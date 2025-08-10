@@ -312,10 +312,33 @@ class MediaManager(models.Manager):
         # Aggregate status (most recent status)
         display_media.aggregated_status = display_media.status  # Already the most recent due to row_number=1
         
-        # Aggregate rating (use the score from the most recent entry)
-        # The display_media is already the most recent entry due to row_number=1
-        # So we should use its score as the "latest" rating
-        display_media.aggregated_score = display_media.score
+        # Aggregate rating (find the most recent rating among all entries)
+        # Since created_at only represents when the entry was first created,
+        # we need to use a different approach to find the most recent rating
+        # We'll prioritize entries with more recent activity (end_date, progressed_at)
+        latest_rating = None
+        latest_activity = None
+        
+        for entry in all_media_entries:
+            if entry.score is not None:
+                # Determine the most recent activity for this entry
+                entry_activity = None
+                if entry.end_date:
+                    entry_activity = entry.end_date
+                elif entry.progressed_at:
+                    entry_activity = entry.progressed_at
+                else:
+                    entry_activity = entry.created_at
+                
+                # If this entry has more recent activity, use its rating
+                if latest_activity is None or entry_activity > latest_activity:
+                    latest_activity = entry_activity
+                    latest_rating = entry.score
+        
+        if latest_rating is not None:
+            display_media.aggregated_score = latest_rating
+        else:
+            display_media.aggregated_score = None
         
         # Store the number of repeats for display
         display_media.repeats = len(all_media_entries)
