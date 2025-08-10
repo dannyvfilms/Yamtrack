@@ -195,6 +195,32 @@ def media_details(request, source, media_type, media_id, title):  # noqa: ARG001
     )
     current_instance = user_medias[0] if user_medias else None
 
+    # Apply the same rating aggregation logic as in the media list
+    if user_medias and len(user_medias) > 1:
+        # Find the most recent rating among all entries
+        latest_rating = None
+        latest_activity = None
+        
+        for user_media in user_medias:
+            if user_media.score is not None:
+                # Determine the most recent activity for this entry
+                entry_activity = None
+                if user_media.end_date:
+                    entry_activity = user_media.end_date
+                elif user_media.progressed_at:
+                    entry_activity = user_media.progressed_at
+                else:
+                    entry_activity = user_media.created_at
+                
+                # If this entry has more recent activity, use its rating
+                if latest_activity is None or entry_activity > latest_activity:
+                    latest_activity = entry_activity
+                    latest_rating = user_media.score
+        
+        # Update the current_instance score to use the most recent rating
+        if latest_rating is not None:
+            current_instance.score = latest_rating
+
     context = {
         "media": media_metadata,
         "media_type": media_type,
@@ -224,6 +250,33 @@ def season_details(request, source, media_id, title, season_number):  # noqa: AR
     )
 
     current_instance = user_medias[0] if user_medias else None
+    
+    # Apply the same rating aggregation logic as in the media list
+    if user_medias and len(user_medias) > 1:
+        # Find the most recent rating among all entries
+        latest_rating = None
+        latest_activity = None
+        
+        for user_media in user_medias:
+            if user_media.score is not None:
+                # Determine the most recent activity for this entry
+                entry_activity = None
+                if user_media.end_date:
+                    entry_activity = user_media.end_date
+                elif user_media.progressed_at:
+                    entry_activity = user_media.progressed_at
+                else:
+                    entry_activity = user_media.created_at
+                
+                # If this entry has more recent activity, use its rating
+                if latest_activity is None or entry_activity > latest_activity:
+                    latest_activity = entry_activity
+                    latest_rating = user_media.score
+        
+        # Update the current_instance score to use the most recent rating
+        if latest_rating is not None:
+            current_instance.score = latest_rating
+    
     episodes_in_db = current_instance.episodes.all() if current_instance else []
 
     if source == Sources.MANUAL.value:
