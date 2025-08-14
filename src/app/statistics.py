@@ -648,25 +648,25 @@ def get_top_played_media(user_media, start_date, end_date):
                     for season in media.seasons.all():
                         if hasattr(season, 'episodes'):
                             # Get season metadata once per season
-                            if season.season_number not in season_metadata_cache:
+                            if season.item.season_number not in season_metadata_cache:
                                 try:
                                     season_metadata = providers.services.get_media_metadata(
                                         "season",
                                         media.item.media_id,
                                         media.item.source,
-                                        season_number=season.season_number
+                                        season_number=season.item.season_number
                                     )
-                                    season_metadata_cache[season.season_number] = season_metadata
+                                    season_metadata_cache[season.item.season_number] = season_metadata
                                     
                                     # Log season metadata for debugging
                                     import logging
                                     logger = logging.getLogger(__name__)
-                                    logger.info(f"Season {season.season_number} metadata for {media.item.title}: {season_metadata}")
+                                    logger.info(f"Season {season.item.season_number} metadata for {media.item.title}: {season_metadata}")
                                 except Exception as e:
-                                    logger.warning(f"Failed to get season {season.season_number} metadata for {media.item.title}: {e}")
-                                    season_metadata_cache[season.season_number] = None
+                                    logger.warning(f"Failed to get season {season.item.season_number} metadata for {media.item.title}: {e}")
+                                    season_metadata_cache[season.item.season_number] = None
                             
-                            season_metadata = season_metadata_cache[season.season_number]
+                            season_metadata = season_metadata_cache[season.item.season_number]
                             
                             for episode in season.episodes.all():
                                 # Check if episode is within date range
@@ -683,7 +683,7 @@ def get_top_played_media(user_media, start_date, end_date):
                                     if season_metadata and season_metadata.get("details", {}).get("runtime"):
                                         # Parse the runtime string (e.g., "45m", "1h 30m")
                                         runtime_str = season_metadata["details"]["runtime"]
-                                        logger.info(f"TV episode runtime string: '{runtime_str}' for {media.item.title} S{season.season_number}")
+                                        logger.info(f"TV episode runtime string: '{runtime_str}' for {media.item.title} S{season.item.season_number}")
                                         episode_minutes = parse_runtime_to_minutes(runtime_str)
                                         logger.info(f"Parsed episode minutes: {episode_minutes}")
                                         if episode_minutes:
@@ -695,7 +695,7 @@ def get_top_played_media(user_media, start_date, end_date):
                                             total_time_minutes += 45
                                     else:
                                         # Fallback: assume 45 minutes per episode for TV
-                                        logger.warning(f"No runtime in season metadata for {media.item.title} S{season.season_number}, using fallback 45 minutes")
+                                        logger.warning(f"No runtime in season metadata for {media.item.title} S{season.item.season_number}, using fallback 45 minutes")
                                         total_time_minutes += 45
                                     
             elif normalized_type == "game":
