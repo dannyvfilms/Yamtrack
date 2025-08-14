@@ -614,7 +614,7 @@ def get_top_played_media(user_media, start_date, end_date):
     """Get top played media by total time spent within date range.
     
     Returns a dictionary with media types as keys and lists of top media items.
-    Each media item includes total_time_minutes and formatted_duration.
+    Each media item includes total_time_minutes, formatted_duration, and episode_count.
     """
     from app.helpers import minutes_to_hhmm
     
@@ -637,6 +637,7 @@ def get_top_played_media(user_media, start_date, end_date):
         
         for media in media_list:
             total_time_minutes = 0
+            episode_count = 0
             
             if normalized_type == "tv":
                 # For TV shows, sum up episode progress and runtime
@@ -644,25 +645,17 @@ def get_top_played_media(user_media, start_date, end_date):
                     for season in media.seasons.all():
                         if hasattr(season, 'episodes'):
                             for episode in season.episodes.all():
+                                # Check if episode is within date range
+                                episode_in_range = False
                                 if episode.end_date and start_date and end_date:
-                                    if start_date <= episode.end_date <= end_date:
-                                        # Get episode runtime from metadata
-                                        try:
-                                            episode_metadata = providers.services.get_media_metadata(
-                                                "episode",
-                                                episode.item.media_id,
-                                                episode.item.source,
-                                            )
-                                            if episode_metadata and episode_metadata.get("runtime"):
-                                                total_time_minutes += episode_metadata["runtime"]
-                                            else:
-                                                # Fallback to episode count if no runtime (count as 1 episode)
-                                                total_time_minutes += 1
-                                        except Exception:
-                                            # Fallback to episode count if metadata fetch fails
-                                            total_time_minutes += 1
+                                    episode_in_range = start_date <= episode.end_date <= end_date
                                 elif not start_date and not end_date:
                                     # All time - include all episodes
+                                    episode_in_range = True
+                                
+                                if episode_in_range:
+                                    episode_count += 1
+                                    # Get episode runtime from metadata
                                     try:
                                         episode_metadata = providers.services.get_media_metadata(
                                             "episode",
@@ -672,9 +665,12 @@ def get_top_played_media(user_media, start_date, end_date):
                                         if episode_metadata and episode_metadata.get("runtime"):
                                             total_time_minutes += episode_metadata["runtime"]
                                         else:
-                                            total_time_minutes += 1
+                                            # Fallback: assume 45 minutes per episode for TV
+                                            total_time_minutes += 45
                                     except Exception:
-                                        total_time_minutes += 1
+                                        # Fallback: assume 45 minutes per episode for TV
+                                        total_time_minutes += 45
+                                    
             elif normalized_type == "game":
                 # For games, use progress field (stored in minutes)
                 if media.end_date and start_date and end_date:
@@ -696,10 +692,11 @@ def get_top_played_media(user_media, start_date, end_date):
                             if media_metadata and media_metadata.get("runtime"):
                                 total_time_minutes += media_metadata["runtime"]
                             else:
-                                # Fallback to progress count
-                                total_time_minutes += media.progress
+                                # Fallback: assume 120 minutes per movie
+                                total_time_minutes += 120
                         except Exception:
-                            total_time_minutes += media.progress
+                            # Fallback: assume 120 minutes per movie
+                            total_time_minutes += 120
                 elif not start_date and not end_date:
                     # All time
                     try:
@@ -711,15 +708,18 @@ def get_top_played_media(user_media, start_date, end_date):
                         if media_metadata and media_metadata.get("runtime"):
                             total_time_minutes += media_metadata["runtime"]
                         else:
-                            total_time_minutes += media.progress
+                            # Fallback: assume 120 minutes per movie
+                            total_time_minutes += 120
                     except Exception:
-                        total_time_minutes += media.progress
+                        # Fallback: assume 120 minutes per movie
+                        total_time_minutes += 120
             
             if total_time_minutes > 0:
                 media_with_progress.append({
                     'media': media,
                     'total_time_minutes': total_time_minutes,
                     'formatted_duration': minutes_to_hhmm(total_time_minutes),
+                    'episode_count': episode_count,
                     'last_activity': media.end_date or media.start_date or media.created_at
                 })
         
