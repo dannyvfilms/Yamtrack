@@ -699,17 +699,27 @@ def get_top_played_media(user_media, start_date, end_date):
                                 media.item.media_id,
                                 media.item.source,
                             )
+                            # Debug logging to see what we're getting
+                            import logging
+                            logger = logging.getLogger(__name__)
+                            logger.info(f"Movie metadata for {media.item.title}: {media_metadata}")
+                            
                             if media_metadata and media_metadata.get("runtime"):
                                 # Parse the runtime string (e.g., "2h 15m")
                                 runtime_str = media_metadata["runtime"]
+                                logger.info(f"Runtime string: '{runtime_str}'")
                                 movie_minutes = parse_runtime_to_minutes(runtime_str)
+                                logger.info(f"Parsed minutes: {movie_minutes}")
                                 if movie_minutes:
                                     total_time_minutes += movie_minutes
+                                    logger.info(f"Added {movie_minutes} minutes, total now: {total_time_minutes}")
                                 else:
                                     # Fallback: assume 120 minutes per movie
+                                    logger.warning(f"Failed to parse runtime '{runtime_str}', using fallback 120 minutes")
                                     total_time_minutes += 120
                             else:
                                 # Fallback: assume 120 minutes per movie
+                                logger.warning(f"No runtime in metadata for {media.item.title}, using fallback 120 minutes")
                                 total_time_minutes += 120
                         except Exception as e:
                             # Log the error for debugging
@@ -726,17 +736,27 @@ def get_top_played_media(user_media, start_date, end_date):
                             media.item.media_id,
                             media.item.source,
                         )
+                        # Debug logging to see what we're getting
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.info(f"Movie metadata (all time) for {media.item.title}: {media_metadata}")
+                        
                         if media_metadata and media_metadata.get("runtime"):
                             # Parse the runtime string (e.g., "2h 15m")
                             runtime_str = media_metadata["runtime"]
+                            logger.info(f"Runtime string (all time): '{runtime_str}'")
                             movie_minutes = parse_runtime_to_minutes(runtime_str)
+                            logger.info(f"Parsed minutes (all time): {movie_minutes}")
                             if movie_minutes:
                                 total_time_minutes += movie_minutes
+                                logger.info(f"Added {movie_minutes} minutes (all time), total now: {total_time_minutes}")
                             else:
                                 # Fallback: assume 120 minutes per movie
+                                logger.warning(f"Failed to parse runtime '{runtime_str}' (all time), using fallback 120 minutes")
                                 total_time_minutes += 120
                         else:
                             # Fallback: assume 120 minutes per movie
+                            logger.warning(f"No runtime in metadata (all time) for {media.item.title}, using fallback 120 minutes")
                             total_time_minutes += 120
                     except Exception as e:
                         # Log the error for debugging
