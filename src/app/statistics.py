@@ -704,9 +704,9 @@ def get_top_played_media(user_media, start_date, end_date):
                             logger = logging.getLogger(__name__)
                             logger.info(f"Movie metadata for {media.item.title}: {media_metadata}")
                             
-                            if media_metadata and media_metadata.get("runtime"):
+                            if media_metadata and media_metadata.get("details", {}).get("runtime"):
                                 # Parse the runtime string (e.g., "2h 15m")
-                                runtime_str = media_metadata["runtime"]
+                                runtime_str = media_metadata["details"]["runtime"]
                                 logger.info(f"Runtime string: '{runtime_str}'")
                                 movie_minutes = parse_runtime_to_minutes(runtime_str)
                                 logger.info(f"Parsed minutes: {movie_minutes}")
@@ -741,9 +741,9 @@ def get_top_played_media(user_media, start_date, end_date):
                         logger = logging.getLogger(__name__)
                         logger.info(f"Movie metadata (all time) for {media.item.title}: {media_metadata}")
                         
-                        if media_metadata and media_metadata.get("runtime"):
+                        if media_metadata and media_metadata.get("details", {}).get("runtime"):
                             # Parse the runtime string (e.g., "2h 15m")
-                            runtime_str = media_metadata["runtime"]
+                            runtime_str = media_metadata["details"]["runtime"]
                             logger.info(f"Runtime string (all time): '{runtime_str}'")
                             movie_minutes = parse_runtime_to_minutes(runtime_str)
                             logger.info(f"Parsed minutes (all time): {movie_minutes}")
