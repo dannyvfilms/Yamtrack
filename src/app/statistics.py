@@ -711,7 +711,11 @@ def get_top_played_media(user_media, start_date, end_date):
                             else:
                                 # Fallback: assume 120 minutes per movie
                                 total_time_minutes += 120
-                        except Exception:
+                        except Exception as e:
+                            # Log the error for debugging
+                            import logging
+                            logger = logging.getLogger(__name__)
+                            logger.warning(f"Failed to get metadata for {media.item.title}: {e}")
                             # Fallback: assume 120 minutes per movie
                             total_time_minutes += 120
                 elif not start_date and not end_date:
@@ -734,7 +738,11 @@ def get_top_played_media(user_media, start_date, end_date):
                         else:
                             # Fallback: assume 120 minutes per movie
                             total_time_minutes += 120
-                    except Exception:
+                    except Exception as e:
+                        # Log the error for debugging
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.warning(f"Failed to get metadata for {media.item.title}: {e}")
                         # Fallback: assume 120 minutes per movie
                         total_time_minutes += 120
             
