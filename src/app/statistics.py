@@ -617,7 +617,9 @@ def get_top_played_media(user_media, start_date, end_date):
     Each media item includes total_time_minutes, formatted_duration, and episode_count.
     """
     from app.helpers import minutes_to_hhmm
+    import logging
     
+    logger = logging.getLogger(__name__)
     top_played = {}
     
     # Define the media types we want to show
@@ -654,13 +656,11 @@ def get_top_played_media(user_media, start_date, end_date):
                                         "season",
                                         media.item.media_id,
                                         media.item.source,
-                                        season_number=season.item.season_number
+                                        [season.item.season_number]  # Note: season_numbers is a list
                                     )
                                     season_metadata_cache[season.item.season_number] = season_metadata
                                     
                                     # Log season metadata for debugging
-                                    import logging
-                                    logger = logging.getLogger(__name__)
                                     logger.info(f"Season {season.item.season_number} metadata for {media.item.title}: {season_metadata}")
                                 except Exception as e:
                                     logger.warning(f"Failed to get season {season.item.season_number} metadata for {media.item.title}: {e}")
@@ -717,8 +717,6 @@ def get_top_played_media(user_media, start_date, end_date):
                                 media.item.source,
                             )
                             # Debug logging to see what we're getting
-                            import logging
-                            logger = logging.getLogger(__name__)
                             logger.info(f"Movie metadata for {media.item.title}: {media_metadata}")
                             
                             if media_metadata and media_metadata.get("details", {}).get("runtime"):
@@ -740,8 +738,6 @@ def get_top_played_media(user_media, start_date, end_date):
                                 total_time_minutes += 120
                         except Exception as e:
                             # Log the error for debugging
-                            import logging
-                            logger = logging.getLogger(__name__)
                             logger.warning(f"Failed to get metadata for {media.item.title}: {e}")
                             # Fallback: assume 120 minutes per movie
                             total_time_minutes += 120
@@ -754,8 +750,6 @@ def get_top_played_media(user_media, start_date, end_date):
                             media.item.source,
                         )
                         # Debug logging to see what we're getting
-                        import logging
-                        logger = logging.getLogger(__name__)
                         logger.info(f"Movie metadata (all time) for {media.item.title}: {media_metadata}")
                         
                         if media_metadata and media_metadata.get("details", {}).get("runtime"):
@@ -777,8 +771,6 @@ def get_top_played_media(user_media, start_date, end_date):
                             total_time_minutes += 120
                     except Exception as e:
                         # Log the error for debugging
-                        import logging
-                        logger = logging.getLogger(__name__)
                         logger.warning(f"Failed to get metadata for {media.item.title}: {e}")
                         # Fallback: assume 120 minutes per movie
                         total_time_minutes += 120
