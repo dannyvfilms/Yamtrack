@@ -462,7 +462,12 @@
       <!-- Top Movies Section -->
       {% if top_played.movie %}
         <div class="bg-[#2a2f35] rounded-lg p-6 mb-6">
-          <h2 class="text-xl font-semibold mb-4">Top Movies - <span x-text="selectedRange"></span></h2>
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-xl font-semibold">Top Movies - <span x-text="selectedRange"></span></h2>
+            <a href="{% url 'medialist' 'movie' %}" class="text-sm text-indigo-400 hover:text-indigo-300 transition-colors">
+              See all your top movies →
+            </a>
+          </div>
           <div class="media-grid">
             {% for item in top_played.movie %}
               <div class="{% if secondary_color %}bg-[#39404b]{% else %}bg-[#2a2f35]{% endif %} rounded-lg overflow-hidden shadow-lg relative">
@@ -526,18 +531,18 @@
               </div>
             {% endfor %}
           </div>
-          <div class="mt-4 text-right">
-            <a href="{% url 'medialist' 'movie' %}" class="text-sm text-indigo-400 hover:text-indigo-300 transition-colors">
-              See all your top movies →
-            </a>
-          </div>
         </div>
       {% endif %}
 
       <!-- Top TV Shows Section -->
       {% if top_played.tv %}
         <div class="bg-[#2a2f35] rounded-lg p-6 mb-6">
-          <h2 class="text-xl font-semibold mb-4">Top TV Shows - <span x-text="selectedRange"></span></h2>
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-xl font-semibold">Top TV Shows - <span x-text="selectedRange"></span></h2>
+            <a href="{% url 'medialist' 'tv' %}" class="text-sm text-indigo-400 hover:text-indigo-300 transition-colors">
+              See all your top TV shows →
+            </a>
+          </div>
           <div class="media-grid">
             {% for item in top_played.tv %}
               <div class="{% if secondary_color %}bg-[#39404b]{% else %}bg-[#2a2f35]{% endif %} rounded-lg overflow-hidden shadow-lg relative">
@@ -601,18 +606,18 @@
               </div>
             {% endfor %}
           </div>
-          <div class="mt-4 text-right">
-            <a href="{% url 'medialist' 'tv' %}" class="text-sm text-indigo-400 hover:text-indigo-300 transition-colors">
-              See all your top TV shows →
-            </a>
-          </div>
         </div>
       {% endif %}
 
       <!-- Top Games Section -->
       {% if top_played.game %}
         <div class="bg-[#2a2f35] rounded-lg p-6 mb-6">
-          <h2 class="text-xl font-semibold mb-4">Top Games - <span x-text="selectedRange"></span></h2>
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-xl font-semibold">Top Games - <span x-text="selectedRange"></span></h2>
+            <a href="{% url 'medialist' 'game' %}" class="text-sm text-indigo-400 hover:text-indigo-300 transition-colors">
+              See all your top games →
+            </a>
+          </div>
           <div class="media-grid">
             {% for item in top_played.game %}
               <div class="{% if secondary_color %}bg-[#39404b]{% else %}bg-[#2a2f35]{% endif %} rounded-lg overflow-hidden shadow-lg relative">
@@ -674,11 +679,6 @@
                 </div>
               </div>
             {% endfor %}
-          </div>
-          <div class="mt-4 text-right">
-            <a href="{% url 'medialist' 'game' %}" class="text-sm text-indigo-400 hover:text-indigo-300 transition-colors">
-              See all your top games →
-            </a>
           </div>
         </div>
       {% endif %}
