@@ -898,10 +898,16 @@ def get_hours_per_media_type(user_media, start_date, end_date):
                 # For other media types, assume 1 hour
                 total_minutes += 60
         
-        # Convert to hours and round to 1 decimal place
+        # Convert to formatted time string (e.g., "17h 30min")
         if total_minutes > 0:
-            hours_per_type[media_type] = round(total_minutes / 60, 1)
+            hours = total_minutes // 60
+            remaining_minutes = total_minutes % 60
+            
+            if remaining_minutes > 0:
+                hours_per_type[media_type] = f"{hours}h {remaining_minutes}min"
+            else:
+                hours_per_type[media_type] = f"{hours}h"
         else:
-            hours_per_type[media_type] = 0
+            hours_per_type[media_type] = "0h"
     
     return hours_per_type
