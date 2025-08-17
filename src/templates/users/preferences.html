@@ -29,17 +29,22 @@
     <form method="post">
       {% csrf_token %}
       
-      <!-- Date Format Preferences Section -->
+      <!-- Display Preferences Section -->
       <div class="mb-6">
-        <h3 class="text-lg font-medium text-gray-200 mb-3">Date Format</h3>
-        <p class="text-gray-400 mb-3 text-sm">Choose how dates are displayed throughout the application.</p>
-        <div class="p-3 bg-[#39404b] rounded-md">
-          <label class="block text-gray-200 text-sm mb-2">Date Format</label>
-          <div class="relative" x-data="{ open: false }">
-            <button @click="open = !open"
+        <h3 class="text-lg font-medium text-gray-200 mb-3">Display Preferences</h3>
+        
+        <!-- Date Format -->
+        <div class="p-3 bg-[#39404b] rounded-md mb-4">
+          <div class="flex items-center justify-between mb-2">
+            <label class="text-gray-200 text-sm font-medium">Date Format</label>
+            <span class="text-gray-400 text-xs">Choose how dates are displayed throughout the application.</span>
+          </div>
+          <div class="relative" x-data="{ open: false, selectedValue: '{{ user.date_format }}', selectedLabel: '{{ user.date_format|date_format_display }}' }">
+            <button type="button"
+                    @click="open = !open"
                     @click.outside="open = false"
                     class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
-              <span>{{ user.date_format|date_format_display }}</span>
+              <span x-text="selectedLabel"></span>
               <svg xmlns="http://www.w3.org/2000/svg"
                    width="24"
                    height="24"
@@ -62,65 +67,57 @@
                  x-transition:leave-end="transform opacity-0 scale-95"
                  class="absolute left-0 right-0 mt-2 py-1 bg-[#272c31] rounded-md shadow-lg overflow-hidden z-10 border border-gray-600">
               <button type="button" 
-                      @click="open = false; $refs.date_system_default.click()"
+                      @click="selectedValue = 'system_default'; selectedLabel = 'System default (locale) — Aug 12, 2025 / 12 Aug 2025'; open = false"
                       class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
-                <input type="radio" name="date_format" value="system_default" x-ref="date_system_default" class="hidden" {% if user.date_format == "system_default" %}checked{% endif %}>
                 System default (locale) — Aug 12, 2025 / 12 Aug 2025
               </button>
               <button type="button" 
-                      @click="open = false; $refs.date_iso_8601.click()"
+                      @click="selectedValue = 'iso_8601'; selectedLabel = 'ISO 8601 — 2025-08-12'; open = false"
                       class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
-                <input type="radio" name="date_format" value="iso_8601" x-ref="date_iso_8601" class="hidden" {% if user.date_format == "iso_8601" %}checked{% endif %}>
                 ISO 8601 — 2025-08-12
               </button>
               <button type="button" 
-                      @click="open = false; $refs.date_month_d_yyyy.click()"
+                      @click="selectedValue = 'month_d_yyyy'; selectedLabel = 'Month D, YYYY — Aug 12, 2025'; open = false"
                       class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
-                <input type="radio" name="date_format" value="month_d_yyyy" x-ref="date_month_d_yyyy" class="hidden" {% if user.date_format == "month_d_yyyy" %}checked{% endif %}>
                 Month D, YYYY — Aug 12, 2025
               </button>
               <button type="button" 
-                      @click="open = false; $refs.date_d_mon_yyyy.click()"
+                      @click="selectedValue = 'd_mon_yyyy'; selectedLabel = 'D Mon YYYY — 12 Aug 2025'; open = false"
                       class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
-                <input type="radio" name="date_format" value="d_mon_yyyy" x-ref="date_d_mon_yyyy" class="hidden" {% if user.date_format == "d_mon_yyyy" %}checked{% endif %}>
                 D Mon YYYY — 12 Aug 2025
               </button>
               <button type="button" 
-                      @click="open = false; $refs.date_m_d_yyyy.click()"
+                      @click="selectedValue = 'm_d_yyyy'; selectedLabel = 'M/D/YYYY — 08/12/2025'; open = false"
                       class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
-                <input type="radio" name="date_format" value="m_d_yyyy" x-ref="date_m_d_yyyy" class="hidden" {% if user.date_format == "m_d_yyyy" %}checked{% endif %}>
                 M/D/YYYY — 08/12/2025
               </button>
               <button type="button" 
-                      @click="open = false; $refs.date_d_m_yyyy.click()"
+                      @click="selectedValue = 'd_m_yyyy'; selectedLabel = 'D/M/YYYY — 12/08/2025'; open = false"
                       class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
-                <input type="radio" name="date_format" value="d_m_yyyy" x-ref="date_d_m_yyyy" class="hidden" {% if user.date_format == "d_m_yyyy" %}checked{% endif %}>
                 D/M/YYYY — 12/08/2025
               </button>
               <button type="button" 
-                      @click="open = false; $refs.date_dd_mm_yyyy.click()"
+                      @click="selectedValue = 'dd_mm_yyyy'; selectedLabel = 'DD.MM.YYYY — 12.08.2025'; open = false"
                       class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
-                <input type="radio" name="date_format" value="dd_mm_yyyy" x-ref="date_dd_mm_yyyy" class="hidden" {% if user.date_format == "dd_mm_yyyy" %}checked{% endif %}>
                 DD.MM.YYYY — 12.08.2025
               </button>
             </div>
+            <input type="hidden" name="date_format" x-bind:value="selectedValue">
           </div>
         </div>
-      </div>
 
-      <div class="border-t border-gray-600 my-5"></div>
-
-      <!-- Time Format Preferences Section -->
-      <div class="mb-6">
-        <h3 class="text-lg font-medium text-gray-200 mb-3">Time Format</h3>
-        <p class="text-gray-400 mb-3 text-sm">Choose how times are displayed throughout the application.</p>
+        <!-- Time Format -->
         <div class="p-3 bg-[#39404b] rounded-md">
-          <label class="block text-gray-200 text-sm mb-2">Time Format</label>
-          <div class="relative" x-data="{ open: false }">
-            <button @click="open = !open"
+          <div class="flex items-center justify-between mb-2">
+            <label class="text-gray-200 text-sm font-medium">Time Format</label>
+            <span class="text-gray-400 text-xs">Choose how times are displayed throughout the application.</span>
+          </div>
+          <div class="relative" x-data="{ open: false, selectedValue: '{{ user.time_format }}', selectedLabel: '{{ user.time_format|time_format_display }}' }">
+            <button type="button"
+                    @click="open = !open"
                     @click.outside="open = false"
                     class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
-              <span>{{ user.time_format|time_format_display }}</span>
+              <span x-text="selectedLabel"></span>
               <svg xmlns="http://www.w3.org/2000/svg"
                    width="24"
                    height="24"
@@ -143,36 +140,32 @@
                  x-transition:leave-end="transform opacity-0 scale-95"
                  class="absolute left-0 right-0 mt-2 py-1 bg-[#272c31] rounded-md shadow-lg overflow-hidden z-10 border border-gray-600">
               <button type="button" 
-                      @click="open = false; $refs.time_system_default.click()"
+                      @click="selectedValue = 'system_default'; selectedLabel = 'System default (locale) — 6:45 PM / 18:45'; open = false"
                       class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
-                <input type="radio" name="time_format" value="system_default" x-ref="time_system_default" class="hidden" {% if user.time_format == "system_default" %}checked{% endif %}>
                 System default (locale) — 6:45 PM / 18:45
               </button>
               <button type="button" 
-                      @click="open = false; $refs.time_h_mm_ampm.click()"
+                      @click="selectedValue = 'h_mm_ampm'; selectedLabel = '12-hour (h:mm AM/PM) — 6:45 PM'; open = false"
                       class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
-                <input type="radio" name="time_format" value="h_mm_ampm" x-ref="time_h_mm_ampm" class="hidden" {% if user.time_format == "h_mm_ampm" %}checked{% endif %}>
                 12-hour (h:mm AM/PM) — 6:45 PM
               </button>
               <button type="button" 
-                      @click="open = false; $refs.time_hh_mm_ampm.click()"
+                      @click="selectedValue = 'hh_mm_ampm'; selectedLabel = '12-hour, leading zero (hh:mm AM/PM) — 06:45 PM'; open = false"
                       class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
-                <input type="radio" name="time_format" value="hh_mm_ampm" x-ref="time_hh_mm_ampm" class="hidden" {% if user.time_format == "hh_mm_ampm" %}checked{% endif %}>
                 12-hour, leading zero (hh:mm AM/PM) — 06:45 PM
               </button>
               <button type="button" 
-                      @click="open = false; $refs.time_hh_mm.click()"
+                      @click="selectedValue = 'hh_mm'; selectedLabel = '24-hour (HH:mm) — 18:45'; open = false"
                       class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
-                <input type="radio" name="time_format" value="hh_mm" x-ref="time_hh_mm" class="hidden" {% if user.time_format == "hh_mm" %}checked{% endif %}>
                 24-hour (HH:mm) — 18:45
               </button>
               <button type="button" 
-                      @click="open = false; $refs.time_hh_mm_ss.click()"
+                      @click="selectedValue = 'hh_mm_ss'; selectedLabel = '24-hour with seconds (HH:mm:ss) — 18:45:00'; open = false"
                       class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
-                <input type="radio" name="time_format" value="hh_mm_ss" x-ref="time_hh_mm_ss" class="hidden" {% if user.time_format == "hh_mm_ss" %}checked{% endif %}>
                 24-hour with seconds (HH:mm:ss) — 18:45:00
               </button>
             </div>
+            <input type="hidden" name="time_format" x-bind:value="selectedValue">
           </div>
         </div>
       </div>
