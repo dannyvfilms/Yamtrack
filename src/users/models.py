@@ -92,6 +92,7 @@ class DateFormatChoices(models.TextChoices):
     M_D_YYYY = "m_d_yyyy", "M/D/YYYY"
     D_M_YYYY = "d_m_yyyy", "D/M/YYYY"
     DD_MM_YYYY = "dd_mm_yyyy", "DD.MM.YYYY"
+    YYYY_MM_DD = "yyyy_mm_dd", "YYYY/MM/DD"
 
 
 class TimeFormatChoices(models.TextChoices):

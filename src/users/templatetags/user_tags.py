@@ -83,6 +83,7 @@ def date_format_display(format_value):
         "m_d_yyyy": "M/D/YYYY — 08/12/2025",
         "d_m_yyyy": "D/M/YYYY — 12/08/2025",
         "dd_mm_yyyy": "DD.MM.YYYY — 12.08.2025",
+        "yyyy_mm_dd": "YYYY/MM/DD — 2025/08/12",
     }
     return format_display_map.get(format_value, format_value)
 
@@ -111,20 +112,13 @@ def user_date_format(date, user):
         from django.utils import timezone, formats
         from datetime import datetime
         
-        # Handle string dates by parsing them first
+        # Simplified version - just handle the basic case
         if isinstance(date, str):
             try:
-                # Try to parse common date formats
-                for fmt in ['%Y-%m-%d', '%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M:%S.%f']:
-                    try:
-                        date = datetime.strptime(date, fmt)
-                        break
-                    except ValueError:
-                        continue
-                else:
-                    # If we can't parse the string, return it as-is
-                    return date
-            except Exception:
+                # Try to parse the date string
+                date_obj = datetime.strptime(date, "%Y-%m-%d")
+                date = timezone.make_aware(date_obj, timezone.get_current_timezone())
+            except (ValueError, TypeError):
                 # If parsing fails, return the original string
                 return date
         
@@ -134,23 +128,26 @@ def user_date_format(date, user):
         
         local_dt = timezone.localtime(date)
         
-        if user.date_format == DateFormatChoices.SYSTEM_DEFAULT:
-            return formats.date_format(local_dt, "DATE_FORMAT")
-        elif user.date_format == DateFormatChoices.ISO_8601:
+        # Simple formatting based on user preference
+        if user.date_format == DateFormatChoices.ISO_8601:
             return local_dt.strftime("%Y-%m-%d")
         elif user.date_format == DateFormatChoices.MONTH_D_YYYY:
-            return local_dt.strftime("%b %-d, %Y")
+            return local_dt.strftime("%b %d, %Y")
         elif user.date_format == DateFormatChoices.D_MON_YYYY:
-            return local_dt.strftime("%-d %b %Y")
+            return local_dt.strftime("%d %b %Y")
         elif user.date_format == DateFormatChoices.M_D_YYYY:
-            return local_dt.strftime("%-m/%-d/%Y")
+            return f"{local_dt.month}/{local_dt.day}/{local_dt.year}"
         elif user.date_format == DateFormatChoices.D_M_YYYY:
-            return local_dt.strftime("%-d/%-m/%Y")
+            return f"{local_dt.day}/{local_dt.month}/{local_dt.year}"
         elif user.date_format == DateFormatChoices.DD_MM_YYYY:
             return local_dt.strftime("%d.%m.%Y")
+        elif user.date_format == DateFormatChoices.YYYY_MM_DD:
+            return f"{local_dt.year}/{local_dt.month:02d}/{local_dt.day:02d}"
         else:
+            # Default to system format
             return formats.date_format(local_dt, "DATE_FORMAT")
-    except Exception:
+            
+    except Exception as e:
         # Fallback to default format if there's an error
         try:
             from django.utils import formats
@@ -197,7 +194,9 @@ def user_time_format(datetime_obj, user):
         if user.time_format == TimeFormatChoices.SYSTEM_DEFAULT:
             return formats.date_format(local_dt, "TIME_FORMAT")
         elif user.time_format == TimeFormatChoices.H_MM_AMPM:
-            return local_dt.strftime("%-I:%M %p")
+            # Use %I and manually remove leading zero for cross-platform compatibility
+            hour = str(local_dt.hour % 12 or 12)  # Convert 0 to 12 for 12-hour format
+            return f"{hour}:{local_dt.strftime('%M %p')}"
         elif user.time_format == TimeFormatChoices.HH_MM_AMPM:
             return local_dt.strftime("%I:%M %p")
         elif user.time_format == TimeFormatChoices.HH_MM:

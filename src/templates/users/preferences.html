@@ -101,6 +101,11 @@
                       class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
                 DD.MM.YYYY — 12.08.2025
               </button>
+              <button type="button" 
+                      @click="selectedValue = 'yyyy_mm_dd'; selectedLabel = 'YYYY/MM/DD — 2025/08/12'; open = false"
+                      class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                YYYY/MM/DD — 2025/08/12
+              </button>
             </div>
             <input type="hidden" name="date_format" x-bind:value="selectedValue">
           </div>
