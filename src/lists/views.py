@@ -127,6 +127,7 @@ def list_detail(request, list_id):
             F("episode_number").asc(nulls_first=True),
         ],
         "media_type": ["media_type"],
+        "rating": ["-customlistitem__date_added"],  # Will be sorted after media objects are loaded
     }
     items = items.order_by(
         *sort_mapping.get(params["sort_by"], ["-customlistitem__date_added"]),
@@ -166,6 +167,17 @@ def list_detail(request, list_id):
     # Annotate items with media objects
     for item in items_page:
         item.media = media_by_item_id.get(item.id)
+
+    # Apply rating sorting if requested
+    if params["sort_by"] == "rating":
+        # Sort items by rating (score) in descending order, with unrated items at the end
+        items_page.object_list = sorted(
+            items_page.object_list,
+            key=lambda item: (
+                item.media.score if item.media and item.media.score is not None else -1
+            ),
+            reverse=True
+        )
 
     # Base context for both full and partial responses
     context = {

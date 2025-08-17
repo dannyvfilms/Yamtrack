@@ -183,7 +183,7 @@
               <path d="M7 4v16"></path>
             </svg>
             <span class="text-sm"
-                  x-text="sort === 'date_added' ? 'Date Added' : (sort === 'title' ? 'Title' : 'Media Type')"></span>
+                  x-text="sort === 'date_added' ? 'Date Added' : (sort === 'title' ? 'Title' : (sort === 'media_type' ? 'Media Type' : (sort === 'rating' ? 'Rating' : 'Date Added')))"></span>
             <svg xmlns="http://www.w3.org/2000/svg"
                  width="24"
                  height="24"
