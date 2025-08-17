@@ -116,7 +116,7 @@
     <td class="p-2 text-center">{{ media.status|media_status_readable }}</td>
 
     {% if media.start_date %}
-      <td class="p-2 text-center">{{ media.start_date|date:"SHORT_DATE_FORMAT" }}</td>
+      <td class="p-2 text-center">{{ media.start_date|user_date_format:user }}</td>
     {% else %}
       <td class="p-2 text-center">
         <span class="text-gray-500">-</span>
@@ -124,7 +124,7 @@
     {% endif %}
 
     {% if media.end_date %}
-      <td class="p-2 text-center">{{ media.end_date|date:"SHORT_DATE_FORMAT" }}</td>
+      <td class="p-2 text-center">{{ media.end_date|user_date_format:user }}</td>
     {% else %}
       <td class="p-2 text-center">
         <span class="text-gray-500">-</span>

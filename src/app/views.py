@@ -48,6 +48,7 @@ def home(request):
         return render(request, "app/components/home_grid.html", context)
 
     context = {
+        "user": request.user,
         "list_by_type": list_by_type,
         "current_sort": sort_by,
         "sort_choices": HomeSortChoices.choices,
@@ -129,6 +130,7 @@ def media_list(request, media_type):
     )
 
     context = {
+        "user": request.user,
         "media_type": media_type,
         "media_type_plural": app_tags.media_type_readable_plural(media_type).lower(),
         "media_list": media_page,
@@ -174,6 +176,7 @@ def media_search(request):
     data = services.search(media_type, query, page, source)
 
     context = {
+        "user": request.user,
         "data": data,
         "source": source,
         "media_type": media_type,
@@ -196,6 +199,7 @@ def media_details(request, source, media_type, media_id, title):  # noqa: ARG001
     current_instance = user_medias[0] if user_medias else None
 
     context = {
+        "user": request.user,
         "media": media_metadata,
         "media_type": media_type,
         "user_medias": user_medias,
@@ -238,6 +242,7 @@ def season_details(request, source, media_id, title, season_number):  # noqa: AR
         )
 
     context = {
+        "user": request.user,
         "media": season_metadata,
         "tv": tv_with_seasons_metadata,
         "media_type": MediaTypes.SEASON.value,
@@ -823,6 +828,7 @@ def statistics(request):
     activity_data = stats.get_activity_data(request.user, start_date, end_date)
 
     context = {
+        "user": request.user,
         "start_date": start_date,
         "end_date": end_date,
         "media_count": media_count,

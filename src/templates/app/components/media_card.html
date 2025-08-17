@@ -86,9 +86,9 @@
         {% endif %}
 
         {% if media.end_date is not None %}
-          <span class="text-sm text-white">{{ media.end_date|date:"SHORT_DATE_FORMAT" }}</span>
+          <span class="text-sm text-white">{{ media.end_date|user_date_format:user }}</span>
         {% elif media.start_date is not None %}
-          <span class="text-sm text-white">{{ media.start_date|date:"SHORT_DATE_FORMAT" }}</span>
+          <span class="text-sm text-white">{{ media.start_date|user_date_format:user }}</span>
         {% endif %}
       </div>
     {% endif %}
