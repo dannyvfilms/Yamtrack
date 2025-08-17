@@ -109,6 +109,28 @@ def user_date_format(date, user):
     try:
         from users.models import DateFormatChoices
         from django.utils import timezone, formats
+        from datetime import datetime
+        
+        # Handle string dates by parsing them first
+        if isinstance(date, str):
+            try:
+                # Try to parse common date formats
+                for fmt in ['%Y-%m-%d', '%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M:%S.%f']:
+                    try:
+                        date = datetime.strptime(date, fmt)
+                        break
+                    except ValueError:
+                        continue
+                else:
+                    # If we can't parse the string, return it as-is
+                    return date
+            except Exception:
+                # If parsing fails, return the original string
+                return date
+        
+        # Ensure we have a datetime object
+        if not hasattr(date, 'month'):
+            return str(date)
         
         local_dt = timezone.localtime(date)
         
@@ -130,8 +152,12 @@ def user_date_format(date, user):
             return formats.date_format(local_dt, "DATE_FORMAT")
     except Exception:
         # Fallback to default format if there's an error
-        from django.utils import formats
-        return formats.date_format(date, "DATE_FORMAT")
+        try:
+            from django.utils import formats
+            return formats.date_format(date, "DATE_FORMAT")
+        except Exception:
+            # If all else fails, return the original value as a string
+            return str(date)
 
 
 @register.filter
@@ -143,6 +169,28 @@ def user_time_format(datetime_obj, user):
     try:
         from users.models import TimeFormatChoices
         from django.utils import timezone, formats
+        from datetime import datetime
+        
+        # Handle string dates by parsing them first
+        if isinstance(datetime_obj, str):
+            try:
+                # Try to parse common datetime formats
+                for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M', '%H:%M:%S', '%H:%M']:
+                    try:
+                        datetime_obj = datetime.strptime(datetime_obj, fmt)
+                        break
+                    except ValueError:
+                        continue
+                else:
+                    # If we can't parse the string, return it as-is
+                    return datetime_obj
+            except Exception:
+                # If parsing fails, return the original string
+                return datetime_obj
+        
+        # Ensure we have a datetime object
+        if not hasattr(datetime_obj, 'hour'):
+            return str(datetime_obj)
         
         local_dt = timezone.localtime(datetime_obj)
         
@@ -160,8 +208,12 @@ def user_time_format(datetime_obj, user):
             return formats.date_format(local_dt, "TIME_FORMAT")
     except Exception:
         # Fallback to default format if there's an error
-        from django.utils import formats
-        return formats.date_format(datetime_obj, "TIME_FORMAT")
+        try:
+            from django.utils import formats
+            return formats.date_format(datetime_obj, "TIME_FORMAT")
+        except Exception:
+            # If all else fails, return the original value as a string
+            return str(datetime_obj)
 
 
 @register.filter
@@ -171,10 +223,37 @@ def user_datetime_format(datetime_obj, user):
         return ""
     
     try:
+        from datetime import datetime
+        
+        # Handle string dates by parsing them first
+        if isinstance(datetime_obj, str):
+            try:
+                # Try to parse common datetime formats
+                for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M', '%Y-%m-%d']:
+                    try:
+                        datetime_obj = datetime.strptime(datetime_obj, fmt)
+                        break
+                    except ValueError:
+                        continue
+                else:
+                    # If we can't parse the string, return it as-is
+                    return datetime_obj
+            except Exception:
+                # If parsing fails, return the original string
+                return datetime_obj
+        
+        # Ensure we have a datetime object
+        if not hasattr(datetime_obj, 'month') or not hasattr(datetime_obj, 'hour'):
+            return str(datetime_obj)
+        
         date_part = user_date_format(datetime_obj, user)
         time_part = user_time_format(datetime_obj, user)
         return f"{date_part} {time_part}"
     except Exception:
         # Fallback to default format if there's an error
-        from django.utils import formats
-        return formats.date_format(datetime_obj, "DATETIME_FORMAT")
+        try:
+            from django.utils import formats
+            return formats.date_format(datetime_obj, "DATETIME_FORMAT")
+        except Exception:
+            # If all else fails, return the original value as a string
+            return str(datetime_obj)
