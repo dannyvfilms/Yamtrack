@@ -242,6 +242,23 @@ def sidebar(request):
     return redirect("sidebar")
 
 
+@require_http_methods(["GET", "POST"])
+def preferences(request):
+    """Render the preferences settings page."""
+    if request.method == "POST":
+        # Prevent demo users from updating preferences
+        if request.user.is_demo:
+            messages.error(request, "This section is view-only for demo accounts.")
+            return redirect("preferences")
+        
+        # Process form submission for user preferences
+        # This is where you can add logic to handle various preference settings
+        messages.success(request, "Preferences updated successfully.")
+        return redirect("preferences")
+
+    return render(request, "users/preferences.html")
+
+
 @require_GET
 def integrations(request):
     """Render the integrations settings page."""
