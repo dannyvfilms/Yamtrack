@@ -623,7 +623,7 @@ def get_top_played_media(user_media, start_date, end_date):
     top_played = {}
     
     # Define the media types we want to show
-    target_media_types = ['movie', 'tv', 'game']
+    target_media_types = ['movie', 'tv', 'game', 'anime']
     
     for media_type, media_list in user_media.items():
         # Normalize media type to match our target types
@@ -691,6 +691,69 @@ def get_top_played_media(user_media, start_date, end_date):
                                         # Fallback: assume 45 minutes per episode for TV
                                         logger.warning(f"No runtime in season metadata for {media.item.title} S{season.item.season_number}, using fallback 45 minutes")
                                         total_time_minutes += 45
+                                    
+            elif normalized_type == "anime":
+                # For Anime, get runtime from metadata and multiply by episode count
+                if media.end_date and start_date and end_date:
+                    if start_date <= media.end_date <= end_date:
+                        episode_count = media.progress
+                        try:
+                            anime_metadata = providers.services.get_media_metadata(
+                                "anime",
+                                media.item.media_id,
+                                media.item.source,
+                            )
+                            
+                            if anime_metadata and anime_metadata.get("details", {}).get("runtime"):
+                                # Parse the runtime string (e.g., "24m", "1h 30m", "12 min")
+                                runtime_str = anime_metadata["details"]["runtime"]
+                                logger.info(f"Anime '{media.item.title}': runtime '{runtime_str}' -> {parse_runtime_to_minutes(runtime_str)} minutes")
+                                episode_minutes = parse_runtime_to_minutes(runtime_str)
+                                if episode_minutes:
+                                    total_time_minutes = episode_count * episode_minutes
+                                else:
+                                    # Fallback: assume 24 minutes per episode for anime
+                                    logger.warning(f"Failed to parse runtime '{runtime_str}' for {media.item.title}, using fallback 24 minutes per episode")
+                                    total_time_minutes = episode_count * 24
+                            else:
+                                # Fallback: assume 24 minutes per episode for anime
+                                logger.warning(f"No runtime in metadata for {media.item.title}, using fallback 24 minutes per episode")
+                                total_time_minutes = episode_count * 24
+                        except Exception as e:
+                            # Log the error for debugging
+                            logger.warning(f"Failed to get metadata for {media.item.title}: {e}")
+                            # Fallback: assume 24 minutes per episode for anime
+                            total_time_minutes = episode_count * 24
+                elif not start_date and not end_date:
+                    # All time
+                    episode_count = media.progress
+                    try:
+                        anime_metadata = providers.services.get_media_metadata(
+                            "anime",
+                            media.item.media_id,
+                            media.item.source,
+                        )
+                        
+                        if anime_metadata and anime_metadata.get("details", {}).get("runtime"):
+                            # Parse the runtime string (e.g., "24m", "1h 30m", "12 min")
+                            runtime_str = anime_metadata["details"]["runtime"]
+                            logger.info(f"Anime '{media.item.title}' (all time): runtime '{runtime_str}' -> {parse_runtime_to_minutes(runtime_str)} minutes")
+                            episode_minutes = parse_runtime_to_minutes(runtime_str)
+                            if episode_minutes:
+                                total_time_minutes = episode_count * episode_minutes
+                            else:
+                                # Fallback: assume 24 minutes per episode for anime
+                                logger.warning(f"Failed to parse runtime '{runtime_str}' for {media.item.title} (all time), using fallback 24 minutes per episode")
+                                total_time_minutes = episode_count * 24
+                        else:
+                            # Fallback: assume 24 minutes per episode for anime
+                            logger.warning(f"No runtime in metadata for {media.item.title} (all time), using fallback 24 minutes per episode")
+                            total_time_minutes = episode_count * 24
+                    except Exception as e:
+                        # Log the error for debugging
+                        logger.warning(f"Failed to get metadata for {media.item.title}: {e}")
+                        # Fallback: assume 24 minutes per episode for anime
+                        total_time_minutes = episode_count * 24
                                     
             elif normalized_type == "game":
                 # For games, use progress field (stored in minutes)
@@ -783,13 +846,23 @@ def get_top_played_media(user_media, start_date, end_date):
 
 
 def parse_runtime_to_minutes(runtime_str):
-    """Parse runtime string (e.g., '45m', '1h 30m', '2h') to total minutes."""
+    """Parse runtime string (e.g., '45m', '1h 30m', '2h', '12 min') to total minutes."""
     if not runtime_str:
         return None
     
     try:
-        if "h" in runtime_str and "m" in runtime_str:
-            # Format like "1h 30m" or "2h 15m"
+        # Handle MAL format: "12 min" (note the space before "min")
+        if "h" in runtime_str and "min" in runtime_str:
+            # Format like "1h 30min" or "2h 15min"
+            parts = runtime_str.split()
+            if len(parts) == 2:  # "1h 30min"
+                hours = int(parts[0].replace("h", ""))
+                minutes = int(parts[1].replace("min", ""))
+                return hours * 60 + minutes
+            else:
+                return None
+        elif "h" in runtime_str and "m" in runtime_str:
+            # Format like "1h 30m" or "2h 15m" (TMDB format)
             parts = runtime_str.split()
             if len(parts) == 2:  # "1h 30m"
                 hours = int(parts[0].replace("h", ""))
@@ -801,8 +874,12 @@ def parse_runtime_to_minutes(runtime_str):
             # Format like "2h"
             hours = int(runtime_str.replace("h", ""))
             return hours * 60
+        elif "min" in runtime_str:
+            # Format like "45min" or "12 min" (MAL format)
+            minutes = int(runtime_str.replace("min", "").replace(" ", ""))
+            return minutes
         elif "m" in runtime_str:
-            # Format like "45m"
+            # Format like "45m" (TMDB format)
             minutes = int(runtime_str.replace("m", ""))
             return minutes
         else:
@@ -889,6 +966,35 @@ def get_hours_per_media_type(user_media, start_date, end_date):
                 except Exception:
                     # Fallback: assume 120 minutes per movie
                     total_minutes += 120
+            
+            elif media_type == 'anime':
+                # For anime, get runtime from metadata and multiply by episode count
+                try:
+                    anime_metadata = providers.services.get_media_metadata(
+                        'anime',
+                        media.item.media_id,
+                        media.item.source,
+                    )
+                    
+                    if anime_metadata and anime_metadata.get("details", {}).get("runtime"):
+                        runtime_str = anime_metadata["details"]["runtime"]
+                        episode_minutes = parse_runtime_to_minutes(runtime_str)
+                        if episode_minutes:
+                            # Use the progress field which tracks episodes watched
+                            episode_count = getattr(media, 'progress', 1)
+                            total_minutes += episode_count * episode_minutes
+                        else:
+                            # Fallback: assume 24 minutes per episode
+                            episode_count = getattr(media, 'progress', 1)
+                            total_minutes += episode_count * 24
+                    else:
+                        # Fallback: assume 24 minutes per episode
+                        episode_count = getattr(media, 'progress', 1)
+                        total_minutes += episode_count * 24
+                except Exception as e:
+                    # Fallback: assume 24 minutes per episode
+                    episode_count = getattr(media, 'progress', 1)
+                    total_minutes += episode_count * 24
             
             elif media_type == 'game':
                 # For games, assume 1 hour per game (or could be based on play time if available)

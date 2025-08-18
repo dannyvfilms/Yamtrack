@@ -818,8 +818,83 @@
         </div>
       {% endif %}
 
+      <!-- Top Anime Section -->
+      {% if top_played.anime %}
+        <div class="bg-[#2a2f35] rounded-lg p-6 mb-6">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-xl font-semibold">Top Anime - <span x-text="selectedRange"></span></h2>
+            <a href="{% url 'medialist' 'anime' %}" class="text-sm text-indigo-400 hover:text-indigo-300 transition-colors">
+              See all your top anime →
+            </a>
+          </div>
+          <div class="media-grid">
+            {% for item in top_played.anime %}
+              <div class="{% if secondary_color %}bg-[#39404b]{% else %}bg-[#2a2f35]{% endif %} rounded-lg overflow-hidden shadow-lg relative">
+                <div class="relative">
+                  <img alt="{{ item.media.item }}"
+                       class="lazyload w-full aspect-[2/3] bg-[#3e454d] {% if item.media.item.image != IMG_NONE %}object-cover{% endif %}"
+                       data-src="{{ item.media.item.image }}"
+                       src="{{ IMG_NONE }}">
+                  
+                  {% if item.media.status %}
+                    <div class="absolute top-2 left-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md">
+                      {% if item.media.status == Status.COMPLETED.value %}
+                        <svg xmlns="http://www.w3.org/2000/svg"
+                             width="24"
+                             height="24"
+                             viewBox="0 0 24 24"
+                             fill="none"
+                             stroke="currentColor"
+                             stroke-width="2"
+                             stroke-linecap="round"
+                             stroke-linejoin="round"
+                             class="w-4 h-4 {{ MediaTypes.ANIME.value|media_color }} mr-1.5">
+                          <path d="M21.801 10A10 10 0 1 1 17 3.335" />
+                          <path d="m9 11 3 3L22 4" />
+                        </svg>
+                      {% endif %}
+                      {% if item.media.end_date is not None %}
+                        <span class="text-sm text-white">{{ item.media.end_date|date:"SHORT_DATE_FORMAT" }}</span>
+                      {% elif item.media.start_date is not None %}
+                        <span class="text-sm text-white">{{ item.media.start_date|date:"SHORT_DATE_FORMAT" }}</span>
+                      {% endif %}
+                    </div>
+                  {% endif %}
+                  
+                  {% if item.media.score is not None %}
+                    <div class="absolute top-2 right-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md">
+                      <svg xmlns="http://www.w3.org/2000/svg"
+                           width="24"
+                           height="24"
+                           viewBox="0 0 24 24"
+                           fill="none"
+                           stroke="currentColor"
+                           stroke-width="2"
+                           stroke-linecap="round"
+                           stroke-linejoin="round"
+                           class="w-4 h-4 text-yellow-400 mr-1">
+                        <path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                      </svg>
+                      <span class="text-sm text-white">{{ item.media.score }}</span>
+                    </div>
+                  {% endif %}
+                </div>
+                
+                <div class="p-3">
+                  <a href="{{ item.media.item|media_url }}"
+                     class="text-sm font-semibold text-white hover:text-indigo-400 transition duration-300 line-clamp-1"
+                     title="{{ item.media.item }}">{{ item.media.item }}</a>
+                  <p class="text-xs text-gray-400 mt-1">{{ item.episode_count }} episodes</p>
+                  <p class="text-xs text-indigo-400 mt-1">{{ item.formatted_duration }}</p>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+      {% endif %}
+
       <!-- Empty State for Top Played -->
-      {% if not top_played.movie and not top_played.tv and not top_played.game %}
+      {% if not top_played.movie and not top_played.tv and not top_played.game and not top_played.anime %}
         <div class="bg-[#2a2f35] rounded-lg p-6 mb-6">
           <h2 class="text-xl font-semibold mb-4">Top Played</h2>
           <div class="flex flex-col items-center justify-center py-16">
