@@ -436,15 +436,18 @@ def get_pagination_range(current_page, total_pages, window):
     return result
 
 
-def _is_predefined_date_range(start_date, end_date, today):
-    """Check if the date range matches any predefined ranges."""
+def _check_same_day_ranges(start_date, end_date, today):
+    """Check for same-day date ranges like Today and Yesterday."""
     if start_date == end_date:
         if start_date == today:
             return "Today"
         elif start_date == today - timedelta(days=1):
             return "Yesterday"
-    
-    # Check for week ranges
+    return None
+
+
+def _check_week_ranges(start_date, end_date, today):
+    """Check for week-based date ranges."""
     days_diff = (end_date - start_date).days
     if days_diff == 6:  # 7 days including start and end
         if start_date == today - timedelta(days=6):
@@ -453,8 +456,12 @@ def _is_predefined_date_range(start_date, end_date, today):
             return "Last Week"
         else:
             return "Last 7 Days"
-    
-    # Check for month ranges
+    return None
+
+
+def _check_month_ranges(start_date, end_date, today):
+    """Check for month-based date ranges."""
+    days_diff = (end_date - start_date).days
     if days_diff == 29:  # 30 days including start and end
         if start_date == today - timedelta(days=29):
             return "This Month"
@@ -462,6 +469,12 @@ def _is_predefined_date_range(start_date, end_date, today):
             return "Last Month"
         else:
             return "Last 30 Days"
+    return None
+
+
+def _check_extended_ranges(start_date, end_date):
+    """Check for extended date ranges like 90 days, 6 months, and 1 year."""
+    days_diff = (end_date - start_date).days
     
     # Check for 90 days
     if days_diff == 89:  # 90 days including start and end
@@ -473,10 +486,32 @@ def _is_predefined_date_range(start_date, end_date, today):
     
     # Check for year ranges
     if days_diff == 364:  # 365 days including start and end
-        if start_date == today - timedelta(days=364):
-            return "This Year"
-        else:
-            return "Last 12 Months"
+        return "Last 12 Months"
+    
+    return None
+
+
+def _is_predefined_date_range(start_date, end_date, today):
+    """Check if the date range matches any predefined ranges."""
+    # Check same-day ranges
+    result = _check_same_day_ranges(start_date, end_date, today)
+    if result:
+        return result
+    
+    # Check week ranges
+    result = _check_week_ranges(start_date, end_date, today)
+    if result:
+        return result
+    
+    # Check month ranges
+    result = _check_month_ranges(start_date, end_date, today)
+    if result:
+        return result
+    
+    # Check extended ranges
+    result = _check_extended_ranges(start_date, end_date)
+    if result:
+        return result
     
     return None
 

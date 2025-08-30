@@ -653,6 +653,125 @@ def parse_runtime_to_minutes(runtime_str):
         return None
 
 
+def _is_media_in_date_range(media, start_date, end_date):
+    """Check if media is within the specified date range."""
+    if not start_date or not end_date:
+        return True
+    
+    if hasattr(media, 'end_date') and media.end_date:
+        return start_date <= media.end_date <= end_date
+    elif hasattr(media, 'start_date') and media.start_date:
+        return start_date <= media.start_date <= end_date
+    
+    return False
+
+
+def _calculate_tv_hours(media, total_minutes):
+    """Calculate hours for TV shows."""
+    try:
+        if hasattr(media, 'seasons'):
+            for season in media.seasons.all():
+                if hasattr(season, 'episodes'):
+                    episode_count = season.episodes.count()
+                    # Get season runtime from metadata
+                    try:
+                        season_metadata = providers.services.get_media_metadata(
+                            'tv',
+                            media.item.media_id,
+                            media.item.source,
+                            [season.item.season_number]
+                        )
+                        if season_metadata and season_metadata.get("details", {}).get("runtime"):
+                            runtime_str = season_metadata["details"]["runtime"]
+                            episode_minutes = parse_runtime_to_minutes(runtime_str)
+                            if episode_minutes:
+                                total_minutes += episode_count * episode_minutes
+                            else:
+                                # Fallback: assume 45 minutes per episode
+                                total_minutes += episode_count * 45
+                        else:
+                            # Fallback: assume 45 minutes per episode
+                            total_minutes += episode_count * 45
+                    except Exception:
+                        # Fallback: assume 45 minutes per episode
+                        total_minutes += episode_count * 45
+    except Exception:
+        # Fallback: assume 45 minutes per episode
+        total_minutes += 1 * 45
+    
+    return total_minutes
+
+
+def _calculate_movie_hours(media, total_minutes):
+    """Calculate hours for movies."""
+    try:
+        media_metadata = providers.services.get_media_metadata(
+            'movie',
+            media.item.media_id,
+            media.item.source,
+        )
+        if media_metadata and media_metadata.get("details", {}).get("runtime"):
+            runtime_str = media_metadata["details"]["runtime"]
+            movie_minutes = parse_runtime_to_minutes(runtime_str)
+            if movie_minutes:
+                total_minutes += movie_minutes
+            else:
+                # Fallback: assume 120 minutes per movie
+                total_minutes += 120
+        else:
+            # Fallback: assume 120 minutes per movie
+            total_minutes += 120
+    except Exception:
+        # Fallback: assume 120 minutes per movie
+        total_minutes += 120
+    
+    return total_minutes
+
+
+def _calculate_anime_hours(media, total_minutes):
+    """Calculate hours for anime."""
+    try:
+        anime_metadata = providers.services.get_media_metadata(
+            'anime',
+            media.item.media_id,
+            media.item.source,
+        )
+        
+        if anime_metadata and anime_metadata.get("details", {}).get("runtime"):
+            runtime_str = anime_metadata["details"]["runtime"]
+            episode_minutes = parse_runtime_to_minutes(runtime_str)
+            if episode_minutes:
+                # Use the progress field which tracks episodes watched
+                episode_count = getattr(media, 'progress', 1)
+                total_minutes += episode_count * episode_minutes
+            else:
+                # Fallback: assume 24 minutes per episode
+                episode_count = getattr(media, 'progress', 1)
+                total_minutes += episode_count * 24
+        else:
+            # Fallback: assume 24 minutes per episode
+            episode_count = getattr(media, 'progress', 1)
+            total_minutes += episode_count * 24
+    except Exception as e:
+        # Fallback: assume 24 minutes per episode
+        episode_count = getattr(media, 'progress', 1)
+        total_minutes += episode_count * 24
+    
+    return total_minutes
+
+
+def _format_hours_minutes(total_minutes):
+    """Format total minutes into hours and minutes string."""
+    if total_minutes > 0:
+        hours = total_minutes // 60
+        remaining_minutes = total_minutes % 60
+        
+        # Always show both hours and minutes for consistency
+        return f"{hours}h {remaining_minutes}min"
+    else:
+        return "0h 0min"
+
+
 def get_hours_per_media_type(user_media, start_date, end_date):
     """Calculate total hours watched per media type within the date range."""
     hours_per_type = {}
@@ -667,119 +786,73 @@ def get_hours_per_media_type(user_media, start_date, end_date):
                 media = media_data
             
             # Check if media is within date range
-            if start_date and end_date:
-                if hasattr(media, 'end_date') and media.end_date:
-                    if not (start_date <= media.end_date <= end_date):
-                        continue
-                elif hasattr(media, 'start_date') and media.start_date:
-                    if not (start_date <= media.start_date <= end_date):
-                        continue
+            if not _is_media_in_date_range(media, start_date, end_date):
+                continue
             
             # Calculate time based on media type
             if media_type == 'tv':
-                # For TV shows, count episodes and get runtime from season metadata
-                try:
-                    if hasattr(media, 'seasons'):
-                        for season in media.seasons.all():
-                            if hasattr(season, 'episodes'):
-                                episode_count = season.episodes.count()
-                                # Get season runtime from metadata
-                                try:
-                                    season_metadata = providers.services.get_media_metadata(
-                                        'tv',
-                                        media.item.media_id,
-                                        media.item.source,
-                                        [season.item.season_number]
-                                    )
-                                    if season_metadata and season_metadata.get("details", {}).get("runtime"):
-                                        runtime_str = season_metadata["details"]["runtime"]
-                                        episode_minutes = parse_runtime_to_minutes(runtime_str)
-                                        if episode_minutes:
-                                            total_minutes += episode_count * episode_minutes
-                                        else:
-                                            # Fallback: assume 45 minutes per episode
-                                            total_minutes += episode_count * 45
-                                    else:
-                                        # Fallback: assume 45 minutes per episode
-                                        total_minutes += episode_count * 45
-                                except Exception:
-                                    # Fallback: assume 45 minutes per episode
-                                    total_minutes += episode_count * 45
-                except Exception:
-                    # Fallback: assume 45 minutes per episode
-                    total_minutes += 1 * 45
-            
+                total_minutes = _calculate_tv_hours(media, total_minutes)
             elif media_type == 'movie':
-                # For movies, get runtime from metadata
-                try:
-                    media_metadata = providers.services.get_media_metadata(
-                        'movie',
-                        media.item.media_id,
-                        media.item.source,
-                    )
-                    if media_metadata and media_metadata.get("details", {}).get("runtime"):
-                        runtime_str = media_metadata["details"]["runtime"]
-                        movie_minutes = parse_runtime_to_minutes(runtime_str)
-                        if movie_minutes:
-                            total_minutes += movie_minutes
-                        else:
-                            # Fallback: assume 120 minutes per movie
-                            total_minutes += 120
-                    else:
-                        # Fallback: assume 120 minutes per movie
-                        total_minutes += 120
-                except Exception:
-                    # Fallback: assume 120 minutes per movie
-                    total_minutes += 120
-            
+                total_minutes = _calculate_movie_hours(media, total_minutes)
             elif media_type == 'anime':
-                # For anime, get runtime from metadata and multiply by episode count
-                try:
-                    anime_metadata = providers.services.get_media_metadata(
-                        'anime',
-                        media.item.media_id,
-                        media.item.source,
-                    )
-                    
-                    if anime_metadata and anime_metadata.get("details", {}).get("runtime"):
-                        runtime_str = anime_metadata["details"]["runtime"]
-                        episode_minutes = parse_runtime_to_minutes(runtime_str)
-                        if episode_minutes:
-                            # Use the progress field which tracks episodes watched
-                            episode_count = getattr(media, 'progress', 1)
-                            total_minutes += episode_count * episode_minutes
-                        else:
-                            # Fallback: assume 24 minutes per episode
-                            episode_count = getattr(media, 'progress', 1)
-                            total_minutes += episode_count * 24
-                    else:
-                        # Fallback: assume 24 minutes per episode
-                        episode_count = getattr(media, 'progress', 1)
-                        total_minutes += episode_count * 24
-                except Exception as e:
-                    # Fallback: assume 24 minutes per episode
-                    episode_count = getattr(media, 'progress', 1)
-                    total_minutes += episode_count * 24
-            
+                total_minutes = _calculate_anime_hours(media, total_minutes)
             elif media_type == 'game':
                 # For games, assume 1 hour per game (or could be based on play time if available)
                 total_minutes += 60
-            
             else:
                 # For other media types, assume 1 hour
                 total_minutes += 60
         
         # Convert to formatted time string (e.g., "17h 30min")
-        if total_minutes > 0:
-            hours = total_minutes // 60
-            remaining_minutes = total_minutes % 60
-            
-            # Always show both hours and minutes for consistency
-            hours_per_type[media_type] = f"{hours}h {remaining_minutes}min"
-        else:
-            hours_per_type[media_type] = "0h 0min"
+        hours_per_type[media_type] = _format_hours_minutes(total_minutes)
     
     return hours_per_type
+
+
+def _get_season_metadata(media, season, season_metadata_cache, logger):
+    """Get season metadata, using cache if available."""
+    if season.item.season_number not in season_metadata_cache:
+        try:
+            season_metadata = providers.services.get_media_metadata(
+                "season",
+                media.item.media_id,
+                media.item.source,
+                [season.item.season_number]  # Note: season_numbers is a list
+            )
+            season_metadata_cache[season.item.season_number] = season_metadata
+        except Exception as e:
+            logger.warning(f"Failed to get season {season.item.season_number} metadata for {media.item.title}: {e}")
+            season_metadata_cache[season.item.season_number] = None
+    
+    return season_metadata_cache[season.item.season_number]
+
+
+def _is_episode_in_range(episode, start_date, end_date):
+    """Check if episode is within the specified date range."""
+    if episode.end_date and start_date and end_date:
+        return start_date <= episode.end_date <= end_date
+    elif not start_date and not end_date:
+        # All time - include all episodes
+        return True
+    return False
+
+
+def _calculate_episode_time(episode, season_metadata, media, season, logger):
+    """Calculate time for a single episode."""
+    if season_metadata and season_metadata.get("details", {}).get("runtime"):
+        # Parse the runtime string (e.g., "45m", "1h 30m")
+        runtime_str = season_metadata["details"]["runtime"]
+        episode_minutes = parse_runtime_to_minutes(runtime_str)
+        if episode_minutes:
+            return episode_minutes
+        else:
+            # Fallback: assume 45 minutes per episode for TV
+            logger.warning(f"Failed to parse runtime '{runtime_str}' for {media.item.title} S{season.item.season_number}, using fallback 45 minutes")
+            return 45
+    else:
+        # Fallback: assume 45 minutes per episode for TV
+        logger.warning(f"No runtime in season metadata for {media.item.title} S{season.item.season_number}, using fallback 45 minutes")
+        return 45
 
 
 def _calculate_tv_time(media, start_date, end_date, logger):
@@ -787,54 +860,26 @@ def _calculate_tv_time(media, start_date, end_date, logger):
     total_time_minutes = 0
     episode_count = 0
     
-    if hasattr(media, 'seasons'):
-        # Cache season metadata to avoid repeated API calls
-        season_metadata_cache = {}
+    if not hasattr(media, 'seasons'):
+        return total_time_minutes, episode_count
+    
+    # Cache season metadata to avoid repeated API calls
+    season_metadata_cache = {}
+    
+    for season in media.seasons.all():
+        if not hasattr(season, 'episodes'):
+            continue
+            
+        # Get season metadata once per season
+        season_metadata = _get_season_metadata(media, season, season_metadata_cache, logger)
         
-        for season in media.seasons.all():
-            if hasattr(season, 'episodes'):
-                # Get season metadata once per season
-                if season.item.season_number not in season_metadata_cache:
-                    try:
-                        season_metadata = providers.services.get_media_metadata(
-                            "season",
-                            media.item.media_id,
-                            media.item.source,
-                            [season.item.season_number]  # Note: season_numbers is a list
-                        )
-                        season_metadata_cache[season.item.season_number] = season_metadata
-                    except Exception as e:
-                        logger.warning(f"Failed to get season {season.item.season_number} metadata for {media.item.title}: {e}")
-                        season_metadata_cache[season.item.season_number] = None
+        for episode in season.episodes.all():
+            # Check if episode is within date range
+            if not _is_episode_in_range(episode, start_date, end_date):
+                continue
                 
-                season_metadata = season_metadata_cache[season.item.season_number]
-                
-                for episode in season.episodes.all():
-                    # Check if episode is within date range
-                    episode_in_range = False
-                    if episode.end_date and start_date and end_date:
-                        episode_in_range = start_date <= episode.end_date <= end_date
-                    elif not start_date and not end_date:
-                        # All time - include all episodes
-                        episode_in_range = True
-                    
-                    if episode_in_range:
-                        episode_count += 1
-                        
-                        if season_metadata and season_metadata.get("details", {}).get("runtime"):
-                            # Parse the runtime string (e.g., "45m", "1h 30m")
-                            runtime_str = season_metadata["details"]["runtime"]
-                            episode_minutes = parse_runtime_to_minutes(runtime_str)
-                            if episode_minutes:
-                                total_time_minutes += episode_minutes
-                            else:
-                                # Fallback: assume 45 minutes per episode for TV
-                                logger.warning(f"Failed to parse runtime '{runtime_str}' for {media.item.title} S{season.item.season_number}, using fallback 45 minutes")
-                                total_time_minutes += 45
-                        else:
-                            # Fallback: assume 45 minutes per episode for TV
-                            logger.warning(f"No runtime in season metadata for {media.item.title} S{season.item.season_number}, using fallback 45 minutes")
-                            total_time_minutes += 45
+            episode_count += 1
+            total_time_minutes += _calculate_episode_time(episode, season_metadata, media, season, logger)
     
     return total_time_minutes, episode_count
 
