@@ -436,29 +436,8 @@ def get_pagination_range(current_page, total_pages, window):
     return result
 
 
-@register.filter
-def format_date_range_display(start_date, end_date):
-    """Format date range for display in card titles.
-    
-    Returns a human-readable string like "Last 12 Months" or "Date Range"
-    based on whether it's a predefined range or custom dates.
-    """
-    if start_date is None and end_date is None:
-        return "All Time"
-    
-    if start_date is None or end_date is None:
-        return "Date Range"
-    
-    # Convert to date objects if they're datetime
-    if hasattr(start_date, 'date'):
-        start_date = start_date.date()
-    if hasattr(end_date, 'date'):
-        end_date = end_date.date()
-    
-    from datetime import date, timedelta
-    today = date.today()
-    
-    # Check for predefined ranges
+def _is_predefined_date_range(start_date, end_date, today):
+    """Check if the date range matches any predefined ranges."""
     if start_date == end_date:
         if start_date == today:
             return "Today"
@@ -498,6 +477,36 @@ def format_date_range_display(start_date, end_date):
             return "This Year"
         else:
             return "Last 12 Months"
+    
+    return None
+
+
+@register.filter
+def format_date_range_display(start_date, end_date):
+    """Format date range for display in card titles.
+    
+    Returns a human-readable string like "Last 12 Months" or "Date Range"
+    based on whether it's a predefined range or custom dates.
+    """
+    if start_date is None and end_date is None:
+        return "All Time"
+    
+    if start_date is None or end_date is None:
+        return "Date Range"
+    
+    # Convert to date objects if they're datetime
+    if hasattr(start_date, 'date'):
+        start_date = start_date.date()
+    if hasattr(end_date, 'date'):
+        end_date = end_date.date()
+    
+    from datetime import date, timedelta
+    today = date.today()
+    
+    # Check for predefined ranges
+    predefined_range = _is_predefined_date_range(start_date, end_date, today)
+    if predefined_range:
+        return predefined_range
     
     # If none of the predefined ranges match, return "Date Range"
     return "Date Range"

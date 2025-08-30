@@ -610,241 +610,6 @@ def calculate_streaks(date_counts, end_date):
     return current_streak, longest_streak
 
 
-def get_top_played_media(user_media, start_date, end_date):
-    """Get top played media by total time spent within date range.
-    
-    Returns a dictionary with media types as keys and lists of top media items.
-    Each media item includes total_time_minutes, formatted_duration, and episode_count.
-    """
-    from app.helpers import minutes_to_hhmm
-    import logging
-    
-    logger = logging.getLogger(__name__)
-    top_played = {}
-    
-    # Define the media types we want to show
-    target_media_types = ['movie', 'tv', 'game', 'anime']
-    
-    for media_type, media_list in user_media.items():
-        # Normalize media type to match our target types
-        normalized_type = media_type.lower()
-        if normalized_type not in target_media_types:
-            continue
-            
-        if not media_list.exists():
-            continue
-            
-        # Get media items with their progress and metadata
-        media_with_progress = []
-        
-        for media in media_list:
-            total_time_minutes = 0
-            episode_count = 0
-            
-            if normalized_type == "tv":
-                # For TV shows, sum up episode progress and runtime
-                if hasattr(media, 'seasons'):
-                    # Cache season metadata to avoid repeated API calls
-                    season_metadata_cache = {}
-                    
-                    for season in media.seasons.all():
-                        if hasattr(season, 'episodes'):
-                            # Get season metadata once per season
-                            if season.item.season_number not in season_metadata_cache:
-                                try:
-                                    season_metadata = providers.services.get_media_metadata(
-                                        "season",
-                                        media.item.media_id,
-                                        media.item.source,
-                                        [season.item.season_number]  # Note: season_numbers is a list
-                                    )
-                                    season_metadata_cache[season.item.season_number] = season_metadata
-                                except Exception as e:
-                                    logger.warning(f"Failed to get season {season.item.season_number} metadata for {media.item.title}: {e}")
-                                    season_metadata_cache[season.item.season_number] = None
-                            
-                            season_metadata = season_metadata_cache[season.item.season_number]
-                            
-                            for episode in season.episodes.all():
-                                # Check if episode is within date range
-                                episode_in_range = False
-                                if episode.end_date and start_date and end_date:
-                                    episode_in_range = start_date <= episode.end_date <= end_date
-                                elif not start_date and not end_date:
-                                    # All time - include all episodes
-                                    episode_in_range = True
-                                
-                                if episode_in_range:
-                                    episode_count += 1
-                                    
-                                    if season_metadata and season_metadata.get("details", {}).get("runtime"):
-                                        # Parse the runtime string (e.g., "45m", "1h 30m")
-                                        runtime_str = season_metadata["details"]["runtime"]
-                                        episode_minutes = parse_runtime_to_minutes(runtime_str)
-                                        if episode_minutes:
-                                            total_time_minutes += episode_minutes
-                                        else:
-                                            # Fallback: assume 45 minutes per episode for TV
-                                            logger.warning(f"Failed to parse runtime '{runtime_str}' for {media.item.title} S{season.item.season_number}, using fallback 45 minutes")
-                                            total_time_minutes += 45
-                                    else:
-                                        # Fallback: assume 45 minutes per episode for TV
-                                        logger.warning(f"No runtime in season metadata for {media.item.title} S{season.item.season_number}, using fallback 45 minutes")
-                                        total_time_minutes += 45
-                                    
-            elif normalized_type == "anime":
-                # For Anime, get runtime from metadata and multiply by episode count
-                if media.end_date and start_date and end_date:
-                    if start_date <= media.end_date <= end_date:
-                        episode_count = media.progress
-                        try:
-                            anime_metadata = providers.services.get_media_metadata(
-                                "anime",
-                                media.item.media_id,
-                                media.item.source,
-                            )
-                            
-                            if anime_metadata and anime_metadata.get("details", {}).get("runtime"):
-                                # Parse the runtime string (e.g., "24m", "1h 30m", "12 min")
-                                runtime_str = anime_metadata["details"]["runtime"]
-                                logger.info(f"Anime '{media.item.title}': runtime '{runtime_str}' -> {parse_runtime_to_minutes(runtime_str)} minutes")
-                                episode_minutes = parse_runtime_to_minutes(runtime_str)
-                                if episode_minutes:
-                                    total_time_minutes = episode_count * episode_minutes
-                                else:
-                                    # Fallback: assume 24 minutes per episode for anime
-                                    logger.warning(f"Failed to parse runtime '{runtime_str}' for {media.item.title}, using fallback 24 minutes per episode")
-                                    total_time_minutes = episode_count * 24
-                            else:
-                                # Fallback: assume 24 minutes per episode for anime
-                                logger.warning(f"No runtime in metadata for {media.item.title}, using fallback 24 minutes per episode")
-                                total_time_minutes = episode_count * 24
-                        except Exception as e:
-                            # Log the error for debugging
-                            logger.warning(f"Failed to get metadata for {media.item.title}: {e}")
-                            # Fallback: assume 24 minutes per episode for anime
-                            total_time_minutes = episode_count * 24
-                elif not start_date and not end_date:
-                    # All time
-                    episode_count = media.progress
-                    try:
-                        anime_metadata = providers.services.get_media_metadata(
-                            "anime",
-                            media.item.media_id,
-                            media.item.source,
-                        )
-                        
-                        if anime_metadata and anime_metadata.get("details", {}).get("runtime"):
-                            # Parse the runtime string (e.g., "24m", "1h 30m", "12 min")
-                            runtime_str = anime_metadata["details"]["runtime"]
-                            logger.info(f"Anime '{media.item.title}' (all time): runtime '{runtime_str}' -> {parse_runtime_to_minutes(runtime_str)} minutes")
-                            episode_minutes = parse_runtime_to_minutes(runtime_str)
-                            if episode_minutes:
-                                total_time_minutes = episode_count * episode_minutes
-                            else:
-                                # Fallback: assume 24 minutes per episode for anime
-                                logger.warning(f"Failed to parse runtime '{runtime_str}' for {media.item.title} (all time), using fallback 24 minutes per episode")
-                                total_time_minutes = episode_count * 24
-                        else:
-                            # Fallback: assume 24 minutes per episode for anime
-                            logger.warning(f"No runtime in metadata for {media.item.title} (all time), using fallback 24 minutes per episode")
-                            total_time_minutes = episode_count * 24
-                    except Exception as e:
-                        # Log the error for debugging
-                        logger.warning(f"Failed to get metadata for {media.item.title}: {e}")
-                        # Fallback: assume 24 minutes per episode for anime
-                        total_time_minutes = episode_count * 24
-                                    
-            elif normalized_type == "game":
-                # For games, use progress field (stored in minutes)
-                if media.end_date and start_date and end_date:
-                    if start_date <= media.end_date <= end_date:
-                        total_time_minutes += media.progress
-                elif not start_date and not end_date:
-                    # All time
-                    total_time_minutes += media.progress
-            else:
-                # For movies and other media types, get runtime from metadata
-                if media.end_date and start_date and end_date:
-                    if start_date <= media.end_date <= end_date:
-                        try:
-                            media_metadata = providers.services.get_media_metadata(
-                                normalized_type,
-                                media.item.media_id,
-                                media.item.source,
-                            )
-                            
-                            if media_metadata and media_metadata.get("details", {}).get("runtime"):
-                                # Parse the runtime string (e.g., "2h 15m")
-                                runtime_str = media_metadata["details"]["runtime"]
-                                logger.info(f"Movie '{media.item.title}': runtime '{runtime_str}' -> {parse_runtime_to_minutes(runtime_str)} minutes")
-                                movie_minutes = parse_runtime_to_minutes(runtime_str)
-                                if movie_minutes:
-                                    total_time_minutes += movie_minutes
-                                else:
-                                    # Fallback: assume 120 minutes per movie
-                                    logger.warning(f"Failed to parse runtime '{runtime_str}' for {media.item.title}, using fallback 120 minutes")
-                                    total_time_minutes += 120
-                            else:
-                                # Fallback: assume 120 minutes per movie
-                                logger.warning(f"No runtime in metadata for {media.item.title}, using fallback 120 minutes")
-                                total_time_minutes += 120
-                        except Exception as e:
-                            # Log the error for debugging
-                            logger.warning(f"Failed to get metadata for {media.item.title}: {e}")
-                            # Fallback: assume 120 minutes per movie
-                            total_time_minutes += 120
-                elif not start_date and not end_date:
-                    # All time
-                    try:
-                        media_metadata = providers.services.get_media_metadata(
-                            normalized_type,
-                            media.item.media_id,
-                            media.item.source,
-                        )
-                        
-                        if media_metadata and media_metadata.get("details", {}).get("runtime"):
-                            # Parse the runtime string (e.g., "2h 15m")
-                            runtime_str = media_metadata["details"]["runtime"]
-                            logger.info(f"Movie '{media.item.title}' (all time): runtime '{runtime_str}' -> {parse_runtime_to_minutes(runtime_str)} minutes")
-                            movie_minutes = parse_runtime_to_minutes(runtime_str)
-                            if movie_minutes:
-                                total_time_minutes += movie_minutes
-                            else:
-                                # Fallback: assume 120 minutes per movie
-                                logger.warning(f"Failed to parse runtime '{runtime_str}' for {media.item.title} (all time), using fallback 120 minutes")
-                                total_time_minutes += 120
-                        else:
-                            # Fallback: assume 120 minutes per movie
-                            logger.warning(f"No runtime in metadata for {media.item.title} (all time), using fallback 120 minutes")
-                            total_time_minutes += 120
-                    except Exception as e:
-                        # Log the error for debugging
-                        logger.warning(f"Failed to get metadata for {media.item.title}: {e}")
-                        # Fallback: assume 120 minutes per movie
-                        total_time_minutes += 120
-            
-            if total_time_minutes > 0:
-                media_with_progress.append({
-                    'media': media,
-                    'total_time_minutes': total_time_minutes,
-                    'formatted_duration': minutes_to_hhmm(total_time_minutes),
-                    'episode_count': episode_count,
-                    'last_activity': media.end_date or media.start_date or media.created_at
-                })
-        
-        # Sort by total time, then by most recent activity
-        media_with_progress.sort(
-            key=lambda x: (x['total_time_minutes'], x['last_activity']), 
-            reverse=True
-        )
-        
-        # Take top 10
-        top_played[normalized_type] = media_with_progress[:10]
-    
-    return top_played
-
-
 def parse_runtime_to_minutes(runtime_str):
     """Parse runtime string (e.g., '45m', '1h 30m', '2h', '12 min') to total minutes."""
     if not runtime_str:
@@ -1015,3 +780,223 @@ def get_hours_per_media_type(user_media, start_date, end_date):
             hours_per_type[media_type] = "0h 0min"
     
     return hours_per_type
+
+
+def _calculate_tv_time(media, start_date, end_date, logger):
+    """Calculate total time for TV shows."""
+    total_time_minutes = 0
+    episode_count = 0
+    
+    if hasattr(media, 'seasons'):
+        # Cache season metadata to avoid repeated API calls
+        season_metadata_cache = {}
+        
+        for season in media.seasons.all():
+            if hasattr(season, 'episodes'):
+                # Get season metadata once per season
+                if season.item.season_number not in season_metadata_cache:
+                    try:
+                        season_metadata = providers.services.get_media_metadata(
+                            "season",
+                            media.item.media_id,
+                            media.item.source,
+                            [season.item.season_number]  # Note: season_numbers is a list
+                        )
+                        season_metadata_cache[season.item.season_number] = season_metadata
+                    except Exception as e:
+                        logger.warning(f"Failed to get season {season.item.season_number} metadata for {media.item.title}: {e}")
+                        season_metadata_cache[season.item.season_number] = None
+                
+                season_metadata = season_metadata_cache[season.item.season_number]
+                
+                for episode in season.episodes.all():
+                    # Check if episode is within date range
+                    episode_in_range = False
+                    if episode.end_date and start_date and end_date:
+                        episode_in_range = start_date <= episode.end_date <= end_date
+                    elif not start_date and not end_date:
+                        # All time - include all episodes
+                        episode_in_range = True
+                    
+                    if episode_in_range:
+                        episode_count += 1
+                        
+                        if season_metadata and season_metadata.get("details", {}).get("runtime"):
+                            # Parse the runtime string (e.g., "45m", "1h 30m")
+                            runtime_str = season_metadata["details"]["runtime"]
+                            episode_minutes = parse_runtime_to_minutes(runtime_str)
+                            if episode_minutes:
+                                total_time_minutes += episode_minutes
+                            else:
+                                # Fallback: assume 45 minutes per episode for TV
+                                logger.warning(f"Failed to parse runtime '{runtime_str}' for {media.item.title} S{season.item.season_number}, using fallback 45 minutes")
+                                total_time_minutes += 45
+                        else:
+                            # Fallback: assume 45 minutes per episode for TV
+                            logger.warning(f"No runtime in season metadata for {media.item.title} S{season.item.season_number}, using fallback 45 minutes")
+                            total_time_minutes += 45
+    
+    return total_time_minutes, episode_count
+
+
+def _calculate_anime_time(media, start_date, end_date, logger):
+    """Calculate total time for anime."""
+    total_time_minutes = 0
+    episode_count = 0
+    
+    # Check if anime is within date range
+    if media.end_date and start_date and end_date:
+        if start_date <= media.end_date <= end_date:
+            episode_count = media.progress
+            total_time_minutes = _get_anime_runtime_minutes(media, episode_count, logger, "(date range)")
+    elif not start_date and not end_date:
+        # All time
+        episode_count = media.progress
+        total_time_minutes = _get_anime_runtime_minutes(media, episode_count, logger, "(all time)")
+    
+    return total_time_minutes, episode_count
+
+
+def _get_anime_runtime_minutes(media, episode_count, logger, context=""):
+    """Get anime runtime in minutes from metadata."""
+    try:
+        anime_metadata = providers.services.get_media_metadata(
+            "anime",
+            media.item.media_id,
+            media.item.source,
+        )
+        
+        if anime_metadata and anime_metadata.get("details", {}).get("runtime"):
+            # Parse the runtime string (e.g., "24m", "1h 30m", "12 min")
+            runtime_str = anime_metadata["details"]["runtime"]
+            logger.info(f"Anime '{media.item.title}' {context}: runtime '{runtime_str}' -> {parse_runtime_to_minutes(runtime_str)} minutes")
+            episode_minutes = parse_runtime_to_minutes(runtime_str)
+            if episode_minutes:
+                return episode_count * episode_minutes
+            else:
+                # Fallback: assume 24 minutes per episode for anime
+                logger.warning(f"Failed to parse runtime '{runtime_str}' for {media.item.title} {context}, using fallback 24 minutes per episode")
+                return episode_count * 24
+        else:
+            # Fallback: assume 24 minutes per episode for anime
+            logger.warning(f"No runtime in metadata for {media.item.title} {context}, using fallback 24 minutes per episode")
+            return episode_count * 24
+    except Exception as e:
+        # Log the error for debugging
+        logger.warning(f"Failed to get metadata for {media.item.title} {context}: {e}")
+        # Fallback: assume 24 minutes per episode for anime
+        return episode_count * 24
+
+
+def _calculate_movie_time(media, start_date, end_date, normalized_type, logger):
+    """Calculate total time for movies and other media types."""
+    total_time_minutes = 0
+    
+    # Check if media is within date range
+    if media.end_date and start_date and end_date:
+        if start_date <= media.end_date <= end_date:
+            total_time_minutes = _get_media_runtime_minutes(media, normalized_type, logger, "(date range)")
+    elif not start_date and not end_date:
+        # All time
+        total_time_minutes = _get_media_runtime_minutes(media, normalized_type, logger, "(all time)")
+    
+    return total_time_minutes
+
+
+def _get_media_runtime_minutes(media, normalized_type, logger, context=""):
+    """Get media runtime in minutes from metadata."""
+    try:
+        media_metadata = providers.services.get_media_metadata(
+            normalized_type,
+            media.item.media_id,
+            media.item.source,
+        )
+        
+        if media_metadata and media_metadata.get("details", {}).get("runtime"):
+            # Parse the runtime string (e.g., "2h 15m")
+            runtime_str = media_metadata["details"]["runtime"]
+            logger.info(f"Movie '{media.item.title}' {context}: runtime '{runtime_str}' -> {parse_runtime_to_minutes(runtime_str)} minutes")
+            movie_minutes = parse_runtime_to_minutes(runtime_str)
+            if movie_minutes:
+                return movie_minutes
+            else:
+                # Fallback: assume 120 minutes per movie
+                logger.warning(f"Failed to parse runtime '{runtime_str}' for {media.item.title} {context}, using fallback 120 minutes")
+                return 120
+        else:
+            # Fallback: assume 120 minutes per movie
+            logger.warning(f"No runtime in metadata for {media.item.title} {context}, using fallback 120 minutes")
+            return 120
+    except Exception as e:
+        # Log the error for debugging
+        logger.warning(f"Failed to get metadata for {media.item.title} {context}: {e}")
+        # Fallback: assume 120 minutes per movie
+        return 120
+
+
+def get_top_played_media(user_media, start_date, end_date):
+    """Get top played media by total time spent within date range.
+    
+    Returns a dictionary with media types as keys and lists of top media items.
+    Each media item includes total_time_minutes, formatted_duration, and episode_count.
+    """
+    from app.helpers import minutes_to_hhmm
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    top_played = {}
+    
+    # Define the media types we want to show
+    target_media_types = ['movie', 'tv', 'game', 'anime']
+    
+    for media_type, media_list in user_media.items():
+        # Normalize media type to match our target types
+        normalized_type = media_type.lower()
+        if normalized_type not in target_media_types:
+            continue
+            
+        if not media_list.exists():
+            continue
+            
+        # Get media items with their progress and metadata
+        media_with_progress = []
+        
+        for media in media_list:
+            total_time_minutes = 0
+            episode_count = 0
+            
+            if normalized_type == "tv":
+                total_time_minutes, episode_count = _calculate_tv_time(media, start_date, end_date, logger)
+            elif normalized_type == "anime":
+                total_time_minutes, episode_count = _calculate_anime_time(media, start_date, end_date, logger)
+            elif normalized_type == "game":
+                # For games, use progress field (stored in minutes)
+                if media.end_date and start_date and end_date:
+                    if start_date <= media.end_date <= end_date:
+                        total_time_minutes += media.progress
+                elif not start_date and not end_date:
+                    # All time
+                    total_time_minutes += media.progress
+            else:
+                # For movies and other media types, get runtime from metadata
+                total_time_minutes = _calculate_movie_time(media, start_date, end_date, normalized_type, logger)
+            
+            if total_time_minutes > 0:
+                media_with_progress.append({
+                    'media': media,
+                    'total_time_minutes': total_time_minutes,
+                    'formatted_duration': minutes_to_hhmm(total_time_minutes),
+                    'episode_count': episode_count,
+                    'last_activity': media.end_date or media.start_date or media.created_at
+                })
+        
+        # Sort by total time, then by most recent activity
+        media_with_progress.sort(
+            key=lambda x: (x['total_time_minutes'], x['last_activity']), 
+            reverse=True
+        )
+        
+        # Take top 10
+        top_played[normalized_type] = media_with_progress[:10]
+    
+    return top_played
