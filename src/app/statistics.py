@@ -53,10 +53,15 @@ def get_user_media(user, start_date, end_date):
                 "related_season__related_tv",
                 flat=True,
             ).distinct()
-            queryset = TV.objects.filter(id__in=tv_ids).prefetch_related(
+            queryset = TV.objects.filter(
+                id__in=tv_ids,
+                status__in=[Status.IN_PROGRESS.value, Status.COMPLETED.value, Status.DROPPED.value, Status.PAUSED.value]
+            ).prefetch_related(
                 Prefetch(
                     "seasons",
-                    queryset=Season.objects.select_related(
+                    queryset=Season.objects.filter(
+                        status__in=[Status.IN_PROGRESS.value, Status.COMPLETED.value, Status.DROPPED.value, Status.PAUSED.value]
+                    ).select_related(
                         "item",
                     ).prefetch_related(
                         Prefetch(
@@ -75,15 +80,22 @@ def get_user_media(user, start_date, end_date):
             ).distinct()
             queryset = Season.objects.filter(
                 id__in=season_ids,
+                status__in=[Status.IN_PROGRESS.value, Status.COMPLETED.value, Status.DROPPED.value, Status.PAUSED.value]
             ).prefetch_related(
                 Prefetch("episodes", queryset=base_episodes),
             )
         # For other models, apply date filtering conditionally
         elif start_date is None and end_date is None:
             # No date filtering for "All Time"
-            queryset = model.objects.filter(user=user)
+            queryset = model.objects.filter(
+                user=user,
+                status__in=[Status.IN_PROGRESS.value, Status.COMPLETED.value, Status.DROPPED.value, Status.PAUSED.value]
+            )
         else:
-            queryset = model.objects.filter(user=user).filter(
+            queryset = model.objects.filter(
+                user=user,
+                status__in=[Status.IN_PROGRESS.value, Status.COMPLETED.value, Status.DROPPED.value, Status.PAUSED.value]
+            ).filter(
                 # Case 1: Media has both start_date and end_date
                 # Include if ranges overlap
                 # (exclude if media ends before filter start or starts after filter end)

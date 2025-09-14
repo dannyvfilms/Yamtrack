@@ -222,11 +222,11 @@ class StatisticsDateFilteringTests(TestCase):
             None,
         )
 
-        # Should include all media
-        self.assertEqual(media_count["total"], 10)  # TV, Season, and 8 Movies
+        # Should include all media except Planning status items
+        self.assertEqual(media_count["total"], 8)  # TV, Season, and 6 Movies (excluding Planning movie4 and movie6)
         self.assertEqual(media_count[MediaTypes.TV.value], 1)
         self.assertEqual(media_count[MediaTypes.SEASON.value], 1)
-        self.assertEqual(media_count[MediaTypes.MOVIE.value], 8)
+        self.assertEqual(media_count[MediaTypes.MOVIE.value], 6)
 
     def test_date_range_filtering(self):
         """Test filtering with a specific date range."""
@@ -403,7 +403,8 @@ class StatisticsDateFilteringTests(TestCase):
         )
 
         movie_ids = [m.item.id for m in user_media[MediaTypes.MOVIE.value]]
-        self.assertIn(self.movie4_item.id, movie_ids)
+        # movie4 has Planning status and should be excluded
+        self.assertNotIn(self.movie4_item.id, movie_ids)
 
     def test_overlapping_ranges(self):
         """Test media with date ranges that overlap with the filter range."""
