@@ -492,6 +492,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "Send daily digest",
         "schedule": crontab(hour=DAILY_DIGEST_HOUR, minute=0),
     },
+    "populate_runtime_data": {
+        "task": "app.tasks.populate_runtime_data_continuous",
+        "schedule": 60 * 30,  # every 30 minutes
+    },
 }
 # Allauth settings
 if CSRF_TRUSTED_ORIGINS:

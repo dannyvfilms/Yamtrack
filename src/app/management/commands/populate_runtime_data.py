@@ -97,7 +97,13 @@ class Command(BaseCommand):
                 item.source,
             )
             
-            if not metadata or not metadata.get("details", {}).get("runtime"):
+            if not metadata:
+                raise ValueError("No metadata returned from provider")
+            
+            if not metadata.get("details"):
+                raise ValueError("No details in metadata")
+            
+            if not metadata["details"].get("runtime"):
                 raise ValueError("No runtime data in metadata")
             
             runtime_str = metadata["details"]["runtime"]

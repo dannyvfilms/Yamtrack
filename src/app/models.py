@@ -1439,6 +1439,10 @@ class Season(Media):
         if not created and not item.runtime_minutes and runtime_minutes:
             item.runtime_minutes = runtime_minutes
             item.save()
+        elif created and runtime_minutes:
+            # Ensure runtime is set for newly created items
+            item.runtime_minutes = runtime_minutes
+            item.save()
 
         return item
 

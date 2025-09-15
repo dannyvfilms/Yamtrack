@@ -696,6 +696,46 @@ def _format_hours_minutes(total_minutes):
         return "0h 0min"
 
 
+def get_hours_per_media_type(user_media, start_date, end_date):
+    """Calculate total hours watched per media type within the date range."""
+    hours_per_type = {}
+    
+    for media_type, media_list in user_media.items():
+        total_minutes = 0
+        
+        for media_data in media_list:
+            if hasattr(media_data, 'media'):
+                media = media_data.media
+            else:
+                media = media_data
+            
+            # Check if media is within date range
+            if not _is_media_in_date_range(media, start_date, end_date):
+                continue
+            
+            # Calculate time based on media type
+            if media_type == 'tv':
+                tv_minutes, _ = _calculate_tv_time(media, start_date, end_date, logger)
+                total_minutes += tv_minutes
+            elif media_type == 'movie':
+                movie_minutes = _calculate_movie_time(media, start_date, end_date, 'movie', logger)
+                total_minutes += movie_minutes
+            elif media_type == 'anime':
+                anime_minutes, _ = _calculate_anime_time(media, start_date, end_date, logger)
+                total_minutes += anime_minutes
+            elif media_type == 'game':
+                # For games, assume 1 hour per game (or could be based on play time if available)
+                total_minutes += 60
+            else:
+                # For other media types, assume 1 hour
+                total_minutes += 60
+        
+        # Convert to formatted time string (e.g., "17h 30min")
+        hours_per_type[media_type] = _format_hours_minutes(total_minutes)
+    
+    return hours_per_type
+
+
 
 
 def _get_season_metadata(media, season, season_metadata_cache, logger):
