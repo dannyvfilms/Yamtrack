@@ -39,8 +39,25 @@ def populate_runtime_data_batch(batch_size=10, delay_seconds=1.0):
                 item.source,
             )
             
-            if not metadata or not metadata.get("details", {}).get("runtime"):
+            # Check if metadata is None or doesn't have the expected structure
+            if not metadata:
+                logger.warning(f"No metadata returned for {item.title} ({item.media_type}, {item.source})")
+                error_count += 1
+                continue
+                
+            if not isinstance(metadata, dict):
+                logger.warning(f"Invalid metadata format for {item.title}: {type(metadata)}")
+                error_count += 1
+                continue
+                
+            if not metadata.get("details"):
+                logger.warning(f"No details in metadata for {item.title}")
+                error_count += 1
+                continue
+                
+            if not metadata["details"].get("runtime"):
                 logger.warning(f"No runtime data available for {item.title}")
+                error_count += 1
                 continue
             
             runtime_str = metadata["details"]["runtime"]
@@ -48,6 +65,7 @@ def populate_runtime_data_batch(batch_size=10, delay_seconds=1.0):
             
             if runtime_minutes is None:
                 logger.warning(f"Failed to parse runtime '{runtime_str}' for {item.title}")
+                error_count += 1
                 continue
             
             # Update the item
