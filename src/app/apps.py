@@ -28,15 +28,21 @@ class AppConfig(AppConfig):
         try:
             from app.tasks import populate_runtime_data_continuous
             from django.core.cache import cache
+            import time
             
-            # Use cache to prevent multiple tasks across different processes
+            # Use a timestamp-based cache key that expires after 10 minutes
+            # This allows the task to run again after a reasonable time
             cache_key = 'runtime_population_scheduled'
-            if cache.get(cache_key):
-                logger.info("Runtime population task already scheduled by another process")
+            current_time = int(time.time())
+            last_scheduled = cache.get(cache_key, 0)
+            
+            # Only schedule if it hasn't been scheduled in the last 10 minutes
+            if current_time - last_scheduled < 600:  # 10 minutes
+                logger.info("Runtime population task already scheduled recently, skipping")
                 return
                 
-            # Set cache for 5 minutes to prevent duplicate scheduling
-            cache.set(cache_key, True, 300)
+            # Set cache with current timestamp
+            cache.set(cache_key, current_time, 600)  # 10 minutes
             
             # Schedule the task to run in 60 seconds to allow the app to fully start
             # and avoid database access warnings
