@@ -72,7 +72,7 @@ def populate_runtime_data_batch(batch_size=10, delay_seconds=1.0):
 
 @shared_task
 def populate_runtime_data_continuous():
-    """Continuously populate runtime data for items that don't have it."""
-    # Run in smaller batches to avoid overwhelming the system
-    result = populate_runtime_data_batch.delay(batch_size=5, delay_seconds=2.0)
+    """Populate runtime data for items that don't have it (startup task)."""
+    # Run in larger batches for startup since it's only running once
+    result = populate_runtime_data_batch.delay(batch_size=20, delay_seconds=1.0)
     return result

@@ -317,6 +317,9 @@ ADMIN_ENABLED = config("ADMIN_ENABLED", default=False, cast=bool)
 
 TRACK_TIME = config("TRACK_TIME", default=True, cast=bool)
 
+# Runtime population settings
+RUNTIME_POPULATION_DISABLED = config("RUNTIME_POPULATION_DISABLED", default=False, cast=bool)
+
 TZ = zoneinfo.ZoneInfo(TIME_ZONE)
 
 IMG_NONE = "https://www.themoviedb.org/assets/2/v4/glyphicons/basic/glyphicons-basic-38-picture-grey-c2ebdbb057f2a7614185931650f8cee23fa137b93812ccb132b9df511df1cfac.svg"
@@ -491,10 +494,6 @@ CELERY_BEAT_SCHEDULE = {
     "send_daily_digest": {
         "task": "Send daily digest",
         "schedule": crontab(hour=DAILY_DIGEST_HOUR, minute=0),
-    },
-    "populate_runtime_data": {
-        "task": "app.tasks.populate_runtime_data_continuous",
-        "schedule": 60 * 30,  # every 30 minutes
     },
 }
 # Allauth settings
