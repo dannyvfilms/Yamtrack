@@ -627,6 +627,14 @@ def parse_runtime_to_minutes(runtime_str):
     if not runtime_str:
         return None
     
+    # Handle case where runtime_str is already an integer (minutes)
+    if isinstance(runtime_str, int):
+        return runtime_str
+    
+    # Convert to string if it's not already
+    if not isinstance(runtime_str, str):
+        runtime_str = str(runtime_str)
+    
     try:
         # Handle MAL format: "12 min" (note the space before "min")
         if "h" in runtime_str and "min" in runtime_str:

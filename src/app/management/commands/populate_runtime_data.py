@@ -44,10 +44,11 @@ class Command(BaseCommand):
 
         self.stdout.write("Starting runtime data population...")
 
-        # Get items that need runtime data
+        # Get items that need runtime data (exclude manual items as they don't have provider data)
         items_to_update = Item.objects.filter(
             runtime_minutes__isnull=True,
-            media_type__in=[MediaTypes.MOVIE.value, MediaTypes.ANIME.value, MediaTypes.EPISODE.value]
+            media_type__in=[MediaTypes.MOVIE.value, MediaTypes.ANIME.value, MediaTypes.EPISODE.value],
+            source__in=['tmdb', 'mal', 'simkl']  # Only process items from providers that have runtime data
         ).order_by('id')
 
         total_items = items_to_update.count()

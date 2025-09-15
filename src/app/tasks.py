@@ -16,10 +16,11 @@ def populate_runtime_data_batch(batch_size=10, delay_seconds=1.0):
     from app.statistics import parse_runtime_to_minutes
     import time
     
-    # Get items that need runtime data
+    # Get items that need runtime data (exclude manual items as they don't have provider data)
     items_to_update = Item.objects.filter(
         runtime_minutes__isnull=True,
-        media_type__in=[MediaTypes.MOVIE.value, MediaTypes.ANIME.value, MediaTypes.EPISODE.value]
+        media_type__in=[MediaTypes.MOVIE.value, MediaTypes.ANIME.value, MediaTypes.EPISODE.value],
+        source__in=['tmdb', 'mal', 'simkl']  # Only process items from providers that have runtime data
     ).order_by('id')[:batch_size]
     
     if not items_to_update.exists():
