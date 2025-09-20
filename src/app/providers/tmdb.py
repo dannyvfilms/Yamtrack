@@ -249,9 +249,9 @@ def tv_with_seasons(media_id, season_numbers):
 
             # add from tv show metadata to the season metadata
             season_data["media_id"] = media_id
-            season_data["source_url"] = (
-                f"https://www.themoviedb.org/tv/{media_id}/season/{season_number}"
-            )
+            season_data[
+                "source_url"
+            ] = f"https://www.themoviedb.org/tv/{media_id}/season/{season_number}"
             season_data["title"] = data["title"]
             season_data["tvdb_id"] = data["tvdb_id"]
             season_data["genres"] = data["genres"]

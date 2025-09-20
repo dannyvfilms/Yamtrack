@@ -160,14 +160,12 @@ class ReloadCalendarTaskTests(TestCase):
                 datetime=timezone.now(),
             ),
         )
-        mock_process_other.side_effect = (
-            lambda item, events_bulk: events_bulk.append(
-                Event(
-                    item=item,
-                    content_number=1,
-                    datetime=timezone.now(),
-                ),
-            )
+        mock_process_other.side_effect = lambda item, events_bulk: events_bulk.append(
+            Event(
+                item=item,
+                content_number=1,
+                datetime=timezone.now(),
+            ),
         )
         # Setup mock for process_anime_bulk to create events for anime items
         mock_process_anime_bulk.side_effect = lambda items, events_bulk: [
@@ -214,14 +212,12 @@ class ReloadCalendarTaskTests(TestCase):
     def test_fetch_releases_specific_items(self, mock_process_other):
         """Test fetch_releases with specific items to process."""
         # Setup mock
-        mock_process_other.side_effect = (
-            lambda item, events_bulk: events_bulk.append(
-                Event(
-                    item=item,
-                    content_number=1,
-                    datetime=timezone.now(),
-                ),
-            )
+        mock_process_other.side_effect = lambda item, events_bulk: events_bulk.append(
+            Event(
+                item=item,
+                content_number=1,
+                datetime=timezone.now(),
+            ),
         )
 
         # Call the task with specific items

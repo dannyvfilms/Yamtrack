@@ -6,7 +6,6 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     initial = True
 
     dependencies = [
@@ -15,54 +14,109 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.CreateModel(
-            name='CustomList',
+            name="CustomList",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('name', models.CharField(max_length=255)),
-                ('description', models.TextField(blank=True, default='')),
-                ('collaborators', models.ManyToManyField(blank=True, related_name='collaborated_lists', to=settings.AUTH_USER_MODEL)),
-                ('owner', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to=settings.AUTH_USER_MODEL)),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("name", models.CharField(max_length=255)),
+                ("description", models.TextField(blank=True, default="")),
+                (
+                    "collaborators",
+                    models.ManyToManyField(
+                        blank=True,
+                        related_name="collaborated_lists",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
+                (
+                    "owner",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
             ],
             options={
-                'ordering': ['name'],
+                "ordering": ["name"],
             },
         ),
         migrations.CreateModel(
-            name='Item',
+            name="Item",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('media_id', models.PositiveIntegerField()),
-                ('media_type', models.CharField(max_length=12)),
-                ('title', models.CharField(max_length=255)),
-                ('image', models.URLField()),
-                ('season_number', models.PositiveIntegerField(null=True)),
-                ('episode_number', models.PositiveIntegerField(null=True)),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("media_id", models.PositiveIntegerField()),
+                ("media_type", models.CharField(max_length=12)),
+                ("title", models.CharField(max_length=255)),
+                ("image", models.URLField()),
+                ("season_number", models.PositiveIntegerField(null=True)),
+                ("episode_number", models.PositiveIntegerField(null=True)),
             ],
             options={
-                'ordering': ['media_id'],
-                'unique_together': {('media_id', 'media_type', 'season_number', 'episode_number')},
+                "ordering": ["media_id"],
+                "unique_together": {
+                    ("media_id", "media_type", "season_number", "episode_number")
+                },
             },
         ),
         migrations.CreateModel(
-            name='CustomListItem',
+            name="CustomListItem",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('date_added', models.DateTimeField(auto_now_add=True)),
-                ('custom_list', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='lists.customlist')),
-                ('item', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='lists.item')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("date_added", models.DateTimeField(auto_now_add=True)),
+                (
+                    "custom_list",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        to="lists.customlist",
+                    ),
+                ),
+                (
+                    "item",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE, to="lists.item"
+                    ),
+                ),
             ],
             options={
-                'ordering': ['date_added'],
-                'unique_together': {('item', 'custom_list')},
+                "ordering": ["date_added"],
+                "unique_together": {("item", "custom_list")},
             },
         ),
         migrations.AddField(
-            model_name='customlist',
-            name='items',
-            field=models.ManyToManyField(blank=True, related_name='custom_lists', through='lists.CustomListItem', to='lists.item'),
+            model_name="customlist",
+            name="items",
+            field=models.ManyToManyField(
+                blank=True,
+                related_name="custom_lists",
+                through="lists.CustomListItem",
+                to="lists.item",
+            ),
         ),
         migrations.AlterUniqueTogether(
-            name='customlist',
-            unique_together={('name', 'owner')},
+            name="customlist",
+            unique_together={("name", "owner")},
         ),
     ]

@@ -5,26 +5,35 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('users', '0032_alter_user_token_and_generate_missing_user_tokens'),
+        ("users", "0032_alter_user_token_and_generate_missing_user_tokens"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='user',
-            name='daily_digest_enabled',
-            field=models.BooleanField(default=True, help_text='Receive a daily digest of upcoming releases'),
+            model_name="user",
+            name="daily_digest_enabled",
+            field=models.BooleanField(
+                default=True, help_text="Receive a daily digest of upcoming releases"
+            ),
         ),
         migrations.AddField(
-            model_name='user',
-            name='release_notifications_enabled',
-            field=models.BooleanField(default=True, help_text='Receive notifications for recently released media'),
+            model_name="user",
+            name="release_notifications_enabled",
+            field=models.BooleanField(
+                default=True,
+                help_text="Receive notifications for recently released media",
+            ),
         ),
         migrations.AlterField(
-            model_name='user',
-            name='token',
-            field=models.CharField(default=users.models.generate_token, help_text='Token for external integrations', max_length=32, unique=True),
+            model_name="user",
+            name="token",
+            field=models.CharField(
+                default=users.models.generate_token,
+                help_text="Token for external integrations",
+                max_length=32,
+                unique=True,
+            ),
         ),
         migrations.RunSQL(
             "DELETE FROM django_celery_beat_periodictask WHERE name = 'send-recent-release-notifications';",

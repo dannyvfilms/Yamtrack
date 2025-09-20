@@ -2,23 +2,22 @@
 
 from django.db import migrations, models
 
+
 def update_repeating_to_in_progress(apps, schema_editor):
     User = apps.get_model("users", "User")
 
-    media_types = [
-        'tv', 'season', 'movie', 'anime', 
-        'manga', 'game', 'book', 'comic'
-    ]
+    media_types = ["tv", "season", "movie", "anime", "manga", "game", "book", "comic"]
 
     for media_type in media_types:
         status_field = f"{media_type}_status"
-        User.objects.filter(**{status_field: "Repeating"}).update(**{status_field: "In progress"})
+        User.objects.filter(**{status_field: "Repeating"}).update(
+            **{status_field: "In progress"}
+        )
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('users', '0035_remove_user_tv_status_valid_and_more'),
+        ("users", "0035_remove_user_tv_status_valid_and_more"),
     ]
 
     operations = [
@@ -27,99 +26,292 @@ class Migration(migrations.Migration):
             reverse_code=migrations.RunPython.noop,
         ),
         migrations.RemoveConstraint(
-            model_name='user',
-            name='tv_status_valid',
+            model_name="user",
+            name="tv_status_valid",
         ),
         migrations.RemoveConstraint(
-            model_name='user',
-            name='season_status_valid',
+            model_name="user",
+            name="season_status_valid",
         ),
         migrations.RemoveConstraint(
-            model_name='user',
-            name='movie_status_valid',
+            model_name="user",
+            name="movie_status_valid",
         ),
         migrations.RemoveConstraint(
-            model_name='user',
-            name='anime_status_valid',
+            model_name="user",
+            name="anime_status_valid",
         ),
         migrations.RemoveConstraint(
-            model_name='user',
-            name='manga_status_valid',
+            model_name="user",
+            name="manga_status_valid",
         ),
         migrations.RemoveConstraint(
-            model_name='user',
-            name='game_status_valid',
+            model_name="user",
+            name="game_status_valid",
         ),
         migrations.RemoveConstraint(
-            model_name='user',
-            name='book_status_valid',
+            model_name="user",
+            name="book_status_valid",
         ),
         migrations.AlterField(
-            model_name='user',
-            name='anime_status',
-            field=models.CharField(choices=[('All', 'All'), ('Completed', 'Completed'), ('In progress', 'In Progress'), ('Planning', 'Planning'), ('Paused', 'Paused'), ('Dropped', 'Dropped')], default='All', max_length=20),
+            model_name="user",
+            name="anime_status",
+            field=models.CharField(
+                choices=[
+                    ("All", "All"),
+                    ("Completed", "Completed"),
+                    ("In progress", "In Progress"),
+                    ("Planning", "Planning"),
+                    ("Paused", "Paused"),
+                    ("Dropped", "Dropped"),
+                ],
+                default="All",
+                max_length=20,
+            ),
         ),
         migrations.AlterField(
-            model_name='user',
-            name='book_status',
-            field=models.CharField(choices=[('All', 'All'), ('Completed', 'Completed'), ('In progress', 'In Progress'), ('Planning', 'Planning'), ('Paused', 'Paused'), ('Dropped', 'Dropped')], default='All', max_length=20),
+            model_name="user",
+            name="book_status",
+            field=models.CharField(
+                choices=[
+                    ("All", "All"),
+                    ("Completed", "Completed"),
+                    ("In progress", "In Progress"),
+                    ("Planning", "Planning"),
+                    ("Paused", "Paused"),
+                    ("Dropped", "Dropped"),
+                ],
+                default="All",
+                max_length=20,
+            ),
         ),
         migrations.AlterField(
-            model_name='user',
-            name='comic_status',
-            field=models.CharField(choices=[('All', 'All'), ('Completed', 'Completed'), ('In progress', 'In Progress'), ('Planning', 'Planning'), ('Paused', 'Paused'), ('Dropped', 'Dropped')], default='All', max_length=20),
+            model_name="user",
+            name="comic_status",
+            field=models.CharField(
+                choices=[
+                    ("All", "All"),
+                    ("Completed", "Completed"),
+                    ("In progress", "In Progress"),
+                    ("Planning", "Planning"),
+                    ("Paused", "Paused"),
+                    ("Dropped", "Dropped"),
+                ],
+                default="All",
+                max_length=20,
+            ),
         ),
         migrations.AlterField(
-            model_name='user',
-            name='game_status',
-            field=models.CharField(choices=[('All', 'All'), ('Completed', 'Completed'), ('In progress', 'In Progress'), ('Planning', 'Planning'), ('Paused', 'Paused'), ('Dropped', 'Dropped')], default='All', max_length=20),
+            model_name="user",
+            name="game_status",
+            field=models.CharField(
+                choices=[
+                    ("All", "All"),
+                    ("Completed", "Completed"),
+                    ("In progress", "In Progress"),
+                    ("Planning", "Planning"),
+                    ("Paused", "Paused"),
+                    ("Dropped", "Dropped"),
+                ],
+                default="All",
+                max_length=20,
+            ),
         ),
         migrations.AlterField(
-            model_name='user',
-            name='manga_status',
-            field=models.CharField(choices=[('All', 'All'), ('Completed', 'Completed'), ('In progress', 'In Progress'), ('Planning', 'Planning'), ('Paused', 'Paused'), ('Dropped', 'Dropped')], default='All', max_length=20),
+            model_name="user",
+            name="manga_status",
+            field=models.CharField(
+                choices=[
+                    ("All", "All"),
+                    ("Completed", "Completed"),
+                    ("In progress", "In Progress"),
+                    ("Planning", "Planning"),
+                    ("Paused", "Paused"),
+                    ("Dropped", "Dropped"),
+                ],
+                default="All",
+                max_length=20,
+            ),
         ),
         migrations.AlterField(
-            model_name='user',
-            name='movie_status',
-            field=models.CharField(choices=[('All', 'All'), ('Completed', 'Completed'), ('In progress', 'In Progress'), ('Planning', 'Planning'), ('Paused', 'Paused'), ('Dropped', 'Dropped')], default='All', max_length=20),
+            model_name="user",
+            name="movie_status",
+            field=models.CharField(
+                choices=[
+                    ("All", "All"),
+                    ("Completed", "Completed"),
+                    ("In progress", "In Progress"),
+                    ("Planning", "Planning"),
+                    ("Paused", "Paused"),
+                    ("Dropped", "Dropped"),
+                ],
+                default="All",
+                max_length=20,
+            ),
         ),
         migrations.AlterField(
-            model_name='user',
-            name='season_status',
-            field=models.CharField(choices=[('All', 'All'), ('Completed', 'Completed'), ('In progress', 'In Progress'), ('Planning', 'Planning'), ('Paused', 'Paused'), ('Dropped', 'Dropped')], default='All', max_length=20),
+            model_name="user",
+            name="season_status",
+            field=models.CharField(
+                choices=[
+                    ("All", "All"),
+                    ("Completed", "Completed"),
+                    ("In progress", "In Progress"),
+                    ("Planning", "Planning"),
+                    ("Paused", "Paused"),
+                    ("Dropped", "Dropped"),
+                ],
+                default="All",
+                max_length=20,
+            ),
         ),
         migrations.AlterField(
-            model_name='user',
-            name='tv_status',
-            field=models.CharField(choices=[('All', 'All'), ('Completed', 'Completed'), ('In progress', 'In Progress'), ('Planning', 'Planning'), ('Paused', 'Paused'), ('Dropped', 'Dropped')], default='All', max_length=20),
+            model_name="user",
+            name="tv_status",
+            field=models.CharField(
+                choices=[
+                    ("All", "All"),
+                    ("Completed", "Completed"),
+                    ("In progress", "In Progress"),
+                    ("Planning", "Planning"),
+                    ("Paused", "Paused"),
+                    ("Dropped", "Dropped"),
+                ],
+                default="All",
+                max_length=20,
+            ),
         ),
         migrations.AddConstraint(
-            model_name='user',
-            constraint=models.CheckConstraint(condition=models.Q(('tv_status__in', ['All', 'Completed', 'In progress', 'Planning', 'Paused', 'Dropped'])), name='tv_status_valid'),
+            model_name="user",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    (
+                        "tv_status__in",
+                        [
+                            "All",
+                            "Completed",
+                            "In progress",
+                            "Planning",
+                            "Paused",
+                            "Dropped",
+                        ],
+                    )
+                ),
+                name="tv_status_valid",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='user',
-            constraint=models.CheckConstraint(condition=models.Q(('season_status__in', ['All', 'Completed', 'In progress', 'Planning', 'Paused', 'Dropped'])), name='season_status_valid'),
+            model_name="user",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    (
+                        "season_status__in",
+                        [
+                            "All",
+                            "Completed",
+                            "In progress",
+                            "Planning",
+                            "Paused",
+                            "Dropped",
+                        ],
+                    )
+                ),
+                name="season_status_valid",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='user',
-            constraint=models.CheckConstraint(condition=models.Q(('movie_status__in', ['All', 'Completed', 'In progress', 'Planning', 'Paused', 'Dropped'])), name='movie_status_valid'),
+            model_name="user",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    (
+                        "movie_status__in",
+                        [
+                            "All",
+                            "Completed",
+                            "In progress",
+                            "Planning",
+                            "Paused",
+                            "Dropped",
+                        ],
+                    )
+                ),
+                name="movie_status_valid",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='user',
-            constraint=models.CheckConstraint(condition=models.Q(('anime_status__in', ['All', 'Completed', 'In progress', 'Planning', 'Paused', 'Dropped'])), name='anime_status_valid'),
+            model_name="user",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    (
+                        "anime_status__in",
+                        [
+                            "All",
+                            "Completed",
+                            "In progress",
+                            "Planning",
+                            "Paused",
+                            "Dropped",
+                        ],
+                    )
+                ),
+                name="anime_status_valid",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='user',
-            constraint=models.CheckConstraint(condition=models.Q(('manga_status__in', ['All', 'Completed', 'In progress', 'Planning', 'Paused', 'Dropped'])), name='manga_status_valid'),
+            model_name="user",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    (
+                        "manga_status__in",
+                        [
+                            "All",
+                            "Completed",
+                            "In progress",
+                            "Planning",
+                            "Paused",
+                            "Dropped",
+                        ],
+                    )
+                ),
+                name="manga_status_valid",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='user',
-            constraint=models.CheckConstraint(condition=models.Q(('game_status__in', ['All', 'Completed', 'In progress', 'Planning', 'Paused', 'Dropped'])), name='game_status_valid'),
+            model_name="user",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    (
+                        "game_status__in",
+                        [
+                            "All",
+                            "Completed",
+                            "In progress",
+                            "Planning",
+                            "Paused",
+                            "Dropped",
+                        ],
+                    )
+                ),
+                name="game_status_valid",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='user',
-            constraint=models.CheckConstraint(condition=models.Q(('book_status__in', ['All', 'Completed', 'In progress', 'Planning', 'Paused', 'Dropped'])), name='book_status_valid'),
+            model_name="user",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    (
+                        "book_status__in",
+                        [
+                            "All",
+                            "Completed",
+                            "In progress",
+                            "Planning",
+                            "Paused",
+                            "Dropped",
+                        ],
+                    )
+                ),
+                name="book_status_valid",
+            ),
         ),
     ]

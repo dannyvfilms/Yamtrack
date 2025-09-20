@@ -4,53 +4,52 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('app', '0048_update_repeating_status'),
+        ("app", "0048_update_repeating_status"),
     ]
 
     operations = [
         migrations.RenameField(
-            model_name='anime',
-            old_name='progress_changed',
-            new_name='progressed_at',
+            model_name="anime",
+            old_name="progress_changed",
+            new_name="progressed_at",
         ),
         migrations.RenameField(
-            model_name='basicmedia',
-            old_name='progress_changed',
-            new_name='progressed_at',
+            model_name="basicmedia",
+            old_name="progress_changed",
+            new_name="progressed_at",
         ),
         migrations.RenameField(
-            model_name='book',
-            old_name='progress_changed',
-            new_name='progressed_at',
+            model_name="book",
+            old_name="progress_changed",
+            new_name="progressed_at",
         ),
         migrations.RenameField(
-            model_name='comic',
-            old_name='progress_changed',
-            new_name='progressed_at',
+            model_name="comic",
+            old_name="progress_changed",
+            new_name="progressed_at",
         ),
         migrations.RenameField(
-            model_name='game',
-            old_name='progress_changed',
-            new_name='progressed_at',
+            model_name="game",
+            old_name="progress_changed",
+            new_name="progressed_at",
         ),
         migrations.RenameField(
-            model_name='manga',
-            old_name='progress_changed',
-            new_name='progressed_at',
+            model_name="manga",
+            old_name="progress_changed",
+            new_name="progressed_at",
         ),
         migrations.RenameField(
-            model_name='movie',
-            old_name='progress_changed',
-            new_name='progressed_at',
+            model_name="movie",
+            old_name="progress_changed",
+            new_name="progressed_at",
         ),
         migrations.RemoveField(
-            model_name='season',
-            name='progress_changed',
+            model_name="season",
+            name="progress_changed",
         ),
         migrations.RemoveField(
-            model_name='tv',
-            name='progress_changed',
+            model_name="tv",
+            name="progress_changed",
         ),
     ]

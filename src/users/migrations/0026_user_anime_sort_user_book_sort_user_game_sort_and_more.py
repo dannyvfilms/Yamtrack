@@ -4,74 +4,199 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('auth', '0012_alter_user_first_name_max_length'),
-        ('users', '0025_remove_user_last_search_type_valid_and_more'),
+        ("auth", "0012_alter_user_first_name_max_length"),
+        ("users", "0025_remove_user_last_search_type_valid_and_more"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='user',
-            name='anime_sort',
-            field=models.CharField(choices=[('score', 'Rating'), ('title', 'Title'), ('progress', 'Progress'), ('start_date', 'Start Date'), ('end_date', 'End Date')], default='score', max_length=20),
+            model_name="user",
+            name="anime_sort",
+            field=models.CharField(
+                choices=[
+                    ("score", "Rating"),
+                    ("title", "Title"),
+                    ("progress", "Progress"),
+                    ("start_date", "Start Date"),
+                    ("end_date", "End Date"),
+                ],
+                default="score",
+                max_length=20,
+            ),
         ),
         migrations.AddField(
-            model_name='user',
-            name='book_sort',
-            field=models.CharField(choices=[('score', 'Rating'), ('title', 'Title'), ('progress', 'Progress'), ('start_date', 'Start Date'), ('end_date', 'End Date')], default='score', max_length=20),
+            model_name="user",
+            name="book_sort",
+            field=models.CharField(
+                choices=[
+                    ("score", "Rating"),
+                    ("title", "Title"),
+                    ("progress", "Progress"),
+                    ("start_date", "Start Date"),
+                    ("end_date", "End Date"),
+                ],
+                default="score",
+                max_length=20,
+            ),
         ),
         migrations.AddField(
-            model_name='user',
-            name='game_sort',
-            field=models.CharField(choices=[('score', 'Rating'), ('title', 'Title'), ('progress', 'Progress'), ('start_date', 'Start Date'), ('end_date', 'End Date')], default='score', max_length=20),
+            model_name="user",
+            name="game_sort",
+            field=models.CharField(
+                choices=[
+                    ("score", "Rating"),
+                    ("title", "Title"),
+                    ("progress", "Progress"),
+                    ("start_date", "Start Date"),
+                    ("end_date", "End Date"),
+                ],
+                default="score",
+                max_length=20,
+            ),
         ),
         migrations.AddField(
-            model_name='user',
-            name='manga_sort',
-            field=models.CharField(choices=[('score', 'Rating'), ('title', 'Title'), ('progress', 'Progress'), ('start_date', 'Start Date'), ('end_date', 'End Date')], default='score', max_length=20),
+            model_name="user",
+            name="manga_sort",
+            field=models.CharField(
+                choices=[
+                    ("score", "Rating"),
+                    ("title", "Title"),
+                    ("progress", "Progress"),
+                    ("start_date", "Start Date"),
+                    ("end_date", "End Date"),
+                ],
+                default="score",
+                max_length=20,
+            ),
         ),
         migrations.AddField(
-            model_name='user',
-            name='movie_sort',
-            field=models.CharField(choices=[('score', 'Rating'), ('title', 'Title'), ('progress', 'Progress'), ('start_date', 'Start Date'), ('end_date', 'End Date')], default='score', max_length=20),
+            model_name="user",
+            name="movie_sort",
+            field=models.CharField(
+                choices=[
+                    ("score", "Rating"),
+                    ("title", "Title"),
+                    ("progress", "Progress"),
+                    ("start_date", "Start Date"),
+                    ("end_date", "End Date"),
+                ],
+                default="score",
+                max_length=20,
+            ),
         ),
         migrations.AddField(
-            model_name='user',
-            name='season_sort',
-            field=models.CharField(choices=[('score', 'Rating'), ('title', 'Title'), ('progress', 'Progress'), ('start_date', 'Start Date'), ('end_date', 'End Date')], default='score', max_length=20),
+            model_name="user",
+            name="season_sort",
+            field=models.CharField(
+                choices=[
+                    ("score", "Rating"),
+                    ("title", "Title"),
+                    ("progress", "Progress"),
+                    ("start_date", "Start Date"),
+                    ("end_date", "End Date"),
+                ],
+                default="score",
+                max_length=20,
+            ),
         ),
         migrations.AddField(
-            model_name='user',
-            name='tv_sort',
-            field=models.CharField(choices=[('score', 'Rating'), ('title', 'Title'), ('progress', 'Progress'), ('start_date', 'Start Date'), ('end_date', 'End Date')], default='score', max_length=20),
+            model_name="user",
+            name="tv_sort",
+            field=models.CharField(
+                choices=[
+                    ("score", "Rating"),
+                    ("title", "Title"),
+                    ("progress", "Progress"),
+                    ("start_date", "Start Date"),
+                    ("end_date", "End Date"),
+                ],
+                default="score",
+                max_length=20,
+            ),
         ),
         migrations.AddConstraint(
-            model_name='user',
-            constraint=models.CheckConstraint(condition=models.Q(('tv_sort__in', ['score', 'title', 'progress', 'start_date', 'end_date'])), name='tv_sort_valid'),
+            model_name="user",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    (
+                        "tv_sort__in",
+                        ["score", "title", "progress", "start_date", "end_date"],
+                    )
+                ),
+                name="tv_sort_valid",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='user',
-            constraint=models.CheckConstraint(condition=models.Q(('season_sort__in', ['score', 'title', 'progress', 'start_date', 'end_date'])), name='season_sort_valid'),
+            model_name="user",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    (
+                        "season_sort__in",
+                        ["score", "title", "progress", "start_date", "end_date"],
+                    )
+                ),
+                name="season_sort_valid",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='user',
-            constraint=models.CheckConstraint(condition=models.Q(('movie_sort__in', ['score', 'title', 'progress', 'start_date', 'end_date'])), name='movie_sort_valid'),
+            model_name="user",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    (
+                        "movie_sort__in",
+                        ["score", "title", "progress", "start_date", "end_date"],
+                    )
+                ),
+                name="movie_sort_valid",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='user',
-            constraint=models.CheckConstraint(condition=models.Q(('anime_sort__in', ['score', 'title', 'progress', 'start_date', 'end_date'])), name='anime_sort_valid'),
+            model_name="user",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    (
+                        "anime_sort__in",
+                        ["score", "title", "progress", "start_date", "end_date"],
+                    )
+                ),
+                name="anime_sort_valid",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='user',
-            constraint=models.CheckConstraint(condition=models.Q(('manga_sort__in', ['score', 'title', 'progress', 'start_date', 'end_date'])), name='manga_sort_valid'),
+            model_name="user",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    (
+                        "manga_sort__in",
+                        ["score", "title", "progress", "start_date", "end_date"],
+                    )
+                ),
+                name="manga_sort_valid",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='user',
-            constraint=models.CheckConstraint(condition=models.Q(('game_sort__in', ['score', 'title', 'progress', 'start_date', 'end_date'])), name='game_sort_valid'),
+            model_name="user",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    (
+                        "game_sort__in",
+                        ["score", "title", "progress", "start_date", "end_date"],
+                    )
+                ),
+                name="game_sort_valid",
+            ),
         ),
         migrations.AddConstraint(
-            model_name='user',
-            constraint=models.CheckConstraint(condition=models.Q(('book_sort__in', ['score', 'title', 'progress', 'start_date', 'end_date'])), name='book_sort_valid'),
+            model_name="user",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    (
+                        "book_sort__in",
+                        ["score", "title", "progress", "start_date", "end_date"],
+                    )
+                ),
+                name="book_sort_valid",
+            ),
         ),
     ]

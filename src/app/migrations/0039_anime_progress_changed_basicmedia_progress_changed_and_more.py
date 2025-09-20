@@ -6,100 +6,127 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('app', '0038_comic_historicalcomic_and_more'),
+        ("app", "0038_comic_historicalcomic_and_more"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='anime',
-            name='progress_changed',
-            field=model_utils.fields.MonitorField(default=django.utils.timezone.now, monitor='progress'),
+            model_name="anime",
+            name="progress_changed",
+            field=model_utils.fields.MonitorField(
+                default=django.utils.timezone.now, monitor="progress"
+            ),
         ),
         migrations.AddField(
-            model_name='basicmedia',
-            name='progress_changed',
-            field=model_utils.fields.MonitorField(default=django.utils.timezone.now, monitor='progress'),
+            model_name="basicmedia",
+            name="progress_changed",
+            field=model_utils.fields.MonitorField(
+                default=django.utils.timezone.now, monitor="progress"
+            ),
         ),
         migrations.AddField(
-            model_name='book',
-            name='progress_changed',
-            field=model_utils.fields.MonitorField(default=django.utils.timezone.now, monitor='progress'),
+            model_name="book",
+            name="progress_changed",
+            field=model_utils.fields.MonitorField(
+                default=django.utils.timezone.now, monitor="progress"
+            ),
         ),
         migrations.AddField(
-            model_name='comic',
-            name='progress_changed',
-            field=model_utils.fields.MonitorField(default=django.utils.timezone.now, monitor='progress'),
+            model_name="comic",
+            name="progress_changed",
+            field=model_utils.fields.MonitorField(
+                default=django.utils.timezone.now, monitor="progress"
+            ),
         ),
         migrations.AddField(
-            model_name='game',
-            name='progress_changed',
-            field=model_utils.fields.MonitorField(default=django.utils.timezone.now, monitor='progress'),
+            model_name="game",
+            name="progress_changed",
+            field=model_utils.fields.MonitorField(
+                default=django.utils.timezone.now, monitor="progress"
+            ),
         ),
         migrations.AddField(
-            model_name='historicalanime',
-            name='progress_changed',
-            field=model_utils.fields.MonitorField(default=django.utils.timezone.now, monitor='progress'),
+            model_name="historicalanime",
+            name="progress_changed",
+            field=model_utils.fields.MonitorField(
+                default=django.utils.timezone.now, monitor="progress"
+            ),
         ),
         migrations.AddField(
-            model_name='historicalbasicmedia',
-            name='progress_changed',
-            field=model_utils.fields.MonitorField(default=django.utils.timezone.now, monitor='progress'),
+            model_name="historicalbasicmedia",
+            name="progress_changed",
+            field=model_utils.fields.MonitorField(
+                default=django.utils.timezone.now, monitor="progress"
+            ),
         ),
         migrations.AddField(
-            model_name='historicalbook',
-            name='progress_changed',
-            field=model_utils.fields.MonitorField(default=django.utils.timezone.now, monitor='progress'),
+            model_name="historicalbook",
+            name="progress_changed",
+            field=model_utils.fields.MonitorField(
+                default=django.utils.timezone.now, monitor="progress"
+            ),
         ),
         migrations.AddField(
-            model_name='historicalcomic',
-            name='progress_changed',
-            field=model_utils.fields.MonitorField(default=django.utils.timezone.now, monitor='progress'),
+            model_name="historicalcomic",
+            name="progress_changed",
+            field=model_utils.fields.MonitorField(
+                default=django.utils.timezone.now, monitor="progress"
+            ),
         ),
         migrations.AddField(
-            model_name='historicalgame',
-            name='progress_changed',
-            field=model_utils.fields.MonitorField(default=django.utils.timezone.now, monitor='progress'),
+            model_name="historicalgame",
+            name="progress_changed",
+            field=model_utils.fields.MonitorField(
+                default=django.utils.timezone.now, monitor="progress"
+            ),
         ),
         migrations.AddField(
-            model_name='historicalmanga',
-            name='progress_changed',
-            field=model_utils.fields.MonitorField(default=django.utils.timezone.now, monitor='progress'),
+            model_name="historicalmanga",
+            name="progress_changed",
+            field=model_utils.fields.MonitorField(
+                default=django.utils.timezone.now, monitor="progress"
+            ),
         ),
         migrations.AddField(
-            model_name='historicalmovie',
-            name='progress_changed',
-            field=model_utils.fields.MonitorField(default=django.utils.timezone.now, monitor='progress'),
+            model_name="historicalmovie",
+            name="progress_changed",
+            field=model_utils.fields.MonitorField(
+                default=django.utils.timezone.now, monitor="progress"
+            ),
         ),
         migrations.AddField(
-            model_name='historicalseason',
-            name='progress_changed',
+            model_name="historicalseason",
+            name="progress_changed",
             field=models.DateTimeField(default=django.utils.timezone.now),
         ),
         migrations.AddField(
-            model_name='historicaltv',
-            name='progress_changed',
+            model_name="historicaltv",
+            name="progress_changed",
             field=models.DateTimeField(default=django.utils.timezone.now),
         ),
         migrations.AddField(
-            model_name='manga',
-            name='progress_changed',
-            field=model_utils.fields.MonitorField(default=django.utils.timezone.now, monitor='progress'),
+            model_name="manga",
+            name="progress_changed",
+            field=model_utils.fields.MonitorField(
+                default=django.utils.timezone.now, monitor="progress"
+            ),
         ),
         migrations.AddField(
-            model_name='movie',
-            name='progress_changed',
-            field=model_utils.fields.MonitorField(default=django.utils.timezone.now, monitor='progress'),
+            model_name="movie",
+            name="progress_changed",
+            field=model_utils.fields.MonitorField(
+                default=django.utils.timezone.now, monitor="progress"
+            ),
         ),
         migrations.AddField(
-            model_name='season',
-            name='progress_changed',
+            model_name="season",
+            name="progress_changed",
             field=models.DateTimeField(default=django.utils.timezone.now),
         ),
         migrations.AddField(
-            model_name='tv',
-            name='progress_changed',
+            model_name="tv",
+            name="progress_changed",
             field=models.DateTimeField(default=django.utils.timezone.now),
         ),
     ]

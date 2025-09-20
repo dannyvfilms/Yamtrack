@@ -4,19 +4,18 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('events', '0005_alter_event_date'),
+        ("events", "0005_alter_event_date"),
     ]
 
     operations = [
         migrations.AlterModelOptions(
-            name='event',
-            options={'ordering': ['datetime']},
+            name="event",
+            options={"ordering": ["datetime"]},
         ),
         migrations.RenameField(
-            model_name='event',
-            old_name='date',
-            new_name='datetime',
+            model_name="event",
+            old_name="date",
+            new_name="datetime",
         ),
     ]

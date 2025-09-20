@@ -4,19 +4,26 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('auth', '0012_alter_user_first_name_max_length'),
-        ('users', '0024_remove_user_lists_sort_valid_alter_user_lists_sort_and_more'),
+        ("auth", "0012_alter_user_first_name_max_length"),
+        ("users", "0024_remove_user_lists_sort_valid_alter_user_lists_sort_and_more"),
     ]
 
     operations = [
         migrations.RemoveConstraint(
-            model_name='user',
-            name='last_search_type_valid',
+            model_name="user",
+            name="last_search_type_valid",
         ),
         migrations.AddConstraint(
-            model_name='user',
-            constraint=models.CheckConstraint(condition=models.Q(('last_search_type__in', ['tv', 'movie', 'anime', 'manga', 'game', 'book'])), name='last_search_type_valid'),
+            model_name="user",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    (
+                        "last_search_type__in",
+                        ["tv", "movie", "anime", "manga", "game", "book"],
+                    )
+                ),
+                name="last_search_type_valid",
+            ),
         ),
     ]

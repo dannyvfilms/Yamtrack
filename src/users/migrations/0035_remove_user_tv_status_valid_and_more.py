@@ -4,12 +4,10 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('app', '0047_alter_anime_options_alter_basicmedia_options_and_more'),
-        ('auth', '0012_alter_user_first_name_max_length'),
-        ('users', '0034_user_plex_usernames'),
+        ("app", "0047_alter_anime_options_alter_basicmedia_options_and_more"),
+        ("auth", "0012_alter_user_first_name_max_length"),
+        ("users", "0034_user_plex_usernames"),
     ]
 
-    operations = [
-    ]
+    operations = []

@@ -4,46 +4,45 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('app', '0042_enable_import_tasks'),
+        ("app", "0042_enable_import_tasks"),
     ]
 
     operations = [
         migrations.RemoveField(
-            model_name='historicalanime',
-            name='progress_changed',
+            model_name="historicalanime",
+            name="progress_changed",
         ),
         migrations.RemoveField(
-            model_name='historicalbasicmedia',
-            name='progress_changed',
+            model_name="historicalbasicmedia",
+            name="progress_changed",
         ),
         migrations.RemoveField(
-            model_name='historicalbook',
-            name='progress_changed',
+            model_name="historicalbook",
+            name="progress_changed",
         ),
         migrations.RemoveField(
-            model_name='historicalcomic',
-            name='progress_changed',
+            model_name="historicalcomic",
+            name="progress_changed",
         ),
         migrations.RemoveField(
-            model_name='historicalgame',
-            name='progress_changed',
+            model_name="historicalgame",
+            name="progress_changed",
         ),
         migrations.RemoveField(
-            model_name='historicalmanga',
-            name='progress_changed',
+            model_name="historicalmanga",
+            name="progress_changed",
         ),
         migrations.RemoveField(
-            model_name='historicalmovie',
-            name='progress_changed',
+            model_name="historicalmovie",
+            name="progress_changed",
         ),
         migrations.RemoveField(
-            model_name='historicalseason',
-            name='progress_changed',
+            model_name="historicalseason",
+            name="progress_changed",
         ),
         migrations.RemoveField(
-            model_name='historicaltv',
-            name='progress_changed',
+            model_name="historicaltv",
+            name="progress_changed",
         ),
     ]

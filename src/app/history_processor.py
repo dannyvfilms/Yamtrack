@@ -191,7 +191,9 @@ def build_changes_list(changes, processed_entry):
     processed_entry["changes"].extend(changes["other_changes"])
 
 
-def format_description(field_name, old_value, new_value, media_type=None):  # noqa: C901, PLR0911, PLR0912
+def format_description(
+    field_name, old_value, new_value, media_type=None
+):  # noqa: C901, PLR0911, PLR0912
     """Format change description in a human-readable way.
 
     Provides natural language descriptions for various types of changes,

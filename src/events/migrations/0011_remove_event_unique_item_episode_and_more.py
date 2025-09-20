@@ -2,34 +2,31 @@
 
 from django.db import migrations, models
 
+
 def fix_movie_events(apps, schema_editor):
-    Event = apps.get_model('events', 'Event')
+    Event = apps.get_model("events", "Event")
 
     # Get all movie items that have events with content_number
-    movie_items_with_episodes = Event.objects.filter(
-        item__media_type='movie',
-        content_number__isnull=False
-    ).values_list('item_id', flat=True).distinct()
+    movie_items_with_episodes = (
+        Event.objects.filter(item__media_type="movie", content_number__isnull=False)
+        .values_list("item_id", flat=True)
+        .distinct()
+    )
 
     for item_id in movie_items_with_episodes:
         # Check if there's already an event with content_number=None for this item
         existing_null_event = Event.objects.filter(
-            item_id=item_id,
-            content_number__isnull=True
+            item_id=item_id, content_number__isnull=True
         ).first()
 
         if existing_null_event:
             # If a null event already exists, delete all events with content_number
-            Event.objects.filter(
-                item_id=item_id,
-                content_number__isnull=False
-            ).delete()
+            Event.objects.filter(item_id=item_id, content_number__isnull=False).delete()
         else:
             # If no null event exists, keep the earliest event and update its content_number to None
             events = Event.objects.filter(
-                item_id=item_id,
-                content_number__isnull=False
-            ).order_by('datetime')
+                item_id=item_id, content_number__isnull=False
+            ).order_by("datetime")
 
             if events.exists():
                 # Keep the earliest event and set its content_number to None
@@ -39,34 +36,41 @@ def fix_movie_events(apps, schema_editor):
 
                 # Delete all other events for this item
                 events.exclude(id=earliest_event.id).delete()
-class Migration(migrations.Migration):
 
+
+class Migration(migrations.Migration):
     dependencies = [
-        ('app', '0038_comic_historicalcomic_and_more'),
-        ('events', '0010_alter_event_options'),
+        ("app", "0038_comic_historicalcomic_and_more"),
+        ("events", "0010_alter_event_options"),
     ]
 
     operations = [
         migrations.RemoveConstraint(
-            model_name='event',
-            name='unique_item_episode',
+            model_name="event",
+            name="unique_item_episode",
         ),
         migrations.RemoveConstraint(
-            model_name='event',
-            name='unique_item_null_episode',
+            model_name="event",
+            name="unique_item_null_episode",
         ),
         migrations.RenameField(
-            model_name='event',
-            old_name='episode_number',
-            new_name='content_number',
+            model_name="event",
+            old_name="episode_number",
+            new_name="content_number",
         ),
         migrations.AddConstraint(
-            model_name='event',
-            constraint=models.UniqueConstraint(fields=('item', 'content_number'), name='unique_item_episode'),
+            model_name="event",
+            constraint=models.UniqueConstraint(
+                fields=("item", "content_number"), name="unique_item_episode"
+            ),
         ),
         migrations.AddConstraint(
-            model_name='event',
-            constraint=models.UniqueConstraint(condition=models.Q(('content_number__isnull', True)), fields=('item',), name='unique_item_null_episode'),
+            model_name="event",
+            constraint=models.UniqueConstraint(
+                condition=models.Q(("content_number__isnull", True)),
+                fields=("item",),
+                name="unique_item_null_episode",
+            ),
         ),
         migrations.RunPython(fix_movie_events, reverse_code=migrations.RunPython.noop),
     ]
