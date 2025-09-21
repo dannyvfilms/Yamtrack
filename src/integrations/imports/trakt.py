@@ -24,7 +24,6 @@ def handle_oauth_callback(request):
     domain = request.get_host()
     scheme = request.scheme
     code = request.GET["code"]
-    state = json.loads(request.GET["state"])
 
     url = "https://api.trakt.tv/oauth/token"
 
@@ -50,7 +49,6 @@ def handle_oauth_callback(request):
         raise
 
     return {
-        "state": state,
         "refresh_token": token_response["refresh_token"],
         "username": get_username_from_oauth(token_response["access_token"]),
     }

@@ -214,6 +214,10 @@ class MyAnimeListImporter:
         if date_str is None:
             return None
 
+        year_only_len = 4
+        if len(date_str) == year_only_len and date_str.isdigit():
+            date_str = f"{date_str}-01-01"  # Default to January 1st
+
         return datetime.strptime(date_str, "%Y-%m-%d").replace(
             hour=0,
             minute=0,

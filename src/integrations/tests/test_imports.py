@@ -597,7 +597,11 @@ class ImportSimkl(TestCase):
         """Create user for the tests."""
         credentials = {"username": "test", "password": "12345"}
         self.user = get_user_model().objects.create_user(**credentials)
-        self.importer = simkl.SimklImporter("testuser", self.user, "new")
+        self.importer = simkl.SimklImporter(
+            helpers.encrypt("token"),
+            self.user,
+            "new",
+        )
 
     @patch("integrations.imports.simkl.SimklImporter._get_user_list")
     def test_importer(
@@ -648,11 +652,7 @@ class ImportSimkl(TestCase):
             ],
         }
 
-        imported_counts, warnings = simkl.importer(
-            "token",
-            self.user,
-            "new",
-        )
+        imported_counts, warnings = self.importer.import_data()
 
         # Check the results
         self.assertEqual(imported_counts[MediaTypes.TV.value], 1)
@@ -767,7 +767,7 @@ class ImportSimkl(TestCase):
             "anime": [],
         }
 
-        imported_counts, warnings = simkl.importer("token", self.user, "new")
+        imported_counts, _ = self.importer.import_data()
 
         # Verify import counts
         self.assertEqual(imported_counts[MediaTypes.TV.value], 1)
@@ -821,7 +821,7 @@ class ImportIMDB(TestCase):
         imported_counts, warnings = self.import_results
 
         # Check import counts
-        self.assertEqual(imported_counts[MediaTypes.MOVIE.value], 4)
+        self.assertEqual(imported_counts[MediaTypes.MOVIE.value], 5)
         self.assertEqual(imported_counts[MediaTypes.TV.value], 2)
 
         # Check that unsupported type was skipped
@@ -896,10 +896,10 @@ class ImportIMDB(TestCase):
             ("TV Mini Series", True),
             ("TV Movie", True),
             ("TV Special", True),
+            ("Video", True),
             ("TV Episode", False),
             ("TV Short", False),
             ("Video Game", False),
-            ("Video", False),
             ("Music Video", False),
             ("Podcast Series", False),
             ("Podcast Episode", False),
@@ -922,9 +922,9 @@ class ImportIMDB(TestCase):
         """Test handling of duplicate IMDB entries that map to same TMDB ID."""
         imported_counts, warnings = self.import_results
 
-        # There are three movies in the test CSV, one of them is a duplicate
+        # There are six movies in the test CSV, one of them is a duplicate
         # The test CSV file contains a duplicate of The Dark Knight
-        self.assertEqual(imported_counts.get(MediaTypes.MOVIE.value, 0), 4)
+        self.assertEqual(imported_counts.get(MediaTypes.MOVIE.value, 0), 5)
 
         # Should have duplicate warning
         self.assertIn("They were matched to the same TMDB ID 155", warnings)
@@ -1176,7 +1176,7 @@ class ImportSteam(TestCase):
         ]
 
         # Import games
-        imported_counts, warnings = steam.importer(
+        imported_counts, _ = steam.importer(
             "76561198000000000",
             self.user,
             "new",

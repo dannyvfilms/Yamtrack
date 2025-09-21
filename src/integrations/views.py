@@ -2,6 +2,7 @@
 
 import json
 import logging
+import secrets
 
 from django.conf import settings
 from django.contrib import messages
@@ -28,12 +29,14 @@ def trakt_oauth(request):
     redirect_uri = request.build_absolute_uri(reverse("import_trakt"))
     url = "https://trakt.tv/oauth/authorize"
     state = {
-        "trakt_import_mode": request.POST["mode"],
-        "trakt_import_frequency": request.POST["frequency"],
-        "trakt_import_time": request.POST["time"],
+        "mode": request.POST["mode"],
+        "frequency": request.POST["frequency"],
+        "time": request.POST["time"],
     }
+    state_token = secrets.token_urlsafe(32)
+    request.session[state_token] = state
     return redirect(
-        f"{url}?client_id={settings.TRAKT_API}&redirect_uri={redirect_uri}&response_type=code&state={json.dumps(state)}",
+        f"{url}?client_id={settings.TRAKT_API}&redirect_uri={redirect_uri}&response_type=code&state={state_token}",
     )
 
 
@@ -41,11 +44,12 @@ def trakt_oauth(request):
 def import_trakt(request):
     """View for getting the Trakt OAuth2 token."""
     oauth_callback = trakt.handle_oauth_callback(request)
-
     enc_token = helpers.encrypt(oauth_callback["refresh_token"])
-    frequency = oauth_callback["state"]["trakt_import_frequency"]
-    mode = oauth_callback["state"]["trakt_import_mode"]
-    import_time = oauth_callback["state"]["trakt_import_time"]
+    state_token = request.GET["state"]
+
+    frequency = request.session[state_token]["frequency"]
+    mode = request.session[state_token]["mode"]
+    import_time = request.session[state_token]["time"]
 
     if frequency == "once":
         tasks.import_trakt.delay(
@@ -74,13 +78,16 @@ def simkl_oauth(request):
     redirect_uri = request.build_absolute_uri(reverse("import_simkl"))
     url = "https://simkl.com/oauth/authorize"
 
-    # store in session because simkl drops all additional parameters
-    request.session["simkl_import_mode"] = request.POST["mode"]
-    request.session["simkl_import_frequency"] = request.POST["frequency"]
-    request.session["simkl_import_time"] = request.POST["time"]
+    state = {
+        "mode": request.POST["mode"],
+        "frequency": request.POST["frequency"],
+        "time": request.POST["time"],
+    }
+    state_token = secrets.token_urlsafe(32)
+    request.session[state_token] = state
 
     return redirect(
-        f"{url}?client_id={settings.SIMKL_ID}&redirect_uri={redirect_uri}&response_type=code",
+        f"{url}?client_id={settings.SIMKL_ID}&redirect_uri={redirect_uri}&response_type=code&state={state_token}",
     )
 
 
@@ -89,9 +96,11 @@ def import_simkl(request):
     """View for getting the SIMKL OAuth2 token."""
     oauth_callback = simkl.get_token(request)
     enc_token = helpers.encrypt(oauth_callback["access_token"])
-    frequency = request.session.pop("simkl_import_frequency")
-    mode = request.session.pop("simkl_import_mode")
-    import_time = request.session.pop("simkl_import_time")
+    state_token = request.GET["state"]
+
+    frequency = request.session[state_token]["frequency"]
+    mode = request.session[state_token]["mode"]
+    import_time = request.session[state_token]["time"]
 
     if frequency == "once":
         tasks.import_simkl.delay(token=enc_token, user_id=request.user.id, mode=mode)
@@ -267,6 +276,7 @@ def import_steam(request):
             "Steam",
         )
     return redirect("import_data")
+
 
 def import_imdb(request):
     """View for importing data from IMDB."""
