@@ -16,7 +16,7 @@ class AppConfig(AppConfig):
         """Import signals when the app is ready."""
         import app.signals  # noqa: F401, PLC0415
         
-        # Only schedule runtime population once per process to avoid duplicates
+        # Only schedule runtime population once per startup to avoid duplicates
         if (not settings.TESTING and 
             not getattr(settings, 'RUNTIME_POPULATION_DISABLED', False) and
             not hasattr(self, '_runtime_population_scheduled')):
