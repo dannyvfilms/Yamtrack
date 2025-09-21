@@ -3,35 +3,37 @@
 from django.conf import settings
 from django.db import migrations, models
 
+
 def convert_media_repeats_to_instances(apps, schema_editor):
     """Convert repeated media instances into separate instances."""
 
-    media_types = ['Anime', 'Manga', 'Game', 'Book', 'Comic']
+    media_types = ["Anime", "Manga", "Game", "Book", "Comic"]
 
     for media_type in media_types:
-        Media = apps.get_model('app', media_type)
-        HistoricalMedia = apps.get_model('app', f'Historical{media_type}')
+        Media = apps.get_model("app", media_type)
+        HistoricalMedia = apps.get_model("app", f"Historical{media_type}")
 
         # Get all objects with status completed with repeats > 0 or status repeating
         media_objects = Media.objects.filter(
-            models.Q(repeats__gt=0) | 
-            models.Q(status='Repeating')
+            models.Q(repeats__gt=0) | models.Q(status="Repeating")
         )
 
         for media_obj in media_objects:
             # Get historical records where status is Completed, ordered by history_date
             completed_history = HistoricalMedia.objects.filter(
-                id=media_obj.id,
-                status='Completed'
-            ).order_by('history_date')
-
+                id=media_obj.id, status="Completed"
+            ).order_by("history_date")
 
             if completed_history.exists():
                 # Group by repeat number and get only the newest instance for each repeat count
                 repeat_groups = {}
                 for record in completed_history:
                     repeat_count = record.repeats
-                    if repeat_count not in repeat_groups or record.history_date > repeat_groups[repeat_count].history_date:
+                    if (
+                        repeat_count not in repeat_groups
+                        or record.history_date
+                        > repeat_groups[repeat_count].history_date
+                    ):
                         repeat_groups[repeat_count] = record
 
                 # Sort by repeat number to process in order
@@ -56,21 +58,21 @@ def convert_media_repeats_to_instances(apps, schema_editor):
                             user=media_obj.user,
                             score=record.score,
                             progress=record.progress,
-                            status='Completed',
+                            status="Completed",
                             repeats=0,
                             start_date=record.start_date,
                             end_date=record.end_date,
-                            notes=record.notes
+                            notes=record.notes,
                         )
 
                         HistoricalMedia.objects.create(
                             id=new_instance.id,
                             history_date=record.history_date,
-                            history_type='+',
+                            history_type="+",
                             history_user=record.history_user,
                             score=record.score,
                             progress=record.progress,
-                            status='Completed',
+                            status="Completed",
                             repeats=0,
                             start_date=record.start_date,
                             end_date=record.end_date,
@@ -78,15 +80,19 @@ def convert_media_repeats_to_instances(apps, schema_editor):
                         )
 
                     previous_repeats = current_repeats
-                    
+
             else:
-                status_date = HistoricalMedia.objects.filter(
-                    id=media_obj.id,
-                    status=media_obj.status
-                ).order_by('history_date').first().history_date
+                status_date = (
+                    HistoricalMedia.objects.filter(
+                        id=media_obj.id, status=media_obj.status
+                    )
+                    .order_by("history_date")
+                    .first()
+                    .history_date
+                )
 
                 repeats_count = media_obj.repeats
-                if media_obj.status == 'Repeating' and repeats_count == 0:
+                if media_obj.status == "Repeating" and repeats_count == 0:
                     repeats_count = 1
 
                 for _ in range(repeats_count):
@@ -95,36 +101,38 @@ def convert_media_repeats_to_instances(apps, schema_editor):
                         user=media_obj.user,
                         score=media_obj.score,
                         progress=media_obj.progress,
-                        status='Completed',
-                        repeats=0,
-                        start_date=media_obj.start_date,
-                        end_date=media_obj.end_date,
-                        notes=media_obj.notes
-                    )
-
-                    HistoricalMedia.objects.create(
-                        id=new_instance.id,
-                        history_date=status_date,
-                        history_type='+',
-                        history_user=media_obj.user,
-                        score=media_obj.score,
-                        progress=media_obj.progress,
-                        status='Completed',
+                        status="Completed",
                         repeats=0,
                         start_date=media_obj.start_date,
                         end_date=media_obj.end_date,
                         notes=media_obj.notes,
                     )
 
-            if media_obj.status == 'Repeating':
-                status = 'In progress'
+                    HistoricalMedia.objects.create(
+                        id=new_instance.id,
+                        history_date=status_date,
+                        history_type="+",
+                        history_user=media_obj.user,
+                        score=media_obj.score,
+                        progress=media_obj.progress,
+                        status="Completed",
+                        repeats=0,
+                        start_date=media_obj.start_date,
+                        end_date=media_obj.end_date,
+                        notes=media_obj.notes,
+                    )
+
+            if media_obj.status == "Repeating":
+                status = "In progress"
             else:
                 status = media_obj.status
 
-            status_date = HistoricalMedia.objects.filter(
-                id=media_obj.id,
-                status=media_obj.status
-            ).order_by('history_date').first().history_date
+            status_date = (
+                HistoricalMedia.objects.filter(id=media_obj.id, status=media_obj.status)
+                .order_by("history_date")
+                .first()
+                .history_date
+            )
 
             new_instance = Media.objects.create(
                 item=media_obj.item,
@@ -135,13 +143,13 @@ def convert_media_repeats_to_instances(apps, schema_editor):
                 repeats=0,
                 start_date=media_obj.start_date,
                 end_date=media_obj.end_date,
-                notes=media_obj.notes
+                notes=media_obj.notes,
             )
 
             HistoricalMedia.objects.create(
                 id=new_instance.id,
                 history_date=status_date,
-                history_type='+',
+                history_type="+",
                 history_user=media_obj.user,
                 score=media_obj.score,
                 progress=media_obj.progress,
@@ -151,89 +159,90 @@ def convert_media_repeats_to_instances(apps, schema_editor):
                 end_date=media_obj.end_date,
                 notes=media_obj.notes,
             )
-        
+
             media_obj.delete()
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('app', '0045_alter_episode_options_and_more'),
+        ("app", "0045_alter_episode_options_and_more"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
     operations = [
         migrations.AlterModelOptions(
-            name='anime',
-            options={'ordering': ['user', 'item']},
+            name="anime",
+            options={"ordering": ["user", "item"]},
         ),
         migrations.AlterModelOptions(
-            name='basicmedia',
-            options={'ordering': ['user', 'item']},
+            name="basicmedia",
+            options={"ordering": ["user", "item"]},
         ),
         migrations.AlterModelOptions(
-            name='book',
-            options={'ordering': ['user', 'item']},
+            name="book",
+            options={"ordering": ["user", "item"]},
         ),
         migrations.AlterModelOptions(
-            name='comic',
-            options={'ordering': ['user', 'item']},
+            name="comic",
+            options={"ordering": ["user", "item"]},
         ),
         migrations.AlterModelOptions(
-            name='game',
-            options={'ordering': ['user', 'item']},
+            name="game",
+            options={"ordering": ["user", "item"]},
         ),
         migrations.AlterModelOptions(
-            name='manga',
-            options={'ordering': ['user', 'item']},
+            name="manga",
+            options={"ordering": ["user", "item"]},
         ),
         migrations.AlterModelOptions(
-            name='movie',
-            options={'ordering': ['user', 'item']},
+            name="movie",
+            options={"ordering": ["user", "item"]},
         ),
         migrations.AlterModelOptions(
-            name='tv',
-            options={'ordering': ['user', 'item']},
+            name="tv",
+            options={"ordering": ["user", "item"]},
         ),
         migrations.RemoveConstraint(
-            model_name='anime',
-            name='app_anime_unique_item_user',
+            model_name="anime",
+            name="app_anime_unique_item_user",
         ),
         migrations.RemoveConstraint(
-            model_name='basicmedia',
-            name='app_basicmedia_unique_item_user',
+            model_name="basicmedia",
+            name="app_basicmedia_unique_item_user",
         ),
         migrations.RemoveConstraint(
-            model_name='book',
-            name='app_book_unique_item_user',
+            model_name="book",
+            name="app_book_unique_item_user",
         ),
         migrations.RemoveConstraint(
-            model_name='comic',
-            name='app_comic_unique_item_user',
+            model_name="comic",
+            name="app_comic_unique_item_user",
         ),
         migrations.RemoveConstraint(
-            model_name='game',
-            name='app_game_unique_item_user',
+            model_name="game",
+            name="app_game_unique_item_user",
         ),
         migrations.RemoveConstraint(
-            model_name='manga',
-            name='app_manga_unique_item_user',
+            model_name="manga",
+            name="app_manga_unique_item_user",
         ),
         migrations.RemoveConstraint(
-            model_name='movie',
-            name='app_movie_unique_item_user',
+            model_name="movie",
+            name="app_movie_unique_item_user",
         ),
         migrations.RemoveConstraint(
-            model_name='tv',
-            name='app_tv_unique_item_user',
+            model_name="tv",
+            name="app_tv_unique_item_user",
         ),
         migrations.RunPython(
             convert_media_repeats_to_instances,
             # No reverse operation as this is a one-way data migration
-            reverse_code=migrations.RunPython.noop
+            reverse_code=migrations.RunPython.noop,
         ),
         migrations.AddConstraint(
-            model_name='tv',
-            constraint=models.UniqueConstraint(fields=('user', 'item'), name='app_tv_unique_item_user'),
+            model_name="tv",
+            constraint=models.UniqueConstraint(
+                fields=("user", "item"), name="app_tv_unique_item_user"
+            ),
         ),
     ]

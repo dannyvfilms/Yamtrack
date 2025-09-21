@@ -125,7 +125,7 @@ def external_game(external_id, source=ExternalGameSource.STEAM):
         url = f"{base_url}/external_games"
         query = (
             f'fields game; where uid = "{external_id}" & '
-            f'external_game_source = {source};'
+            f"external_game_source = {source};"
         )
         headers = {
             "Client-ID": settings.IGDB_ID,

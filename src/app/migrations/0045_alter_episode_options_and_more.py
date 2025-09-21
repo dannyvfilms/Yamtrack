@@ -10,25 +10,23 @@ logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 1_000
 
+
 def convert_repeats_to_instances(apps, schema_editor):
-    Episode = apps.get_model('app', 'Episode')
-    HistoricalEpisode = apps.get_model('app', 'HistoricalEpisode')
+    Episode = apps.get_model("app", "Episode")
+    HistoricalEpisode = apps.get_model("app", "HistoricalEpisode")
 
     # Grab repeat episodes once so we can delete them later
     episodes_qs = (
-        Episode.objects
-        .filter(repeats__gt=0)
-        .select_related('item', 'related_season')
-        .order_by('pk')
+        Episode.objects.filter(repeats__gt=0)
+        .select_related("item", "related_season")
+        .order_by("pk")
     )
 
-    episode_ids = list(episodes_qs.values_list('pk', flat=True))
+    episode_ids = list(episodes_qs.values_list("pk", flat=True))
 
     # Prefetch all historic rows, grouped by original episode id
-    history_qs = (
-        HistoricalEpisode.objects
-        .filter(id__in=episode_ids)
-        .order_by('id', 'history_date')
+    history_qs = HistoricalEpisode.objects.filter(id__in=episode_ids).order_by(
+        "id", "history_date"
     )
 
     grouped_history = {
@@ -86,97 +84,113 @@ def _flush_pairs(pair_buffer, Episode, HistoricalEpisode):
     for created_ep, (_, hist_template) in zip(created_episodes, pair_buffer):
         historical_to_create.append(
             HistoricalEpisode(
-                id=created_ep.pk,         # required by django-simple-history
+                id=created_ep.pk,  # required by django-simple-history
                 history_date=hist_template.history_date,
-                history_type='+',
+                history_type="+",
                 history_user=hist_template.history_user,
                 end_date=hist_template.end_date,
                 repeats=0,
             )
         )
 
-    HistoricalEpisode.objects.bulk_create(
-        historical_to_create,
-        batch_size=BATCH_SIZE
-    )
+    HistoricalEpisode.objects.bulk_create(historical_to_create, batch_size=BATCH_SIZE)
+
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('app', '0044_fix_episode_images'),
+        ("app", "0044_fix_episode_images"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='anime',
-            name='created_at',
-            field=models.DateTimeField(auto_now_add=True, default=django.utils.timezone.now),
+            model_name="anime",
+            name="created_at",
+            field=models.DateTimeField(
+                auto_now_add=True, default=django.utils.timezone.now
+            ),
             preserve_default=False,
         ),
         migrations.AddField(
-            model_name='basicmedia',
-            name='created_at',
-            field=models.DateTimeField(auto_now_add=True, default=django.utils.timezone.now),
+            model_name="basicmedia",
+            name="created_at",
+            field=models.DateTimeField(
+                auto_now_add=True, default=django.utils.timezone.now
+            ),
             preserve_default=False,
         ),
         migrations.AddField(
-            model_name='book',
-            name='created_at',
-            field=models.DateTimeField(auto_now_add=True, default=django.utils.timezone.now),
+            model_name="book",
+            name="created_at",
+            field=models.DateTimeField(
+                auto_now_add=True, default=django.utils.timezone.now
+            ),
             preserve_default=False,
         ),
         migrations.AddField(
-            model_name='comic',
-            name='created_at',
-            field=models.DateTimeField(auto_now_add=True, default=django.utils.timezone.now),
+            model_name="comic",
+            name="created_at",
+            field=models.DateTimeField(
+                auto_now_add=True, default=django.utils.timezone.now
+            ),
             preserve_default=False,
         ),
         migrations.AddField(
-            model_name='episode',
-            name='created_at',
-            field=models.DateTimeField(auto_now_add=True, default=django.utils.timezone.now),
+            model_name="episode",
+            name="created_at",
+            field=models.DateTimeField(
+                auto_now_add=True, default=django.utils.timezone.now
+            ),
             preserve_default=False,
         ),
         migrations.AddField(
-            model_name='game',
-            name='created_at',
-            field=models.DateTimeField(auto_now_add=True, default=django.utils.timezone.now),
+            model_name="game",
+            name="created_at",
+            field=models.DateTimeField(
+                auto_now_add=True, default=django.utils.timezone.now
+            ),
             preserve_default=False,
         ),
         migrations.AddField(
-            model_name='manga',
-            name='created_at',
-            field=models.DateTimeField(auto_now_add=True, default=django.utils.timezone.now),
+            model_name="manga",
+            name="created_at",
+            field=models.DateTimeField(
+                auto_now_add=True, default=django.utils.timezone.now
+            ),
             preserve_default=False,
         ),
         migrations.AddField(
-            model_name='movie',
-            name='created_at',
-            field=models.DateTimeField(auto_now_add=True, default=django.utils.timezone.now),
+            model_name="movie",
+            name="created_at",
+            field=models.DateTimeField(
+                auto_now_add=True, default=django.utils.timezone.now
+            ),
             preserve_default=False,
         ),
         migrations.AddField(
-            model_name='season',
-            name='created_at',
-            field=models.DateTimeField(auto_now_add=True, default=django.utils.timezone.now),
+            model_name="season",
+            name="created_at",
+            field=models.DateTimeField(
+                auto_now_add=True, default=django.utils.timezone.now
+            ),
             preserve_default=False,
         ),
         migrations.AddField(
-            model_name='tv',
-            name='created_at',
-            field=models.DateTimeField(auto_now_add=True, default=django.utils.timezone.now),
+            model_name="tv",
+            name="created_at",
+            field=models.DateTimeField(
+                auto_now_add=True, default=django.utils.timezone.now
+            ),
             preserve_default=False,
         ),
         migrations.AlterModelOptions(
-            name='episode',
+            name="episode",
             options={},
         ),
         migrations.RemoveConstraint(
-            model_name='episode',
-            name='app_episode_unique_season_item',
+            model_name="episode",
+            name="app_episode_unique_season_item",
         ),
         migrations.RunPython(
-            convert_repeats_to_instances,
-            reverse_code=migrations.RunPython.noop
+            convert_repeats_to_instances, reverse_code=migrations.RunPython.noop
         ),
     ]

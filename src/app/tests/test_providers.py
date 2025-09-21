@@ -1275,7 +1275,9 @@ class ServicesTests(TestCase):
         """Test the get_media_metadata function for TMDB episodes that don't exist."""
         # Setup mock to raise ProviderAPIError
         mock_response = type(
-            "Response", (), {"status_code": 404, "text": "Episode not found"},
+            "Response",
+            (),
+            {"status_code": 404, "text": "Episode not found"},
         )()
         mock_error = type("Error", (), {"response": mock_response})()
         mock_episode.side_effect = services.ProviderAPIError(
@@ -1298,7 +1300,6 @@ class ServicesTests(TestCase):
 
         # Verify the correct function was called
         mock_episode.assert_called_once_with("1396", 1, "3")
-
 
     @patch("app.providers.hardcover.book")
     def test_get_media_metadata_hardcover_book(self, mock_book):

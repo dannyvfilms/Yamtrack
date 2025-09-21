@@ -20,7 +20,9 @@ def setup_sqlite_pragmas(sender, connection, **kwargs):  # noqa: ARG001
 
 
 @before_task_publish.connect
-def create_task_result_on_publish(sender=None, headers=None, body=None, **kwargs):  # noqa: ARG001
+def create_task_result_on_publish(
+    sender=None, headers=None, body=None, **kwargs
+):  # noqa: ARG001
     """Create a TaskResult object with PENDING status on task publish.
 
     https://github.com/celery/django-celery-results/issues/286#issuecomment-1279161047

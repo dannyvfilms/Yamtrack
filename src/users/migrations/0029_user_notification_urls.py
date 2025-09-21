@@ -4,15 +4,16 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('users', '0028_user_anime_status_user_book_status_user_game_status_and_more'),
+        ("users", "0028_user_anime_status_user_book_status_user_game_status_and_more"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='user',
-            name='notification_urls',
-            field=models.TextField(blank=True, help_text='Apprise URLs for notifications'),
+            model_name="user",
+            name="notification_urls",
+            field=models.TextField(
+                blank=True, help_text="Apprise URLs for notifications"
+            ),
         ),
     ]

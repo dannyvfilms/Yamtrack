@@ -4,9 +4,10 @@ from django.db import migrations, models
 from django.utils import timezone
 from datetime import time, timezone as dt_timezone
 
+
 def convert_dates_to_datetimes(apps, schema_editor):
     """Convert existing date values to datetime with max time in UTC."""
-    Event = apps.get_model('events', 'Event')
+    Event = apps.get_model("events", "Event")
 
     sentinel_time = time(
         11,
@@ -25,21 +26,16 @@ def convert_dates_to_datetimes(apps, schema_editor):
             event.save()
 
 
-
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('events', '0004_fix_anime_episode_numbers'),
+        ("events", "0004_fix_anime_episode_numbers"),
     ]
 
     operations = [
         migrations.AlterField(
-            model_name='event',
-            name='date',
+            model_name="event",
+            name="date",
             field=models.DateTimeField(),
         ),
-        migrations.RunPython(
-            convert_dates_to_datetimes,
-            migrations.RunPython.noop
-        ),
+        migrations.RunPython(convert_dates_to_datetimes, migrations.RunPython.noop),
     ]

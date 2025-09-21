@@ -4,20 +4,36 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('auth', '0012_alter_user_first_name_max_length'),
-        ('users', '0009_alter_user_options_squashed_0022_alter_user_last_search_type'),
+        ("auth", "0012_alter_user_first_name_max_length"),
+        ("users", "0009_alter_user_options_squashed_0022_alter_user_last_search_type"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='user',
-            name='home_sort',
-            field=models.CharField(choices=[('upcoming', 'Upcoming'), ('completion', 'Completion'), ('episodes_left', 'Episodes Left'), ('title', 'Title')], default='upcoming', max_length=20),
+            model_name="user",
+            name="home_sort",
+            field=models.CharField(
+                choices=[
+                    ("upcoming", "Upcoming"),
+                    ("completion", "Completion"),
+                    ("episodes_left", "Episodes Left"),
+                    ("title", "Title"),
+                ],
+                default="upcoming",
+                max_length=20,
+            ),
         ),
         migrations.AddConstraint(
-            model_name='user',
-            constraint=models.CheckConstraint(condition=models.Q(('home_sort__in', ['upcoming', 'completion', 'episodes_left', 'title'])), name='home_sort_valid'),
+            model_name="user",
+            constraint=models.CheckConstraint(
+                condition=models.Q(
+                    (
+                        "home_sort__in",
+                        ["upcoming", "completion", "episodes_left", "title"],
+                    )
+                ),
+                name="home_sort_valid",
+            ),
         ),
     ]

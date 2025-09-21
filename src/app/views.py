@@ -184,7 +184,9 @@ def media_search(request):
 
 
 @require_GET
-def media_details(request, source, media_type, media_id, title):  # noqa: ARG001 title for URL
+def media_details(
+    request, source, media_type, media_id, title
+):  # noqa: ARG001 title for URL
     """Return the details page for a media item."""
     media_metadata = services.get_media_metadata(media_type, media_id, source)
     user_medias = BasicMedia.objects.filter_media_prefetch(
@@ -205,7 +207,9 @@ def media_details(request, source, media_type, media_id, title):  # noqa: ARG001
 
 
 @require_GET
-def season_details(request, source, media_id, title, season_number):  # noqa: ARG001 For URL
+def season_details(
+    request, source, media_id, title, season_number
+):  # noqa: ARG001 For URL
     """Return the details page for a season."""
     tv_with_seasons_metadata = services.get_media_metadata(
         "tv_with_seasons",

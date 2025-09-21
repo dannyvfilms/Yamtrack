@@ -4,14 +4,13 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('events', '0009_fix_movie_episode_number'),
+        ("events", "0009_fix_movie_episode_number"),
     ]
 
     operations = [
         migrations.AlterModelOptions(
-            name='event',
-            options={'ordering': ['-datetime']},
+            name="event",
+            options={"ordering": ["-datetime"]},
         ),
     ]

@@ -7,18 +7,19 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def fix_null_history_users(apps, schema_editor):
-    HistoricalTV = apps.get_model('app', 'HistoricalTV')
-    HistoricalSeason = apps.get_model('app', 'HistoricalSeason')
-    HistoricalEpisode = apps.get_model('app', 'HistoricalEpisode')
-    HistoricalMovie = apps.get_model('app', 'HistoricalMovie')
-    HistoricalAnime = apps.get_model('app', 'HistoricalAnime')
 
-    TV = apps.get_model('app', 'TV')
-    Season = apps.get_model('app', 'Season')
-    Episode = apps.get_model('app', 'Episode')
-    Movie = apps.get_model('app', 'Movie')
-    Anime = apps.get_model('app', 'Anime')
+def fix_null_history_users(apps, schema_editor):
+    HistoricalTV = apps.get_model("app", "HistoricalTV")
+    HistoricalSeason = apps.get_model("app", "HistoricalSeason")
+    HistoricalEpisode = apps.get_model("app", "HistoricalEpisode")
+    HistoricalMovie = apps.get_model("app", "HistoricalMovie")
+    HistoricalAnime = apps.get_model("app", "HistoricalAnime")
+
+    TV = apps.get_model("app", "TV")
+    Season = apps.get_model("app", "Season")
+    Episode = apps.get_model("app", "Episode")
+    Movie = apps.get_model("app", "Movie")
+    Anime = apps.get_model("app", "Anime")
 
     def bulk_update_history(model, qs, user_id_field):
         with transaction.atomic():
@@ -37,51 +38,45 @@ def fix_null_history_users(apps, schema_editor):
 
     # Process TV records
     tv_qs = HistoricalTV.objects.filter(history_user_id__isnull=True).annotate(
-        user_id=Subquery(
-            TV.objects.filter(id=OuterRef('id')).values('user_id')[:1]
-        )
+        user_id=Subquery(TV.objects.filter(id=OuterRef("id")).values("user_id")[:1])
     )
-    bulk_update_history(HistoricalTV, tv_qs, 'user_id')
+    bulk_update_history(HistoricalTV, tv_qs, "user_id")
 
     # Process Season records
     season_qs = HistoricalSeason.objects.filter(history_user_id__isnull=True).annotate(
-        user_id=Subquery(
-            Season.objects.filter(id=OuterRef('id')).values('user_id')[:1]
-        )
+        user_id=Subquery(Season.objects.filter(id=OuterRef("id")).values("user_id")[:1])
     )
-    bulk_update_history(HistoricalSeason, season_qs, 'user_id')
+    bulk_update_history(HistoricalSeason, season_qs, "user_id")
 
     # Process Movie records
     movie_qs = HistoricalMovie.objects.filter(history_user_id__isnull=True).annotate(
-        user_id=Subquery(
-            Movie.objects.filter(id=OuterRef('id')).values('user_id')[:1]
-        )
+        user_id=Subquery(Movie.objects.filter(id=OuterRef("id")).values("user_id")[:1])
     )
-    bulk_update_history(HistoricalMovie, movie_qs, 'user_id')
+    bulk_update_history(HistoricalMovie, movie_qs, "user_id")
 
     # Process Anime records
     anime_qs = HistoricalAnime.objects.filter(history_user_id__isnull=True).annotate(
-        user_id=Subquery(
-            Anime.objects.filter(id=OuterRef('id')).values('user_id')[:1]
-        )
+        user_id=Subquery(Anime.objects.filter(id=OuterRef("id")).values("user_id")[:1])
     )
-    bulk_update_history(HistoricalAnime, anime_qs, 'user_id')
+    bulk_update_history(HistoricalAnime, anime_qs, "user_id")
 
     # Process Episode records (special case)
-    episode_qs = HistoricalEpisode.objects.filter(history_user_id__isnull=True).annotate(
+    episode_qs = HistoricalEpisode.objects.filter(
+        history_user_id__isnull=True
+    ).annotate(
         season_id=Subquery(
-            Episode.objects.filter(id=OuterRef('id')).values('related_season_id')[:1]
+            Episode.objects.filter(id=OuterRef("id")).values("related_season_id")[:1]
         ),
         user_id=Subquery(
-            Season.objects.filter(id=OuterRef('season_id')).values('user_id')[:1]
-        )
+            Season.objects.filter(id=OuterRef("season_id")).values("user_id")[:1]
+        ),
     )
-    bulk_update_history(HistoricalEpisode, episode_qs, 'user_id')
+    bulk_update_history(HistoricalEpisode, episode_qs, "user_id")
+
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('app', '0049_rename_progress_changed_anime_progressed_at_and_more'),
+        ("app", "0049_rename_progress_changed_anime_progressed_at_and_more"),
     ]
 
     operations = [

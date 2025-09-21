@@ -4,16 +4,20 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('app', '0022_item_source_squashed_0037_alter_item_media_type'),
-        ('users', '0029_user_notification_urls'),
+        ("app", "0022_item_source_squashed_0037_alter_item_media_type"),
+        ("users", "0029_user_notification_urls"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='user',
-            name='notification_excluded_items',
-            field=models.ManyToManyField(blank=True, help_text='Items excluded from notifications', related_name='excluded_by_users', to='app.item'),
+            model_name="user",
+            name="notification_excluded_items",
+            field=models.ManyToManyField(
+                blank=True,
+                help_text="Items excluded from notifications",
+                related_name="excluded_by_users",
+                to="app.item",
+            ),
         ),
     ]

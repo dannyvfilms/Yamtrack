@@ -4,15 +4,17 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('users', '0033_user_daily_digest_enabled_and_more'),
+        ("users", "0033_user_daily_digest_enabled_and_more"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='user',
-            name='plex_usernames',
-            field=models.TextField(blank=True, help_text='Comma-separated list of Plex usernames for webhook matching'),
+            model_name="user",
+            name="plex_usernames",
+            field=models.TextField(
+                blank=True,
+                help_text="Comma-separated list of Plex usernames for webhook matching",
+            ),
         ),
     ]

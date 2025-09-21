@@ -15,9 +15,7 @@ def fill_missing_tokens(apps, _):
         user.save(update_fields=["token"])
 
 
-
 class Migration(migrations.Migration):
-
     dependencies = [
         ("users", "0031_remove_user_last_search_type_valid_and_more"),
     ]

@@ -3,6 +3,7 @@
 import django.db.models.deletion
 from django.db import migrations, models
 
+
 def clone_items(apps, schema_editor):
     """Clone the items from the old model to the new one."""
     existing_items = apps.get_model("lists", "Item").objects.all()
@@ -23,25 +24,31 @@ def clone_items(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('app', '0018_item'),
-        ('lists', '0001_initial'),
+        ("app", "0018_item"),
+        ("lists", "0001_initial"),
     ]
 
     operations = [
         migrations.RunPython(clone_items),
         migrations.AlterField(
-            model_name='customlistitem',
-            name='item',
-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='app.item'),
+            model_name="customlistitem",
+            name="item",
+            field=models.ForeignKey(
+                on_delete=django.db.models.deletion.CASCADE, to="app.item"
+            ),
         ),
         migrations.AlterField(
-            model_name='customlist',
-            name='items',
-            field=models.ManyToManyField(blank=True, related_name='custom_lists', through='lists.CustomListItem', to='app.item'),
+            model_name="customlist",
+            name="items",
+            field=models.ManyToManyField(
+                blank=True,
+                related_name="custom_lists",
+                through="lists.CustomListItem",
+                to="app.item",
+            ),
         ),
         migrations.DeleteModel(
-            name='Item',
+            name="Item",
         ),
     ]

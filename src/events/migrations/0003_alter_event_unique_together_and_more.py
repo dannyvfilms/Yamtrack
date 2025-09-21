@@ -4,23 +4,28 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('app', '0031_alter_item_image'),
-        ('events', '0002_alter_event_unique_together'),
+        ("app", "0031_alter_item_image"),
+        ("events", "0002_alter_event_unique_together"),
     ]
 
     operations = [
         migrations.AlterUniqueTogether(
-            name='event',
+            name="event",
             unique_together=set(),
         ),
         migrations.AddConstraint(
-            model_name='event',
-            constraint=models.UniqueConstraint(fields=('item', 'episode_number'), name='unique_item_episode'),
+            model_name="event",
+            constraint=models.UniqueConstraint(
+                fields=("item", "episode_number"), name="unique_item_episode"
+            ),
         ),
         migrations.AddConstraint(
-            model_name='event',
-            constraint=models.UniqueConstraint(condition=models.Q(('episode_number__isnull', True)), fields=('item',), name='unique_item_null_episode'),
+            model_name="event",
+            constraint=models.UniqueConstraint(
+                condition=models.Q(("episode_number__isnull", True)),
+                fields=("item",),
+                name="unique_item_null_episode",
+            ),
         ),
     ]

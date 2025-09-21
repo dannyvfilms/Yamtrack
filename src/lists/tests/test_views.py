@@ -414,6 +414,73 @@ class ListDetailViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["current_sort"], "media_type")
 
+        # Test rating sorting
+        mock_update_preference.return_value = "rating"
+        response = self.client.get(
+            reverse("list_detail", args=[self.custom_list.id]) + "?sort=rating",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "rating")
+
+    @patch.object(get_user_model(), "update_preference")
+    @patch.object(CustomList, "user_can_view")
+    @patch("app.providers.services.get_media_metadata")
+    def test_list_detail_view_rating_sorting(
+        self,
+        mock_get_media_metadata,
+        mock_user_can_view,
+        mock_update_preference,
+    ):
+        """Test the list_detail view with rating sorting."""
+        mock_user_can_view.return_value = True
+        mock_update_preference.return_value = "rating"
+
+        # Mock the media metadata to avoid API calls
+        mock_get_media_metadata.return_value = {
+            "max_progress": 1,
+            "related": {"seasons": []},
+            "title": "Test Media",
+        }
+
+        # Create model instances with different ratings
+        Movie.objects.create(
+            item=self.movie_item,
+            status=Status.COMPLETED.value,
+            user=self.user,
+            score=8.5,
+        )
+
+        TV.objects.create(
+            item=self.tv_item,
+            status=Status.IN_PROGRESS.value,
+            user=self.user,
+            score=9.0,
+        )
+
+        Anime.objects.create(
+            item=self.anime_item,
+            status=Status.PLANNING.value,
+            user=self.user,
+            score=7.5,
+        )
+
+        # Test rating sorting - should be in descending order (highest first)
+        response = self.client.get(
+            reverse("list_detail", args=[self.custom_list.id]) + "?sort=rating",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "rating")
+
+        # Check that items are sorted by rating (highest first)
+        items = response.context["items"]
+        self.assertEqual(len(items), 3)
+        # First item should have highest rating (9.0)
+        self.assertEqual(items[0].media.score, 9.0)
+        # Second item should have second highest rating (8.5)
+        self.assertEqual(items[1].media.score, 8.5)
+        # Third item should have lowest rating (7.5)
+        self.assertEqual(items[2].media.score, 7.5)
+
     @patch.object(get_user_model(), "update_preference")
     @patch.object(CustomList, "user_can_view")
     def test_list_detail_view_htmx_request(

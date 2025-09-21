@@ -4,15 +4,14 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('events', '0006_alter_event_options_rename_date_event_datetime'),
+        ("events", "0006_alter_event_options_rename_date_event_datetime"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='event',
-            name='notification_sent',
+            model_name="event",
+            name="notification_sent",
             field=models.BooleanField(default=False),
         ),
     ]

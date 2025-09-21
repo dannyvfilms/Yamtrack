@@ -853,7 +853,6 @@ class MediaManagerTests(TestCase):
         )  # 11 total - 5 offset
         self.assertEqual(in_progress[MediaTypes.ANIME.value]["total"], 11)
 
-
     def test_get_media(self):
         """Test the get_media method."""
         manager = MediaManager()

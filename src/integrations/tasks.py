@@ -117,15 +117,18 @@ def import_hltb(file, user_id, mode):
     """Celery task for importing media data from HowLongToBeat."""
     return import_media(hltb.importer, file, user_id, mode)
 
+
 @shared_task(name="Import from Steam")
 def import_steam(username, user_id, mode):
     """Celery task for importing game data from Steam."""
     return import_media(steam.importer, username, user_id, mode)
 
+
 @shared_task(name="Import from IMDB")
 def import_imdb(file, user_id, mode):
     """Celery task for importing media data from IMDB."""
     return import_media(imdb.importer, file, user_id, mode)
+
 
 @shared_task(name="Import from GoodReads")
 def import_goodreads(file, user_id, mode):

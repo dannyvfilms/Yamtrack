@@ -4,11 +4,11 @@ from django.db import migrations
 
 
 def delete_single_anime_events(apps, schema_editor):
-    Event = apps.get_model('events', 'Event')
-    Item = apps.get_model('app', 'Item')
+    Event = apps.get_model("events", "Event")
+    Item = apps.get_model("app", "Item")
 
     # Get all anime items
-    anime_items = Item.objects.filter(media_type='anime')
+    anime_items = Item.objects.filter(media_type="anime")
 
     for item in anime_items:
         # Get all events for this anime item
@@ -20,11 +20,12 @@ def delete_single_anime_events(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('events', '0012_remove_event_unique_item_episode_and_more'),
+        ("events", "0012_remove_event_unique_item_episode_and_more"),
     ]
 
     operations = [
-        migrations.RunPython(delete_single_anime_events, reverse_code=migrations.RunPython.noop),
+        migrations.RunPython(
+            delete_single_anime_events, reverse_code=migrations.RunPython.noop
+        ),
     ]

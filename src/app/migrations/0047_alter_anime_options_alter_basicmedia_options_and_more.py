@@ -4,10 +4,8 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('app', '0046_alter_anime_options_alter_basicmedia_options_and_more'),
+        ("app", "0046_alter_anime_options_alter_basicmedia_options_and_more"),
     ]
 
-    operations = [
-    ]
+    operations = []

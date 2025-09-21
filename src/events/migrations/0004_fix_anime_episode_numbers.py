@@ -12,16 +12,16 @@ def fix_anime_episode_numbers(apps, schema_editor):
     This migration identifies events for each anime item, checks if they need fixing,
     and deletes them so they can be recreated correctly.
     """
-    Item = apps.get_model('app', 'Item')
-    Event = apps.get_model('events', 'Event')
+    Item = apps.get_model("app", "Item")
+    Event = apps.get_model("events", "Event")
 
     # Get all anime items
-    anime_items = Item.objects.filter(media_type='anime')
+    anime_items = Item.objects.filter(media_type="anime")
     deleted_items_count = 0
 
     for item in anime_items:
         # Get all events for this anime item, ordered by date
-        events = Event.objects.filter(item=item).order_by('date')
+        events = Event.objects.filter(item=item).order_by("date")
 
         # Skip if there are no events or only one event
         if events.count() <= 1:
@@ -29,14 +29,22 @@ def fix_anime_episode_numbers(apps, schema_editor):
 
         # Check if the first episode number is greater than 1
         first_episode = events.first()
-        if first_episode and first_episode.episode_number and first_episode.episode_number > 1:
+        if (
+            first_episode
+            and first_episode.episode_number
+            and first_episode.episode_number > 1
+        ):
             events.delete()
             deleted_items_count += 1
-            logging.info(f"Deleted events for anime {item.title} (ID: {item.media_id}) - first episode was {first_episode.episode_number}")
+            logging.info(
+                f"Deleted events for anime {item.title} (ID: {item.media_id}) - first episode was {first_episode.episode_number}"
+            )
 
     # Only run the task if we actually deleted any events
     if deleted_items_count > 0:
-        logging.info(f"Deleted events for {deleted_items_count} anime items, scheduling calendar reload")
+        logging.info(
+            f"Deleted events for {deleted_items_count} anime items, scheduling calendar reload"
+        )
         tasks.reload_calendar.delay()
 
 
@@ -46,10 +54,10 @@ def reverse_fix(apps, schema_editor):
     """
     pass
 
-class Migration(migrations.Migration):
 
+class Migration(migrations.Migration):
     dependencies = [
-        ('events', '0003_alter_event_unique_together_and_more'),
+        ("events", "0003_alter_event_unique_together_and_more"),
     ]
 
     operations = [
