@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import date, timedelta
 
 from django import template
 from django.conf import settings
@@ -9,6 +10,7 @@ from unidecode import unidecode
 
 from app import media_type_config
 from app.models import MediaTypes, Sources, Status
+from users.models import TimeFormatChoices
 
 register = template.Library()
 
@@ -213,9 +215,6 @@ def user_event_time(event, user):
         return ""
     
     try:
-        from users.models import TimeFormatChoices
-        from django.utils import timezone, formats
-        
         local_dt = timezone.localtime(event.datetime)
         
         if user.time_format == TimeFormatChoices.SYSTEM_DEFAULT:
@@ -234,9 +233,8 @@ def user_event_time(event, user):
             time_str = formats.date_format(local_dt, "TIME_FORMAT")
         
         return f"at {time_str}"
-    except Exception:
+    except (ValueError, TypeError, AttributeError):
         # Fallback to default format if there's an error
-        from django.utils import timezone, formats
         local_dt = timezone.localtime(event.datetime)
         return f"at {local_dt.strftime('%H:%M')}"
 
@@ -570,7 +568,6 @@ def format_date_range_display(start_date, end_date):
     if hasattr(end_date, 'date'):
         end_date = end_date.date()
     
-    from datetime import date, timedelta
     today = date.today()
     
     # Check for predefined ranges

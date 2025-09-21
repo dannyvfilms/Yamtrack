@@ -249,17 +249,17 @@ def preferences(request):
         if request.user.is_demo:
             messages.error(request, "This section is view-only for demo accounts.")
             return redirect("preferences")
-        
+
         # Process form submission for user preferences
         date_format = request.POST.get("date_format")
         time_format = request.POST.get("time_format")
-        
+
         if date_format and date_format in [choice[0] for choice in DateFormatChoices.choices]:
             request.user.date_format = date_format
-        
+
         if time_format and time_format in [choice[0] for choice in TimeFormatChoices.choices]:
             request.user.time_format = time_format
-        
+
         # Save changes and redirect
         request.user.save()
         messages.success(request, "Preferences updated successfully.")

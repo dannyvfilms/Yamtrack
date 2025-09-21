@@ -1,6 +1,11 @@
+from datetime import datetime
+
 from django import template
 from django.templatetags.static import static
+from django.utils import formats, timezone
 from django.utils.html import format_html
+
+from users.models import DateFormatChoices, TimeFormatChoices
 
 register = template.Library()
 
@@ -108,10 +113,6 @@ def user_date_format(date, user):
         return ""
     
     try:
-        from users.models import DateFormatChoices
-        from django.utils import timezone, formats
-        from datetime import datetime
-        
         # Simplified version - just handle the basic case
         if isinstance(date, str):
             try:
@@ -147,12 +148,11 @@ def user_date_format(date, user):
             # Default to system format
             return formats.date_format(local_dt, "DATE_FORMAT")
             
-    except Exception as e:
+    except (ValueError, TypeError, AttributeError):
         # Fallback to default format if there's an error
         try:
-            from django.utils import formats
             return formats.date_format(date, "DATE_FORMAT")
-        except Exception:
+        except (ValueError, TypeError, AttributeError):
             # If all else fails, return the original value as a string
             return str(date)
 
@@ -164,10 +164,6 @@ def user_time_format(datetime_obj, user):
         return ""
     
     try:
-        from users.models import TimeFormatChoices
-        from django.utils import timezone, formats
-        from datetime import datetime
-        
         # Parse string dates if needed
         datetime_obj = _parse_datetime_string(datetime_obj)
         
@@ -178,12 +174,11 @@ def user_time_format(datetime_obj, user):
         local_dt = timezone.localtime(datetime_obj)
         return _format_time_by_preference(local_dt, user, formats)
         
-    except Exception:
+    except (ValueError, TypeError, AttributeError):
         # Fallback to default format if there's an error
         try:
-            from django.utils import formats
             return formats.date_format(datetime_obj, "TIME_FORMAT")
-        except Exception:
+        except (ValueError, TypeError, AttributeError):
             # If all else fails, return the original value as a string
             return str(datetime_obj)
 
@@ -195,13 +190,12 @@ def _parse_datetime_string(datetime_obj):
             # Try to parse common datetime formats
             for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M', '%H:%M:%S', '%H:%M']:
                 try:
-                    from datetime import datetime
                     return datetime.strptime(datetime_obj, fmt)
                 except ValueError:
                     continue
             # If we can't parse the string, return it as-is
             return datetime_obj
-        except Exception:
+        except (ValueError, TypeError):
             # If parsing fails, return the original string
             return datetime_obj
     return datetime_obj
@@ -209,8 +203,6 @@ def _parse_datetime_string(datetime_obj):
 
 def _format_time_by_preference(local_dt, user, formats):
     """Format time according to user preference."""
-    from users.models import TimeFormatChoices
-    
     if user.time_format == TimeFormatChoices.SYSTEM_DEFAULT:
         return formats.date_format(local_dt, "TIME_FORMAT")
     elif user.time_format == TimeFormatChoices.H_MM_AMPM:
@@ -234,8 +226,6 @@ def user_datetime_format(datetime_obj, user):
         return ""
     
     try:
-        from datetime import datetime
-        
         # Parse string dates if needed
         datetime_obj = _parse_datetime_string(datetime_obj)
         
@@ -246,11 +236,10 @@ def user_datetime_format(datetime_obj, user):
         date_part = user_date_format(datetime_obj, user)
         time_part = user_time_format(datetime_obj, user)
         return f"{date_part} {time_part}"
-    except Exception:
+    except (ValueError, TypeError, AttributeError):
         # Fallback to default format if there's an error
         try:
-            from django.utils import formats
             return formats.date_format(datetime_obj, "DATETIME_FORMAT")
-        except Exception:
+        except (ValueError, TypeError, AttributeError):
             # If all else fails, return the original value as a string
             return str(datetime_obj)
