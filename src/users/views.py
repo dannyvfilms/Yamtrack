@@ -14,6 +14,7 @@ from django_celery_beat.models import PeriodicTask
 
 from app.models import Item, MediaTypes
 from users.forms import NotificationSettingsForm, PasswordChangeForm, UserUpdateForm
+from users.models import DateFormatChoices, TimeFormatChoices
 
 logger = logging.getLogger(__name__)
 
@@ -240,23 +241,50 @@ def sidebar(request):
     return redirect("sidebar")
 
 
+@require_http_methods(["GET", "POST"])
+def preferences(request):
+    """Render the preferences settings page."""
+    if request.method == "POST":
+        # Prevent demo users from updating preferences
+        if request.user.is_demo:
+            messages.error(request, "This section is view-only for demo accounts.")
+            return redirect("preferences")
+
+        # Process form submission for user preferences
+        date_format = request.POST.get("date_format")
+        time_format = request.POST.get("time_format")
+
+        if date_format and date_format in [choice[0] for choice in DateFormatChoices.choices]:
+            request.user.date_format = date_format
+
+        if time_format and time_format in [choice[0] for choice in TimeFormatChoices.choices]:
+            request.user.time_format = time_format
+
+        # Save changes and redirect
+        request.user.save()
+        messages.success(request, "Preferences updated successfully.")
+        return redirect("preferences")
+
+    return render(request, "users/preferences.html")
+
+
 @require_GET
 def integrations(request):
     """Render the integrations settings page."""
-    return render(request, "users/integrations.html")
+    return render(request, "users/integrations.html", {"user": request.user})
 
 
 @require_GET
 def import_data(request):
     """Render the import data settings page."""
     import_tasks = request.user.get_import_tasks()
-    return render(request, "users/import_data.html", {"import_tasks": import_tasks})
+    return render(request, "users/import_data.html", {"user": request.user, "import_tasks": import_tasks})
 
 
 @require_GET
 def export_data(request):
     """Render the export data settings page."""
-    return render(request, "users/export_data.html")
+    return render(request, "users/export_data.html", {"user": request.user})
 
 @require_GET
 def advanced(request):
@@ -266,7 +294,7 @@ def advanced(request):
 @require_GET
 def about(request):
     """Render the about page."""
-    return render(request, "users/about.html", {"version": settings.VERSION})
+    return render(request, "users/about.html", {"user": request.user, "version": settings.VERSION})
 
 
 @require_POST

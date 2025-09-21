@@ -79,6 +79,7 @@ def calendar(request):
     today = timezone.localdate()
 
     context = {
+        "user": request.user,
         "calendar": calendar_format,
         "month": month,
         "month_name": month_name,

@@ -1,0 +1,203 @@
+{% extends "users/base.html" %}
+{% load user_tags %}
+{% load app_tags %}
+
+{% block title %}
+  Preferences - Yamtrack
+{% endblock title %}
+
+{% block settings_content %}
+  <div class="bg-[#2a2f35] rounded-lg p-6">
+    <div class="flex items-center mb-4">
+      <svg xmlns="http://www.w3.org/2000/svg"
+           width="24"
+           height="24"
+           viewBox="0 0 24 24"
+           fill="none"
+           stroke="currentColor"
+           stroke-width="2"
+           stroke-linecap="round"
+           stroke-linejoin="round"
+           class="w-6 h-6 text-indigo-400 mr-3">
+        <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path>
+        <circle cx="12" cy="12" r="3"></circle>
+      </svg>
+      <h2 class="text-xl font-semibold">User Preferences</h2>
+    </div>
+    <p class="text-gray-400 mb-5 text-sm">Customize your Yamtrack experience with these preference settings.</p>
+    
+    <form method="post">
+      {% csrf_token %}
+      
+      <!-- Display Preferences Section -->
+      <div class="mb-6">
+        <h3 class="text-lg font-medium text-gray-200 mb-3">Display Preferences</h3>
+        
+        <!-- Date Format -->
+        <div class="p-3 bg-[#39404b] rounded-md mb-4">
+          <div class="flex items-center justify-between mb-2">
+            <label class="text-gray-200 text-sm font-medium">Date Format</label>
+            <span class="text-gray-400 text-xs">Choose how dates are displayed throughout the application.</span>
+          </div>
+          <div class="relative" x-data="{ open: false, selectedValue: '{{ user.date_format }}', selectedLabel: '{{ user.date_format|date_format_display }}' }">
+            <button type="button"
+                    @click="open = !open"
+                    @click.outside="open = false"
+                    class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
+              <span x-text="selectedLabel"></span>
+              <svg xmlns="http://www.w3.org/2000/svg"
+                   width="24"
+                   height="24"
+                   viewBox="0 0 24 24"
+                   fill="none"
+                   stroke="currentColor"
+                   stroke-width="2"
+                   stroke-linecap="round"
+                   stroke-linejoin="round"
+                   class="w-4 h-4 text-gray-400">
+                <path d="m6 9 6 6 6-6"></path>
+              </svg>
+            </button>
+            <div x-show="open"
+                 x-transition:enter="transition ease-out duration-100"
+                 x-transition:enter-start="transform opacity-0 scale-95"
+                 x-transition:enter-end="transform opacity-100 scale-100"
+                 x-transition:leave="transition ease-in duration-75"
+                 x-transition:leave-start="transform opacity-100 scale-100"
+                 x-transition:leave-end="transform opacity-0 scale-95"
+                 class="absolute left-0 right-0 mt-2 py-1 bg-[#272c31] rounded-md shadow-lg overflow-hidden z-10 border border-gray-600">
+              <button type="button" 
+                      @click="selectedValue = 'system_default'; selectedLabel = 'System default (locale) — Aug 12, 2025 / 12 Aug 2025'; open = false"
+                      class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                System default (locale) — Aug 12, 2025 / 12 Aug 2025
+              </button>
+              <button type="button" 
+                      @click="selectedValue = 'iso_8601'; selectedLabel = 'ISO 8601 — 2025-08-12'; open = false"
+                      class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                ISO 8601 — 2025-08-12
+              </button>
+              <button type="button" 
+                      @click="selectedValue = 'month_d_yyyy'; selectedLabel = 'Month D, YYYY — Aug 12, 2025'; open = false"
+                      class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                Month D, YYYY — Aug 12, 2025
+              </button>
+              <button type="button" 
+                      @click="selectedValue = 'd_mon_yyyy'; selectedLabel = 'D Mon YYYY — 12 Aug 2025'; open = false"
+                      class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                D Mon YYYY — 12 Aug 2025
+              </button>
+              <button type="button" 
+                      @click="selectedValue = 'm_d_yyyy'; selectedLabel = 'M/D/YYYY — 08/12/2025'; open = false"
+                      class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                M/D/YYYY — 08/12/2025
+              </button>
+              <button type="button" 
+                      @click="selectedValue = 'd_m_yyyy'; selectedLabel = 'D/M/YYYY — 12/08/2025'; open = false"
+                      class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                D/M/YYYY — 12/08/2025
+              </button>
+              <button type="button" 
+                      @click="selectedValue = 'dd_mm_yyyy'; selectedLabel = 'DD.MM.YYYY — 12.08.2025'; open = false"
+                      class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                DD.MM.YYYY — 12.08.2025
+              </button>
+              <button type="button" 
+                      @click="selectedValue = 'yyyy_mm_dd'; selectedLabel = 'YYYY/MM/DD — 2025/08/12'; open = false"
+                      class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                YYYY/MM/DD — 2025/08/12
+              </button>
+            </div>
+            <input type="hidden" name="date_format" x-bind:value="selectedValue">
+          </div>
+        </div>
+
+        <!-- Time Format -->
+        <div class="p-3 bg-[#39404b] rounded-md">
+          <div class="flex items-center justify-between mb-2">
+            <label class="text-gray-200 text-sm font-medium">Time Format</label>
+            <span class="text-gray-400 text-xs">Choose how times are displayed throughout the application.</span>
+          </div>
+          <div class="relative" x-data="{ open: false, selectedValue: '{{ user.time_format }}', selectedLabel: '{{ user.time_format|time_format_display }}' }">
+            <button type="button"
+                    @click="open = !open"
+                    @click.outside="open = false"
+                    class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
+              <span x-text="selectedLabel"></span>
+              <svg xmlns="http://www.w3.org/2000/svg"
+                   width="24"
+                   height="24"
+                   viewBox="0 0 24 24"
+                   fill="none"
+                   stroke="currentColor"
+                   stroke-width="2"
+                   stroke-linecap="round"
+                   stroke-linejoin="round"
+                   class="w-4 h-4 text-gray-400">
+                <path d="m6 9 6 6 6-6"></path>
+              </svg>
+            </button>
+            <div x-show="open"
+                 x-transition:enter="transition ease-out duration-100"
+                 x-transition:enter-start="transform opacity-0 scale-95"
+                 x-transition:enter-end="transform opacity-100 scale-100"
+                 x-transition:leave="transition ease-in duration-75"
+                 x-transition:leave-start="transform opacity-100 scale-100"
+                 x-transition:leave-end="transform opacity-0 scale-95"
+                 class="absolute left-0 right-0 mt-2 py-1 bg-[#272c31] rounded-md shadow-lg overflow-hidden z-10 border border-gray-600">
+              <button type="button" 
+                      @click="selectedValue = 'system_default'; selectedLabel = 'System default (locale) — 6:45 PM / 18:45'; open = false"
+                      class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                System default (locale) — 6:45 PM / 18:45
+              </button>
+              <button type="button" 
+                      @click="selectedValue = 'h_mm_ampm'; selectedLabel = '12-hour (h:mm AM/PM) — 6:45 PM'; open = false"
+                      class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                12-hour (h:mm AM/PM) — 6:45 PM
+              </button>
+              <button type="button" 
+                      @click="selectedValue = 'hh_mm_ampm'; selectedLabel = '12-hour, leading zero (hh:mm AM/PM) — 06:45 PM'; open = false"
+                      class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                12-hour, leading zero (hh:mm AM/PM) — 06:45 PM
+              </button>
+              <button type="button" 
+                      @click="selectedValue = 'hh_mm'; selectedLabel = '24-hour (HH:mm) — 18:45'; open = false"
+                      class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                24-hour (HH:mm) — 18:45
+              </button>
+              <button type="button" 
+                      @click="selectedValue = 'hh_mm_ss'; selectedLabel = '24-hour with seconds (HH:mm:ss) — 18:45:00'; open = false"
+                      class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                24-hour with seconds (HH:mm:ss) — 18:45:00
+              </button>
+            </div>
+            <input type="hidden" name="time_format" x-bind:value="selectedValue">
+          </div>
+        </div>
+      </div>
+
+      <div class="border-t border-gray-600 my-5"></div>
+
+      <!-- Save Button -->
+      <div class="mt-5 pt-4 border-gray-600">
+        <button type="submit"
+                class="flex items-center px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors text-sm cursor-pointer">
+          <svg xmlns="http://www.w3.org/2000/svg"
+               width="24"
+               height="24"
+               viewBox="0 0 24 24"
+               fill="none"
+               stroke="currentColor"
+               stroke-width="2"
+               stroke-linecap="round"
+               stroke-linejoin="round"
+               class="w-4 h-4 mr-2">
+            <path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 0 2 2H5a2 2 0 0 0-2-2V5a2 2 0 0 1 2-2z"></path>
+            <path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"></path>
+            <path d="M7 3v4a1 1 0 0 0 1 1h7"></path>
+          </svg>
+          Save Preferences
+        </button>
+      </div>
+    </form>
+  </div>
+{% endblock settings_content %}

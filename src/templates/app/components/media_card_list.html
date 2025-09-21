@@ -126,7 +126,7 @@
   </div>
 
   {% if item.media_type == MediaTypes.EPISODE.value %}
-    {% include "app/components/fill_track_episode.html" with request=request media=item episode=item episode_title=title csrf_token=csrf_token TRACK_TIME=TRACK_TIME only %}
+    {% include "app/components/fill_track_episode.html" with request=request media=item episode=item episode_title=title csrf_token=csrf_token TRACK_TIME=TRACK_TIME user=user only %}
   {% else %}
     {# Track Modal #}
     <div x-show="trackOpen"

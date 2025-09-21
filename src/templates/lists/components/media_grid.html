@@ -2,6 +2,6 @@
 
 {% for item in items %}
   <div {% if forloop.last and has_next %} hx-get="{% url 'list_detail' custom_list.id %}?page={{ next_page_number }}" hx-trigger="revealed threshold:200px" hx-swap="afterend" hx-include="#filter-form" hx-indicator="#loading-indicator" {% endif %}>
-    {% include "app/components/media_card.html" with media=item.media item=item title=item from_grid=True %}
+    {% include "app/components/media_card.html" with media=item.media item=item title=item from_grid=True user=user %}
   </div>
 {% endfor %}

@@ -1,4 +1,5 @@
 {% load app_tags %}
+{% load user_tags %}
 
 <div class="{% if secondary_color %}bg-[#39404b]{% else %}bg-[#2a2f35]{% endif %} rounded-lg overflow-hidden shadow-lg relative"
      x-data="{ trackOpen: false, listsOpen: false, historyOpen: false }">
@@ -87,9 +88,9 @@
           {% endif %}
 
           {% if media.aggregated_end_date is not None %}
-            <span class="text-sm text-white">{{ media.aggregated_end_date|date:"SHORT_DATE_FORMAT" }}</span>
+            <span class="text-sm text-white">{{ media.aggregated_end_date|user_date_format:user }}</span>
           {% elif media.aggregated_start_date is not None %}
-            <span class="text-sm text-white">{{ media.aggregated_start_date|date:"SHORT_DATE_FORMAT" }}</span>
+            <span class="text-sm text-white">{{ media.aggregated_start_date|user_date_format:user }}</span>
           {% endif %}
         {% else %}
           {% if media.status == Status.COMPLETED.value %}
@@ -168,9 +169,9 @@
           {% endif %}
 
           {% if media.end_date is not None %}
-            <span class="text-sm text-white">{{ media.end_date|date:"SHORT_DATE_FORMAT" }}</span>
+            <span class="text-sm text-white">{{ media.end_date|user_date_format:user }}</span>
           {% elif media.start_date is not None %}
-            <span class="text-sm text-white">{{ media.start_date|date:"SHORT_DATE_FORMAT" }}</span>
+            <span class="text-sm text-white">{{ media.start_date|user_date_format:user }}</span>
           {% endif %}
         {% endif %}
       </div>
@@ -393,7 +394,7 @@
   </div>
 
   {% if item.media_type == MediaTypes.EPISODE.value %}
-    {% include "app/components/fill_track_episode.html" with request=request media=item episode=item episode_title=title csrf_token=csrf_token TRACK_TIME=TRACK_TIME only %}
+    {% include "app/components/fill_track_episode.html" with request=request media=item episode=item episode_title=title csrf_token=csrf_token TRACK_TIME=TRACK_TIME user=user only %}
   {% else %}
     {# Track Modal #}
     <div x-show="trackOpen"

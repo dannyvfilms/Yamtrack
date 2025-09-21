@@ -1,4 +1,5 @@
 {% load app_tags %}
+{% load user_tags %}
 
 {% for media in media_list %}
   <tr class="hover:bg-[#39404b] transition-colors cursor-pointer hover-tap"
@@ -163,7 +164,7 @@
 
     {% if media.aggregated_start_date %}
       <td class="p-2 text-center">
-        <div class="font-medium">{{ media.aggregated_start_date|date:"SHORT_DATE_FORMAT" }}</div>
+        <div class="font-medium">{{ media.aggregated_start_date|user_date_format:user }}</div>
         {% if media.repeats > 1 %}
           <div class="text-xs text-indigo-400 mt-1">
             <span>Earliest</span>
@@ -171,7 +172,7 @@
         {% endif %}
       </td>
     {% elif media.start_date %}
-      <td class="p-2 text-center">{{ media.start_date|date:"SHORT_DATE_FORMAT" }}</td>
+      <td class="p-2 text-center">{{ media.start_date|user_date_format:user }}</td>
     {% else %}
       <td class="p-2 text-center">
         <span class="text-gray-500">-</span>
@@ -180,7 +181,7 @@
 
     {% if media.aggregated_end_date %}
       <td class="p-2 text-center">
-        <div class="font-medium">{{ media.aggregated_end_date|date:"SHORT_DATE_FORMAT" }}</div>
+        <div class="font-medium">{{ media.aggregated_end_date|user_date_format:user }}</div>
         {% if media.repeats > 1 %}
           <div class="text-xs text-indigo-400 mt-1">
             <span>Latest</span>
@@ -188,7 +189,7 @@
         {% endif %}
       </td>
     {% elif media.end_date %}
-      <td class="p-2 text-center">{{ media.end_date|date:"SHORT_DATE_FORMAT" }}</td>
+      <td class="p-2 text-center">{{ media.end_date|user_date_format:user }}</td>
     {% else %}
       <td class="p-2 text-center">
         <span class="text-gray-500">-</span>

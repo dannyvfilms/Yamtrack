@@ -1,4 +1,5 @@
 {% load app_tags %}
+{% load user_tags %}
 
 
 {# Track Episode Modal #}
@@ -59,7 +60,7 @@
 
               {% for entry in episode.history %}
                 <div class="flex items-center justify-between bg-[#343a40] rounded-md p-3 border border-gray-600">
-                  <div class="text-sm text-white">{{ entry.end_date|date_tracker_format|default_if_none:"No date provided" }}</div>
+                  <div class="text-sm text-white">{{ entry.end_date|user_date_format:user|default_if_none:"No date provided" }}</div>
                   <form method="post"
                         action="{% url 'media_delete' %}?next={{ request.path }}">
                     {% csrf_token %}
@@ -101,7 +102,7 @@
                    x-model="inputDateTime">
             {% if episode.air_date %}
               <button type="button"
-                      @click="inputDateTime = inputType === 'datetime-local' ? '{{ episode.air_date }}T{% now "H:i" %}' : '{{ episode.air_date }}'"
+                      @click="inputDateTime = inputType === 'datetime-local' ? '{{ episode.air_date|date:'Y-m-d' }}T{% now "H:i" %}' : '{{ episode.air_date|date:'Y-m-d' }}'"
                       class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center text-sm text-indigo-400 hover:text-indigo-300 transition-colors bg-[#2a2f35] px-2 py-1 rounded cursor-pointer">
                 <svg xmlns="http://www.w3.org/2000/svg"
                      width="24"

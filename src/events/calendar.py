@@ -566,7 +566,13 @@ def get_episode_datetime(episode, season_number, episode_number, tvmaze_map):
     # Fall back to TMDB data (date only)
     if episode["air_date"]:
         try:
-            return date_parser(episode["air_date"])
+            # Handle both string and datetime air dates
+            if hasattr(episode["air_date"], 'date'):
+                # It's already a datetime object
+                return episode["air_date"]
+            else:
+                # It's a string, parse it
+                return date_parser(episode["air_date"])
         except ValueError:
             logger.warning(
                 "Invalid air date for S%sE%s from TMDB: %s",

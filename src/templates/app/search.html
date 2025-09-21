@@ -61,12 +61,12 @@
     <div {% if layout == 'grid' %}
          class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
       {% for item in data.results %}
-        {% include "app/components/media_card.html" with item=item title=item.title %}
+        {% include "app/components/media_card.html" with item=item title=item.title user=user %}
       {% endfor %}
     {% else %}
       class="grid grid-cols-1 gap-4">
       {% for item in data.results %}
-        {% include "app/components/media_card_list.html" with item=item title=item.title %}
+        {% include "app/components/media_card_list.html" with item=item title=item.title user=user %}
       {% endfor %}
     {% endif %}
   </div>

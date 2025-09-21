@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import date, timedelta
 
 from django import template
 from django.conf import settings
@@ -9,6 +10,7 @@ from unidecode import unidecode
 
 from app import media_type_config
 from app.models import MediaTypes, Sources, Status
+from users.models import TimeFormatChoices
 
 register = template.Library()
 
@@ -204,6 +206,37 @@ def natural_day(value):
 
     # For dates further away
     return value.strftime("%b %d")
+
+
+@register.filter
+def user_event_time(event, user):
+    """Format event time according to user's time format preference."""
+    if not event or not user or event.is_sentinel_time:
+        return ""
+    
+    try:
+        local_dt = timezone.localtime(event.datetime)
+        
+        if user.time_format == TimeFormatChoices.SYSTEM_DEFAULT:
+            time_str = formats.date_format(local_dt, "TIME_FORMAT")
+        elif user.time_format == TimeFormatChoices.H_MM_AMPM:
+            # Use %I and manually remove leading zero for cross-platform compatibility
+            hour = str(local_dt.hour % 12 or 12)  # Convert 0 to 12 for 12-hour format
+            time_str = f"{hour}:{local_dt.strftime('%M %p')}"
+        elif user.time_format == TimeFormatChoices.HH_MM_AMPM:
+            time_str = local_dt.strftime("%I:%M %p")
+        elif user.time_format == TimeFormatChoices.HH_MM:
+            time_str = local_dt.strftime("%H:%M")
+        elif user.time_format == TimeFormatChoices.HH_MM_SS:
+            time_str = local_dt.strftime("%H:%M:%S")
+        else:
+            time_str = formats.date_format(local_dt, "TIME_FORMAT")
+        
+        return f"at {time_str}"
+    except (ValueError, TypeError, AttributeError):
+        # Fallback to default format if there's an error
+        local_dt = timezone.localtime(event.datetime)
+        return f"at {local_dt.strftime('%H:%M')}"
 
 
 @register.filter
@@ -535,7 +568,6 @@ def format_date_range_display(start_date, end_date):
     if hasattr(end_date, 'date'):
         end_date = end_date.date()
     
-    from datetime import date, timedelta
     today = date.today()
     
     # Check for predefined ranges

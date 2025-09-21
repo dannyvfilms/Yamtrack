@@ -222,6 +222,7 @@ def list_detail(request, list_id):
 
     # Base context for both full and partial responses
     context = {
+        "user": request.user,
         "custom_list": custom_list,
         "items": items_page,
         "has_next": items_page.has_next(),

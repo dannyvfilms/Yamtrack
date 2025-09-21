@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% load static %}
 {% load app_tags %}
+{% load user_tags %}
 
 {% block title %}
   Statistics - Yamtrack
@@ -630,9 +631,9 @@
                         </svg>
                       {% endif %}
                       {% if item.media.end_date is not None %}
-                        <span class="text-sm text-white">{{ item.media.end_date|date:"SHORT_DATE_FORMAT" }}</span>
+                        <span class="text-sm text-white">{{ item.media.end_date|user_date_format:user }}</span>
                       {% elif item.media.start_date is not None %}
-                        <span class="text-sm text-white">{{ item.media.start_date|date:"SHORT_DATE_FORMAT" }}</span>
+                        <span class="text-sm text-white">{{ item.media.start_date|user_date_format:user }}</span>
                       {% endif %}
                     </div>
                   {% endif %}
@@ -705,9 +706,9 @@
                         </svg>
                       {% endif %}
                       {% if item.media.end_date is not None %}
-                        <span class="text-sm text-white">{{ item.media.end_date|date:"SHORT_DATE_FORMAT" }}</span>
+                        <span class="text-sm text-white">{{ item.media.end_date|user_date_format:user }}</span>
                       {% elif item.media.start_date is not None %}
-                        <span class="text-sm text-white">{{ item.media.start_date|date:"SHORT_DATE_FORMAT" }}</span>
+                        <span class="text-sm text-white">{{ item.media.start_date|user_date_format:user }}</span>
                       {% endif %}
                     </div>
                   {% endif %}
@@ -780,9 +781,9 @@
                         </svg>
                       {% endif %}
                       {% if item.media.end_date is not None %}
-                        <span class="text-sm text-white">{{ item.media.end_date|date:"SHORT_DATE_FORMAT" }}</span>
+                        <span class="text-sm text-white">{{ item.media.end_date|user_date_format:user }}</span>
                       {% elif item.media.start_date is not None %}
-                        <span class="text-sm text-white">{{ item.media.start_date|date:"SHORT_DATE_FORMAT" }}</span>
+                        <span class="text-sm text-white">{{ item.media.start_date|user_date_format:user }}</span>
                       {% endif %}
                     </div>
                   {% endif %}
@@ -854,9 +855,9 @@
                         </svg>
                       {% endif %}
                       {% if item.media.end_date is not None %}
-                        <span class="text-sm text-white">{{ item.media.end_date|date:"SHORT_DATE_FORMAT" }}</span>
+                        <span class="text-sm text-white">{{ item.media.end_date|user_date_format:user }}</span>
                       {% elif item.media.start_date is not None %}
-                        <span class="text-sm text-white">{{ item.media.start_date|date:"SHORT_DATE_FORMAT" }}</span>
+                        <span class="text-sm text-white">{{ item.media.start_date|user_date_format:user }}</span>
                       {% endif %}
                     </div>
                   {% endif %}
@@ -926,7 +927,7 @@
         {% if top_rated %}
           <div class="media-grid">
             {% for media in top_rated %}
-              {% include "app/components/media_card.html" with media=media item=media.item title=media.item from_grid=True secondary_color=True %}
+              {% include "app/components/media_card.html" with media=media item=media.item title=media.item from_grid=True secondary_color=True user=user %}
             {% endfor %}
           </div>
         {% else %}
@@ -1006,9 +1007,9 @@
                             </h4>
                             <div class="text-sm text-gray-400 mt-1">
                               <p>
-                                {% if media.start_date %}{{ media.start_date|date_tracker_format }}{% endif %}
+                                {% if media.start_date %}{{ media.start_date|user_date_format:user }}{% endif %}
                                 {% if media.start_date and media.end_date %}-{% endif %}
-                                {% if media.end_date %}{{ media.end_date|date_tracker_format }}{% endif %}
+                                {% if media.end_date %}{{ media.end_date|user_date_format:user }}{% endif %}
                               </p>
                             </div>
                             {% if media.score is not None %}

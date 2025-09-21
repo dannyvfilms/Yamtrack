@@ -1,5 +1,6 @@
 {% load app_tags %}
 {% load events_tags %}
+{% load user_tags %}
 
 <div class="space-y-6">
   {% for day, releases in release_dict.items %}
@@ -23,7 +24,7 @@
                 <div class="flex items-center">
                   <span class="text-xs text-gray-400 me-2">{{ release.item.media_type|media_type_readable }}</span>
                   {% if release.readable_content_number %}
-                    <span class="text-xs text-indigo-400">{{ release.readable_content_number }} {{ release.display_time }}</span>
+                    <span class="text-xs text-indigo-400">{{ release.readable_content_number }} {{ release|user_event_time:user }}</span>
                   {% endif %}
                 </div>
               </div>

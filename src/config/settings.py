@@ -67,7 +67,7 @@ SECRET_KEY = config(
 
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = config("DEBUG", default=False, cast=bool)
+DEBUG = config("DEBUG", default=True, cast=bool)
 
 INTERNAL_IPS = ["127.0.0.1"]
 
@@ -562,3 +562,10 @@ if not REGISTRATION:
     ACCOUNT_ADAPTER = "users.account_adapter.NoNewUsersAccountAdapter"
 
 REDIRECT_LOGIN_TO_SSO = config("REDIRECT_LOGIN_TO_SSO", default=False, cast=bool)
+
+# Configure LoginRequiredMiddleware to exclude static files
+LOGIN_REQUIRED_EXEMPT = [
+    r'^/static/.*$',
+    r'^/favicon\.ico$',
+    r'^/health/.*$',
+]

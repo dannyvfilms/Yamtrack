@@ -83,6 +83,29 @@ class ListDetailSortChoices(models.TextChoices):
     RATING = "rating", "Rating"
 
 
+class DateFormatChoices(models.TextChoices):
+    """Choices for date format preferences."""
+
+    SYSTEM_DEFAULT = "system_default", "System default (locale)"
+    ISO_8601 = "iso_8601", "ISO 8601"
+    MONTH_D_YYYY = "month_d_yyyy", "Month D, YYYY"
+    D_MON_YYYY = "d_mon_yyyy", "D Mon YYYY"
+    M_D_YYYY = "m_d_yyyy", "M/D/YYYY"
+    D_M_YYYY = "d_m_yyyy", "D/M/YYYY"
+    DD_MM_YYYY = "dd_mm_yyyy", "DD.MM.YYYY"
+    YYYY_MM_DD = "yyyy_mm_dd", "YYYY/MM/DD"
+
+
+class TimeFormatChoices(models.TextChoices):
+    """Choices for time format preferences."""
+
+    SYSTEM_DEFAULT = "system_default", "System default (locale)"
+    H_MM_AMPM = "h_mm_ampm", "12-hour (h:mm AM/PM)"
+    HH_MM_AMPM = "hh_mm_ampm", "12-hour, leading zero (hh:mm AM/PM)"
+    HH_MM = "hh_mm", "24-hour (HH:mm)"
+    HH_MM_SS = "hh_mm_ss", "24-hour with seconds (HH:mm:ss)"
+
+
 class User(AbstractUser):
     """Custom user model."""
 
@@ -288,6 +311,18 @@ class User(AbstractUser):
     plex_usernames = models.TextField(
         blank=True,
         help_text="Comma-separated list of Plex usernames for webhook matching",
+    )
+
+    date_format = models.CharField(
+        max_length=20,
+        default=DateFormatChoices.SYSTEM_DEFAULT,
+        choices=DateFormatChoices.choices,
+    )
+
+    time_format = models.CharField(
+        max_length=20,
+        default=TimeFormatChoices.SYSTEM_DEFAULT,
+        choices=TimeFormatChoices.choices,
     )
 
     class Meta:
