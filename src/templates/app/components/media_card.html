@@ -227,6 +227,15 @@
       </div>
     {% endif %}
 
+    {# Time Left display for time_left sort #}
+    {% if media_type == MediaTypes.TV.value and current_sort == 'time_left' and media.episodes_left > 0 %}
+      <div class="absolute bottom-2 right-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md">
+        <span class="text-sm text-white">
+          {{ media.formatted_time_left }}
+        </span>
+      </div>
+    {% endif %}
+
     {% if media.repeats > 1 %}
       <div class="absolute sm:bottom-2 sm:right-2 sm:left-auto bottom-10 left-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md">
         <svg xmlns="http://www.w3.org/2000/svg"

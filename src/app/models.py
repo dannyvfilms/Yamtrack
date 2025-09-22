@@ -459,6 +459,11 @@ class MediaManager(models.Manager):
                 models.functions.Lower("item__title"),
             )
 
+        if sort_filter == "time_left":
+            # For time_left sorting, we need custom Python sorting
+            # Return queryset as-is for custom sorting in views
+            return queryset
+
         # Default to generic sorting
         return self._sort_generic_media_list(queryset, sort_filter)
 
@@ -713,9 +718,10 @@ class MediaManager(models.Manager):
             ):
                 released_episodes[media_id][season_number] = episode_number
 
-        # Calculate total released episodes per TV show
+        # Calculate total released episodes per TV show (released only)
         for tv in tv_list:
             tv_episodes = released_episodes.get(tv.item.media_id, {})
+            # Sum only released episodes; if none released yet, use 0 so unaired seasons don't count
             tv.max_progress = sum(tv_episodes.values()) if tv_episodes else 0
 
     def get_media(
@@ -977,6 +983,83 @@ class Media(models.Model):
                 return app.helpers.minutes_to_hhmm(self.aggregated_progress)
             return str(self.aggregated_progress)
         return str(self.progress)
+
+    @property
+    def episodes_left(self):
+        """Return the number of episodes left to watch."""
+        if not hasattr(self, 'max_progress') or self.max_progress is None:
+            return 0
+        return max(0, self.max_progress - self.progress)
+
+    @property
+    def time_left(self):
+        """Return the estimated time left to complete the show in minutes."""
+        if not hasattr(self, 'max_progress') or self.max_progress is None:
+            return 0
+        
+        episodes_left = self.episodes_left
+        if episodes_left <= 0:
+            return 0
+        
+        # Try to get runtime from cached data using the same approach as statistics
+        runtime_minutes = None
+        
+        # First, try to get from TV show runtime (like statistics does)
+        if hasattr(self, 'item') and self.item.runtime_minutes:
+            runtime_minutes = self.item.runtime_minutes
+        else:
+            # Try to get from season cache
+            from django.core.cache import cache
+            season_cache_key = f"tmdb_season_{self.item.media_id}_1"
+            cached_season_data = cache.get(season_cache_key)
+            
+            if cached_season_data and cached_season_data.get("details", {}).get("runtime"):
+                from app.statistics import parse_runtime_to_minutes
+                runtime_str = cached_season_data["details"]["runtime"]
+                runtime_minutes = parse_runtime_to_minutes(runtime_str)
+            else:
+                # Try other seasons
+                for season_num in [2, 3, 4, 5]:
+                    season_cache_key = f"tmdb_season_{self.item.media_id}_{season_num}"
+                    cached_season_data = cache.get(season_cache_key)
+                    if cached_season_data and cached_season_data.get("details", {}).get("runtime"):
+                        from app.statistics import parse_runtime_to_minutes
+                        runtime_str = cached_season_data["details"]["runtime"]
+                        runtime_minutes = parse_runtime_to_minutes(runtime_str)
+                        break
+        
+        # If we still don't have runtime, use fallback values
+        if runtime_minutes is None:
+            if self.item.source == "tmdb":
+                runtime_minutes = 30  # TMDB default
+            elif self.item.source == "mal":
+                runtime_minutes = 23  # MAL default
+            else:
+                runtime_minutes = 30  # Generic default
+        
+        # Skip shows with unrealistic runtime (999999 fallback)
+        if runtime_minutes >= 999999:
+            return 0  # Don't count these episodes
+        
+        return episodes_left * runtime_minutes
+
+    @property
+    def formatted_time_left(self):
+        """Return the time left in a human-readable format."""
+        time_left_minutes = self.time_left
+        if time_left_minutes <= 0:
+            return "0m"
+        
+        hours = time_left_minutes // 60
+        minutes = time_left_minutes % 60
+        
+        if hours > 0:
+            if minutes > 0:
+                return f"{hours}h {minutes}m"
+            else:
+                return f"{hours}h"
+        else:
+            return f"{minutes}m"
 
     def increase_progress(self):
         """Increase the progress of the media by one."""

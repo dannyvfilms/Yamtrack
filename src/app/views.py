@@ -99,6 +99,12 @@ def media_list(request, media_type):
         f"{media_type}_sort",
         request.GET.get("sort"),
     )
+    
+    # If time_left sort is selected for non-TV media types, fallback to default
+    if sort_filter == "time_left" and media_type != MediaTypes.TV.value:
+        sort_filter = "title"  # Default fallback
+        # Update the user's preference to the fallback
+        request.user.update_preference(f"{media_type}_sort", "title")
     status_filter = request.user.update_preference(
         f"{media_type}_status",
         request.GET.get("status"),
@@ -119,15 +125,73 @@ def media_list(request, media_type):
         search=search_query,
     )
 
-    # Paginate results
-    items_per_page = 32
-    paginator = Paginator(media_queryset, items_per_page)
-    media_page = paginator.get_page(page)
+    # Handle time_left sorting for TV shows
+    if sort_filter == "time_left" and media_type == MediaTypes.TV.value:
+        import logging
+        from django.core.cache import cache
+        
+        logger = logging.getLogger(__name__)
+        
+        # Create a cache key based on user and filters to avoid conflicts
+        # Add timestamp to force cache refresh when sorting logic changes
+        cache_key = f"time_left_sorted_v2_{request.user.id}_{media_type}_{status_filter}_{search_query}"
+        
+        # Try to get cached sorted results first
+        cached_results = cache.get(cache_key)
+        
+        if cached_results is not None:
+            logger.debug(f"DEBUG: Using cached time_left sort results for page {page}")
+            # Use cached sorted list
+            items_per_page = 32
+            paginator = Paginator(cached_results, items_per_page)
+            media_page = paginator.get_page(page)
+        else:
+            logger.debug(f"DEBUG: Starting time_left sort for page {page} (no cache)")
+            
+            # Get all media objects for sorting
+            media_list = list(media_queryset)
+            logger.debug(f"DEBUG: Got {len(media_list)} media objects from queryset")
+            
+            # Annotate max_progress first
+            BasicMedia.objects.annotate_max_progress(media_list, media_type)
+            logger.debug(f"DEBUG: Annotated max_progress for all media")
+            
+            # Apply time_left sorting
+            media_list = _sort_tv_media_by_time_left(media_list)
+            logger.debug(f"DEBUG: Applied time_left sorting")
+            
+            # Cache the sorted results for 5 minutes
+            cache.set(cache_key, media_list, 300)
+            logger.debug(f"DEBUG: Cached sorted results for 5 minutes")
+            
+            # Paginate the sorted list
+            items_per_page = 32
+            paginator = Paginator(media_list, items_per_page)
+            media_page = paginator.get_page(page)
+        
+        logger.debug(f"DEBUG: Paginated to page {page} of {paginator.num_pages} pages")
+        logger.debug(f"DEBUG: This page has {len(media_page)} items")
+        
+        # Log the first few items on this page to see what's being displayed
+        logger.debug(f"DEBUG: First 5 items on page {page}:")
+        for i, media in enumerate(media_page[:5]):
+            episodes_left = media.max_progress - media.progress if hasattr(media, 'max_progress') else 0
+            logger.debug(f"  {i+1}. {media.item.title} - Episodes left: {episodes_left}, Status: {getattr(media, 'status', 'Unknown')}")
+        
+        # Additional debug info for pagination issues
+        logger.debug(f"DEBUG: Page {page} pagination info - has_next: {media_page.has_next()}, next_page: {media_page.next_page_number() if media_page.has_next() else 'None'}")
+        if hasattr(media_page, 'has_previous') and media_page.has_previous():
+            logger.debug(f"DEBUG: Page {page} has previous page: {media_page.previous_page_number()}")
+    else:
+        # Paginate results normally
+        items_per_page = 32
+        paginator = Paginator(media_queryset, items_per_page)
+        media_page = paginator.get_page(page)
 
-    BasicMedia.objects.annotate_max_progress(
-        media_page.object_list,
-        media_type,
-    )
+        BasicMedia.objects.annotate_max_progress(
+            media_page.object_list,
+            media_type,
+        )
 
     context = {
         "user": request.user,
@@ -135,7 +199,7 @@ def media_list(request, media_type):
         "media_type_plural": app_tags.media_type_readable_plural(media_type).lower(),
         "media_list": media_page,
         "current_layout": layout,
-        "layout_class": ".media-grid" if layout == "grid" else "tbody",
+        "layout_class": ".media-grid" if layout == "grid" else ".media-table",
         "current_sort": sort_filter,
         "current_status": status_filter,
         "sort_choices": MediaSortChoices.choices,
@@ -149,11 +213,23 @@ def media_list(request, media_type):
             response = HttpResponse()
             response["HX-Redirect"] = reverse("medialist", args=[media_type])
             return response
+        
+        # Check if this is a pagination request (has page parameter and is not the first page)
+        is_pagination = request.GET.get("page") and int(request.GET.get("page", 1)) > 1
+        
         if layout == "grid":
             template_name = "app/components/media_grid_items.html"
         else:
-            template_name = "app/components/media_table_items.html"
+            if is_pagination:
+                # For pagination, we need to return only the table rows, not the full template
+                # Return only the table rows without headers
+                context["is_pagination"] = True
+                template_name = "app/components/media_table_items.html"
+            else:
+                context["is_pagination"] = False
+                template_name = "app/components/media_table_items.html"
     else:
+        context["is_pagination"] = False
         template_name = "app/media_list.html"
 
     return render(request, template_name, context)
@@ -919,3 +995,100 @@ def statistics(request):
     }
 
     return render(request, "app/statistics.html", context)
+
+
+def _sort_tv_media_by_time_left(media_list):
+    """Sort TV media by time left using cached runtime data with status priority."""
+    from django.core.cache import cache
+    from app.statistics import parse_runtime_to_minutes
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    def time_left_sort_key(media):
+        """Calculate sort key for time_left sorting with status priority."""
+        # Skip shows that haven't released yet or have unknown runtime
+        if not hasattr(media, 'max_progress') or media.max_progress == 0:
+            logger.debug(f"DEBUG: {media.item.title} - No max_progress, putting at end")
+            return (3, float('inf'))  # Put at the end
+        
+        # Calculate episodes left
+        episodes_left = media.max_progress - media.progress
+        
+        # Debug: Log episodes left calculation for shows with issues
+        if episodes_left < 0 or episodes_left > 1000:
+            logger.debug(f"DEBUG: {media.item.title} - max_progress: {getattr(media, 'max_progress', 'None')}, progress: {getattr(media, 'progress', 'None')}, episodes_left: {episodes_left}")
+        
+        # CRITICAL: Shows with 0 episodes left should ALWAYS go to the end
+        if episodes_left <= 0:
+            logger.debug(f"DEBUG: {media.item.title} - 0 episodes left, putting at end")
+            return (2, 0)  # Status priority 2 = last
+        
+        # Only process shows with episodes left
+        # Determine status priority for shows with episodes left
+        status = getattr(media, 'status', 'In progress')
+        if status == Status.DROPPED.value:
+            status_priority = 1  # Dropped shows go after active shows
+        else:
+            # All other shows with episodes left (In progress, Planning, Completed) go first
+            status_priority = 0
+        
+        # Try to get runtime from cached data using the same approach as statistics
+        runtime_minutes = None
+        
+        # First, try to get from TV show runtime (like statistics does)
+        if hasattr(media, 'item') and media.item.runtime_minutes:
+            runtime_minutes = media.item.runtime_minutes
+        else:
+            # Try to get from season cache
+            season_cache_key = f"tmdb_season_{media.item.media_id}_1"
+            cached_season_data = cache.get(season_cache_key)
+            
+            if cached_season_data and cached_season_data.get("details", {}).get("runtime"):
+                runtime_str = cached_season_data["details"]["runtime"]
+                runtime_minutes = parse_runtime_to_minutes(runtime_str)
+            else:
+                # Try other seasons
+                for season_num in [2, 3, 4, 5]:
+                    season_cache_key = f"tmdb_season_{media.item.media_id}_{season_num}"
+                    cached_season_data = cache.get(season_cache_key)
+                    if cached_season_data and cached_season_data.get("details", {}).get("runtime"):
+                        runtime_str = cached_season_data["details"]["runtime"]
+                        runtime_minutes = parse_runtime_to_minutes(runtime_str)
+                        break
+        
+        # If we still don't have runtime, use fallback values
+        if runtime_minutes is None:
+            if media.item.source == "tmdb":
+                runtime_minutes = 30  # TMDB default
+            elif media.item.source == "mal":
+                runtime_minutes = 23  # MAL default
+            else:
+                runtime_minutes = 30  # Generic default
+        
+        # Skip shows with unrealistic runtime (999999 fallback)
+        if runtime_minutes >= 999999:
+            logger.debug(f"DEBUG: {media.item.title} - Unrealistic runtime {runtime_minutes}, putting at end")
+            return (3, float('inf'))  # Put at the very end
+        
+        # Calculate total time left in minutes
+        total_time_left = episodes_left * runtime_minutes
+        
+        # Only log shows with episodes left to reduce noise
+        if episodes_left > 0 and episodes_left <= 10:  # Only log shows with few episodes left
+            logger.debug(f"DEBUG: {media.item.title} - Episodes left: {episodes_left}, Runtime: {runtime_minutes}m, Time left: {total_time_left}m, Status: {getattr(media, 'status', 'Unknown')}, Sort key: ({status_priority}, {total_time_left})")
+        
+        return (status_priority, total_time_left)
+    
+    # Sort by status priority first, then time left (ascending - least time first)
+    logger.debug(f"DEBUG: Sorting {len(media_list)} TV shows by time left")
+    sorted_list = sorted(media_list, key=time_left_sort_key)
+    
+    # Log first 10 items for debugging
+    logger.debug("DEBUG: First 10 sorted shows:")
+    for i, media in enumerate(sorted_list[:10]):
+        episodes_left = media.max_progress - media.progress if hasattr(media, 'max_progress') else 0
+        logger.debug(f"  {i+1}. {media.item.title} - Episodes left: {episodes_left}, Status: {getattr(media, 'status', 'Unknown')}")
+    
+    return sorted_list
+

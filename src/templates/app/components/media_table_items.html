@@ -1,10 +1,27 @@
 {% load app_tags %}
 {% load user_tags %}
 
+{% if not is_pagination %}
+<thead class="text-left text-gray-400 text-sm">
+  <tr>
+    <th class="p-2 w-15"></th>
+    <th class="p-2 pe-8 w-2/5">Title</th>
+    <th class="p-2 text-center">Score</th>
+    {% if media_type != MediaTypes.MOVIE.value and current_sort != 'time_left' %}<th class="p-2 text-center">Progress</th>{% endif %}
+    {% if media_type == MediaTypes.TV.value and current_sort == 'time_left' %}<th class="p-2 text-center">Episodes Left</th>{% endif %}
+    {% if media_type == MediaTypes.TV.value and current_sort == 'time_left' %}<th class="p-2 text-center w-24">Time Left</th>{% endif %}
+    {% if media_type == MediaTypes.TV.value and current_sort != 'time_left' %}<th class="p-2 text-center">Last Watched</th>{% endif %}
+    <th class="p-2 text-center">Status</th>
+    <th class="p-2 text-center">Start Date</th>
+    <th class="p-2 text-center">End Date</th>
+  </tr>
+</thead>
+<tbody id="media-table-body">
+{% endif %}
 {% for media in media_list %}
-  <tr class="hover:bg-[#39404b] transition-colors cursor-pointer hover-tap"
+  <tr class="hover:bg-[#39404b] transition-colors cursor-pointer hover-tap{% if forloop.last and media_list.has_next %} pagination-trigger{% endif %}"
       x-data="{ trackOpen: false }"
-      {% if forloop.last and media_list.has_next %} hx-get="{% url 'medialist' media_type %}?page={{ media_list.next_page_number }}" hx-trigger="revealed threshold:200px" hx-swap="afterend" hx-include="#filter-form" hx-indicator="#loading-indicator" {% endif %}>
+      {% if forloop.last and media_list.has_next %} hx-get="{% url 'medialist' media_type %}?page={{ media_list.next_page_number }}" hx-trigger="revealed threshold:150px once" hx-swap="beforeend" hx-target="#media-table-body" hx-include="#filter-form" hx-indicator="#loading-indicator" data-page="{{ media_list.next_page_number }}" {% endif %}>
     <td class="p-2 relative">
       <img alt="{{ media.item }}"
            class="lazyload min-w-10 w-10 h-10 object-cover rounded-md parent-hover-tap:hidden"
@@ -131,7 +148,7 @@
     {% endif %}
 
     {# Progress field #}
-    {% if media_type != MediaTypes.MOVIE.value %}
+    {% if media_type != MediaTypes.MOVIE.value and current_sort != 'time_left' %}
       <td class="p-2 text-center">
         {% if media.aggregated_progress is not None %}
           <div class="font-medium">{{ media.formatted_aggregated_progress }}</div>
@@ -146,7 +163,35 @@
           {% if media.max_progress %}/ {{ media.max_progress }}{% endif %}
         {% endif %}
       </td>
-      {% if media_type == MediaTypes.TV.value %}<td class="p-2 text-center">{{ media.last_watched }}</td>{% endif %}
+    {% endif %}
+
+    {# Episodes Left column for time_left sort #}
+    {% if media_type == MediaTypes.TV.value and current_sort == 'time_left' %}
+      <td class="p-2 text-center">
+        <div class="font-medium">{{ media.episodes_left }}</div>
+        {% if media.repeats > 1 %}
+          <div class="text-xs text-indigo-400 mt-1">
+            <span>Remaining</span>
+          </div>
+        {% endif %}
+      </td>
+    {% endif %}
+
+    {# Time Left column for time_left sort #}
+    {% if media_type == MediaTypes.TV.value and current_sort == 'time_left' %}
+      <td class="p-2 text-center">
+        <div class="font-medium">{{ media.formatted_time_left }}</div>
+        {% if media.repeats > 1 %}
+          <div class="text-xs text-indigo-400 mt-1">
+            <span>Total</span>
+          </div>
+        {% endif %}
+      </td>
+    {% endif %}
+
+    {# Last Watched column for non-time_left sort #}
+    {% if media_type == MediaTypes.TV.value and current_sort != 'time_left' %}
+      <td class="p-2 text-center">{{ media.last_watched }}</td>
     {% endif %}
 
     <td class="p-2 text-center">
@@ -197,3 +242,4 @@
     {% endif %}
   </tr>
 {% endfor %}
+{% if not is_pagination %}</tbody>{% endif %}
