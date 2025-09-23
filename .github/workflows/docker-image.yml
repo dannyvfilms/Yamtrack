@@ -9,7 +9,7 @@ on:
       - "v*"
   pull_request:
     branches:
-      - ["dev", "release"]
+      - "release"
 
 env:
   REGISTRY: ghcr.io
