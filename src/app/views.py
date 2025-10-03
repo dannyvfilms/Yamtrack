@@ -1006,11 +1006,15 @@ def _sort_tv_media_by_time_left(media_list):
     def _calc_runtime_minutes(media):
         """Best-effort runtime in minutes for a TV show or fallback."""
         runtime_minutes = None
-        # FIRST: Check locally stored runtime
+        # FIRST: Check locally stored runtime (but exclude 999999 marker for unknown)
         if hasattr(media, 'item') and media.item.runtime_minutes:
-            runtime_minutes = media.item.runtime_minutes
-            logger.debug(f"Using stored runtime for {media.item.title}: {runtime_minutes}min")
-        else:
+            # 999999 is a placeholder value meaning "unknown runtime" - skip it
+            if media.item.runtime_minutes < 999999:
+                runtime_minutes = media.item.runtime_minutes
+                logger.debug(f"Using stored runtime for {media.item.title}: {runtime_minutes}min")
+            else:
+                logger.debug(f"Skipping invalid runtime marker ({media.item.runtime_minutes}min) for {media.item.title}")
+        if not runtime_minutes:
             # SECOND: Check cached season data
             season_cache_key = f"tmdb_season_{media.item.media_id}_1"
             cached_season_data = cache.get(season_cache_key)
@@ -1100,11 +1104,17 @@ def _sort_tv_media_by_time_left(media_list):
             provider_max = _provider_max_progress(media)
             if provider_max > effective_max:
                 effective_max = provider_max
+                logger.debug(f"{media.item.title}: Using provider max_progress={provider_max} (was {_effective_max_progress(media)})")
         # Ensure UI-calculated properties use effective max
         media.max_progress = effective_max
         episodes_left = effective_max - media.progress
         if episodes_left < 0:
             episodes_left = 0
+        
+        # Debug shows that should have episodes left but show 0
+        if media.progress > 0 and episodes_left == 0 and media.item.title in ["Taskmaster", "Rent-a-Girlfriend", "The Last of Us"]:
+            logger.debug(f"DEBUG 0 episodes: {media.item.title} - progress={media.progress}, max_progress={effective_max}, episodes_left={episodes_left}")
+        
         status = getattr(media, 'status', Status.IN_PROGRESS.value)
 
         if status == Status.DROPPED.value:
