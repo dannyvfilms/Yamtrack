@@ -157,7 +157,7 @@ def media_list(request, media_type):
         # Paginate the sorted list
         items_per_page = 32
         paginator = Paginator(media_list, items_per_page)
-            media_page = paginator.get_page(page)
+        media_page = paginator.get_page(page)
         
         logger.debug(f"DEBUG: Paginated to page {page} of {paginator.num_pages} pages")
         logger.debug(f"DEBUG: This page has {len(media_page)} items")
