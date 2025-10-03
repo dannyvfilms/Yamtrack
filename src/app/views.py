@@ -1019,25 +1019,48 @@ def _sort_tv_media_by_time_left(media_list):
             else:
                 logger.debug(f"Skipping invalid runtime marker ({media.item.runtime_minutes}min) for {media.item.title}")
         if not runtime_minutes:
-            # SECOND: Check cached season data
-            season_cache_key = f"tmdb_season_{media.item.media_id}_1"
-            cached_season_data = cache.get(season_cache_key)
-            if cached_season_data and cached_season_data.get("details", {}).get("runtime"):
-                runtime_str = cached_season_data["details"]["runtime"]
-                runtime_minutes = parse_runtime_to_minutes(runtime_str)
-                if runtime_minutes and runtime_minutes > 0:
-                    logger.debug(f"Using cached runtime for {media.item.title}: {runtime_minutes}min")
-            # Try other seasons if season 1 didn't work
-            if not runtime_minutes:
-                for season_num in [2, 3, 4, 5]:
-                    season_cache_key = f"tmdb_season_{media.item.media_id}_{season_num}"
-                    cached_season_data = cache.get(season_cache_key)
-                    if cached_season_data and cached_season_data.get("details", {}).get("runtime"):
-                        runtime_str = cached_season_data["details"]["runtime"]
-                        runtime_minutes = parse_runtime_to_minutes(runtime_str)
-                        if runtime_minutes and runtime_minutes > 0:
-                            logger.debug(f"Using cached runtime (season {season_num}) for {media.item.title}: {runtime_minutes}min")
-                            break
+            # SECOND: Check cached season data from ACTUAL seasons user has watched
+            # Get the season numbers from the user's watched seasons
+            season_numbers_to_check = []
+            if hasattr(media, 'seasons'):
+                # Get season numbers from the user's Season objects
+                season_numbers_to_check = list(
+                    media.seasons.exclude(item__season_number=0)
+                    .values_list('item__season_number', flat=True)
+                    .distinct()
+                )
+                logger.debug(f"{media.item.title}: Checking seasons {season_numbers_to_check} from user's watch history")
+            
+            # If no seasons from user data, fall back to checking common seasons
+            if not season_numbers_to_check:
+                season_numbers_to_check = [1, 2, 3, 4, 5]
+            
+            # Try to find cached runtime from any of these seasons
+            runtime_values = []
+            for season_num in season_numbers_to_check:
+                season_cache_key = f"tmdb_season_{media.item.media_id}_{season_num}"
+                cached_season_data = cache.get(season_cache_key)
+                if cached_season_data and cached_season_data.get("details", {}).get("runtime"):
+                    runtime_str = cached_season_data["details"]["runtime"]
+                    season_runtime = parse_runtime_to_minutes(runtime_str)
+                    if season_runtime and season_runtime > 0:
+                        runtime_values.append(season_runtime)
+                        logger.debug(f"{media.item.title}: Found cached runtime for season {season_num}: {season_runtime}min")
+            
+            # Use the average runtime across all cached seasons (more accurate than single season)
+            if runtime_values:
+                runtime_minutes = round(sum(runtime_values) / len(runtime_values))
+                logger.debug(f"Using average cached runtime for {media.item.title}: {runtime_minutes}min (from {len(runtime_values)} seasons)")
+                
+                # Save this calculated average to the database for future use
+                if hasattr(media, 'item') and (not media.item.runtime_minutes or media.item.runtime_minutes >= 999999):
+                    try:
+                        media.item.runtime_minutes = runtime_minutes
+                        media.item.save(update_fields=['runtime_minutes'])
+                        logger.debug(f"Saved calculated runtime to database for {media.item.title}: {runtime_minutes}min")
+                    except Exception as e:
+                        logger.warning(f"Failed to save runtime for {media.item.title}: {e}")
+        
         # THIRD: Use industry standard fallback  
         if not runtime_minutes or runtime_minutes <= 0:
             if media.item.source == "tmdb":
