@@ -1212,6 +1212,11 @@ def _sort_tv_media_by_time_left(media_list):
 
     # 4) Dropped - show remaining content (sorted by least time left)
     for m in group_dropped:
+        # Debug logging for first few dropped shows
+        if not hasattr(m, '_debug_logged'):
+            m._debug_logged = True
+            logger.debug(f"Dropped show: {m.item.title} - progress={m.progress}, max_progress={getattr(m, 'max_progress', 'MISSING')}, hasattr={hasattr(m, 'max_progress')}")
+        
         # Calculate episodes remaining (not watched)
         if hasattr(m, 'max_progress') and hasattr(m, 'progress') and m.max_progress > 0:
             episodes_left = m.max_progress - m.progress
@@ -1233,6 +1238,7 @@ def _sort_tv_media_by_time_left(media_list):
                 m.time_left_display = "0m"
         else:
             # No max_progress data - show as unknown
+            logger.debug(f"Dropped show NO DATA: {m.item.title} - Setting '-' display")
             m.episodes_left_display = 0
             m.time_left_display = "-"
     
