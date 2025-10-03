@@ -1099,12 +1099,12 @@ def _sort_tv_media_by_time_left(media_list):
             group_tail.append(media)
             continue
         effective_max = _effective_max_progress(media)
-        # Fallback to provider metadata when annotated/db are insufficient
-        if effective_max <= 0 or effective_max < media.progress:
-            provider_max = _provider_max_progress(media)
-            if provider_max > effective_max:
-                effective_max = provider_max
-                logger.debug(f"{media.item.title}: Using provider max_progress={provider_max} (was {_effective_max_progress(media)})")
+        # Always check provider metadata - use the higher value
+        # This ensures we catch new episodes that have aired but aren't tracked yet
+        provider_max = _provider_max_progress(media)
+        if provider_max > effective_max:
+            effective_max = provider_max
+            logger.debug(f"{media.item.title}: Using provider max_progress={provider_max} (was {_effective_max_progress(media)})")
         # Ensure UI-calculated properties use effective max
         media.max_progress = effective_max
         episodes_left = effective_max - media.progress
