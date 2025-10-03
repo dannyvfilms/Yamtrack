@@ -168,7 +168,7 @@
     {# Episodes Left column for time_left sort #}
     {% if media_type == MediaTypes.TV.value and current_sort == 'time_left' %}
       <td class="p-2 text-center">
-        <div class="font-medium">{{ media.episodes_left }}</div>
+        <div class="font-medium">{{ media._episodes_left_display|default:"-" }}</div>
         {% if media.repeats > 1 %}
           <div class="text-xs text-indigo-400 mt-1">
             <span>Remaining</span>
@@ -180,7 +180,7 @@
     {# Time Left column for time_left sort #}
     {% if media_type == MediaTypes.TV.value and current_sort == 'time_left' %}
       <td class="p-2 text-center">
-        <div class="font-medium">{{ media.formatted_time_left }}</div>
+        <div class="font-medium">{{ media._time_left_display|default:"-" }}</div>
         {% if media.repeats > 1 %}
           <div class="text-xs text-indigo-400 mt-1">
             <span>Total</span>
