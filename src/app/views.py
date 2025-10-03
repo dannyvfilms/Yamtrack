@@ -134,7 +134,7 @@ def media_list(request, media_type):
         
         # Cache sorted results for 5 minutes to avoid expensive re-sorts
         # Cache invalidates automatically when you update any show progress
-        cache_key = f"time_left_sorted_v9_{request.user.id}_{media_type}_{status_filter}_{search_query}"
+        cache_key = f"time_left_sorted_v10_{request.user.id}_{media_type}_{status_filter}_{search_query}"
         cached_results = cache.get(cache_key)
         
         if cached_results is not None:
@@ -1228,10 +1228,10 @@ def _sort_tv_media_by_time_left(media_list):
         else:
             m.time_left_display = "0m"
     
-    # Sort dropped by most time watched (descending), then by title
+    # Sort dropped by least time watched (ascending), then by title
     group_dropped_sorted = sorted(
         group_dropped,
-        key=lambda m: (-m.episodes_left_display * _calc_runtime_minutes(m), m.item.title.lower()),
+        key=lambda m: (m.episodes_left_display * _calc_runtime_minutes(m), m.item.title.lower()),
     )
     
     # 5) Tail (unreleased/unknown) - set display values
