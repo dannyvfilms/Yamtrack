@@ -133,8 +133,8 @@ def media_list(request, media_type):
         logger = logging.getLogger(__name__)
         
         # Create a cache key based on user and filters to avoid conflicts
-        # Add timestamp to force cache refresh when sorting logic changes
-        cache_key = f"time_left_sorted_v2_{request.user.id}_{media_type}_{status_filter}_{search_query}"
+        # Bump version when changing ordering logic
+        cache_key = f"time_left_sorted_v6_{request.user.id}_{media_type}_{status_filter}_{search_query}"
         
         # Try to get cached sorted results first
         cached_results = cache.get(cache_key)
@@ -998,91 +998,226 @@ def statistics(request):
 
 
 def _sort_tv_media_by_time_left(media_list):
-    """Sort TV media by time left using cached runtime data with status priority."""
+    """Sort TV media by time left with explicit grouping order.
+
+    Group order:
+      1) Active (episodes_left > 0 for non-dropped statuses) by least total time left first
+      2) In-Progress caught-up (episodes_left == 0) newest end_date first
+      3) Completed (episodes_left == 0) newest end_date first
+      4) Dropped (episodes_left may be 0 or > 0) newest end_date first
+      5) Unreleased/unknown runtime at the very end
+    """
     from django.core.cache import cache
     from app.statistics import parse_runtime_to_minutes
     import logging
     
     logger = logging.getLogger(__name__)
     
-    def time_left_sort_key(media):
-        """Calculate sort key for time_left sorting with status priority."""
-        # Skip shows that haven't released yet or have unknown runtime
-        if not hasattr(media, 'max_progress') or media.max_progress == 0:
-            logger.debug(f"DEBUG: {media.item.title} - No max_progress, putting at end")
-            return (3, float('inf'))  # Put at the end
-        
-        # Calculate episodes left
-        episodes_left = media.max_progress - media.progress
-        
-        # Debug: Log episodes left calculation for shows with issues
-        if episodes_left < 0 or episodes_left > 1000:
-            logger.debug(f"DEBUG: {media.item.title} - max_progress: {getattr(media, 'max_progress', 'None')}, progress: {getattr(media, 'progress', 'None')}, episodes_left: {episodes_left}")
-        
-        # CRITICAL: Shows with 0 episodes left should ALWAYS go to the end
-        if episodes_left <= 0:
-            logger.debug(f"DEBUG: {media.item.title} - 0 episodes left, putting at end")
-            return (2, 0)  # Status priority 2 = last
-        
-        # Only process shows with episodes left
-        # Determine status priority for shows with episodes left
-        status = getattr(media, 'status', 'In progress')
-        if status == Status.DROPPED.value:
-            status_priority = 1  # Dropped shows go after active shows
-        else:
-            # All other shows with episodes left (In progress, Planning, Completed) go first
-            status_priority = 0
-        
-        # Try to get runtime from cached data using the same approach as statistics
+    def _calc_runtime_minutes(media):
+        """Best-effort runtime in minutes for a TV show or fallback."""
         runtime_minutes = None
-        
-        # First, try to get from TV show runtime (like statistics does)
+        # FIRST: Check locally stored runtime
         if hasattr(media, 'item') and media.item.runtime_minutes:
             runtime_minutes = media.item.runtime_minutes
+            logger.debug(f"Using stored runtime for {media.item.title}: {runtime_minutes}min")
         else:
-            # Try to get from season cache
+            # SECOND: Check cached season data
             season_cache_key = f"tmdb_season_{media.item.media_id}_1"
             cached_season_data = cache.get(season_cache_key)
-            
             if cached_season_data and cached_season_data.get("details", {}).get("runtime"):
                 runtime_str = cached_season_data["details"]["runtime"]
                 runtime_minutes = parse_runtime_to_minutes(runtime_str)
-            else:
-                # Try other seasons
+                if runtime_minutes and runtime_minutes > 0:
+                    logger.debug(f"Using cached runtime for {media.item.title}: {runtime_minutes}min")
+            # Try other seasons if season 1 didn't work
+            if not runtime_minutes:
                 for season_num in [2, 3, 4, 5]:
                     season_cache_key = f"tmdb_season_{media.item.media_id}_{season_num}"
                     cached_season_data = cache.get(season_cache_key)
                     if cached_season_data and cached_season_data.get("details", {}).get("runtime"):
                         runtime_str = cached_season_data["details"]["runtime"]
                         runtime_minutes = parse_runtime_to_minutes(runtime_str)
-                        break
-        
-        # If we still don't have runtime, use fallback values
-        if runtime_minutes is None:
+                        if runtime_minutes and runtime_minutes > 0:
+                            logger.debug(f"Using cached runtime (season {season_num}) for {media.item.title}: {runtime_minutes}min")
+                            break
+        # THIRD: Use industry standard fallback  
+        if not runtime_minutes or runtime_minutes <= 0:
             if media.item.source == "tmdb":
-                runtime_minutes = 30  # TMDB default
+                runtime_minutes = 30
             elif media.item.source == "mal":
-                runtime_minutes = 23  # MAL default
+                runtime_minutes = 23
             else:
-                runtime_minutes = 30  # Generic default
-        
-        # Skip shows with unrealistic runtime (999999 fallback)
-        if runtime_minutes >= 999999:
-            logger.debug(f"DEBUG: {media.item.title} - Unrealistic runtime {runtime_minutes}, putting at end")
-            return (3, float('inf'))  # Put at the very end
-        
-        # Calculate total time left in minutes
-        total_time_left = episodes_left * runtime_minutes
-        
-        # Only log shows with episodes left to reduce noise
-        if episodes_left > 0 and episodes_left <= 10:  # Only log shows with few episodes left
-            logger.debug(f"DEBUG: {media.item.title} - Episodes left: {episodes_left}, Runtime: {runtime_minutes}m, Time left: {total_time_left}m, Status: {getattr(media, 'status', 'Unknown')}, Sort key: ({status_priority}, {total_time_left})")
-        
-        return (status_priority, total_time_left)
+                runtime_minutes = 30
+            logger.debug(f"Using fallback runtime for {media.item.title}: {runtime_minutes}min")
+        return runtime_minutes
+
+    def _end_date_for_sort(media):
+        # Prefer aggregated_end_date when present, else media.end_date
+        return getattr(media, 'aggregated_end_date', None) or getattr(media, 'end_date', None) or getattr(media, 'progressed_at', None) or getattr(media, 'created_at', None)
+
+    def _effective_max_progress(media):
+        """Prefer annotated max_progress; fallback to DB episodes to avoid negatives."""
+        annotated = getattr(media, 'max_progress', 0) or 0
+        if annotated <= 0 or annotated < media.progress:
+            total_from_db = 0
+            # Use prefetched seasons/episodes when available
+            if hasattr(media, 'seasons'):
+                for season in media.seasons.all():
+                    if getattr(season.item, 'season_number', 0) and hasattr(season, 'episodes'):
+                        max_ep_num = 0
+                        for ep in season.episodes.all():
+                            ep_num = getattr(ep.item, 'episode_number', 0) or 0
+                            if ep_num > max_ep_num:
+                                max_ep_num = ep_num
+                        total_from_db += max_ep_num
+            return max(annotated, total_from_db)
+        return annotated
+
+    # Cache provider metadata lookups per (source, type, id)
+    provider_max_cache = {}
+    def _provider_max_progress(media):
+        key = (media.item.source, media.item.media_type, media.item.media_id)
+        if key in provider_max_cache:
+            return provider_max_cache[key]
+        try:
+            tv_metadata = services.get_media_metadata(
+                media.item.media_type,
+                media.item.media_id,
+                media.item.source,
+            )
+            provider_max = tv_metadata.get("max_progress") or 0
+        except Exception:  # noqa: BLE001 - best-effort fallback only
+            provider_max = 0
+        provider_max_cache[key] = provider_max
+        return provider_max
+
+    # Explicit bucketing for deterministic grouping
+    active_statuses = {Status.IN_PROGRESS.value, Status.PLANNING.value, Status.PAUSED.value}
+    group_active = []           # episodes_left > 0 and status in active_statuses
+    group_inprog_zero = []      # status == IN_PROGRESS and episodes_left == 0
+    group_completed = []        # status == COMPLETED and episodes_left == 0
+    group_dropped = []          # status == DROPPED
+    group_tail = []             # everything else (unreleased/unknown)
+
+    for media in media_list:
+        # Compute effective episodes_left
+        if not hasattr(media, 'max_progress'):
+            group_tail.append(media)
+            continue
+        effective_max = _effective_max_progress(media)
+        # Fallback to provider metadata when annotated/db are insufficient
+        if effective_max <= 0 or effective_max < media.progress:
+            provider_max = _provider_max_progress(media)
+            if provider_max > effective_max:
+                effective_max = provider_max
+        # Ensure UI-calculated properties use effective max
+        media.max_progress = effective_max
+        episodes_left = effective_max - media.progress
+        if episodes_left < 0:
+            episodes_left = 0
+        status = getattr(media, 'status', Status.IN_PROGRESS.value)
+
+        if status == Status.DROPPED.value:
+            group_dropped.append(media)
+            continue
+
+        if episodes_left == 0 and status == Status.IN_PROGRESS.value:
+            group_inprog_zero.append(media)
+            continue
+
+        if episodes_left == 0 and status == Status.COMPLETED.value:
+            group_completed.append(media)
+            continue
+
+        if episodes_left > 0 and status in active_statuses:
+            group_active.append((media, episodes_left))
+            continue
+
+        group_tail.append(media)
+
+    # Sort each group
+    # 1) Active by least total minutes left
+    def _active_key(entry):
+        media, episodes_left = entry
+        runtime = _calc_runtime_minutes(media)
+        if not runtime or runtime <= 0:
+            runtime = 30  # Ensure fallback is used
+        total = episodes_left * runtime
+        # Store the time_left for display
+        media.episodes_left = episodes_left
+        if total > 0:
+            hours = int(total // 60)
+            minutes = int(total % 60)
+            if hours > 0:
+                media.time_left = f"{hours}h {minutes}m"
+            else:
+                media.time_left = f"{minutes}m"
+        else:
+            media.time_left = f"{episodes_left} ep" if episodes_left > 0 else "-"
+        logger.debug(f"Active: {media.item.title} - {episodes_left} eps × {runtime}min = {total}min ({media.time_left})")
+        return (total, media.item.title.lower())
+    group_active_sorted = [m for (m, _) in sorted(group_active, key=_active_key)]
+
+    # 2) In-Progress caught-up by newest end_date
+    for m in group_inprog_zero:
+        m.episodes_left = 0
+        m.time_left = "0m"
+    group_inprog_zero_sorted = sorted(
+        group_inprog_zero,
+        key=lambda m: (-( _end_date_for_sort(m).timestamp() if _end_date_for_sort(m) else float('-inf') ), m.item.title.lower()),
+    )
+
+    # 3) Completed by newest end_date
+    for m in group_completed:
+        m.episodes_left = 0
+        m.time_left = "0m"
+    group_completed_sorted = sorted(
+        group_completed,
+        key=lambda m: (-( _end_date_for_sort(m).timestamp() if _end_date_for_sort(m) else float('-inf') ), m.item.title.lower()),
+    )
+
+    # 4) Dropped by newest end_date
+    for m in group_dropped:
+        if hasattr(m, 'max_progress'):
+            episodes_left = m.max_progress - m.progress
+            if episodes_left < 0:
+                episodes_left = 0
+            m.episodes_left = episodes_left
+            if episodes_left > 0:
+                runtime = _calc_runtime_minutes(m)
+                total = episodes_left * runtime
+                hours = int(total // 60)
+                minutes = int(total % 60)
+                if hours > 0:
+                    m.time_left = f"{hours}h {minutes}m"
+                else:
+                    m.time_left = f"{minutes}m"
+            else:
+                m.time_left = "0m"
+        else:
+            m.episodes_left = 0
+            m.time_left = "-"
+    group_dropped_sorted = sorted(
+        group_dropped,
+        key=lambda m: (-( _end_date_for_sort(m).timestamp() if _end_date_for_sort(m) else float('-inf') ), m.item.title.lower()),
+    )
     
-    # Sort by status priority first, then time left (ascending - least time first)
-    logger.debug(f"DEBUG: Sorting {len(media_list)} TV shows by time left")
-    sorted_list = sorted(media_list, key=time_left_sort_key)
+    # 5) Tail (unreleased/unknown) - set display values
+    for m in group_tail:
+        m.episodes_left = 0
+        m.time_left = "-"
+
+    sorted_list = (
+        group_active_sorted
+        + group_inprog_zero_sorted
+        + group_completed_sorted
+        + group_dropped_sorted
+        + group_tail
+    )
+    logger.debug(
+        "DEBUG: Group counts -> active: %d, inprog_zero: %d, completed: %d, dropped: %d, tail: %d",
+        len(group_active_sorted), len(group_inprog_zero_sorted), len(group_completed_sorted), len(group_dropped_sorted), len(group_tail)
+    )
     
     # Log first 10 items for debugging
     logger.debug("DEBUG: First 10 sorted shows:")
