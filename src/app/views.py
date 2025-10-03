@@ -132,27 +132,31 @@ def media_list(request, media_type):
         
         logger = logging.getLogger(__name__)
         
-        # TEMPORARILY DISABLED CACHING FOR DEBUGGING
-        # TODO: Implement proper cache invalidation based on progress updates
-        # cache_key = f"time_left_sorted_v6_{request.user.id}_{media_type}_{status_filter}_{search_query}"
-        # cached_results = cache.get(cache_key)
+        # Cache sorted results for 5 minutes to avoid expensive re-sorts
+        # Cache invalidates automatically when you update any show progress
+        cache_key = f"time_left_sorted_v7_{request.user.id}_{media_type}_{status_filter}_{search_query}"
+        cached_results = cache.get(cache_key)
         
-        logger.debug(f"DEBUG: Starting time_left sort for page {page} (cache disabled for debugging)")
-        
-        # Get all media objects for sorting
-        media_list = list(media_queryset)
-        logger.debug(f"DEBUG: Got {len(media_list)} media objects from queryset")
-        
-        # Annotate max_progress first
-        BasicMedia.objects.annotate_max_progress(media_list, media_type)
-        logger.debug(f"DEBUG: Annotated max_progress for all media")
-        
-        # Apply time_left sorting
-        media_list = _sort_tv_media_by_time_left(media_list)
-        logger.debug(f"DEBUG: Applied time_left sorting")
-        
-        # CACHING DISABLED - will re-enable with proper invalidation strategy
-        # cache.set(cache_key, media_list, 300)
+        if cached_results is not None:
+            logger.debug(f"DEBUG: Using cached time_left sort (page {page})")
+            media_list = cached_results
+        else:
+            logger.debug(f"DEBUG: Starting time_left sort for page {page} (no cache)")
+            
+            # Get all media objects for sorting
+            media_list = list(media_queryset)
+            logger.debug(f"DEBUG: Got {len(media_list)} media objects from queryset")
+            
+            # Annotate max_progress first
+            BasicMedia.objects.annotate_max_progress(media_list, media_type)
+            logger.debug(f"DEBUG: Annotated max_progress for all media")
+            
+            # Apply time_left sorting
+            media_list = _sort_tv_media_by_time_left(media_list)
+            logger.debug(f"DEBUG: Applied time_left sorting")
+            
+            # Cache for 5 minutes (300 seconds)
+            cache.set(cache_key, media_list, 300)
         
         # Paginate the sorted list
         items_per_page = 32
