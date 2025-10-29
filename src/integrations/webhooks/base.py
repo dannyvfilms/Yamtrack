@@ -322,18 +322,12 @@ class BaseWebhookProcessor:
                 initial_progress,
             )
 
-    def _handle_tv_episode(
-        self,
-        media_id,
-        season_number,
-        episode_number,
-        payload,
-        user,
-    ):
-        """Handle TV episode playback event."""
-        tv_metadata = app.providers.tmdb.tv_with_seasons(media_id, [season_number])
-        season_metadata = tv_metadata[f"season/{season_number}"]
-
+    def _ensure_tv_instance(self, media_id, tv_metadata, user):
+        """Ensure TV item and instance exist, creating/updating as needed.
+        
+        Returns:
+            tv_instance: The TV instance for the user
+        """
         tv_item, _ = app.models.Item.objects.get_or_create(
             media_id=media_id,
             source=Sources.TMDB.value,
@@ -360,7 +354,15 @@ class BaseWebhookProcessor:
                 Status.IN_PROGRESS.value,
                 tv_metadata["title"],
             )
+        
+        return tv_instance
 
+    def _ensure_season_instance(self, media_id, season_number, tv_metadata, season_metadata, tv_instance, user):
+        """Ensure season item and instance exist, creating/updating as needed.
+        
+        Returns:
+            season_instance: The Season instance for the user
+        """
         season_item, _ = app.models.Item.objects.get_or_create(
             media_id=media_id,
             source=Sources.TMDB.value,
@@ -394,7 +396,100 @@ class BaseWebhookProcessor:
                 tv_metadata["title"],
                 season_number,
             )
+        
+        return season_instance
 
+    def _should_update_episode(self, latest_episode, episode_played, now):
+        """Determine if episode should be updated based on duplicate detection logic.
+        
+        Returns:
+            bool: True if episode should be updated, False otherwise
+        """
+        if not latest_episode or not latest_episode.end_date:
+            return True
+
+        # Episode already marked as complete
+        if not episode_played:
+            # Episode complete, don't update progress
+            return False
+
+        # Only update if we got a new play event (to handle duplicates)
+        time_diff = abs((now - latest_episode.end_date).total_seconds())
+        threshold = 5
+        if time_diff < threshold:
+            logger.debug(
+                "Skipping duplicate episode record (time difference: %d seconds)",
+                time_diff,
+            )
+            return False
+
+        return True
+
+    def _update_or_create_episode(
+        self,
+        episode_item,
+        season_instance,
+        latest_episode,
+        progress_percent,
+        episode_played,
+        is_completed,
+        now,
+        tv_title,
+        season_number,
+        episode_number,
+    ):
+        """Update existing episode or create new one based on current state."""
+        if latest_episode and not latest_episode.end_date:
+            # Update existing incomplete episode record
+            if progress_percent is not None:
+                latest_episode.progress = progress_percent
+
+            if is_completed:
+                latest_episode.end_date = now
+                latest_episode.progress = 100
+
+            latest_episode.save()
+            logger.info(
+                "Updated episode progress: %s S%02dE%02d, progress: %s%%, completed: %s",
+                tv_title,
+                season_number,
+                episode_number,
+                latest_episode.progress,
+                is_completed,
+            )
+        else:
+            # Create new episode record
+            app.models.Episode.objects.create(
+                item=episode_item,
+                related_season=season_instance,
+                progress=progress_percent if progress_percent is not None else 0,
+                end_date=now if is_completed else None,
+            )
+            logger.info(
+                "Created episode record: %s S%02dE%02d, progress: %s%%, completed: %s",
+                tv_title,
+                season_number,
+                episode_number,
+                progress_percent if progress_percent is not None else 0,
+                is_completed,
+            )
+
+    def _handle_tv_episode(
+        self,
+        media_id,
+        season_number,
+        episode_number,
+        payload,
+        user,
+    ):
+        """Handle TV episode playback event."""
+        tv_metadata = app.providers.tmdb.tv_with_seasons(media_id, [season_number])
+        season_metadata = tv_metadata[f"season/{season_number}"]
+
+        tv_instance = self._ensure_tv_instance(media_id, tv_metadata, user)
+        season_instance = self._ensure_season_instance(
+            media_id, season_number, tv_metadata, season_metadata, tv_instance, user
+        )
         episode_item = season_instance.get_episode_item(episode_number, season_metadata)
 
         # Extract progress percentage from payload
@@ -408,7 +503,7 @@ class BaseWebhookProcessor:
         if episode_played:
             progress_percent = 100
 
-        # Get or create episode record
+        # Get latest episode record for duplicate detection
         latest_episode = (
             app.models.Episode.objects.filter(
                 item=episode_item,
@@ -418,65 +513,22 @@ class BaseWebhookProcessor:
             .first()
         )
 
-        # Check if we should create or update
-        should_update = True
-        if latest_episode and latest_episode.end_date:
-            # Episode already marked as complete
-            # Only update if we got a new play event (to handle duplicates)
-            if episode_played:
-                time_diff = abs((now - latest_episode.end_date).total_seconds())
-                threshold = 5
-                if time_diff < threshold:
-                    should_update = False
-                    logger.debug(
-                        "Skipping duplicate episode record "
-                        "(time difference: %d seconds): %s S%02dE%02d",
-                        time_diff,
-                        tv_metadata["title"],
-                        season_number,
-                        episode_number,
-                    )
-            else:
-                # Episode complete, don't update progress
-                should_update = False
+        should_update = self._should_update_episode(latest_episode, episode_played, now)
 
         if should_update:
             is_completed = episode_played or (progress_percent is not None and progress_percent >= 95)
-
-            if latest_episode and not latest_episode.end_date:
-                # Update existing incomplete episode record
-                if progress_percent is not None:
-                    latest_episode.progress = progress_percent
-
-                if is_completed:
-                    latest_episode.end_date = now
-                    latest_episode.progress = 100
-
-                latest_episode.save()
-                logger.info(
-                    "Updated episode progress: %s S%02dE%02d, progress: %s%%, completed: %s",
-                    tv_metadata["title"],
-                    season_number,
-                    episode_number,
-                    latest_episode.progress,
-                    is_completed,
-                )
-            else:
-                # Create new episode record
-                app.models.Episode.objects.create(
-                    item=episode_item,
-                    related_season=season_instance,
-                    progress=progress_percent if progress_percent is not None else 0,
-                    end_date=now if is_completed else None,
-                )
-                logger.info(
-                    "Created episode record: %s S%02dE%02d, progress: %s%%, completed: %s",
-                    tv_metadata["title"],
-                    season_number,
-                    episode_number,
-                    progress_percent if progress_percent is not None else 0,
-                    is_completed,
-                )
+            self._update_or_create_episode(
+                episode_item,
+                season_instance,
+                latest_episode,
+                progress_percent,
+                episode_played,
+                is_completed,
+                now,
+                tv_metadata["title"],
+                season_number,
+                episode_number,
+            )
         else:
             logger.debug(
                 "Episode not updated: %s S%02dE%02d",
