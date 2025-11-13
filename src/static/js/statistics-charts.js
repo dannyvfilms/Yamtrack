@@ -284,6 +284,32 @@ document.addEventListener("DOMContentLoaded", function () {
     return null;
   }
 
+  function initializeSingleSeriesBarChart(canvasId, dataElementId) {
+    const dataElement = document.getElementById(dataElementId);
+    if (!dataElement) {
+      return null;
+    }
+
+    const rawData = JSON.parse(dataElement.textContent || "null");
+    if (!rawData || !rawData.labels || rawData.labels.length === 0) {
+      return null;
+    }
+
+    const chartOptions = JSON.parse(JSON.stringify(barChartConfig));
+    chartOptions.scales.x.stacked = false;
+    chartOptions.scales.y.stacked = false;
+    if (chartOptions.plugins && chartOptions.plugins.legend) {
+      chartOptions.plugins.legend.display = false;
+    }
+
+    return initializeChartIfExists(
+      canvasId,
+      "bar",
+      processBarData(rawData),
+      chartOptions,
+    );
+  }
+
   // Create Media Type Distribution Chart
   const mediaTypeDistributionElement = document.getElementById(
     "media_type_distribution"
@@ -373,4 +399,38 @@ document.addEventListener("DOMContentLoaded", function () {
       scoreChartOptions
     );
   }
+
+  initializeSingleSeriesBarChart(
+    "tvEpisodesByYearChart",
+    "tv_episodes_by_year"
+  );
+  initializeSingleSeriesBarChart(
+    "tvEpisodesByMonthChart",
+    "tv_episodes_by_month"
+  );
+  initializeSingleSeriesBarChart(
+    "tvEpisodesByWeekdayChart",
+    "tv_episodes_by_weekday"
+  );
+  initializeSingleSeriesBarChart(
+    "tvEpisodesByTimeChart",
+    "tv_episodes_by_time"
+  );
+
+  initializeSingleSeriesBarChart(
+    "moviePlaysByYearChart",
+    "movie_plays_by_year"
+  );
+  initializeSingleSeriesBarChart(
+    "moviePlaysByMonthChart",
+    "movie_plays_by_month"
+  );
+  initializeSingleSeriesBarChart(
+    "moviePlaysByWeekdayChart",
+    "movie_plays_by_weekday"
+  );
+  initializeSingleSeriesBarChart(
+    "moviePlaysByTimeChart",
+    "movie_plays_by_time"
+  );
 });

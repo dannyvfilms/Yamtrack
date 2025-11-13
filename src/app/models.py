@@ -567,6 +567,10 @@ class MediaManager(models.Manager):
             # Annotate with max_progress and next_event
             self.annotate_max_progress(media_list, media_type)
             self._annotate_next_event(media_list)
+            
+            # Fix missing season images
+            if media_type == MediaTypes.SEASON.value:
+                self._fix_missing_season_images(media_list)
 
             # Sort the media list
             sorted_list = self._sort_in_progress_media(media_list, sort_by)
@@ -613,6 +617,32 @@ class MediaManager(models.Manager):
             )
 
             media.next_event = future_events[0] if future_events else None
+    
+    def _fix_missing_season_images(self, season_list):
+        """Backfill missing season poster images from metadata."""
+        from django.conf import settings
+        
+        items_to_update = []
+        for season in season_list:
+            if season.item.image == settings.IMG_NONE:
+                try:
+                    season_metadata = providers.services.get_media_metadata(
+                        MediaTypes.SEASON.value,
+                        season.item.media_id,
+                        season.item.source,
+                        [season.item.season_number],
+                    )
+                    if season_metadata.get("image"):
+                        season.item.image = season_metadata["image"]
+                        items_to_update.append(season.item)
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to fetch image for {season}: {e}"
+                    )
+        
+        if items_to_update:
+            Item.objects.bulk_update(items_to_update, ["image"])
+            logger.info(f"Updated {len(items_to_update)} season poster(s)")
 
     def _sort_in_progress_media(self, media_list, sort_by):
         """Sort in-progress media based on the sort criteria."""

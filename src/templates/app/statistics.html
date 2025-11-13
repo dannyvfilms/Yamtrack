@@ -468,6 +468,294 @@
         {% endif %}
       </div>
 
+      <!-- TV Shows Consumption Section -->
+      <section class="bg-[#2a2f35] rounded-lg p-6 mb-8 space-y-6">
+        <div class="flex flex-col">
+          <span class="text-sm uppercase tracking-widest text-gray-400">TV Shows</span>
+          <h2 class="text-2xl font-semibold text-white">Activity Overview</h2>
+          <span class="text-sm text-gray-500" x-text="selectedRange"></span>
+        </div>
+
+        <div class="space-y-6">
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Hours Watched</p>
+              {% if tv_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ tv_consumption.hours.total|floatformat:1 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Total</p>
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Year</p>
+              {% if tv_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ tv_consumption.hours.per_year|floatformat:1 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Hours</p>
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Month</p>
+              {% if tv_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ tv_consumption.hours.per_month|floatformat:1 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Hours</p>
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Day</p>
+              {% if tv_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ tv_consumption.hours.per_day|floatformat:2 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Hours</p>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Episode Plays</p>
+              {% if tv_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ tv_consumption.plays.total|floatformat:0 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Total</p>
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Year</p>
+              {% if tv_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ tv_consumption.plays.per_year|floatformat:1 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Episodes</p>
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Month</p>
+              {% if tv_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ tv_consumption.plays.per_month|floatformat:1 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Episodes</p>
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Day</p>
+              {% if tv_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ tv_consumption.plays.per_day|floatformat:2 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Episodes</p>
+            </div>
+          </div>
+
+          {% if show_year_charts %}
+          <div class="bg-[#39404b] rounded-lg p-4">
+            <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Episode Plays by Year</h3>
+            {% if tv_consumption.charts.by_year.labels %}
+              <div class="h-64">
+                <canvas id="tvEpisodesByYearChart"></canvas>
+              </div>
+            {% else %}
+              <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+                <p class="text-sm">No episode plays available for this range.</p>
+              </div>
+            {% endif %}
+          </div>
+          {% endif %}
+
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div class="bg-[#39404b] rounded-lg p-4">
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Episode Plays by Month</h3>
+              {% if tv_consumption.charts.by_month.labels %}
+                <div class="h-64">
+                  <canvas id="tvEpisodesByMonthChart"></canvas>
+                </div>
+              {% else %}
+                <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+                  <p class="text-sm">No monthly episode plays recorded.</p>
+                </div>
+              {% endif %}
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-4">
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Episode Plays by Day of Week</h3>
+              {% if tv_consumption.charts.by_weekday.labels %}
+                <div class="h-64">
+                  <canvas id="tvEpisodesByWeekdayChart"></canvas>
+                </div>
+              {% else %}
+                <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+                  <p class="text-sm">No weekday data available.</p>
+                </div>
+              {% endif %}
+            </div>
+          </div>
+
+          <div class="bg-[#39404b] rounded-lg p-4">
+            <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Episode Plays by Time of Day</h3>
+            {% if tv_consumption.charts.by_time_of_day.labels %}
+              <div class="h-64">
+                <canvas id="tvEpisodesByTimeChart"></canvas>
+              </div>
+            {% else %}
+              <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+                <p class="text-sm">No time-of-day data available.</p>
+              </div>
+            {% endif %}
+          </div>
+        </div>
+      </section>
+
+      <!-- Movies Consumption Section -->
+      <section class="bg-[#2a2f35] rounded-lg p-6 mb-8 space-y-6">
+        <div class="flex flex-col">
+          <span class="text-sm uppercase tracking-widest text-gray-400">Movies</span>
+          <h2 class="text-2xl font-semibold text-white">Activity Overview</h2>
+          <span class="text-sm text-gray-500" x-text="selectedRange"></span>
+        </div>
+
+        <div class="space-y-6">
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Hours Watched</p>
+              {% if movie_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ movie_consumption.hours.total|floatformat:1 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Total</p>
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Year</p>
+              {% if movie_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ movie_consumption.hours.per_year|floatformat:1 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Hours</p>
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Month</p>
+              {% if movie_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ movie_consumption.hours.per_month|floatformat:1 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Hours</p>
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Day</p>
+              {% if movie_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ movie_consumption.hours.per_day|floatformat:2 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Hours</p>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Movie Plays</p>
+              {% if movie_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ movie_consumption.plays.total|floatformat:0 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Total</p>
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Year</p>
+              {% if movie_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ movie_consumption.plays.per_year|floatformat:1 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Movies</p>
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Month</p>
+              {% if movie_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ movie_consumption.plays.per_month|floatformat:1 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Movies</p>
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Day</p>
+              {% if movie_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ movie_consumption.plays.per_day|floatformat:2 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Movies</p>
+            </div>
+          </div>
+
+          {% if show_year_charts %}
+          <div class="bg-[#39404b] rounded-lg p-4">
+            <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Movie Plays by Year</h3>
+            {% if movie_consumption.charts.by_year.labels %}
+              <div class="h-64">
+                <canvas id="moviePlaysByYearChart"></canvas>
+              </div>
+            {% else %}
+              <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+                <p class="text-sm">No movie plays available for this range.</p>
+              </div>
+            {% endif %}
+          </div>
+          {% endif %}
+
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div class="bg-[#39404b] rounded-lg p-4">
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Movie Plays by Month</h3>
+              {% if movie_consumption.charts.by_month.labels %}
+                <div class="h-64">
+                  <canvas id="moviePlaysByMonthChart"></canvas>
+                </div>
+              {% else %}
+                <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+                  <p class="text-sm">No monthly movie plays recorded.</p>
+                </div>
+              {% endif %}
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-4">
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Movie Plays by Day of Week</h3>
+              {% if movie_consumption.charts.by_weekday.labels %}
+                <div class="h-64">
+                  <canvas id="moviePlaysByWeekdayChart"></canvas>
+                </div>
+              {% else %}
+                <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+                  <p class="text-sm">No weekday data available.</p>
+                </div>
+              {% endif %}
+            </div>
+          </div>
+
+          <div class="bg-[#39404b] rounded-lg p-4">
+            <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Movie Plays by Time of Day</h3>
+            {% if movie_consumption.charts.by_time_of_day.labels %}
+              <div class="h-64">
+                <canvas id="moviePlaysByTimeChart"></canvas>
+              </div>
+            {% else %}
+              <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+                <p class="text-sm">No time-of-day data available.</p>
+              </div>
+            {% endif %}
+          </div>
+        </div>
+      </section>
+
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <!-- Media Type Distribution Section -->
         <div class="bg-[#2a2f35] rounded-lg p-6">
@@ -1077,6 +1365,18 @@
   {{ status_pie_chart_data|json_script:"status_pie_chart_data" }}
   {{ status_distribution|json_script:"status_distribution" }}
   {{ score_distribution|json_script:"score_distribution" }}
+  {% if show_year_charts %}
+    {{ tv_consumption.charts.by_year|json_script:"tv_episodes_by_year" }}
+  {% endif %}
+  {{ tv_consumption.charts.by_month|json_script:"tv_episodes_by_month" }}
+  {{ tv_consumption.charts.by_weekday|json_script:"tv_episodes_by_weekday" }}
+  {{ tv_consumption.charts.by_time_of_day|json_script:"tv_episodes_by_time" }}
+  {% if show_year_charts %}
+    {{ movie_consumption.charts.by_year|json_script:"movie_plays_by_year" }}
+  {% endif %}
+  {{ movie_consumption.charts.by_month|json_script:"movie_plays_by_month" }}
+  {{ movie_consumption.charts.by_weekday|json_script:"movie_plays_by_weekday" }}
+  {{ movie_consumption.charts.by_time_of_day|json_script:"movie_plays_by_time" }}
 
   <script src="{% static 'js/statistics-charts.js' %}{% get_static_file_mtime 'js/statistics-charts.js' %}"></script>
 {% endblock js %}

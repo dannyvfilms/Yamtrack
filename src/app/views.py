@@ -1,4 +1,5 @@
 import logging
+from datetime import timedelta
 
 from django.apps import apps
 from django.conf import settings
@@ -22,6 +23,7 @@ from app.models import TV, BasicMedia, Item, MediaTypes, Season, Sources, Status
 from app.providers import manual, services, tmdb
 from app.templatetags import app_tags
 from users.models import HomeSortChoices, MediaSortChoices, MediaStatusChoices
+from dateutil.relativedelta import relativedelta
 
 logger = logging.getLogger(__name__)
 
@@ -610,7 +612,7 @@ def media_save(request):
             from app.statistics import parse_runtime_to_minutes
             runtime_minutes = parse_runtime_to_minutes(metadata["details"]["runtime"])
         
-        item, _ = Item.objects.get_or_create(
+        item, created = Item.objects.get_or_create(
             media_id=media_id,
             source=source,
             media_type=media_type,
@@ -622,9 +624,15 @@ def media_save(request):
             },
         )
         
-        # Update runtime if it's not set and we have it now
+        # Update image and runtime if they're not set and we have them now
+        needs_save = False
+        if item.image == settings.IMG_NONE and metadata.get("image"):
+            item.image = metadata["image"]
+            needs_save = True
         if not item.runtime_minutes and runtime_minutes:
             item.runtime_minutes = runtime_minutes
+            needs_save = True
+        if needs_save:
             item.save()
         model = apps.get_model(app_label="app", model_name=media_type)
         instance = model(item=item, user=request.user)
@@ -955,6 +963,13 @@ def statistics(request):
         end_date,
     )
 
+    if not request.user.season_enabled:
+        season_key = MediaTypes.SEASON.value
+        season_count = media_count.pop(season_key, 0)
+        if season_count:
+            media_count["total"] = max(media_count.get("total", 0) - season_count, 0)
+        user_media.pop(season_key, None)
+
     # Calculate all statistics from the retrieved data
     media_type_distribution = stats.get_media_type_distribution(
         media_count,
@@ -967,10 +982,35 @@ def statistics(request):
     timeline = stats.get_timeline(user_media)
     top_played = stats.get_top_played_media(user_media, start_date, end_date)
     
-    # Calculate hours per media type for the new statistics cards
-    hours_per_media_type = stats.get_hours_per_media_type(user_media, start_date, end_date)
+    # Calculate hours and detailed consumption summaries
+    minutes_per_media_type = stats.calculate_minutes_per_media_type(
+        user_media,
+        start_date,
+        end_date,
+    )
+    hours_per_media_type = stats.get_hours_per_media_type(
+        user_media,
+        start_date,
+        end_date,
+        minutes_per_media_type,
+    )
+    tv_consumption = stats.get_tv_consumption_stats(
+        user_media,
+        start_date,
+        end_date,
+        minutes_per_media_type,
+    )
+    movie_consumption = stats.get_movie_consumption_stats(
+        user_media,
+        start_date,
+        end_date,
+        minutes_per_media_type,
+    )
 
     activity_data = stats.get_activity_data(request.user, start_date, end_date)
+
+    selected_range_name = _identify_predefined_range(start_date, end_date)
+    show_year_charts = selected_range_name in (None, "All Time")
 
     context = {
         "user": request.user,
@@ -986,6 +1026,9 @@ def statistics(request):
         "status_pie_chart_data": status_pie_chart_data,
         "timeline": timeline,
         "hours_per_media_type": hours_per_media_type,
+        "tv_consumption": tv_consumption,
+        "movie_consumption": movie_consumption,
+        "show_year_charts": show_year_charts,
     }
 
     return render(request, "app/statistics.html", context)
@@ -1272,4 +1315,65 @@ def _sort_tv_media_by_time_left(media_list):
         logger.debug(f"  {i+1}. {media.item.title} - Episodes left: {episodes_left}, Status: {getattr(media, 'status', 'Unknown')}")
     
     return sorted_list
+
+
+def _identify_predefined_range(start_date, end_date):
+    if start_date is None and end_date is None:
+        return "All Time"
+
+    if not start_date or not end_date:
+        return None
+
+    local_start = timezone.localtime(start_date).date()
+    local_end = timezone.localtime(end_date).date()
+    today = timezone.localdate()
+
+    if local_start == today and local_end == today:
+        return "Today"
+
+    yesterday = today - timedelta(days=1)
+    if local_start == yesterday and local_end == yesterday:
+        return "Yesterday"
+
+    monday = today - timedelta(days=today.weekday())
+    if local_start == monday and local_end == today:
+        return "This Week"
+
+    if local_start == today - timedelta(days=6) and local_end == today:
+        return "Last 7 Days"
+
+    month_start = today.replace(day=1)
+    if local_start == month_start and local_end == today:
+        return "This Month"
+
+    if local_start == today - timedelta(days=29) and local_end == today:
+        return "Last 30 Days"
+
+    if local_start == today - timedelta(days=89) and local_end == today:
+        return "Last 90 Days"
+
+    year_start = today.replace(month=1, day=1)
+    if local_start == year_start and local_end == today:
+        return "This Year"
+
+    six_months_start = _adjust_month_delta(today, months=6)
+    if _dates_close(local_start, six_months_start) and local_end == today:
+        return "Last 6 Months"
+
+    twelve_months_start = _adjust_month_delta(today, months=12)
+    if _dates_close(local_start, twelve_months_start) and local_end == today:
+        return "Last 12 Months"
+
+    return None
+
+
+def _adjust_month_delta(reference_date, months):
+    candidate = reference_date - relativedelta(months=months)
+    if candidate.day != reference_date.day:
+        candidate = (candidate.replace(day=1) + relativedelta(months=1)) - timedelta(days=1)
+    return candidate
+
+
+def _dates_close(date_one, date_two, tolerance_days=1):
+    return abs((date_one - date_two).days) <= tolerance_days
 
