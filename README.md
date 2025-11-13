@@ -8,6 +8,15 @@
 
 Yamtrack is a self hosted media tracker for movies, tv shows, anime, manga, video games and books.
 
+## ✨ Repo-Specific Features
+
+- Sort by Ratings on Lists
+- Preferences Tab for more flexibility in optional features
+- Improved Statistic including most watched and total time per media type
+- Multiple plays combined in Video Games
+- Sort TV Shows by Least Time Remaining
+- Fixed issue with Yamtrack CSV Importing
+
 ## 🚀 Demo
 
 You can try the app at [yamtrack.fuzzygrim.com](https://yamtrack.fuzzygrim.com) using the username `demo` and password `demo`.
