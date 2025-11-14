@@ -1141,22 +1141,26 @@ def _sort_tv_media_by_time_left(media_list):
         return annotated
 
     # Cache provider metadata lookups per (source, type, id)
-    provider_max_cache = {}
-    def _provider_max_progress(media):
-        key = (media.item.source, media.item.media_type, media.item.media_id)
-        if key in provider_max_cache:
-            return provider_max_cache[key]
+    RELEASE_SYNC_TTL_SECONDS = 3600
+
+    def _release_sync_cache_key(media):
+        return f"timeleft:release-sync:{media.item.source}:{media.item.media_id}"
+
+    def _refresh_release_metadata(media):
+        if media.item.source == Sources.MANUAL.value:
+            return
+
+        cache_key = _release_sync_cache_key(media)
+        if not cache.add(cache_key, True, RELEASE_SYNC_TTL_SECONDS):
+            return
+
         try:
-            tv_metadata = services.get_media_metadata(
-                media.item.media_type,
-                media.item.media_id,
-                media.item.source,
-            )
-            provider_max = tv_metadata.get("max_progress") or 0
-        except Exception:  # noqa: BLE001 - best-effort fallback only
-            provider_max = 0
-        provider_max_cache[key] = provider_max
-        return provider_max
+            media.item.fetch_releases(delay=False)
+        except Exception:  # noqa: BLE001 - log and continue
+            logger.exception("Failed to refresh release metadata for %s", media.item)
+            return
+
+        BasicMedia.objects.annotate_max_progress([media], MediaTypes.TV.value)
 
     # Explicit bucketing for deterministic grouping
     active_statuses = {Status.IN_PROGRESS.value, Status.PLANNING.value, Status.PAUSED.value}
@@ -1171,23 +1175,31 @@ def _sort_tv_media_by_time_left(media_list):
         if not hasattr(media, 'max_progress'):
             group_tail.append(media)
             continue
-        effective_max = _effective_max_progress(media)
-        # Check provider when we need accurate max_progress data
+
+        annotated_max = getattr(media, 'max_progress', None)
         status = getattr(media, 'status', Status.IN_PROGRESS.value)
-        should_check_provider = (
-            effective_max <= 0  # No local data
-            or effective_max < media.progress  # Progress exceeds known max (data issue)
-            or (status in {Status.IN_PROGRESS.value, Status.PLANNING.value, Status.PAUSED.value}
-                and effective_max == media.progress)  # Caught up - might have new episodes
-            or (status == Status.DROPPED.value and effective_max <= media.progress + 5)  # Dropped shows - check if there's more content
+
+        should_refresh_release_data = (
+            (annotated_max is None and status in active_statuses)
+            or (annotated_max is not None and annotated_max < media.progress)
+            or (
+                status in active_statuses
+                and annotated_max is not None
+                and annotated_max == media.progress
+            )
         )
-        
-        if should_check_provider:
-            provider_max = _provider_max_progress(media)
-            if provider_max > effective_max:
-                effective_max = provider_max
-                logger.debug(f"{media.item.title}: Using provider max_progress={provider_max} (was {_effective_max_progress(media)})")
-        # Ensure UI-calculated properties use effective max
+
+        if should_refresh_release_data:
+            _refresh_release_metadata(media)
+            annotated_max = getattr(media, 'max_progress', None)
+
+        fallback_max = _effective_max_progress(media) or 0
+
+        if annotated_max is None:
+            effective_max = max(fallback_max, media.progress)
+        else:
+            effective_max = max(annotated_max, fallback_max)
+
         media.max_progress = effective_max
         episodes_left = effective_max - media.progress
         if episodes_left < 0:

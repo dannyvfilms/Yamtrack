@@ -10,6 +10,7 @@ from django.utils import timezone
 
 from app import cache_utils
 from app.models import (
+    BasicMedia,
     TV,
     Anime,
     Episode,
@@ -21,6 +22,7 @@ from app.models import (
     Status,
 )
 from app.templatetags import app_tags
+from app.views import _sort_tv_media_by_time_left
 from events.models import Event
 from users.models import HomeSortChoices, MediaStatusChoices
 
@@ -375,6 +377,137 @@ class MediaListViewTests(TestCase):
         page_after = response_after.context["media_list"]
         updated_media = page_after.object_list[0]
         self.assertEqual(getattr(updated_media, "time_left_display", None), "0m")
+
+    @patch("app.views.Item.fetch_releases")
+    def test_time_left_ignores_future_episode_release_dates(self, mock_fetch_releases):
+        """Ensure future-dated episodes are not counted in time left calculations."""
+        mock_fetch_releases.side_effect = AssertionError("fetch_releases should not be called")
+
+        now = timezone.now()
+        tv_item = Item.objects.create(
+            media_id="next-level-chef",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Next Level Chef",
+            image="http://example.com/tv.jpg",
+            runtime_minutes=42,
+        )
+        tv = TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=1,
+        )
+
+        season_item = Item.objects.create(
+            media_id="next-level-chef",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Next Level Chef",
+            image="http://example.com/season.jpg",
+            season_number=1,
+        )
+        Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=tv,
+            status=Status.IN_PROGRESS.value,
+        )
+
+        Item.objects.create(
+            media_id="next-level-chef",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Next Level Chef",
+            image="http://example.com/tv.jpg",
+            season_number=1,
+            episode_number=1,
+            release_datetime=now - timezone.timedelta(days=1),
+        )
+        Item.objects.create(
+            media_id="next-level-chef",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Next Level Chef",
+            image="http://example.com/tv.jpg",
+            season_number=1,
+            episode_number=2,
+            release_datetime=now + timezone.timedelta(days=7),
+        )
+
+        Event.objects.create(
+            item=season_item,
+            content_number=1,
+            datetime=now - timezone.timedelta(days=1),
+        )
+        Event.objects.create(
+            item=season_item,
+            content_number=2,
+            datetime=now + timezone.timedelta(days=7),
+        )
+
+        BasicMedia.objects.annotate_max_progress([tv], MediaTypes.TV.value)
+        sorted_media = _sort_tv_media_by_time_left([tv])
+        self.assertEqual(sorted_media[0].max_progress, 1)
+        self.assertEqual(sorted_media[0].episodes_left_display, 0)
+
+    @patch("app.views.Item.fetch_releases")
+    def test_time_left_counts_episode_released_today(self, mock_fetch_releases):
+        """Episodes released today should be considered available."""
+        mock_fetch_releases.side_effect = AssertionError("fetch_releases should not be called")
+
+        now = timezone.now()
+        tv_item = Item.objects.create(
+            media_id="cooking-show",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Cooking Show",
+            image="http://example.com/tv.jpg",
+            runtime_minutes=42,
+        )
+        tv = TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=0,
+        )
+
+        season_item = Item.objects.create(
+            media_id="cooking-show",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Cooking Show",
+            image="http://example.com/season.jpg",
+            season_number=1,
+        )
+        Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=tv,
+            status=Status.IN_PROGRESS.value,
+        )
+
+        Item.objects.create(
+            media_id="cooking-show",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Cooking Show",
+            image="http://example.com/tv.jpg",
+            season_number=1,
+            episode_number=1,
+            release_datetime=now,
+        )
+
+        Event.objects.create(
+            item=season_item,
+            content_number=1,
+            datetime=now,
+        )
+
+        BasicMedia.objects.annotate_max_progress([tv], MediaTypes.TV.value)
+        sorted_media = _sort_tv_media_by_time_left([tv])
+        self.assertEqual(sorted_media[0].max_progress, 1)
+        self.assertEqual(sorted_media[0].episodes_left_display, 1)
 
     def test_media_list_htmx_request(self):
         """Test the media list view with HTMX request."""

@@ -1,4 +1,6 @@
 import logging
+from collections import defaultdict
+from datetime import datetime
 
 from django.apps import apps
 from django.conf import settings
@@ -80,6 +82,7 @@ class Item(CalendarTriggerMixin, models.Model):
     season_number = models.PositiveIntegerField(null=True, blank=True)
     episode_number = models.PositiveIntegerField(null=True, blank=True)
     runtime_minutes = models.PositiveIntegerField(null=True, blank=True, help_text="Runtime in minutes")
+    release_datetime = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         """Meta options for the model."""
@@ -721,38 +724,72 @@ class MediaManager(models.Manager):
 
     def _annotate_tv_released_episodes(self, tv_list, current_datetime):
         """Annotate TV shows with the number of released episodes."""
-        # Prefetch all relevant events in one query
-        released_events = events.models.Event.objects.filter(
-            item__media_id__in=[tv.item.media_id for tv in tv_list],
-            item__source=tv_list[0].item.source if tv_list else None,
-            item__media_type=MediaTypes.SEASON.value,
-            item__season_number__gt=0,
-            datetime__lte=current_datetime,
-            content_number__isnull=False,
-        ).select_related("item")
+        if not tv_list:
+            return
 
-        # Create a dictionary to store max episode numbers per season per show
-        released_episodes = {}
+        media_keys = {(tv.item.media_id, tv.item.source) for tv in tv_list}
+        media_ids = {media_id for media_id, _ in media_keys}
+        media_sources = {source for _, source in media_keys}
 
-        for event in released_events:
-            media_id = event.item.media_id
-            season_number = event.item.season_number
-            episode_number = event.content_number
+        released_by_show: dict[tuple[str, str], dict[int, int]] = defaultdict(dict)
 
-            if media_id not in released_episodes:
-                released_episodes[media_id] = {}
+        episode_rows = (
+            Item.objects.filter(
+                media_type=MediaTypes.EPISODE.value,
+                media_id__in=media_ids,
+                source__in=media_sources,
+                release_datetime__isnull=False,
+                release_datetime__lte=current_datetime,
+                season_number__gt=0,
+            )
+            .values("media_id", "source", "season_number")
+            .annotate(max_episode=models.Max("episode_number"))
+        )
 
-            if (
-                season_number not in released_episodes[media_id]
-                or episode_number > released_episodes[media_id][season_number]
-            ):
-                released_episodes[media_id][season_number] = episode_number
+        for row in episode_rows:
+            key = (row["media_id"], row["source"])
+            season_number = row["season_number"]
+            max_episode = row["max_episode"] or 0
+            released_by_show[key][season_number] = max(
+                released_by_show[key].get(season_number, 0),
+                max_episode,
+            )
 
-        # Calculate total released episodes per TV show (released only)
+        released_events = (
+            events.models.Event.objects.filter(
+                item__media_id__in=media_ids,
+                item__source__in=media_sources,
+                item__media_type=MediaTypes.SEASON.value,
+                item__season_number__gt=0,
+                datetime__lte=current_datetime,
+                content_number__isnull=False,
+            )
+            .exclude(datetime__year__lt=1900)
+            .values(
+                "item__media_id",
+                "item__source",
+                "item__season_number",
+            )
+            .annotate(max_episode=models.Max("content_number"))
+        )
+
+        for row in released_events:
+            key = (row["item__media_id"], row["item__source"])
+            season_number = row["item__season_number"]
+            max_episode = row["max_episode"] or 0
+            released_by_show[key][season_number] = max(
+                released_by_show[key].get(season_number, 0),
+                max_episode,
+            )
+
         for tv in tv_list:
-            tv_episodes = released_episodes.get(tv.item.media_id, {})
-            # Sum only released episodes; if none released yet, use 0 so unaired seasons don't count
-            tv.max_progress = sum(tv_episodes.values()) if tv_episodes else 0
+            key = (tv.item.media_id, tv.item.source)
+            breakdown = released_by_show.get(key, {})
+            tv.released_episode_breakdown = breakdown
+            if breakdown:
+                tv.max_progress = sum(breakdown.values())
+            else:
+                tv.max_progress = None
 
     def get_media(
         self,
