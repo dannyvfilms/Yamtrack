@@ -1,7 +1,7 @@
 {% load app_tags %}
 
-<div class="flex items-center justify-center space-x-4">
-  <button class="p-1 bg-gray-700 hover:bg-gray-600 rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:hover:bg-gray-700 disabled:cursor-not-allowed"
+<div class="progress-changer flex items-center justify-center space-x-4">
+  <button class="progress-adjust-btn p-1 bg-gray-700 hover:bg-gray-600 rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:hover:bg-gray-700 disabled:cursor-not-allowed"
           {% if media.progress == 0 %}disabled{% endif %}
           hx-post="{% url 'progress_edit' media.item.media_type media.id %}"
           hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
@@ -34,7 +34,7 @@
     {% endif %}
   </div>
 
-  <button class="p-1 bg-gray-700 hover:bg-gray-600 rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:hover:bg-gray-700 disabled:cursor-not-allowed"
+  <button class="progress-adjust-btn p-1 bg-gray-700 hover:bg-gray-600 rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:hover:bg-gray-700 disabled:cursor-not-allowed"
           {% if media.progress == media.max_progress %}disabled{% endif %}
           hx-post="{% url 'progress_edit' media.item.media_type media.id %}"
           hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'

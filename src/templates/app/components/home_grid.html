@@ -2,11 +2,11 @@
 {% load user_tags %}
 
 {% for media in media_list.items %}
-  <div class="bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg transition-all duration-300"
+  <div class="media-card {% if secondary_color %}bg-[#39404b]{% else %}bg-[#2a2f35]{% endif %} rounded-lg overflow-hidden shadow-lg transition-all duration-300"
        x-data="{ trackOpen: false, listsOpen: false, historyOpen: false }">
     <div class="relative">
       <img alt="{{ media }}"
-           class="lazyload w-full aspect-[2/3] {% if media.item.image != IMG_NONE %}object-cover{% endif %}"
+           class="media-card-poster lazyload w-full aspect-[2/3] {% if media.item.image != IMG_NONE %}object-cover{% endif %}"
            data-src="{{ media.item.image }}"
            src="{{ IMG_NONE }}">
 
@@ -116,11 +116,11 @@
       </div>
     </div>
 
-    <div class="p-3 space-y-3">
+    <div class="media-card-body p-3 space-y-3">
       <a href="{{ media.item|media_url }}"
-         class="text-sm font-semibold text-white hover:text-indigo-400 transition duration-300 line-clamp-1 text-center"
+         class="media-card-title text-sm font-semibold text-white hover:text-indigo-400 transition duration-300 line-clamp-1 text-center"
          title="{{ media }}">{{ media }}</a>
-      <div id="progress-{{ media.item.media_type }}-{{ media.id }}">
+      <div id="progress-{{ media.item.media_type }}-{{ media.id }}" class="media-card-progress">
         {% include "app/components/progress_changer.html" with media=media csrf_token=csrf_token MediaTypes=MediaTypes only %}
       </div>
       

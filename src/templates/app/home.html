@@ -6,7 +6,7 @@
 {% endblock title %}
 
 {% block content %}
-  <div class="flex flex-col sm:flex-row justify-between items-center gap-4 mb-8">
+  <div class="flex flex-col sm:flex-row justify-between items-center gap-2 sm:gap-4 mb-4 sm:mb-8">
     <h1 class="text-3xl font-bold text-center w-full sm:w-auto">In Progress</h1>
     <div class="relative" x-data="{ open: false }">
       <button @click="open = !open"
@@ -58,17 +58,17 @@
       </div>
     </div>
   </div>
-  <div class="space-y-8">
+  <div class="space-y-4 sm:space-y-8">
     {% for media_type, media_list in list_by_type.items %}
       <div>
-        <h2 class="text-xl font-semibold mb-4">{{ media_type|media_type_readable_plural }}</h2>
+        <h2 class="text-xl font-semibold mb-2 sm:mb-4">{{ media_type|media_type_readable_plural }}</h2>
         <div id="media-grid-{{ media_type }}"
              class="media-grid">
           {% include "app/components/home_grid.html" %}
         </div>
 
         {% if media_list.total > items_limit %}
-          <div class="mt-6 flex justify-center">
+          <div class="mt-3 sm:mt-6 flex justify-center">
             <button hx-get="{% url 'home' %}?sort={{ current_sort }}&load_media_type={{ media_type }}"
                     hx-target="#media-grid-{{ media_type }}"
                     hx-swap="beforeend"
@@ -86,7 +86,7 @@
         {% endif %}
       </div>
     {% empty %}
-      <div class="flex flex-col items-center justify-center py-32 px-4 bg-[#2a2f35] rounded-lg">
+      <div class="flex flex-col items-center justify-center py-16 sm:py-32 px-3 sm:px-4 bg-[#2a2f35] rounded-lg">
         <div class="bg-[#39404b] rounded-full p-4 w-16 h-16 mx-auto mb-4 flex items-center justify-center">
           <svg xmlns="http://www.w3.org/2000/svg"
                width="24"

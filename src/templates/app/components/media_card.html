@@ -1,11 +1,11 @@
 {% load app_tags %}
 {% load user_tags %}
 
-<div class="{% if secondary_color %}bg-[#39404b]{% else %}bg-[#2a2f35]{% endif %} rounded-lg overflow-hidden shadow-lg relative"
+<div class="media-card {% if secondary_color %}bg-[#39404b]{% else %}bg-[#2a2f35]{% endif %} rounded-lg overflow-hidden shadow-lg relative"
      x-data="{ trackOpen: false, listsOpen: false, historyOpen: false }">
   <div class="relative">
     <img alt="{{ title }}"
-         class="lazyload w-full {% if from_grid %}aspect-[2/3]{% else %}h-48{% endif %} bg-[#3e454d] {% if item.image != IMG_NONE %}object-cover{% endif %}"
+         class="media-card-poster lazyload w-full {% if from_grid %}aspect-[2/3]{% else %}h-48{% endif %} bg-[#3e454d] {% if item.image != IMG_NONE %}object-cover{% endif %}"
          data-src="{{ item.image }}"
          src="{{ IMG_NONE }}">
 
@@ -372,9 +372,9 @@
     </div>
   </div>
 
-  <div class="p-3">
+  <div class="media-card-body p-3">
     <a href="{{ item|media_url }}"
-       class="text-sm font-semibold text-white hover:text-indigo-400 transition duration-300 line-clamp-1"
+       class="media-card-title text-sm font-semibold text-white hover:text-indigo-400 transition duration-300 line-clamp-1"
        title="{{ title }}">{{ title }}</a>
     {% if duration %}
       <p class="text-xs text-gray-400 mt-1">{{ duration }}</p>

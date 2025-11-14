@@ -9,11 +9,11 @@
 
 {% block content %}
   <div x-data="dateRangePicker()" x-init="init()">
-    <div class="mb-8">
+    <div class="mb-4 sm:mb-8">
       <h1 class="text-3xl font-bold mb-2">Statistics</h1>
       <p class="text-gray-400">Track your media consumption habits</p>
     </div>
-    <div class="relative mb-8">
+    <div class="relative mb-4 sm:mb-8">
       <!-- Trigger Button -->
       <button @click="toggleDropdown()"
               class="flex items-center gap-2 px-4 py-2.5 bg-[#2a2f35] hover:bg-[#343a40] rounded-lg transition-all duration-200 border border-gray-700 shadow-sm cursor-pointer">
@@ -53,7 +53,7 @@
            x-show="isOpen"
            x-transition
            @click.outside="isOpen = false"
-           class="absolute z-20 mt-2 w-[340px] bg-[#2a2f35] rounded-lg shadow-lg border border-gray-700 overflow-hidden transition-all duration-200 animate-in fade-in-50 slide-in-from-top-5">
+           class="absolute z-20 mt-2 w-[90vw] sm:w-[340px] bg-[#2a2f35] rounded-lg shadow-lg border border-gray-700 overflow-hidden transition-all duration-200 animate-in fade-in-50 slide-in-from-top-5">
 
         <!-- Tabs -->
         <div class="flex border-b border-gray-700">
@@ -159,9 +159,9 @@
 
     <div class="space-y-8">
       <!-- Statistics Cards -->
-      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <div class="bg-[#2a2f35] rounded-lg p-6 flex items-center">
-          <div class="bg-indigo-600/20 p-4 rounded-full mr-4">
+      <div class="grid grid-cols-2 gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-4 sm:mb-8">
+        <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 flex items-center min-w-0">
+          <div class="bg-indigo-600/20 p-3 sm:p-4 rounded-full mr-4">
             <svg xmlns="http://www.w3.org/2000/svg"
                  width="24"
                  height="24"
@@ -171,24 +171,24 @@
                  stroke-width="2"
                  stroke-linecap="round"
                  stroke-linejoin="round"
-                 class="w-8 h-8 text-indigo-400">
+                 class="w-5 h-5 sm:w-8 sm:h-8 text-indigo-400">
               <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
               <path d="m9 11 3 3L22 4"></path>
             </svg>
           </div>
           <div>
-            <h3 class="text-sm font-medium text-gray-400">Completed Items</h3>
+            <h3 class="text-xs sm:text-sm font-medium text-gray-400">Completed Items</h3>
             {% if media_count.total %}
-              <p class="text-2xl font-bold">
-                {{ status_distribution.total_completed }} <span class="text-gray-500 text-lg">/ {{ media_count.total }}</span>
+              <p class="text-xl sm:text-2xl font-bold">
+                {{ status_distribution.total_completed }} <span class="text-gray-500 text-sm sm:text-lg">/ {{ media_count.total }}</span>
               </p>
             {% else %}
-              <p class="text-2xl font-bold text-gray-500">--</p>
+              <p class="text-xl sm:text-2xl font-bold text-gray-500">--</p>
             {% endif %}
           </div>
         </div>
-        <div class="bg-[#2a2f35] rounded-lg p-6 flex items-center">
-          <div class="bg-yellow-600/20 p-4 rounded-full mr-4">
+        <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 flex items-center min-w-0">
+          <div class="bg-yellow-600/20 p-3 sm:p-4 rounded-full mr-4">
             <svg xmlns="http://www.w3.org/2000/svg"
                  width="24"
                  height="24"
@@ -198,25 +198,25 @@
                  stroke-width="2"
                  stroke-linecap="round"
                  stroke-linejoin="round"
-                 class="w-8 h-8 text-yellow-400">
+                 class="w-5 h-5 sm:w-8 sm:h-8 text-yellow-400">
               <path d="m15.477 12.89 1.515 8.526a.5.5 0 0 1-.81.47l-3.58-2.687a1 1 0 0 0-1.197 0l-3.586 2.686a.5.5 0 0 1-.81-.469l1.514-8.526">
               </path>
               <circle cx="12" cy="8" r="6"></circle>
             </svg>
           </div>
           <div>
-            <h3 class="text-sm font-medium text-gray-400">Average Rating</h3>
+            <h3 class="text-xs sm:text-sm font-medium text-gray-400">Average Rating</h3>
             {% if score_distribution.total_scored %}
-              <p class="text-2xl font-bold">
-                {{ score_distribution.average_score }} <span class="text-gray-500 text-lg">/ 10</span>
+              <p class="text-xl sm:text-2xl font-bold">
+                {{ score_distribution.average_score }} <span class="text-gray-500 text-sm sm:text-lg">/ 10</span>
               </p>
             {% else %}
-              <p class="text-2xl font-bold text-gray-500">--</p>
+              <p class="text-xl sm:text-2xl font-bold text-gray-500">--</p>
             {% endif %}
           </div>
         </div>
-        <div class="bg-[#2a2f35] rounded-lg p-6 flex items-center">
-          <div class="bg-emerald-600/20 p-4 rounded-full mr-4">
+        <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 flex items-center min-w-0">
+          <div class="bg-emerald-600/20 p-3 sm:p-4 rounded-full mr-4">
             <svg xmlns="http://www.w3.org/2000/svg"
                  width="24"
                  height="24"
@@ -226,7 +226,7 @@
                  stroke-width="2"
                  stroke-linecap="round"
                  stroke-linejoin="round"
-                 class="w-8 h-8 text-emerald-400">
+                 class="w-5 h-5 sm:w-8 sm:h-8 text-emerald-400">
               <path d="M8 2v4"></path>
               <path d="M16 2v4"></path>
               <rect width="18" height="18" x="3" y="4" rx="2"></rect>
@@ -234,17 +234,17 @@
             </svg>
           </div>
           <div>
-            <h3 class="text-sm font-medium text-gray-400">Most Active Day</h3>
+            <h3 class="text-xs sm:text-sm font-medium text-gray-400">Most Active Day</h3>
             {% if activity_data.stats.most_active_day %}
-              <p class="text-2xl font-bold">{{ activity_data.stats.most_active_day }}</p>
-              <p class="text-sm text-gray-500">{{ activity_data.stats.most_active_day_percentage }}% of activity</p>
+              <p class="text-xl sm:text-2xl font-bold">{{ activity_data.stats.most_active_day }}</p>
+              <p class="text-xs sm:text-sm text-gray-500">{{ activity_data.stats.most_active_day_percentage }}% of activity</p>
             {% else %}
-              <p class="text-2xl font-bold text-gray-500">--</p>
+              <p class="text-xl sm:text-2xl font-bold text-gray-500">--</p>
             {% endif %}
           </div>
         </div>
-        <div class="bg-[#2a2f35] rounded-lg p-6 flex items-center">
-          <div class="bg-red-600/20 p-4 rounded-full mr-4">
+        <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 flex items-center min-w-0">
+          <div class="bg-red-600/20 p-3 sm:p-4 rounded-full mr-4">
             <svg xmlns="http://www.w3.org/2000/svg"
                  width="24"
                  height="24"
@@ -254,36 +254,36 @@
                  stroke-width="2"
                  stroke-linecap="round"
                  stroke-linejoin="round"
-                 class="w-8 h-8 text-red-400">
+                 class="w-5 h-5 sm:w-8 sm:h-8 text-red-400">
               <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z">
               </path>
             </svg>
           </div>
           <div>
-            <h3 class="text-sm font-medium text-gray-400">Current Streak</h3>
+            <h3 class="text-xs sm:text-sm font-medium text-gray-400">Current Streak</h3>
             {% if activity_data.stats.most_active_day %}
-              <p class="text-2xl font-bold">
+              <p class="text-xl sm:text-2xl font-bold">
                 {{ activity_data.stats.current_streak }} day{{ activity_data.stats.current_streak|pluralize }}
                 <p class="text-sm text-gray-500">
                   Longest: {{ activity_data.stats.longest_streak }} day{{ activity_data.stats.longest_streak|pluralize }}
                 </p>
               </p>
             {% else %}
-              <p class="text-2xl font-bold text-gray-500">--</p>
+              <p class="text-xl sm:text-2xl font-bold text-gray-500">--</p>
             {% endif %}
           </div>
         </div>
       </div>
 
       <!-- Activity History Section -->
-      <div class="bg-[#2a2f35] rounded-lg p-6 max-w-[calc(100svw-4rem)]">
-        <h2 class="text-xl font-semibold mb-4 text-center">Activity History</h2>
+      <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 stat-scroll-safe">
+        <h2 class="text-xl font-semibold mb-3 sm:mb-4 text-center">Activity History</h2>
         <div class="overflow-x-auto flex flex-col justify-center"
              x-data="{ graphTooWide: false }"
              x-init="$nextTick(() => { const graphWidth = $refs.graphContainer.scrollWidth; const parentWidth = $el.clientWidth; graphTooWide = graphWidth > parentWidth; })"
              :class="graphTooWide ? 'items-start' : 'items-center'">
 
-          <div class="p-4" x-ref="graphContainer">
+          <div class="p-3 sm:p-4" x-ref="graphContainer">
             <!-- Months row -->
             <div class="flex mb-2 pl-[36.68px]">
               {% for month, week_count in activity_data.months %}
@@ -320,7 +320,7 @@
           </div>
 
           <!-- Legend -->
-          <div class="flex items-center gap-2 pl-6 text-xs text-gray-400"
+          <div class="flex items-center gap-2 pl-4 sm:pl-6 text-xs text-gray-400"
                :class="graphTooWide ? 'mb-5 mt-2' : 'mt-4'">
             <span>Less</span>
             <div class="w-4 h-4 rounded-sm bg-[#2f353e]"></div>
@@ -334,7 +334,7 @@
       </div>
 
       <!-- Media Type Hours Cards Section -->
-      <div class="grid gap-4 mb-8" 
+      <div class="grid gap-3 sm:gap-4 mb-4 sm:mb-8 stat-scroll-safe" 
            x-data="{ 
              cardCount: 0,
              init() {
@@ -345,22 +345,22 @@
              },
              updateGrid() {
                // Remove all grid column classes first
-               this.$el.classList.remove('grid-cols-1', 'md:grid-cols-2', 'lg:grid-cols-3', 'lg:grid-cols-4');
+               this.$el.classList.remove('grid-cols-1', 'grid-cols-2', 'md:grid-cols-2', 'md:grid-cols-3', 'lg:grid-cols-4');
                
                if (this.cardCount === 1) {
                  this.$el.classList.add('grid-cols-1');
                } else if (this.cardCount === 2) {
-                 this.$el.classList.add('grid-cols-1', 'md:grid-cols-2');
+                 this.$el.classList.add('grid-cols-2', 'md:grid-cols-2');
                } else if (this.cardCount === 3) {
-                 this.$el.classList.add('grid-cols-1', 'md:grid-cols-3');
+                 this.$el.classList.add('grid-cols-2', 'md:grid-cols-3');
                } else if (this.cardCount >= 4) {
-                 this.$el.classList.add('grid-cols-1', 'md:grid-cols-2', 'lg:grid-cols-4');
+                 this.$el.classList.add('grid-cols-2', 'md:grid-cols-2', 'lg:grid-cols-4');
                }
              }
            }">
         {% if hours_per_media_type.tv and hours_per_media_type.tv != "0h 0min" %}
-        <div class="bg-[#2a2f35] rounded-lg p-6 flex items-center" data-media-card>
-          <div class="bg-indigo-600/20 p-4 rounded-full mr-4">
+        <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 flex items-center min-w-0" data-media-card>
+          <div class="bg-indigo-600/20 p-3 sm:p-4 rounded-full mr-4">
             <svg xmlns="http://www.w3.org/2000/svg"
                  width="24"
                  height="24"
@@ -370,22 +370,22 @@
                  stroke-width="2"
                  stroke-linecap="round"
                  stroke-linejoin="round"
-                 class="w-8 h-8 text-indigo-400">
+                 class="w-5 h-5 sm:w-8 sm:h-8 text-indigo-400">
               <rect width="20" height="15" x="2" y="7" rx="2" ry="2"/>
               <polyline points="17 2 12 7 7 2"/>
             </svg>
           </div>
           <div>
-            <h3 class="text-sm font-medium text-gray-400">TV Shows</h3>
-            <p class="text-2xl font-bold">{{ hours_per_media_type.tv }}</p>
-            <p class="text-sm text-gray-500" x-text="selectedRange"></p>
+            <h3 class="text-xs sm:text-sm font-medium text-gray-400">TV Shows</h3>
+            <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.tv }}</p>
+            <p class="text-xs sm:text-sm text-gray-500" x-text="selectedRange"></p>
           </div>
         </div>
         {% endif %}
         
         {% if hours_per_media_type.movie and hours_per_media_type.movie != "0h 0min" %}
-        <div class="bg-[#2a2f35] rounded-lg p-6 flex items-center" data-media-card>
-          <div class="bg-red-600/20 p-4 rounded-full mr-4">
+        <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 flex items-center min-w-0" data-media-card>
+          <div class="bg-red-600/20 p-3 sm:p-4 rounded-full mr-4">
             <svg xmlns="http://www.w3.org/2000/svg"
                  width="24"
                  height="24"
@@ -395,7 +395,7 @@
                  stroke-width="2"
                  stroke-linecap="round"
                  stroke-linejoin="round"
-                 class="w-8 h-8 text-red-400">
+                 class="w-5 h-5 sm:w-8 sm:h-8 text-red-400">
               <rect width="18" height="18" x="3" y="3" rx="2"/>
               <path d="M7 3v18"/>
               <path d="M3 7.5h4"/>
@@ -407,16 +407,16 @@
             </svg>
           </div>
           <div>
-            <h3 class="text-sm font-medium text-gray-400">Movies</h3>
-            <p class="text-2xl font-bold">{{ hours_per_media_type.movie }}</p>
-            <p class="text-sm text-gray-500" x-text="selectedRange"></p>
+            <h3 class="text-xs sm:text-sm font-medium text-gray-400">Movies</h3>
+            <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.movie }}</p>
+            <p class="text-xs sm:text-sm text-gray-500" x-text="selectedRange"></p>
           </div>
         </div>
         {% endif %}
         
         {% if hours_per_media_type.game and hours_per_media_type.game != "0h 0min" %}
-        <div class="bg-[#2a2f35] rounded-lg p-6 flex items-center" data-media-card>
-          <div class="bg-emerald-600/20 p-4 rounded-full mr-4">
+        <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 flex items-center min-w-0" data-media-card>
+          <div class="bg-emerald-600/20 p-3 sm:p-4 rounded-full mr-4">
             <svg xmlns="http://www.w3.org/2000/svg"
                  width="24"
                  height="24"
@@ -426,7 +426,7 @@
                  stroke-width="2"
                  stroke-linecap="round"
                  stroke-linejoin="round"
-                 class="w-8 h-8 text-emerald-400">
+                 class="w-5 h-5 sm:w-8 sm:h-8 text-emerald-400">
               <line x1="6" x2="10" y1="11" y2="11"/>
               <line x1="8" x2="8" y1="9" y2="13"/>
               <line x1="15" x2="15.01" y1="12" y2="12"/>
@@ -435,16 +435,16 @@
             </svg>
           </div>
           <div>
-            <h3 class="text-sm font-medium text-gray-400">Games</h3>
-            <p class="text-2xl font-bold">{{ hours_per_media_type.game }}</p>
-            <p class="text-sm text-gray-500" x-text="selectedRange"></p>
+            <h3 class="text-xs sm:text-sm font-medium text-gray-400">Games</h3>
+            <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.game }}</p>
+            <p class="text-xs sm:text-sm text-gray-500" x-text="selectedRange"></p>
           </div>
         </div>
         {% endif %}
         
         {% if hours_per_media_type.anime and hours_per_media_type.anime != "0h 0min" %}
-        <div class="bg-[#2a2f35] rounded-lg p-6 flex items-center" data-media-card>
-          <div class="bg-pink-600/20 p-4 rounded-full mr-4">
+        <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 flex items-center min-w-0" data-media-card>
+          <div class="bg-pink-600/20 p-3 sm:p-4 rounded-full mr-4">
             <svg xmlns="http://www.w3.org/2000/svg"
                  width="24"
                  height="24"
@@ -454,31 +454,31 @@
                  stroke-width="2"
                  stroke-linecap="round"
                  stroke-linejoin="round"
-                 class="w-8 h-8 text-pink-400">
+                 class="w-5 h-5 sm:w-8 sm:h-8 text-pink-400">
               <circle cx="12" cy="12" r="10"/>
               <polygon points="10 8 16 12 10 16 10 8"/>
             </svg>
           </div>
           <div>
-            <h3 class="text-sm font-medium text-gray-400">Anime</h3>
-            <p class="text-2xl font-bold">{{ hours_per_media_type.anime }}</p>
-            <p class="text-sm text-gray-500" x-text="selectedRange"></p>
+            <h3 class="text-xs sm:text-sm font-medium text-gray-400">Anime</h3>
+            <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.anime }}</p>
+            <p class="text-xs sm:text-sm text-gray-500" x-text="selectedRange"></p>
           </div>
         </div>
         {% endif %}
       </div>
 
       <!-- TV Shows Consumption Section -->
-      <section class="bg-[#2a2f35] rounded-lg p-6 mb-8 space-y-6">
-        <div class="flex flex-col">
+      <section class="bg-[#2a2f35] rounded-lg p-6 mobile-tight-section stat-scroll-safe mb-4 sm:mb-8 space-y-4 sm:space-y-6">
+        <div class="flex flex-col space-y-1">
           <span class="text-sm uppercase tracking-widest text-gray-400">TV Shows</span>
           <h2 class="text-2xl font-semibold text-white">Activity Overview</h2>
           <span class="text-sm text-gray-500" x-text="selectedRange"></span>
         </div>
 
-        <div class="space-y-6">
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+        <div class="space-y-4 sm:space-y-6">
+          <div class="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
               <p class="text-xs uppercase tracking-widest text-gray-400">Hours Watched</p>
               {% if tv_consumption.has_data %}
                 <p class="text-3xl font-bold mt-2">{{ tv_consumption.hours.total|floatformat:1 }}</p>
@@ -487,7 +487,7 @@
               {% endif %}
               <p class="text-xs text-gray-500 mt-1">Total</p>
             </div>
-            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
               <p class="text-xs uppercase tracking-widest text-gray-400">Per Year</p>
               {% if tv_consumption.has_data %}
                 <p class="text-3xl font-bold mt-2">{{ tv_consumption.hours.per_year|floatformat:1 }}</p>
@@ -496,7 +496,7 @@
               {% endif %}
               <p class="text-xs text-gray-500 mt-1">Hours</p>
             </div>
-            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
               <p class="text-xs uppercase tracking-widest text-gray-400">Per Month</p>
               {% if tv_consumption.has_data %}
                 <p class="text-3xl font-bold mt-2">{{ tv_consumption.hours.per_month|floatformat:1 }}</p>
@@ -505,7 +505,7 @@
               {% endif %}
               <p class="text-xs text-gray-500 mt-1">Hours</p>
             </div>
-            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
               <p class="text-xs uppercase tracking-widest text-gray-400">Per Day</p>
               {% if tv_consumption.has_data %}
                 <p class="text-3xl font-bold mt-2">{{ tv_consumption.hours.per_day|floatformat:2 }}</p>
@@ -516,8 +516,8 @@
             </div>
           </div>
 
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+          <div class="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
               <p class="text-xs uppercase tracking-widest text-gray-400">Episode Plays</p>
               {% if tv_consumption.has_data %}
                 <p class="text-3xl font-bold mt-2">{{ tv_consumption.plays.total|floatformat:0 }}</p>
@@ -526,7 +526,7 @@
               {% endif %}
               <p class="text-xs text-gray-500 mt-1">Total</p>
             </div>
-            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
               <p class="text-xs uppercase tracking-widest text-gray-400">Per Year</p>
               {% if tv_consumption.has_data %}
                 <p class="text-3xl font-bold mt-2">{{ tv_consumption.plays.per_year|floatformat:1 }}</p>
@@ -535,7 +535,7 @@
               {% endif %}
               <p class="text-xs text-gray-500 mt-1">Episodes</p>
             </div>
-            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
               <p class="text-xs uppercase tracking-widest text-gray-400">Per Month</p>
               {% if tv_consumption.has_data %}
                 <p class="text-3xl font-bold mt-2">{{ tv_consumption.plays.per_month|floatformat:1 }}</p>
@@ -544,7 +544,7 @@
               {% endif %}
               <p class="text-xs text-gray-500 mt-1">Episodes</p>
             </div>
-            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
               <p class="text-xs uppercase tracking-widest text-gray-400">Per Day</p>
               {% if tv_consumption.has_data %}
                 <p class="text-3xl font-bold mt-2">{{ tv_consumption.plays.per_day|floatformat:2 }}</p>
@@ -556,7 +556,7 @@
           </div>
 
           {% if show_year_charts %}
-          <div class="bg-[#39404b] rounded-lg p-4">
+          <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
             <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Episode Plays by Year</h3>
             {% if tv_consumption.charts.by_year.labels %}
               <div class="h-64">
@@ -570,8 +570,8 @@
           </div>
           {% endif %}
 
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div class="bg-[#39404b] rounded-lg p-4">
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
               <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Episode Plays by Month</h3>
               {% if tv_consumption.charts.by_month.labels %}
                 <div class="h-64">
@@ -583,7 +583,7 @@
                 </div>
               {% endif %}
             </div>
-            <div class="bg-[#39404b] rounded-lg p-4">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
               <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Episode Plays by Day of Week</h3>
               {% if tv_consumption.charts.by_weekday.labels %}
                 <div class="h-64">
@@ -597,7 +597,7 @@
             </div>
           </div>
 
-          <div class="bg-[#39404b] rounded-lg p-4">
+          <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
             <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Episode Plays by Time of Day</h3>
             {% if tv_consumption.charts.by_time_of_day.labels %}
               <div class="h-64">
@@ -613,16 +613,16 @@
       </section>
 
       <!-- Movies Consumption Section -->
-      <section class="bg-[#2a2f35] rounded-lg p-6 mb-8 space-y-6">
-        <div class="flex flex-col">
+      <section class="bg-[#2a2f35] rounded-lg p-6 mobile-tight-section stat-scroll-safe mb-4 sm:mb-8 space-y-4 sm:space-y-6">
+        <div class="flex flex-col space-y-1">
           <span class="text-sm uppercase tracking-widest text-gray-400">Movies</span>
           <h2 class="text-2xl font-semibold text-white">Activity Overview</h2>
           <span class="text-sm text-gray-500" x-text="selectedRange"></span>
         </div>
 
-        <div class="space-y-6">
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+        <div class="space-y-4 sm:space-y-6">
+          <div class="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
               <p class="text-xs uppercase tracking-widest text-gray-400">Hours Watched</p>
               {% if movie_consumption.has_data %}
                 <p class="text-3xl font-bold mt-2">{{ movie_consumption.hours.total|floatformat:1 }}</p>
@@ -631,7 +631,7 @@
               {% endif %}
               <p class="text-xs text-gray-500 mt-1">Total</p>
             </div>
-            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
               <p class="text-xs uppercase tracking-widest text-gray-400">Per Year</p>
               {% if movie_consumption.has_data %}
                 <p class="text-3xl font-bold mt-2">{{ movie_consumption.hours.per_year|floatformat:1 }}</p>
@@ -640,7 +640,7 @@
               {% endif %}
               <p class="text-xs text-gray-500 mt-1">Hours</p>
             </div>
-            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
               <p class="text-xs uppercase tracking-widest text-gray-400">Per Month</p>
               {% if movie_consumption.has_data %}
                 <p class="text-3xl font-bold mt-2">{{ movie_consumption.hours.per_month|floatformat:1 }}</p>
@@ -649,7 +649,7 @@
               {% endif %}
               <p class="text-xs text-gray-500 mt-1">Hours</p>
             </div>
-            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
               <p class="text-xs uppercase tracking-widest text-gray-400">Per Day</p>
               {% if movie_consumption.has_data %}
                 <p class="text-3xl font-bold mt-2">{{ movie_consumption.hours.per_day|floatformat:2 }}</p>
@@ -660,8 +660,8 @@
             </div>
           </div>
 
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+          <div class="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
               <p class="text-xs uppercase tracking-widest text-gray-400">Movie Plays</p>
               {% if movie_consumption.has_data %}
                 <p class="text-3xl font-bold mt-2">{{ movie_consumption.plays.total|floatformat:0 }}</p>
@@ -670,7 +670,7 @@
               {% endif %}
               <p class="text-xs text-gray-500 mt-1">Total</p>
             </div>
-            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
               <p class="text-xs uppercase tracking-widest text-gray-400">Per Year</p>
               {% if movie_consumption.has_data %}
                 <p class="text-3xl font-bold mt-2">{{ movie_consumption.plays.per_year|floatformat:1 }}</p>
@@ -679,7 +679,7 @@
               {% endif %}
               <p class="text-xs text-gray-500 mt-1">Movies</p>
             </div>
-            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
               <p class="text-xs uppercase tracking-widest text-gray-400">Per Month</p>
               {% if movie_consumption.has_data %}
                 <p class="text-3xl font-bold mt-2">{{ movie_consumption.plays.per_month|floatformat:1 }}</p>
@@ -688,7 +688,7 @@
               {% endif %}
               <p class="text-xs text-gray-500 mt-1">Movies</p>
             </div>
-            <div class="bg-[#39404b] rounded-lg p-4 text-center">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
               <p class="text-xs uppercase tracking-widest text-gray-400">Per Day</p>
               {% if movie_consumption.has_data %}
                 <p class="text-3xl font-bold mt-2">{{ movie_consumption.plays.per_day|floatformat:2 }}</p>
@@ -700,7 +700,7 @@
           </div>
 
           {% if show_year_charts %}
-          <div class="bg-[#39404b] rounded-lg p-4">
+          <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
             <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Movie Plays by Year</h3>
             {% if movie_consumption.charts.by_year.labels %}
               <div class="h-64">
@@ -714,8 +714,8 @@
           </div>
           {% endif %}
 
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div class="bg-[#39404b] rounded-lg p-4">
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
               <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Movie Plays by Month</h3>
               {% if movie_consumption.charts.by_month.labels %}
                 <div class="h-64">
@@ -727,7 +727,7 @@
                 </div>
               {% endif %}
             </div>
-            <div class="bg-[#39404b] rounded-lg p-4">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
               <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Movie Plays by Day of Week</h3>
               {% if movie_consumption.charts.by_weekday.labels %}
                 <div class="h-64">
@@ -741,7 +741,7 @@
             </div>
           </div>
 
-          <div class="bg-[#39404b] rounded-lg p-4">
+          <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
             <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Movie Plays by Time of Day</h3>
             {% if movie_consumption.charts.by_time_of_day.labels %}
               <div class="h-64">
@@ -758,7 +758,7 @@
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <!-- Media Type Distribution Section -->
-        <div class="bg-[#2a2f35] rounded-lg p-6">
+        <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 stat-scroll-safe">
           <h2 class="text-xl font-semibold mb-4">Media Type Distribution</h2>
 
           {% if media_type_distribution.labels %}
@@ -789,7 +789,7 @@
         </div>
 
         <!-- Status Distribution Section -->
-        <div class="bg-[#2a2f35] rounded-lg p-6">
+        <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 stat-scroll-safe">
           <h2 class="text-xl font-semibold mb-4">Status Distribution</h2>
 
           {% if status_pie_chart_data.labels %}
@@ -819,7 +819,7 @@
         </div>
 
         <!-- Status Distribution by Media Type Section -->
-        <div class="bg-[#2a2f35] rounded-lg p-6">
+        <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 stat-scroll-safe">
           <h2 class="text-xl font-semibold mb-4">Status Distribution by Media Type</h2>
 
           {% if media_type_distribution.labels %}
@@ -851,7 +851,7 @@
         </div>
 
         <!-- Score Distribution by Media Type Section -->
-        <div class="bg-[#2a2f35] rounded-lg p-6">
+        <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 stat-scroll-safe">
           <h2 class="text-xl font-semibold mb-4">Score Distribution by Media Type</h2>
 
           {% if score_distribution.total_scored %}
@@ -885,12 +885,18 @@
 
       <!-- Top Movies Section -->
       {% if top_played.movie %}
-        <div class="bg-[#2a2f35] rounded-lg p-6 mb-6">
-          <div class="flex items-center justify-between mb-4">
-            <h2 class="text-xl font-semibold">Top Movies - <span x-text="selectedRange"></span></h2>
-            <a href="{% url 'medialist' 'movie' %}" class="text-sm text-indigo-400 hover:text-indigo-300 transition-colors">
-              See all your top movies →
-            </a>
+        <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 mobile-tight-section stat-scroll-safe mb-4 sm:mb-6">
+          <div class="flex flex-col space-y-1 mb-3 sm:mb-4">
+            <span class="text-sm uppercase tracking-widest text-gray-400">Movies</span>
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <div>
+                <h2 class="text-2xl font-semibold text-white">Most Played</h2>
+                <span class="text-sm text-gray-500" x-text="selectedRange"></span>
+              </div>
+              <a href="{% url 'medialist' 'movie' %}" class="text-sm text-indigo-400 hover:text-indigo-300 transition-colors">
+                See all your top movies →
+              </a>
+            </div>
           </div>
           <div class="media-grid">
             {% for item in top_played.movie %}
@@ -962,12 +968,18 @@
 
       <!-- Top TV Shows Section -->
       {% if top_played.tv %}
-        <div class="bg-[#2a2f35] rounded-lg p-6 mb-6">
-          <div class="flex items-center justify-between mb-4">
-            <h2 class="text-xl font-semibold">Top TV Shows - <span x-text="selectedRange"></span></h2>
-            <a href="{% url 'medialist' 'tv' %}" class="text-sm text-indigo-400 hover:text-indigo-300 transition-colors">
-              See all your top TV shows →
-            </a>
+        <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 mobile-tight-section stat-scroll-safe mb-4 sm:mb-6">
+          <div class="flex flex-col space-y-1 mb-3 sm:mb-4">
+            <span class="text-sm uppercase tracking-widest text-gray-400">TV Shows</span>
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <div>
+                <h2 class="text-2xl font-semibold text-white">Most Played</h2>
+                <span class="text-sm text-gray-500" x-text="selectedRange"></span>
+              </div>
+              <a href="{% url 'medialist' 'tv' %}" class="text-sm text-indigo-400 hover:text-indigo-300 transition-colors">
+                See all your top TV shows →
+              </a>
+            </div>
           </div>
           <div class="media-grid">
             {% for item in top_played.tv %}
@@ -1037,12 +1049,18 @@
 
       <!-- Top Games Section -->
       {% if top_played.game %}
-        <div class="bg-[#2a2f35] rounded-lg p-6 mb-6">
-          <div class="flex items-center justify-between mb-4">
-            <h2 class="text-xl font-semibold">Top Games - <span x-text="selectedRange"></span></h2>
-            <a href="{% url 'medialist' 'game' %}" class="text-sm text-indigo-400 hover:text-indigo-300 transition-colors">
-              See all your top games →
-            </a>
+        <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 mobile-tight-section stat-scroll-safe mb-4 sm:mb-6">
+          <div class="flex flex-col space-y-1 mb-3 sm:mb-4">
+            <span class="text-sm uppercase tracking-widest text-gray-400">Games</span>
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <div>
+                <h2 class="text-2xl font-semibold text-white">Most Played</h2>
+                <span class="text-sm text-gray-500" x-text="selectedRange"></span>
+              </div>
+              <a href="{% url 'medialist' 'game' %}" class="text-sm text-indigo-400 hover:text-indigo-300 transition-colors">
+                See all your top games →
+              </a>
+            </div>
           </div>
           <div class="media-grid">
             {% for item in top_played.game %}
@@ -1111,12 +1129,18 @@
 
       <!-- Top Anime Section -->
       {% if top_played.anime %}
-        <div class="bg-[#2a2f35] rounded-lg p-6 mb-6">
-          <div class="flex items-center justify-between mb-4">
-            <h2 class="text-xl font-semibold">Top Anime - <span x-text="selectedRange"></span></h2>
-            <a href="{% url 'medialist' 'anime' %}" class="text-sm text-indigo-400 hover:text-indigo-300 transition-colors">
-              See all your top anime →
-            </a>
+        <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 mobile-tight-section stat-scroll-safe mb-4 sm:mb-6">
+          <div class="flex flex-col space-y-1 mb-3 sm:mb-4">
+            <span class="text-sm uppercase tracking-widest text-gray-400">Anime</span>
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <div>
+                <h2 class="text-2xl font-semibold text-white">Most Played</h2>
+                <span class="text-sm text-gray-500" x-text="selectedRange"></span>
+              </div>
+              <a href="{% url 'medialist' 'anime' %}" class="text-sm text-indigo-400 hover:text-indigo-300 transition-colors">
+                See all your top anime →
+              </a>
+            </div>
           </div>
           <div class="media-grid">
             {% for item in top_played.anime %}
@@ -1186,9 +1210,9 @@
 
       <!-- Empty State for Top Played -->
       {% if not top_played.movie and not top_played.tv and not top_played.game and not top_played.anime %}
-        <div class="bg-[#2a2f35] rounded-lg p-6 mb-6">
-          <h2 class="text-xl font-semibold mb-4">Top Played</h2>
-          <div class="flex flex-col items-center justify-center py-16">
+        <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 stat-scroll-safe mb-4 sm:mb-6">
+          <h2 class="text-xl font-semibold mb-3 sm:mb-4">Top Played</h2>
+          <div class="flex flex-col items-center justify-center py-12 sm:py-16">
             <div class="bg-[#39404b] rounded-full p-4 w-16 h-16 mx-auto mb-4 flex items-center justify-center">
               <svg xmlns="http://www.w3.org/2000/svg"
                    width="24"
@@ -1211,8 +1235,11 @@
       {% endif %}
 
       <!-- Top Rated Media Section -->
-      <div class="bg-[#2a2f35] rounded-lg p-6">
-        <h2 class="text-xl font-semibold mb-4">Top Rated Media</h2>
+      <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 mobile-tight-section stat-scroll-safe mb-4 sm:mb-6">
+        <div class="flex flex-col space-y-1 mb-3 sm:mb-4">
+          <span class="text-sm uppercase tracking-widest text-gray-400">All Media</span>
+          <h2 class="text-2xl font-semibold text-white">Top Rated Media</h2>
+        </div>
 
         {% if top_rated %}
           <div class="media-grid">
@@ -1245,8 +1272,8 @@
       </div>
 
       <!-- Media Timeline Section -->
-      <div class="bg-[#2a2f35] rounded-lg p-6 max-w-[calc(100svw-4rem)]">
-        <h2 class="text-xl font-semibold mb-6 md:mb-10">Media Timeline</h2>
+      <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 stat-scroll-safe">
+        <h2 class="text-xl font-semibold mb-4 sm:mb-6 md:mb-10">Media Timeline</h2>
 
         {% if timeline %}
           <div class="relative flex justify-center">
@@ -1278,7 +1305,7 @@
                       {% endif %}
                     </div>
                   </div>
-                  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4 md:w-[calc(50%-2rem)] lg:w-[calc(50%-1rem)] {% if forloop.counter|divisibleby:2 %}md:mr-auto md:ml-0{% else %}md:ml-auto md:mr-0{% endif %}">
+                  <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4 mt-4 md:w-[calc(50%-2rem)] lg:w-[calc(50%-1rem)] {% if forloop.counter|divisibleby:2 %}md:mr-auto md:ml-0{% else %}md:ml-auto md:mr-0{% endif %}">
                     {% for media in media_list %}
                       <div class="bg-[#39404b] p-4 rounded-lg hover:ring-2 hover:ring-indigo-500 transition-all duration-200">
                         <div class="flex items-start gap-4">

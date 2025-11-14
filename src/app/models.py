@@ -259,7 +259,12 @@ class MediaManager(models.Manager):
             )
         
         # Handle duplicate entries by selecting the most recent record for each item
-        if sort_filter == "progress":
+        has_progress_field = any(
+            getattr(field, "attname", "") == "progress"
+            for field in model._meta.get_fields()
+            if getattr(field, "concrete", False)
+        )
+        if sort_filter == "progress" and has_progress_field:
             # For progress sorting, select the record with highest individual progress
             queryset = queryset.annotate(
                 repeats=Window(
