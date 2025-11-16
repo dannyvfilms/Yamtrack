@@ -27,12 +27,21 @@ class AppConfig(AppConfig):
         
         # Only schedule runtime population once per day to avoid duplicates
         # Use a 24-hour cache timeout and skip Celery worker processes
+        # Wrap cache access in try/except to handle cases where Redis isn't available (e.g., during Docker build)
         cache_key = "runtime_population_startup_scheduled"
+        try:
+            cache_available = cache.add(cache_key, True, timeout=86400)  # 24 hours
+        except Exception:
+            # Redis/cache not available (e.g., during Docker build, collectstatic, etc.)
+            # Skip scheduling to avoid errors during non-runtime operations
+            cache_available = False
+            logger.debug("Cache not available, skipping runtime population scheduling")
+        
         if (
             not settings.TESTING
             and not getattr(settings, 'RUNTIME_POPULATION_DISABLED', False)
             and not is_celery_worker
-            and cache.add(cache_key, True, timeout=86400)  # 24 hours
+            and cache_available
         ):
             self._schedule_runtime_population()
 
