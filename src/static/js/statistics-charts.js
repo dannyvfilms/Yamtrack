@@ -310,6 +310,22 @@ document.addEventListener("DOMContentLoaded", function () {
     );
   }
 
+  // Ensure the copied score chart wrapper matches Activity History height
+  function matchScoreCopyHeight() {
+    const activityEl = document.getElementById("activityHistory");
+    const scoreCopyWrapper = document.getElementById("scoreCopyWrapper");
+    const scoreCanvasWrapper = document.getElementById("scoreCopyCanvasWrapper");
+
+    if (!activityEl || !scoreCopyWrapper || !scoreCanvasWrapper) return 0;
+
+    // Compute height and apply to the canvas wrapper so chart matches visual height
+    const height = activityEl.clientHeight || activityEl.offsetHeight || 0;
+    scoreCanvasWrapper.style.height = height + "px";
+    scoreCopyWrapper.style.minHeight = height + "px";
+
+    return height;
+  }
+
   // Create Media Type Distribution Chart
   const mediaTypeDistributionElement = document.getElementById(
     "media_type_distribution"
@@ -398,6 +414,44 @@ document.addEventListener("DOMContentLoaded", function () {
       processBarData(scoreData),
       scoreChartOptions
     );
+    // Ensure copy wrapper is sized to match Activity History BEFORE initializing the copy
+    matchScoreCopyHeight();
+
+    // Debug: log element presence and sizes to help diagnose blank chart issues
+    try {
+      const activityEl = document.getElementById("activityHistory");
+      const copyWrapper = document.getElementById("scoreCopyWrapper");
+      const copyCanvasWrapper = document.getElementById("scoreCopyCanvasWrapper");
+      const copyCanvas = document.getElementById("scoreStackedChartCopy");
+      console.debug("[stats] activityEl:", !!activityEl, "height:", activityEl ? activityEl.clientHeight : null);
+      console.debug("[stats] copyWrapper:", !!copyWrapper, "minHeight:", copyWrapper ? copyWrapper.style.minHeight : null);
+      console.debug("[stats] copyCanvasWrapper:", !!copyCanvasWrapper, "height:", copyCanvasWrapper ? copyCanvasWrapper.clientHeight : null);
+      console.debug("[stats] copyCanvas:", !!copyCanvas, "clientH/clientW:", copyCanvas ? [copyCanvas.clientHeight, copyCanvas.clientWidth] : null);
+    } catch (e) {
+      // swallow debug errors
+      console.debug("[stats] debug error", e);
+    }
+
+    // Also initialize a copy of the score stacked chart (if a second canvas exists)
+    // Use a deep clone of the options so Chart instances don't share mutable state.
+    const scoreCopyChart = initializeChartIfExists(
+      "scoreStackedChartCopy",
+      "bar",
+      processBarData(scoreData),
+      JSON.parse(JSON.stringify(scoreChartOptions))
+    );
+
+    // If the chart was created, trigger a resize so it picks up the wrapper height we set
+    if (scoreCopyChart && typeof scoreCopyChart.resize === "function") {
+      scoreCopyChart.resize();
+      try {
+        const c = document.getElementById("scoreStackedChartCopy");
+        console.debug("[stats] after resize canvas clientH/clientW:", c ? [c.clientHeight, c.clientWidth, c.height, c.width] : null);
+        console.debug("[stats] scoreCopyChart internal height/width:", [scoreCopyChart.height, scoreCopyChart.width]);
+      } catch (e) {
+        console.debug("[stats] post-resize debug error", e);
+      }
+    }
   }
 
   initializeSingleSeriesBarChart(
@@ -433,4 +487,12 @@ document.addEventListener("DOMContentLoaded", function () {
     "moviePlaysByTimeChart",
     "movie_plays_by_time"
   );
+
+  // Initial sizing and on resize for the copied score chart wrapper
+  matchScoreCopyHeight();
+  window.addEventListener("resize", function () {
+    // Debounce-ish
+    clearTimeout(window._scoreCopyResizeTimer);
+    window._scoreCopyResizeTimer = setTimeout(matchScoreCopyHeight, 120);
+  });
 });

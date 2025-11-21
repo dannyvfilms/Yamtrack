@@ -275,8 +275,8 @@
         </div>
       </div>
 
-      <!-- Activity History Section -->
-      <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 stat-scroll-safe">
+  <!-- Activity History Section -->
+  <div id="activityHistory" class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 stat-scroll-safe">
         <h2 class="text-xl font-semibold mb-3 sm:mb-4 text-center">Activity History</h2>
         <div class="overflow-x-auto flex flex-col justify-center"
              x-data="{ graphTooWide: false }"
@@ -331,6 +331,38 @@
             <span>More</span>
           </div>
         </div>
+      </div>
+      
+      <!-- Copied: Score Distribution by Media Type (placed under Activity History) -->
+      <div id="scoreCopyWrapper" class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 stat-scroll-safe mt-4">
+        <h2 class="text-xl font-semibold mb-4">Score Distribution by Media Type</h2>
+
+        {% if score_distribution.total_scored %}
+          <div class="flex justify-center items-center" id="scoreCopyCanvasWrapper">
+            <canvas id="scoreStackedChartCopy"></canvas>
+          </div>
+        {% else %}
+          <div class="flex flex-col items-center justify-center py-16">
+            <div class="bg-[#39404b] rounded-full p-4 w-16 h-16 mx-auto mb-4 flex items-center justify-center">
+              <svg xmlns="http://www.w3.org/2000/svg"
+                   width="24"
+                   height="24"
+                   viewBox="0 0 24 24"
+                   fill="none"
+                   stroke="currentColor"
+                   stroke-width="2"
+                   stroke-linecap="round"
+                   stroke-linejoin="round"
+                   class="w-8 h-8 text-gray-400">
+                <path d="m15.477 12.89 1.515 8.526a.5.5 0 0 1-.81.47l-3.58-2.687a1 1 0 0 0-1.197 0l-3.586 2.686a.5.5 0 0 1-.81-.469l1.514-8.526">
+                </path>
+                <circle cx="12" cy="8" r="6"></circle>
+              </svg>
+            </div>
+            <h3 class="text-lg font-medium mb-2">No ratings yet</h3>
+            <p class="text-gray-400 text-center max-w-md">Rate your media items to see score distribution statistics.</p>
+          </div>
+        {% endif %}
       </div>
 
       <!-- Media Type Hours Cards Section -->
