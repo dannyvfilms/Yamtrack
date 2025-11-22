@@ -335,7 +335,7 @@
       
       <!-- Copied: Score Distribution by Media Type (placed under Activity History) -->
       <div id="scoreCopyWrapper" class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 stat-scroll-safe mt-4">
-        <h2 class="text-xl font-semibold mb-4">Score Distribution by Media Type</h2>
+        <h2 class="text-xl font-semibold mb-3 sm:mb-4 text-center">Played Hours by Media Type</h2>
 
         {% if score_distribution.total_scored %}
           <div class="flex justify-center items-center" id="scoreCopyCanvasWrapper">
@@ -1418,6 +1418,9 @@
   {{ status_pie_chart_data|json_script:"status_pie_chart_data" }}
   {{ status_distribution|json_script:"status_distribution" }}
   {{ score_distribution|json_script:"score_distribution" }}
+  {{ daily_hours_by_media_type|json_script:"daily_hours_by_media_type" }}
+  {{ start_date|date:"c"|default_if_none:""|json_script:"stats_start_date" }}
+  {{ end_date|date:"c"|default_if_none:""|json_script:"stats_end_date" }}
   {% if show_year_charts %}
     {{ tv_consumption.charts.by_year|json_script:"tv_episodes_by_year" }}
   {% endif %}

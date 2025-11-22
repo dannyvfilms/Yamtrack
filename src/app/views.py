@@ -1012,6 +1012,13 @@ def statistics(request):
         minutes_per_media_type,
     )
 
+    # Daily hours per media type (used by the Activity History-attached chart)
+    daily_hours_by_media_type = stats.get_daily_hours_by_media_type(
+        user_media,
+        start_date,
+        end_date,
+    )
+
     activity_data = stats.get_activity_data(request.user, start_date, end_date)
 
     selected_range_name = _identify_predefined_range(start_date, end_date)
@@ -1033,6 +1040,7 @@ def statistics(request):
         "hours_per_media_type": hours_per_media_type,
         "tv_consumption": tv_consumption,
         "movie_consumption": movie_consumption,
+        "daily_hours_by_media_type": daily_hours_by_media_type,
         "show_year_charts": show_year_charts,
     }
 
@@ -1341,8 +1349,10 @@ def _identify_predefined_range(start_date, end_date):
     if not start_date or not end_date:
         return None
 
-    local_start = timezone.localtime(start_date).date()
-    local_end = timezone.localtime(end_date).date()
+    # Use timezone.localdate to avoid off-by-one when converting aware datetimes
+    # (localtime(...).date() can shift the date if the aware datetime is at UTC midnight)
+    local_start = timezone.localdate(start_date)
+    local_end = timezone.localdate(end_date)
     today = timezone.localdate()
 
     if local_start == today and local_end == today:

@@ -38,19 +38,25 @@ document.addEventListener("DOMContentLoaded", function () {
         }
       }
 
-      // Get all values for this stack
+      // Get all values for this stack and format to 1 decimal place
       let tableBody =
         '<thead><tr><th colspan="2">' +
         formattedTitle +
         "</th></tr></thead><tbody>";
       let stackTotal = 0;
 
+      function fmt(v) {
+        const n = Number(v) || 0;
+        return n.toFixed(1);
+      }
+
       chart.data.datasets.forEach((dataset, i) => {
-        if (dataset.data[dataIndex] && dataset.data[dataIndex] > 0) {
-          const value = dataset.data[dataIndex];
-          stackTotal += value;
+        const raw = Number(dataset.data[dataIndex]) || 0;
+        if (raw > 0) {
+          stackTotal += raw;
           const bgColor = dataset.backgroundColor;
           const label = dataset.label || "";
+          const value = fmt(raw);
 
           tableBody +=
             "<tr>" +
@@ -66,12 +72,12 @@ document.addEventListener("DOMContentLoaded", function () {
         }
       });
 
-      // Add total row
+      // Add total row (formatted)
       tableBody +=
         '<tr class="total-row">' +
         "<td>Total:</td>" +
         '<td style="text-align:right;font-weight:bold;">' +
-        stackTotal +
+        (stackTotal.toFixed ? stackTotal.toFixed(1) : Number(stackTotal).toFixed(1)) +
         "</td>" +
         "</tr>";
 
@@ -432,24 +438,231 @@ document.addEventListener("DOMContentLoaded", function () {
       console.debug("[stats] debug error", e);
     }
 
-    // Also initialize a copy of the score stacked chart (if a second canvas exists)
-    // Use a deep clone of the options so Chart instances don't share mutable state.
-    const scoreCopyChart = initializeChartIfExists(
-      "scoreStackedChartCopy",
-      "bar",
-      processBarData(scoreData),
-      JSON.parse(JSON.stringify(scoreChartOptions))
-    );
+    // Prefer a daily-hours dataset for the copy (if provided by backend)
+    const dailyHoursEl = document.getElementById("daily_hours_by_media_type");
+    if (dailyHoursEl) {
+      const dailyData = JSON.parse(dailyHoursEl.textContent || "null");
+      if (dailyData && dailyData.labels && dailyData.labels.length > 0 && dailyData.datasets && dailyData.datasets.length > 0) {
+        // Determine bucket size based on selected date range
+        let startIso = null;
+        let endIso = null;
+        try {
+          const startEl = document.getElementById("stats_start_date");
+          const endEl = document.getElementById("stats_end_date");
+          startIso = startEl ? JSON.parse(startEl.textContent || '""') : null;
+          endIso = endEl ? JSON.parse(endEl.textContent || '""') : null;
+        } catch (e) {
+          console.debug('[stats] failed to read start/end JSON', e);
+        }
 
-    // If the chart was created, trigger a resize so it picks up the wrapper height we set
-    if (scoreCopyChart && typeof scoreCopyChart.resize === "function") {
-      scoreCopyChart.resize();
-      try {
-        const c = document.getElementById("scoreStackedChartCopy");
-        console.debug("[stats] after resize canvas clientH/clientW:", c ? [c.clientHeight, c.clientWidth, c.height, c.width] : null);
-        console.debug("[stats] scoreCopyChart internal height/width:", [scoreCopyChart.height, scoreCopyChart.width]);
-      } catch (e) {
-        console.debug("[stats] post-resize debug error", e);
+        function chooseBucket(startIso, endIso, labels) {
+          // Choose a bucket (day/week/month/year) by finding the
+          // coarsest granularity that keeps the number of bars
+          // reasonably small (target ~36 bars).
+          // If start/end ISO are not provided (All Time), try to infer
+          // them from the provided labels array (first/last date strings).
+          let startIsoLocal = startIso;
+          let endIsoLocal = endIso;
+          if ((!startIsoLocal || !endIsoLocal) && Array.isArray(labels) && labels.length) {
+            startIsoLocal = labels[0];
+            endIsoLocal = labels[labels.length - 1];
+          }
+          if (!startIsoLocal || !endIsoLocal) return 'month';
+          const start = new Date(startIsoLocal);
+          const end = new Date(endIsoLocal);
+          const msPerDay = 24 * 60 * 60 * 1000;
+          const spanDays = Math.ceil((end - start) / msPerDay) + 1;
+
+          const maxBars = 36;
+
+          // Day: one label per day
+          if (spanDays <= 31) return 'day';
+
+          // Week: one label per ISO week (approx 7 days)
+          const spanWeeks = Math.ceil(spanDays / 7);
+          if (spanWeeks <= maxBars) return 'week';
+
+          // Month: compute month diff inclusive
+          const spanMonths = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth()) + 1;
+          if (spanMonths <= maxBars) return 'month';
+
+          // Otherwise fall back to years
+          return 'year';
+        }
+
+        function getWeekStartIso(d) {
+          const date = new Date(d);
+          // ISO week start: Monday
+          const day = date.getDay(); // 0 Sun .. 6 Sat
+          const diff = (day + 6) % 7; // days since Monday
+          const wk = new Date(date);
+          wk.setDate(date.getDate() - diff);
+          wk.setHours(0,0,0,0);
+          return wk.toISOString().slice(0,10);
+        }
+
+        function getMonthIso(d) {
+          const date = new Date(d);
+          return date.toISOString().slice(0,7); // YYYY-MM
+        }
+
+        function getYearIso(d) {
+          const date = new Date(d);
+          return String(date.getFullYear());
+        }
+
+        function formatBucketLabel(bucket, key, startIso, endIso) {
+          const nowYear = new Date().getFullYear();
+          let startYear = null;
+          let endYear = null;
+          try {
+            if (startIso) startYear = new Date(startIso).getFullYear();
+            if (endIso) endYear = new Date(endIso).getFullYear();
+          } catch (e) {
+            // ignore
+          }
+
+          if (bucket === 'day') {
+            const d = new Date(key);
+            const opts = { month: 'short', day: 'numeric' };
+            // include year if span crosses years or not current year
+            if (startYear && endYear && startYear !== endYear) {
+              opts.year = 'numeric';
+            } else if (d.getFullYear() !== nowYear) {
+              opts.year = 'numeric';
+            }
+            return d.toLocaleDateString(navigator.language || 'en-US', opts);
+          }
+
+          if (bucket === 'week') {
+            // key is ISO date for week start (YYYY-MM-DD)
+            const d = new Date(key);
+            const opts = { month: 'short', day: 'numeric' };
+            if (startYear && endYear && startYear !== endYear) {
+              opts.year = 'numeric';
+            } else if (d.getFullYear() !== nowYear) {
+              opts.year = 'numeric';
+            }
+            // Show a short date for the week (no "Week of" prefix)
+            return d.toLocaleDateString(navigator.language || 'en-US', opts);
+          }
+
+          if (bucket === 'month') {
+            // key is YYYY-MM
+            const [yy, mm] = key.split('-');
+            const date = new Date(`${key}-01`);
+            // If the selected range is within the current year, show full month name only
+            if (startYear && endYear && startYear === endYear && startYear === nowYear) {
+              return date.toLocaleDateString(navigator.language || 'en-US', { month: 'long' });
+            }
+            // Otherwise show abbreviated month + year
+            return date.toLocaleDateString(navigator.language || 'en-US', { month: 'short', year: 'numeric' });
+          }
+
+          if (bucket === 'year') {
+            return String(key);
+          }
+
+          return key;
+        }
+
+        function aggregateDailyToBucket(dailyData, bucket) {
+          const labels = dailyData.labels || [];
+
+          // If we're using daily buckets, format the labels but keep the data as-is
+          if (bucket === 'day') {
+            const newLabels = labels.map((k) => formatBucketLabel('day', k, startIso, endIso));
+            const newDatasets = dailyData.datasets.map((ds) => ({
+              label: ds.label,
+              data: ds.data.map((v) => Number(v) || 0),
+              background_color: ds.background_color || ds.backgroundColor || ds.backgroundColor,
+            }));
+
+            return { labels: newLabels, datasets: newDatasets };
+          }
+
+          const bucketMap = new Map();
+
+          labels.forEach((lbl, idx) => {
+            let key;
+            if (bucket === 'week') key = getWeekStartIso(lbl);
+            else if (bucket === 'month') key = getMonthIso(lbl);
+            else if (bucket === 'year') key = getYearIso(lbl);
+            else key = lbl;
+
+            if (!bucketMap.has(key)) {
+              bucketMap.set(key, Array(dailyData.datasets.length).fill(0));
+            }
+
+            dailyData.datasets.forEach((ds, dsIndex) => {
+              const value = Number(ds.data[idx]) || 0;
+              const arr = bucketMap.get(key);
+              arr[dsIndex] = +(arr[dsIndex] + value).toFixed(4);
+            });
+          });
+
+          const rawKeys = Array.from(bucketMap.keys()).sort();
+          const newLabels = rawKeys.map((k) => formatBucketLabel(bucket, k, startIso, endIso));
+          const newDatasets = dailyData.datasets.map((ds, i) => ({
+            label: ds.label,
+            data: rawKeys.map((k) => bucketMap.get(k)[i] || 0),
+            background_color: ds.background_color || ds.backgroundColor || ds.backgroundColor,
+          }));
+
+          return { labels: newLabels, datasets: newDatasets };
+        }
+
+  const bucket = chooseBucket(startIso, endIso, dailyData.labels);
+        const aggregated = aggregateDailyToBucket(dailyData, bucket);
+        const dailyOptions = JSON.parse(JSON.stringify(barChartConfig));
+        dailyOptions.scales.x.stacked = true;
+        dailyOptions.scales.y.stacked = true;
+        // Remove x-axis title for the copy chart (we use the page heading instead)
+        if (dailyOptions.scales && dailyOptions.scales.x) {
+          dailyOptions.scales.x.title = { display: false };
+        }
+        dailyOptions.scales.y.title = {
+          display: true,
+          text: "Hours",
+          color: "#D1D5DB",
+          padding: { top: 0, left: 10 },
+        };
+        // Don't add an in-chart title for the copy chart; the page heading above
+        // already displays "Played Hours by Media Type" in larger type.
+        dailyOptions.plugins.tooltip = {
+          enabled: false,
+          mode: "index",
+          intersect: false,
+          external: customBarTooltip,
+        };
+
+        const dailyChart = initializeChartIfExists(
+          "scoreStackedChartCopy",
+          "bar",
+          processBarData(aggregated),
+          dailyOptions
+        );
+
+        if (dailyChart && typeof dailyChart.resize === "function") {
+          dailyChart.resize();
+        }
+      }
+    } else {
+      // Fallback: initialize copy using score distribution data (legacy behavior)
+      // Use the score chart options as a base but override title for the copy
+      const fallbackOptions = JSON.parse(JSON.stringify(scoreChartOptions));
+      fallbackOptions.plugins = fallbackOptions.plugins || {};
+      // Don't set an in-chart title for the fallback; the page heading is used
+
+      const scoreCopyChart = initializeChartIfExists(
+        "scoreStackedChartCopy",
+        "bar",
+        processBarData(scoreData),
+        fallbackOptions
+      );
+
+      if (scoreCopyChart && typeof scoreCopyChart.resize === "function") {
+        scoreCopyChart.resize();
       }
     }
   }
