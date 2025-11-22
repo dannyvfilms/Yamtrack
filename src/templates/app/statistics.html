@@ -276,6 +276,7 @@
       </div>
 
   <!-- Activity History Section -->
+  {% if user.activity_history_view != 'stacked' %}
   <div id="activityHistory" class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 stat-scroll-safe">
         <h2 class="text-xl font-semibold mb-3 sm:mb-4 text-center">Activity History</h2>
         <div class="overflow-x-auto flex flex-col justify-center"
@@ -331,15 +332,17 @@
             <span>More</span>
           </div>
         </div>
-      </div>
+    </div>
+  {% endif %}
       
-      <!-- Copied: Score Distribution by Media Type (placed under Activity History) -->
-      <div id="scoreCopyWrapper" class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 stat-scroll-safe mt-4">
+    <!-- Copied: Score Distribution by Media Type (placed under Activity History) -->
+    {% if user.activity_history_view != 'heatmap' %}
+    <div id="scoreCopyWrapper" class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 stat-scroll-safe mt-4">
         <h2 class="text-xl font-semibold mb-3 sm:mb-4 text-center">Played Hours by Media Type</h2>
 
         {% if score_distribution.total_scored %}
-          <div class="flex justify-center items-center" id="scoreCopyCanvasWrapper">
-            <canvas id="scoreStackedChartCopy"></canvas>
+          <div class="flex justify-center items-stretch min-h-[320px] sm:min-h-[380px]" id="scoreCopyCanvasWrapper">
+            <canvas id="scoreStackedChartCopy" class="w-full h-full min-h-[320px] sm:min-h-[380px]" style="width:100%;height:100%;"></canvas>
           </div>
         {% else %}
           <div class="flex flex-col items-center justify-center py-16">
@@ -364,9 +367,10 @@
           </div>
         {% endif %}
       </div>
+    {% endif %}
 
       <!-- Media Type Hours Cards Section -->
-      <div class="grid gap-3 sm:gap-4 mb-4 sm:mb-8 stat-scroll-safe" 
+      <div class="grid gap-3 sm:gap-4 mb-4 sm:mb-8 stat-scroll-safe -mt-4 sm:-mt-5" 
            x-data="{ 
              cardCount: 0,
              init() {

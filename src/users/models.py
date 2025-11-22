@@ -107,6 +107,12 @@ class TimeFormatChoices(models.TextChoices):
     HH_MM_SS = "hh_mm_ss", "24-hour with seconds (HH:mm:ss)"
 
 
+class ActivityHistoryViewChoices(models.TextChoices):
+    """Choices for which activity history view to show on the statistics page."""
+
+    HEATMAP = "heatmap", "Activity Heatmap"
+    STACKED = "stacked", "Stacked Bar Chart"
+
 class User(AbstractUser):
     """Custom user model."""
 
@@ -326,6 +332,12 @@ class User(AbstractUser):
         choices=TimeFormatChoices.choices,
     )
 
+    activity_history_view = models.CharField(
+        max_length=20,
+        default=ActivityHistoryViewChoices.HEATMAP,
+        choices=ActivityHistoryViewChoices.choices,
+        help_text="Which activity history visualization to show on the Statistics page",
+    )
     auto_pause_in_progress_enabled = models.BooleanField(
         default=False,
         help_text="Automatically pause stale in-progress items",
@@ -412,6 +424,10 @@ class User(AbstractUser):
             models.CheckConstraint(
                 name="lists_sort_valid",
                 condition=models.Q(lists_sort__in=ListSortChoices.values),
+            ),
+            models.CheckConstraint(
+                name="activity_history_view_valid",
+                condition=models.Q(activity_history_view__in=ActivityHistoryViewChoices.values),
             ),
             models.CheckConstraint(
                 name="list_detail_sort_valid",

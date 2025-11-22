@@ -16,7 +16,7 @@ from django_celery_beat.models import PeriodicTask
 from app.models import Item, MediaTypes
 from app.templatetags import app_tags
 from users.forms import NotificationSettingsForm, PasswordChangeForm, UserUpdateForm
-from users.models import DateFormatChoices, TimeFormatChoices
+from users.models import DateFormatChoices, TimeFormatChoices, ActivityHistoryViewChoices
 
 logger = logging.getLogger(__name__)
 
@@ -324,6 +324,7 @@ def preferences(request):
         # Process form submission for user preferences
         date_format = request.POST.get("date_format")
         time_format = request.POST.get("time_format")
+        activity_history_view = request.POST.get("activity_history_view")
 
         fields_to_update = []
 
@@ -336,6 +337,14 @@ def preferences(request):
             if request.user.time_format != time_format:
                 request.user.time_format = time_format
                 fields_to_update.append("time_format")
+
+        if (
+            activity_history_view
+            and activity_history_view in [choice[0] for choice in ActivityHistoryViewChoices.choices]
+        ):
+            if request.user.activity_history_view != activity_history_view:
+                request.user.activity_history_view = activity_history_view
+                fields_to_update.append("activity_history_view")
 
         auto_pause_enabled = request.POST.get("auto_pause_enabled") == "1"
         raw_rules = request.POST.get("auto_pause_rules", "[]")

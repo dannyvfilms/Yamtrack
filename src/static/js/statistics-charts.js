@@ -321,15 +321,33 @@ document.addEventListener("DOMContentLoaded", function () {
     const activityEl = document.getElementById("activityHistory");
     const scoreCopyWrapper = document.getElementById("scoreCopyWrapper");
     const scoreCanvasWrapper = document.getElementById("scoreCopyCanvasWrapper");
+    const scoreCanvas = document.getElementById("scoreStackedChartCopy");
 
-    if (!activityEl || !scoreCopyWrapper || !scoreCanvasWrapper) return 0;
+    if (!scoreCopyWrapper || !scoreCanvasWrapper) return 0;
 
-    // Compute height and apply to the canvas wrapper so chart matches visual height
-    const height = activityEl.clientHeight || activityEl.offsetHeight || 0;
-    scoreCanvasWrapper.style.height = height + "px";
-    scoreCopyWrapper.style.minHeight = height + "px";
+    // If Activity History is hidden (stacked view), fall back to a generous baseline height
+    const minHeight = 320; // ~2x the default 150px canvas height
+    const activityHeight = activityEl
+      ? Math.max(activityEl.clientHeight || 0, activityEl.offsetHeight || 0)
+      : 0;
+    const desiredHeight = Math.max(
+      minHeight,
+      activityHeight ? Math.round(activityHeight * 2) : 0
+    );
 
-    return height;
+    scoreCopyWrapper.style.minHeight = desiredHeight + "px";
+    scoreCanvasWrapper.style.minHeight = desiredHeight + "px";
+    scoreCanvasWrapper.style.height = desiredHeight + "px";
+
+    // Ensure the canvas element fills its parent (Chart.js may set inline size attributes)
+    if (scoreCanvas) {
+      scoreCanvas.style.height = "100%";
+      scoreCanvas.style.width = "100%";
+      scoreCanvas.style.minHeight = desiredHeight + "px";
+      scoreCanvas.height = desiredHeight;
+    }
+
+    return desiredHeight;
   }
 
   // Create Media Type Distribution Chart
