@@ -360,11 +360,13 @@ class MediaListViewTests(TestCase):
         self.assertNotEqual(getattr(first_media, "time_left_display", None), "0m")
 
         status_filter = response.context["current_status"]
+        direction = response.context["current_direction"]
         cache_key = cache_utils.build_time_left_cache_key(
             self.user.id,
             MediaTypes.TV.value,
             status_filter,
             "",
+            direction,
         )
         self.assertIsNotNone(cache.get(cache_key))
 

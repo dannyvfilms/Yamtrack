@@ -8,15 +8,22 @@ from django.core.cache import cache
 logger = logging.getLogger(__name__)
 
 
-TIME_LEFT_CACHE_PREFIX = "time_left_sorted_v11"
+TIME_LEFT_CACHE_PREFIX = "time_left_sorted_v12"
 _REGISTRY_TEMPLATE = f"{TIME_LEFT_CACHE_PREFIX}_registry_{{user_id}}"
 
 
-def build_time_left_cache_key(user_id: int, media_type: str, status_filter: str, search_query: str) -> str:
+def build_time_left_cache_key(
+    user_id: int,
+    media_type: str,
+    status_filter: str,
+    search_query: str,
+    direction: str,
+) -> str:
     """Create the cache key used for time-left sorted TV lists."""
     normalized_status = status_filter or ""
     normalized_query = search_query or ""
-    return f"{TIME_LEFT_CACHE_PREFIX}_{user_id}_{media_type}_{normalized_status}_{normalized_query}"
+    normalized_direction = direction or ""
+    return f"{TIME_LEFT_CACHE_PREFIX}_{user_id}_{media_type}_{normalized_status}_{normalized_query}_{normalized_direction}"
 
 
 def _registry_key_for_user(user_id: int) -> str:
@@ -58,4 +65,3 @@ def clear_time_left_cache_for_user(user_id: int) -> None:
         deleted,
         user_id,
     )
-

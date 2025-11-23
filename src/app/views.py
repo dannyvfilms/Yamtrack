@@ -101,12 +101,17 @@ def media_list(request, media_type):
         f"{media_type}_sort",
         request.GET.get("sort"),
     )
+    direction = BasicMedia.objects.resolve_direction(
+        sort_filter,
+        request.GET.get("direction"),
+    )
     
     # If time_left sort is selected for non-TV media types, fallback to default
     if sort_filter == "time_left" and media_type != MediaTypes.TV.value:
         sort_filter = "title"  # Default fallback
         # Update the user's preference to the fallback
         request.user.update_preference(f"{media_type}_sort", "title")
+        direction = BasicMedia.objects.resolve_direction(sort_filter, direction)
     status_filter = request.user.update_preference(
         f"{media_type}_status",
         request.GET.get("status"),
@@ -125,6 +130,7 @@ def media_list(request, media_type):
         status_filter=status_filter,
         sort_filter=sort_filter,
         search=search_query,
+        direction=direction,
     )
 
     # Handle time_left sorting for TV shows
@@ -140,6 +146,7 @@ def media_list(request, media_type):
             media_type,
             status_filter,
             search_query,
+            direction,
         )
         cached_results = cache.get(cache_key)
         
@@ -158,7 +165,7 @@ def media_list(request, media_type):
             logger.debug(f"DEBUG: Annotated max_progress for all media")
             
             # Apply time_left sorting
-            media_list = _sort_tv_media_by_time_left(media_list)
+            media_list = _sort_tv_media_by_time_left(media_list, direction)
             logger.debug(f"DEBUG: Applied time_left sorting")
             
             # Cache for 5 minutes (300 seconds)
@@ -202,6 +209,7 @@ def media_list(request, media_type):
         "current_layout": layout,
         "layout_class": ".media-grid" if layout == "grid" else ".media-table",
         "current_sort": sort_filter,
+        "current_direction": direction,
         "current_status": status_filter,
         "sort_choices": MediaSortChoices.choices,
         "status_choices": MediaStatusChoices.choices,
@@ -1047,7 +1055,7 @@ def statistics(request):
     return render(request, "app/statistics.html", context)
 
 
-def _sort_tv_media_by_time_left(media_list):
+def _sort_tv_media_by_time_left(media_list, direction="asc"):
     """Sort TV media by time left with explicit grouping order.
 
     Group order:
@@ -1339,6 +1347,9 @@ def _sort_tv_media_by_time_left(media_list):
         episodes_left = media.max_progress - media.progress if hasattr(media, 'max_progress') else 0
         logger.debug(f"  {i+1}. {media.item.title} - Episodes left: {episodes_left}, Status: {getattr(media, 'status', 'Unknown')}")
     
+    if direction == "desc":
+        return list(reversed(sorted_list))
+
     return sorted_list
 
 
@@ -1403,4 +1414,3 @@ def _adjust_month_delta(reference_date, months):
 
 def _dates_close(date_one, date_two, tolerance_days=1):
     return abs((date_one - date_two).days) <= tolerance_days
-
