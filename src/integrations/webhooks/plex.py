@@ -1,6 +1,7 @@
 import json
 import logging
 
+import app
 from app.models import MediaTypes
 
 from .base import BaseWebhookProcessor
@@ -31,11 +32,66 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
         ids = self._extract_external_ids(payload)
         logger.info("Extracted IDs from payload: %s", ids)
 
-        if not any(ids.values()):
+        ids = self._resolve_ids_if_missing(payload, ids)
+        if not any(ids.get(key) for key in ("tmdb_id", "imdb_id", "tvdb_id")):
             logger.warning("Ignoring Plex webhook call because no ID was found.")
             return
 
         self._process_media(payload, user, ids)
+
+    def _resolve_ids_if_missing(self, payload, ids):
+        """Attempt to resolve TMDB ID when only plex:// GUID is present."""
+        if any(ids.get(key) for key in ("tmdb_id", "imdb_id", "tvdb_id")):
+            return ids
+
+        plex_guid = ids.get("plex_guid")
+        if not plex_guid:
+            return ids
+
+        # Only handle TV for now; movies with plex:// GUID are not tracked today
+        if self._get_media_type(payload) != MediaTypes.TV.value:
+            return ids
+
+        metadata = payload.get("Metadata", {})
+        series_title = metadata.get("grandparentTitle")
+        original_date = metadata.get("originallyAvailableAt")
+
+        if not series_title:
+            logger.debug("Cannot resolve plex:// GUID without series title")
+            return ids
+
+        try:
+            search_results = app.providers.tmdb.search(
+                MediaTypes.TV.value,
+                series_title,
+                page=1,
+            )
+        except Exception:  # pragma: no cover - defensive
+            logger.exception("Failed TMDB search while resolving plex:// GUID")
+            return ids
+
+        tmdb_id = None
+        results = search_results.get("results") or []
+
+        if original_date:
+            year = str(original_date).split("-")[0]
+            for result in results:
+                first_air_date = result.get("details", {}).get("first_air_date") or ""
+                if str(first_air_date).startswith(year):
+                    tmdb_id = result.get("media_id")
+                    break
+
+        if not tmdb_id and results:
+            tmdb_id = results[0].get("media_id")
+
+        if tmdb_id:
+            ids["tmdb_id"] = tmdb_id
+            logger.info(
+                "Resolved plex:// GUID to TMDB ID %s using title search",
+                tmdb_id,
+            )
+
+        return ids
 
     def _process_media(self, payload, user, ids):
         """Route processing based on media type, extracting season/episode for TV."""
@@ -99,6 +155,10 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
 
     def _extract_external_ids(self, payload):
         guids = payload["Metadata"].get("Guid", [])
+        if not guids:
+            single_guid = payload["Metadata"].get("guid")
+            if single_guid:
+                guids = [{"id": single_guid}]
 
         def get_id(prefix):
             return next(
@@ -114,6 +174,7 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
             "tmdb_id": get_id("tmdb"),
             "imdb_id": get_id("imdb"),
             "tvdb_id": get_id("tvdb"),
+            "plex_guid": get_id("plex"),
         }
 
     def _extract_season_episode_from_payload(self, payload):

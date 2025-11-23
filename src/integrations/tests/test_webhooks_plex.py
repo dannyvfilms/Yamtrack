@@ -1,4 +1,5 @@
 import json
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import Client, TestCase
@@ -21,6 +22,97 @@ class PlexWebhookTests(TestCase):
         }
         self.user = get_user_model().objects.create_superuser(**self.credentials)
         self.url = reverse("plex_webhook", kwargs={"token": "test-token"})
+        self.fetch_mapping_patcher = patch(
+            "integrations.webhooks.base.BaseWebhookProcessor._fetch_mapping_data",
+            return_value={
+                "anime_episode": {
+                    "tvdb_id": 9350138,
+                    "tvdb_season": 1,
+                    "tvdb_epoffset": 0,
+                    "mal_id": "52991",
+                },
+                "anime_movie": {
+                    "tmdb_movie_id": 10494,
+                    "mal_id": "437",
+                },
+            },
+        )
+        self.fetch_mapping_patcher.start()
+
+        def fake_tv_with_seasons(media_id, season_numbers):
+            media_id = str(media_id)
+            seasons = {}
+            for season_number in season_numbers:
+                seasons[f"season/{season_number}"] = {
+                    "image": "",
+                    "episodes": [
+                        {"episode_number": 1, "runtime": 30},
+                        {"episode_number": 2, "runtime": 30},
+                    ],
+                }
+
+            title = "Dummy"
+            tvdb_id = "1"
+            if media_id == "1668":
+                title = "Friends"
+                tvdb_id = "303821"
+            elif media_id == "18664":
+                title = "Cake Boss"
+                tvdb_id = "107671"
+
+            related_seasons = [{"season_number": sn} for sn in season_numbers]
+            return {
+                "tvdb_id": tvdb_id,
+                "title": title,
+                "image": "",
+                "related": {"seasons": related_seasons},
+                **seasons,
+            }
+
+        self.tv_with_seasons_patcher = patch(
+            "app.providers.tmdb.tv_with_seasons",
+            side_effect=fake_tv_with_seasons,
+        )
+        self.tv_with_seasons_patcher.start()
+        self.movie_patcher = patch(
+            "app.providers.tmdb.movie",
+            return_value={
+                "title": "Dummy Movie",
+                "image": "",
+                "max_progress": 1,
+            },
+        )
+        self.movie_patcher.start()
+
+        def fake_get_media_metadata(media_type, media_id, source, season_numbers=None):
+            if media_type == "tv_with_seasons":
+                return fake_tv_with_seasons(media_id, season_numbers or [])
+            if media_type == MediaTypes.SEASON.value:
+                return fake_tv_with_seasons(media_id, season_numbers or [])
+            return {
+                "max_progress": 1,
+                "title": "Metadata Title",
+                "image": "",
+                "related": {
+                    "seasons": [
+                        {"season_number": 1, "image": ""},
+                        {"season_number": 15, "image": ""},
+                    ],
+                },
+                "season/1": {"episodes": [{"episode_number": 1, "runtime": 30}]},
+            }
+
+        self.metadata_patcher = patch(
+            "app.providers.services.get_media_metadata",
+            side_effect=fake_get_media_metadata,
+        )
+        self.metadata_patcher.start()
+
+    def tearDown(self):
+        self.fetch_mapping_patcher.stop()
+        self.tv_with_seasons_patcher.stop()
+        self.movie_patcher.stop()
+        self.metadata_patcher.stop()
 
     def test_invalid_token(self):
         """Test webhook with invalid token returns 401."""
@@ -399,6 +491,7 @@ class PlexWebhookTests(TestCase):
             "tmdb_id": "12345",
             "imdb_id": "tt67890",
             "tvdb_id": "98765",
+            "plex_guid": None,
         }
 
         if result != expected:
@@ -415,7 +508,71 @@ class PlexWebhookTests(TestCase):
             "tmdb_id": None,
             "imdb_id": None,
             "tvdb_id": None,
+            "plex_guid": None,
         }
         if result != expected:
             msg = f"Expected {expected}, got {result}"
             raise AssertionError(msg)
+
+    @patch("app.providers.tmdb.tv_with_seasons")
+    @patch("app.providers.tmdb.search")
+    def test_tv_episode_with_plex_guid_fallback(
+        self,
+        mock_tmdb_search,
+        mock_tv_with_seasons,
+    ):
+        """Test webhook resolves plex:// GUID via TMDB search."""
+        mock_tmdb_search.return_value = {
+            "results": [
+                {
+                    "media_id": "18664",
+                    "title": "Cake Boss",
+                },
+            ],
+        }
+        mock_tv_with_seasons.return_value = {
+            "tvdb_id": "107671",
+            "title": "Cake Boss",
+            "image": "",
+            "season/15": {
+                "image": "",
+                "episodes": [
+                    {"episode_number": 2, "runtime": 30},
+                ],
+            },
+            "related": {"seasons": [{"season_number": 15}]},
+        }
+
+        payload = {
+            "event": "media.scrobble",
+            "Account": {
+                "title": "testuser",
+            },
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "Cake Boss",
+                "index": 2,
+                "parentIndex": 15,
+                "guid": "plex://episode/66abff6b88824f5224a8b6db",
+            },
+        }
+
+        data = {
+            "payload": json.dumps(payload),
+        }
+
+        response = self.client.post(
+            self.url,
+            data=data,
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        episode = Episode.objects.get(
+            item__media_id="18664",
+            item__season_number=15,
+            item__episode_number=2,
+        )
+        self.assertIsNotNone(episode.end_date)
+        mock_tmdb_search.assert_called_once_with("tv", "Cake Boss", page=1)

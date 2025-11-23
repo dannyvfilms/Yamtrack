@@ -22,12 +22,13 @@ This document explains how media types are defined and wired through the app so 
 ## UI surfaces
 - Navigation: Sidebar entries from `get_sidebar_media_types` + `app_tags.icon` (icons from `media_type_config.svg_icon`).
 - Home: `src/app/views.py:home` + `templates/app/home.html`/`components/home_grid.html`; uses `BasicMedia.get_in_progress`; Season entries show next event; units/colors from config.
-- Media list: `views.media_list` + `templates/app/media_list.html` and table/grid components. Movie hides progress column; TV has `time_left` sort with custom runtime logic; generic filters (status/sort/search/layout) by `media_type`.
+- Media list: `views.media_list` + `templates/app/media_list.html` and table/grid components. Movies hide the progress column; TV has a `time_left` sort with custom runtime logic; episodes are never routed to standalone detail pages. Generic filters (status/sort/search/layout) operate per media_type.
 - Detail pages: `media_details`/`season_details` (`templates/app/media_details.html`) render provider metadata; season view builds episodes via TMDB/manual. Sync button uses `sync_metadata`.
 - Search results: `templates/app/search.html` builds source tabs from `media_type_config.sources`; layout toggle; pagination generic.
 - Custom lists: `lists`/`list_detail` views accept any `media_type`; MediaManager prefetch/annotate per type.
 - Manual create: `ManualItemForm` + `create_entry` supports all types; seasons/episodes require parent TV/Season; title auto-filled from parent.
 - Track modal/CRUD: `track_modal`, `media_save`, `media_delete`, `progress_edit`, `episode_save` all route on `media_type` string; forms in `src/app/forms.py` per type (Game uses duration field).
+- History: the history modal `(views.history_modal)` dynamically resolves Historical<media_type> via apps.get_model. Any new Media subclass automatically gets a historical model through Media.history, so no extra wiring is needed beyond adding the media type itself.
 
 ## Statistics
 - Data assembly in `src/app/statistics.py`: iterates `user.get_active_media_types`; if `season_enabled` is false, seasons are removed from counts. TV/Season queries prefetch episodes; others filter by date window.
