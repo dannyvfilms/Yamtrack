@@ -1078,6 +1078,16 @@ def statistics(request):
     return render(request, "app/statistics.html", context)
 
 
+@require_GET
+def service_worker(request):
+    """Serve the service worker file from static files."""
+    sw_path = settings.STATICFILES_DIRS[0] / "js" / "serviceworker.js"
+    with open(sw_path, encoding="utf-8") as sw_file:
+        response = HttpResponse(sw_file.read(), content_type="application/javascript")
+    response["Service-Worker-Allowed"] = "/"
+    return response
+
+
 def _sort_tv_media_by_time_left(media_list, direction="asc"):
     """Sort TV media by time left with explicit grouping order.
 
