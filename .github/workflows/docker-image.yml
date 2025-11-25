@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - "dev"
+      - "release"
     tags:
       - "v*"
   pull_request:
@@ -13,7 +14,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: dannyvfilms/yamtrack
 
 jobs:
   build:
@@ -71,8 +72,8 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: dannyvfilms
+          password: ${{ secrets.GHCR_TOKEN }}
 
       - name: Build and push Docker image
         id: build-and-push
