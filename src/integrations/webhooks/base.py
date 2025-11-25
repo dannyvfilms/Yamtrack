@@ -95,9 +95,53 @@ class BaseWebhookProcessor:
             )
             return
 
-        tvdb_id = app.providers.tmdb.tv_with_seasons(media_id, [season_number])[
-            "tvdb_id"
-        ]
+        # Pull TMDB metadata; if the TMDB ID is actually episode-level, fall back to
+        # TVDB/IMDB to resolve the show ID instead of erroring and losing the scrobble.
+        tv_metadata = None
+        try:
+            tv_metadata = app.providers.tmdb.tv_with_seasons(media_id, [season_number])
+        except Exception as exc:  # pragma: no cover - defensive network guard
+            logger.warning(
+                "Failed tmdb.tv_with_seasons for TMDB ID %s (season %s): %s",
+                media_id,
+                season_number,
+                exc,
+            )
+
+            # If TMDB lookup failed, try resolving the show via TVDB/IMDB and retry.
+            if ids.get("tmdb_id") and (ids.get("tvdb_id") or ids.get("imdb_id")):
+                alt_ids = dict(ids)
+                alt_ids["tmdb_id"] = None
+                fallback_media_id, alt_season, alt_episode = self._find_tv_media_id(
+                    alt_ids
+                )
+
+                if fallback_media_id:
+                    media_id = fallback_media_id
+                    season_number = season_number or alt_season
+                    episode_number = episode_number or alt_episode
+                    try:
+                        tv_metadata = app.providers.tmdb.tv_with_seasons(
+                            media_id,
+                            [season_number],
+                        )
+                        logger.info(
+                            "Recovered TMDB lookup using TVDB/IMDB mapping: TMDB show %s",
+                            media_id,
+                        )
+                    except Exception as fallback_exc:  # pragma: no cover - defensive
+                        logger.warning(
+                            "Fallback tmdb.tv_with_seasons failed for show %s: %s",
+                            media_id,
+                            fallback_exc,
+                        )
+                        return
+                else:
+                    return
+            else:
+                return
+
+        tvdb_id = tv_metadata.get("tvdb_id") if tv_metadata else None
 
         if not tvdb_id:
             logger.warning("No TVDB ID found for TMDB ID: %s", media_id)
