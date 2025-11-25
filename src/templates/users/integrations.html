@@ -126,7 +126,127 @@
              class="w-5 h-5 text-indigo-400 mr-2">
           <rect width="20" height="8" x="2" y="2" rx="2" ry="2"></rect><rect width="20" height="8" x="2" y="14" rx="2" ry="2"></rect><line x1="6" x2="6.01" y1="6" y2="6"></line><line x1="6" x2="6.01" y1="18" y2="18"></line>
         </svg>
-        <h3 class="text-base font-medium">Jellyfin Integration</h3>
+        <h3 class="text-base font-medium">Jellyfin Integration (Official Repo)</h3>
+      </div>
+      <p class="text-gray-400 mb-4 text-sm">Connect Jellyfin to automatically track your watching progress.</p>
+      <div class="bg-[#262a2f] p-4 rounded-md">
+        <h4 class="text-sm font-medium mb-3">Setup Instructions</h4>
+        <ol class="list-decimal list-inside space-y-2 text-sm text-gray-300">
+          <li>You will need to have TMDB and TVDB as metadata providers in Jellyfin.</li>
+          <li>Open your Jellyfin server's settings, and navigate to the Plugin Catalog. Install the Webhook plugin from the "Jellyfin Stable" repo. Restart your server, then open the plugin's settings by clicking on it in the "My Plugins" tab.</li>
+          <li>
+            In the plugin settings:
+            <ul class="list-disc list-inside ml-6 mt-2 space-y-1 text-gray-400">
+              <li>Click on the "Add Generic Destination" button to create a new webhook. Type "Yamtrack" into "Webhook Name".</li>
+              <li>
+                <div class="inline-flex items-center gap-2 w-[calc(100%-30px)]">Webhook-URL: 
+                  <input readonly
+                         id="jellyfin-webhook-url"
+                         class="w-full bg-[#262a2f] rounded-md text-gray-400 text-sm border-0 focus:ring-0 outline-none font-mono"
+                         type="text"
+                         value="{{ request.scheme }}://{{ request.get_host }}/webhook/jellyfin/{{ request.user.token|default_if_none:"&lttoken&gt" }}">
+                  <span class="flex items-center cursor-pointer group"
+                        title="Copy"
+                        data-copy-target="#jellyfin-webhook-url">
+                    <svg xmlns="http://www.w3.org/2000/svg"
+                         width="20"
+                         height="20"
+                         viewBox="0 0 24 24"
+                         fill="none"
+                         stroke="currentColor"
+                         stroke-width="2"
+                         stroke-linecap="round"
+                         stroke-linejoin="round"
+                         class="w-5 h-5 text-gray-400 group-hover:text-indigo-400 transition-colors">
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                      <path d="M5 15V5a2 2 0 0 1 2-2h10"></path>
+                    </svg>
+                  </span>
+                </div>
+              </li>
+              <li>Select "Playback Start" and "Playback Stop" as the notification types, then select which User you want to monitor, as well as which media types.</li>
+              <li>Finally, under the "Template" section, paste the following code.</li>
+              <li>
+                <div class="bg-[#39404b] p-5 rounded-lg mb-6">
+                  <div class="flex items-center justify-end mb-2">
+                    <span class="flex items-center cursor-pointer group"
+                          title="Copy"
+                          role="button"
+                          aria-label="Copy JSON template"
+                          data-copy-target="#jellyfin-json-template">
+                      <svg xmlns="http://www.w3.org/2000/svg"
+                           width="20"
+                           height="20"
+                           viewBox="0 0 24 24"
+                           fill="none"
+                           stroke="currentColor"
+                           stroke-width="2"
+                           stroke-linecap="round"
+                           stroke-linejoin="round"
+                           class="w-5 h-5 text-gray-400 group-hover:text-indigo-400 transition-colors">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15V5a2 2 0 0 1 2-2h10"></path>
+                      </svg>
+                    </span>
+                  </div>
+                  <textarea readonly
+                            id="jellyfin-json-template"
+                            class="w-full bg-[#262a2f] rounded-md text-gray-300 text-sm border-0 focus:ring-0 outline-none font-mono p-3 resize-none overflow-auto max-h-72"
+                            rows="14">{% verbatim %}
+{ 
+  {{#if_equals NotificationType 'PlaybackStart'}}
+    "Event": "Play",
+  {{/if_equals}}
+  {{#if_equals NotificationType 'PlaybackStop'}}
+    "Event": "Stop",
+  {{/if_equals}}
+  "Item": {
+    "Id": "{{{ItemId}}}",
+    "Type": "{{{ItemType}}}",
+    "Name": "{{{Name}}}",
+    "Overview": "{{{Overview}}}",
+    "ProductionYear": "{{{Year}}}",
+    {{#if_equals ItemType 'Episode'}}
+      "SeriesName": "{{{SeriesName}}}",
+      "ParentIndexNumber": {{{SeasonNumber}}},
+      "IndexNumber": {{{EpisodeNumber}}},
+    {{/if_equals}}
+    "ProviderIds": {
+      "Tmdb": "{{{Provider_tmdb}}}",
+      "Imdb": "{{{Provider_imdb}}}",
+      "Tvdb": "{{{Provider_tvdb}}}"
+    },
+    "UserData": {
+      {{#if_equals PlayedToCompletion 'True'}}
+        "Played": "True"
+      {{else}}
+        "Played": ""
+      {{/if_equals}}
+    }
+  }
+}{% endverbatim %}</textarea>
+                </div>
+              </li>
+            </ul>
+          </li>
+        </ol>
+      </div>
+    </div>
+    <div class="bg-[#39404b] p-5 rounded-lg mb-6">
+      <div class="flex items-center mb-3">
+        <svg xmlns="http://www.w3.org/2000/svg"
+             width="24"
+             height="24"
+             viewBox="0 0 24 24"
+             fill="none"
+             stroke="currentColor"
+             stroke-width="2"
+             stroke-linecap="round"
+             stroke-linejoin="round"
+             class="w-5 h-5 text-indigo-400 mr-2">
+          <rect width="20" height="8" x="2" y="2" rx="2" ry="2"></rect><rect width="20" height="8" x="2" y="14" rx="2" ry="2"></rect><line x1="6" x2="6.01" y1="6" y2="6"></line><line x1="6" x2="6.01" y1="18" y2="18"></line>
+        </svg>
+        <h3 class="text-base font-medium">Jellyfin Integration (Unofficial Repo)</h3>
       </div>
       <p class="text-gray-400 mb-4 text-sm">Connect Jellyfin to automatically track your watching progress.</p>
       <div class="bg-[#262a2f] p-4 rounded-md">
