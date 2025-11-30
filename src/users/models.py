@@ -144,6 +144,7 @@ class User(AbstractUser):
         choices=HomeSortChoices.choices,
     )
 
+    # Media type preferences: TV Shows
     tv_enabled = models.BooleanField(default=True)
     tv_layout = models.CharField(
         max_length=20,
@@ -166,6 +167,7 @@ class User(AbstractUser):
         choices=MediaStatusChoices.choices,
     )
 
+    # Media type preferences: TV Seasons
     season_enabled = models.BooleanField(default=True)
     season_layout = models.CharField(
         max_length=20,
@@ -188,6 +190,7 @@ class User(AbstractUser):
         choices=MediaStatusChoices.choices,
     )
 
+    # Media type preferences: Movies
     movie_enabled = models.BooleanField(default=True)
     movie_layout = models.CharField(
         max_length=20,
@@ -210,6 +213,7 @@ class User(AbstractUser):
         choices=MediaStatusChoices.choices,
     )
 
+    # Media type preferences: Anime
     anime_enabled = models.BooleanField(default=True)
     anime_layout = models.CharField(
         max_length=20,
@@ -232,6 +236,7 @@ class User(AbstractUser):
         choices=MediaStatusChoices.choices,
     )
 
+    # Media type preferences: Manga
     manga_enabled = models.BooleanField(default=True)
     manga_layout = models.CharField(
         max_length=20,
@@ -254,6 +259,7 @@ class User(AbstractUser):
         choices=MediaStatusChoices.choices,
     )
 
+    # Media type preferences: Games
     game_enabled = models.BooleanField(default=True)
     game_layout = models.CharField(
         max_length=20,
@@ -276,6 +282,7 @@ class User(AbstractUser):
         choices=MediaStatusChoices.choices,
     )
 
+    # Media type preferences: Books
     book_enabled = models.BooleanField(default=True)
     book_layout = models.CharField(
         max_length=20,
@@ -298,6 +305,7 @@ class User(AbstractUser):
         choices=MediaStatusChoices.choices,
     )
 
+    # Media type preferences: Comics
     comic_enabled = models.BooleanField(default=True)
     comic_layout = models.CharField(
         max_length=20,
@@ -320,55 +328,58 @@ class User(AbstractUser):
         choices=MediaStatusChoices.choices,
     )
 
-    hide_from_search = models.BooleanField(default=True)
+    # UI preferences
+    clickable_media_cards = models.BooleanField(
+        default=False,
+        help_text="Hide hover overlay on touch devices",
+    )
 
+    # Calendar preferences
     calendar_layout = models.CharField(
         max_length=20,
         default=CalendarLayoutChoices.GRID,
         choices=CalendarLayoutChoices.choices,
     )
 
+    # Lists preferences
     lists_sort = models.CharField(
         max_length=20,
         default=ListSortChoices.LAST_ITEM_ADDED,
         choices=ListSortChoices.choices,
     )
-
     list_detail_sort = models.CharField(
         max_length=20,
         default=ListDetailSortChoices.DATE_ADDED,
         choices=ListDetailSortChoices.choices,
     )
 
+    # Notification settings
     notification_urls = models.TextField(
         blank=True,
         help_text="Apprise URLs for notifications",
     )
-
     notification_excluded_items = models.ManyToManyField(
         Item,
         related_name="excluded_by_users",
         blank=True,
         help_text="Items excluded from notifications",
     )
-
     release_notifications_enabled = models.BooleanField(
         default=True,
         help_text="Receive notifications for recently released media",
     )
-
     daily_digest_enabled = models.BooleanField(
         default=True,
         help_text="Receive a daily digest of upcoming releases",
     )
 
+    # Integration settings
     token = models.CharField(
         max_length=32,
         unique=True,
         default=generate_token,
         help_text="Token for external integrations",
     )
-
     plex_usernames = models.TextField(
         blank=True,
         help_text="Comma-separated list of Plex usernames for webhook matching",

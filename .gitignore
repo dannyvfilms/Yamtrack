@@ -10,3 +10,6 @@ db.sqlite3-wal
 .DS_Store
 src/.DS_Store
 .vscode/launch.json
+CLAUDE.md
+requests.http
+TODO.txt

@@ -156,7 +156,7 @@ cd Yamtrack
 Install Redis or spin up a bare redis container:
 
 ```bash
-docker run -d --name redis -p 6379:6379 --restart unless-stopped redis:7-alpine
+docker run -d --name redis -p 6379:6379 --restart unless-stopped redis:8-alpine
 ```
 
 Create a `.env` file in the root directory and add the following variables.

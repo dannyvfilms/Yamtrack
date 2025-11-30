@@ -8,7 +8,7 @@ from django.core.cache import cache
 from django.db.models import Exists, OuterRef, Q, Subquery
 from django.utils import timezone
 
-from app import media_type_config
+from app import config
 from app.models import Item, MediaTypes, Sources
 from app.providers import comicvine, services, tmdb
 from events.models import Event, SentinelDatetime
@@ -785,7 +785,7 @@ def process_other(item, events_bulk):
         )
         return
 
-    date_key = media_type_config.get_date_key(item.media_type)
+    date_key = config.get_date_key(item.media_type)
 
     if date_key in metadata["details"] and metadata["details"][date_key]:
         try:

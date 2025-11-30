@@ -276,21 +276,25 @@ def test_notification(request):
 
 
 @require_http_methods(["GET", "POST"])
-def sidebar(request):
-    """Render the sidebar settings page."""
+def ui_preferences(request):
+    """Render the UI preferences settings page."""
     media_types = MediaTypes.values
     media_types.remove(MediaTypes.EPISODE.value)
 
     if request.method == "GET":
-        return render(request, "users/sidebar.html", {"media_types": media_types})
+        return render(
+            request,
+            "users/ui_preferences.html",
+            {"media_types": media_types},
+        )
 
     # Prevent demo users from updating preferences
     if request.user.is_demo:
         messages.error(request, "This section is view-only for demo accounts.")
-        return redirect("sidebar")
+        return redirect("ui_preferences")
 
     # Process form submission
-    request.user.hide_from_search = "hide_disabled" in request.POST
+    request.user.clickable_media_cards = "clickable_media_cards" in request.POST
     media_types_checked = request.POST.getlist("media_types_checkboxes")
 
     # Update user preferences for each media type
@@ -305,7 +309,7 @@ def sidebar(request):
     request.user.save()
     messages.success(request, "Settings updated.")
 
-    return redirect("sidebar")
+    return redirect("ui_preferences")
 
 
 @require_http_methods(["GET", "POST"])
@@ -409,10 +413,12 @@ def export_data(request):
     """Render the export data settings page."""
     return render(request, "users/export_data.html", {"user": request.user})
 
+
 @require_GET
 def advanced(request):
     """Render the advanced settings page."""
     return render(request, "users/advanced.html")
+
 
 @require_GET
 def about(request):
@@ -470,6 +476,7 @@ def update_plex_usernames(request):
         messages.success(request, "Plex usernames updated successfully")
 
     return redirect("integrations")
+
 
 @require_POST
 def clear_search_cache(request):

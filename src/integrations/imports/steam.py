@@ -6,7 +6,7 @@ import requests
 from django.conf import settings
 
 import app
-from app.models import Item, MediaTypes, Sources, Status
+from app.models import MediaTypes, Sources, Status
 from app.providers import services
 from app.providers.igdb import ExternalGameSource, external_game
 from integrations.imports import helpers
@@ -137,7 +137,7 @@ class SteamImporter:
                 # Define HTTP status codes as constants for better readability
                 http_too_many_requests = 429
                 http_forbidden = 403
-                http_internal_server_error = 500
+                http_bad_request = 400
 
                 if e.response.status_code == http_too_many_requests:
                     if attempt < max_retries - 1:
@@ -156,18 +156,18 @@ class SteamImporter:
                 if e.response.status_code == http_forbidden:
                     msg = "Steam profile is private or invalid"
                     raise MediaImportError(msg) from e
-                if e.response.status_code == http_internal_server_error:
-                    msg = "Steam API returned an internal error"
+                if e.response.status_code == http_bad_request:
+                    msg = "Bad request to Steam API. Please check the Steam ID."
                     raise MediaImportError(msg) from e
                 msg = f"Steam API error: {e.response.status_code}"
-                raise MediaImportError(msg) from e
+                raise MediaImportUnexpectedError(msg) from e
             except requests.RequestException as e:
                 logger.exception("Request error when fetching Steam games")
                 msg = "Failed to connect to Steam API"
-                raise MediaImportError(msg) from e
+                raise MediaImportUnexpectedError(msg) from e
 
         msg = "Steam API request failed after all retries"
-        raise MediaImportError(msg)
+        raise MediaImportUnexpectedError(msg)
 
     def _process_game(self, game_data):
         """Process a single game from Steam API response."""
@@ -180,55 +180,38 @@ class SteamImporter:
             # Try to match with IGDB
             igdb_game = self._match_with_igdb(name, appid)
 
-            if igdb_game:
-                if not helpers.should_process_media(
-                    self.existing_media,
-                    self.to_delete,
-                    MediaTypes.GAME.value,
-                    Sources.IGDB.value,
-                    str(igdb_game["media_id"]),
-                    self.mode,
-                ):
-                    return
-
-                # Use IGDB data if found
-                item, _ = app.models.Item.objects.get_or_create(
-                    media_id=str(igdb_game["media_id"]),
-                    source=Sources.IGDB.value,
-                    media_type=MediaTypes.GAME.value,
-                    defaults={
-                        "title": igdb_game["title"],
-                        "image": igdb_game["image"],
-                    },
+            if not igdb_game:
+                # Skip games that can't be matched to IGDB
+                logger.debug(
+                    "Skipping Steam game %s (appid: %s) - no IGDB match found",
+                    name,
+                    appid,
                 )
-            else:
-                manual_media_id = Item.generate_manual_id(MediaTypes.GAME.value)
-                if not helpers.should_process_media(
-                    self.existing_media,
-                    self.to_delete,
-                    MediaTypes.GAME.value,
-                    Sources.MANUAL.value,
-                    manual_media_id,
-                    self.mode,
-                ):
-                    return
-
-                img_icon_url = game_data.get("img_icon_url")
-                if img_icon_url:
-                    image_url = f"http://media.steampowered.com/steamcommunity/public/images/apps/{appid}/{img_icon_url}.jpg"
-                else:
-                    image_url = settings.IMG_NONE
-
-                # Create manual entry if no IGDB match
-                item, _ = app.models.Item.objects.get_or_create(
-                    media_id=manual_media_id,
-                    source=Sources.MANUAL.value,
-                    media_type=MediaTypes.GAME.value,
-                    defaults={
-                        "title": name,
-                        "image": image_url,
-                    },
+                self.warnings.append(
+                    f"{name} ({appid}): Couldn't find a match in {Sources.IGDB.label}",
                 )
+                return
+
+            if not helpers.should_process_media(
+                self.existing_media,
+                self.to_delete,
+                MediaTypes.GAME.value,
+                Sources.IGDB.value,
+                str(igdb_game["media_id"]),
+                self.mode,
+            ):
+                return
+
+            # Use IGDB data if found
+            item, _ = app.models.Item.objects.get_or_create(
+                media_id=str(igdb_game["media_id"]),
+                source=Sources.IGDB.value,
+                media_type=MediaTypes.GAME.value,
+                defaults={
+                    "title": igdb_game["title"],
+                    "image": igdb_game["image"],
+                },
+            )
 
             # Determine status based on playtime
             status = self._determine_game_status(playtime_forever, playtime_2weeks)

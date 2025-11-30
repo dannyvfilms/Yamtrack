@@ -126,7 +126,7 @@ def comic(media_id):
             "source_url": response["site_detail_url"],
             "media_type": MediaTypes.COMIC.value,
             "title": response["name"],
-            "max_progress": get_issue_number(response["last_issue"]["issue_number"]),
+            "max_progress": None,
             "image": get_image(response),
             "synopsis": get_synopsis(response),
             "genres": get_genres(response),
@@ -158,25 +158,6 @@ def get_image(response):
     if "image" in response:
         return response["image"]["medium_url"]
     return settings.IMG_NONE
-
-
-def get_issue_number(issue_number):
-    """
-    Return the last issue number as an integer if possible.
-
-    For compound issue numbers (like "463-464"), returns the highest number.
-    Returns None if no valid issue number can be extracted.
-    """
-    try:
-        return int(issue_number)
-    except ValueError:
-        # Handle compound issue numbers like "463-464"
-        try:
-            # Split by hyphen and get the highest number
-            parts = [int(part.strip()) for part in issue_number.split("-")]
-            return max(parts)
-        except (ValueError, AttributeError):
-            return None
 
 
 def get_synopsis(response):

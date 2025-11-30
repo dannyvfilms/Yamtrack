@@ -457,7 +457,8 @@ class TraktImporter:
         if not episode_exists:
             item_identifier = f"{show['title']} S{season_number}E{episode_number}"
             self.warnings.append(
-                f"{item_identifier}: not found in TMDB with ID {tmdb_id}.",
+                f"{item_identifier}: not found in {Sources.TMDB.label} "
+                f"with ID {tmdb_id}.",
             )
             return
 

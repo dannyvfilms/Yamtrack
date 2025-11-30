@@ -77,7 +77,7 @@ class Item(CalendarTriggerMixin, models.Model):
         choices=MediaTypes.choices,
         default=MediaTypes.MOVIE.value,
     )
-    title = models.CharField(max_length=255)
+    title = models.TextField()
     image = models.URLField()  # if add default, custom media entry will show the value
     season_number = models.PositiveIntegerField(null=True, blank=True)
     episode_number = models.PositiveIntegerField(null=True, blank=True)

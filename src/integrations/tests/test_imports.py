@@ -1412,22 +1412,21 @@ class ImportSteam(TestCase):
         mock_external_game.return_value = None
 
         # Import games
-        imported_counts, _ = steam.importer(
+        imported_counts, warnings = steam.importer(
             "76561198000000000",
             self.user,
             "new",
         )
 
-        # Verify the game was imported as a manual entry
-        self.assertEqual(imported_counts.get(MediaTypes.GAME.value, 0), 1)
+        # Verify no games were imported (games without IGDB match are skipped)
+        self.assertEqual(imported_counts.get(MediaTypes.GAME.value, 0), 0)
 
-        # Verify the game was created with manual source
-        game = Game.objects.get(user=self.user)
-        self.assertEqual(game.item.source, Sources.MANUAL.value)
-        self.assertEqual(game.item.media_id, "1")
-        self.assertEqual(game.item.title, "Unknown Game")
-        # 100 minutes total, 0 recent
-        self.assertEqual(game.status, Status.PAUSED.value)
+        # Verify a warning was logged
+        self.assertIn("Unknown Game (999)", warnings)
+        self.assertIn(f"Couldn't find a match in {Sources.IGDB.label}", warnings)
+
+        # Verify no game was created
+        self.assertEqual(Game.objects.filter(user=self.user).count(), 0)
 
     def test_determine_game_status_logic(self):
         """Test the status determination logic."""

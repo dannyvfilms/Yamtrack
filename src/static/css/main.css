@@ -521,6 +521,9 @@
   .ml-6 {
     margin-left: calc(var(--spacing) * 6);
   }
+  .ml-7 {
+    margin-left: calc(var(--spacing) * 7);
+  }
   .ml-auto {
     margin-left: auto;
   }
@@ -1701,6 +1704,9 @@
   .italic {
     font-style: italic;
   }
+  .underline {
+    text-decoration-line: underline;
+  }
   .placeholder-gray-500 {
     &::placeholder {
       color: var(--color-gray-500);
@@ -2823,6 +2829,11 @@
   .\@max-\[210px\]\:flex-col {
     @container (width < 210px) {
       flex-direction: column;
+    }
+  }
+  .pointer-coarse\:hidden {
+    @media (pointer: coarse) {
+      display: none;
     }
   }
   .hover-tap\:opacity-100 {

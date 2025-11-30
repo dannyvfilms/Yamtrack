@@ -16,7 +16,7 @@ from django.utils.dateparse import parse_date
 from django.utils.timezone import datetime
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
-from app import cache_utils, helpers, history_cache, history_processor
+from app import cache_utils, config, helpers, history_cache, history_processor
 from app import statistics as stats
 from app.forms import EpisodeForm, ManualItemForm, get_form_class
 from app.models import (
@@ -278,7 +278,10 @@ def media_search(request):
     layout = request.GET.get("layout", "grid")
 
     # only receives source when searching with secondary source
-    source = request.GET.get("source")
+    source = request.GET.get(
+        "source",
+        config.get_default_source_name(media_type).value,
+    )
 
     data = services.search(media_type, query, page, source)
 

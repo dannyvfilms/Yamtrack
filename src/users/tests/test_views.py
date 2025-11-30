@@ -345,11 +345,11 @@ class SidebarViewTests(TestCase):
         self.user = get_user_model().objects.create_user(**self.credentials)
         self.client.login(**self.credentials)
 
-    def test_sidebar_get(self):
-        """Test GET request to sidebar view."""
-        response = self.client.get(reverse("sidebar"))
+    def test_ui_preferences_get(self):
+        """Test GET request to UI preferences view."""
+        response = self.client.get(reverse("ui_preferences"))
         self.assertEqual(response.status_code, 200)
-        self.assertTemplateUsed(response, "users/sidebar.html")
+        self.assertTemplateUsed(response, "users/ui_preferences.html")
 
         # Check that media_types are in context
         self.assertIn("media_types", response.context)
@@ -358,30 +358,27 @@ class SidebarViewTests(TestCase):
         self.assertNotIn(MediaTypes.EPISODE.value, response.context["media_types"])
 
     def test_sidebar_post_update_preferences(self):
-        """Test POST request to update sidebar preferences."""
+        """Test POST request to update UI preferences."""
         # Initial state
         self.user.tv_enabled = True
         self.user.movie_enabled = True
         self.user.anime_enabled = True
-        self.user.hide_from_search = False
         self.user.save()
 
         # Update preferences
         response = self.client.post(
-            reverse("sidebar"),
+            reverse("ui_preferences"),
             {
                 "media_types_checkboxes": [MediaTypes.TV.value, MediaTypes.ANIME.value],
-                "hide_disabled": "on",
             },
         )
-        self.assertRedirects(response, reverse("sidebar"))
+        self.assertRedirects(response, reverse("ui_preferences"))
 
         # Check that preferences were updated
         self.user.refresh_from_db()
         self.assertTrue(self.user.tv_enabled)
         self.assertFalse(self.user.movie_enabled)
         self.assertTrue(self.user.anime_enabled)
-        self.assertTrue(self.user.hide_from_search)
 
         # Check for success message
         messages = list(get_messages(response.wsgi_request))
@@ -389,7 +386,7 @@ class SidebarViewTests(TestCase):
         self.assertIn("Settings updated", str(messages[0]))
 
     def test_sidebar_post_demo_user(self):
-        """Test POST request from a demo user."""
+        """Test POST request from a demo user to UI preferences."""
         # Set user as demo
         self.user.is_demo = True
         self.user.tv_enabled = True
@@ -398,12 +395,12 @@ class SidebarViewTests(TestCase):
 
         # Try to update preferences
         response = self.client.post(
-            reverse("sidebar"),
+            reverse("ui_preferences"),
             {
                 "media_types_checkboxes": [MediaTypes.TV.value, MediaTypes.MOVIE.value],
             },
         )
-        self.assertRedirects(response, reverse("sidebar"))
+        self.assertRedirects(response, reverse("ui_preferences"))
 
         # Check that preferences were not updated
         self.user.refresh_from_db()

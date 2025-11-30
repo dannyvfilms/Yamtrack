@@ -587,7 +587,12 @@ class MediaSearchViewTests(TestCase):
         self.assertEqual(self.user.last_search_type, MediaTypes.MOVIE.value)
 
         # Verify the search function was called with correct parameters
-        mock_search.assert_called_once_with(MediaTypes.MOVIE.value, "test", 1, None)
+        mock_search.assert_called_once_with(
+            MediaTypes.MOVIE.value,
+            "test",
+            1,
+            Sources.TMDB.value,
+        )
 
 
 class MediaDetailsViewTests(TestCase):
