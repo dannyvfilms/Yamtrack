@@ -142,7 +142,7 @@
                 <div class="p-3 space-y-1.5 truncate">
                   <div class="flex items-center gap-2 text-xs text-gray-400">
                     <div class="flex items-center gap-1">
-                      {% if entry.media_type in (MediaTypes.GAME.value, MediaTypes.BOARDGAME.value) and entry.progress_display %}
+                      {% if (entry.media_type == MediaTypes.GAME.value or entry.media_type == MediaTypes.BOARDGAME.value) and entry.progress_display %}
                         <span class="font-semibold text-indigo-400">{{ entry.progress_display }}</span>
                       {% elif entry.media_type == MediaTypes.MOVIE.value %}
                         <span class="font-semibold text-indigo-400">
@@ -157,7 +157,7 @@
                     <span class="text-xs text-white truncate whitespace-nowrap block max-w-full">{{ entry.display_title|default:entry.title }}</span>
                   </div>
                   <p class="text-xs text-gray-400">
-                    {% if entry.media_type in (MediaTypes.GAME.value, MediaTypes.BOARDGAME.value) %}
+                    {% if entry.media_type == MediaTypes.GAME.value or entry.media_type == MediaTypes.BOARDGAME.value %}
                       {{ entry.date_range_display }}
                     {% else %}
                       <span class="hidden sm:inline">{{ entry.played_at_local|user_datetime_format:user }}</span>

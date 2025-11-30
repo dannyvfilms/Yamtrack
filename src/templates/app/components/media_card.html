@@ -107,7 +107,7 @@
     {% endif %}
 
     {% if media.repeats > 1 %}
-      {% if item.media_type not in (MediaTypes.GAME.value, MediaTypes.BOARDGAME.value) or user.game_logging_style != 'sessions' %}
+      {% if item.media_type != MediaTypes.GAME.value and item.media_type != MediaTypes.BOARDGAME.value or user.game_logging_style != 'sessions' %}
       <div class="absolute sm:bottom-2 sm:right-2 sm:left-auto bottom-10 left-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md">
         {% include "app/icons/repeat.svg" with classes="w-4 h-4 text-slate-200 mr-1" %}
         <span class="text-sm text-white">{{ media.repeats }}</span>

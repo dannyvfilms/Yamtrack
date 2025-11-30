@@ -286,7 +286,7 @@
                       class="group flex items-center justify-center w-full px-3 py-2 text-sm text-white bg-gray-600 hover:bg-gray-700 transition-all duration-200 rounded-lg tracking-wide cursor-pointer">
                 <div class="lucide lucide-chevron-down w-4 h-4 mr-2 transition-transform"
                      :class="{ 'rotate-180': showRepeats }">{% include "app/icons/chevron-down.svg" %}</div>
-                {% if media_type in (MediaTypes.GAME.value, MediaTypes.BOARDGAME.value) %}Show Sessions{% else %}Show Repeats{% endif %} ({{ user_medias|length|add:"-1" }})
+                {% if media_type == MediaTypes.GAME.value or media_type == MediaTypes.BOARDGAME.value %}Show Sessions{% else %}Show Repeats{% endif %} ({{ user_medias|length|add:"-1" }})
               </button>
 
               <div x-show="showRepeats" class="space-y-2 mt-4">

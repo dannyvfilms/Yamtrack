@@ -52,7 +52,7 @@
            class="hover:text-indigo-400 transition-colors line-clamp-1">{{ media.item }}</a>
 
         {% if media.repeats > 1 %}
-          {% if media.item.media_type not in (MediaTypes.GAME.value, MediaTypes.BOARDGAME.value) or user.game_logging_style != 'sessions' %}
+          {% if media.item.media_type != MediaTypes.GAME.value and media.item.media_type != MediaTypes.BOARDGAME.value or user.game_logging_style != 'sessions' %}
             <div class="flex items-center">
               {% include "app/icons/repeat.svg" with classes="w-4 h-4 text-slate-200 mr-1" %}
               <span class="text-sm text-white">{{ media.repeats }}</span>
@@ -81,7 +81,7 @@
           <span class="text-white -mt-[3px]">{{ media.aggregated_score }}</span>
         </div>
         {% if media.repeats > 1 %}
-          {% if media.item.media_type not in (MediaTypes.GAME.value, MediaTypes.BOARDGAME.value) or user.game_logging_style != 'sessions' %}
+          {% if media.item.media_type != MediaTypes.GAME.value and media.item.media_type != MediaTypes.BOARDGAME.value or user.game_logging_style != 'sessions' %}
             <div class="text-xs text-gray-400 mt-1">
               <span class="text-indigo-400">Latest</span>
             </div>
@@ -110,7 +110,7 @@
           <div class="font-medium">{{ media.formatted_aggregated_progress }}</div>
           {% if media.max_progress %}/ {{ media.max_progress }}{% endif %}
           {% if media.repeats > 1 %}
-            {% if media.item.media_type not in (MediaTypes.GAME.value, MediaTypes.BOARDGAME.value) or user.game_logging_style != 'sessions' %}
+            {% if media.item.media_type != MediaTypes.GAME.value and media.item.media_type != MediaTypes.BOARDGAME.value or user.game_logging_style != 'sessions' %}
               <div class="text-xs text-indigo-400 mt-1">
                 <span>Total ({{ media.repeats }} repeats)</span>
               </div>
@@ -128,7 +128,7 @@
       <td class="p-2 text-center">
         <div class="font-medium">{{ media.episodes_left_display|default:"-" }}</div>
         {% if media.repeats > 1 %}
-          {% if media.item.media_type not in (MediaTypes.GAME.value, MediaTypes.BOARDGAME.value) or user.game_logging_style != 'sessions' %}
+          {% if media.item.media_type != MediaTypes.GAME.value and media.item.media_type != MediaTypes.BOARDGAME.value or user.game_logging_style != 'sessions' %}
             <div class="text-xs text-indigo-400 mt-1">
               <span>Remaining</span>
             </div>
@@ -142,7 +142,7 @@
       <td class="p-2 text-center">
         <div class="font-medium">{{ media.time_left_display|default:"-" }}</div>
         {% if media.repeats > 1 %}
-          {% if media.item.media_type not in (MediaTypes.GAME.value, MediaTypes.BOARDGAME.value) or user.game_logging_style != 'sessions' %}
+          {% if media.item.media_type != MediaTypes.GAME.value and media.item.media_type != MediaTypes.BOARDGAME.value or user.game_logging_style != 'sessions' %}
             <div class="text-xs text-indigo-400 mt-1">
               <span>Total</span>
             </div>
@@ -160,7 +160,7 @@
       {% if media.aggregated_status %}
         <div class="font-medium">{{ media.aggregated_status|media_status_readable }}</div>
         {% if media.repeats > 1 %}
-          {% if media.item.media_type not in (MediaTypes.GAME.value, MediaTypes.BOARDGAME.value) or user.game_logging_style != 'sessions' %}
+          {% if media.item.media_type != MediaTypes.GAME.value and media.item.media_type != MediaTypes.BOARDGAME.value or user.game_logging_style != 'sessions' %}
             <div class="text-xs text-indigo-400 mt-1">
               <span>Latest</span>
             </div>
@@ -175,7 +175,7 @@
       <td class="p-2 text-center">
         <div class="font-medium">{{ media.aggregated_start_date|user_date_format:user }}</div>
         {% if media.repeats > 1 %}
-          {% if media.item.media_type not in (MediaTypes.GAME.value, MediaTypes.BOARDGAME.value) or user.game_logging_style != 'sessions' %}
+          {% if media.item.media_type != MediaTypes.GAME.value and media.item.media_type != MediaTypes.BOARDGAME.value or user.game_logging_style != 'sessions' %}
             <div class="text-xs text-indigo-400 mt-1">
               <span>Earliest</span>
             </div>
@@ -194,7 +194,7 @@
       <td class="p-2 text-center">
         <div class="font-medium">{{ media.aggregated_end_date|user_date_format:user }}</div>
         {% if media.repeats > 1 %}
-          {% if media.item.media_type not in (MediaTypes.GAME.value, MediaTypes.BOARDGAME.value) or user.game_logging_style != 'sessions' %}
+          {% if media.item.media_type != MediaTypes.GAME.value and media.item.media_type != MediaTypes.BOARDGAME.value or user.game_logging_style != 'sessions' %}
             <div class="text-xs text-indigo-400 mt-1">
               <span>Latest</span>
             </div>
