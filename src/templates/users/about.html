@@ -75,6 +75,7 @@
       <div class="mt-8 pt-4 border-t border-gray-700">
         <p class="text-gray-400 text-sm">
           Version: <span class="font-mono">{{ version }}</span>
+          {% if commit %}<span class="text-gray-500 px-1">|</span><span class="font-mono">Commit: {{ commit }}</span>{% endif %}
         </p>
       </div>
     </div>

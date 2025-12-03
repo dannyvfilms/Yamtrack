@@ -5,8 +5,10 @@ ENV PYTHONUNBUFFERED=1
 
 # Define build argument with default value
 ARG VERSION=dev
+ARG COMMIT_SHA=unknown
 # Set it as an environment variable
 ENV VERSION=$VERSION
+ENV COMMIT_SHA=$COMMIT_SHA
 
 COPY ./requirements.txt /requirements.txt
 COPY ./entrypoint.sh /entrypoint.sh

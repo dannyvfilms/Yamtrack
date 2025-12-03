@@ -1,6 +1,7 @@
 """Django settings for Yamtrack project."""
 
 import json
+import subprocess
 import warnings
 import zoneinfo
 from pathlib import Path
@@ -344,7 +345,64 @@ AUTH_USER_MODEL = "users.User"
 # For CSV imports
 FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10 MB
 
-VERSION = config("VERSION", default="dev")
+
+def _get_commit_hash():
+    """Return the current commit hash from env or the local git metadata."""
+    env_commit = (
+        config("COMMIT_SHA", default=None)
+        or config("GIT_COMMIT", default=None)
+        or config("GITHUB_SHA", default=None)
+    )
+
+    if env_commit and env_commit.lower() not in {"unknown", "none"}:
+        return env_commit.strip()
+
+    try:
+        git_rev = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=BASE_DIR,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ).stdout.strip()
+        if git_rev:
+            return git_rev
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+    git_dir = BASE_DIR / ".git"
+    head_file = git_dir / "HEAD"
+    try:
+        head_contents = head_file.read_text().strip()
+    except (FileNotFoundError, OSError, UnicodeDecodeError):
+        return None
+
+    if head_contents.startswith("gitdir:"):
+        _, git_dir_path = head_contents.split(":", 1)
+        git_dir = (BASE_DIR / git_dir_path.strip()).resolve()
+        head_file = git_dir / "HEAD"
+        try:
+            head_contents = head_file.read_text().strip()
+        except (FileNotFoundError, OSError, UnicodeDecodeError):
+            return None
+
+    if head_contents.startswith("ref:"):
+        _, ref_path = head_contents.split(" ", 1)
+        ref_file = git_dir / ref_path
+        try:
+            return ref_file.read_text().strip()
+        except (FileNotFoundError, OSError, UnicodeDecodeError):
+            return None
+
+    return head_contents or None
+
+
+VERSION_RAW = config("VERSION", default=None)
+COMMIT_SHA = _get_commit_hash()
+COMMIT_SHA_SHORT = COMMIT_SHA[:7] if COMMIT_SHA else None
+
+VERSION = VERSION_RAW or COMMIT_SHA_SHORT or "dev"
 
 ADMIN_ENABLED = config("ADMIN_ENABLED", default=False, cast=bool)
 
