@@ -6,7 +6,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.core.cache import cache
 from django.core.paginator import EmptyPage, Paginator
-from django.db import IntegrityError
+from django.db import IntegrityError, models
 from django.db.models import prefetch_related_objects
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import redirect, render
@@ -750,15 +750,22 @@ def media_save(request):
             # Create or get Album
             album_id = metadata.get("_album_id") or metadata.get("details", {}).get("album_id")
             album_title = metadata.get("_album_title") or metadata.get("details", {}).get("album")
+            image_url = metadata.get("image", "")
+            
             if album_id and album_title:
-                album_instance, _ = Album.objects.get_or_create(
+                album_instance, created = Album.objects.get_or_create(
                     musicbrainz_release_id=album_id,
                     defaults={
                         "title": album_title,
                         "artist": artist_instance,
-                        "image": metadata.get("image", ""),
+                        "image": image_url,
                     },
                 )
+                # Update album image if it's missing
+                if not created and image_url and image_url != settings.IMG_NONE:
+                    if not album_instance.image or album_instance.image == settings.IMG_NONE:
+                        album_instance.image = image_url
+                        album_instance.save(update_fields=["image"])
             elif album_title:
                 # Try to find by title and artist if no ID
                 album_instance = Album.objects.filter(
@@ -769,7 +776,7 @@ def media_save(request):
                     album_instance = Album.objects.create(
                         title=album_title,
                         artist=artist_instance,
-                        image=metadata.get("image", ""),
+                        image=image_url,
                     )
 
             instance.artist = artist_instance
@@ -1133,10 +1140,10 @@ def create_album_from_search(request, musicbrainz_release_id):
     # Check if album already exists
     album = Album.objects.filter(musicbrainz_release_id=musicbrainz_release_id).first()
     
+    # Fetch release data from MusicBrainz (for both new and existing albums)
+    release_data = musicbrainz.get_release(musicbrainz_release_id)
+    
     if not album:
-        # Fetch release data from MusicBrainz
-        release_data = musicbrainz.get_release(musicbrainz_release_id)
-        
         # Create or get the artist
         artist = None
         artist_id = release_data.get("artist_id")
@@ -1177,6 +1184,13 @@ def create_album_from_search(request, musicbrainz_release_id):
             image=release_data.get("image", ""),
         )
         logger.info("Created album %s from MusicBrainz", album.title)
+    else:
+        # Update album image if it's missing or placeholder
+        new_image = release_data.get("image", "")
+        if new_image and new_image != settings.IMG_NONE and (not album.image or album.image == settings.IMG_NONE):
+            album.image = new_image
+            album.save(update_fields=["image"])
+            logger.info("Updated album %s image", album.title)
 
     return redirect("album_detail", album_id=album.id)
 
@@ -1184,36 +1198,43 @@ def create_album_from_search(request, musicbrainz_release_id):
 @require_GET
 def artist_detail(request, artist_id):
     """Return the detail page for a music artist."""
+    from django.db.models import Count
     from django.shortcuts import get_object_or_404
 
     artist = get_object_or_404(Artist, id=artist_id)
 
     # Get albums for this artist that have tracks in the user's library
+    # Annotate with track count for display
     user_track_album_ids = Music.objects.filter(
         user=request.user,
-        artist=artist,
+        album__artist=artist,
         album__isnull=False,
     ).values_list("album_id", flat=True).distinct()
 
     albums_in_library = Album.objects.filter(
         id__in=user_track_album_ids,
+    ).annotate(
+        library_track_count=Count(
+            "tracks",
+            filter=models.Q(tracks__user=request.user),
+        )
     ).order_by("-release_date", "title")
 
     # Get all albums for this artist (may include albums not yet in library)
     all_albums = Album.objects.filter(artist=artist).order_by("-release_date", "title")
 
-    # Get top tracks from this artist in user's library
-    user_tracks = Music.objects.filter(
+    # Get total track count for this artist in user's library
+    total_tracks = Music.objects.filter(
         user=request.user,
-        artist=artist,
-    ).select_related("item", "album").order_by("-created_at")[:10]
+        album__artist=artist,
+    ).count()
 
     context = {
         "user": request.user,
         "artist": artist,
         "albums_in_library": albums_in_library,
         "all_albums": all_albums,
-        "user_tracks": user_tracks,
+        "total_tracks": total_tracks,
     }
     return render(request, "app/music_artist_detail.html", context)
 
@@ -1226,16 +1247,27 @@ def album_detail(request, album_id):
     album = get_object_or_404(Album.objects.select_related("artist"), id=album_id)
 
     # Get all tracks for this album in user's library
-    # Sort by item title (which includes track info) for now
+    # Prefetch history for track actions (like episodes)
     user_tracks = Music.objects.filter(
         user=request.user,
         album=album,
-    ).select_related("item").order_by("item__title")
+    ).select_related("item").prefetch_related("history").order_by("item__title")
+
+    # Build track data with history for template (like season episodes)
+    tracks_with_history = []
+    for track in user_tracks:
+        track_data = {
+            "music": track,
+            "item": track.item,
+            "history": list(track.history.all().order_by("-end_date")),
+        }
+        tracks_with_history.append(track_data)
 
     context = {
         "user": request.user,
         "album": album,
         "user_tracks": user_tracks,
+        "tracks_with_history": tracks_with_history,
     }
     return render(request, "app/music_album_detail.html", context)
 

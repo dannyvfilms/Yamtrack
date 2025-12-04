@@ -59,34 +59,75 @@ def _mb_request(endpoint, params=None):
         raise
 
 
-def _get_cover_art(release_id):
-    """Try to fetch cover art for a release from the Cover Art Archive."""
-    try:
-        url = f"{COVER_ART_BASE}/release/{release_id}"
-        headers = {
-            "User-Agent": USER_AGENT,
-            "Accept": "application/json",
-        }
-        response = services.api_request(
-            Sources.MUSICBRAINZ.value,
-            "GET",
-            url,
-            headers=headers,
-        )
-        
-        if response and "images" in response:
-            for image in response["images"]:
-                if image.get("front"):
-                    return image.get("thumbnails", {}).get("500") or image.get("image")
-            # If no front cover, use the first image
-            if response["images"]:
-                first_image = response["images"][0]
-                return first_image.get("thumbnails", {}).get("500") or first_image.get("image")
-    except Exception:
-        # Cover art is optional, don't fail the whole request
-        logger.debug("No cover art found for release %s", release_id)
+def _get_cover_art(release_id, release_group_id=None):
+    """Try to fetch cover art for a release from the Cover Art Archive.
     
-    return settings.IMG_NONE
+    Args:
+        release_id: MusicBrainz release ID
+        release_group_id: Optional release group ID to try as fallback
+    
+    Returns:
+        Image URL or IMG_NONE placeholder
+    """
+    # Check cache first
+    cache_key = f"musicbrainz_cover_{release_id}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+    
+    def _try_fetch_cover(url):
+        """Helper to fetch cover from a specific URL."""
+        try:
+            headers = {
+                "User-Agent": USER_AGENT,
+                "Accept": "application/json",
+            }
+            response = services.api_request(
+                Sources.MUSICBRAINZ.value,
+                "GET",
+                url,
+                headers=headers,
+            )
+            
+            if response and "images" in response:
+                # Prioritize front cover
+                for image in response["images"]:
+                    if image.get("front"):
+                        # Try different thumbnail sizes
+                        thumbnails = image.get("thumbnails", {})
+                        return (
+                            thumbnails.get("500") or 
+                            thumbnails.get("250") or 
+                            thumbnails.get("large") or 
+                            image.get("image")
+                        )
+                # No front cover, use first available image
+                if response["images"]:
+                    first_image = response["images"][0]
+                    thumbnails = first_image.get("thumbnails", {})
+                    return (
+                        thumbnails.get("500") or 
+                        thumbnails.get("250") or 
+                        thumbnails.get("large") or 
+                        first_image.get("image")
+                    )
+        except Exception as e:
+            logger.debug("Cover art fetch failed for %s: %s", url, e)
+        return None
+    
+    # Try release-specific cover art first
+    image_url = _try_fetch_cover(f"{COVER_ART_BASE}/release/{release_id}")
+    
+    # If no cover for release, try release group as fallback
+    if not image_url and release_group_id:
+        image_url = _try_fetch_cover(f"{COVER_ART_BASE}/release-group/{release_group_id}")
+    
+    result = image_url or settings.IMG_NONE
+    
+    # Cache the result (even if it's IMG_NONE) to avoid repeated lookups
+    cache.set(cache_key, result, 60 * 60 * 24 * 7)  # Cache for 7 days
+    
+    return result
 
 
 def search(query, page=1):
@@ -215,24 +256,26 @@ def recording(media_id):
     release_date = None
     album_title = ""
     album_id = None
+    release_group_id = None
     image = settings.IMG_NONE
     
     if releases:
         # Use the first release with a date, or just the first release
+        selected_release = None
         for release in releases:
             if release.get("date"):
-                album_title = release.get("title", "")
-                album_id = release.get("id")
-                release_date = release.get("date")
-                image = _get_cover_art(album_id)
+                selected_release = release
                 break
         
-        if not album_title and releases:
-            first_release = releases[0]
-            album_title = first_release.get("title", "")
-            album_id = first_release.get("id")
-            release_date = first_release.get("date")
-            image = _get_cover_art(album_id)
+        if not selected_release and releases:
+            selected_release = releases[0]
+        
+        if selected_release:
+            album_title = selected_release.get("title", "")
+            album_id = selected_release.get("id")
+            release_date = selected_release.get("date")
+            release_group_id = selected_release.get("release-group", {}).get("id")
+            image = _get_cover_art(album_id, release_group_id)
     
     # Get duration
     duration_ms = response.get("length")
@@ -445,13 +488,16 @@ def get_release(release_id):
         return cached
 
     params = {
-        "inc": "artists+recordings",
+        "inc": "artists+recordings+release-groups",
     }
 
     response = _mb_request(f"release/{release_id}", params)
 
     title = response.get("title", "Unknown")
     date = response.get("date", "")
+
+    # Get release group ID for cover art fallback
+    release_group_id = response.get("release-group", {}).get("id")
 
     # Get artist info
     artist_credits = response.get("artist-credit", [])
@@ -468,8 +514,8 @@ def get_release(release_id):
                 artist_parts.append(credit.get("joinphrase", ""))
         artist_name = "".join(artist_parts).strip()
 
-    # Get cover art
-    image = _get_cover_art(release_id)
+    # Get cover art with release group fallback
+    image = _get_cover_art(release_id, release_group_id)
 
     # Get tracks
     media_list = response.get("media", [])

@@ -7,12 +7,23 @@
 {% endblock title %}
 
 {% block content %}
+  {# Breadcrumb navigation #}
+  <nav class="flex items-center text-sm text-gray-400 mb-6">
+    <a href="{% url 'medialist' 'music' %}" class="hover:text-white transition-colors">Music</a>
+    <span class="mx-2">›</span>
+    {% if album.artist %}
+      <a href="{% url 'artist_detail' album.artist.id %}" class="hover:text-white transition-colors">{{ album.artist.name }}</a>
+      <span class="mx-2">›</span>
+    {% endif %}
+    <span class="text-white">{{ album.title }}</span>
+  </nav>
+
   {# Top section #}
   <div class="flex flex-col md:flex-row gap-8 md:gap-10 mb-12 md:mb-8">
     <div class="w-full md:w-1/4 max-w-[250px] mx-auto md:mx-0">
-      {% if album.image %}
+      {% if album.image and album.image != IMG_NONE %}
         <img alt="{{ album.title }}"
-             class="w-full rounded-lg shadow-lg bg-[#2a2f35] object-cover"
+             class="w-full rounded-lg shadow-lg bg-[#2a2f35] object-cover aspect-square"
              src="{{ album.image }}">
       {% else %}
         <div class="w-full aspect-square rounded-lg shadow-lg bg-[#2a2f35] flex items-center justify-center">
@@ -26,7 +37,7 @@
       <div class="flex items-center gap-3 mb-2">
         <span class="px-3 py-1 bg-rose-600 text-white rounded-full text-sm font-medium">Album</span>
       </div>
-      
+
       {# Artist link #}
       {% if album.artist %}
         <h2 class="text-xl font-semibold cursor-pointer hover:text-indigo-400 transition-colors duration-200 mb-2 text-gray-400 text-center md:text-start">
@@ -69,36 +80,129 @@
     </div>
   </div>
 
-  {# Tracks section #}
-  {% if user_tracks %}
-    <div>
+  {# Tracks section - Episode-like cards #}
+  {% if tracks_with_history %}
+    <div class="w-full">
       <h2 class="text-xl font-bold mb-4">Tracks in Your Library</h2>
-      <div class="bg-[#2a2f35] rounded-lg overflow-hidden">
-        {% for track in user_tracks %}
-          <a href="{{ track.item|media_url }}"
-             class="flex items-center gap-4 p-4 hover:bg-[#343a40] transition-colors duration-200 {% if not forloop.last %}border-b border-[#1a1d20]{% endif %}">
-            <div class="w-8 h-8 bg-[#1a1d20] rounded flex items-center justify-center shrink-0 text-sm text-gray-400">
-              {{ forloop.counter }}
+      <div class="space-y-4">
+        {% for track_data in tracks_with_history %}
+          <div class="bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg">
+            <div class="flex flex-col md:flex-row">
+              {# Track image (album cover) #}
+              <div class="md:w-32 md:h-32 shrink-0 bg-[#1a1d20] flex items-center justify-center">
+                {% if album.image and album.image != IMG_NONE %}
+                  <img src="{{ album.image }}"
+                       alt="{{ track_data.item.title }}"
+                       class="w-full h-full object-cover">
+                {% else %}
+                  {% icon 'music' is_active=False extra_classes="w-12 h-12 text-gray-600" %}
+                {% endif %}
+              </div>
+
+              <div class="py-3 flex-1 flex flex-col">
+                <div class="flex-1">
+                  <div class="flex justify-between items-start mb-2 space-x-2 px-4">
+                    <div class="flex-1 min-w-0">
+                      <h2 class="text-xl font-semibold mb-1 line-clamp-1">{{ track_data.item.title }}</h2>
+                      <p class="text-sm text-gray-400">
+                        {% if track_data.item.runtime_minutes %}{{ track_data.item.runtime_minutes }} min{% endif %}
+                        {% if track_data.music.status %} • {{ track_data.music.status|media_status_readable }}{% endif %}
+                      </p>
+                    </div>
+
+                    {# Action buttons #}
+                    <div class="flex space-x-2 shrink-0">
+                      {# Track modal #}
+                      <div x-data="{ trackOpen: false }">
+                        <button @click="trackOpen = true"
+                                title="Edit Track"
+                                class="p-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full transition duration-300 cursor-pointer">
+                          {% if track_data.history %}
+                            {% include "app/icons/eye.svg" with classes="w-4 h-4" %}
+                          {% else %}
+                            {% include "app/icons/eye-closed.svg" with classes="w-4 h-4" %}
+                          {% endif %}
+                        </button>
+
+                        <div x-show="trackOpen"
+                             @keydown.escape.window="trackOpen = false"
+                             class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                          <div class="w-152 max-h-[90vh] px-4 md:px-0 relative z-60"
+                               @click.outside="trackOpen = false">
+                            <div hx-get="{% url 'track_modal' track_data.item.source 'music' track_data.item.media_id %}?instance_id={{ track_data.music.id }}&return_url={{ request.get_full_path|urlencode }}"
+                                 hx-trigger="intersect once"
+                                 hx-swap="outerHTML">
+                              <div class="bg-[#2a2f35] p-6 rounded-lg flex items-center justify-center">
+                                <div class="animate-spin">
+                                  {% include "app/icons/circle-spinning-clockwise.svg" with classes="w-8 h-8 text-gray-400" %}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {# Lists #}
+                      <div x-data="{ listsOpen: false }">
+                        <button class="p-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full transition duration-300 cursor-pointer"
+                                title="Add to custom lists"
+                                hx-get="{% url 'lists_modal' track_data.item.source 'music' track_data.item.media_id %}?return_url={{ request.get_full_path|urlencode }}"
+                                hx-target="#lists-modal-{{ track_data.music.id }}"
+                                hx-trigger="click once"
+                                @click="listsOpen = true">
+                          {% include "app/icons/list-add.svg" with classes="w-4 h-4" %}
+                        </button>
+
+                        <div x-show="listsOpen"
+                             @keydown.escape.window="listsOpen = false"
+                             class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                          <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
+                               @click.outside="listsOpen = false">
+                            <div id="lists-modal-{{ track_data.music.id }}"></div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {# History #}
+                      <div x-data="{ historyOpen: false }">
+                        <button class="p-2 bg-amber-600 hover:bg-amber-700 text-white rounded-full transition duration-300 cursor-pointer"
+                                title="View your activity history"
+                                hx-get="{% url 'history_modal' track_data.item.source 'music' track_data.item.media_id %}?return_url={{ request.get_full_path|urlencode }}"
+                                hx-target="#history-modal-{{ track_data.music.id }}"
+                                hx-trigger="click once"
+                                @click="historyOpen = true">
+                          {% include "app/icons/history.svg" with classes="w-4 h-4" %}
+                        </button>
+                        <div x-show="historyOpen"
+                             @keydown.escape.window="historyOpen = false"
+                             class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                          <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
+                               @click.outside="historyOpen = false">
+                            <div id="history-modal-{{ track_data.music.id }}"></div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {# Notes if any #}
+                  {% if track_data.music.notes %}
+                    <div class="px-4">
+                      <p class="text-sm text-gray-300 italic line-clamp-2">"{{ track_data.music.notes }}"</p>
+                    </div>
+                  {% endif %}
+                </div>
+
+                {# History info #}
+                {% if track_data.history %}
+                  <p class="text-xs text-gray-400 mt-2 px-4">
+                    Last listened: {{ track_data.history.0.end_date|user_date_format:user|default_if_none:"No date provided" }}
+                    {% if track_data.history|length > 1 %}• Listened {{ track_data.history|length }} times{% endif %}
+                  </p>
+                {% endif %}
+              </div>
             </div>
-            <div class="w-12 h-12 bg-[#1a1d20] rounded flex items-center justify-center shrink-0">
-              {% if track.item.image and track.item.image != IMG_NONE %}
-                <img src="{{ track.item.image }}"
-                     alt="{{ track.item.title }}"
-                     class="w-full h-full object-cover rounded">
-              {% else %}
-                {% icon 'music' is_active=False extra_classes="w-6 h-6 text-gray-600" %}
-              {% endif %}
-            </div>
-            <div class="flex-1 min-w-0">
-              <h3 class="font-medium text-white truncate">{{ track.item.title }}</h3>
-              {% if track.item.runtime_minutes %}
-                <p class="text-sm text-gray-400">{{ track.item.runtime_minutes }} min</p>
-              {% endif %}
-            </div>
-            <div class="text-sm text-gray-400">
-              {{ track.status|media_status_readable }}
-            </div>
-          </a>
+          </div>
         {% endfor %}
       </div>
     </div>
@@ -109,10 +213,13 @@
         {% icon 'music' is_active=False extra_classes="w-8 h-8 text-gray-400" %}
       </div>
       <h3 class="text-xl font-semibold mb-2">No tracks in your library</h3>
-      <p class="text-gray-400 text-center max-w-md">
-        Search for tracks from this album and add them to your library to see them here.
+      <p class="text-gray-400 text-center max-w-md mb-6">
+        Search for tracks from "{{ album.title }}" and add them to your library to see them here.
       </p>
+      <a href="{% url 'search' %}?q={{ album.title|urlencode }}&media_type=music"
+         class="px-4 py-2 bg-rose-600 text-white rounded-md hover:bg-rose-700 transition-colors">
+        Search for tracks
+      </a>
     </div>
   {% endif %}
 {% endblock content %}
-
