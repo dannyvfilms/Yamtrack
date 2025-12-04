@@ -47,6 +47,7 @@
     --color-fuchsia-700: oklch(51.8% 0.253 323.949);
     --color-pink-400: oklch(71.8% 0.202 349.761);
     --color-pink-600: oklch(59.2% 0.249 0.584);
+    --color-rose-400: oklch(71.2% 0.194 13.428);
     --color-slate-200: oklch(92.9% 0.013 255.508);
     --color-slate-400: oklch(70.4% 0.04 256.788);
     --color-gray-100: oklch(96.7% 0.003 264.542);
@@ -1693,6 +1694,9 @@
   }
   .text-red-500 {
     color: var(--color-red-500);
+  }
+  .text-rose-400 {
+    color: var(--color-rose-400);
   }
   .text-slate-200 {
     color: var(--color-slate-200);

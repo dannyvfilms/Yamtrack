@@ -46,9 +46,25 @@ admin.site.register(Item, ItemAdmin)
 admin.site.register(Episode, EpisodeAdmin)
 
 
+class ArtistAdmin(admin.ModelAdmin):
+    """Custom admin for Artist model."""
+
+    search_fields = ["name", "musicbrainz_id"]
+    list_display = ["name", "sort_name", "musicbrainz_id"]
+
+
+class AlbumAdmin(admin.ModelAdmin):
+    """Custom admin for Album model."""
+
+    search_fields = ["title", "musicbrainz_release_id", "artist__name"]
+    list_display = ["title", "artist", "release_date"]
+    list_filter = ["release_date"]
+
+
 # Auto-register remaining models
 app_models = apps.get_app_config("app").get_models()
-SpecialModels = ["Item", "Episode", "BasicMedia"]
+# Models that don't use MediaAdmin (either registered separately or excluded)
+SpecialModels = ["Item", "Episode", "BasicMedia", "Artist", "Album"]
 for model in app_models:
     if (
         not model.__name__.startswith("Historical")
@@ -56,3 +72,10 @@ for model in app_models:
     ):
         with contextlib.suppress(AlreadyRegistered):
             admin.site.register(model, MediaAdmin)
+
+
+# Register Artist and Album with custom admin classes
+from app.models import Artist, Album  # noqa: E402
+
+admin.site.register(Artist, ArtistAdmin)
+admin.site.register(Album, AlbumAdmin)

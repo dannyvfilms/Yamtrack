@@ -48,6 +48,7 @@ class Sources(models.TextChoices):
     HARDCOVER = "hardcover", "Hardcover"
     COMICVINE = "comicvine", "Comic Vine"
     BGG = "bgg", "BoardGameGeek"
+    MUSICBRAINZ = "musicbrainz", "MusicBrainz"
     MANUAL = "manual", "Manual"
 
 
@@ -64,6 +65,7 @@ class MediaTypes(models.TextChoices):
     BOOK = "book", "Book"
     COMIC = "comic", "Comic"
     BOARDGAME = "boardgame", "Board Game"
+    MUSIC = "music", "Music"
 
 
 class Item(CalendarTriggerMixin, models.Model):
@@ -2001,3 +2003,112 @@ class Comic(Media):
     """Model for comics."""
 
     tracker = FieldTracker()
+
+
+class Artist(models.Model):
+    """Model for music artists."""
+
+    name = models.CharField(max_length=255)
+    sort_name = models.CharField(max_length=255, blank=True, default="")
+    musicbrainz_id = models.CharField(
+        max_length=36,
+        unique=True,
+        null=True,
+        blank=True,
+        help_text="MusicBrainz Artist ID (UUID)",
+    )
+    image = models.URLField(blank=True, default="")
+
+    class Meta:
+        """Meta options for the model."""
+
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["musicbrainz_id"],
+                condition=models.Q(musicbrainz_id__isnull=False),
+                name="unique_artist_musicbrainz_id",
+            ),
+        ]
+
+    def __str__(self):
+        """Return the name of the artist."""
+        return self.name
+
+
+class Album(models.Model):
+    """Model for music albums."""
+
+    title = models.CharField(max_length=255)
+    musicbrainz_release_id = models.CharField(
+        max_length=36,
+        unique=True,
+        null=True,
+        blank=True,
+        help_text="MusicBrainz Release ID (UUID)",
+    )
+    artist = models.ForeignKey(
+        Artist,
+        on_delete=models.CASCADE,
+        related_name="albums",
+        null=True,
+        blank=True,
+    )
+    release_date = models.DateField(null=True, blank=True)
+    image = models.URLField(blank=True, default="")
+
+    class Meta:
+        """Meta options for the model."""
+
+        ordering = ["title"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["musicbrainz_release_id"],
+                condition=models.Q(musicbrainz_release_id__isnull=False),
+                name="unique_album_musicbrainz_release_id",
+            ),
+        ]
+
+    def __str__(self):
+        """Return the album title with artist."""
+        if self.artist:
+            return f"{self.title} - {self.artist.name}"
+        return self.title
+
+
+class Music(Media):
+    """Model for music tracks.
+
+    This is the trackable unit for music, backed by an Item with media_type='music'.
+    """
+
+    tracker = FieldTracker()
+
+    album = models.ForeignKey(
+        Album,
+        on_delete=models.SET_NULL,
+        related_name="tracks",
+        null=True,
+        blank=True,
+    )
+    artist = models.ForeignKey(
+        Artist,
+        on_delete=models.SET_NULL,
+        related_name="tracks",
+        null=True,
+        blank=True,
+        help_text="Convenience FK to artist (can be derived via album)",
+    )
+
+    @property
+    def formatted_progress(self):
+        """Return progress as play count."""
+        plays = self.progress or 0
+        return f"{plays} play{'s' if plays != 1 else ''}"
+
+    @property
+    def formatted_aggregated_progress(self):
+        """Return aggregated progress as play count."""
+        plays = getattr(self, "aggregated_progress", None)
+        value = plays if plays is not None else self.progress
+        return f"{value} play{'s' if value != 1 else ''}"

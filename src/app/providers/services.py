@@ -17,6 +17,7 @@ from app.providers import (
     mal,
     mangaupdates,
     manual,
+    musicbrainz,
     openlibrary,
     tmdb,
 )
@@ -180,6 +181,7 @@ def get_media_metadata(
         else openlibrary.book(media_id),
         MediaTypes.COMIC.value: lambda: comicvine.comic(media_id),
         MediaTypes.BOARDGAME.value: lambda: bgg.metadata(media_id),
+        MediaTypes.MUSIC.value: lambda: musicbrainz.recording(media_id),
     }
     return metadata_retrievers[media_type]()
 
@@ -208,5 +210,7 @@ def search(media_type, query, page, source=None):
         response = comicvine.search(query, page)
     elif media_type == MediaTypes.BOARDGAME.value:
         response = bgg.search(query, page)
+    elif media_type == MediaTypes.MUSIC.value:
+        response = musicbrainz.search(query, page)
 
     return response

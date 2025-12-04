@@ -14,6 +14,7 @@ from app.models import (
     Manga,
     MediaTypes,
     Movie,
+    Music,
     Season,
     Sources,
 )
@@ -390,3 +391,18 @@ class EpisodeForm(forms.ModelForm):
             self.fields["end_date"].widget = forms.DateInput(
                 attrs={"type": "date"},
             )
+
+
+class MusicForm(MediaForm):
+    """Form for music tracks."""
+
+    class Meta(MediaForm.Meta):
+        """Bind form to model."""
+
+        model = Music
+        labels = {
+            "progress": (
+                f"Progress "
+                f"({config.get_unit(MediaTypes.MUSIC.value, short=False)}s)"
+            ),
+        }

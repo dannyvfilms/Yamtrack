@@ -351,6 +351,29 @@ class User(AbstractUser):
         choices=MediaStatusChoices.choices,
     )
 
+    # Media type preferences: Music
+    music_enabled = models.BooleanField(default=True)
+    music_layout = models.CharField(
+        max_length=20,
+        default=LayoutChoices.GRID,
+        choices=LayoutChoices.choices,
+    )
+    music_direction = models.CharField(
+        max_length=4,
+        default=DirectionChoices.DESC,
+        choices=DirectionChoices.choices,
+    )
+    music_sort = models.CharField(
+        max_length=20,
+        default=MediaSortChoices.SCORE,
+        choices=MediaSortChoices.choices,
+    )
+    music_status = models.CharField(
+        max_length=20,
+        default=MediaStatusChoices.ALL,
+        choices=MediaStatusChoices.choices,
+    )
+
     # UI preferences
     clickable_media_cards = models.BooleanField(
         default=False,
@@ -603,6 +626,22 @@ class User(AbstractUser):
             models.CheckConstraint(
                 name="book_status_valid",
                 condition=models.Q(book_status__in=MediaStatusChoices.values),
+            ),
+            models.CheckConstraint(
+                name="music_layout_valid",
+                condition=models.Q(music_layout__in=LayoutChoices.values),
+            ),
+            models.CheckConstraint(
+                name="music_sort_valid",
+                condition=models.Q(music_sort__in=MediaSortChoices.values),
+            ),
+            models.CheckConstraint(
+                name="music_direction_valid",
+                condition=models.Q(music_direction__in=DirectionChoices.values),
+            ),
+            models.CheckConstraint(
+                name="music_status_valid",
+                condition=models.Q(music_status__in=MediaStatusChoices.values),
             ),
         ]
 

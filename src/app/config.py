@@ -172,6 +172,21 @@ MEDIA_TYPE_CONFIG = {
         "unit": ("#", "Play"),
         "date_key": "publish_date",
     },
+    MediaTypes.MUSIC.value: {
+        "sources": [Sources.MUSICBRAINZ],
+        "default_source": Sources.MUSICBRAINZ,
+        "sample_query": "Bohemian Rhapsody",
+        "unicode_icon": "🎵",
+        "verb": ("listen", "listened"),
+        "text_color": "text-rose-400",
+        "stats_color": "#fb7185",
+        "svg_icon": """
+            <path d="M9 18V5l12-2v13"/>
+            <circle cx="6" cy="18" r="3"/>
+            <circle cx="18" cy="16" r="3"/>""",
+        "unit": ("#", "Play"),
+        "date_key": "release_date",
+    },
 }
 
 # --- Status Configuration ---
