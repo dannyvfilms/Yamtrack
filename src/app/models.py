@@ -2198,3 +2198,49 @@ class Music(Media):
         plays = getattr(self, "aggregated_progress", None)
         value = plays if plays is not None else self.progress
         return f"{value} play{'s' if value != 1 else ''}"
+
+
+class ArtistTracker(models.Model):
+    """Model for tracking artists in user's library.
+    
+    This is similar to how Media subclasses track TV/Movies, but Artist
+    is not a Media subclass so we need a separate tracker model.
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="artist_trackers",
+    )
+    artist = models.ForeignKey(
+        Artist,
+        on_delete=models.CASCADE,
+        related_name="trackers",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.IN_PROGRESS.value,
+    )
+    score = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        validators=[MaxValueValidator(10)],
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        """Meta options for the model."""
+
+        ordering = ["-updated_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "artist"],
+                name="unique_artist_tracker_per_user",
+            ),
+        ]
+
+    def __str__(self):
+        """Return the tracker string."""
+        return f"{self.user.username} - {self.artist.name}"

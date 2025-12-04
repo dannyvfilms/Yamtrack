@@ -259,3 +259,46 @@ def album_has_musicbrainz_id(album: Album) -> bool:
     """
     return bool(album.musicbrainz_release_id or album.musicbrainz_release_group_id)
 
+
+def prefetch_album_covers(artist: Artist, limit: int = 20) -> int:
+    """Prefetch cover art for albums missing images.
+    
+    This runs on artist page load to populate album covers that
+    were not fetched during discography sync.
+    
+    Args:
+        artist: The Artist whose albums to check
+        limit: Maximum number of albums to prefetch (to respect rate limits)
+        
+    Returns:
+        Number of albums that got new cover art
+    """
+    from app.providers import musicbrainz
+    
+    # Find albums with missing images that have MusicBrainz IDs
+    albums_needing_art = Album.objects.filter(
+        artist=artist,
+    ).filter(
+        models.Q(image="") | models.Q(image=settings.IMG_NONE)
+    ).filter(
+        models.Q(musicbrainz_release_id__isnull=False) | 
+        models.Q(musicbrainz_release_group_id__isnull=False)
+    )[:limit]
+    
+    updated = 0
+    for album in albums_needing_art:
+        try:
+            image = musicbrainz.get_cover_art(
+                release_id=album.musicbrainz_release_id,
+                release_group_id=album.musicbrainz_release_group_id,
+            )
+            if image and image != settings.IMG_NONE:
+                album.image = image
+                album.save(update_fields=["image"])
+                updated += 1
+                logger.debug("Prefetched cover for album: %s", album.title)
+        except Exception as e:
+            logger.debug("Failed to prefetch cover for %s: %s", album.title, e)
+    
+    return updated
+

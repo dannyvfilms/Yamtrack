@@ -92,6 +92,16 @@ urlpatterns = [
         name="sync_artist_discography",
     ),
     path(
+        "music/artist/<int:artist_id>/track/",
+        views.artist_tracker_toggle,
+        name="artist_tracker_toggle",
+    ),
+    path(
+        "music/artist/<int:artist_id>/score/",
+        views.artist_score_update,
+        name="artist_score_update",
+    ),
+    path(
         "music/album/<int:album_id>/sync/",
         views.sync_album_metadata_view,
         name="sync_album_metadata",

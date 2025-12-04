@@ -1218,8 +1218,10 @@ def artist_detail(request, artist_id):
         needs_discography_sync,
         sync_artist_discography,
         get_artist_hero_image,
+        prefetch_album_covers,
     )
     from app.providers import musicbrainz
+    from app.models import ArtistTracker
 
     artist = get_object_or_404(Artist, id=artist_id)
 
@@ -1228,6 +1230,17 @@ def artist_detail(request, artist_id):
         sync_artist_discography(artist)
 
     # Get ALL albums for this artist (metadata-driven, like Seasons)
+    all_albums = Album.objects.filter(artist=artist).annotate(
+        library_track_count=Count(
+            "music_entries",
+            filter=models.Q(music_entries__user=request.user),
+        )
+    ).order_by("-release_date", "title")
+
+    # Prefetch album covers for albums missing art (up to 20 to respect rate limits)
+    prefetch_album_covers(artist, limit=20)
+
+    # Refresh the queryset after prefetch to get updated images
     all_albums = Album.objects.filter(artist=artist).annotate(
         library_track_count=Count(
             "music_entries",
@@ -1244,6 +1257,12 @@ def artist_detail(request, artist_id):
     # Get hero image from albums (since MusicBrainz doesn't have artist photos)
     hero_image = get_artist_hero_image(artist)
 
+    # Get user's tracker for this artist
+    artist_tracker = ArtistTracker.objects.filter(
+        user=request.user,
+        artist=artist,
+    ).first()
+
     # Get user's music entries for this artist
     user_music_for_artist = Music.objects.filter(
         user=request.user,
@@ -1255,9 +1274,6 @@ def artist_detail(request, artist_id):
         first_listened=Min("start_date"),
         last_listened=Max("end_date"),
     )
-    
-    # Get the current/primary Music instance for this artist (most recently updated)
-    current_instance = user_music_for_artist.order_by("-end_date", "-start_date").first()
 
     # Fetch detailed artist metadata from MusicBrainz
     artist_metadata = {}
@@ -1302,8 +1318,8 @@ def artist_detail(request, artist_id):
         "total_tracks": total_tracks,
         "total_albums": all_albums.count(),
         "hero_image": hero_image,
+        "artist_tracker": artist_tracker,
         "history_stats": history_stats,
-        "current_instance": current_instance,
         "artist_metadata": artist_metadata,
         "genre_chips": genre_chips,
         "annotation": annotation,
@@ -1471,6 +1487,65 @@ def sync_artist_discography_view(request, artist_id):
     response = HttpResponse(status=204)
     response["HX-Refresh"] = "true"
     return response
+
+
+@require_POST
+def artist_tracker_toggle(request, artist_id):
+    """Add or remove an artist from the user's library."""
+    from django.shortcuts import get_object_or_404
+    from app.models import ArtistTracker
+
+    artist = get_object_or_404(Artist, id=artist_id)
+    
+    tracker, created = ArtistTracker.objects.get_or_create(
+        user=request.user,
+        artist=artist,
+        defaults={"status": Status.IN_PROGRESS.value},
+    )
+    
+    if not created:
+        # Already tracked - remove it
+        tracker.delete()
+        messages.success(request, f"Removed {artist.name} from your library")
+    else:
+        messages.success(request, f"Added {artist.name} to your library")
+    
+    # Return HX-Refresh header to reload the page
+    response = HttpResponse(status=204)
+    response["HX-Refresh"] = "true"
+    return response
+
+
+@require_POST
+def artist_score_update(request, artist_id):
+    """Update the user's score for an artist."""
+    from django.shortcuts import get_object_or_404
+    from app.models import ArtistTracker
+
+    artist = get_object_or_404(Artist, id=artist_id)
+    score = request.POST.get("score")
+    
+    if score:
+        try:
+            score = int(score)
+            if score < 1 or score > 10:
+                score = None
+        except ValueError:
+            score = None
+    else:
+        score = None
+    
+    # Get or create tracker
+    tracker, _ = ArtistTracker.objects.get_or_create(
+        user=request.user,
+        artist=artist,
+        defaults={"status": Status.IN_PROGRESS.value},
+    )
+    
+    tracker.score = score
+    tracker.save(update_fields=["score"])
+    
+    return HttpResponse(status=204)
 
 
 @require_POST

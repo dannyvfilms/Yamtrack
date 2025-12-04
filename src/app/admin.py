@@ -72,7 +72,7 @@ class TrackAdmin(admin.ModelAdmin):
 # Auto-register remaining models
 app_models = apps.get_app_config("app").get_models()
 # Models that don't use MediaAdmin (either registered separately or excluded)
-SpecialModels = ["Item", "Episode", "BasicMedia", "Artist", "Album", "Track"]
+SpecialModels = ["Item", "Episode", "BasicMedia", "Artist", "Album", "Track", "ArtistTracker"]
 for model in app_models:
     if (
         not model.__name__.startswith("Historical")
@@ -82,9 +82,20 @@ for model in app_models:
             admin.site.register(model, MediaAdmin)
 
 
-# Register Artist, Album, and Track with custom admin classes
-from app.models import Artist, Album, Track  # noqa: E402
+# Register Artist, Album, Track, and ArtistTracker with custom admin classes
+from app.models import Artist, Album, Track, ArtistTracker  # noqa: E402
+
+
+class ArtistTrackerAdmin(admin.ModelAdmin):
+    """Admin for ArtistTracker."""
+
+    list_display = ["user", "artist", "status", "score", "created_at"]
+    list_filter = ["status", "created_at"]
+    search_fields = ["user__username", "artist__name"]
+    raw_id_fields = ["user", "artist"]
+
 
 admin.site.register(Artist, ArtistAdmin)
 admin.site.register(Album, AlbumAdmin)
 admin.site.register(Track, TrackAdmin)
+admin.site.register(ArtistTracker, ArtistTrackerAdmin)

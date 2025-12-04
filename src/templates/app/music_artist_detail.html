@@ -8,7 +8,7 @@
 {% endblock title %}
 
 {% block content %}
-  {# Top section - Hero layout matching TV Show page #}
+  {# Top section - Hero layout matching TV Show page exactly #}
   <div class="flex flex-col md:flex-row gap-8 md:gap-10 mb-12 md:mb-8">
     <div class="w-full md:w-1/4 max-w-[250px] mx-auto md:mx-0">
       {# Artist hero image (from album covers) #}
@@ -21,20 +21,34 @@
           {% icon 'music' is_active=False extra_classes="w-24 h-24 text-gray-500" %}
         </div>
       {% endif %}
+
+      {# Primary CTA button - same as TV shows #}
+      <button class="mt-4 p-3 rounded-lg w-full flex items-center text-white transition duration-300 cursor-pointer {% if artist_tracker %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}"
+              hx-post="{% url 'artist_tracker_toggle' artist.id %}"
+              hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+              hx-swap="none">
+        <div class="flex-1 text-center font-medium">
+          {% if artist_tracker %}
+            In Library
+          {% else %}
+            Add to Library
+          {% endif %}
+        </div>
+        <div class="h-5 mx-2 border-l border-white/30"></div>
+        {% include "app/icons/edit.svg" with classes="w-5 h-5 shrink-0" %}
+      </button>
     </div>
 
-    {# Artist details - Right side of hero #}
+    {# Artist details - Right side of hero, left-aligned like TV #}
     <div class="md:w-3/4">
       <h1 class="text-3xl font-bold mb-4 text-center md:text-start">{{ artist.name }}</h1>
 
-      {# Genre chips (like TV genres) #}
+      {# Genre chips (like TV genres) - left-aligned #}
       <div class="flex flex-wrap gap-2 mb-4 justify-center md:justify-start">
         {% if genre_chips %}
           {% for genre in genre_chips %}
             <span class="px-3 py-1 bg-violet-600 text-white rounded-full text-sm">{{ genre }}</span>
           {% endfor %}
-        {% else %}
-          <span class="px-3 py-1 bg-rose-600 text-white rounded-full text-sm">Artist</span>
         {% endif %}
       </div>
 
@@ -44,7 +58,7 @@
           <div x-data="{ isExpanded: false, isClamped: false, checkClamp() { const element = this.$refs.bioText; this.isClamped = element.scrollHeight > element.clientHeight; } }"
                x-init="$nextTick(() => checkClamp())">
             <p x-ref="bioText"
-               :class="isExpanded ? '' : 'line-clamp-4'"
+               :class="isExpanded ? '' : 'line-clamp-5'"
                class="text-gray-300 text-pretty">{{ annotation|linebreaksbr }}</p>
             <button x-show="isClamped"
                     @click="isExpanded = !isExpanded"
@@ -54,10 +68,10 @@
           </div>
         </div>
       {% elif artist_metadata.disambiguation %}
-        <p class="text-gray-400 mb-6 text-center md:text-start">{{ artist_metadata.disambiguation }}</p>
+        <p class="text-gray-300 mb-6 text-center md:text-start">{{ artist_metadata.disambiguation }}</p>
       {% endif %}
 
-      {# Score cards (like TMDB/YOUR SCORE on TV) #}
+      {# Score cards - MB Score + Your Score (like TMDB Score + Your Score on TV) #}
       <div class="flex flex-wrap gap-4 justify-center md:justify-start">
         {% if mb_rating %}
           <div class="bg-[#2a2f35] p-3 rounded-lg w-[120px]">
@@ -71,14 +85,54 @@
             {% endif %}
           </div>
         {% endif %}
-        <div class="bg-[#2a2f35] p-3 rounded-lg w-[120px]">
-          <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">ALBUMS</h3>
-          <p class="text-lg font-bold text-white text-center">{{ total_albums }}</p>
-        </div>
-        <div class="bg-[#2a2f35] p-3 rounded-lg w-[120px]">
-          <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">IN LIBRARY</h3>
-          <p class="text-lg font-bold text-white text-center">{{ total_tracks }}</p>
-          <p class="text-xs text-gray-400 text-center">tracks</p>
+
+        {# Your Score card - always visible like TV #}
+        <div x-data="{ showRatingPopup: false, rating: {{ artist_tracker.score|default:'null' }}, hoverRating: null, isHovering: false }"
+             class="relative">
+          <div @click="showRatingPopup = !showRatingPopup"
+               class="bg-[#2a2f35] p-3 rounded-lg w-[120px] cursor-pointer">
+            <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">YOUR SCORE</h3>
+            <div class="flex items-center justify-center">
+              {% include "app/icons/star.svg" with classes="w-5 h-5 mr-1.5 text-yellow-400 fill-yellow-400" %}
+              <template x-if="rating">
+                <div class="flex items-baseline">
+                  <span class="text-lg font-bold text-white" x-text="rating"></span>
+                  <span class="text-gray-400 ml-0.5 text-sm">/10</span>
+                </div>
+              </template>
+              <template x-if="!rating">
+                <span class="text-lg font-bold text-gray-400">-</span>
+              </template>
+            </div>
+            <p class="text-xs text-gray-400 mt-0.5 text-center">Click to edit</p>
+          </div>
+
+          {# Rating popup #}
+          <div x-show="showRatingPopup"
+               @click.outside="showRatingPopup = false; isHovering = false"
+               class="absolute left-0 top-full mt-2 p-3 bg-[#2a2f35] rounded-lg shadow-lg z-10 w-[250px] border border-gray-700"
+               @mouseenter="isHovering = true"
+               @mouseleave="isHovering = false; hoverRating = null">
+            <div class="flex justify-between mb-1">
+              {% with rating_range=10|get_range %}
+                {% for rating_value in rating_range %}
+                  <button @click="rating = {{ rating_value }}; showRatingPopup = false; isHovering = false"
+                          @mouseenter="hoverRating = {{ rating_value }}"
+                          hx-post="{% url 'artist_score_update' artist.id %}"
+                          hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+                          hx-vals='{"score": {{ rating_value }} }'
+                          hx-trigger="click"
+                          hx-swap="none"
+                          class="focus:outline-none flex flex-col items-center cursor-pointer">
+                    <div :class="{ 'text-yellow-400': {{ rating_value }} <= (isHovering ? hoverRating : rating), 'text-gray-600': {{ rating_value }} > (isHovering ? hoverRating : rating) }">
+                      {% include "app/icons/star.svg" with classes="w-5 h-5 hover:scale-110 transition-transform" %}
+                    </div>
+                    <span class="text-xs mt-1 text-gray-400">{{ rating_value }}</span>
+                  </button>
+                {% endfor %}
+              {% endwith %}
+            </div>
+          </div>
         </div>
       </div>
     </div>
