@@ -211,6 +211,6 @@ def search(media_type, query, page, source=None):
     elif media_type == MediaTypes.BOARDGAME.value:
         response = bgg.search(query, page)
     elif media_type == MediaTypes.MUSIC.value:
-        response = musicbrainz.search(query, page)
+        response = musicbrainz.search_combined(query, page)
 
     return response

@@ -83,4 +83,18 @@ urlpatterns = [
     path("statistics", views.statistics, name="statistics"),
     path("history", views.history, name="history"),
     path("serviceworker.js", views.service_worker, name="service_worker"),
+    # Music hierarchy navigation
+    path("music/artist/<int:artist_id>/", views.artist_detail, name="artist_detail"),
+    path("music/album/<int:album_id>/", views.album_detail, name="album_detail"),
+    # Music search to create artist/album
+    path(
+        "music/artist/create/<str:musicbrainz_artist_id>/",
+        views.create_artist_from_search,
+        name="create_artist_from_search",
+    ),
+    path(
+        "music/album/create/<str:musicbrainz_release_id>/",
+        views.create_album_from_search,
+        name="create_album_from_search",
+    ),
 ]

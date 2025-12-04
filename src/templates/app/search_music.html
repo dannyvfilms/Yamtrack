@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% load app_tags %}
+
+{% block title %}
+  Search Music - Yamtrack
+{% endblock title %}
+
+{% block content %}
+  <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-8 gap-y-4">
+    <h2 class="text-2xl font-bold">Search Results</h2>
+    <div class="flex items-center flex-wrap gap-x-4 gap-y-2">
+      <span class="text-sm text-gray-400">Source:</span>
+      <div class="flex gap-x-2">
+        {% with source_options=media_type|sources %}
+          {% for source_option in source_options %}
+            <a href="{% url 'search' %}?q={{ request.GET.q }}&media_type={{ media_type }}&source={{ source_option.value }}&layout={{ layout }}"
+               class="px-3 py-1.5 text-sm rounded-md transition-colors duration-200 cursor-pointer flex items-center {% if source == source_option.value %}bg-indigo-600 text-white{% else %}bg-gray-700 text-gray-300 hover:bg-gray-600{% endif %}">
+              {{ source_option.label }}
+            </a>
+          {% endfor %}
+        {% endwith %}
+        <div class="flex rounded-md overflow-hidden border border-gray-700">
+          <a href="?q={{ request.GET.q }}&media_type={{ media_type }}{% if source %}&source={{ source }}{% endif %}&layout=grid"
+             {% if layout == 'grid' %} class="p-2 cursor-pointer bg-indigo-600 text-white flex items-center" {% else %} class="p-2 cursor-pointer bg-[#39404b] hover:bg-[#454d5a] flex items-center" {% endif %}
+             title="Grid View">
+            {% include "app/icons/four-square.svg" with classes="w-5 h-5" %}
+          </a>
+          <a href="?q={{ request.GET.q }}&media_type={{ media_type }}{% if source %}&source={{ source }}{% endif %}&layout=list"
+             {% if layout == 'list' %} class="p-2 cursor-pointer bg-indigo-600 text-white flex items-center" {% else %} class="p-2 cursor-pointer bg-[#39404b] hover:bg-[#454d5a] flex items-center" {% endif %}
+             title="List View">
+            {% include "app/icons/list.svg" with classes="w-5 h-5" %}
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# Artists Section - only show on first page #}
+  {% if music_artists %}
+    <div class="mb-8">
+      <h3 class="text-lg font-semibold mb-4 text-gray-300">Artists</h3>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {% for artist in music_artists %}
+          <a href="{% url 'create_artist_from_search' artist.artist_id %}"
+             class="flex items-center gap-4 p-4 bg-[#2a2f35] rounded-lg hover:bg-[#343a40] transition-colors duration-200">
+            <div class="w-14 h-14 bg-[#1a1d20] rounded-full flex items-center justify-center shrink-0">
+              {% icon 'music' is_active=False extra_classes="w-6 h-6 text-rose-400" %}
+            </div>
+            <div class="flex-1 min-w-0">
+              <h4 class="font-medium text-white truncate">{{ artist.name }}</h4>
+              <p class="text-sm text-gray-400 truncate">
+                {% if artist.type %}{{ artist.type }}{% endif %}
+                {% if artist.begin_year %}{% if artist.type %} · {% endif %}{{ artist.begin_year }}{% endif %}
+                {% if artist.disambiguation %}{% if artist.type or artist.begin_year %} · {% endif %}{{ artist.disambiguation }}{% endif %}
+              </p>
+            </div>
+            <div class="text-rose-400">
+              {% include "app/icons/chevron-right.svg" with classes="w-5 h-5" %}
+            </div>
+          </a>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+  {# Albums Section - only show on first page #}
+  {% if music_releases %}
+    <div class="mb-8">
+      <h3 class="text-lg font-semibold mb-4 text-gray-300">Albums</h3>
+      <div class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
+        {% for release in music_releases %}
+          <a href="{% url 'create_album_from_search' release.release_id %}"
+             class="group bg-[#2a2f35] rounded-lg overflow-hidden hover:bg-[#343a40] transition-colors duration-200">
+            {% if release.image and release.image != IMG_NONE %}
+              <img src="{{ release.image }}"
+                   alt="{{ release.title }}"
+                   class="w-full aspect-square object-cover">
+            {% else %}
+              <div class="w-full aspect-square bg-[#1a1d20] flex items-center justify-center">
+                {% icon 'music' is_active=False extra_classes="w-12 h-12 text-gray-600" %}
+              </div>
+            {% endif %}
+            <div class="p-3">
+              <h4 class="font-medium text-sm text-white group-hover:text-rose-400 transition-colors line-clamp-2">
+                {{ release.title }}
+              </h4>
+              <p class="text-xs text-gray-400 mt-1 truncate">{{ release.artist_name }}</p>
+              {% if release.release_date %}
+                <p class="text-xs text-gray-500 mt-0.5">{{ release.release_date|slice:":4" }}</p>
+              {% endif %}
+            </div>
+          </a>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+  {# Tracks Section #}
+  {% if data.results %}
+    <div>
+      <h3 class="text-lg font-semibold mb-4 text-gray-300">Tracks</h3>
+      <div {% if layout == 'grid' %}
+           class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
+        {% for result in data.results %}
+          {% include "app/components/media_card.html" with item=result.item title=result.item.title media=result.media user=user %}
+        {% endfor %}
+      {% else %}
+        class="grid grid-cols-1 gap-4">
+        {% for result in data.results %}
+          {% include "app/components/media_card_list.html" with item=result.item title=result.item.title media=result.media user=user %}
+        {% endfor %}
+      {% endif %}
+    </div>
+
+    {% if data.total_pages > 1 %}
+      <div class="flex flex-wrap justify-center items-center mt-8 gap-x-2 gap-y-3">
+        {# Previous button #}
+        {% if data.page > 1 %}
+          <a href="?q={{ request.GET.q }}&media_type={{ media_type }}{% if source %}&source={{ source }}{% endif %}&page={{ data.page|add:'-1' }}&layout={{ layout }}"
+             class="p-2 rounded-md bg-[#2a2f35] text-white hover:bg-[#39404b]">
+            {% include "app/icons/chevron-left.svg" with classes="w-5 h-5" %}
+          </a>
+        {% else %}
+          <button class="p-2 rounded-md bg-gray-700 text-gray-500 cursor-not-allowed"
+                  disabled>
+            {% include "app/icons/chevron-left.svg" with classes="w-5 h-5" %}
+          </button>
+        {% endif %}
+
+        {# Page numbers with ellipses #}
+        {% get_pagination_range data.page data.total_pages 2 as pages %}
+        {% for page_num in pages %}
+          {% if page_num %}
+            <a href="?q={{ request.GET.q }}&media_type={{ media_type }}{% if source %}&source={{ source }}{% endif %}&page={{ page_num }}&layout={{ layout }}"
+               class="w-10 h-10 rounded-md {% if data.page == page_num %}bg-indigo-600{% else %}bg-[#2a2f35] hover:bg-[#39404b]{% endif %} text-white flex items-center justify-center">
+              {{ page_num }}
+            </a>
+          {% else %}
+            {# Ellipsis #}
+            <span class="flex items-center justify-center w-10 h-10 text-gray-400">
+              {% include "app/icons/ellipsis.svg" with classes="w-5 h-5" %}
+            </span>
+          {% endif %}
+        {% endfor %}
+
+        {# Next button #}
+        {% if data.page < data.total_pages %}
+          <a href="?q={{ request.GET.q }}&media_type={{ media_type }}{% if source %}&source={{ source }}{% endif %}&page={{ data.page|add:'1' }}&layout={{ layout }}"
+             class="p-2 rounded-md bg-[#2a2f35] text-white hover:bg-[#39404b]">
+            {% include "app/icons/chevron-right.svg" with classes="w-5 h-5" %}
+          </a>
+        {% else %}
+          <button class="p-2 rounded-md bg-gray-700 text-gray-500 cursor-not-allowed"
+                  disabled>
+            {% include "app/icons/chevron-right.svg" with classes="w-5 h-5" %}
+          </button>
+        {% endif %}
+      </div>
+
+      {# Page info text #}
+      <div class="text-center text-sm text-gray-400 mt-3">
+        Page {{ data.page }} of {{ data.total_pages }} ({{ data.total_results }} tracks)
+      </div>
+    {% endif %}
+  {% endif %}
+
+  {# No results #}
+  {% if not music_artists and not music_releases and not data.results %}
+    <div class="flex flex-col items-center justify-center py-32 px-4 bg-[#2a2f35] rounded-lg">
+      <div class="bg-[#39404b] rounded-full p-4 w-16 h-16 mx-auto mb-4 flex items-center justify-center">
+        {% include "app/icons/magnifying-glass.svg" with classes="w-8 h-8 text-gray-400" %}
+      </div>
+      <h3 class="text-xl font-semibold mb-2">No results found</h3>
+      <p class="text-gray-400 text-center max-w-md mb-8">
+        We couldn't find any matches for "{{ request.GET.q }}". Try checking your spelling or using different keywords.
+      </p>
+    </div>
+  {% endif %}
+{% endblock content %}
+

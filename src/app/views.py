@@ -21,11 +21,14 @@ from app import statistics as stats
 from app.forms import EpisodeForm, ManualItemForm, get_form_class
 from app.models import (
     TV,
+    Album,
+    Artist,
     BasicMedia,
     Episode,
     Item,
     MediaTypes,
     Movie,
+    Music,
     Season,
     Sources,
     Status,
@@ -285,6 +288,26 @@ def media_search(request):
 
     data = services.search(media_type, query, page, source)
 
+    # Handle music's combined search format
+    if media_type == MediaTypes.MUSIC.value:
+        # Music returns {artists: [], releases: [], tracks: {...}}
+        track_data = data.get("tracks", {})
+        if track_data.get("results"):
+            track_data["results"] = helpers.enrich_items_with_user_data(
+                request, track_data["results"]
+            )
+        
+        context = {
+            "user": request.user,
+            "data": track_data,  # Track results for pagination
+            "music_artists": data.get("artists", []),
+            "music_releases": data.get("releases", []),
+            "source": source,
+            "media_type": media_type,
+            "layout": layout,
+        }
+        return render(request, "app/search_music.html", context)
+
     # Enrich search results with user tracking data
     if data.get("results"):
         data["results"] = helpers.enrich_items_with_user_data(request, data["results"])
@@ -346,12 +369,21 @@ def media_details(
                     )
                 )
 
+    # For music tracks, get linked artist and album for navigation
+    music_artist = None
+    music_album = None
+    if media_type == MediaTypes.MUSIC.value and current_instance:
+        music_artist = getattr(current_instance, "artist", None)
+        music_album = getattr(current_instance, "album", None)
+
     context = {
         "user": request.user,
         "media": media_metadata,
         "media_type": media_type,
         "user_medias": user_medias,
         "current_instance": current_instance,
+        "music_artist": music_artist,
+        "music_album": music_album,
     }
     return render(request, "app/media_details.html", context)
 
@@ -696,6 +728,53 @@ def media_save(request):
         model = apps.get_model(app_label="app", model_name=media_type)
         instance = model(item=item, user=request.user)
 
+        # For music tracks, create/link Artist and Album
+        if media_type == MediaTypes.MUSIC.value:
+            artist_instance = None
+            album_instance = None
+
+            # Create or get Artist
+            artist_id = metadata.get("_artist_id") or metadata.get("details", {}).get("artist_id")
+            artist_name = metadata.get("_artist_name") or metadata.get("details", {}).get("artist")
+            if artist_id and artist_name:
+                artist_instance, _ = Artist.objects.get_or_create(
+                    musicbrainz_id=artist_id,
+                    defaults={"name": artist_name},
+                )
+            elif artist_name:
+                # Try to find by name if no ID
+                artist_instance = Artist.objects.filter(name=artist_name).first()
+                if not artist_instance:
+                    artist_instance = Artist.objects.create(name=artist_name)
+
+            # Create or get Album
+            album_id = metadata.get("_album_id") or metadata.get("details", {}).get("album_id")
+            album_title = metadata.get("_album_title") or metadata.get("details", {}).get("album")
+            if album_id and album_title:
+                album_instance, _ = Album.objects.get_or_create(
+                    musicbrainz_release_id=album_id,
+                    defaults={
+                        "title": album_title,
+                        "artist": artist_instance,
+                        "image": metadata.get("image", ""),
+                    },
+                )
+            elif album_title:
+                # Try to find by title and artist if no ID
+                album_instance = Album.objects.filter(
+                    title=album_title,
+                    artist=artist_instance,
+                ).first()
+                if not album_instance:
+                    album_instance = Album.objects.create(
+                        title=album_title,
+                        artist=artist_instance,
+                        image=metadata.get("image", ""),
+                    )
+
+            instance.artist = artist_instance
+            instance.album = album_instance
+
     # Validate the form and save the instance if it's valid
     form_class = get_form_class(media_type)
     form = form_class(request.POST, instance=instance)
@@ -1022,6 +1101,143 @@ def history(request):
         "days_per_page": paginator.per_page,
     }
     return render(request, "app/history.html", context)
+
+
+@require_GET
+def create_artist_from_search(request, musicbrainz_artist_id):
+    """Create an Artist from MusicBrainz search and redirect to artist page."""
+    from app.providers import musicbrainz
+
+    # Check if artist already exists
+    artist = Artist.objects.filter(musicbrainz_id=musicbrainz_artist_id).first()
+    
+    if not artist:
+        # Fetch artist data from MusicBrainz
+        artist_data = musicbrainz.get_artist(musicbrainz_artist_id)
+        
+        artist = Artist.objects.create(
+            name=artist_data.get("name", "Unknown Artist"),
+            sort_name=artist_data.get("sort_name", ""),
+            musicbrainz_id=musicbrainz_artist_id,
+        )
+        logger.info("Created artist %s from MusicBrainz", artist.name)
+
+    return redirect("artist_detail", artist_id=artist.id)
+
+
+@require_GET
+def create_album_from_search(request, musicbrainz_release_id):
+    """Create an Album from MusicBrainz search and redirect to album page."""
+    from app.providers import musicbrainz
+
+    # Check if album already exists
+    album = Album.objects.filter(musicbrainz_release_id=musicbrainz_release_id).first()
+    
+    if not album:
+        # Fetch release data from MusicBrainz
+        release_data = musicbrainz.get_release(musicbrainz_release_id)
+        
+        # Create or get the artist
+        artist = None
+        artist_id = release_data.get("artist_id")
+        artist_name = release_data.get("artist_name")
+        
+        if artist_id:
+            artist = Artist.objects.filter(musicbrainz_id=artist_id).first()
+            if not artist and artist_name:
+                artist = Artist.objects.create(
+                    name=artist_name,
+                    musicbrainz_id=artist_id,
+                )
+        elif artist_name:
+            artist = Artist.objects.filter(name=artist_name).first()
+            if not artist:
+                artist = Artist.objects.create(name=artist_name)
+        
+        # Parse release date
+        release_date = None
+        date_str = release_data.get("release_date", "")
+        if date_str:
+            try:
+                from datetime import datetime
+                if len(date_str) == 4:  # Year only
+                    release_date = datetime.strptime(date_str, "%Y").date()
+                elif len(date_str) == 7:  # Year-month
+                    release_date = datetime.strptime(date_str, "%Y-%m").date()
+                elif len(date_str) >= 10:  # Full date
+                    release_date = datetime.strptime(date_str[:10], "%Y-%m-%d").date()
+            except ValueError:
+                pass
+        
+        album = Album.objects.create(
+            title=release_data.get("title", "Unknown Album"),
+            musicbrainz_release_id=musicbrainz_release_id,
+            artist=artist,
+            release_date=release_date,
+            image=release_data.get("image", ""),
+        )
+        logger.info("Created album %s from MusicBrainz", album.title)
+
+    return redirect("album_detail", album_id=album.id)
+
+
+@require_GET
+def artist_detail(request, artist_id):
+    """Return the detail page for a music artist."""
+    from django.shortcuts import get_object_or_404
+
+    artist = get_object_or_404(Artist, id=artist_id)
+
+    # Get albums for this artist that have tracks in the user's library
+    user_track_album_ids = Music.objects.filter(
+        user=request.user,
+        artist=artist,
+        album__isnull=False,
+    ).values_list("album_id", flat=True).distinct()
+
+    albums_in_library = Album.objects.filter(
+        id__in=user_track_album_ids,
+    ).order_by("-release_date", "title")
+
+    # Get all albums for this artist (may include albums not yet in library)
+    all_albums = Album.objects.filter(artist=artist).order_by("-release_date", "title")
+
+    # Get top tracks from this artist in user's library
+    user_tracks = Music.objects.filter(
+        user=request.user,
+        artist=artist,
+    ).select_related("item", "album").order_by("-created_at")[:10]
+
+    context = {
+        "user": request.user,
+        "artist": artist,
+        "albums_in_library": albums_in_library,
+        "all_albums": all_albums,
+        "user_tracks": user_tracks,
+    }
+    return render(request, "app/music_artist_detail.html", context)
+
+
+@require_GET
+def album_detail(request, album_id):
+    """Return the detail page for a music album."""
+    from django.shortcuts import get_object_or_404
+
+    album = get_object_or_404(Album.objects.select_related("artist"), id=album_id)
+
+    # Get all tracks for this album in user's library
+    # Sort by item title (which includes track info) for now
+    user_tracks = Music.objects.filter(
+        user=request.user,
+        album=album,
+    ).select_related("item").order_by("item__title")
+
+    context = {
+        "user": request.user,
+        "album": album,
+        "user_tracks": user_tracks,
+    }
+    return render(request, "app/music_album_detail.html", context)
 
 
 @require_GET

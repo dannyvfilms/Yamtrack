@@ -277,3 +277,265 @@ def recording(media_id):
     cache.set(cache_key, result, 60 * 60 * 24 * 7)  # Cache for 7 days
     return result
 
+
+def search_artists(query, page=1):
+    """Search for artists on MusicBrainz."""
+    cache_key = f"musicbrainz_artist_search_{query.lower()}_p{page}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    per_page = 10
+    offset = (page - 1) * per_page
+
+    params = {
+        "query": query,
+        "limit": per_page,
+        "offset": offset,
+    }
+
+    response = _mb_request("artist", params)
+
+    artists = response.get("artists", [])
+    total_results = response.get("count", 0)
+
+    results = []
+    for artist in artists:
+        artist_id = artist.get("id")
+        name = artist.get("name", "Unknown")
+        sort_name = artist.get("sort-name", name)
+        disambiguation = artist.get("disambiguation", "")
+        
+        # Get life-span for display
+        life_span = artist.get("life-span", {})
+        begin = life_span.get("begin", "")
+        
+        results.append({
+            "artist_id": artist_id,
+            "name": name,
+            "sort_name": sort_name,
+            "disambiguation": disambiguation,
+            "begin_year": begin[:4] if begin else None,
+            "type": artist.get("type", ""),
+        })
+
+    data = {
+        "page": page,
+        "per_page": per_page,
+        "total_results": total_results,
+        "total_pages": (total_results + per_page - 1) // per_page if total_results > 0 else 0,
+        "results": results,
+    }
+
+    cache.set(cache_key, data, 60 * 60 * 24)
+    return data
+
+
+def search_releases(query, page=1):
+    """Search for releases (albums) on MusicBrainz."""
+    cache_key = f"musicbrainz_release_search_{query.lower()}_p{page}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    per_page = 10
+    offset = (page - 1) * per_page
+
+    params = {
+        "query": query,
+        "limit": per_page,
+        "offset": offset,
+    }
+
+    response = _mb_request("release", params)
+
+    releases = response.get("releases", [])
+    total_results = response.get("count", 0)
+
+    results = []
+    for release in releases:
+        release_id = release.get("id")
+        title = release.get("title", "Unknown")
+        date = release.get("date", "")
+
+        # Get artist info
+        artist_credits = release.get("artist-credit", [])
+        artist_name = ""
+        artist_id = None
+        if artist_credits:
+            artist_parts = []
+            for credit in artist_credits:
+                if isinstance(credit, dict):
+                    artist_data = credit.get("artist", {})
+                    if not artist_id:
+                        artist_id = artist_data.get("id")
+                    artist_parts.append(credit.get("name", artist_data.get("name", "")))
+                    artist_parts.append(credit.get("joinphrase", ""))
+            artist_name = "".join(artist_parts).strip()
+
+        # Try to get cover art
+        image = _get_cover_art(release_id)
+
+        results.append({
+            "release_id": release_id,
+            "title": title,
+            "artist_name": artist_name,
+            "artist_id": artist_id,
+            "release_date": date,
+            "image": image,
+        })
+
+    data = {
+        "page": page,
+        "per_page": per_page,
+        "total_results": total_results,
+        "total_pages": (total_results + per_page - 1) // per_page if total_results > 0 else 0,
+        "results": results,
+    }
+
+    cache.set(cache_key, data, 60 * 60 * 24)
+    return data
+
+
+def get_artist(artist_id):
+    """Get detailed metadata for an artist."""
+    cache_key = f"musicbrainz_artist_{artist_id}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    params = {
+        "inc": "releases+release-groups",
+    }
+
+    response = _mb_request(f"artist/{artist_id}", params)
+
+    name = response.get("name", "Unknown")
+    sort_name = response.get("sort-name", name)
+    disambiguation = response.get("disambiguation", "")
+
+    # Get releases (albums) for this artist
+    release_groups = response.get("release-groups", [])
+    albums = []
+    for rg in release_groups[:20]:  # Limit to 20 albums
+        albums.append({
+            "release_group_id": rg.get("id"),
+            "title": rg.get("title", ""),
+            "type": rg.get("primary-type", ""),
+            "first_release_date": rg.get("first-release-date", ""),
+        })
+
+    result = {
+        "artist_id": artist_id,
+        "name": name,
+        "sort_name": sort_name,
+        "disambiguation": disambiguation,
+        "albums": albums,
+    }
+
+    cache.set(cache_key, result, 60 * 60 * 24 * 7)
+    return result
+
+
+def get_release(release_id):
+    """Get detailed metadata for a release (album)."""
+    cache_key = f"musicbrainz_release_{release_id}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    params = {
+        "inc": "artists+recordings",
+    }
+
+    response = _mb_request(f"release/{release_id}", params)
+
+    title = response.get("title", "Unknown")
+    date = response.get("date", "")
+
+    # Get artist info
+    artist_credits = response.get("artist-credit", [])
+    artist_name = ""
+    artist_id = None
+    if artist_credits:
+        artist_parts = []
+        for credit in artist_credits:
+            if isinstance(credit, dict):
+                artist_data = credit.get("artist", {})
+                if not artist_id:
+                    artist_id = artist_data.get("id")
+                artist_parts.append(credit.get("name", artist_data.get("name", "")))
+                artist_parts.append(credit.get("joinphrase", ""))
+        artist_name = "".join(artist_parts).strip()
+
+    # Get cover art
+    image = _get_cover_art(release_id)
+
+    # Get tracks
+    media_list = response.get("media", [])
+    tracks = []
+    for medium in media_list:
+        disc_number = medium.get("position", 1)
+        for track in medium.get("tracks", []):
+            recording = track.get("recording", {})
+            track_length = recording.get("length")
+            duration_str = None
+            if track_length:
+                minutes = int(track_length // 60000)
+                seconds = int((track_length % 60000) // 1000)
+                duration_str = f"{minutes}:{seconds:02d}"
+
+            tracks.append({
+                "recording_id": recording.get("id"),
+                "title": recording.get("title", track.get("title", "")),
+                "track_number": track.get("position"),
+                "disc_number": disc_number,
+                "duration": duration_str,
+                "duration_ms": track_length,
+            })
+
+    result = {
+        "release_id": release_id,
+        "title": title,
+        "artist_name": artist_name,
+        "artist_id": artist_id,
+        "release_date": date,
+        "image": image,
+        "tracks": tracks,
+    }
+
+    cache.set(cache_key, result, 60 * 60 * 24 * 7)
+    return result
+
+
+def search_combined(query, page=1):
+    """Combined search returning artists, albums, and tracks."""
+    cache_key = f"musicbrainz_combined_search_{query.lower()}_p{page}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    # For first page, fetch artists, releases, and recordings
+    # For subsequent pages, only fetch recordings (tracks)
+    if page == 1:
+        artist_results = search_artists(query, page=1)
+        release_results = search_releases(query, page=1)
+        track_results = search(query, page=1)
+
+        data = {
+            "artists": artist_results.get("results", [])[:5],  # Top 5 artists
+            "releases": release_results.get("results", [])[:5],  # Top 5 albums
+            "tracks": track_results,  # Full track results with pagination
+        }
+    else:
+        # For page > 1, only return tracks
+        track_results = search(query, page=page)
+        data = {
+            "artists": [],
+            "releases": [],
+            "tracks": track_results,
+        }
+
+    cache.set(cache_key, data, 60 * 60 * 24)
+    return data
+
