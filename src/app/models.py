@@ -2018,6 +2018,10 @@ class Artist(models.Model):
         help_text="MusicBrainz Artist ID (UUID)",
     )
     image = models.URLField(blank=True, default="")
+    albums_populated = models.BooleanField(
+        default=False,
+        help_text="Whether albums have been fetched from MusicBrainz",
+    )
 
     class Meta:
         """Meta options for the model."""
@@ -2056,6 +2060,10 @@ class Album(models.Model):
     )
     release_date = models.DateField(null=True, blank=True)
     image = models.URLField(blank=True, default="")
+    tracks_populated = models.BooleanField(
+        default=False,
+        help_text="Whether tracks have been fetched from MusicBrainz",
+    )
 
     class Meta:
         """Meta options for the model."""
@@ -2076,10 +2084,68 @@ class Album(models.Model):
         return self.title
 
 
+class Track(models.Model):
+    """Model for music tracks (like Episode for TV).
+    
+    This represents a track from MusicBrainz metadata, independent of user tracking.
+    Populated from MusicBrainz when an album is viewed.
+    """
+
+    album = models.ForeignKey(
+        Album,
+        on_delete=models.CASCADE,
+        related_name="tracklist",
+    )
+    title = models.CharField(max_length=500)
+    musicbrainz_recording_id = models.CharField(
+        max_length=36,
+        null=True,
+        blank=True,
+        help_text="MusicBrainz Recording ID (UUID)",
+    )
+    track_number = models.PositiveIntegerField(null=True, blank=True)
+    disc_number = models.PositiveIntegerField(default=1)
+    duration_ms = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Duration in milliseconds",
+    )
+
+    class Meta:
+        """Meta options for the model."""
+
+        ordering = ["disc_number", "track_number", "title"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["album", "disc_number", "track_number"],
+                condition=models.Q(track_number__isnull=False),
+                name="unique_track_per_album_disc",
+            ),
+        ]
+
+    def __str__(self):
+        """Return the track title."""
+        if self.track_number:
+            return f"{self.track_number}. {self.title}"
+        return self.title
+
+    @property
+    def duration_formatted(self):
+        """Return duration as mm:ss string."""
+        if not self.duration_ms:
+            return None
+        total_seconds = self.duration_ms // 1000
+        minutes = total_seconds // 60
+        seconds = total_seconds % 60
+        return f"{minutes}:{seconds:02d}"
+
+
 class Music(Media):
     """Model for music tracks.
 
-    This is the trackable unit for music, backed by an Item with media_type='music'.
+    This is the trackable unit for music (per-user tracking),
+    backed by an Item with media_type='music'.
+    Optionally links to a Track (MusicBrainz catalog entry) for metadata.
     """
 
     tracker = FieldTracker()
@@ -2087,17 +2153,25 @@ class Music(Media):
     album = models.ForeignKey(
         Album,
         on_delete=models.SET_NULL,
-        related_name="tracks",
+        related_name="music_entries",
         null=True,
         blank=True,
     )
     artist = models.ForeignKey(
         Artist,
         on_delete=models.SET_NULL,
-        related_name="tracks",
+        related_name="music_entries",
         null=True,
         blank=True,
         help_text="Convenience FK to artist (can be derived via album)",
+    )
+    track = models.ForeignKey(
+        Track,
+        on_delete=models.SET_NULL,
+        related_name="music_entries",
+        null=True,
+        blank=True,
+        help_text="Link to Track catalog entry from MusicBrainz",
     )
 
     @property

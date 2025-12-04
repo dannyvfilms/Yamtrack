@@ -480,6 +480,60 @@ def get_artist(artist_id):
     return result
 
 
+def get_artist_releases(artist_id, limit=100):
+    """Get all releases (albums) for an artist with cover art.
+    
+    This fetches releases directly associated with the artist,
+    which gives us actual release IDs for cover art lookup.
+    """
+    cache_key = f"musicbrainz_artist_releases_{artist_id}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    params = {
+        "artist": artist_id,
+        "type": "album|ep",  # Focus on albums and EPs
+        "status": "official",
+        "limit": limit,
+    }
+
+    response = _mb_request("release", params)
+    
+    releases = response.get("releases", [])
+    
+    # De-duplicate by release-group (keep first/best release per group)
+    seen_groups = {}
+    for release in releases:
+        rg_id = release.get("release-group", {}).get("id")
+        if rg_id and rg_id not in seen_groups:
+            seen_groups[rg_id] = release
+    
+    albums = []
+    for release in seen_groups.values():
+        release_id = release.get("id")
+        title = release.get("title", "")
+        date = release.get("date", "")
+        
+        # Get cover art
+        image = _get_cover_art(release_id)
+        
+        albums.append({
+            "release_id": release_id,
+            "release_group_id": release.get("release-group", {}).get("id"),
+            "title": title,
+            "release_date": date,
+            "image": image,
+            "type": release.get("release-group", {}).get("primary-type", ""),
+        })
+    
+    # Sort by date (newest first)
+    albums.sort(key=lambda x: x.get("release_date", "") or "0000", reverse=True)
+    
+    cache.set(cache_key, albums, 60 * 60 * 24 * 7)  # Cache for 7 days
+    return albums
+
+
 def get_release(release_id):
     """Get detailed metadata for a release (album)."""
     cache_key = f"musicbrainz_release_{release_id}"

@@ -14,7 +14,7 @@
     <span class="text-white">{{ artist.name }}</span>
   </nav>
 
-  {# Top section #}
+  {# Top section - Hero layout like TV show #}
   <div class="flex flex-col md:flex-row gap-8 md:gap-10 mb-12 md:mb-8">
     <div class="w-full md:w-1/4 max-w-[250px] mx-auto md:mx-0">
       {% if artist.image and artist.image != IMG_NONE %}
@@ -59,64 +59,68 @@
       <div class="flex flex-wrap gap-4">
         <div class="bg-[#2a2f35] p-3 rounded-lg min-w-[100px]">
           <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">ALBUMS</h3>
-          <p class="text-lg font-bold text-white text-center">{{ albums_in_library|length }}</p>
-          <p class="text-xs text-gray-400 text-center">in library</p>
+          <p class="text-lg font-bold text-white text-center">{{ albums|length }}</p>
         </div>
         <div class="bg-[#2a2f35] p-3 rounded-lg min-w-[100px]">
-          <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">TRACKS</h3>
+          <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">IN LIBRARY</h3>
           <p class="text-lg font-bold text-white text-center">{{ total_tracks }}</p>
-          <p class="text-xs text-gray-400 text-center">in library</p>
+          <p class="text-xs text-gray-400 text-center">tracks</p>
         </div>
       </div>
     </div>
   </div>
 
-  {# Albums section #}
-  {% if albums_in_library %}
-    <div class="mb-12">
-      <h2 class="text-xl font-bold mb-4">Albums in Your Library</h2>
-      <div class="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-6">
-        {% for album in albums_in_library %}
+  {# Albums section - Grid like Seasons on TV show page #}
+  <div class="w-full">
+    <h2 class="text-xl font-bold mb-4">Albums</h2>
+    {% if albums %}
+      <div class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
+        {% for album in albums %}
           <a href="{% url 'album_detail' album.id %}"
-             class="group bg-[#2a2f35] rounded-lg overflow-hidden hover:bg-[#343a40] transition-colors duration-200">
+             class="group bg-[#2a2f35] rounded-lg overflow-hidden hover:bg-[#343a40] transition-colors duration-200 relative">
+            {# Cover art #}
             {% if album.image and album.image != IMG_NONE %}
               <img src="{{ album.image }}"
                    alt="{{ album.title }}"
                    class="w-full aspect-square object-cover">
             {% else %}
               <div class="w-full aspect-square bg-[#1a1d20] flex items-center justify-center">
-                {% icon 'music' is_active=False extra_classes="w-16 h-16 text-gray-600" %}
+                {% icon 'music' is_active=False extra_classes="w-12 h-12 text-gray-600" %}
               </div>
             {% endif %}
-            <div class="p-4">
-              <h3 class="font-medium text-white group-hover:text-rose-400 transition-colors line-clamp-2 mb-1">
+            
+            {# Library badge (like progress on Season cards) #}
+            {% if album.library_track_count %}
+              <div class="absolute top-2 left-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md">
+                <span class="text-sm text-white">{{ album.library_track_count }} in library</span>
+              </div>
+            {% endif %}
+            
+            <div class="p-3">
+              <h3 class="font-medium text-sm text-white group-hover:text-rose-400 transition-colors line-clamp-2 mb-1">
                 {{ album.title }}
               </h3>
               {% if album.release_date %}
-                <p class="text-sm text-gray-400">{{ album.release_date|date:"Y" }}</p>
-              {% endif %}
-              {% if album.library_track_count %}
-                <p class="text-xs text-gray-500 mt-1">{{ album.library_track_count }} track{{ album.library_track_count|pluralize }} in library</p>
+                <p class="text-xs text-gray-400">{{ album.release_date|date:"Y" }}</p>
               {% endif %}
             </div>
           </a>
         {% endfor %}
       </div>
-    </div>
-  {% else %}
-    {# Empty state #}
-    <div class="flex flex-col items-center justify-center py-16 px-4 bg-[#2a2f35] rounded-lg">
-      <div class="bg-[#39404b] rounded-full p-4 w-16 h-16 mx-auto mb-4 flex items-center justify-center">
-        {% icon 'music' is_active=False extra_classes="w-8 h-8 text-gray-400" %}
+    {% else %}
+      <div class="bg-[#2a2f35] p-6 rounded-lg text-center">
+        <p class="text-gray-400">
+          {% if artist.musicbrainz_id %}
+            No albums found for this artist on MusicBrainz.
+          {% else %}
+            This artist doesn't have a MusicBrainz ID, so albums can't be populated automatically.
+          {% endif %}
+        </p>
+        <a href="{% url 'search' %}?q={{ artist.name|urlencode }}&media_type=music"
+           class="inline-block mt-4 px-4 py-2 bg-rose-600 text-white rounded-md hover:bg-rose-700 transition-colors">
+          Search for {{ artist.name }}
+        </a>
       </div>
-      <h3 class="text-xl font-semibold mb-2">No albums in your library</h3>
-      <p class="text-gray-400 text-center max-w-md mb-6">
-        You don't have any tracks by {{ artist.name }} in your library yet. Search for their music to add it.
-      </p>
-      <a href="{% url 'search' %}?q={{ artist.name|urlencode }}&media_type=music"
-         class="px-4 py-2 bg-rose-600 text-white rounded-md hover:bg-rose-700 transition-colors">
-        Search for {{ artist.name }}
-      </a>
-    </div>
-  {% endif %}
+    {% endif %}
+  </div>
 {% endblock content %}

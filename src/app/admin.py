@@ -57,14 +57,22 @@ class AlbumAdmin(admin.ModelAdmin):
     """Custom admin for Album model."""
 
     search_fields = ["title", "musicbrainz_release_id", "artist__name"]
-    list_display = ["title", "artist", "release_date"]
-    list_filter = ["release_date"]
+    list_display = ["title", "artist", "release_date", "tracks_populated"]
+    list_filter = ["release_date", "tracks_populated"]
+
+
+class TrackAdmin(admin.ModelAdmin):
+    """Custom admin for Track model."""
+
+    search_fields = ["title", "musicbrainz_recording_id", "album__title"]
+    list_display = ["title", "album", "track_number", "disc_number", "duration_formatted"]
+    list_filter = ["album"]
 
 
 # Auto-register remaining models
 app_models = apps.get_app_config("app").get_models()
 # Models that don't use MediaAdmin (either registered separately or excluded)
-SpecialModels = ["Item", "Episode", "BasicMedia", "Artist", "Album"]
+SpecialModels = ["Item", "Episode", "BasicMedia", "Artist", "Album", "Track"]
 for model in app_models:
     if (
         not model.__name__.startswith("Historical")
@@ -74,8 +82,9 @@ for model in app_models:
             admin.site.register(model, MediaAdmin)
 
 
-# Register Artist and Album with custom admin classes
-from app.models import Artist, Album  # noqa: E402
+# Register Artist, Album, and Track with custom admin classes
+from app.models import Artist, Album, Track  # noqa: E402
 
 admin.site.register(Artist, ArtistAdmin)
 admin.site.register(Album, AlbumAdmin)
+admin.site.register(Track, TrackAdmin)

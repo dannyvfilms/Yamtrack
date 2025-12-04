@@ -32,6 +32,7 @@ from app.models import (
     Season,
     Sources,
     Status,
+    Track,
 )
 from app.providers import manual, services, tmdb
 from app.templatetags import app_tags
@@ -782,6 +783,15 @@ def media_save(request):
             instance.artist = artist_instance
             instance.album = album_instance
 
+            # Link to Track if it exists (for album-based additions)
+            if album_instance:
+                track_instance = Track.objects.filter(
+                    album=album_instance,
+                    musicbrainz_recording_id=media_id,
+                ).first()
+                if track_instance:
+                    instance.track = track_instance
+
     # Validate the form and save the instance if it's valid
     form_class = get_form_class(media_type)
     form = form_class(request.POST, instance=instance)
@@ -1200,28 +1210,53 @@ def artist_detail(request, artist_id):
     """Return the detail page for a music artist."""
     from django.db.models import Count
     from django.shortcuts import get_object_or_404
+    from app.providers import musicbrainz
 
     artist = get_object_or_404(Artist, id=artist_id)
 
-    # Get albums for this artist that have tracks in the user's library
-    # Annotate with track count for display
-    user_track_album_ids = Music.objects.filter(
-        user=request.user,
-        album__artist=artist,
-        album__isnull=False,
-    ).values_list("album_id", flat=True).distinct()
+    # Populate albums from MusicBrainz if not done yet (like TV populates seasons)
+    if not artist.albums_populated and artist.musicbrainz_id:
+        try:
+            releases = musicbrainz.get_artist_releases(artist.musicbrainz_id)
+            for release_data in releases:
+                release_id = release_data.get("release_id")
+                if release_id:
+                    # Parse release date
+                    release_date = None
+                    date_str = release_data.get("release_date", "")
+                    if date_str:
+                        try:
+                            if len(date_str) >= 10:
+                                release_date = parse_date(date_str[:10])
+                            elif len(date_str) == 7:
+                                release_date = parse_date(date_str + "-01")
+                            elif len(date_str) == 4:
+                                release_date = parse_date(date_str + "-01-01")
+                        except (ValueError, TypeError):
+                            pass
+                    
+                    Album.objects.update_or_create(
+                        musicbrainz_release_id=release_id,
+                        defaults={
+                            "title": release_data.get("title", "Unknown Album"),
+                            "artist": artist,
+                            "release_date": release_date,
+                            "image": release_data.get("image", ""),
+                        },
+                    )
+            artist.albums_populated = True
+            artist.save(update_fields=["albums_populated"])
+            logger.info("Populated %d albums for artist %s", len(releases), artist.name)
+        except Exception as e:
+            logger.warning("Failed to populate albums for artist %s: %s", artist.name, e)
 
-    albums_in_library = Album.objects.filter(
-        id__in=user_track_album_ids,
-    ).annotate(
+    # Get ALL albums for this artist (metadata-driven, like Seasons)
+    all_albums = Album.objects.filter(artist=artist).annotate(
         library_track_count=Count(
-            "tracks",
-            filter=models.Q(tracks__user=request.user),
+            "music_entries",
+            filter=models.Q(music_entries__user=request.user),
         )
     ).order_by("-release_date", "title")
-
-    # Get all albums for this artist (may include albums not yet in library)
-    all_albums = Album.objects.filter(artist=artist).order_by("-release_date", "title")
 
     # Get total track count for this artist in user's library
     total_tracks = Music.objects.filter(
@@ -1232,8 +1267,7 @@ def artist_detail(request, artist_id):
     context = {
         "user": request.user,
         "artist": artist,
-        "albums_in_library": albums_in_library,
-        "all_albums": all_albums,
+        "albums": all_albums,  # All albums, not just "in library"
         "total_tracks": total_tracks,
     }
     return render(request, "app/music_artist_detail.html", context)
@@ -1243,31 +1277,82 @@ def artist_detail(request, artist_id):
 def album_detail(request, album_id):
     """Return the detail page for a music album."""
     from django.shortcuts import get_object_or_404
+    from app.models import Track
+    from app.providers import musicbrainz
 
     album = get_object_or_404(Album.objects.select_related("artist"), id=album_id)
 
-    # Get all tracks for this album in user's library
-    # Prefetch history for track actions (like episodes)
-    user_tracks = Music.objects.filter(
+    # Populate tracks from MusicBrainz if not done yet (like Season populates episodes)
+    if not album.tracks_populated and album.musicbrainz_release_id:
+        try:
+            release_data = musicbrainz.get_release(album.musicbrainz_release_id)
+            tracks_data = release_data.get("tracks", [])
+            
+            for track_data in tracks_data:
+                Track.objects.update_or_create(
+                    album=album,
+                    disc_number=track_data.get("disc_number", 1),
+                    track_number=track_data.get("track_number"),
+                    defaults={
+                        "title": track_data.get("title", "Unknown Track"),
+                        "musicbrainz_recording_id": track_data.get("recording_id"),
+                        "duration_ms": track_data.get("duration_ms"),
+                    },
+                )
+            
+            # Also update album image if missing
+            if not album.image or album.image == settings.IMG_NONE:
+                new_image = release_data.get("image", "")
+                if new_image and new_image != settings.IMG_NONE:
+                    album.image = new_image
+            
+            album.tracks_populated = True
+            album.save(update_fields=["tracks_populated", "image"])
+            logger.info("Populated %d tracks for album %s", len(tracks_data), album.title)
+        except Exception as e:
+            logger.warning("Failed to populate tracks for album %s: %s", album.title, e)
+
+    # Get ALL tracks for this album (metadata-driven, like Episodes)
+    all_tracks = Track.objects.filter(album=album).order_by("disc_number", "track_number", "title")
+
+    # Get user's Music entries for these tracks
+    user_music_by_track = {}
+    user_music_entries = Music.objects.filter(
         user=request.user,
         album=album,
-    ).select_related("item").prefetch_related("history").order_by("item__title")
+    ).select_related("item", "track").prefetch_related("history")
+    
+    for music in user_music_entries:
+        if music.track_id:
+            user_music_by_track[music.track_id] = music
+        # Also index by recording ID for legacy data
+        if music.item and music.item.media_id:
+            user_music_by_track[f"recording_{music.item.media_id}"] = music
 
-    # Build track data with history for template (like season episodes)
-    tracks_with_history = []
-    for track in user_tracks:
+    # Build track data with user's tracking info (like Episodes)
+    tracks_with_data = []
+    for track in all_tracks:
+        # Look up user's Music entry for this track
+        music_entry = user_music_by_track.get(track.id)
+        if not music_entry and track.musicbrainz_recording_id:
+            music_entry = user_music_by_track.get(f"recording_{track.musicbrainz_recording_id}")
+        
         track_data = {
-            "music": track,
-            "item": track.item,
-            "history": list(track.history.all().order_by("-end_date")),
+            "track": track,
+            "music": music_entry,
+            "history": list(music_entry.history.all().order_by("-end_date")) if music_entry else [],
         }
-        tracks_with_history.append(track_data)
+        tracks_with_data.append(track_data)
+
+    # Count tracks in library
+    library_track_count = sum(1 for t in tracks_with_data if t["music"])
 
     context = {
         "user": request.user,
         "album": album,
-        "user_tracks": user_tracks,
-        "tracks_with_history": tracks_with_history,
+        "tracks": tracks_with_data,  # All tracks from metadata
+        "library_track_count": library_track_count,
+        "total_tracks": len(tracks_with_data),
     }
     return render(request, "app/music_album_detail.html", context)
 
