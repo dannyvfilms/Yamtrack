@@ -666,6 +666,9 @@
   .max-h-\[320px\] {
     max-height: 320px;
   }
+  .min-h-\[96px\] {
+    min-height: 96px;
+  }
   .min-h-\[130px\] {
     min-height: 130px;
   }
@@ -2271,6 +2274,13 @@
     &:hover {
       @media (hover: hover) {
         color: var(--color-red-400);
+      }
+    }
+  }
+  .hover\:text-rose-400 {
+    &:hover {
+      @media (hover: hover) {
+        color: var(--color-rose-400);
       }
     }
   }

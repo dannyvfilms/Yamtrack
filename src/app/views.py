@@ -1212,9 +1212,13 @@ def create_album_from_search(request, musicbrainz_release_id):
 @require_GET
 def artist_detail(request, artist_id):
     """Return the detail page for a music artist."""
-    from django.db.models import Count
+    from django.db.models import Count, Min, Max
     from django.shortcuts import get_object_or_404
-    from app.services.music import needs_discography_sync, sync_artist_discography
+    from app.services.music import (
+        needs_discography_sync,
+        sync_artist_discography,
+        get_artist_hero_image,
+    )
 
     artist = get_object_or_404(Artist, id=artist_id)
 
@@ -1236,11 +1240,40 @@ def artist_detail(request, artist_id):
         album__artist=artist,
     ).count()
 
+    # Get hero image from albums (since MusicBrainz doesn't have artist photos)
+    hero_image = get_artist_hero_image(artist)
+
+    # Get user's music entries for this artist
+    user_music_for_artist = Music.objects.filter(
+        user=request.user,
+        album__artist=artist,
+    )
+    
+    # History summary - just get date ranges, not historical record counts
+    history_stats = user_music_for_artist.aggregate(
+        first_listened=Min("start_date"),
+        last_listened=Max("end_date"),
+    )
+    
+    # Get the current/primary Music instance for this artist (most recently updated)
+    current_instance = user_music_for_artist.order_by("-end_date", "-start_date").first()
+
+    # Artist details from MusicBrainz (if we have metadata)
+    # We'll pass these as structured details like TV shows
+    artist_details = {}
+    if artist.musicbrainz_id:
+        artist_details["musicbrainz_id"] = artist.musicbrainz_id
+
     context = {
         "user": request.user,
         "artist": artist,
         "albums": all_albums,  # All albums from discography, not just "in library"
         "total_tracks": total_tracks,
+        "total_albums": all_albums.count(),
+        "hero_image": hero_image,
+        "history_stats": history_stats,
+        "current_instance": current_instance,
+        "artist_details": artist_details,
     }
     return render(request, "app/music_artist_detail.html", context)
 
@@ -1248,6 +1281,7 @@ def artist_detail(request, artist_id):
 @require_GET
 def album_detail(request, album_id):
     """Return the detail page for a music album."""
+    from django.db.models import Min, Max
     from django.shortcuts import get_object_or_404
     from app.models import Track
     from app.providers import musicbrainz
@@ -1303,6 +1337,7 @@ def album_detail(request, album_id):
 
     # Build track data with user's tracking info (like Episodes)
     tracks_with_data = []
+    total_duration_ms = 0
     for track in all_tracks:
         # Look up user's Music entry for this track
         music_entry = user_music_by_track.get(track.id)
@@ -1315,9 +1350,41 @@ def album_detail(request, album_id):
             "history": list(music_entry.history.all().order_by("-end_date")) if music_entry else [],
         }
         tracks_with_data.append(track_data)
+        if track.duration_ms:
+            total_duration_ms += track.duration_ms
 
     # Count tracks in library
     library_track_count = sum(1 for t in tracks_with_data if t["music"])
+
+    # History summary for this album (like Season history)
+    history_stats = user_music_entries.aggregate(
+        first_listened=Min("start_date"),
+        last_listened=Max("end_date"),
+    )
+    
+    # Get the current/primary Music instance for this album (most recently updated)
+    current_instance = user_music_entries.order_by("-end_date", "-start_date").first()
+
+    # Calculate total runtime
+    total_runtime = None
+    if total_duration_ms:
+        total_minutes = total_duration_ms // 60000
+        if total_minutes >= 60:
+            hours = total_minutes // 60
+            minutes = total_minutes % 60
+            total_runtime = f"{hours}h {minutes}m"
+        else:
+            total_runtime = f"{total_minutes}m"
+
+    # Album details (like Season details)
+    album_details = {
+        "format": album.release_type or "Album",
+        "release_date": album.release_date,
+        "tracks": len(tracks_with_data),
+        "runtime": total_runtime,
+    }
+    if album.musicbrainz_release_id:
+        album_details["musicbrainz_id"] = album.musicbrainz_release_id
 
     context = {
         "user": request.user,
@@ -1325,8 +1392,31 @@ def album_detail(request, album_id):
         "tracks": tracks_with_data,  # All tracks from metadata
         "library_track_count": library_track_count,
         "total_tracks": len(tracks_with_data),
+        "history_stats": history_stats,
+        "current_instance": current_instance,
+        "album_details": album_details,
+        "total_runtime": total_runtime,
     }
     return render(request, "app/music_album_detail.html", context)
+
+
+@require_POST
+def sync_artist_discography_view(request, artist_id):
+    """Manually trigger discography sync for an artist."""
+    from django.shortcuts import get_object_or_404
+    from app.services.music import sync_artist_discography
+
+    artist = get_object_or_404(Artist, id=artist_id)
+    
+    # Force sync
+    count = sync_artist_discography(artist, force=True)
+    
+    messages.success(request, f"Synced {count} albums for {artist.name}")
+    
+    # Return HX-Refresh header to reload the page
+    response = HttpResponse(status=204)
+    response["HX-Refresh"] = "true"
+    return response
 
 
 @require_GET

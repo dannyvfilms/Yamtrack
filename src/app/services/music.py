@@ -3,12 +3,107 @@
 import logging
 from datetime import datetime
 
+from django.conf import settings
+from django.db import models
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 
 from app.models import Album, Artist
 
 logger = logging.getLogger(__name__)
+
+
+def get_artist_hero_image(artist: Artist) -> str:
+    """Get a hero image for an artist from their albums.
+    
+    Since MusicBrainz doesn't have artist photos, we derive a hero image
+    from the artist's albums - preferring albums with cover art.
+    
+    Strategy:
+    1. Find albums with images, prefer earliest release (often most iconic)
+    2. If no albums have images, return the default placeholder
+    
+    Args:
+        artist: The Artist object
+        
+    Returns:
+        URL to the hero image, or settings.IMG_NONE
+    """
+    # Get all albums for this artist that have images
+    albums_with_images = Album.objects.filter(
+        artist=artist,
+    ).exclude(
+        image=""
+    ).exclude(
+        image=settings.IMG_NONE
+    ).order_by("release_date")
+    
+    if albums_with_images.exists():
+        # Return the earliest album's image (often the most iconic)
+        return albums_with_images.first().image
+    
+    return settings.IMG_NONE
+
+
+def refresh_album_cover_art(album: Album) -> bool:
+    """Try to fetch/refresh cover art for an album.
+    
+    Args:
+        album: The Album object to refresh
+        
+    Returns:
+        True if cover art was updated, False otherwise
+    """
+    from app.providers import musicbrainz
+    
+    # Only try if we have IDs to look up
+    if not album.musicbrainz_release_id and not album.musicbrainz_release_group_id:
+        return False
+    
+    # Skip if album already has good cover art
+    if album.image and album.image != settings.IMG_NONE:
+        return False
+    
+    try:
+        new_image = musicbrainz.get_cover_art(
+            release_id=album.musicbrainz_release_id,
+            release_group_id=album.musicbrainz_release_group_id,
+        )
+        
+        if new_image and new_image != settings.IMG_NONE:
+            album.image = new_image
+            album.save(update_fields=["image"])
+            logger.info("Updated cover art for album %s", album.title)
+            return True
+            
+    except Exception as e:
+        logger.debug("Failed to fetch cover art for album %s: %s", album.title, e)
+    
+    return False
+
+
+def refresh_missing_album_covers(artist: Artist, limit: int = 10) -> int:
+    """Refresh cover art for albums missing images.
+    
+    Args:
+        artist: The Artist whose albums to check
+        limit: Maximum number of albums to refresh (to avoid rate limiting)
+        
+    Returns:
+        Number of albums that got new cover art
+    """
+    albums_without_images = Album.objects.filter(
+        artist=artist,
+    ).filter(
+        models.Q(image="") | models.Q(image=settings.IMG_NONE)
+    )[:limit]
+    
+    refreshed = 0
+    for album in albums_without_images:
+        if refresh_album_cover_art(album):
+            refreshed += 1
+    
+    return refreshed
 
 
 def sync_artist_discography(artist: Artist, force: bool = False) -> int:

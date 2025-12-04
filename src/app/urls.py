@@ -86,6 +86,11 @@ urlpatterns = [
     # Music hierarchy navigation
     path("music/artist/<int:artist_id>/", views.artist_detail, name="artist_detail"),
     path("music/album/<int:album_id>/", views.album_detail, name="album_detail"),
+    path(
+        "music/artist/<int:artist_id>/sync/",
+        views.sync_artist_discography_view,
+        name="sync_artist_discography",
+    ),
     # Music search to create artist/album
     path(
         "music/artist/create/<str:musicbrainz_artist_id>/",
