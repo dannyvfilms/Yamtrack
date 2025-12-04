@@ -215,3 +215,47 @@ def needs_discography_sync(artist: Artist, max_age_days: int = 7) -> bool:
     days_since_sync = (timezone.now() - artist.discography_synced_at).days
     return days_since_sync >= max_age_days
 
+
+def ensure_album_has_release_id(album: Album) -> bool:
+    """Ensure an album has a release_id, fetching it from release_group if needed.
+    
+    If the album only has a release_group_id, this will query MusicBrainz to find
+    a representative release and update the album.
+    
+    Args:
+        album: The Album object
+        
+    Returns:
+        True if the album now has a release_id (or already had one)
+    """
+    from app.providers import musicbrainz
+    
+    # Already has a release_id
+    if album.musicbrainz_release_id:
+        return True
+    
+    # No release_group_id either - truly no MusicBrainz identity
+    if not album.musicbrainz_release_group_id:
+        return False
+    
+    # Try to get a release from the release group
+    try:
+        release_id = musicbrainz.get_release_for_group(album.musicbrainz_release_group_id)
+        if release_id:
+            album.musicbrainz_release_id = release_id
+            album.save(update_fields=["musicbrainz_release_id"])
+            logger.info("Found release_id %s for album %s", release_id, album.title)
+            return True
+    except Exception as e:
+        logger.debug("Failed to get release_id for album %s: %s", album.title, e)
+    
+    return False
+
+
+def album_has_musicbrainz_id(album: Album) -> bool:
+    """Check if an album has any MusicBrainz identity.
+    
+    Returns True if the album has either a release_id or release_group_id.
+    """
+    return bool(album.musicbrainz_release_id or album.musicbrainz_release_group_id)
+

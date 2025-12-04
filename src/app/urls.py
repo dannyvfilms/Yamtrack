@@ -91,6 +91,11 @@ urlpatterns = [
         views.sync_artist_discography_view,
         name="sync_artist_discography",
     ),
+    path(
+        "music/album/<int:album_id>/sync/",
+        views.sync_album_metadata_view,
+        name="sync_album_metadata",
+    ),
     # Music search to create artist/album
     path(
         "music/artist/create/<str:musicbrainz_artist_id>/",

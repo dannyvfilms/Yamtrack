@@ -466,7 +466,7 @@ def get_artist(artist_id):
         return cached
 
     params = {
-        "inc": "releases+release-groups",
+        "inc": "releases+release-groups+tags+ratings+annotation+genres",
     }
 
     response = _mb_request(f"artist/{artist_id}", params)
@@ -474,6 +474,54 @@ def get_artist(artist_id):
     name = response.get("name", "Unknown")
     sort_name = response.get("sort-name", name)
     disambiguation = response.get("disambiguation", "")
+    artist_type = response.get("type", "")
+    country = response.get("country", "")
+    
+    # Life span
+    life_span = response.get("life-span", {})
+    begin_date = life_span.get("begin", "")
+    end_date = life_span.get("end", "")
+    ended = life_span.get("ended", False)
+    
+    # Area (country/location)
+    area = response.get("area", {})
+    area_name = area.get("name", "")
+    
+    # Annotation (bio/description) - note: this is often empty
+    annotation = response.get("annotation", "")
+    
+    # Genres from MusicBrainz (new genre system)
+    genres = []
+    genre_data = response.get("genres", [])
+    for g in genre_data:
+        genre_name = g.get("name", "")
+        genre_count = g.get("count", 0)
+        if genre_name:
+            genres.append({
+                "name": genre_name,
+                "count": genre_count,
+            })
+    # Sort by count (most relevant first)
+    genres.sort(key=lambda x: x.get("count", 0), reverse=True)
+    
+    # Tags (user-submitted tags, often more available than genres)
+    tags = []
+    tag_data = response.get("tags", [])
+    for t in tag_data:
+        tag_name = t.get("name", "")
+        tag_count = t.get("count", 0)
+        if tag_name and tag_count > 0:
+            tags.append({
+                "name": tag_name,
+                "count": tag_count,
+            })
+    # Sort by count (most relevant first)
+    tags.sort(key=lambda x: x.get("count", 0), reverse=True)
+    
+    # Rating
+    rating_data = response.get("rating", {})
+    rating = rating_data.get("value")  # 0-5 scale
+    rating_count = rating_data.get("votes-count", 0)
 
     # Get releases (albums) for this artist
     release_groups = response.get("release-groups", [])
@@ -491,6 +539,17 @@ def get_artist(artist_id):
         "name": name,
         "sort_name": sort_name,
         "disambiguation": disambiguation,
+        "type": artist_type,
+        "country": country,
+        "area": area_name,
+        "begin_date": begin_date,
+        "end_date": end_date,
+        "ended": ended,
+        "annotation": annotation,
+        "genres": genres[:10],  # Top 10 genres
+        "tags": tags[:15],  # Top 15 tags
+        "rating": rating,
+        "rating_count": rating_count,
         "albums": albums,
     }
 
@@ -594,6 +653,47 @@ def get_artist_discography(artist_id):
 
     cache.set(cache_key, albums, 60 * 60 * 24 * 7)  # Cache for 7 days
     return albums
+
+
+def get_release_for_group(release_group_id):
+    """Get a representative release for a release group.
+    
+    This is useful when we only have a release_group_id and need to find
+    a specific release to fetch tracks from.
+    
+    Args:
+        release_group_id: The MusicBrainz release group ID
+        
+    Returns:
+        A release ID string, or None if not found
+    """
+    cache_key = f"musicbrainz_release_for_group_{release_group_id}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+    
+    try:
+        # Query releases for this release group
+        params = {
+            "release-group": release_group_id,
+            "status": "official",
+            "limit": 5,
+        }
+        
+        response = _mb_request("release", params)
+        releases = response.get("releases", [])
+        
+        if releases:
+            # Prefer releases with media/tracks info
+            # Just pick the first official release
+            release_id = releases[0].get("id")
+            cache.set(cache_key, release_id, 60 * 60 * 24 * 7)
+            return release_id
+            
+    except Exception as e:
+        logger.debug("Failed to get release for group %s: %s", release_group_id, e)
+    
+    return None
 
 
 def get_release(release_id):

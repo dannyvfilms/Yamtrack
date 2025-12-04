@@ -1219,6 +1219,7 @@ def artist_detail(request, artist_id):
         sync_artist_discography,
         get_artist_hero_image,
     )
+    from app.providers import musicbrainz
 
     artist = get_object_or_404(Artist, id=artist_id)
 
@@ -1258,11 +1259,41 @@ def artist_detail(request, artist_id):
     # Get the current/primary Music instance for this artist (most recently updated)
     current_instance = user_music_for_artist.order_by("-end_date", "-start_date").first()
 
-    # Artist details from MusicBrainz (if we have metadata)
-    # We'll pass these as structured details like TV shows
-    artist_details = {}
+    # Fetch detailed artist metadata from MusicBrainz
+    artist_metadata = {}
+    genres = []
+    tags = []
+    mb_rating = None
+    mb_rating_count = 0
+    annotation = ""
+    
     if artist.musicbrainz_id:
-        artist_details["musicbrainz_id"] = artist.musicbrainz_id
+        try:
+            mb_data = musicbrainz.get_artist(artist.musicbrainz_id)
+            artist_metadata = {
+                "type": mb_data.get("type", ""),
+                "country": mb_data.get("country", ""),
+                "area": mb_data.get("area", ""),
+                "begin_date": mb_data.get("begin_date", ""),
+                "end_date": mb_data.get("end_date", ""),
+                "ended": mb_data.get("ended", False),
+                "disambiguation": mb_data.get("disambiguation", ""),
+            }
+            genres = mb_data.get("genres", [])
+            tags = mb_data.get("tags", [])
+            mb_rating = mb_data.get("rating")
+            mb_rating_count = mb_data.get("rating_count", 0)
+            annotation = mb_data.get("annotation", "")
+        except Exception as e:
+            logger.debug("Failed to fetch artist metadata from MusicBrainz: %s", e)
+
+    # Build genre chips (prefer genres, fall back to tags)
+    genre_chips = []
+    if genres:
+        genre_chips = [g["name"].title() for g in genres[:6]]
+    elif tags:
+        # Use top tags as genre chips if no official genres
+        genre_chips = [t["name"].title() for t in tags[:6]]
 
     context = {
         "user": request.user,
@@ -1273,7 +1304,11 @@ def artist_detail(request, artist_id):
         "hero_image": hero_image,
         "history_stats": history_stats,
         "current_instance": current_instance,
-        "artist_details": artist_details,
+        "artist_metadata": artist_metadata,
+        "genre_chips": genre_chips,
+        "annotation": annotation,
+        "mb_rating": mb_rating,
+        "mb_rating_count": mb_rating_count,
     }
     return render(request, "app/music_artist_detail.html", context)
 
@@ -1285,36 +1320,49 @@ def album_detail(request, album_id):
     from django.shortcuts import get_object_or_404
     from app.models import Track
     from app.providers import musicbrainz
+    from app.services.music import ensure_album_has_release_id, album_has_musicbrainz_id
 
     album = get_object_or_404(Album.objects.select_related("artist"), id=album_id)
 
+    # Ensure album has a release_id (fetch from release_group if needed)
+    # This fixes albums that came from discography sync with only release_group_id
+    if not album.musicbrainz_release_id and album.musicbrainz_release_group_id:
+        ensure_album_has_release_id(album)
+
     # Populate tracks from MusicBrainz if not done yet (like Season populates episodes)
-    if not album.tracks_populated and album.musicbrainz_release_id:
+    # Now we accept albums that have EITHER release_id OR release_group_id
+    has_mb_identity = album_has_musicbrainz_id(album)
+    if not album.tracks_populated and has_mb_identity:
         try:
-            release_data = musicbrainz.get_release(album.musicbrainz_release_id)
-            tracks_data = release_data.get("tracks", [])
-            
-            for track_data in tracks_data:
-                Track.objects.update_or_create(
-                    album=album,
-                    disc_number=track_data.get("disc_number", 1),
-                    track_number=track_data.get("track_number"),
-                    defaults={
-                        "title": track_data.get("title", "Unknown Track"),
-                        "musicbrainz_recording_id": track_data.get("recording_id"),
-                        "duration_ms": track_data.get("duration_ms"),
-                    },
-                )
-            
-            # Also update album image if missing
-            if not album.image or album.image == settings.IMG_NONE:
-                new_image = release_data.get("image", "")
-                if new_image and new_image != settings.IMG_NONE:
-                    album.image = new_image
-            
-            album.tracks_populated = True
-            album.save(update_fields=["tracks_populated", "image"])
-            logger.info("Populated %d tracks for album %s", len(tracks_data), album.title)
+            # If we still don't have release_id after ensure_album_has_release_id,
+            # we can't fetch tracks (need a specific release for track listing)
+            if album.musicbrainz_release_id:
+                release_data = musicbrainz.get_release(album.musicbrainz_release_id)
+                tracks_data = release_data.get("tracks", [])
+                
+                for track_data in tracks_data:
+                    Track.objects.update_or_create(
+                        album=album,
+                        disc_number=track_data.get("disc_number", 1),
+                        track_number=track_data.get("track_number"),
+                        defaults={
+                            "title": track_data.get("title", "Unknown Track"),
+                            "musicbrainz_recording_id": track_data.get("recording_id"),
+                            "duration_ms": track_data.get("duration_ms"),
+                        },
+                    )
+                
+                # Also update album image if missing
+                if not album.image or album.image == settings.IMG_NONE:
+                    new_image = release_data.get("image", "")
+                    if new_image and new_image != settings.IMG_NONE:
+                        album.image = new_image
+                
+                album.tracks_populated = True
+                album.save(update_fields=["tracks_populated", "image"])
+                logger.info("Populated %d tracks for album %s", len(tracks_data), album.title)
+            else:
+                logger.warning("Album %s has release_group but no release found for tracks", album.title)
         except Exception as e:
             logger.warning("Failed to populate tracks for album %s: %s", album.title, e)
 
@@ -1383,8 +1431,13 @@ def album_detail(request, album_id):
         "tracks": len(tracks_with_data),
         "runtime": total_runtime,
     }
+    # Show either release_id or release_group_id for the source link
     if album.musicbrainz_release_id:
         album_details["musicbrainz_id"] = album.musicbrainz_release_id
+        album_details["musicbrainz_url"] = f"https://musicbrainz.org/release/{album.musicbrainz_release_id}"
+    elif album.musicbrainz_release_group_id:
+        album_details["musicbrainz_id"] = album.musicbrainz_release_group_id
+        album_details["musicbrainz_url"] = f"https://musicbrainz.org/release-group/{album.musicbrainz_release_group_id}"
 
     context = {
         "user": request.user,
@@ -1396,6 +1449,7 @@ def album_detail(request, album_id):
         "current_instance": current_instance,
         "album_details": album_details,
         "total_runtime": total_runtime,
+        "has_mb_identity": has_mb_identity,  # For template to show correct message
     }
     return render(request, "app/music_album_detail.html", context)
 
@@ -1412,6 +1466,59 @@ def sync_artist_discography_view(request, artist_id):
     count = sync_artist_discography(artist, force=True)
     
     messages.success(request, f"Synced {count} albums for {artist.name}")
+    
+    # Return HX-Refresh header to reload the page
+    response = HttpResponse(status=204)
+    response["HX-Refresh"] = "true"
+    return response
+
+
+@require_POST
+def sync_album_metadata_view(request, album_id):
+    """Manually trigger metadata sync for an album."""
+    from django.shortcuts import get_object_or_404
+    from app.models import Track
+    from app.providers import musicbrainz
+    from app.services.music import ensure_album_has_release_id
+
+    album = get_object_or_404(Album, id=album_id)
+    
+    # Ensure we have a release_id
+    ensure_album_has_release_id(album)
+    
+    if album.musicbrainz_release_id:
+        try:
+            # Fetch fresh data from MusicBrainz
+            release_data = musicbrainz.get_release(album.musicbrainz_release_id)
+            
+            # Update album image
+            new_image = release_data.get("image", "")
+            if new_image and new_image != settings.IMG_NONE:
+                album.image = new_image
+            
+            # Update tracks
+            tracks_data = release_data.get("tracks", [])
+            for track_data in tracks_data:
+                Track.objects.update_or_create(
+                    album=album,
+                    disc_number=track_data.get("disc_number", 1),
+                    track_number=track_data.get("track_number"),
+                    defaults={
+                        "title": track_data.get("title", "Unknown Track"),
+                        "musicbrainz_recording_id": track_data.get("recording_id"),
+                        "duration_ms": track_data.get("duration_ms"),
+                    },
+                )
+            
+            album.tracks_populated = True
+            album.save(update_fields=["tracks_populated", "image"])
+            
+            messages.success(request, f"Synced {len(tracks_data)} tracks for {album.title}")
+        except Exception as e:
+            logger.warning("Failed to sync album %s: %s", album.title, e)
+            messages.error(request, f"Failed to sync album: {e}")
+    else:
+        messages.warning(request, "Could not find a MusicBrainz release for this album")
     
     # Return HX-Refresh header to reload the page
     response = HttpResponse(status=204)

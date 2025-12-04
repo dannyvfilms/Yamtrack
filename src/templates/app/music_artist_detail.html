@@ -27,20 +27,50 @@
     <div class="md:w-3/4">
       <h1 class="text-3xl font-bold mb-4 text-center md:text-start">{{ artist.name }}</h1>
 
-      {# Type badge (like genre pills on TV) #}
+      {# Genre chips (like TV genres) #}
       <div class="flex flex-wrap gap-2 mb-4 justify-center md:justify-start">
-        <span class="px-3 py-1 bg-rose-600 text-white rounded-full text-sm">Artist</span>
+        {% if genre_chips %}
+          {% for genre in genre_chips %}
+            <span class="px-3 py-1 bg-violet-600 text-white rounded-full text-sm">{{ genre }}</span>
+          {% endfor %}
+        {% else %}
+          <span class="px-3 py-1 bg-rose-600 text-white rounded-full text-sm">Artist</span>
+        {% endif %}
       </div>
 
-      {# Sort name if different #}
-      {% if artist.sort_name and artist.sort_name != artist.name %}
-        <p class="text-gray-300 mb-6 text-center md:text-start">
-          Also known as: {{ artist.sort_name }}
-        </p>
+      {# Bio/Annotation (like TV synopsis) #}
+      {% if annotation %}
+        <div class="mb-6">
+          <div x-data="{ isExpanded: false, isClamped: false, checkClamp() { const element = this.$refs.bioText; this.isClamped = element.scrollHeight > element.clientHeight; } }"
+               x-init="$nextTick(() => checkClamp())">
+            <p x-ref="bioText"
+               :class="isExpanded ? '' : 'line-clamp-4'"
+               class="text-gray-300 text-pretty">{{ annotation|linebreaksbr }}</p>
+            <button x-show="isClamped"
+                    @click="isExpanded = !isExpanded"
+                    class="text-indigo-400 hover:text-indigo-300 text-sm mt-2 focus:outline-none transition-colors cursor-pointer">
+              <span x-text="isExpanded ? 'Show less' : 'Read more'"></span>
+            </button>
+          </div>
+        </div>
+      {% elif artist_metadata.disambiguation %}
+        <p class="text-gray-400 mb-6 text-center md:text-start">{{ artist_metadata.disambiguation }}</p>
       {% endif %}
 
-      {# Stats cards (like TMDB/YOUR SCORE on TV) #}
+      {# Score cards (like TMDB/YOUR SCORE on TV) #}
       <div class="flex flex-wrap gap-4 justify-center md:justify-start">
+        {% if mb_rating %}
+          <div class="bg-[#2a2f35] p-3 rounded-lg w-[120px]">
+            <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">MB SCORE</h3>
+            <div class="flex items-center justify-center">
+              {% include "app/icons/star.svg" with classes="w-5 h-5 mr-1.5 text-yellow-400 fill-yellow-400" %}
+              <span class="text-lg font-bold text-white">{{ mb_rating|floatformat:1 }}</span><span class="text-gray-400 ml-0.5 text-sm">/5</span>
+            </div>
+            {% if mb_rating_count %}
+              <p class="text-xs text-gray-400 mt-0.5 text-center">{{ mb_rating_count }} vote{{ mb_rating_count|pluralize }}</p>
+            {% endif %}
+          </div>
+        {% endif %}
         <div class="bg-[#2a2f35] p-3 rounded-lg w-[120px]">
           <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">ALBUMS</h3>
           <p class="text-lg font-bold text-white text-center">{{ total_albums }}</p>
@@ -86,17 +116,24 @@
         </div>
       {% endif %}
 
-      {# Actions #}
+      {# Actions - matching TV Show layout #}
       <h2 class="text-xl font-bold mb-4">Actions</h2>
       <div class="bg-[#2a2f35] p-4 md:p-2 lg:p-4 rounded-lg flex items-center justify-center gap-x-5 md:gap-x-2 lg:gap-x-5 mb-6">
-        {# Search for artist #}
+        {# Search for tracks (emerald like Custom Lists) #}
         <a href="{% url 'search' %}?q={{ artist.name|urlencode }}&media_type=music"
            class="px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition duration-300 cursor-pointer"
            title="Search for tracks by this artist">
           {% include "app/icons/magnifying-glass.svg" with classes="w-4 h-4" %}
         </a>
 
-        {# Sync discography #}
+        {# View history - link to history page filtered by artist #}
+        <a href="{% url 'history' %}?artist={{ artist.id }}"
+           class="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 transition duration-300 cursor-pointer"
+           title="View your listening history for this artist">
+          {% include "app/icons/history.svg" with classes="w-4 h-4" %}
+        </a>
+
+        {# Sync discography (fuchsia like Sync Metadata) #}
         <button type="button"
                 title="Sync discography from MusicBrainz"
                 class="px-4 py-2 bg-fuchsia-600 text-white rounded-md hover:bg-fuchsia-700 transition duration-300 cursor-pointer disabled:opacity-75"
@@ -115,10 +152,33 @@
       {# Details #}
       <h2 class="text-xl font-bold mb-4">Details</h2>
       <div class="bg-[#2a2f35] p-4 rounded-lg text-center md:text-start">
-        <div class="mb-4">
-          <h3 class="text-sm font-semibold text-gray-400">TYPE</h3>
-          <p class="text-gray-200">Artist</p>
-        </div>
+        {% if artist_metadata.type %}
+          <div class="mb-4">
+            <h3 class="text-sm font-semibold text-gray-400">TYPE</h3>
+            <p class="text-gray-200">{{ artist_metadata.type }}</p>
+          </div>
+        {% endif %}
+        
+        {% if artist_metadata.area or artist_metadata.country %}
+          <div class="mb-4">
+            <h3 class="text-sm font-semibold text-gray-400">ORIGIN</h3>
+            <p class="text-gray-200">{{ artist_metadata.area|default:artist_metadata.country }}</p>
+          </div>
+        {% endif %}
+        
+        {% if artist_metadata.begin_date %}
+          <div class="mb-4">
+            <h3 class="text-sm font-semibold text-gray-400">{% if artist_metadata.type == 'Group' %}FORMED{% else %}BORN{% endif %}</h3>
+            <p class="text-gray-200">{{ artist_metadata.begin_date }}</p>
+          </div>
+        {% endif %}
+        
+        {% if artist_metadata.end_date %}
+          <div class="mb-4">
+            <h3 class="text-sm font-semibold text-gray-400">{% if artist_metadata.type == 'Group' %}DISBANDED{% else %}DIED{% endif %}</h3>
+            <p class="text-gray-200">{{ artist_metadata.end_date }}</p>
+          </div>
+        {% endif %}
         
         <div class="mb-4">
           <h3 class="text-sm font-semibold text-gray-400">ALBUMS</h3>
