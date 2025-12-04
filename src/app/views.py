@@ -1124,6 +1124,7 @@ def history(request):
 def create_artist_from_search(request, musicbrainz_artist_id):
     """Create an Artist from MusicBrainz search and redirect to artist page."""
     from app.providers import musicbrainz
+    from app.services.music import sync_artist_discography
 
     # Check if artist already exists
     artist = Artist.objects.filter(musicbrainz_id=musicbrainz_artist_id).first()
@@ -1138,6 +1139,9 @@ def create_artist_from_search(request, musicbrainz_artist_id):
             musicbrainz_id=musicbrainz_artist_id,
         )
         logger.info("Created artist %s from MusicBrainz", artist.name)
+        
+        # Sync discography immediately after creating artist
+        sync_artist_discography(artist)
 
     return redirect("artist_detail", artist_id=artist.id)
 
@@ -1210,45 +1214,13 @@ def artist_detail(request, artist_id):
     """Return the detail page for a music artist."""
     from django.db.models import Count
     from django.shortcuts import get_object_or_404
-    from app.providers import musicbrainz
+    from app.services.music import needs_discography_sync, sync_artist_discography
 
     artist = get_object_or_404(Artist, id=artist_id)
 
-    # Populate albums from MusicBrainz if not done yet (like TV populates seasons)
-    if not artist.albums_populated and artist.musicbrainz_id:
-        try:
-            releases = musicbrainz.get_artist_releases(artist.musicbrainz_id)
-            for release_data in releases:
-                release_id = release_data.get("release_id")
-                if release_id:
-                    # Parse release date
-                    release_date = None
-                    date_str = release_data.get("release_date", "")
-                    if date_str:
-                        try:
-                            if len(date_str) >= 10:
-                                release_date = parse_date(date_str[:10])
-                            elif len(date_str) == 7:
-                                release_date = parse_date(date_str + "-01")
-                            elif len(date_str) == 4:
-                                release_date = parse_date(date_str + "-01-01")
-                        except (ValueError, TypeError):
-                            pass
-                    
-                    Album.objects.update_or_create(
-                        musicbrainz_release_id=release_id,
-                        defaults={
-                            "title": release_data.get("title", "Unknown Album"),
-                            "artist": artist,
-                            "release_date": release_date,
-                            "image": release_data.get("image", ""),
-                        },
-                    )
-            artist.albums_populated = True
-            artist.save(update_fields=["albums_populated"])
-            logger.info("Populated %d albums for artist %s", len(releases), artist.name)
-        except Exception as e:
-            logger.warning("Failed to populate albums for artist %s: %s", artist.name, e)
+    # Sync discography from MusicBrainz if needed (like TV populates seasons from TMDB)
+    if needs_discography_sync(artist):
+        sync_artist_discography(artist)
 
     # Get ALL albums for this artist (metadata-driven, like Seasons)
     all_albums = Album.objects.filter(artist=artist).annotate(
@@ -1267,7 +1239,7 @@ def artist_detail(request, artist_id):
     context = {
         "user": request.user,
         "artist": artist,
-        "albums": all_albums,  # All albums, not just "in library"
+        "albums": all_albums,  # All albums from discography, not just "in library"
         "total_tracks": total_tracks,
     }
     return render(request, "app/music_artist_detail.html", context)

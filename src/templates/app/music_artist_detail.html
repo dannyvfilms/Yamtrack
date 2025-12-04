@@ -100,9 +100,14 @@
               <h3 class="font-medium text-sm text-white group-hover:text-rose-400 transition-colors line-clamp-2 mb-1">
                 {{ album.title }}
               </h3>
-              {% if album.release_date %}
-                <p class="text-xs text-gray-400">{{ album.release_date|date:"Y" }}</p>
-              {% endif %}
+              <div class="flex items-center gap-2 flex-wrap">
+                {% if album.release_date %}
+                  <span class="text-xs text-gray-400">{{ album.release_date|date:"Y" }}</span>
+                {% endif %}
+                {% if album.release_type %}
+                  <span class="text-xs text-gray-500">• {{ album.release_type }}</span>
+                {% endif %}
+              </div>
             </div>
           </a>
         {% endfor %}

@@ -480,56 +480,98 @@ def get_artist(artist_id):
     return result
 
 
-def get_artist_releases(artist_id, limit=100):
-    """Get all releases (albums) for an artist with cover art.
+def get_artist_discography(artist_id):
+    """Get the full discography for an artist from MusicBrainz.
     
-    This fetches releases directly associated with the artist,
-    which gives us actual release IDs for cover art lookup.
+    This fetches release-groups (which represent unique album releases)
+    and finds a representative release for each to get cover art.
+    
+    Returns a normalized list of albums with:
+    - title, release_group_id, release_id, release_date, image, release_type
     """
-    cache_key = f"musicbrainz_artist_releases_{artist_id}"
+    cache_key = f"musicbrainz_artist_discography_{artist_id}"
     cached = cache.get(cache_key)
     if cached:
         return cached
 
+    # Fetch ALL release-groups for the artist
+    # Don't filter by type to get everything, we'll sort later
     params = {
         "artist": artist_id,
-        "type": "album|ep",  # Focus on albums and EPs
-        "status": "official",
-        "limit": limit,
+        "limit": 100,
     }
 
-    response = _mb_request("release", params)
+    response = _mb_request("release-group", params)
+    release_groups = response.get("release-groups", [])
     
-    releases = response.get("releases", [])
+    # Filter to sensible types (Album, EP, Compilation)
+    # Skip Singles unless you want them
+    allowed_types = {"Album", "EP", "Compilation"}
+    release_groups = [
+        rg for rg in release_groups 
+        if rg.get("primary-type") in allowed_types
+    ]
+
+    albums = []
+    for rg in release_groups:
+        rg_id = rg.get("id")
+        title = rg.get("title", "")
+        primary_type = rg.get("primary-type", "")
+        secondary_types = rg.get("secondary-types", [])
+        first_release_date = rg.get("first-release-date", "")
+
+        # Build a type string (e.g., "Album", "EP", "Album + Live")
+        release_type = primary_type
+        if secondary_types:
+            release_type = f"{primary_type} + {', '.join(secondary_types)}"
+
+        albums.append({
+            "release_group_id": rg_id,
+            "title": title,
+            "release_date": first_release_date,
+            "release_type": release_type,
+            "primary_type": primary_type,
+            "secondary_types": secondary_types,
+            "release_id": None,  # Will be filled if we fetch releases
+            "image": settings.IMG_NONE,  # Will be filled later
+        })
+
+    # Now fetch actual releases to get release IDs for cover art
+    # We'll batch this to avoid too many API calls
+    # Get releases for each release-group to find cover art
+    release_params = {
+        "artist": artist_id,
+        "status": "official",
+        "limit": 100,
+    }
     
-    # De-duplicate by release-group (keep first/best release per group)
-    seen_groups = {}
+    release_response = _mb_request("release", release_params)
+    releases = release_response.get("releases", [])
+    
+    # Map release-group-id to best release (prefer ones with cover art)
+    rg_to_release = {}
     for release in releases:
         rg_id = release.get("release-group", {}).get("id")
-        if rg_id and rg_id not in seen_groups:
-            seen_groups[rg_id] = release
-    
-    albums = []
-    for release in seen_groups.values():
-        release_id = release.get("id")
-        title = release.get("title", "")
-        date = release.get("date", "")
-        
-        # Get cover art
-        image = _get_cover_art(release_id)
-        
-        albums.append({
-            "release_id": release_id,
-            "release_group_id": release.get("release-group", {}).get("id"),
-            "title": title,
-            "release_date": date,
-            "image": image,
-            "type": release.get("release-group", {}).get("primary-type", ""),
-        })
-    
-    # Sort by date (newest first)
+        if rg_id:
+            # Keep first release per release-group (API returns most relevant first)
+            if rg_id not in rg_to_release:
+                rg_to_release[rg_id] = release
+
+    # Update albums with release IDs and fetch cover art
+    for album in albums:
+        rg_id = album["release_group_id"]
+        if rg_id in rg_to_release:
+            release = rg_to_release[rg_id]
+            release_id = release.get("id")
+            album["release_id"] = release_id
+            
+            # Try to get cover art
+            if release_id:
+                album["image"] = _get_cover_art(release_id, rg_id)
+
+    # Sort by date (newest first), with albums without dates at the end
     albums.sort(key=lambda x: x.get("release_date", "") or "0000", reverse=True)
-    
+
     cache.set(cache_key, albums, 60 * 60 * 24 * 7)  # Cache for 7 days
     return albums
 

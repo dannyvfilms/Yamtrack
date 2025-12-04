@@ -2018,9 +2018,10 @@ class Artist(models.Model):
         help_text="MusicBrainz Artist ID (UUID)",
     )
     image = models.URLField(blank=True, default="")
-    albums_populated = models.BooleanField(
-        default=False,
-        help_text="Whether albums have been fetched from MusicBrainz",
+    discography_synced_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the discography was last synced from MusicBrainz",
     )
 
     class Meta:
@@ -2046,10 +2047,15 @@ class Album(models.Model):
     title = models.CharField(max_length=255)
     musicbrainz_release_id = models.CharField(
         max_length=36,
-        unique=True,
         null=True,
         blank=True,
-        help_text="MusicBrainz Release ID (UUID)",
+        help_text="MusicBrainz Release ID (UUID) - one specific release",
+    )
+    musicbrainz_release_group_id = models.CharField(
+        max_length=36,
+        null=True,
+        blank=True,
+        help_text="MusicBrainz Release Group ID (UUID) - groups multiple releases",
     )
     artist = models.ForeignKey(
         Artist,
@@ -2060,6 +2066,12 @@ class Album(models.Model):
     )
     release_date = models.DateField(null=True, blank=True)
     image = models.URLField(blank=True, default="")
+    release_type = models.CharField(
+        max_length=50,
+        blank=True,
+        default="",
+        help_text="Album type: Album, EP, Single, Compilation, etc.",
+    )
     tracks_populated = models.BooleanField(
         default=False,
         help_text="Whether tracks have been fetched from MusicBrainz",
@@ -2068,12 +2080,12 @@ class Album(models.Model):
     class Meta:
         """Meta options for the model."""
 
-        ordering = ["title"]
+        ordering = ["-release_date", "title"]
         constraints = [
             models.UniqueConstraint(
-                fields=["musicbrainz_release_id"],
-                condition=models.Q(musicbrainz_release_id__isnull=False),
-                name="unique_album_musicbrainz_release_id",
+                fields=["artist", "musicbrainz_release_group_id"],
+                condition=models.Q(musicbrainz_release_group_id__isnull=False),
+                name="unique_album_per_artist_release_group",
             ),
         ]
 
