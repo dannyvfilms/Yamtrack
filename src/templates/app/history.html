@@ -142,7 +142,7 @@
                 <div class="p-3 space-y-1.5 truncate">
                   <div class="flex items-center gap-2 text-xs text-gray-400">
                     <div class="flex items-center gap-1">
-                      {% if (entry.media_type == MediaTypes.GAME.value or entry.media_type == MediaTypes.BOARDGAME.value) and entry.progress_display %}
+                      {% if entry.progress_display and entry.media_type == MediaTypes.GAME.value or entry.progress_display and entry.media_type == MediaTypes.BOARDGAME.value %}
                         <span class="font-semibold text-indigo-400">{{ entry.progress_display }}</span>
                       {% elif entry.media_type == MediaTypes.MOVIE.value %}
                         <span class="font-semibold text-indigo-400">
