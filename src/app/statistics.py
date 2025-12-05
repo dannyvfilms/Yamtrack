@@ -1400,6 +1400,152 @@ def get_movie_consumption_stats(user_media, start_date, end_date, minutes_per_ty
     }
 
 
+def _collect_music_play_data(music_queryset, start_date, end_date):
+    """Collect music play datetimes and per-play runtime from history records.
+    
+    Returns:
+        tuple: (list of datetimes, list of (music_entry, datetime, runtime_minutes) tuples)
+    """
+    datetimes = []
+    play_details = []  # (music_entry, datetime, runtime_minutes)
+    
+    if music_queryset is None:
+        return datetimes, play_details
+    
+    for music in music_queryset:
+        runtime_minutes = _get_music_runtime_minutes(music)
+        
+        for history_record in music.history.all():
+            history_end_date = getattr(history_record, "end_date", None)
+            if not history_end_date:
+                continue
+            
+            # Check if within date range
+            if start_date and end_date:
+                if not (start_date <= history_end_date <= end_date):
+                    continue
+            
+            localized_date = _localize_datetime(history_end_date)
+            datetimes.append(localized_date)
+            play_details.append((music, localized_date, runtime_minutes))
+    
+    return datetimes, play_details
+
+
+def _compute_music_top_lists(play_details, limit=5):
+    """Compute top artists, albums, and tracks by total listening time.
+    
+    Args:
+        play_details: List of (music_entry, datetime, runtime_minutes) tuples
+        limit: Number of items to return per list
+        
+    Returns:
+        dict with top_artists, top_albums, top_tracks lists
+    """
+    from app.helpers import minutes_to_hhmm
+    
+    # Aggregate by artist, album, and track
+    artist_stats = defaultdict(lambda: {"minutes": 0, "plays": 0, "name": "", "image": "", "id": None})
+    album_stats = defaultdict(lambda: {"minutes": 0, "plays": 0, "title": "", "artist": "", "image": "", "id": None})
+    track_stats = defaultdict(lambda: {"minutes": 0, "plays": 0, "title": "", "artist": "", "album": "", "id": None})
+    
+    for music, dt, runtime in play_details:
+        # Track stats (use music.id as key since each Music is a unique track entry)
+        track_key = music.id
+        track_stats[track_key]["minutes"] += runtime
+        track_stats[track_key]["plays"] += 1
+        track_stats[track_key]["title"] = music.item.title if music.item else "Unknown"
+        track_stats[track_key]["id"] = music.id
+        
+        # Get artist and album info
+        artist = music.artist
+        album = music.album
+        
+        if artist:
+            track_stats[track_key]["artist"] = artist.name
+            artist_stats[artist.id]["minutes"] += runtime
+            artist_stats[artist.id]["plays"] += 1
+            artist_stats[artist.id]["name"] = artist.name
+            artist_stats[artist.id]["image"] = artist.image or ""
+            artist_stats[artist.id]["id"] = artist.id
+        
+        if album:
+            track_stats[track_key]["album"] = album.title
+            album_stats[album.id]["minutes"] += runtime
+            album_stats[album.id]["plays"] += 1
+            album_stats[album.id]["title"] = album.title
+            album_stats[album.id]["artist"] = artist.name if artist else "Unknown"
+            album_stats[album.id]["image"] = album.image or ""
+            album_stats[album.id]["id"] = album.id
+    
+    # Sort by minutes and take top N
+    top_artists = sorted(artist_stats.values(), key=lambda x: x["minutes"], reverse=True)[:limit]
+    top_albums = sorted(album_stats.values(), key=lambda x: x["minutes"], reverse=True)[:limit]
+    top_tracks = sorted(track_stats.values(), key=lambda x: x["minutes"], reverse=True)[:limit]
+    
+    # Format durations
+    for item in top_artists + top_albums + top_tracks:
+        item["formatted_duration"] = minutes_to_hhmm(item["minutes"])
+    
+    return {
+        "top_artists": top_artists,
+        "top_albums": top_albums,
+        "top_tracks": top_tracks,
+    }
+
+
+def get_music_consumption_stats(user_media, start_date, end_date, minutes_per_type=None):
+    """Return aggregate metrics and chart data for music activity.
+    
+    This is similar to TV/Movie consumption stats but uses minutes instead of hours
+    and includes top artists, albums, and tracks.
+    """
+    music_queryset = (user_media or {}).get(MediaTypes.MUSIC.value)
+    
+    # Prefetch related data for efficiency
+    if music_queryset is not None:
+        music_queryset = music_queryset.select_related("item", "artist", "album").prefetch_related("history")
+    
+    music_datetimes, play_details = _collect_music_play_data(music_queryset, start_date, end_date)
+    
+    if minutes_per_type is None:
+        minutes_per_type = calculate_minutes_per_media_type(user_media or {}, start_date, end_date)
+    
+    total_minutes = minutes_per_type.get(MediaTypes.MUSIC.value, 0)
+    total_plays = len(music_datetimes)
+    
+    # For music, we use minutes breakdown instead of hours
+    minutes_breakdown = _compute_metric_breakdown(
+        total_minutes,
+        music_datetimes,
+        start_date,
+        end_date,
+    )
+    plays_breakdown = _compute_metric_breakdown(
+        total_plays,
+        music_datetimes,
+        start_date,
+        end_date,
+    )
+    
+    color = config.get_stats_color(MediaTypes.MUSIC.value)
+    chart_label = "Music Plays"
+    charts = _build_media_charts(music_datetimes, color, chart_label)
+    
+    # Compute top lists
+    top_lists = _compute_music_top_lists(play_details, limit=5)
+    
+    return {
+        "minutes": minutes_breakdown,
+        "plays": plays_breakdown,
+        "charts": charts,
+        "has_data": total_plays > 0,
+        "top_artists": top_lists["top_artists"],
+        "top_albums": top_lists["top_albums"],
+        "top_tracks": top_lists["top_tracks"],
+    }
+
+
 def get_daily_hours_by_media_type(user_media, start_date, end_date):
     """Build Chart.js-friendly stacked bar data where X axis is dates (inclusive)
     between start_date and end_date and Y axis is hours per media type per day.

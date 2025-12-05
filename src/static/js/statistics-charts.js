@@ -734,6 +734,24 @@ document.addEventListener("DOMContentLoaded", function () {
     "movie_plays_by_time"
   );
 
+  // Music consumption charts
+  initializeSingleSeriesBarChart(
+    "musicPlaysByYearChart",
+    "music_plays_by_year"
+  );
+  initializeSingleSeriesBarChart(
+    "musicPlaysByMonthChart",
+    "music_plays_by_month"
+  );
+  initializeSingleSeriesBarChart(
+    "musicPlaysByWeekdayChart",
+    "music_plays_by_weekday"
+  );
+  initializeSingleSeriesBarChart(
+    "musicPlaysByTimeChart",
+    "music_plays_by_time"
+  );
+
   // Initial sizing and on resize for the copied score chart wrapper
   matchScoreCopyHeight();
   window.addEventListener("resize", function () {

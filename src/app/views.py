@@ -1960,6 +1960,12 @@ def statistics(request):
         end_date,
         minutes_per_media_type,
     )
+    music_consumption = stats.get_music_consumption_stats(
+        user_media,
+        start_date,
+        end_date,
+        minutes_per_media_type,
+    )
 
     # Daily hours per media type (used by the Activity History-attached chart)
     daily_hours_by_media_type = stats.get_daily_hours_by_media_type(
@@ -1988,6 +1994,7 @@ def statistics(request):
         "hours_per_media_type": hours_per_media_type,
         "tv_consumption": tv_consumption,
         "movie_consumption": movie_consumption,
+        "music_consumption": music_consumption,
         "daily_hours_by_media_type": daily_hours_by_media_type,
         "show_year_charts": show_year_charts,
     }

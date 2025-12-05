@@ -846,6 +846,250 @@
         </div>
       </section>
 
+      <!-- Music Consumption Section -->
+      {% if user.music_enabled and music_consumption.has_data %}
+      <section class="bg-[#2a2f35] rounded-lg p-6 mobile-tight-section stat-scroll-safe mb-4 sm:mb-8 space-y-4 sm:space-y-6">
+        <div class="flex flex-col space-y-1">
+          <span class="text-sm uppercase tracking-widest text-gray-400">Music</span>
+          <h2 class="text-2xl font-semibold text-white">Activity Overview</h2>
+          <span class="text-sm text-gray-500" x-text="selectedRange"></span>
+        </div>
+
+        <div class="space-y-4 sm:space-y-6">
+          <!-- Minutes Listened row - 3 or 4 columns based on show_year_charts -->
+          <div class="grid grid-cols-3 {% if show_year_charts %}lg:grid-cols-4{% endif %} gap-3 sm:gap-4">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Minutes Listened</p>
+              {% if music_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ music_consumption.minutes.total|floatformat:0 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Total</p>
+            </div>
+            {% if show_year_charts %}
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Year</p>
+              {% if music_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ music_consumption.minutes.per_year|floatformat:1 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Minutes</p>
+            </div>
+            {% endif %}
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Month</p>
+              {% if music_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ music_consumption.minutes.per_month|floatformat:1 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Minutes</p>
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Day</p>
+              {% if music_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ music_consumption.minutes.per_day|floatformat:2 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Minutes</p>
+            </div>
+          </div>
+
+          <!-- Music Plays row - 3 or 4 columns based on show_year_charts -->
+          <div class="grid grid-cols-3 {% if show_year_charts %}lg:grid-cols-4{% endif %} gap-3 sm:gap-4">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Music Plays</p>
+              {% if music_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ music_consumption.plays.total|floatformat:0 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Total</p>
+            </div>
+            {% if show_year_charts %}
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Year</p>
+              {% if music_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ music_consumption.plays.per_year|floatformat:1 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Plays</p>
+            </div>
+            {% endif %}
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Month</p>
+              {% if music_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ music_consumption.plays.per_month|floatformat:1 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Plays</p>
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Day</p>
+              {% if music_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ music_consumption.plays.per_day|floatformat:2 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Plays</p>
+            </div>
+          </div>
+
+          {% if show_year_charts %}
+          <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+            <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Music Plays by Year</h3>
+            {% if music_consumption.charts.by_year.labels %}
+              <div class="h-64">
+                <canvas id="musicPlaysByYearChart"></canvas>
+              </div>
+            {% else %}
+              <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+                <p class="text-sm">No music plays available for this range.</p>
+              </div>
+            {% endif %}
+          </div>
+          {% endif %}
+
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Music Plays by Month</h3>
+              {% if music_consumption.charts.by_month.labels %}
+                <div class="h-64">
+                  <canvas id="musicPlaysByMonthChart"></canvas>
+                </div>
+              {% else %}
+                <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+                  <p class="text-sm">No monthly music plays recorded.</p>
+                </div>
+              {% endif %}
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Music Plays by Day of Week</h3>
+              {% if music_consumption.charts.by_weekday.labels %}
+                <div class="h-64">
+                  <canvas id="musicPlaysByWeekdayChart"></canvas>
+                </div>
+              {% else %}
+                <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+                  <p class="text-sm">No weekday data available.</p>
+                </div>
+              {% endif %}
+            </div>
+          </div>
+
+          <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+            <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Music Plays by Time of Day</h3>
+            {% if music_consumption.charts.by_time_of_day.labels %}
+              <div class="h-64">
+                <canvas id="musicPlaysByTimeChart"></canvas>
+              </div>
+            {% else %}
+              <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+                <p class="text-sm">No time-of-day data available.</p>
+              </div>
+            {% endif %}
+          </div>
+
+          <!-- Top 5 Artists, Albums, Tracks -->
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4">
+            <!-- Top 5 Artists -->
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top 5 Artists</h3>
+              {% if music_consumption.top_artists %}
+                <div class="space-y-3">
+                  {% for artist in music_consumption.top_artists %}
+                  <div class="flex items-center space-x-3">
+                    <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
+                    {% if artist.image %}
+                    <img src="{{ artist.image }}" alt="{{ artist.name }}" class="w-10 h-10 rounded-full object-cover">
+                    {% else %}
+                    <div class="w-10 h-10 rounded-full bg-[#2a2f35] flex items-center justify-center">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
+                    </div>
+                    {% endif %}
+                    <div class="flex-1 min-w-0">
+                      <p class="text-sm font-medium text-white truncate">{{ artist.name }}</p>
+                      <p class="text-xs text-gray-500">{{ artist.formatted_duration }} · {{ artist.plays }} play{{ artist.plays|pluralize }}</p>
+                    </div>
+                  </div>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="flex flex-col items-center justify-center py-8 text-gray-400">
+                  <p class="text-sm">No artist data available.</p>
+                </div>
+              {% endif %}
+            </div>
+
+            <!-- Top 5 Albums -->
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top 5 Albums</h3>
+              {% if music_consumption.top_albums %}
+                <div class="space-y-3">
+                  {% for album in music_consumption.top_albums %}
+                  <div class="flex items-center space-x-3">
+                    <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
+                    {% if album.image %}
+                    <img src="{{ album.image }}" alt="{{ album.title }}" class="w-10 h-10 rounded object-cover">
+                    {% else %}
+                    <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+                      </svg>
+                    </div>
+                    {% endif %}
+                    <div class="flex-1 min-w-0">
+                      <p class="text-sm font-medium text-white truncate">{{ album.title }}</p>
+                      <p class="text-xs text-gray-500 truncate">{{ album.artist }} · {{ album.formatted_duration }}</p>
+                    </div>
+                  </div>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="flex flex-col items-center justify-center py-8 text-gray-400">
+                  <p class="text-sm">No album data available.</p>
+                </div>
+              {% endif %}
+            </div>
+
+            <!-- Top 5 Tracks -->
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top 5 Tracks</h3>
+              {% if music_consumption.top_tracks %}
+                <div class="space-y-3">
+                  {% for track in music_consumption.top_tracks %}
+                  <div class="flex items-center space-x-3">
+                    <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
+                    <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+                      </svg>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                      <p class="text-sm font-medium text-white truncate">{{ track.title }}</p>
+                      <p class="text-xs text-gray-500 truncate">{{ track.artist }} · {{ track.formatted_duration }}</p>
+                    </div>
+                  </div>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="flex flex-col items-center justify-center py-8 text-gray-400">
+                  <p class="text-sm">No track data available.</p>
+                </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </section>
+      {% endif %}
+
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <!-- Media Type Distribution Section -->
         <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 stat-scroll-safe">
@@ -1476,6 +1720,14 @@
   {{ movie_consumption.charts.by_month|json_script:"movie_plays_by_month" }}
   {{ movie_consumption.charts.by_weekday|json_script:"movie_plays_by_weekday" }}
   {{ movie_consumption.charts.by_time_of_day|json_script:"movie_plays_by_time" }}
+  {% if user.music_enabled and music_consumption.has_data %}
+    {% if show_year_charts %}
+      {{ music_consumption.charts.by_year|json_script:"music_plays_by_year" }}
+    {% endif %}
+    {{ music_consumption.charts.by_month|json_script:"music_plays_by_month" }}
+    {{ music_consumption.charts.by_weekday|json_script:"music_plays_by_weekday" }}
+    {{ music_consumption.charts.by_time_of_day|json_script:"music_plays_by_time" }}
+  {% endif %}
 
   <script src="{% static 'js/statistics-charts.js' %}{% get_static_file_mtime 'js/statistics-charts.js' %}"></script>
 {% endblock js %}
