@@ -15,7 +15,7 @@ from django.db.models import (
 from django.utils import timezone
 
 from app import config, providers
-from app.models import TV, BasicMedia, Episode, MediaManager, MediaTypes, Season, Status
+from app.models import TV, BasicMedia, Episode, MediaManager, MediaTypes, Music, Season, Status, Track
 from app.templatetags import app_tags
 
 logger = logging.getLogger(__name__)
@@ -816,6 +816,12 @@ def calculate_minutes_per_media_type(user_media, start_date, end_date):
                     total_minutes += media.progress
                 continue
 
+            if media_type == MediaTypes.MUSIC.value:
+                # Music: sum up runtime for each play (history record) within date range
+                music_minutes = _calculate_music_time(media, start_date, end_date, logger)
+                total_minutes += music_minutes
+                continue
+
             if not _is_media_in_date_range(media, start_date, end_date):
                 continue
 
@@ -1073,6 +1079,59 @@ def _calculate_movie_time(media, start_date, end_date, normalized_type, logger):
         total_time_minutes = _get_media_runtime_from_cache(media, logger, "(all time)")
     
     return total_time_minutes
+
+
+def _calculate_music_time(media, start_date, end_date, logger):
+    """Calculate total time for music plays using history records within date range.
+    
+    Each history record with an end_date represents a play, and we sum up the runtime
+    for each play that falls within the date range.
+    """
+    total_minutes = 0
+    
+    # Get the track runtime (in minutes)
+    runtime_minutes = _get_music_runtime_minutes(media)
+    if runtime_minutes <= 0:
+        return 0
+    
+    # Count plays within date range from history records
+    for history_record in media.history.all():
+        history_end_date = getattr(history_record, "end_date", None)
+        if not history_end_date:
+            continue
+        
+        # Check if within date range
+        if start_date and end_date:
+            if start_date <= history_end_date <= end_date:
+                total_minutes += runtime_minutes
+        else:
+            # All time - include all history records
+            total_minutes += runtime_minutes
+    
+    return total_minutes
+
+
+def _get_music_runtime_minutes(music_entry):
+    """Get runtime in minutes from a Music entry, checking track and item."""
+    # First try the linked Track's duration_ms
+    if music_entry.track and music_entry.track.duration_ms:
+        return music_entry.track.duration_ms // 60000  # ms to minutes
+    
+    # Fall back to item runtime_minutes
+    if music_entry.item and music_entry.item.runtime_minutes:
+        return music_entry.item.runtime_minutes
+    
+    # Try to look up from album tracklist by recording ID
+    if music_entry.album_id and music_entry.item and music_entry.item.media_id:
+        track = Track.objects.filter(
+            album_id=music_entry.album_id,
+            musicbrainz_recording_id=music_entry.item.media_id,
+            duration_ms__isnull=False,
+        ).first()
+        if track:
+            return track.duration_ms // 60000
+    
+    return 0
 
 
 def _localize_datetime(value):
@@ -1471,6 +1530,27 @@ def get_daily_hours_by_media_type(user_media, start_date, end_date):
                     if media_type in per_type_minutes and label in per_type_minutes[media_type]:
                         per_type_minutes[media_type][label] += minutes
 
+        # Music: assign runtime to each play date from history records
+        elif media_type == MediaTypes.MUSIC.value:
+            for media in media_list:
+                runtime_minutes = _get_music_runtime_minutes(media)
+                if runtime_minutes <= 0:
+                    continue
+                
+                # Each history record represents a play
+                for history_record in media.history.all():
+                    history_end_date = getattr(history_record, "end_date", None)
+                    if not history_end_date:
+                        continue
+                    
+                    play_date = _localize_datetime(history_end_date).date()
+                    if play_date < start_date_dt or play_date > end_date_dt:
+                        continue
+                    
+                    label = play_date.isoformat()
+                    if media_type in per_type_minutes and label in per_type_minutes[media_type]:
+                        per_type_minutes[media_type][label] += runtime_minutes
+
         # Manga, Games, Books, Comics: use progress field and distribute evenly across item's date span
         elif media_type in (
             MediaTypes.MANGA.value,
@@ -1538,7 +1618,7 @@ def get_top_played_media(user_media, start_date, end_date):
     top_played = {}
     
     # Define the media types we want to show
-    target_media_types = ["movie", "tv", "game", "boardgame", "anime"]
+    target_media_types = ["movie", "tv", "game", "boardgame", "anime", "music"]
     
     for media_type, media_list in user_media.items():
         # Normalize media type to match our target types
@@ -1631,6 +1711,21 @@ def get_top_played_media(user_media, start_date, end_date):
                         total_time_minutes += media.progress
                     elif not start_date and not end_date:
                         total_time_minutes += media.progress
+                elif normalized_type == "music":
+                    # Music: sum runtime for each play (history record) within date range
+                    total_time_minutes = _calculate_music_time(media, start_date, end_date, logger)
+                    # Count plays for display
+                    play_count = 0
+                    for history_record in media.history.all():
+                        history_end_date = getattr(history_record, "end_date", None)
+                        if not history_end_date:
+                            continue
+                        if start_date and end_date:
+                            if start_date <= history_end_date <= end_date:
+                                play_count += 1
+                        else:
+                            play_count += 1
+                    episode_count = play_count  # Reuse episode_count for plays
                 else:
                     # For movies and other media types, get runtime from metadata
                     total_time_minutes = _calculate_movie_time(media, start_date, end_date, normalized_type, logger)
