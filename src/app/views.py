@@ -1318,7 +1318,7 @@ def artist_detail(request, artist_id):
     tags = []
     mb_rating = None
     mb_rating_count = 0
-    annotation = ""
+    bio = ""
     
     if artist.musicbrainz_id:
         try:
@@ -1336,7 +1336,7 @@ def artist_detail(request, artist_id):
             tags = mb_data.get("tags", [])
             mb_rating = mb_data.get("rating")
             mb_rating_count = mb_data.get("rating_count", 0)
-            annotation = mb_data.get("annotation", "")
+            bio = mb_data.get("bio", "")  # Wikipedia extract
         except Exception as e:
             logger.debug("Failed to fetch artist metadata from MusicBrainz: %s", e)
 
@@ -1359,7 +1359,7 @@ def artist_detail(request, artist_id):
         "history_stats": history_stats,
         "artist_metadata": artist_metadata,
         "genre_chips": genre_chips,
-        "annotation": annotation,
+        "bio": bio,  # Wikipedia extract
         "mb_rating": mb_rating,
         "mb_rating_count": mb_rating_count,
     }

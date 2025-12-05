@@ -3,6 +3,7 @@
 import logging
 import time
 
+import requests
 from django.conf import settings
 from django.core.cache import cache
 
@@ -14,11 +15,51 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://musicbrainz.org/ws/2"
 COVER_ART_BASE = "https://coverartarchive.org"
+WIKIPEDIA_API_BASE = "https://en.wikipedia.org/api/rest_v1/page/summary"
 MIN_REQUEST_INTERVAL = 1.0  # MusicBrainz requires 1 req/sec for unauth requests
 _last_request_time = 0
 
 # User-Agent required by MusicBrainz API
 USER_AGENT = "Yamtrack/1.0 (https://github.com/FuzzyGrim/Yamtrack)"
+
+
+def get_wikipedia_extract(artist_name):
+    """Fetch the Wikipedia extract for an artist.
+    
+    Uses Wikipedia's REST API to get a summary/extract for the artist.
+    Returns None if not found or on error.
+    """
+    if not artist_name:
+        return None
+    
+    cache_key = f"wikipedia_extract_{artist_name.lower().replace(' ', '_')}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached if cached else None  # Handle empty string as "no extract"
+    
+    try:
+        # Wikipedia API uses underscores for spaces in titles
+        url = f"{WIKIPEDIA_API_BASE}/{artist_name.replace(' ', '_')}"
+        response = requests.get(
+            url,
+            headers={"User-Agent": USER_AGENT},
+            timeout=10,
+        )
+        
+        if response.ok:
+            data = response.json()
+            extract = data.get("extract", "")
+            # Cache for 7 days
+            cache.set(cache_key, extract or "", 60 * 60 * 24 * 7)
+            return extract if extract else None
+        else:
+            # Cache the miss to avoid repeated failed lookups
+            cache.set(cache_key, "", 60 * 60 * 24)  # Cache miss for 1 day
+            return None
+            
+    except Exception as e:
+        logger.debug("Failed to fetch Wikipedia extract for %s: %s", artist_name, e)
+        return None
 
 
 def _rate_limit():
@@ -487,8 +528,11 @@ def get_artist(artist_id):
     area = response.get("area", {})
     area_name = area.get("name", "")
     
-    # Annotation (bio/description) - note: this is often empty
-    annotation = response.get("annotation", "")
+    # Annotation from MusicBrainz (often just editor notes, not a bio)
+    mb_annotation = response.get("annotation", "")
+    
+    # Get Wikipedia extract as the bio (much more useful than MB annotation)
+    wikipedia_extract = get_wikipedia_extract(name)
     
     # Genres from MusicBrainz (new genre system)
     genres = []
@@ -545,7 +589,8 @@ def get_artist(artist_id):
         "begin_date": begin_date,
         "end_date": end_date,
         "ended": ended,
-        "annotation": annotation,
+        "bio": wikipedia_extract,  # Wikipedia extract as bio
+        "annotation": mb_annotation,  # MusicBrainz annotation (usually editor notes)
         "genres": genres[:10],  # Top 10 genres
         "tags": tags[:15],  # Top 15 tags
         "rating": rating,

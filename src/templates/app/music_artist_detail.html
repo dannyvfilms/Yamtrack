@@ -67,14 +67,14 @@
         {% endif %}
       </div>
 
-      {# Bio/Annotation (like TV synopsis) #}
-      {% if annotation %}
+      {# Bio (Wikipedia extract, like TV synopsis) #}
+      {% if bio %}
         <div class="mb-6">
           <div x-data="{ isExpanded: false, isClamped: false, checkClamp() { const element = this.$refs.bioText; this.isClamped = element.scrollHeight > element.clientHeight; } }"
                x-init="$nextTick(() => checkClamp())">
             <p x-ref="bioText"
                :class="isExpanded ? '' : 'line-clamp-5'"
-               class="text-gray-300 text-pretty">{{ annotation|linebreaksbr }}</p>
+               class="text-gray-300 text-pretty">{{ bio }}</p>
             <button x-show="isClamped"
                     @click="isExpanded = !isExpanded"
                     class="text-indigo-400 hover:text-indigo-300 text-sm mt-2 focus:outline-none transition-colors cursor-pointer">
@@ -83,7 +83,7 @@
           </div>
         </div>
       {% elif artist_metadata.disambiguation %}
-        <p class="text-gray-300 mb-6 text-center md:text-start">{{ artist_metadata.disambiguation }}</p>
+        <p class="text-gray-300 mb-6">{{ artist_metadata.disambiguation }}</p>
       {% endif %}
 
       {# Score cards - MB Score + Your Score (like TMDB Score + Your Score on TV) #}
