@@ -667,16 +667,22 @@ def get_artist(artist_id):
     return result
 
 
-def get_artist_discography(artist_id):
+def get_artist_discography(artist_id, skip_cover_art=False):
     """Get the full discography for an artist from MusicBrainz.
     
     This fetches release-groups (which represent unique album releases)
     and finds a representative release for each to get cover art.
     
+    Args:
+        artist_id: MusicBrainz artist ID
+        skip_cover_art: If True, skip fetching cover art (faster initial load)
+    
     Returns a normalized list of albums with:
     - title, release_group_id, release_id, release_date, image, release_type
     """
     cache_key = f"musicbrainz_artist_discography_{artist_id}"
+    if skip_cover_art:
+        cache_key += "_no_art"
     cached = cache.get(cache_key)
     if cached:
         return cached
@@ -744,7 +750,7 @@ def get_artist_discography(artist_id):
             if rg_id not in rg_to_release:
                 rg_to_release[rg_id] = release
 
-    # Update albums with release IDs and fetch cover art
+    # Update albums with release IDs and optionally fetch cover art
     for album in albums:
         rg_id = album["release_group_id"]
         release_id = None
@@ -754,9 +760,10 @@ def get_artist_discography(artist_id):
             release_id = release.get("id")
             album["release_id"] = release_id
         
-        # Try to get cover art - use both release_id and release_group_id
-        # This ensures we try the release-group fallback even if we have a release_id
-        album["image"] = get_cover_art(release_id=release_id, release_group_id=rg_id)
+        if not skip_cover_art:
+            # Try to get cover art - use both release_id and release_group_id
+            # This ensures we try the release-group fallback even if we have a release_id
+            album["image"] = get_cover_art(release_id=release_id, release_group_id=rg_id)
 
     # Sort by date (newest first), with albums without dates at the end
     albums.sort(key=lambda x: x.get("release_date", "") or "0000", reverse=True)

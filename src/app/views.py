@@ -1374,9 +1374,9 @@ def prefetch_artist_covers(request, artist_id):
     This runs after the artist page loads to avoid blocking the initial render.
     Returns the updated album grid HTML.
     """
+    from django.shortcuts import get_object_or_404
     from app.services.music import prefetch_album_covers
     from app.models import Artist, Album, Music
-    from django.db.models import Min, Max
     
     artist = get_object_or_404(Artist, id=artist_id)
     

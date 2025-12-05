@@ -138,7 +138,8 @@ def sync_artist_discography(artist: Artist, force: bool = False) -> int:
             return 0
     
     try:
-        discography = musicbrainz.get_artist_discography(artist.musicbrainz_id)
+        # Skip cover art fetching during sync - covers are loaded async via HTMX
+        discography = musicbrainz.get_artist_discography(artist.musicbrainz_id, skip_cover_art=True)
         
         synced_count = 0
         for album_data in discography:
