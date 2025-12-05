@@ -2258,3 +2258,63 @@ class ArtistTracker(models.Model):
     def status_readable(self):
         """Return the human-readable status."""
         return dict(Status.choices).get(self.status, self.status)
+
+
+class AlbumTracker(models.Model):
+    """Model for tracking albums in user's library.
+    
+    This mirrors the Media model fields so album tracking feels identical
+    to TV/Movie tracking in terms of status, score, dates, and notes.
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="album_trackers",
+    )
+    album = models.ForeignKey(
+        Album,
+        on_delete=models.CASCADE,
+        related_name="trackers",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.IN_PROGRESS.value,
+    )
+    score = models.DecimalField(
+        null=True,
+        blank=True,
+        max_digits=3,
+        decimal_places=1,
+        validators=[
+            DecimalValidator(3, 1),
+            MinValueValidator(0),
+            MaxValueValidator(10),
+        ],
+    )
+    start_date = models.DateTimeField(null=True, blank=True)
+    end_date = models.DateTimeField(null=True, blank=True)
+    notes = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        """Meta options for the model."""
+
+        ordering = ["-updated_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "album"],
+                name="unique_album_tracker_per_user",
+            ),
+        ]
+
+    def __str__(self):
+        """Return the tracker string."""
+        return f"{self.user.username} - {self.album.title}"
+    
+    @property
+    def status_readable(self):
+        """Return the human-readable status."""
+        return dict(Status.choices).get(self.status, self.status)

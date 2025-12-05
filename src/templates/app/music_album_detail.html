@@ -21,6 +21,36 @@
           {% icon 'music' is_active=False extra_classes="w-24 h-24 text-gray-500" %}
         </div>
       {% endif %}
+
+      {# Primary CTA button - same as artist page #}
+      <div x-data="{ trackOpen: false }">
+        <button class="mt-4 p-3 rounded-lg w-full flex items-center text-white transition duration-300 cursor-pointer {% if album_tracker %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}"
+                hx-get="{% url 'album_track_modal' album.id %}"
+                hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
+                hx-target="#album-track-modal"
+                hx-trigger="click"
+                @click="trackOpen = true">
+          <div class="flex-1 text-center font-medium">
+            {% if album_tracker %}
+              {{ album_tracker.status_readable }}
+            {% else %}
+              Add to Library
+            {% endif %}
+          </div>
+          <div class="h-5 mx-2 border-l border-white/30"></div>
+          {% include "app/icons/edit.svg" with classes="w-5 h-5 shrink-0" %}
+        </button>
+
+        {# Track Modal #}
+        <div x-show="trackOpen"
+             @keydown.escape.window="trackOpen = false"
+             class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div class="w-152 max-h-[90vh] px-4 md:px-0 relative z-60"
+               @click.outside="trackOpen = false">
+            <div id="album-track-modal"></div>
+          </div>
+        </div>
+      </div>
     </div>
 
     {# Album details - Right side of hero #}

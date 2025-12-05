@@ -1469,6 +1469,12 @@ def album_detail(request, album_id):
     # Get the current/primary Music instance for this album (most recently updated)
     current_instance = user_music_entries.order_by("-end_date", "-start_date").first()
 
+    # Get user's tracker for this album
+    from app.models import AlbumTracker
+    album_tracker = AlbumTracker.objects.filter(
+        user=request.user, album=album
+    ).first()
+
     # Calculate total runtime
     total_runtime = None
     if total_duration_ms:
@@ -1506,6 +1512,7 @@ def album_detail(request, album_id):
         "album_details": album_details,
         "total_runtime": total_runtime,
         "has_mb_identity": has_mb_identity,  # For template to show correct message
+        "album_tracker": album_tracker,  # User's tracking for this album
     }
     return render(request, "app/music_album_detail.html", context)
 
@@ -1603,6 +1610,82 @@ def artist_delete(request):
     if next_url:
         return redirect(next_url)
     return redirect("artist_detail", artist_id=artist.id)
+
+
+def album_track_modal(request, album_id):
+    """Return the tracking form modal for an album - mirrors artist_track_modal."""
+    from django.shortcuts import get_object_or_404
+    from app.models import AlbumTracker
+    from app.forms import AlbumTrackerForm
+
+    album = get_object_or_404(Album, id=album_id)
+    return_url = request.GET.get("return_url", "")
+    
+    # Get existing tracker if any
+    tracker = AlbumTracker.objects.filter(user=request.user, album=album).first()
+    
+    initial_data = {"album_id": album.id}
+    form = AlbumTrackerForm(instance=tracker, initial=initial_data)
+
+    return render(
+        request,
+        "app/components/album_track_modal.html",
+        {
+            "album": album,
+            "tracker": tracker,
+            "form": form,
+            "return_url": return_url,
+        },
+    )
+
+
+@require_POST
+def album_save(request):
+    """Save an album tracker - mirrors artist_save."""
+    from django.shortcuts import get_object_or_404
+    from app.models import AlbumTracker
+    from app.forms import AlbumTrackerForm
+
+    album_id = request.POST.get("album_id")
+    album = get_object_or_404(Album, id=album_id)
+    
+    # Get existing tracker or None
+    tracker = AlbumTracker.objects.filter(user=request.user, album=album).first()
+    
+    form = AlbumTrackerForm(request.POST, instance=tracker)
+    if form.is_valid():
+        tracker = form.save(commit=False)
+        tracker.user = request.user
+        tracker.album = album
+        tracker.save()
+        messages.success(request, f"Saved {album.title}")
+    else:
+        messages.error(request, f"Error saving {album.title}: {form.errors}")
+    
+    next_url = request.GET.get("next", "")
+    if next_url:
+        return redirect(next_url)
+    return redirect("album_detail", album_id=album.id)
+
+
+@require_POST
+def album_delete(request):
+    """Delete an album tracker - mirrors artist_delete."""
+    from django.shortcuts import get_object_or_404
+    from app.models import AlbumTracker
+
+    album_id = request.POST.get("album_id")
+    album = get_object_or_404(Album, id=album_id)
+    
+    tracker = AlbumTracker.objects.filter(user=request.user, album=album).first()
+    if tracker:
+        tracker.delete()
+        messages.success(request, f"Removed {album.title} from your library")
+    
+    next_url = request.GET.get("next", "")
+    if next_url:
+        return redirect(next_url)
+    return redirect("album_detail", album_id=album.id)
 
 
 @require_POST

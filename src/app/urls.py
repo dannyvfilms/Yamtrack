@@ -107,6 +107,21 @@ urlpatterns = [
         name="artist_delete",
     ),
     path(
+        "music/album/<int:album_id>/track_modal/",
+        views.album_track_modal,
+        name="album_track_modal",
+    ),
+    path(
+        "music/album/save/",
+        views.album_save,
+        name="album_save",
+    ),
+    path(
+        "music/album/delete/",
+        views.album_delete,
+        name="album_delete",
+    ),
+    path(
         "music/album/<int:album_id>/sync/",
         views.sync_album_metadata_view,
         name="sync_album_metadata",
