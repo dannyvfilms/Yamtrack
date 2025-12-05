@@ -11,11 +11,11 @@
   {# Top section - Hero layout matching TV Show page exactly #}
   <div class="flex flex-col md:flex-row gap-8 md:gap-10 mb-12 md:mb-8">
     <div class="w-full md:w-1/4 max-w-[250px] mx-auto md:mx-0">
-      {# Artist hero image (from album covers) #}
-      {% if hero_image and hero_image != IMG_NONE %}
+      {# Artist photo (from Wikipedia) #}
+      {% if artist.image and artist.image != IMG_NONE %}
         <img alt="{{ artist.name }}"
              class="w-full rounded-lg shadow-lg bg-[#2a2f35] object-cover"
-             src="{{ hero_image }}">
+             src="{{ artist.image }}">
       {% else %}
         <div class="w-full aspect-square rounded-lg shadow-lg bg-[#2a2f35] flex items-center justify-center">
           {% icon 'music' is_active=False extra_classes="w-24 h-24 text-gray-500" %}

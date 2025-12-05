@@ -1254,7 +1254,6 @@ def artist_detail(request, artist_id):
     from app.services.music import (
         needs_discography_sync,
         sync_artist_discography,
-        get_artist_hero_image,
         prefetch_album_covers,
     )
     from app.providers import musicbrainz
@@ -1291,8 +1290,7 @@ def artist_detail(request, artist_id):
         album__artist=artist,
     ).count()
 
-    # Get hero image from albums (since MusicBrainz doesn't have artist photos)
-    hero_image = get_artist_hero_image(artist)
+    # Artist image is set from Wikipedia when fetching metadata below
 
     # Get user's tracker for this artist
     artist_tracker = ArtistTracker.objects.filter(
@@ -1360,7 +1358,6 @@ def artist_detail(request, artist_id):
         "albums": all_albums,  # All albums from discography, not just "in library"
         "total_tracks": total_tracks,
         "total_albums": all_albums.count(),
-        "hero_image": hero_image,
         "artist_tracker": artist_tracker,
         "history_stats": history_stats,
         "artist_metadata": artist_metadata,
