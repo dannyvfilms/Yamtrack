@@ -153,6 +153,12 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
 
         return title
 
+    def _extract_series_title(self, payload):
+        """Extract TV series title from Plex payload."""
+        if self._get_media_type(payload) == MediaTypes.TV.value:
+            return payload.get("Metadata", {}).get("grandparentTitle")
+        return None
+
     def _extract_external_ids(self, payload):
         guids = payload["Metadata"].get("Guid", [])
         if not guids:

@@ -49,6 +49,14 @@ class BaseWebhookProcessor:
         """
         return None, None
 
+    def _extract_series_title(self, payload):
+        """Extract TV series title from payload for title-based TMDB search.
+        
+        Override in subclasses if payload structure differs.
+        Returns series title string or None if not found.
+        """
+        return None
+
     def _process_media(self, payload, user, ids):
         """Route processing based on media type."""
         media_type = self._get_media_type(payload)
@@ -109,6 +117,7 @@ class BaseWebhookProcessor:
             )
 
             # If TMDB lookup failed, try resolving the show via TVDB/IMDB and retry.
+            fallback_media_id = None
             if ids.get("tmdb_id") and (ids.get("tvdb_id") or ids.get("imdb_id")):
                 alt_ids = dict(ids)
                 alt_ids["tmdb_id"] = None
@@ -135,10 +144,43 @@ class BaseWebhookProcessor:
                             media_id,
                             fallback_exc,
                         )
-                        return
-                else:
-                    return
-            else:
+                        fallback_media_id = None  # Mark as failed so title search runs
+
+            # Last resort: search by title if all ID-based lookups failed
+            if not fallback_media_id and not tv_metadata:
+                series_title = self._extract_series_title(payload)
+                if series_title:
+                    logger.info(
+                        "Attempting title-based TMDB search for: %s", series_title
+                    )
+                    try:
+                        search_results = app.providers.tmdb.search(
+                            MediaTypes.TV.value, series_title
+                        )
+                        if search_results and search_results.get("results"):
+                            top_result = search_results["results"][0]
+                            media_id = top_result.get("media_id")
+                            if media_id:
+                                tv_metadata = app.providers.tmdb.tv_with_seasons(
+                                    media_id, [season_number]
+                                )
+                                logger.info(
+                                    "Recovered TMDB lookup using title search: %s -> TMDB %s",
+                                    series_title,
+                                    media_id,
+                                )
+                    except Exception as search_exc:
+                        logger.warning(
+                            "Title-based search failed for %s: %s",
+                            series_title,
+                            search_exc,
+                        )
+
+            if not tv_metadata:
+                logger.warning(
+                    "All TMDB lookup attempts failed for show (original ID: %s)",
+                    ids.get("tmdb_id"),
+                )
                 return
 
         tvdb_id = tv_metadata.get("tvdb_id") if tv_metadata else None

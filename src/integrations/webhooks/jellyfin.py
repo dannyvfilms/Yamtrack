@@ -81,3 +81,9 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
             return None, None
         
         return season_number, episode_number
+
+    def _extract_series_title(self, payload):
+        """Extract TV series title from Jellyfin payload."""
+        if self._get_media_type(payload) == MediaTypes.TV.value:
+            return payload.get("Item", {}).get("SeriesName")
+        return None
