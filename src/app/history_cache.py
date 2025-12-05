@@ -11,11 +11,11 @@ from django.db import models
 from django.utils import formats, timezone
 
 from app import helpers
-from app.models import BoardGame, Episode, Game, Item, MediaTypes, Movie
+from app.models import Album, BoardGame, Episode, Game, Item, MediaTypes, Movie, Music, Track
 
 logger = logging.getLogger(__name__)
 
-HISTORY_CACHE_PREFIX = "history_page_v9"
+HISTORY_CACHE_PREFIX = "history_page_v13"
 HISTORY_CACHE_TIMEOUT = 60 * 60 * 6  # 6 hours
 HISTORY_STALE_AFTER = timedelta(minutes=15)
 HISTORY_DAYS_PER_PAGE = 30
@@ -172,6 +172,116 @@ def _build_movie_entry(movie):
     }
 
 
+def _get_music_runtime_minutes(music_entry, track_duration_cache=None):
+    """Get runtime in minutes from a Music entry, checking track and item.
+    
+    Args:
+        music_entry: The Music model instance
+        track_duration_cache: Optional dict with two types of keys:
+            - (album_id, track_title) -> duration_ms
+            - ("recording", recording_id) -> duration_ms
+    """
+    # First try the linked Track's duration_ms
+    if music_entry.track and music_entry.track.duration_ms:
+        return music_entry.track.duration_ms // 60000  # ms to minutes
+    
+    # Fall back to item runtime_minutes
+    if music_entry.item and music_entry.item.runtime_minutes:
+        return music_entry.item.runtime_minutes
+    
+    # Try to look up duration from cache (built from album tracklist)
+    if track_duration_cache and music_entry.item:
+        # Try matching by title (if we have album)
+        if music_entry.album_id:
+            title_key = (music_entry.album_id, music_entry.item.title)
+            duration_ms = track_duration_cache.get(title_key)
+            if duration_ms:
+                return duration_ms // 60000
+        
+        # Try matching by recording ID (item.media_id is the MusicBrainz recording ID)
+        if music_entry.item.media_id:
+            recording_key = ("recording", music_entry.item.media_id)
+            duration_ms = track_duration_cache.get(recording_key)
+            if duration_ms:
+                return duration_ms // 60000
+    
+    return 0
+
+
+def _build_music_album_entries(music_entries_for_album, album, day_date, track_duration_cache=None):
+    """Build a single history entry for an album's plays on a given day.
+    
+    Groups all track plays for an album on a day into one card showing:
+    - Album poster
+    - Play count (sum of plays that day from history records)
+    - Album name
+    - Time range (earliest to latest play time)
+    - Total runtime
+    """
+    if not music_entries_for_album:
+        return None
+    
+    # Collect all play times and runtimes for this album on this day
+    # We need to count history records, not Music entries, since a track
+    # played twice creates 2 history records on the same Music entry
+    play_times = []
+    total_runtime_minutes = 0
+    play_count = 0
+    
+    for music in music_entries_for_album:
+        runtime_for_track = _get_music_runtime_minutes(music, track_duration_cache)
+        
+        # Check history records for plays on this day
+        # Each history record with an end_date on this day counts as a play
+        for history_record in music.history.all():
+            history_end_date = getattr(history_record, "end_date", None)
+            if history_end_date:
+                play_time = _localize_datetime(history_end_date)
+                if play_time and play_time.date() == day_date:
+                    play_times.append(play_time)
+                    play_count += 1
+                    total_runtime_minutes += runtime_for_track
+    
+    if not play_times:
+        return None
+    
+    play_times.sort()
+    earliest_time = play_times[0]
+    latest_time = play_times[-1]
+    
+    # Format time range (just times, no date)
+    if len(play_times) == 1:
+        time_range_display = formats.time_format(earliest_time, "g:i A")
+    else:
+        time_range_display = f"{formats.time_format(earliest_time, 'g:i A')} - {formats.time_format(latest_time, 'g:i A')}"
+    
+    # Get album poster
+    poster = settings.IMG_NONE
+    if album and album.image:
+        poster = album.image
+    
+    # Album name
+    album_name = album.title if album else "Unknown Album"
+    artist_name = album.artist.name if album and album.artist else "Unknown Artist"
+    
+    return {
+        "media_type": MediaTypes.MUSIC.value,
+        "item": album,  # Link to album for navigation
+        "album": album,
+        "poster": poster,
+        "title": album_name,
+        "display_title": album_name,
+        "artist_name": artist_name,
+        "play_count": play_count,
+        "time_range_display": time_range_display,
+        "episode_label": None,
+        "episode_code": None,
+        "played_at_local": latest_time,  # Use latest play for sorting
+        "runtime_minutes": total_runtime_minutes,
+        "runtime_display": helpers.minutes_to_hhmm(total_runtime_minutes) if total_runtime_minutes else None,
+    }
+
+
 def build_history_days(user):
     """Build the list of grouped history entries for a user."""
     game_logging_style = getattr(user, "game_logging_style", "repeats")
@@ -212,6 +322,16 @@ def build_history_days(user):
         BoardGame.objects.filter(user=user)
         .select_related("item")
         .order_by("-end_date", "-created_at")
+    )
+    
+    # Music - query all music entries with end_date
+    music_entries = (
+        Music.objects.filter(
+            user=user,
+            end_date__isnull=False,
+        )
+        .select_related("item", "album", "album__artist", "track")
+        .order_by("-end_date")
     )
 
     entries = []
@@ -272,6 +392,60 @@ def build_history_days(user):
         play_count = annotated or repeat_attr or 1
         entry["play_count"] = play_count
         entries.append(entry)
+
+    # Music - group by album and day based on history records
+    # Each history record represents a play, so we need to find all days
+    # where any track from an album was played
+    music_by_album_day = defaultdict(list)
+    album_lookup = {}
+    
+    for music in music_entries:
+        album_id = music.album_id if music.album else None
+        if album_id and music.album:
+            album_lookup[album_id] = music.album
+        
+        # Find all days this track was played by checking history records
+        days_played = set()
+        for history_record in music.history.all():
+            history_end_date = getattr(history_record, "end_date", None)
+            if history_end_date:
+                play_time = _localize_datetime(history_end_date)
+                if play_time:
+                    days_played.add(play_time.date())
+        
+        # Add this Music entry to each day it was played
+        for day_date in days_played:
+            key = (album_id, day_date)
+            if music not in music_by_album_day[key]:
+                music_by_album_day[key].append(music)
+    
+    # Build a cache of track durations from album tracklists for fallback
+    # This helps get runtime for Music entries that don't have Track linked
+    # Cache has two types of keys:
+    # - (album_id, track_title) -> duration_ms
+    # - ("recording", musicbrainz_recording_id) -> duration_ms
+    track_duration_cache = {}
+    album_ids_with_music = list(album_lookup.keys())
+    if album_ids_with_music:
+        tracks_qs = Track.objects.filter(
+            album_id__in=album_ids_with_music,
+            duration_ms__isnull=False,
+        ).values("album_id", "title", "duration_ms", "musicbrainz_recording_id")
+        for track_data in tracks_qs:
+            # Key by album + title
+            title_key = (track_data["album_id"], track_data["title"])
+            track_duration_cache[title_key] = track_data["duration_ms"]
+            # Also key by recording ID for fallback
+            if track_data["musicbrainz_recording_id"]:
+                recording_key = ("recording", track_data["musicbrainz_recording_id"])
+                track_duration_cache[recording_key] = track_data["duration_ms"]
+    
+    # Now build one entry per album per day
+    for (album_id, day_date), album_music_entries in music_by_album_day.items():
+        album = album_lookup.get(album_id)
+        entry = _build_music_album_entries(album_music_entries, album, day_date, track_duration_cache)
+        if entry:
+            entries.append(entry)
 
     # Games
     if game_logging_style == "sessions":

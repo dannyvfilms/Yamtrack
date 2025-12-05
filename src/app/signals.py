@@ -7,8 +7,8 @@ from django.db.backends.signals import connection_created
 from django.dispatch import receiver
 from django_celery_results.models import TaskResult
 
-from app.history_cache import schedule_history_refresh
-from app.models import Episode, Movie
+from app.history_cache import invalidate_history_cache, schedule_history_refresh
+from app.models import Episode, Movie, Music
 
 logger = logging.getLogger(__name__)
 
@@ -59,4 +59,17 @@ def refresh_history_cache_on_movie_change(sender, instance, **kwargs):  # noqa: 
     """Schedule history cache refresh when movie activity changes."""
     user_id = getattr(instance, "user_id", None)
     if user_id:
+        schedule_history_refresh(user_id)
+
+
+@receiver([post_save, post_delete], sender=Music)
+def refresh_history_cache_on_music_change(sender, instance, **kwargs):  # noqa: ARG001
+    """Invalidate and schedule history cache refresh when music activity changes.
+    
+    We invalidate immediately so the next page load rebuilds fresh,
+    rather than relying on potentially delayed background task.
+    """
+    user_id = getattr(instance, "user_id", None)
+    if user_id:
+        invalidate_history_cache(user_id)
         schedule_history_refresh(user_id)

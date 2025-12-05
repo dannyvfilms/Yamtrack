@@ -125,7 +125,7 @@
           <div class="media-grid">
             {% for entry in day.entries %}
               <div class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg transition-all duration-200 hover:-translate-y-1 hover:shadow-xl">
-                <a href="{{ entry.item|media_url }}" class="relative block">
+                <a href="{% if entry.media_type == MediaTypes.MUSIC.value and entry.album %}{% url 'album_detail' entry.album.id %}{% else %}{{ entry.item|media_url }}{% endif %}" class="relative block">
                   <img alt="{{ entry.title }}"
                        class="media-card-poster lazyload w-full aspect-[2/3] {% if entry.poster != IMG_NONE %}object-cover{% endif %}"
                        data-src="{{ entry.poster }}"
@@ -148,6 +148,10 @@
                         <span class="font-semibold text-indigo-400">
                           {{ entry.play_count|default:1 }} play{{ entry.play_count|default:1|pluralize }}
                         </span>
+                      {% elif entry.media_type == MediaTypes.MUSIC.value %}
+                        <span class="font-semibold text-indigo-400">
+                          {{ entry.play_count|default:1 }} play{{ entry.play_count|default:1|pluralize }}
+                        </span>
                       {% elif entry.episode_label %}
                         <span class="font-semibold text-indigo-400">{{ entry.episode_label }}</span>
                       {% elif entry.episode_code %}
@@ -159,6 +163,8 @@
                   <p class="text-xs text-gray-400">
                     {% if entry.media_type == MediaTypes.GAME.value or entry.media_type == MediaTypes.BOARDGAME.value %}
                       {{ entry.date_range_display }}
+                    {% elif entry.media_type == MediaTypes.MUSIC.value %}
+                      {{ entry.time_range_display }}
                     {% else %}
                       <span class="hidden sm:inline">{{ entry.played_at_local|user_datetime_format:user }}</span>
                       <span class="inline sm:hidden">{{ entry.played_at_local|user_time_format:user }}</span>

@@ -1761,35 +1761,55 @@ def song_save(request):
         track=track,
     ).first()
 
+    # Calculate runtime from track duration if available
+    runtime_minutes = None
+    if track and track.duration_ms:
+        runtime_minutes = track.duration_ms // 60000  # Convert ms to minutes
+    
     if existing_music:
         # Add a new history entry (rewatch/relisten)
         existing_music.end_date = end_date
         existing_music.save()
+        
+        # Update Item runtime if not set and we have it
+        if runtime_minutes and existing_music.item and not existing_music.item.runtime_minutes:
+            existing_music.item.runtime_minutes = runtime_minutes
+            existing_music.item.save(update_fields=["runtime_minutes"])
+        
         messages.success(request, f"Added listen for {track.title if track else 'track'}")
     else:
         # Create new Music entry
         # First, get or create the Item for this recording
+        item_defaults = {
+            "title": track.title if track else "Unknown Track",
+            "image": album.image or settings.IMG_NONE,
+        }
+        if runtime_minutes:
+            item_defaults["runtime_minutes"] = runtime_minutes
+        
         if recording_id:
-            item, _ = Item.objects.get_or_create(
+            item, created = Item.objects.get_or_create(
                 media_id=recording_id,
                 source=Sources.MUSICBRAINZ.value,
                 media_type=MediaTypes.MUSIC.value,
-                defaults={
-                    "title": track.title if track else "Unknown Track",
-                    "image": album.image or settings.IMG_NONE,
-                },
+                defaults=item_defaults,
             )
+            # Update runtime if item existed but didn't have it
+            if not created and not item.runtime_minutes and runtime_minutes:
+                item.runtime_minutes = runtime_minutes
+                item.save(update_fields=["runtime_minutes"])
         else:
             # Create a placeholder item for tracks without recording ID
-            item, _ = Item.objects.get_or_create(
+            item, created = Item.objects.get_or_create(
                 media_id=f"track_{track_id}",
                 source=Sources.MUSICBRAINZ.value,
                 media_type=MediaTypes.MUSIC.value,
-                defaults={
-                    "title": track.title if track else "Unknown Track",
-                    "image": album.image or settings.IMG_NONE,
-                },
+                defaults=item_defaults,
             )
+            # Update runtime if item existed but didn't have it
+            if not created and not item.runtime_minutes and runtime_minutes:
+                item.runtime_minutes = runtime_minutes
+                item.save(update_fields=["runtime_minutes"])
 
         Music.objects.create(
             item=item,
