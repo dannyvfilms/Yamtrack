@@ -240,6 +240,36 @@ def media_list(request, media_type):
         "sort_choices": MediaSortChoices.choices,
         "status_choices": MediaStatusChoices.choices,
     }
+    
+    # For music, also include tracked artists
+    if media_type == MediaTypes.MUSIC.value:
+        from app.models import ArtistTracker
+        
+        artist_trackers = ArtistTracker.objects.filter(user=request.user).select_related("artist")
+        
+        # Apply status filter to artists
+        if status_filter and status_filter != MediaStatusChoices.ALL:
+            artist_trackers = artist_trackers.filter(status=status_filter)
+        
+        # Apply search filter to artists
+        if search_query:
+            artist_trackers = artist_trackers.filter(artist__name__icontains=search_query)
+        
+        # Apply sorting (limited to what makes sense for artists)
+        if sort_filter == "title":
+            order = "artist__name" if direction == "asc" else "-artist__name"
+            artist_trackers = artist_trackers.order_by(order)
+        elif sort_filter == "score":
+            order = "score" if direction == "asc" else "-score"
+            artist_trackers = artist_trackers.order_by(order, "artist__name")
+        elif sort_filter == "start_date":
+            order = "start_date" if direction == "asc" else "-start_date"
+            artist_trackers = artist_trackers.order_by(order)
+        else:
+            # Default: most recently updated
+            artist_trackers = artist_trackers.order_by("-updated_at")
+        
+        context["artist_trackers"] = artist_trackers
 
     # Handle HTMX requests for partial updates
     if request.headers.get("HX-Request"):
