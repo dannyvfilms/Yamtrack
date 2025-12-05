@@ -1266,12 +1266,7 @@ def artist_detail(request, artist_id):
         sync_artist_discography(artist)
 
     # Get ALL albums for this artist (metadata-driven, like Seasons)
-    all_albums = Album.objects.filter(artist=artist).order_by("-release_date", "title")
-
-    # Prefetch album covers for albums missing art (up to 20 to respect rate limits)
-    prefetch_album_covers(artist, limit=20)
-
-    # Refresh the queryset after prefetch to get updated images
+    # Note: Album covers are prefetched asynchronously via HTMX after page load
     all_albums = list(Album.objects.filter(artist=artist).order_by("-release_date", "title"))
 
     # Get user's music entries for this artist to calculate play counts
@@ -1370,6 +1365,46 @@ def artist_detail(request, artist_id):
         "mb_rating_count": mb_rating_count,
     }
     return render(request, "app/music_artist_detail.html", context)
+
+
+@require_GET
+def prefetch_artist_covers(request, artist_id):
+    """HTMX endpoint to asynchronously fetch album covers for an artist.
+    
+    This runs after the artist page loads to avoid blocking the initial render.
+    Returns the updated album grid HTML.
+    """
+    from app.services.music import prefetch_album_covers
+    from app.models import Artist, Album, Music
+    from django.db.models import Min, Max
+    
+    artist = get_object_or_404(Artist, id=artist_id)
+    
+    # Prefetch covers for albums missing art
+    prefetch_album_covers(artist, limit=20)
+    
+    # Get updated albums
+    all_albums = list(Album.objects.filter(artist=artist).order_by("-release_date", "title"))
+    
+    # Calculate play counts
+    user_music_entries = Music.objects.filter(
+        user=request.user,
+        album__artist=artist,
+    ).select_related("album")
+    
+    album_play_counts = {}
+    for music in user_music_entries:
+        if music.album_id:
+            play_count = music.history.count()
+            album_play_counts[music.album_id] = album_play_counts.get(music.album_id, 0) + play_count
+    
+    for album in all_albums:
+        album.play_count = album_play_counts.get(album.id, 0)
+    
+    return render(request, "app/components/album_grid.html", {
+        "all_albums": all_albums,
+        "artist": artist,
+    })
 
 
 @require_GET

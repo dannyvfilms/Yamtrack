@@ -575,17 +575,28 @@ def get_artist(artist_id):
                 if "en.wikipedia.org" in url:
                     break
     
-    # Fall back to artist name with disambiguation if no Wikipedia URL found
-    if not wikipedia_title:
-        if disambiguation:
-            wikipedia_title = f"{name}_({disambiguation.replace(' ', '_')})"
-        else:
-            wikipedia_title = name
+    # Get Wikipedia data - try multiple strategies
+    wikipedia_bio = None
+    wikipedia_image = None
     
-    # Get Wikipedia data (bio and image - much more useful than MB annotation)
-    wiki_data = get_wikipedia_data(wikipedia_title)
-    wikipedia_bio = wiki_data.get("extract")
-    wikipedia_image = wiki_data.get("image")
+    if wikipedia_title:
+        # Best case: MusicBrainz has the exact Wikipedia URL
+        wiki_data = get_wikipedia_data(wikipedia_title)
+        wikipedia_bio = wiki_data.get("extract")
+        wikipedia_image = wiki_data.get("image")
+    
+    if not wikipedia_bio:
+        # Try artist name directly (works for "Kenny G", etc.)
+        wiki_data = get_wikipedia_data(name)
+        wikipedia_bio = wiki_data.get("extract")
+        wikipedia_image = wiki_data.get("image")
+    
+    if not wikipedia_bio and disambiguation:
+        # Last resort: try name with disambiguation (e.g., "Queen_(band)")
+        wiki_title_with_disambig = f"{name}_({disambiguation.replace(' ', '_')})"
+        wiki_data = get_wikipedia_data(wiki_title_with_disambig)
+        wikipedia_bio = wiki_data.get("extract")
+        wikipedia_image = wiki_data.get("image")
     
     # Genres from MusicBrainz (new genre system)
     genres = []
