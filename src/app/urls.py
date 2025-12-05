@@ -122,6 +122,11 @@ urlpatterns = [
         name="album_delete",
     ),
     path(
+        "music/song/save/",
+        views.song_save,
+        name="song_save",
+    ),
+    path(
         "music/album/<int:album_id>/sync/",
         views.sync_album_metadata_view,
         name="sync_album_metadata",

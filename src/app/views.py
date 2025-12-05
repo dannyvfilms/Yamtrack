@@ -1689,6 +1689,88 @@ def album_delete(request):
 
 
 @require_POST
+def song_save(request):
+    """Handle adding a listen for a song - mirrors episode_save for episodes."""
+    from django.utils.dateparse import parse_datetime, parse_date
+    from app.models import Track
+    from app.providers import musicbrainz
+
+    recording_id = request.POST.get("recording_id")
+    album_id = request.POST.get("album_id")
+    track_id = request.POST.get("track_id")
+    end_date_str = request.POST.get("end_date")
+
+    # Parse the end date
+    end_date = None
+    if end_date_str:
+        end_date = parse_datetime(end_date_str)
+        if not end_date:
+            parsed_date = parse_date(end_date_str)
+            if parsed_date:
+                from django.utils import timezone
+                end_date = timezone.make_aware(
+                    timezone.datetime.combine(parsed_date, timezone.datetime.min.time())
+                )
+
+    # Get the album and track
+    album = get_object_or_404(Album, id=album_id)
+    track = get_object_or_404(Track, id=track_id) if track_id else None
+
+    # Check if user already has a Music entry for this track
+    existing_music = Music.objects.filter(
+        user=request.user,
+        album=album,
+        track=track,
+    ).first()
+
+    if existing_music:
+        # Add a new history entry (rewatch/relisten)
+        existing_music.end_date = end_date
+        existing_music.save()
+        messages.success(request, f"Added listen for {track.title if track else 'track'}")
+    else:
+        # Create new Music entry
+        # First, get or create the Item for this recording
+        if recording_id:
+            item, _ = Item.objects.get_or_create(
+                media_id=recording_id,
+                source=Sources.MUSICBRAINZ.value,
+                media_type=MediaTypes.MUSIC.value,
+                defaults={
+                    "title": track.title if track else "Unknown Track",
+                    "image": album.image or settings.IMG_NONE,
+                },
+            )
+        else:
+            # Create a placeholder item for tracks without recording ID
+            item, _ = Item.objects.get_or_create(
+                media_id=f"track_{track_id}",
+                source=Sources.MUSICBRAINZ.value,
+                media_type=MediaTypes.MUSIC.value,
+                defaults={
+                    "title": track.title if track else "Unknown Track",
+                    "image": album.image or settings.IMG_NONE,
+                },
+            )
+
+        Music.objects.create(
+            item=item,
+            user=request.user,
+            artist=album.artist,
+            album=album,
+            track=track,
+            status=Status.COMPLETED.value,
+            end_date=end_date,
+        )
+        messages.success(request, f"Added {track.title if track else 'track'} to your library")
+
+    next_url = request.GET.get("next", "")
+    if next_url:
+        return redirect(next_url)
+    return redirect("album_detail", album_id=album.id)
+
+
+@require_POST
 def sync_album_metadata_view(request, album_id):
     """Manually trigger metadata sync for an album."""
     from django.shortcuts import get_object_or_404

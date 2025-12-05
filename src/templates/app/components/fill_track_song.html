@@ -1,0 +1,122 @@
+{% load app_tags %}
+{% load user_tags %}
+
+
+{# Track Song Modal - mirrors fill_track_episode.html #}
+<div x-show="trackOpen"
+     @keydown.escape.window="trackOpen = false"
+     class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+  <div class="w-[400px] max-h-[90vh] px-4 md:px-0 relative z-60"
+       @click.outside="trackOpen = false">
+    <div class="bg-[#2a2f35] p-6 rounded-lg max-h-[70svh] overflow-y-auto">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-xl font-bold text-white">Track Song</h2>
+        <button class="text-gray-400 hover:text-white transition-colors cursor-pointer"
+                @click="trackOpen = false">
+          {% include "app/icons/x.svg" with classes="w-5 h-5" %}
+        </button>
+      </div>
+
+      {# Song preview data #}
+      <div class="bg-[#343a40] rounded-lg p-4 mb-6">
+        <div class="flex items-start gap-4">
+          {% if album.image and album.image != IMG_NONE %}
+            <img alt="{{ track.title }}"
+                 class="w-20 h-20 rounded object-cover shrink-0"
+                 src="{{ album.image }}">
+          {% else %}
+            <div class="w-20 h-20 rounded bg-[#1a1d20] flex items-center justify-center shrink-0">
+              {% icon 'music' is_active=False extra_classes="w-8 h-8 text-gray-600" %}
+            </div>
+          {% endif %}
+          <div>
+            <h3 class="text-lg font-semibold mb-1 line-clamp-1">{{ track.title }}</h3>
+            <p class="text-sm text-gray-400">
+              {% if track.track_number %}Track {{ track.track_number }}{% endif %}
+              {% if track.duration_formatted %}{% if track.track_number %} • {% endif %}{{ track.duration_formatted }}{% endif %}
+            </p>
+            {% if music and music.history.count > 0 %}
+              {% with listen_count=music.history.count %}
+                {% if listen_count == 1 %}
+                  <p class="text-sm text-gray-400 mt-1">Listened once</p>
+                {% else %}
+                  <p class="text-sm text-gray-400 mt-1">Listened {{ listen_count }} times</p>
+                {% endif %}
+              {% endwith %}
+            {% else %}
+              <p class="text-sm text-gray-400 mt-1">Not listened yet</p>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      {# Song form #}
+      <div class="space-y-4">
+
+        {% if music and music.history.count > 0 %}
+          <div>
+            <label class="block text-sm font-medium text-gray-300 mb-3">Previous Listens</label>
+            <div class="max-h-[200px] overflow-y-auto space-y-2">
+
+              {% for entry in music.history.all %}
+                <div class="flex items-center justify-between bg-[#343a40] rounded-md p-3 border border-gray-600">
+                  <div class="text-sm text-white">{{ entry.end_date|user_date_format:user|default_if_none:"No date provided" }}</div>
+                  <form method="post"
+                        action="{% url 'media_delete' %}?next={{ request.path }}">
+                    {% csrf_token %}
+                    <input type="hidden" name="instance_id" value="{{ entry.id }}">
+                    <input type="hidden" name="media_type" value="music">
+                    <button class="text-red-400 hover:text-red-300 transition-colors text-sm px-2 py-1 hover:bg-red-600/20 rounded-md cursor-pointer">
+                      Delete
+                    </button>
+                  </form>
+                </div>
+              {% endfor %}
+            </div>
+          </div>
+
+          <div class="border-t border-gray-600 my-6"></div>
+        {% endif %}
+
+        <form method="post"
+              action="{% url 'song_save' %}?next={{ request.path }}">
+          {% csrf_token %}
+          <input type="hidden" name="recording_id" value="{{ track.musicbrainz_recording_id }}">
+          <input type="hidden" name="album_id" value="{{ album.id }}">
+          <input type="hidden" name="track_id" value="{{ track.id }}">
+
+          <label class="block text-sm font-medium text-gray-300 mb-2">Listen Date</label>
+
+          {# djlint:off #}
+          <div class="relative" x-data="{ 
+              inputDateTime: '{% if TRACK_TIME %}{% now "Y-m-d\TH:i" %}{% else %}{% now "Y-m-d" %}{% endif %}',
+              inputType: '{% if TRACK_TIME %}datetime-local{% else %}date{% endif %}'
+          }">
+            <input class="w-full p-3 bg-[#343a40] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff] appearance-none"
+                   x-bind:type="inputType"
+                   name="end_date"
+                   onfocus="this.showPicker?.()"
+                   x-model="inputDateTime">
+            {% if album.release_date %}
+              <button type="button"
+                      @click="inputDateTime = inputType === 'datetime-local' ? '{{ album.release_date|date:'Y-m-d' }}T{% now "H:i" %}' : '{{ album.release_date|date:'Y-m-d' }}'"
+                      class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center text-sm text-indigo-400 hover:text-indigo-300 transition-colors bg-[#2a2f35] px-2 py-1 rounded cursor-pointer">
+                {% include "app/icons/calendar.svg" with classes="w-4 h-4 mr-1" %}
+                Release date
+              </button>
+            {% endif %}
+          </div>
+          {# djlint:on #}
+
+          <div class="flex justify-end-safe gap-3 mt-6">
+            <button type="submit"
+                    class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors cursor-pointer">
+              Add listen
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
