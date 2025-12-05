@@ -857,7 +857,7 @@
 
         <div class="space-y-4 sm:space-y-6">
           <!-- Minutes Listened row - 3 or 4 columns based on show_year_charts -->
-          <div class="grid grid-cols-3 {% if show_year_charts %}lg:grid-cols-4{% endif %} gap-3 sm:gap-4">
+          <div class="grid grid-cols-2 sm:grid-cols-2 {% if show_year_charts %}lg:grid-cols-4{% else %}md:grid-cols-3 lg:grid-cols-3{% endif %} gap-3 sm:gap-4">
             <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
               <p class="text-xs uppercase tracking-widest text-gray-400">Minutes Listened</p>
               {% if music_consumption.has_data %}
@@ -899,7 +899,7 @@
           </div>
 
           <!-- Music Plays row - 3 or 4 columns based on show_year_charts -->
-          <div class="grid grid-cols-3 {% if show_year_charts %}lg:grid-cols-4{% endif %} gap-3 sm:gap-4">
+          <div class="grid grid-cols-2 sm:grid-cols-2 {% if show_year_charts %}lg:grid-cols-4{% else %}md:grid-cols-3 lg:grid-cols-3{% endif %} gap-3 sm:gap-4">
             <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
               <p class="text-xs uppercase tracking-widest text-gray-400">Music Plays</p>
               {% if music_consumption.has_data %}
@@ -996,7 +996,7 @@
           </div>
 
           <!-- Top 5 Artists, Albums, Tracks -->
-          <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4">
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4">
             <!-- Top 5 Artists -->
             <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
               <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top 5 Artists</h3>
@@ -1067,11 +1067,15 @@
                   {% for track in music_consumption.top_tracks %}
                   <div class="flex items-center space-x-3">
                     <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
+                    {% if track.album_image %}
+                    <img src="{{ track.album_image }}" alt="{{ track.album }}" class="w-10 h-10 rounded object-cover">
+                    {% else %}
                     <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
                       <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
                       </svg>
                     </div>
+                    {% endif %}
                     <div class="flex-1 min-w-0">
                       <p class="text-sm font-medium text-white truncate">{{ track.title }}</p>
                       <p class="text-xs text-gray-500 truncate">{{ track.artist }} · {{ track.formatted_duration }}</p>

@@ -1172,8 +1172,9 @@ def _compute_metric_breakdown(total_value, datetimes, start_date, end_date):
     if total_days <= 0:
         total_days = 1
 
-    total_years = total_days / 365.25
-    total_months = total_days / 30.4375
+    # Avoid exaggerated projections when the range is shorter than a month/year (e.g., new data)
+    total_years = max(total_days / 365.25, 1)
+    total_months = max(total_days / 30.4375, 1)
 
     breakdown["per_year"] = total_value / total_years if total_years else total_value
     breakdown["per_month"] = total_value / total_months if total_months else total_value
@@ -1447,7 +1448,7 @@ def _compute_music_top_lists(play_details, limit=5):
     # Aggregate by artist, album, and track
     artist_stats = defaultdict(lambda: {"minutes": 0, "plays": 0, "name": "", "image": "", "id": None})
     album_stats = defaultdict(lambda: {"minutes": 0, "plays": 0, "title": "", "artist": "", "image": "", "id": None})
-    track_stats = defaultdict(lambda: {"minutes": 0, "plays": 0, "title": "", "artist": "", "album": "", "id": None})
+    track_stats = defaultdict(lambda: {"minutes": 0, "plays": 0, "title": "", "artist": "", "album": "", "album_image": "", "id": None})
     
     for music, dt, runtime in play_details:
         # Track stats (use music.id as key since each Music is a unique track entry)
@@ -1471,6 +1472,7 @@ def _compute_music_top_lists(play_details, limit=5):
         
         if album:
             track_stats[track_key]["album"] = album.title
+            track_stats[track_key]["album_image"] = album.image or track_stats[track_key]["album_image"]
             album_stats[album.id]["minutes"] += runtime
             album_stats[album.id]["plays"] += 1
             album_stats[album.id]["title"] = album.title
@@ -1502,9 +1504,9 @@ def get_music_consumption_stats(user_media, start_date, end_date, minutes_per_ty
     """
     music_queryset = (user_media or {}).get(MediaTypes.MUSIC.value)
     
-    # Prefetch related data for efficiency
+    # Prefetch related data for efficiency (history manager from simple_history can't be prefetched)
     if music_queryset is not None:
-        music_queryset = music_queryset.select_related("item", "artist", "album").prefetch_related("history")
+        music_queryset = music_queryset.select_related("item", "artist", "album")
     
     music_datetimes, play_details = _collect_music_play_data(music_queryset, start_date, end_date)
     
