@@ -1420,7 +1420,7 @@ def album_detail(request, album_id):
     user_music_entries = Music.objects.filter(
         user=request.user,
         album=album,
-    ).select_related("item", "track").prefetch_related("history")
+    ).select_related("item", "track")
     
     for music in user_music_entries:
         if music.track_id:
