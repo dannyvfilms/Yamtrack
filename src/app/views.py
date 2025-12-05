@@ -1266,29 +1266,32 @@ def artist_detail(request, artist_id):
         sync_artist_discography(artist)
 
     # Get ALL albums for this artist (metadata-driven, like Seasons)
-    all_albums = Album.objects.filter(artist=artist).annotate(
-        library_track_count=Count(
-            "music_entries",
-            filter=models.Q(music_entries__user=request.user),
-        )
-    ).order_by("-release_date", "title")
+    all_albums = Album.objects.filter(artist=artist).order_by("-release_date", "title")
 
     # Prefetch album covers for albums missing art (up to 20 to respect rate limits)
     prefetch_album_covers(artist, limit=20)
 
     # Refresh the queryset after prefetch to get updated images
-    all_albums = Album.objects.filter(artist=artist).annotate(
-        library_track_count=Count(
-            "music_entries",
-            filter=models.Q(music_entries__user=request.user),
-        )
-    ).order_by("-release_date", "title")
+    all_albums = list(Album.objects.filter(artist=artist).order_by("-release_date", "title"))
 
-    # Get total track count for this artist in user's library
-    total_tracks = Music.objects.filter(
+    # Get user's music entries for this artist to calculate play counts
+    user_music_entries = Music.objects.filter(
         user=request.user,
         album__artist=artist,
-    ).count()
+    ).select_related("album")
+
+    # Calculate play counts per album (history entries = listens)
+    album_play_counts = {}
+    total_plays = 0
+    for music in user_music_entries:
+        if music.album_id:
+            play_count = music.history.count()
+            album_play_counts[music.album_id] = album_play_counts.get(music.album_id, 0) + play_count
+            total_plays += play_count
+
+    # Attach play_count to each album
+    for album in all_albums:
+        album.play_count = album_play_counts.get(album.id, 0)
 
     # Artist image is set from Wikipedia when fetching metadata below
 
@@ -1356,8 +1359,8 @@ def artist_detail(request, artist_id):
         "user": request.user,
         "artist": artist,
         "albums": all_albums,  # All albums from discography, not just "in library"
-        "total_tracks": total_tracks,
-        "total_albums": all_albums.count(),
+        "total_plays": total_plays,
+        "total_albums": len(all_albums),
         "artist_tracker": artist_tracker,
         "history_stats": history_stats,
         "artist_metadata": artist_metadata,

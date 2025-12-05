@@ -143,8 +143,8 @@
                 </div>
               {% endif %}
               <div class="flex @max-[210px]:flex-col justify-between text-sm">
-                <span class="text-gray-400">Tracks in library:</span>
-                <span class="text-gray-200">{{ total_tracks }}</span>
+                <span class="text-gray-400">Total plays:</span>
+                <span class="text-gray-200">{{ total_plays }}</span>
               </div>
             </div>
           </div>
@@ -251,10 +251,10 @@
                   </div>
                 {% endif %}
                 
-                {# Library badge (like progress on Season cards) #}
-                {% if album.library_track_count %}
+                {# Play count badge #}
+                {% if album.play_count %}
                   <div class="absolute top-2 left-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md">
-                    <span class="text-sm text-white">{{ album.library_track_count }} in library</span>
+                    <span class="text-sm text-white">{{ album.play_count }} play{{ album.play_count|pluralize }}</span>
                   </div>
                 {% endif %}
                 
