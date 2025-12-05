@@ -241,7 +241,8 @@ def media_list(request, media_type):
         "status_choices": MediaStatusChoices.choices,
     }
     
-    # For music, also include tracked artists
+    # For music, show tracked artists instead of individual tracks
+    # This parallels TV which shows TV shows, not seasons/episodes
     if media_type == MediaTypes.MUSIC.value:
         from app.models import ArtistTracker
         
@@ -269,7 +270,13 @@ def media_list(request, media_type):
             # Default: most recently updated
             artist_trackers = artist_trackers.order_by("-updated_at")
         
-        context["artist_trackers"] = artist_trackers
+        # Paginate artist trackers
+        artist_paginator = Paginator(artist_trackers, 32)
+        artist_page = artist_paginator.get_page(page)
+        
+        # Replace media_list with artist trackers for music
+        context["media_list"] = artist_page
+        context["is_artist_list"] = True
 
     # Handle HTMX requests for partial updates
     if request.headers.get("HX-Request"):

@@ -165,52 +165,7 @@
       </div>
     </div>
 
-    {# For music, show tracked artists first #}
-    {% if artist_trackers %}
-      <div class="mb-8">
-        <h2 class="text-xl font-bold mb-4">Artists</h2>
-        <div class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
-          {% for tracker in artist_trackers %}
-            <a href="{% url 'artist_detail' tracker.artist.id %}"
-               class="group bg-[#2a2f35] rounded-lg overflow-hidden hover:bg-[#343a40] transition-colors duration-200 relative">
-              {# Artist image (from first album) #}
-              {% if tracker.artist.albums.first.image %}
-                <img src="{{ tracker.artist.albums.first.image }}"
-                     alt="{{ tracker.artist.name }}"
-                     class="w-full aspect-square object-cover">
-              {% else %}
-                <div class="w-full aspect-square bg-[#1a1d20] flex items-center justify-center">
-                  {% include "app/icons/person.svg" with classes="w-12 h-12 text-gray-600" %}
-                </div>
-              {% endif %}
-              
-              {# Status badge #}
-              <div class="absolute top-2 left-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md shadow-md">
-                {{ tracker.status_readable }}
-              </div>
-              
-              <div class="p-3">
-                <h3 class="font-medium text-sm text-white group-hover:text-rose-400 transition-colors line-clamp-2 mb-1">
-                  {{ tracker.artist.name }}
-                </h3>
-                {% if tracker.score %}
-                  <div class="flex items-center gap-1">
-                    {% include "app/icons/star.svg" with classes="w-3 h-3 text-yellow-400 fill-yellow-400" %}
-                    <span class="text-xs text-gray-400">{{ tracker.score|floatformat:1 }}</span>
-                  </div>
-                {% endif %}
-              </div>
-            </a>
-          {% endfor %}
-        </div>
-      </div>
-      
-      {% if media_list %}
-        <h2 class="text-xl font-bold mb-4">Tracks</h2>
-      {% endif %}
-    {% endif %}
-
-    {% if not media_list and not artist_trackers %}
+    {% if not media_list %}
       <div id="empty_list"
            class="flex flex-col items-center justify-center py-16 bg-[#2a2f35] rounded-lg">
         <div class="text-center max-w-md mx-auto p-6">
@@ -227,9 +182,19 @@
           </a>
         </div>
       </div>
-    {% elif media_list and current_layout == "grid" %}
+    {% elif is_artist_list and current_layout == "grid" %}
+      {# Music shows artists in a grid (like TV shows) #}
+      <div class="media-grid">{% include "app/components/artist_grid_items.html" %}</div>
+    {% elif is_artist_list %}
+      {# Music shows artists in a table (like TV shows) #}
+      <div class="bg-[#2a2f35] p-4 rounded-lg overflow-hidden max-w-[calc(100svw-4rem)] overflow-x-scroll">
+        <table class="w-full bg-[#2a2f35] media-table">
+          {% include "app/components/artist_table_items.html" %}
+        </table>
+      </div>
+    {% elif current_layout == "grid" %}
       <div class="media-grid">{% include "app/components/media_grid_items.html" %}</div>
-    {% elif media_list %}
+    {% else %}
       <div class="bg-[#2a2f35] p-4 rounded-lg overflow-hidden max-w-[calc(100svw-4rem)] overflow-x-scroll">
         <table class="w-full bg-[#2a2f35] media-table">
           {% include "app/components/media_table_items.html" %}
