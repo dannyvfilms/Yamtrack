@@ -2203,8 +2203,8 @@ class Music(Media):
 class ArtistTracker(models.Model):
     """Model for tracking artists in user's library.
     
-    This is similar to how Media subclasses track TV/Movies, but Artist
-    is not a Media subclass so we need a separate tracker model.
+    This mirrors the Media model fields so artist tracking feels identical
+    to TV/Movie tracking in terms of status, score, dates, and notes.
     """
 
     user = models.ForeignKey(
@@ -2222,11 +2222,20 @@ class ArtistTracker(models.Model):
         choices=Status.choices,
         default=Status.IN_PROGRESS.value,
     )
-    score = models.PositiveSmallIntegerField(
+    score = models.DecimalField(
         null=True,
         blank=True,
-        validators=[MaxValueValidator(10)],
+        max_digits=3,
+        decimal_places=1,
+        validators=[
+            DecimalValidator(3, 1),
+            MinValueValidator(0),
+            MaxValueValidator(10),
+        ],
     )
+    start_date = models.DateTimeField(null=True, blank=True)
+    end_date = models.DateTimeField(null=True, blank=True)
+    notes = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -2244,3 +2253,8 @@ class ArtistTracker(models.Model):
     def __str__(self):
         """Return the tracker string."""
         return f"{self.user.username} - {self.artist.name}"
+    
+    @property
+    def status_readable(self):
+        """Return the human-readable status."""
+        return dict(Status.choices).get(self.status, self.status)

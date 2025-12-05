@@ -1489,63 +1489,80 @@ def sync_artist_discography_view(request, artist_id):
     return response
 
 
+def artist_track_modal(request, artist_id):
+    """Return the tracking form modal for an artist - mirrors TV's track_modal."""
+    from django.shortcuts import get_object_or_404
+    from app.models import ArtistTracker
+    from app.forms import ArtistTrackerForm
+
+    artist = get_object_or_404(Artist, id=artist_id)
+    return_url = request.GET.get("return_url", "")
+    
+    # Get existing tracker if any
+    tracker = ArtistTracker.objects.filter(user=request.user, artist=artist).first()
+    
+    initial_data = {"artist_id": artist.id}
+    form = ArtistTrackerForm(instance=tracker, initial=initial_data)
+
+    return render(
+        request,
+        "app/components/artist_track_modal.html",
+        {
+            "artist": artist,
+            "tracker": tracker,
+            "form": form,
+            "return_url": return_url,
+        },
+    )
+
+
 @require_POST
-def artist_tracker_toggle(request, artist_id):
-    """Add or remove an artist from the user's library."""
+def artist_save(request):
+    """Save an artist tracker - mirrors media_save for TV."""
+    from django.shortcuts import get_object_or_404
+    from app.models import ArtistTracker
+    from app.forms import ArtistTrackerForm
+
+    artist_id = request.POST.get("artist_id")
+    artist = get_object_or_404(Artist, id=artist_id)
+    
+    # Get existing tracker or None
+    tracker = ArtistTracker.objects.filter(user=request.user, artist=artist).first()
+    
+    form = ArtistTrackerForm(request.POST, instance=tracker)
+    if form.is_valid():
+        tracker = form.save(commit=False)
+        tracker.user = request.user
+        tracker.artist = artist
+        tracker.save()
+        messages.success(request, f"Saved {artist.name}")
+    else:
+        messages.error(request, f"Error saving {artist.name}: {form.errors}")
+    
+    next_url = request.GET.get("next", "")
+    if next_url:
+        return redirect(next_url)
+    return redirect("artist_detail", artist_id=artist.id)
+
+
+@require_POST
+def artist_delete(request):
+    """Delete an artist tracker - mirrors media_delete for TV."""
     from django.shortcuts import get_object_or_404
     from app.models import ArtistTracker
 
+    artist_id = request.POST.get("artist_id")
     artist = get_object_or_404(Artist, id=artist_id)
     
-    tracker, created = ArtistTracker.objects.get_or_create(
-        user=request.user,
-        artist=artist,
-        defaults={"status": Status.IN_PROGRESS.value},
-    )
-    
-    if not created:
-        # Already tracked - remove it
+    tracker = ArtistTracker.objects.filter(user=request.user, artist=artist).first()
+    if tracker:
         tracker.delete()
         messages.success(request, f"Removed {artist.name} from your library")
-    else:
-        messages.success(request, f"Added {artist.name} to your library")
     
-    # Return HX-Refresh header to reload the page
-    response = HttpResponse(status=204)
-    response["HX-Refresh"] = "true"
-    return response
-
-
-@require_POST
-def artist_score_update(request, artist_id):
-    """Update the user's score for an artist."""
-    from django.shortcuts import get_object_or_404
-    from app.models import ArtistTracker
-
-    artist = get_object_or_404(Artist, id=artist_id)
-    score = request.POST.get("score")
-    
-    if score:
-        try:
-            score = int(score)
-            if score < 1 or score > 10:
-                score = None
-        except ValueError:
-            score = None
-    else:
-        score = None
-    
-    # Get or create tracker
-    tracker, _ = ArtistTracker.objects.get_or_create(
-        user=request.user,
-        artist=artist,
-        defaults={"status": Status.IN_PROGRESS.value},
-    )
-    
-    tracker.score = score
-    tracker.save(update_fields=["score"])
-    
-    return HttpResponse(status=204)
+    next_url = request.GET.get("next", "")
+    if next_url:
+        return redirect(next_url)
+    return redirect("artist_detail", artist_id=artist.id)
 
 
 @require_POST

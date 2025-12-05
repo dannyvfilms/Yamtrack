@@ -22,21 +22,36 @@
         </div>
       {% endif %}
 
-      {# Primary CTA button - same as TV shows #}
-      <button class="mt-4 p-3 rounded-lg w-full flex items-center text-white transition duration-300 cursor-pointer {% if artist_tracker %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}"
-              hx-post="{% url 'artist_tracker_toggle' artist.id %}"
-              hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
-              hx-swap="none">
-        <div class="flex-1 text-center font-medium">
-          {% if artist_tracker %}
-            In Library
-          {% else %}
-            Add to Library
-          {% endif %}
+      {# Primary CTA button - same as TV shows with track modal #}
+      <div x-data="{ trackOpen: false }">
+        <button class="mt-4 p-3 rounded-lg w-full flex items-center text-white transition duration-300 cursor-pointer {% if artist_tracker %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}"
+                hx-get="{% url 'artist_track_modal' artist.id %}"
+                hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
+                hx-target="#artist-track-modal"
+                hx-trigger="click"
+                @click="trackOpen = true">
+          <div class="flex-1 text-center font-medium">
+            {% if artist_tracker %}
+              {{ artist_tracker.status_readable }}
+            {% else %}
+              Add to Library
+            {% endif %}
+          </div>
+          <div class="h-5 mx-2 border-l border-white/30"></div>
+          {% include "app/icons/edit.svg" with classes="w-5 h-5 shrink-0" %}
+        </button>
+
+        {# Track Modal #}
+        <div x-show="trackOpen"
+             @keydown.escape.window="trackOpen = false"
+             class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div class="w-152 max-h-[90vh] px-4 md:px-0 relative z-60"
+               @click.outside="trackOpen = false"
+               @click.stop>
+            <div id="artist-track-modal"></div>
+          </div>
         </div>
-        <div class="h-5 mx-2 border-l border-white/30"></div>
-        {% include "app/icons/edit.svg" with classes="w-5 h-5 shrink-0" %}
-      </button>
+      </div>
     </div>
 
     {# Artist details - Right side of hero, left-aligned like TV #}
@@ -86,53 +101,19 @@
           </div>
         {% endif %}
 
-        {# Your Score card - always visible like TV #}
-        <div x-data="{ showRatingPopup: false, rating: {{ artist_tracker.score|default:'null' }}, hoverRating: null, isHovering: false }"
-             class="relative">
-          <div @click="showRatingPopup = !showRatingPopup"
-               class="bg-[#2a2f35] p-3 rounded-lg w-[120px] cursor-pointer">
-            <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">YOUR SCORE</h3>
-            <div class="flex items-center justify-center">
-              {% include "app/icons/star.svg" with classes="w-5 h-5 mr-1.5 text-yellow-400 fill-yellow-400" %}
-              <template x-if="rating">
-                <div class="flex items-baseline">
-                  <span class="text-lg font-bold text-white" x-text="rating"></span>
-                  <span class="text-gray-400 ml-0.5 text-sm">/10</span>
-                </div>
-              </template>
-              <template x-if="!rating">
-                <span class="text-lg font-bold text-gray-400">-</span>
-              </template>
-            </div>
-            <p class="text-xs text-gray-400 mt-0.5 text-center">Click to edit</p>
+        {# Your Score card - display only, editing happens in modal #}
+        <div class="bg-[#2a2f35] p-3 rounded-lg w-[120px]">
+          <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">YOUR SCORE</h3>
+          <div class="flex items-center justify-center">
+            {% include "app/icons/star.svg" with classes="w-5 h-5 mr-1.5 text-yellow-400 fill-yellow-400" %}
+            {% if artist_tracker.score %}
+              <span class="text-lg font-bold text-white">{{ artist_tracker.score|floatformat:1 }}</span>
+              <span class="text-gray-400 ml-0.5 text-sm">/10</span>
+            {% else %}
+              <span class="text-lg font-bold text-gray-400">-</span>
+            {% endif %}
           </div>
-
-          {# Rating popup #}
-          <div x-show="showRatingPopup"
-               @click.outside="showRatingPopup = false; isHovering = false"
-               class="absolute left-0 top-full mt-2 p-3 bg-[#2a2f35] rounded-lg shadow-lg z-10 w-[250px] border border-gray-700"
-               @mouseenter="isHovering = true"
-               @mouseleave="isHovering = false; hoverRating = null">
-            <div class="flex justify-between mb-1">
-              {% with rating_range=10|get_range %}
-                {% for rating_value in rating_range %}
-                  <button @click="rating = {{ rating_value }}; showRatingPopup = false; isHovering = false"
-                          @mouseenter="hoverRating = {{ rating_value }}"
-                          hx-post="{% url 'artist_score_update' artist.id %}"
-                          hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
-                          hx-vals='{"score": {{ rating_value }} }'
-                          hx-trigger="click"
-                          hx-swap="none"
-                          class="focus:outline-none flex flex-col items-center cursor-pointer">
-                    <div :class="{ 'text-yellow-400': {{ rating_value }} <= (isHovering ? hoverRating : rating), 'text-gray-600': {{ rating_value }} > (isHovering ? hoverRating : rating) }">
-                      {% include "app/icons/star.svg" with classes="w-5 h-5 hover:scale-110 transition-transform" %}
-                    </div>
-                    <span class="text-xs mt-1 text-gray-400">{{ rating_value }}</span>
-                  </button>
-                {% endfor %}
-              {% endwith %}
-            </div>
-          </div>
+          <p class="text-xs text-gray-400 mt-0.5 text-center">Click button to edit</p>
         </div>
       </div>
     </div>
