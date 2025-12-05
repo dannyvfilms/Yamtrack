@@ -770,6 +770,7 @@ def media_save(request):
         if media_type == MediaTypes.MUSIC.value:
             artist_instance = None
             album_instance = None
+            track_genres = metadata.get("genres", [])
 
             # Create or get Artist
             artist_id = metadata.get("_artist_id") or metadata.get("details", {}).get("artist_id")
@@ -789,6 +790,10 @@ def media_save(request):
             album_id = metadata.get("_album_id") or metadata.get("details", {}).get("album_id")
             album_title = metadata.get("_album_title") or metadata.get("details", {}).get("album")
             image_url = metadata.get("image", "")
+            release_date = None
+            release_date_str = metadata.get("details", {}).get("release_date")
+            if release_date_str:
+                release_date = _parse_release_date_str(release_date_str)
             
             if album_id and album_title:
                 album_instance, created = Album.objects.get_or_create(
@@ -797,6 +802,8 @@ def media_save(request):
                         "title": album_title,
                         "artist": artist_instance,
                         "image": image_url,
+                        "release_date": release_date,
+                        "genres": track_genres,
                     },
                 )
                 # Update album image if it's missing
@@ -804,6 +811,13 @@ def media_save(request):
                     if not album_instance.image or album_instance.image == settings.IMG_NONE:
                         album_instance.image = image_url
                         album_instance.save(update_fields=["image"])
+                # Fill release_date/genres if missing
+                if not album_instance.release_date and release_date:
+                    album_instance.release_date = release_date
+                    album_instance.save(update_fields=["release_date"])
+                if not album_instance.genres and track_genres:
+                    album_instance.genres = track_genres
+                    album_instance.save(update_fields=["genres"])
             elif album_title:
                 # Try to find by title and artist if no ID
                 album_instance = Album.objects.filter(
@@ -815,6 +829,8 @@ def media_save(request):
                         title=album_title,
                         artist=artist_instance,
                         image=image_url,
+                        release_date=release_date,
+                        genres=track_genres,
                     )
 
             instance.artist = artist_instance
@@ -1174,6 +1190,8 @@ def create_artist_from_search(request, musicbrainz_artist_id):
             name=artist_data.get("name", "Unknown Artist"),
             sort_name=artist_data.get("sort_name", ""),
             musicbrainz_id=musicbrainz_artist_id,
+            country=artist_data.get("country", "") or "",
+            genres=[g.get("name") for g in artist_data.get("genres", []) if g.get("name")] if artist_data.get("genres") else [],
         )
         logger.info("Created artist %s from MusicBrainz", artist.name)
         
@@ -1206,6 +1224,7 @@ def create_album_from_search(request, musicbrainz_release_id):
                 artist = Artist.objects.create(
                     name=artist_name,
                     musicbrainz_id=artist_id,
+                    country=release_data.get("country", "") or "",
                 )
         elif artist_name:
             artist = Artist.objects.filter(name=artist_name).first()
@@ -1226,13 +1245,14 @@ def create_album_from_search(request, musicbrainz_release_id):
                     release_date = datetime.strptime(date_str[:10], "%Y-%m-%d").date()
             except ValueError:
                 pass
-        
+    
         album = Album.objects.create(
             title=release_data.get("title", "Unknown Album"),
             musicbrainz_release_id=musicbrainz_release_id,
             artist=artist,
             release_date=release_date,
             image=release_data.get("image", ""),
+            genres=release_data.get("genres", []),
         )
         logger.info("Created album %s from MusicBrainz", album.title)
     else:
@@ -1242,6 +1262,10 @@ def create_album_from_search(request, musicbrainz_release_id):
             album.image = new_image
             album.save(update_fields=["image"])
             logger.info("Updated album %s image", album.title)
+        # Update genres if we have fresh metadata and none stored yet
+        if not album.genres and release_data.get("genres"):
+            album.genres = release_data.get("genres", [])
+            album.save(update_fields=["genres"])
 
     return redirect("album_detail", album_id=album.id)
 
@@ -1333,6 +1357,19 @@ def artist_detail(request, artist_id):
             mb_rating = mb_data.get("rating")
             mb_rating_count = mb_data.get("rating_count", 0)
             bio = mb_data.get("bio", "")  # Wikipedia extract
+            
+            # Persist country/genres locally for statistics rollups
+            updated_fields = []
+            if mb_data.get("country") and mb_data.get("country") != artist.country:
+                artist.country = mb_data.get("country", "")
+                updated_fields.append("country")
+            if mb_data.get("genres"):
+                genre_names = [g.get("name") for g in mb_data.get("genres") if g.get("name")]
+                if genre_names != artist.genres:
+                    artist.genres = genre_names
+                    updated_fields.append("genres")
+            if updated_fields:
+                artist.save(update_fields=updated_fields)
             
             # Save Wikipedia image to Artist if not already set
             wiki_image = mb_data.get("image")
@@ -1434,6 +1471,11 @@ def album_detail(request, album_id):
                 release_data = musicbrainz.get_release(album.musicbrainz_release_id)
                 tracks_data = release_data.get("tracks", [])
                 
+                # Update genres from release if available
+                if release_data.get("genres") and not album.genres:
+                    album.genres = release_data.get("genres")
+                    album.save(update_fields=["genres"])
+
                 for track_data in tracks_data:
                     Track.objects.update_or_create(
                         album=album,
@@ -1443,6 +1485,7 @@ def album_detail(request, album_id):
                             "title": track_data.get("title", "Unknown Track"),
                             "musicbrainz_recording_id": track_data.get("recording_id"),
                             "duration_ms": track_data.get("duration_ms"),
+                            "genres": track_data.get("genres", []) or release_data.get("genres", []),
                         },
                     )
                 
@@ -1851,6 +1894,9 @@ def sync_album_metadata_view(request, album_id):
             if new_image and new_image != settings.IMG_NONE:
                 album.image = new_image
             
+            if release_data.get("genres"):
+                album.genres = release_data.get("genres")
+            
             # Update tracks
             tracks_data = release_data.get("tracks", [])
             for track_data in tracks_data:
@@ -1862,11 +1908,12 @@ def sync_album_metadata_view(request, album_id):
                         "title": track_data.get("title", "Unknown Track"),
                         "musicbrainz_recording_id": track_data.get("recording_id"),
                         "duration_ms": track_data.get("duration_ms"),
+                        "genres": track_data.get("genres", []) or release_data.get("genres", []),
                     },
                 )
             
             album.tracks_populated = True
-            album.save(update_fields=["tracks_populated", "image"])
+            album.save(update_fields=["tracks_populated", "image", "genres"])
             
             messages.success(request, f"Synced {len(tracks_data)} tracks for {album.title}")
         except Exception as e:

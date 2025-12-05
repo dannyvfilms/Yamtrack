@@ -1496,6 +1496,102 @@ def _compute_music_top_lists(play_details, limit=5):
     }
 
 
+def _coerce_genre_list(value):
+    """Normalize a genre field (string or list) into a list of strings."""
+    if not value:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (list, tuple)):
+        return [v for v in value if v]
+    return []
+
+
+def _parse_release_date_str(date_str):
+    """Parse a MusicBrainz date string (YYYY, YYYY-MM, YYYY-MM-DD) to date."""
+    if not date_str:
+        return None
+    try:
+        if len(date_str) >= 10:
+            return datetime.datetime.strptime(date_str[:10], "%Y-%m-%d").date()
+        if len(date_str) == 7:
+            return datetime.datetime.strptime(date_str, "%Y-%m").date()
+        if len(date_str) == 4:
+            return datetime.datetime.strptime(date_str, "%Y").date()
+    except ValueError:
+        return None
+    return None
+
+
+def _hydrate_music_metadata_for_rollups(music_queryset):
+    """Ensure artists/albums have genres/country/release_date without manual visits.
+    
+    Currently we only use locally stored metadata to avoid extra provider calls.
+    """
+    # No-op placeholder: relies on metadata stored at creation/sync time.
+
+
+def _compute_music_top_rollups(play_details, limit=5):
+    """Compute top genres, decades, and countries from music play details."""
+    from app.helpers import minutes_to_hhmm
+
+    genre_stats = defaultdict(lambda: {"minutes": 0, "plays": 0, "name": ""})
+    decade_stats = defaultdict(lambda: {"minutes": 0, "plays": 0, "label": ""})
+    country_stats = defaultdict(lambda: {"minutes": 0, "plays": 0, "code": ""})
+
+    for music, dt, runtime in play_details:
+        minutes = runtime or 0
+
+        # Genres: prefer album genres, fall back to artist genres
+        genres = []
+        if getattr(music, "album", None) and music.album.genres:
+            genres = _coerce_genre_list(music.album.genres)
+        elif getattr(music, "artist", None) and music.artist.genres:
+            genres = _coerce_genre_list(music.artist.genres)
+        elif getattr(music, "track", None) and music.track.genres:
+            genres = _coerce_genre_list(music.track.genres)
+
+        for genre in genres:
+            key = genre.title()
+            genre_stats[key]["minutes"] += minutes
+            genre_stats[key]["plays"] += 1
+            genre_stats[key]["name"] = key
+
+        # Decades: from album release_date if available
+        release_date = getattr(music.album, "release_date", None) if getattr(music, "album", None) else None
+        if release_date and release_date.year:
+            decade_label = f"{(release_date.year // 10) * 10}s"
+            decade_stats[decade_label]["minutes"] += minutes
+            decade_stats[decade_label]["plays"] += 1
+            decade_stats[decade_label]["label"] = decade_label
+
+        # Countries: from artist.country
+        country_code = ""
+        if getattr(music, "artist", None) and music.artist.country:
+            country_code = music.artist.country
+        if country_code:
+            code_upper = country_code.upper()
+            country_stats[code_upper]["minutes"] += minutes
+            country_stats[code_upper]["plays"] += 1
+            country_stats[code_upper]["code"] = code_upper
+
+    def _format_top(stat_map, label_key):
+        items = sorted(
+            stat_map.values(),
+            key=lambda x: (x["minutes"], x["plays"]),
+            reverse=True,
+        )[:limit]
+        for item in items:
+            item["formatted_duration"] = minutes_to_hhmm(item["minutes"])
+        return items
+
+    return {
+        "top_genres": _format_top(genre_stats, "name"),
+        "top_decades": _format_top(decade_stats, "label"),
+        "top_countries": _format_top(country_stats, "code"),
+    }
+
+
 def get_music_consumption_stats(user_media, start_date, end_date, minutes_per_type=None):
     """Return aggregate metrics and chart data for music activity.
     
@@ -1509,6 +1605,10 @@ def get_music_consumption_stats(user_media, start_date, end_date, minutes_per_ty
         music_queryset = music_queryset.select_related("item", "artist", "album")
     
     music_datetimes, play_details = _collect_music_play_data(music_queryset, start_date, end_date)
+    
+    # Hydrate missing metadata (genres, country, release_date) from stored data only (no provider calls)
+    if music_queryset is not None:
+        _hydrate_music_metadata_for_rollups(music_queryset)
     
     if minutes_per_type is None:
         minutes_per_type = calculate_minutes_per_media_type(user_media or {}, start_date, end_date)
@@ -1536,6 +1636,7 @@ def get_music_consumption_stats(user_media, start_date, end_date, minutes_per_ty
     
     # Compute top lists
     top_lists = _compute_music_top_lists(play_details, limit=5)
+    meta_lists = _compute_music_top_rollups(play_details, limit=5)
     
     return {
         "minutes": minutes_breakdown,
@@ -1545,6 +1646,9 @@ def get_music_consumption_stats(user_media, start_date, end_date, minutes_per_ty
         "top_artists": top_lists["top_artists"],
         "top_albums": top_lists["top_albums"],
         "top_tracks": top_lists["top_tracks"],
+        "top_genres": meta_lists["top_genres"],
+        "top_decades": meta_lists["top_decades"],
+        "top_countries": meta_lists["top_countries"],
     }
 
 

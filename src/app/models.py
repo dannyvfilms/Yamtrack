@@ -2018,6 +2018,17 @@ class Artist(models.Model):
         help_text="MusicBrainz Artist ID (UUID)",
     )
     image = models.URLField(blank=True, default="")
+    country = models.CharField(
+        max_length=5,
+        blank=True,
+        default="",
+        help_text="ISO country code from MusicBrainz",
+    )
+    genres = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Top genres/tags from MusicBrainz",
+    )
     discography_synced_at = models.DateTimeField(
         null=True,
         blank=True,
@@ -2072,6 +2083,11 @@ class Album(models.Model):
         default="",
         help_text="Album type: Album, EP, Single, Compilation, etc.",
     )
+    genres = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Genres/tags from MusicBrainz release",
+    )
     tracks_populated = models.BooleanField(
         default=False,
         help_text="Whether tracks have been fetched from MusicBrainz",
@@ -2121,6 +2137,11 @@ class Track(models.Model):
         null=True,
         blank=True,
         help_text="Duration in milliseconds",
+    )
+    genres = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Genres/tags for this recording",
     )
 
     class Meta:

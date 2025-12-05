@@ -325,7 +325,7 @@ def recording(media_id):
     
     # Fetch recording with releases and artist-credits included
     params = {
-        "inc": "artists+releases+release-groups",
+        "inc": "artists+releases+release-groups+genres+tags",
     }
     
     response = _mb_request(f"recording/{media_id}", params)
@@ -383,6 +383,18 @@ def recording(media_id):
         minutes = int(duration_ms // 60000)
         seconds = int((duration_ms % 60000) // 1000)
         runtime_str = f"{minutes}:{seconds:02d}"
+
+    # Genres/tags (prefer official genres)
+    genres = []
+    for g in response.get("genres", []):
+        name = g.get("name")
+        if name:
+            genres.append(name)
+    if not genres:
+        for t in response.get("tags", []):
+            name = t.get("name")
+            if name:
+                genres.append(name)
     
     # Build display title with artist
     display_title = title
@@ -407,6 +419,7 @@ def recording(media_id):
             "runtime": runtime_str,
             "duration_minutes": duration_minutes,
         },
+        "genres": genres,
         # Additional fields for creating Artist/Album models
         "_artist_name": artist_name,
         "_artist_id": artist_id,
@@ -840,7 +853,7 @@ def get_release(release_id):
         return cached
 
     params = {
-        "inc": "artists+recordings+release-groups",
+        "inc": "artists+recordings+release-groups+genres+tags",
     }
 
     response = _mb_request(f"release/{release_id}", params)
@@ -869,6 +882,18 @@ def get_release(release_id):
     # Get cover art with release group fallback
     image = _get_cover_art(release_id, release_group_id)
 
+    # Genres/tags (prefer official genres)
+    genres = []
+    for g in response.get("genres", []):
+        name = g.get("name")
+        if name:
+            genres.append(name)
+    if not genres:
+        for t in response.get("tags", []):
+            name = t.get("name")
+            if name:
+                genres.append(name)
+
     # Get tracks
     media_list = response.get("media", [])
     tracks = []
@@ -890,6 +915,7 @@ def get_release(release_id):
                 "disc_number": disc_number,
                 "duration": duration_str,
                 "duration_ms": track_length,
+                "genres": genres,
             })
 
     result = {
@@ -899,6 +925,7 @@ def get_release(release_id):
         "artist_id": artist_id,
         "release_date": date,
         "image": image,
+        "genres": genres,
         "tracks": tracks,
     }
 
@@ -940,4 +967,3 @@ def search_combined(query, page=1):
 
     cache.set(cache_key, data, 60 * 60 * 24)
     return data
-

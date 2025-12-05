@@ -1090,6 +1090,84 @@
               {% endif %}
             </div>
           </div>
+
+          <!-- Top 5 Genres / Decades / Countries -->
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4">
+            <!-- Top Genres -->
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top 5 Genres</h3>
+              {% if music_consumption.top_genres %}
+                <div class="space-y-3">
+                  {% for genre in music_consumption.top_genres %}
+                  <div class="flex items-center space-x-3">
+                    <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
+                    <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center text-gray-300 text-sm font-semibold uppercase">
+                      {{ genre.name|slice:":2" }}
+                    </div>
+                    <div class="flex-1 min-w-0">
+                      <p class="text-sm font-medium text-white truncate">{{ genre.name }}</p>
+                      <p class="text-xs text-gray-500 truncate">{{ genre.formatted_duration }} · {{ genre.plays }} play{{ genre.plays|pluralize }}</p>
+                    </div>
+                  </div>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="flex flex-col items-center justify-center py-8 text-gray-400">
+                  <p class="text-sm">No genre data available.</p>
+                </div>
+              {% endif %}
+            </div>
+
+            <!-- Top Decades -->
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top 5 Decades</h3>
+              {% if music_consumption.top_decades %}
+                <div class="space-y-3">
+                  {% for decade in music_consumption.top_decades %}
+                  <div class="flex items-center space-x-3">
+                    <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
+                    <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center text-indigo-300 text-sm font-semibold">
+                      {{ decade.label|default:""|slice:":-1" }}
+                    </div>
+                    <div class="flex-1 min-w-0">
+                      <p class="text-sm font-medium text-white truncate">{{ decade.label|default:"Unknown" }}</p>
+                      <p class="text-xs text-gray-500 truncate">{{ decade.formatted_duration }} · {{ decade.plays }} play{{ decade.plays|pluralize }}</p>
+                    </div>
+                  </div>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="flex flex-col items-center justify-center py-8 text-gray-400">
+                  <p class="text-sm">No decade data available.</p>
+                </div>
+              {% endif %}
+            </div>
+
+            <!-- Top Countries -->
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top 5 Countries</h3>
+              {% if music_consumption.top_countries %}
+                <div class="space-y-3">
+                  {% for country in music_consumption.top_countries %}
+                  <div class="flex items-center space-x-3">
+                    <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
+                    <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center text-emerald-300 text-sm font-semibold">
+                      {{ country.code|upper }}
+                    </div>
+                    <div class="flex-1 min-w-0">
+                      <p class="text-sm font-medium text-white truncate">{{ country.code|upper }}</p>
+                      <p class="text-xs text-gray-500 truncate">{{ country.formatted_duration }} · {{ country.plays }} play{{ country.plays|pluralize }}</p>
+                    </div>
+                  </div>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="flex flex-col items-center justify-center py-8 text-gray-400">
+                  <p class="text-sm">No country data available.</p>
+                </div>
+              {% endif %}
+            </div>
+          </div>
         </div>
       </section>
       {% endif %}
