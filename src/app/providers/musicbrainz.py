@@ -23,19 +23,21 @@ _last_request_time = 0
 USER_AGENT = "Yamtrack/1.0 (https://github.com/FuzzyGrim/Yamtrack)"
 
 
-def get_wikipedia_extract(artist_name):
-    """Fetch the Wikipedia extract for an artist.
+def get_wikipedia_data(artist_name):
+    """Fetch Wikipedia data for an artist (bio extract and image).
     
-    Uses Wikipedia's REST API to get a summary/extract for the artist.
-    Returns None if not found or on error.
+    Uses Wikipedia's REST API to get a summary/extract and image for the artist.
+    Returns a dict with 'extract' and 'image' keys, or None values if not found.
     """
     if not artist_name:
-        return None
+        return {"extract": None, "image": None}
     
-    cache_key = f"wikipedia_extract_{artist_name.lower().replace(' ', '_')}"
+    cache_key = f"wikipedia_data_{artist_name.lower().replace(' ', '_')}"
     cached = cache.get(cache_key)
     if cached is not None:
-        return cached if cached else None  # Handle empty string as "no extract"
+        return cached
+    
+    result = {"extract": None, "image": None}
     
     try:
         # Wikipedia API uses underscores for spaces in titles
@@ -48,18 +50,40 @@ def get_wikipedia_extract(artist_name):
         
         if response.ok:
             data = response.json()
+            
+            # Get the extract (bio)
             extract = data.get("extract", "")
+            result["extract"] = extract if extract else None
+            
+            # Get the image - prefer originalimage, fall back to thumbnail
+            original = data.get("originalimage", {})
+            thumbnail = data.get("thumbnail", {})
+            
+            # Use original if available and reasonable size, otherwise thumbnail
+            if original.get("source"):
+                result["image"] = original["source"]
+            elif thumbnail.get("source"):
+                result["image"] = thumbnail["source"]
+            
             # Cache for 7 days
-            cache.set(cache_key, extract or "", 60 * 60 * 24 * 7)
-            return extract if extract else None
+            cache.set(cache_key, result, 60 * 60 * 24 * 7)
         else:
             # Cache the miss to avoid repeated failed lookups
-            cache.set(cache_key, "", 60 * 60 * 24)  # Cache miss for 1 day
-            return None
+            cache.set(cache_key, result, 60 * 60 * 24)  # Cache miss for 1 day
             
     except Exception as e:
-        logger.debug("Failed to fetch Wikipedia extract for %s: %s", artist_name, e)
-        return None
+        logger.debug("Failed to fetch Wikipedia data for %s: %s", artist_name, e)
+    
+    return result
+
+
+def get_wikipedia_extract(artist_name):
+    """Fetch the Wikipedia extract for an artist (legacy wrapper).
+    
+    Returns just the extract string for backwards compatibility.
+    """
+    data = get_wikipedia_data(artist_name)
+    return data.get("extract")
 
 
 def _rate_limit():
@@ -531,8 +555,10 @@ def get_artist(artist_id):
     # Annotation from MusicBrainz (often just editor notes, not a bio)
     mb_annotation = response.get("annotation", "")
     
-    # Get Wikipedia extract as the bio (much more useful than MB annotation)
-    wikipedia_extract = get_wikipedia_extract(name)
+    # Get Wikipedia data (bio and image - much more useful than MB annotation)
+    wiki_data = get_wikipedia_data(name)
+    wikipedia_bio = wiki_data.get("extract")
+    wikipedia_image = wiki_data.get("image")
     
     # Genres from MusicBrainz (new genre system)
     genres = []
@@ -589,7 +615,8 @@ def get_artist(artist_id):
         "begin_date": begin_date,
         "end_date": end_date,
         "ended": ended,
-        "bio": wikipedia_extract,  # Wikipedia extract as bio
+        "bio": wikipedia_bio,  # Wikipedia extract as bio
+        "image": wikipedia_image,  # Wikipedia image URL
         "annotation": mb_annotation,  # MusicBrainz annotation (usually editor notes)
         "genres": genres[:10],  # Top 10 genres
         "tags": tags[:15],  # Top 15 tags

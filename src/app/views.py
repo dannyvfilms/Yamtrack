@@ -1337,6 +1337,12 @@ def artist_detail(request, artist_id):
             mb_rating = mb_data.get("rating")
             mb_rating_count = mb_data.get("rating_count", 0)
             bio = mb_data.get("bio", "")  # Wikipedia extract
+            
+            # Save Wikipedia image to Artist if not already set
+            wiki_image = mb_data.get("image")
+            if wiki_image and (not artist.image or artist.image == settings.IMG_NONE):
+                artist.image = wiki_image
+                artist.save(update_fields=["image"])
         except Exception as e:
             logger.debug("Failed to fetch artist metadata from MusicBrainz: %s", e)
 
