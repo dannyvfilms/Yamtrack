@@ -23,16 +23,21 @@ _last_request_time = 0
 USER_AGENT = "Yamtrack/1.0 (https://github.com/FuzzyGrim/Yamtrack)"
 
 
-def get_wikipedia_data(artist_name):
-    """Fetch Wikipedia data for an artist (bio extract and image).
+def get_wikipedia_data(title):
+    """Fetch Wikipedia data for a given title (bio extract and image).
     
-    Uses Wikipedia's REST API to get a summary/extract and image for the artist.
+    Uses Wikipedia's REST API to get a summary/extract and image.
+    The title can be an artist name or a specific Wikipedia article title
+    (e.g., "Queen_(band)" which is more accurate than just "Queen").
+    
     Returns a dict with 'extract' and 'image' keys, or None values if not found.
     """
-    if not artist_name:
+    if not title:
         return {"extract": None, "image": None}
     
-    cache_key = f"wikipedia_data_{artist_name.lower().replace(' ', '_')}"
+    # Normalize title for cache key and URL
+    normalized_title = title.replace(' ', '_')
+    cache_key = f"wikipedia_data_{normalized_title.lower()}"
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
@@ -41,7 +46,7 @@ def get_wikipedia_data(artist_name):
     
     try:
         # Wikipedia API uses underscores for spaces in titles
-        url = f"{WIKIPEDIA_API_BASE}/{artist_name.replace(' ', '_')}"
+        url = f"{WIKIPEDIA_API_BASE}/{normalized_title}"
         response = requests.get(
             url,
             headers={"User-Agent": USER_AGENT},
@@ -531,7 +536,7 @@ def get_artist(artist_id):
         return cached
 
     params = {
-        "inc": "releases+release-groups+tags+ratings+annotation+genres",
+        "inc": "releases+release-groups+tags+ratings+annotation+genres+url-rels",
     }
 
     response = _mb_request(f"artist/{artist_id}", params)
@@ -555,8 +560,30 @@ def get_artist(artist_id):
     # Annotation from MusicBrainz (often just editor notes, not a bio)
     mb_annotation = response.get("annotation", "")
     
+    # Try to get the Wikipedia article title from MusicBrainz relations
+    # This is more reliable than guessing (e.g., "Queen" -> "Queen_(band)")
+    wikipedia_title = None
+    relations = response.get("relations", [])
+    for rel in relations:
+        if rel.get("type") == "wikipedia":
+            url = rel.get("url", {}).get("resource", "")
+            # Extract article title from Wikipedia URL
+            # e.g., "https://en.wikipedia.org/wiki/Queen_(band)" -> "Queen_(band)"
+            if "wikipedia.org/wiki/" in url:
+                wikipedia_title = url.split("/wiki/")[-1]
+                # Prefer English Wikipedia
+                if "en.wikipedia.org" in url:
+                    break
+    
+    # Fall back to artist name with disambiguation if no Wikipedia URL found
+    if not wikipedia_title:
+        if disambiguation:
+            wikipedia_title = f"{name}_({disambiguation.replace(' ', '_')})"
+        else:
+            wikipedia_title = name
+    
     # Get Wikipedia data (bio and image - much more useful than MB annotation)
-    wiki_data = get_wikipedia_data(name)
+    wiki_data = get_wikipedia_data(wikipedia_title)
     wikipedia_bio = wiki_data.get("extract")
     wikipedia_image = wiki_data.get("image")
     
