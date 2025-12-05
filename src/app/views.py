@@ -1691,9 +1691,9 @@ def album_delete(request):
 @require_POST
 def song_save(request):
     """Handle adding a listen for a song - mirrors episode_save for episodes."""
+    from django.shortcuts import get_object_or_404
     from django.utils.dateparse import parse_datetime, parse_date
     from app.models import Track
-    from app.providers import musicbrainz
 
     recording_id = request.POST.get("recording_id")
     album_id = request.POST.get("album_id")
