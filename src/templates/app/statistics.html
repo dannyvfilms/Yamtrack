@@ -530,6 +530,32 @@
           </div>
         </div>
         {% endif %}
+        
+        {% if hours_per_media_type.music and hours_per_media_type.music != "0h 0min" %}
+        <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 flex items-center min-w-0" data-media-card>
+          <div class="bg-rose-600/20 p-3 sm:p-4 rounded-full mr-4">
+            <svg xmlns="http://www.w3.org/2000/svg"
+                 width="24"
+                 height="24"
+                 viewBox="0 0 24 24"
+                 fill="none"
+                 stroke="currentColor"
+                 stroke-width="2"
+                 stroke-linecap="round"
+                 stroke-linejoin="round"
+                 class="w-5 h-5 sm:w-8 sm:h-8 text-rose-400">
+              <path d="M9 18V5l12-2v13"/>
+              <circle cx="6" cy="18" r="3"/>
+              <circle cx="18" cy="16" r="3"/>
+            </svg>
+          </div>
+          <div>
+            <h3 class="text-xs sm:text-sm font-medium text-gray-400">Music</h3>
+            <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.music }}</p>
+            <p class="text-xs sm:text-sm text-gray-500" x-text="selectedRange"></p>
+          </div>
+        </div>
+        {% endif %}
       </div>
 
       <!-- TV Shows Consumption Section -->
