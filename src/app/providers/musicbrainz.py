@@ -218,9 +218,17 @@ def _get_cover_art(release_id, release_group_id=None):
     return get_cover_art(release_id=release_id, release_group_id=release_group_id)
 
 
-def search(query, page=1):
-    """Search for music recordings on MusicBrainz."""
+def search(query, page=1, skip_cover_art=False):
+    """Search for music recordings on MusicBrainz.
+    
+    Args:
+        query: Search query string
+        page: Page number for pagination
+        skip_cover_art: If True, skip fetching cover art (faster)
+    """
     cache_key = f"musicbrainz_search_{query.lower()}_p{page}"
+    if skip_cover_art:
+        cache_key += "_no_art"
     cached = cache.get(cache_key)
     if cached:
         return cached
@@ -267,10 +275,11 @@ def search(query, page=1):
             first_release = releases[0]
             album_title = first_release.get("title", "")
             release_date = first_release.get("date", "")
-            # Try to get cover art from the first release
-            release_id = first_release.get("id")
-            if release_id:
-                image = _get_cover_art(release_id)
+            # Try to get cover art from the first release (skip if requested for faster search)
+            if not skip_cover_art:
+                release_id = first_release.get("id")
+                if release_id:
+                    image = _get_cover_art(release_id)
         
         # Get duration in milliseconds, convert to minutes
         duration_ms = recording.get("length")
@@ -462,9 +471,17 @@ def search_artists(query, page=1):
     return data
 
 
-def search_releases(query, page=1):
-    """Search for releases (albums) on MusicBrainz."""
+def search_releases(query, page=1, skip_cover_art=False):
+    """Search for releases (albums) on MusicBrainz.
+    
+    Args:
+        query: Search query string
+        page: Page number for pagination
+        skip_cover_art: If True, skip fetching cover art (faster)
+    """
     cache_key = f"musicbrainz_release_search_{query.lower()}_p{page}"
+    if skip_cover_art:
+        cache_key += "_no_art"
     cached = cache.get(cache_key)
     if cached:
         return cached
@@ -504,8 +521,10 @@ def search_releases(query, page=1):
                     artist_parts.append(credit.get("joinphrase", ""))
             artist_name = "".join(artist_parts).strip()
 
-        # Try to get cover art
-        image = _get_cover_art(release_id)
+        # Try to get cover art (skip if requested for faster search)
+        image = settings.IMG_NONE
+        if not skip_cover_art:
+            image = _get_cover_art(release_id)
 
         results.append({
             "release_id": release_id,
@@ -888,7 +907,10 @@ def get_release(release_id):
 
 
 def search_combined(query, page=1):
-    """Combined search returning artists, albums, and tracks."""
+    """Combined search returning artists, albums, and tracks.
+    
+    Cover art is skipped during search for speed - results use placeholders.
+    """
     cache_key = f"musicbrainz_combined_search_{query.lower()}_p{page}"
     cached = cache.get(cache_key)
     if cached:
@@ -896,10 +918,11 @@ def search_combined(query, page=1):
 
     # For first page, fetch artists, releases, and recordings
     # For subsequent pages, only fetch recordings (tracks)
+    # Skip cover art for faster search results
     if page == 1:
         artist_results = search_artists(query, page=1)
-        release_results = search_releases(query, page=1)
-        track_results = search(query, page=1)
+        release_results = search_releases(query, page=1, skip_cover_art=True)
+        track_results = search(query, page=1, skip_cover_art=True)
 
         data = {
             "artists": artist_results.get("results", [])[:5],  # Top 5 artists
@@ -907,8 +930,8 @@ def search_combined(query, page=1):
             "tracks": track_results,  # Full track results with pagination
         }
     else:
-        # For page > 1, only return tracks
-        track_results = search(query, page=page)
+        # For page > 1, only return tracks (skip cover art for speed)
+        track_results = search(query, page=page, skip_cover_art=True)
         data = {
             "artists": [],
             "releases": [],
