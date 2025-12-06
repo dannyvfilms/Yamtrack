@@ -36,6 +36,7 @@ This document explains how media types are defined and wired through the app so 
 - Charts: media type distribution, score/status distribution, activity heatmap, hours/plays per media type. Colors from `media_type_config.stats_color`.
 - Spotlight sections are hard-coded for Movies, TV, Games, Anime (top played cards); new types won’t appear there without template edits.
 - Runtime/units: Minutes per media type rely on `Item.runtime_minutes` or provider runtime; fallback 60 minutes for unknown types; movies use cached runtime; TV/anime use episode runtimes; games use progress minutes.
+- Music rollups: genres/decades/countries are derived from album→artist metadata; country codes are expanded to full names for display.
 
 ## Calendar, releases, notifications
 - Event creation (`src/events/calendar.py`): processes all types except seasons/episodes directly; skips manual sources. Branches:
@@ -56,7 +57,7 @@ This document explains how media types are defined and wired through the app so 
 ## Imports/exports, webhooks, automation
 - CSV export (`src/integrations/exports.py`) iterates `MediaTypes.values`; prefetch for TV/Season→Episode; game progress formatted hh:mm.
 - Imports (`src/integrations/imports/helpers.py` + source modules) loop over media types (skip season/episode) and expect concrete models per `media_type`. Overwrite mode deletes existing items by type/source. New types need an import handler to create items + trackers.
-- Webhooks (`src/integrations/webhooks/*.py`) handle TV/Movie with optional anime mapping; unknown media types are ignored. Extend mapping/handlers for new types.
+- Webhooks (`src/integrations/webhooks/*.py`) handle TV/Movie with optional anime mapping; music scrobbles are ingested from Plex/Emby/Jellyfin and normalized via `music_scrobble.record_music_playback`. Unknown media types are ignored. Extend mapping/handlers for new types.
 - Auto-pause (`src/app/services/auto_pause.py` + `AUTO_PAUSE_MEDIA_TYPES` in `users/views.py`) covers game, movie, season, anime, manga, book, comic; extend maps for new types.
 
 ## Edge cases & special rules

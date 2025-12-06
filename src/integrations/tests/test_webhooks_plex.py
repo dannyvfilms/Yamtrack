@@ -1,11 +1,21 @@
 import json
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import Client, TestCase
 from django.urls import reverse
 
-from app.models import TV, Anime, Episode, Item, MediaTypes, Movie, Season, Status
+from app.models import (
+    Anime,
+    Episode,
+    Item,
+    MediaTypes,
+    Movie,
+    Season,
+    Status,
+    TV,
+)
 from integrations.webhooks.plex import PlexWebhookProcessor
 
 
@@ -21,6 +31,9 @@ class PlexWebhookTests(TestCase):
             "plex_usernames": "testuser",
         }
         self.user = get_user_model().objects.create_superuser(**self.credentials)
+        self.user.anime_enabled = True
+        self.user.music_enabled = True
+        self.user.save()
         self.url = reverse("plex_webhook", kwargs={"token": "test-token"})
         self.fetch_mapping_patcher = patch(
             "integrations.webhooks.base.BaseWebhookProcessor._fetch_mapping_data",
@@ -52,13 +65,16 @@ class PlexWebhookTests(TestCase):
                 }
 
             title = "Dummy"
-            tvdb_id = "1"
-            if media_id == "1668":
+            tvdb_id = 1
+            if media_id in ("1668", "85987"):
                 title = "Friends"
-                tvdb_id = "303821"
+                tvdb_id = 303821
+            elif media_id == "3946240":
+                title = "Frieren: Beyond Journey's End"
+                tvdb_id = 9350138
             elif media_id == "18664":
                 title = "Cake Boss"
-                tvdb_id = "107671"
+                tvdb_id = 107671
 
             related_seasons = [{"season_number": sn} for sn in season_numbers]
             return {
@@ -108,11 +124,23 @@ class PlexWebhookTests(TestCase):
         )
         self.metadata_patcher.start()
 
+        # Avoid external MAL requests during anime handling
+        self.mal_anime_patcher = patch(
+            "app.providers.mal.anime",
+            return_value={
+                "title": "Dummy Anime",
+                "image": "",
+                "max_progress": 12,
+            },
+        )
+        self.mal_anime_patcher.start()
+
     def tearDown(self):
         self.fetch_mapping_patcher.stop()
         self.tv_with_seasons_patcher.stop()
         self.movie_patcher.stop()
         self.metadata_patcher.stop()
+        self.mal_anime_patcher.stop()
 
     def test_invalid_token(self):
         """Test webhook with invalid token returns 401."""
@@ -159,20 +187,20 @@ class PlexWebhookTests(TestCase):
         self.assertEqual(response.status_code, 200)
 
         # Verify objects were created
-        tv_item = Item.objects.get(media_type=MediaTypes.TV.value, media_id="1668")
+        tv_item = Item.objects.get(media_type=MediaTypes.TV.value, media_id="85987")
         self.assertEqual(tv_item.title, "Friends")
 
         tv = TV.objects.get(item=tv_item, user=self.user)
         self.assertEqual(tv.status, Status.IN_PROGRESS.value)
 
         season = Season.objects.get(
-            item__media_id="1668",
+            item__media_id="85987",
             item__season_number=1,
         )
         self.assertEqual(season.status, Status.IN_PROGRESS.value)
 
         episode = Episode.objects.get(
-            item__media_id="1668",
+            item__media_id="85987",
             item__season_number=1,
             item__episode_number=1,
         )
@@ -422,6 +450,68 @@ class PlexWebhookTests(TestCase):
         self.assertEqual(movie.count(), 2)
         self.assertEqual(movie[0].status, Status.COMPLETED.value)
         self.assertEqual(movie[1].status, Status.COMPLETED.value)
+
+    @patch("integrations.webhooks.plex.music_scrobble.record_music_playback")
+    def test_music_play_event(self, mock_scrobble):
+        """Test Plex music play delegates to the scrobble service."""
+        mock_scrobble.return_value = None
+        payload = {
+            "event": "media.play",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "track",
+                "title": "Test Song",
+                "parentTitle": "Test Album",
+                "grandparentTitle": "Test Artist",
+                "duration": 200000,
+                "ratingKey": "987",
+                "Guid": [
+                    {"id": "musicbrainz://recording/00000000-1111-2222-3333-444444444444"},
+                ],
+            },
+        }
+        response = self.client.post(
+            self.url,
+            data={"payload": json.dumps(payload)},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        mock_scrobble.assert_called_once()
+        event = mock_scrobble.call_args[0][0]
+        self.assertEqual(event.track_title, "Test Song")
+        self.assertEqual(event.artist_name, "Test Artist")
+        self.assertFalse(event.completed)
+        self.assertEqual(
+            event.external_ids.get("musicbrainz_recording"),
+            "00000000-1111-2222-3333-444444444444",
+        )
+
+    @patch("integrations.webhooks.plex.music_scrobble.record_music_playback")
+    def test_music_event_respects_user_setting(self, mock_scrobble):
+        """Music webhooks are ignored when music is disabled for the user."""
+        self.user.music_enabled = False
+        self.user.save()
+        payload = {
+            "event": "media.scrobble",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "track",
+                "title": "Test Song",
+                "parentTitle": "Test Album",
+                "grandparentTitle": "Test Artist",
+                "duration": 200000,
+            },
+        }
+
+        response = self.client.post(
+            self.url,
+            data={"payload": json.dumps(payload)},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        mock_scrobble.assert_not_called()
 
     def test_username_matching(self):
         """Test Plex username matching functionality."""

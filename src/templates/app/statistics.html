@@ -1155,7 +1155,9 @@
                       {{ country.code|upper }}
                     </div>
                     <div class="flex-1 min-w-0">
-                      <p class="text-sm font-medium text-white truncate">{{ country.code|upper }}</p>
+                      <p class="text-sm font-medium text-white truncate">
+                        {% if country.name %}{{ country.name }}{% else %}{{ country.code|upper }}{% endif %}
+                      </p>
                       <p class="text-xs text-gray-500 truncate">{{ country.formatted_duration }} · {{ country.plays }} play{{ country.plays|pluralize }}</p>
                     </div>
                   </div>

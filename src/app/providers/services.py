@@ -150,6 +150,15 @@ def get_media_metadata(
     episode_number=None,
 ):
     """Return the metadata for the selected media."""
+    if media_type == MediaTypes.MUSIC.value and source == Sources.MANUAL.value:
+        return {
+            "max_progress": None,
+            "title": "",
+            "image": "",
+            "related": {},
+            "details": {},
+        }
+
     if source == Sources.MANUAL.value:
         if media_type == MediaTypes.SEASON.value:
             return manual.season(media_id, season_numbers[0])
@@ -183,6 +192,27 @@ def get_media_metadata(
         MediaTypes.BOARDGAME.value: lambda: bgg.metadata(media_id),
         MediaTypes.MUSIC.value: lambda: musicbrainz.recording(media_id),
     }
+    if media_type == MediaTypes.MUSIC.value:
+        if not media_id or len(str(media_id)) < 30:
+            return {
+                "max_progress": None,
+                "title": "",
+                "image": "",
+                "related": {},
+                "details": {},
+            }
+        try:
+            return metadata_retrievers[media_type]()
+        except Exception as exc:  # pragma: no cover - defensive guard for bad IDs
+            logger.debug("Music metadata lookup failed for %s: %s", media_id, exc)
+            return {
+                "max_progress": None,
+                "title": "",
+                "image": "",
+                "related": {},
+                "details": {},
+            }
+
     return metadata_retrievers[media_type]()
 
 

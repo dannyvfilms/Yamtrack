@@ -1,8 +1,11 @@
 import json
 import logging
+import re
 
 import app
 from app.models import MediaTypes
+from app.services import music_scrobble
+from django.utils import timezone
 
 from .base import BaseWebhookProcessor
 
@@ -11,6 +14,11 @@ logger = logging.getLogger(__name__)
 
 class PlexWebhookProcessor(BaseWebhookProcessor):
     """Processor for Plex webhook events."""
+
+    MEDIA_TYPE_MAPPING = {
+        **BaseWebhookProcessor.MEDIA_TYPE_MAPPING,
+        "Track": MediaTypes.MUSIC.value,
+    }
 
     def process_payload(self, payload, user):
         """Process the incoming Plex webhook payload."""
@@ -26,6 +34,37 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
             logger.debug(
                 "Ignoring Plex webhook event for user %s: not a valid user",
                 payload_user,
+            )
+            return
+
+        media_type = self._get_media_type(payload)
+        if media_type == MediaTypes.MUSIC.value:
+            if not getattr(user, "music_enabled", False):
+                logger.debug(
+                    "Ignoring Plex music webhook for user %s: music disabled",
+                    payload_user,
+                )
+                return
+
+            music_event = self._build_music_event(payload, user)
+            music_entry = music_scrobble.record_music_playback(music_event)
+            if music_entry is None:
+                logger.info(
+                    "Processed Plex music %s for %s: %s - %s (no tracking yet; waiting for scrobble)",
+                    "scrobble" if music_event.completed else "play",
+                    payload_user,
+                    music_event.track_title,
+                    music_event.artist_name or "Unknown Artist",
+                )
+                return
+            logger.info(
+                "Processed Plex music %s for %s: %s - %s (status=%s, progress=%s)",
+                "scrobble" if music_event.completed else "play",
+                payload_user,
+                music_event.track_title,
+                music_event.artist_name or "Unknown Artist",
+                music_entry.status,
+                music_entry.progress,
             )
             return
 
@@ -142,14 +181,25 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
         """Get media title from payload."""
         title = None
 
-        if self._get_media_type(payload) == MediaTypes.TV.value:
+        media_type = self._get_media_type(payload)
+
+        if media_type == MediaTypes.TV.value:
             series_name = payload["Metadata"].get("grandparentTitle")
             season_number = payload["Metadata"].get("parentIndex")
             episode_number = payload["Metadata"].get("index")
             title = f"{series_name} S{season_number:02d}E{episode_number:02d}"
 
-        elif self._get_media_type(payload) == MediaTypes.MOVIE.value:
+        elif media_type == MediaTypes.MOVIE.value:
             title = payload["Metadata"].get("title")
+
+        elif media_type == MediaTypes.MUSIC.value:
+            metadata = payload.get("Metadata", {})
+            artist = metadata.get("grandparentTitle")
+            track = metadata.get("title")
+            if artist and track:
+                title = f"{artist} - {track}"
+            else:
+                title = track or artist
 
         return title
 
@@ -182,6 +232,69 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
             "tvdb_id": get_id("tvdb"),
             "plex_guid": get_id("plex"),
         }
+
+    def _extract_music_ids(self, metadata):
+        """Extract MusicBrainz IDs from a Plex track payload."""
+        guids = metadata.get("Guid", [])
+        if not guids:
+            single_guid = metadata.get("guid")
+            if single_guid:
+                guids = [{"id": single_guid}]
+
+        ids = {}
+        for guid in guids:
+            guid_value = guid.get("id") or ""
+            guid_lower = guid_value.lower()
+            uuid = self._extract_uuid(guid_value)
+
+            if "musicbrainz" in guid_lower or "mbid" in guid_lower:
+                if "recording" in guid_lower or "track" in guid_lower:
+                    ids.setdefault("musicbrainz_recording", uuid or guid_value)
+                elif "release-group" in guid_lower or "release_group" in guid_lower:
+                    ids.setdefault("musicbrainz_release_group", uuid or guid_value)
+                elif "release" in guid_lower or "album" in guid_lower:
+                    ids.setdefault("musicbrainz_release", uuid or guid_value)
+                elif "artist" in guid_lower:
+                    ids.setdefault("musicbrainz_artist", uuid or guid_value)
+                else:
+                    ids.setdefault("musicbrainz_recording", uuid or guid_value)
+
+        return ids
+
+    def _extract_uuid(self, value):
+        """Extract UUID from a string."""
+        match = re.search(
+            r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+            value,
+        )
+        return match.group(0) if match else None
+
+    def _build_music_event(self, payload, user):
+        """Build a normalized music playback event from Plex payload."""
+        metadata = payload.get("Metadata", {}) or {}
+        duration_ms = metadata.get("duration")
+        try:
+            duration_ms = int(duration_ms) if duration_ms is not None else None
+        except (TypeError, ValueError):
+            duration_ms = None
+        track_number = metadata.get("index")
+        try:
+            track_number = int(track_number) if track_number is not None else None
+        except (TypeError, ValueError):
+            track_number = None
+
+        return music_scrobble.MusicPlaybackEvent(
+            user=user,
+            artist_name=metadata.get("grandparentTitle"),
+            album_title=metadata.get("parentTitle"),
+            track_title=metadata.get("title") or "Unknown Track",
+            track_number=track_number,
+            duration_ms=duration_ms,
+            plex_rating_key=metadata.get("ratingKey"),
+            external_ids=self._extract_music_ids(metadata),
+            completed=payload.get("event") == "media.scrobble",
+            played_at=timezone.now().replace(second=0, microsecond=0),
+        )
 
     def _extract_season_episode_from_payload(self, payload):
         """Extract season and episode numbers from Plex payload."""

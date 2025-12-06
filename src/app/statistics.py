@@ -4,7 +4,6 @@ import heapq
 import itertools
 import logging
 from collections import Counter, defaultdict
-
 from dateutil.relativedelta import relativedelta
 from django.apps import apps
 from django.db import models
@@ -1497,14 +1496,295 @@ def _compute_music_top_lists(play_details, limit=5):
 
 
 def _coerce_genre_list(value):
-    """Normalize a genre field (string or list) into a list of strings."""
+    """Normalize a genre field (string, dict, or list) into a list of strings."""
+    def _coerce_one(v):
+        if not v:
+            return None
+        if isinstance(v, str):
+            return v
+        if isinstance(v, dict):
+            # Common shapes: {"name": "Jazz"} or {"tag": "jazz"}
+            return v.get("name") or v.get("tag") or v.get("label")
+        return str(v)
+
     if not value:
         return []
     if isinstance(value, str):
         return [value]
+    if isinstance(value, dict):
+        coerced = _coerce_one(value)
+        return [coerced] if coerced else []
     if isinstance(value, (list, tuple)):
-        return [v for v in value if v]
-    return []
+        out = []
+        for v in value:
+            coerced = _coerce_one(v)
+            if coerced:
+                out.append(coerced)
+        return out
+    coerced = _coerce_one(value)
+    return [coerced] if coerced else []
+
+
+# Country name mapping (ISO 3166-1 alpha-2 -> English name)
+COUNTRY_NAME_MAP = {
+    "AD": "Andorra",
+    "AE": "United Arab Emirates",
+    "AF": "Afghanistan",
+    "AG": "Antigua and Barbuda",
+    "AI": "Anguilla",
+    "AL": "Albania",
+    "AM": "Armenia",
+    "AO": "Angola",
+    "AQ": "Antarctica",
+    "AR": "Argentina",
+    "AS": "American Samoa",
+    "AT": "Austria",
+    "AU": "Australia",
+    "AW": "Aruba",
+    "AX": "Aland Islands",
+    "AZ": "Azerbaijan",
+    "BA": "Bosnia and Herzegovina",
+    "BB": "Barbados",
+    "BD": "Bangladesh",
+    "BE": "Belgium",
+    "BF": "Burkina Faso",
+    "BG": "Bulgaria",
+    "BH": "Bahrain",
+    "BI": "Burundi",
+    "BJ": "Benin",
+    "BL": "Saint Barthelemy",
+    "BM": "Bermuda",
+    "BN": "Brunei Darussalam",
+    "BO": "Bolivia, Plurinational State of",
+    "BQ": "Bonaire, Sint Eustatius and Saba",
+    "BR": "Brazil",
+    "BS": "Bahamas",
+    "BT": "Bhutan",
+    "BV": "Bouvet Island",
+    "BW": "Botswana",
+    "BY": "Belarus",
+    "BZ": "Belize",
+    "CA": "Canada",
+    "CC": "Cocos (Keeling) Islands",
+    "CD": "Congo, Democratic Republic of the",
+    "CF": "Central African Republic",
+    "CG": "Congo",
+    "CH": "Switzerland",
+    "CI": "Cote d'Ivoire",
+    "CK": "Cook Islands",
+    "CL": "Chile",
+    "CM": "Cameroon",
+    "CN": "China",
+    "CO": "Colombia",
+    "CR": "Costa Rica",
+    "CU": "Cuba",
+    "CV": "Cabo Verde",
+    "CW": "Curacao",
+    "CX": "Christmas Island",
+    "CY": "Cyprus",
+    "CZ": "Czechia",
+    "DE": "Germany",
+    "DJ": "Djibouti",
+    "DK": "Denmark",
+    "DM": "Dominica",
+    "DO": "Dominican Republic",
+    "DZ": "Algeria",
+    "EC": "Ecuador",
+    "EE": "Estonia",
+    "EG": "Egypt",
+    "EH": "Western Sahara",
+    "ER": "Eritrea",
+    "ES": "Spain",
+    "ET": "Ethiopia",
+    "FI": "Finland",
+    "FJ": "Fiji",
+    "FK": "Falkland Islands (Malvinas)",
+    "FM": "Micronesia, Federated States of",
+    "FO": "Faroe Islands",
+    "FR": "France",
+    "GA": "Gabon",
+    "GB": "United Kingdom of Great Britain and Northern Ireland",
+    "GD": "Grenada",
+    "GE": "Georgia",
+    "GF": "French Guiana",
+    "GG": "Guernsey",
+    "GH": "Ghana",
+    "GI": "Gibraltar",
+    "GL": "Greenland",
+    "GM": "Gambia",
+    "GN": "Guinea",
+    "GP": "Guadeloupe",
+    "GQ": "Equatorial Guinea",
+    "GR": "Greece",
+    "GS": "South Georgia and the South Sandwich Islands",
+    "GT": "Guatemala",
+    "GU": "Guam",
+    "GW": "Guinea-Bissau",
+    "GY": "Guyana",
+    "HK": "Hong Kong",
+    "HM": "Heard Island and McDonald Islands",
+    "HN": "Honduras",
+    "HR": "Croatia",
+    "HT": "Haiti",
+    "HU": "Hungary",
+    "ID": "Indonesia",
+    "IE": "Ireland",
+    "IL": "Israel",
+    "IM": "Isle of Man",
+    "IN": "India",
+    "IO": "British Indian Ocean Territory",
+    "IQ": "Iraq",
+    "IR": "Iran, Islamic Republic of",
+    "IS": "Iceland",
+    "IT": "Italy",
+    "JE": "Jersey",
+    "JM": "Jamaica",
+    "JO": "Jordan",
+    "JP": "Japan",
+    "KE": "Kenya",
+    "KG": "Kyrgyzstan",
+    "KH": "Cambodia",
+    "KI": "Kiribati",
+    "KM": "Comoros",
+    "KN": "Saint Kitts and Nevis",
+    "KP": "Korea, Democratic People's Republic of",
+    "KR": "Korea, Republic of",
+    "KW": "Kuwait",
+    "KY": "Cayman Islands",
+    "KZ": "Kazakhstan",
+    "LA": "Lao People's Democratic Republic",
+    "LB": "Lebanon",
+    "LC": "Saint Lucia",
+    "LI": "Liechtenstein",
+    "LK": "Sri Lanka",
+    "LR": "Liberia",
+    "LS": "Lesotho",
+    "LT": "Lithuania",
+    "LU": "Luxembourg",
+    "LV": "Latvia",
+    "LY": "Libya",
+    "MA": "Morocco",
+    "MC": "Monaco",
+    "MD": "Moldova, Republic of",
+    "ME": "Montenegro",
+    "MF": "Saint Martin (French part)",
+    "MG": "Madagascar",
+    "MH": "Marshall Islands",
+    "MK": "North Macedonia",
+    "ML": "Mali",
+    "MM": "Myanmar",
+    "MN": "Mongolia",
+    "MO": "Macao",
+    "MP": "Northern Mariana Islands",
+    "MQ": "Martinique",
+    "MR": "Mauritania",
+    "MS": "Montserrat",
+    "MT": "Malta",
+    "MU": "Mauritius",
+    "MV": "Maldives",
+    "MW": "Malawi",
+    "MX": "Mexico",
+    "MY": "Malaysia",
+    "MZ": "Mozambique",
+    "NA": "Namibia",
+    "NC": "New Caledonia",
+    "NE": "Niger",
+    "NF": "Norfolk Island",
+    "NG": "Nigeria",
+    "NI": "Nicaragua",
+    "NL": "Netherlands, Kingdom of the",
+    "NO": "Norway",
+    "NP": "Nepal",
+    "NR": "Nauru",
+    "NU": "Niue",
+    "NZ": "New Zealand",
+    "OM": "Oman",
+    "PA": "Panama",
+    "PE": "Peru",
+    "PF": "French Polynesia",
+    "PG": "Papua New Guinea",
+    "PH": "Philippines",
+    "PK": "Pakistan",
+    "PL": "Poland",
+    "PM": "Saint Pierre and Miquelon",
+    "PN": "Pitcairn",
+    "PR": "Puerto Rico",
+    "PS": "Palestine, State of",
+    "PT": "Portugal",
+    "PW": "Palau",
+    "PY": "Paraguay",
+    "QA": "Qatar",
+    "RE": "Reunion",
+    "RO": "Romania",
+    "RS": "Serbia",
+    "RU": "Russian Federation",
+    "RW": "Rwanda",
+    "SA": "Saudi Arabia",
+    "SB": "Solomon Islands",
+    "SC": "Seychelles",
+    "SD": "Sudan",
+    "SE": "Sweden",
+    "SG": "Singapore",
+    "SH": "Saint Helena, Ascension and Tristan da Cunha",
+    "SI": "Slovenia",
+    "SJ": "Svalbard and Jan Mayen",
+    "SK": "Slovakia",
+    "SL": "Sierra Leone",
+    "SM": "San Marino",
+    "SN": "Senegal",
+    "SO": "Somalia",
+    "SR": "Suriname",
+    "SS": "South Sudan",
+    "ST": "Sao Tome and Principe",
+    "SV": "El Salvador",
+    "SX": "Sint Maarten (Dutch part)",
+    "SY": "Syrian Arab Republic",
+    "SZ": "Eswatini",
+    "TC": "Turks and Caicos Islands",
+    "TD": "Chad",
+    "TF": "French Southern Territories",
+    "TG": "Togo",
+    "TH": "Thailand",
+    "TJ": "Tajikistan",
+    "TK": "Tokelau",
+    "TL": "Timor-Leste",
+    "TM": "Turkmenistan",
+    "TN": "Tunisia",
+    "TO": "Tonga",
+    "TR": "Turkiye",
+    "TT": "Trinidad and Tobago",
+    "TV": "Tuvalu",
+    "TW": "Taiwan, Province of China",
+    "TZ": "Tanzania, United Republic of",
+    "UA": "Ukraine",
+    "UG": "Uganda",
+    "UM": "United States Minor Outlying Islands",
+    "US": "United States of America",
+    "UY": "Uruguay",
+    "UZ": "Uzbekistan",
+    "VA": "Holy See",
+    "VC": "Saint Vincent and the Grenadines",
+    "VE": "Venezuela, Bolivarian Republic of",
+    "VG": "Virgin Islands (British)",
+    "VI": "Virgin Islands (U.S.)",
+    "VN": "Viet Nam",
+    "VU": "Vanuatu",
+    "WF": "Wallis and Futuna",
+    "WS": "Samoa",
+    "YE": "Yemen",
+    "YT": "Mayotte",
+    "ZA": "South Africa",
+    "ZM": "Zambia",
+    "ZW": "Zimbabwe",
+}
+
+
+def _country_name_from_code(code: str) -> str:
+    """Return the full country name for an ISO alpha-2 code."""
+    if not code:
+        return "Unknown"
+    code = str(code).upper()
+    return COUNTRY_NAME_MAP.get(code, code)
 
 
 def _parse_release_date_str(date_str):
@@ -1552,7 +1832,7 @@ def _compute_music_top_rollups(play_details, limit=5):
             genres = _coerce_genre_list(music.track.genres)
 
         for genre in genres:
-            key = genre.title()
+            key = str(genre).title()
             genre_stats[key]["minutes"] += minutes
             genre_stats[key]["plays"] += 1
             genre_stats[key]["name"] = key
@@ -1574,6 +1854,7 @@ def _compute_music_top_rollups(play_details, limit=5):
             country_stats[code_upper]["minutes"] += minutes
             country_stats[code_upper]["plays"] += 1
             country_stats[code_upper]["code"] = code_upper
+            country_stats[code_upper]["name"] = _country_name_from_code(code_upper)
 
     def _format_top(stat_map, label_key):
         items = sorted(

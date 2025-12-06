@@ -1280,14 +1280,21 @@ def artist_detail(request, artist_id):
         sync_artist_discography,
         prefetch_album_covers,
     )
+    from app.services.music_scrobble import dedupe_artist_albums
     from app.providers import musicbrainz
     from app.models import ArtistTracker
 
     artist = get_object_or_404(Artist, id=artist_id)
 
+    # Heal duplicate albums for this artist (caused by noisy metadata)
+    dedupe_artist_albums(artist)
+
     # Sync discography from MusicBrainz if needed (like TV populates seasons from TMDB)
+    synced_count = 0
     if needs_discography_sync(artist):
-        sync_artist_discography(artist)
+        synced_count = sync_artist_discography(artist)
+        if synced_count:
+            dedupe_artist_albums(artist)
 
     # Get ALL albums for this artist (metadata-driven, like Seasons)
     # Note: Album covers are prefetched asynchronously via HTMX after page load
@@ -1452,8 +1459,56 @@ def album_detail(request, album_id):
     from app.models import Track
     from app.providers import musicbrainz
     from app.services.music import ensure_album_has_release_id, album_has_musicbrainz_id
+    from app.services.music_scrobble import (
+        dedupe_artist_albums,
+        _normalize,
+        is_incomplete_album,
+        _choose_primary_album,
+    )
+    from app.services.music import sync_artist_discography
 
     album = get_object_or_404(Album.objects.select_related("artist"), id=album_id)
+    original_artist = album.artist
+    original_title = album.title
+    original_norm = _normalize(original_title)
+
+    # Heal duplicate albums for this artist so detail pages are consistent
+    dedupe_artist_albums(original_artist)
+    try:
+        album.refresh_from_db()
+    except Album.DoesNotExist:
+        # Find the canonical album by normalized title
+        replacement = (
+            Album.objects.filter(artist=original_artist, title__iexact=original_title)
+            .order_by("id")
+            .first()
+        )
+        if not replacement:
+            for cand in Album.objects.filter(artist=original_artist):
+                if _normalize(cand.title) == original_norm:
+                    replacement = cand
+                    break
+        if replacement:
+            return redirect("album_detail", album_id=replacement.id)
+        raise
+
+    # If we only have a sparse placeholder, try to repopulate via discography and re-dedupe
+    if is_incomplete_album(album) and original_artist.musicbrainz_id:
+        try:
+            sync_artist_discography(original_artist, force=True)
+            dedupe_artist_albums(original_artist)
+            candidates = [
+                a
+                for a in Album.objects.filter(artist=original_artist)
+                if _normalize(a.title) == original_norm
+            ]
+            if candidates:
+                best = _choose_primary_album(candidates, album)
+                if best.id != album.id:
+                    return redirect("album_detail", album_id=best.id)
+                album = best
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Failed to heal album %s via discography: %s", album_id, exc)
 
     # Ensure album has a release_id (fetch from release_group if needed)
     # This fixes albums that came from discography sync with only release_group_id
@@ -1603,11 +1658,14 @@ def sync_artist_discography_view(request, artist_id):
     """Manually trigger discography sync for an artist."""
     from django.shortcuts import get_object_or_404
     from app.services.music import sync_artist_discography
+    from app.services.music_scrobble import dedupe_artist_albums
 
     artist = get_object_or_404(Artist, id=artist_id)
     
     # Force sync
     count = sync_artist_discography(artist, force=True)
+    if count:
+        dedupe_artist_albums(artist)
     
     messages.success(request, f"Synced {count} albums for {artist.name}")
     

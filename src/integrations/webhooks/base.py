@@ -341,8 +341,12 @@ class BaseWebhookProcessor:
     def _get_mal_id_from_tmdb_movie(self, mapping_data, tmdb_movie_id):
         """Find MAL ID from TMDB movie mapping."""
         for entry in mapping_data.values():
-            if entry.get("tmdb_movie_id") == tmdb_movie_id and "mal_id" in entry:
-                return self._parse_mal_id(entry["mal_id"])
+            candidate = entry.get("tmdb_movie_id")
+            try:
+                if candidate is not None and int(candidate) == int(tmdb_movie_id) and "mal_id" in entry:
+                    return self._parse_mal_id(entry["mal_id"])
+            except (TypeError, ValueError):
+                continue
         return None
 
     def _get_mal_id_from_imdb(self, mapping_data, imdb_id):

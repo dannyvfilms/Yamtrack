@@ -245,12 +245,25 @@ def populate_album_tracks(album: Album) -> int:
     # Creates Track rows with title, number, duration
 ```
 
+### Playback / Scrobble Pipeline (`src/app/services/music_scrobble.py`)
+
+- Webhooks (Plex/Jellyfin/Emby) translate music payloads into `MusicPlaybackEvent` and call `record_music_playback`.
+- Plays (`media.play`) only update existing Music rows; scrobbles (`media.scrobble`) create or advance progress/history.
+- Metadata resolution prefers MBIDs (recording/release/release-group/artist) and falls back to MusicBrainz search; mismatched MBIDs are dropped to avoid hijacking the wrong artist/album/track.
+- Healing on scrobble:
+  - Attaches artist MBID when found and triggers discography sync.
+  - Dedupes albums/tracks by normalized title and re-homes trackers and Music rows to the canonical records.
+  - Prefetches cover art for **all** missing album images for the artist (no limit) so posters arrive without page visits.
+  - Ensures `ArtistTracker` and `AlbumTracker` exist for the user.
+- Dedupe also runs when viewing artist/album pages or forcing discography sync.
+
 ### Cover Art Prefetch
 
 ```python
 def prefetch_album_covers(artist: Artist, limit: int = 20):
     """Prefetch cover art for albums missing images."""
     # Called async via HTMX after artist page loads
+    # Also invoked after scrobbles (limit=None) to hydrate new artists completely
     # Only fetches for albums with missing images
     # Respects rate limits
 ```
@@ -436,6 +449,12 @@ Custom admin classes for music models:
 - `ArtistTrackerAdmin`: User/artist/status filters
 - `AlbumTrackerAdmin`: User/album/status filters
 
+## Statistics
+
+- Music is included in the global statistics rollups (`src/app/statistics.py`).
+- Genre/decade/country rollups come from album → artist metadata; country codes are expanded to full country names for display.
+- Durations use track runtime minutes when available; otherwise fall back to album/track duration heuristics.
+
 ## Performance Optimizations
 
 ### Search Speed
@@ -444,7 +463,7 @@ Custom admin classes for music models:
 
 ### Artist Page Load
 - Discography sync skips cover art fetching (`skip_cover_art=True`)
-- Cover art loads asynchronously via HTMX endpoint (`prefetch_artist_covers`)
+- Cover art loads asynchronously via HTMX endpoint (`prefetch_artist_covers`) and is also prefetched automatically after scrobbles to fill the entire artist catalog.
 - Page renders immediately with placeholder images; covers fill in progressively
 
 ### Caching
@@ -455,8 +474,6 @@ Custom admin classes for music models:
 
 ## What's NOT Implemented (Future Phases)
 
-- Plex/Jellyfin webhook integration for scrobbling
-- Statistics charts for music
 - Calendar events for album releases
 - Import/export for music library
 - Auto-pause for music playback
@@ -469,4 +486,3 @@ Custom admin classes for music models:
 4. **Adding tracking features**: Mirror TV show/season patterns in views and templates
 5. **Performance issues**: Check if cover art is being fetched synchronously; use `skip_cover_art=True`
 6. **Missing Wikipedia data**: Check URL relations strategy in `get_artist()`
-

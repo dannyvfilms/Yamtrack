@@ -124,8 +124,15 @@ def _mb_request(endpoint, params=None):
             headers=headers,
         )
         return response
-    except Exception as error:
-        logger.exception("MusicBrainz API request failed: %s", error)
+    except requests.exceptions.HTTPError as error:
+        # Downgrade noise for missing/invalid IDs
+        if error.response is not None and error.response.status_code == 404:
+            logger.debug("MusicBrainz API request 404 for %s: %s", url, error)
+        else:
+            logger.warning("MusicBrainz API request failed: %s", error)
+        raise
+    except Exception as error:  # pragma: no cover - defensive
+        logger.warning("MusicBrainz API request failed: %s", error)
         raise
 
 
@@ -256,11 +263,14 @@ def search(query, page=1, skip_cover_art=False):
         # Get artist info
         artist_credits = recording.get("artist-credit", [])
         artist_name = ""
+        artist_id = None
         if artist_credits:
             # Combine all artist credits into a single string
             artist_parts = []
             for credit in artist_credits:
                 if isinstance(credit, dict):
+                    if not artist_id:
+                        artist_id = credit.get("artist", {}).get("id")
                     artist_parts.append(credit.get("name", credit.get("artist", {}).get("name", "")))
                     artist_parts.append(credit.get("joinphrase", ""))
             artist_name = "".join(artist_parts).strip()
@@ -270,14 +280,18 @@ def search(query, page=1, skip_cover_art=False):
         image = settings.IMG_NONE
         release_date = None
         album_title = ""
+        release_id = None
+        release_group_id = None
         
         if releases:
             first_release = releases[0]
             album_title = first_release.get("title", "")
             release_date = first_release.get("date", "")
+            release_id = first_release.get("id")
+            release_group = first_release.get("release-group") or first_release.get("release_group") or {}
+            release_group_id = release_group.get("id")
             # Try to get cover art from the first release (skip if requested for faster search)
             if not skip_cover_art:
-                release_id = first_release.get("id")
                 if release_id:
                     image = _get_cover_art(release_id)
         
@@ -301,6 +315,9 @@ def search(query, page=1, skip_cover_art=False):
             # Store additional data for later use
             "artist_name": artist_name,
             "album_title": album_title,
+            "artist_id": artist_id,
+            "release_id": release_id,
+            "release_group_id": release_group_id,
             "duration_minutes": duration_minutes,
             "release_date": release_date,
         })
