@@ -2,11 +2,13 @@
 
 import logging
 from celery import shared_task
-from django.db import transaction
+from django.conf import settings
+from django.db import IntegrityError, transaction
 
 from app import history_cache
 from app.models import Item, MediaTypes
 from app.providers import services
+from django.contrib.auth import get_user_model
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +241,205 @@ def populate_runtime_data_continuous():
         "episode_task_id": episode_result.id,
         "message": "Started comprehensive runtime population for movies/TV/anime and episodes. Check logs for progress."
     }
+
+
+@shared_task
+def enrich_music_library_task(user_id: int):
+    """Post-import enrichment/dedupe for a user's music library."""
+    from app.models import Artist, Music, Album
+    from app.providers import musicbrainz
+    from app.services.music import (
+        merge_artist_records,
+        resolve_artist_mbid,
+        sync_artist_discography,
+        populate_album_tracks,
+        prefetch_album_covers,
+    )
+    from app.services.music_scrobble import dedupe_artist_albums
+
+    User = get_user_model()
+    try:
+        user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        logger.warning("enrich_music_library_task: user %s no longer exists", user_id)
+        return {"artists": 0, "synced": 0, "deduped": 0}
+
+    artist_ids = (
+        Music.objects.filter(user=user)
+        .exclude(artist_id__isnull=True)
+        .values_list("artist_id", flat=True)
+        .distinct()
+    )
+
+    artists = list(Artist.objects.filter(id__in=artist_ids))
+    synced = 0
+    deduped = 0
+    attached = 0
+    merged = 0
+    no_match = 0
+    total_candidates = 0
+    artists_for_covers: list[int] = []
+    defer_covers = getattr(settings, "MUSIC_DEFER_COVER_PREFETCH", True)
+
+    for artist in artists:
+        # Heal blank names that slipped in during fast import
+        if not (artist.name or "").strip():
+            artist.name = "Unknown Artist"
+            artist.save(update_fields=["name"])
+
+        # If missing MBID, try to attach a safe one
+        if not artist.musicbrainz_id:
+            try:
+                mbid, cand_count, variant = resolve_artist_mbid(
+                    artist.name or "",
+                    artist.sort_name or "",
+                )
+                total_candidates += cand_count
+                if mbid:
+                    try:
+                        artist.musicbrainz_id = mbid
+                        artist.save(update_fields=["musicbrainz_id"])
+                        attached += 1
+                        logger.debug(
+                            "enrich_music_library_task: attached MBID %s to %s via '%s' (candidates=%d)",
+                            mbid,
+                            artist.name,
+                            variant,
+                            cand_count,
+                        )
+                    except IntegrityError:
+                        # Merge into the existing artist that already owns this MBID
+                        existing = Artist.objects.filter(musicbrainz_id=mbid).first()
+                        if existing:
+                            artist = merge_artist_records(artist, existing)
+                            merged += 1
+                            logger.debug(
+                                "enrich_music_library_task: merged artist %s into existing MBID %s via '%s'",
+                                artist.name,
+                                mbid,
+                                variant,
+                            )
+                        else:
+                            logger.debug(
+                                "enrich_music_library_task: MBID attach failed for %s, duplicate %s with no target (variant '%s')",
+                                artist.name,
+                                mbid,
+                                variant,
+                            )
+                else:
+                    no_match += 1
+                    logger.debug(
+                        "enrich_music_library_task: no MBID match for %s (variants tried, top candidate count=%d)",
+                        artist.name,
+                        cand_count,
+                    )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("Artist MBID attach failed for %s: %s", artist.name, exc)
+
+        if artist.musicbrainz_id:
+            try:
+                sync_artist_discography(artist, force=False)
+                synced += 1
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("Discography sync failed for %s: %s", artist.name, exc)
+
+        try:
+            dedupe_artist_albums(artist)
+            deduped += 1
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Album dedupe failed for %s: %s", artist.name, exc)
+
+        # Populate tracks for sparse albums
+        for album in Album.objects.filter(artist=artist, tracks_populated=False):
+            try:
+                populate_album_tracks(album)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("Track populate failed for album %s: %s", album.id, exc)
+
+        # Link Music entries to populated tracks by recording_id to unlock runtimes
+        try:
+            from app.models import Track as TrackModel
+
+            music_without_track = Music.objects.filter(
+                artist=artist,
+                track__isnull=True,
+                item__media_id__isnull=False,
+                album__isnull=False,
+            )
+            if music_without_track.exists():
+                track_map = {
+                    t.musicbrainz_recording_id: t.id
+                    for t in TrackModel.objects.filter(
+                        album__artist=artist,
+                        musicbrainz_recording_id__isnull=False,
+                    )
+                }
+                to_update = []
+                for music in music_without_track:
+                    track_id = track_map.get(music.item.media_id)
+                    if track_id:
+                        music.track_id = track_id
+                        to_update.append(music)
+                if to_update:
+                    Music.objects.bulk_update(to_update, ["track"])
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Music->Track relink failed for artist %s: %s", artist.id, exc)
+
+        # Either queue cover prefetch for later or do it inline (configurable)
+        if defer_covers and artist.musicbrainz_id:
+            artists_for_covers.append(artist.id)
+        elif artist.musicbrainz_id:
+            try:
+                prefetch_album_covers(artist, limit=None)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("Cover prefetch failed for artist %s: %s", artist.id, exc)
+
+    # Backfill item runtime from track duration so stats work before enrichment completes
+    from app.services.music_scrobble import _runtime_minutes_from_ms  # local to avoid cycles
+    user_music_items = (
+        Music.objects.filter(user=user, item__runtime_minutes__isnull=True)
+        .exclude(track__duration_ms__isnull=True)
+        .select_related("item", "track")
+    )
+    for music in user_music_items:
+        runtime = _runtime_minutes_from_ms(music.track.duration_ms)
+        if runtime:
+            music.item.runtime_minutes = runtime
+            music.item.save(update_fields=["runtime_minutes"])
+
+    cover_task_id = None
+    if defer_covers and artists_for_covers:
+        result = prefetch_album_covers_batch.delay(artists_for_covers, limit_per_artist=5)
+        cover_task_id = result.id
+
+    return {
+        "artists": len(artists),
+        "synced": synced,
+        "deduped": deduped,
+        "attached_mbid": attached,
+        "merged_artists": merged,
+        "no_mbid_match": no_match,
+        "candidate_sum": total_candidates,
+        "cover_task_id": cover_task_id,
+    }
+
+
+@shared_task
+def prefetch_album_covers_batch(artist_ids: list[int], limit_per_artist: int | None = 10):
+    """Prefetch album covers for a batch of artists (run after enrichment)."""
+    from app.models import Artist
+    from app.services.music import prefetch_album_covers
+
+    updated = 0
+    for artist_id in artist_ids:
+        artist = Artist.objects.filter(id=artist_id, musicbrainz_id__isnull=False).first()
+        if not artist:
+            continue
+        try:
+            updated += prefetch_album_covers(artist, limit=limit_per_artist)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Cover batch prefetch failed for artist %s: %s", artist_id, exc)
+    return {"artists": len(artist_ids), "covers_updated": updated}
 
 
 @shared_task

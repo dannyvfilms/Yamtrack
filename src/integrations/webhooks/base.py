@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone as dt_timezone
 
 from django.core.cache import cache
 from django.utils import timezone
@@ -20,6 +21,22 @@ class BaseWebhookProcessor:
     def process_payload(self, payload, user):
         """Process webhook payload."""
         raise NotImplementedError
+
+    def _get_played_at(self, payload):
+        """Extract played-at timestamp if provided by the payload."""
+        metadata = payload.get("Metadata", {}) or {}
+        ts = (
+            metadata.get("viewedAt")
+            or metadata.get("lastViewedAt")
+            or payload.get("viewedAt")
+        )
+        try:
+            ts_int = int(ts)
+        except (TypeError, ValueError):
+            return None
+
+        played_at = datetime.fromtimestamp(ts_int, tz=dt_timezone.utc)
+        return timezone.localtime(played_at)
 
     def _is_supported_event(self, event_type):
         """Check if event type is supported."""
@@ -383,7 +400,9 @@ class BaseWebhookProcessor:
         movie_played = self._is_played(payload)
 
         progress = 1 if movie_played else 0
-        now = timezone.now().replace(second=0, microsecond=0)
+        now = self._get_played_at(payload) or timezone.now().replace(
+            second=0, microsecond=0
+        )
 
         if current_instance and current_instance.status != Status.COMPLETED.value:
             current_instance.progress = progress
@@ -499,7 +518,9 @@ class BaseWebhookProcessor:
         episode_item = season_instance.get_episode_item(episode_number, season_metadata)
 
         if self._is_played(payload):
-            now = timezone.now().replace(second=0, microsecond=0)
+            now = self._get_played_at(payload) or timezone.now().replace(
+                second=0, microsecond=0
+            )
             latest_episode = (
                 app.models.Episode.objects.filter(
                     item=episode_item,

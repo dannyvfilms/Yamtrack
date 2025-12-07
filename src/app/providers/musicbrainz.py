@@ -452,24 +452,65 @@ def search_artists(query, page=1):
     """Search for artists on MusicBrainz."""
     cache_key = f"musicbrainz_artist_search_{query.lower()}_p{page}"
     cached = cache.get(cache_key)
-    if cached:
+    # Reuse cached hits, but allow a re-query when the previous result was empty
+    # so we can benefit from new fallback search logic.
+    if cached and cached.get("results"):
         return cached
 
     per_page = 10
     offset = (page - 1) * per_page
 
-    params = {
-        "query": query,
-        "limit": per_page,
-        "offset": offset,
-    }
+    def _query_musicbrainz(q):
+        params = {
+            "query": q,
+            "limit": per_page,
+            "offset": offset,
+        }
+        return _mb_request("artist", params)
 
-    response = _mb_request("artist", params)
-
+    # Try the primary query first
+    response = _query_musicbrainz(query)
     artists = response.get("artists", [])
     total_results = response.get("count", 0)
 
-    results = []
+    # If nothing comes back (commonly for names with special chars like AC/DC),
+    # try a few normalized variants before giving up.
+    if not artists:
+        variants = {query}
+        if "/" in query:
+            variants.update({
+                query.replace("/", " "),
+                query.replace("/", ""),
+                query.replace("/", "-"),
+            })
+        # MusicBrainz sometimes matches better with quoted exact queries
+        variants.add(f"\"{query}\"")
+        # Run fallback queries until we get a hit
+        for variant in variants:
+            if variant == query:
+                continue
+            try:
+                resp = _query_musicbrainz(variant)
+                if resp.get("artists"):
+                    logger.debug(
+                        "musicbrainz.search_artists fallback query '%s' returned %s results",
+                        variant,
+                        len(resp.get("artists", [])),
+                    )
+                    artists = resp.get("artists", [])
+                    total_results = resp.get("count", total_results)
+                    break
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("musicbrainz.search_artists fallback failed for %s: %s", variant, exc)
+
+    data = {
+        "page": page,
+        "per_page": per_page,
+        "total_results": total_results,
+        "total_pages": (total_results + per_page - 1) // per_page if total_results > 0 else 0,
+        "results": [],
+    }
+
     for artist in artists:
         artist_id = artist.get("id")
         name = artist.get("name", "Unknown")
@@ -480,22 +521,16 @@ def search_artists(query, page=1):
         life_span = artist.get("life-span", {})
         begin = life_span.get("begin", "")
         
-        results.append({
+        # Keep both artist_id and id for callers that expect the generic key
+        data["results"].append({
             "artist_id": artist_id,
+            "id": artist_id,
             "name": name,
             "sort_name": sort_name,
             "disambiguation": disambiguation,
             "begin_year": begin[:4] if begin else None,
             "type": artist.get("type", ""),
         })
-
-    data = {
-        "page": page,
-        "per_page": per_page,
-        "total_results": total_results,
-        "total_pages": (total_results + per_page - 1) // per_page if total_results > 0 else 0,
-        "results": results,
-    }
 
     cache.set(cache_key, data, 60 * 60 * 24)
     return data
@@ -862,8 +897,13 @@ def get_release_for_group(release_group_id):
     return None
 
 
-def get_release(release_id):
-    """Get detailed metadata for a release (album)."""
+def get_release(release_id, skip_cover_art: bool = False):
+    """Get detailed metadata for a release (album).
+    
+    Args:
+        release_id: MusicBrainz release UUID
+        skip_cover_art: If True, do not fetch cover art (use placeholder)
+    """
     cache_key = f"musicbrainz_release_{release_id}"
     cached = cache.get(cache_key)
     if cached:
@@ -897,7 +937,7 @@ def get_release(release_id):
         artist_name = "".join(artist_parts).strip()
 
     # Get cover art with release group fallback
-    image = _get_cover_art(release_id, release_group_id)
+    image = settings.IMG_NONE if skip_cover_art else _get_cover_art(release_id, release_group_id)
 
     # Genres/tags (prefer official genres)
     genres = []

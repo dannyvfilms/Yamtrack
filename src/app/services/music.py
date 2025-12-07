@@ -1,6 +1,7 @@
 """Music-related service functions for discography sync."""
 
 import logging
+import re
 from datetime import datetime
 
 from django.conf import settings
@@ -8,7 +9,7 @@ from django.db import models
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 
-from app.models import Album, Artist
+from app.models import Album, Artist, Track
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,75 @@ def get_artist_hero_image(artist: Artist) -> str:
         return albums_with_images.first().image
     
     return settings.IMG_NONE
+
+
+def _norm_name(val: str) -> str:
+    """Normalize names for matching (strip punctuation/whitespace, lowercase)."""
+    return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", (val or "")).strip()).lower()
+
+
+def resolve_artist_mbid(name: str, sort_name: str | None = None):
+    """Resolve an artist MBID using the same heuristics as the app search.
+
+    Returns (mbid, candidate_count, matched_variant) or (None, 0, None).
+    """
+    if not (name or sort_name):
+        return None, 0, None
+
+    from app.providers import musicbrainz
+
+    variants = []
+    base_names = {name} if name else set()
+    if sort_name:
+        base_names.add(sort_name)
+    for base in base_names:
+        variants.append(base)
+        # Slash/hyphen/space swaps
+        variants.append(base.replace("/", " "))
+        variants.append(base.replace("/", "-"))
+        variants.append(base.replace("-", " "))
+        # Punctuation-stripped
+        variants.append(re.sub(r"[^\w\s]", " ", base))
+        # Quoted exact search
+        variants.append(f"\"{base}\"")
+
+    seen = set()
+    for variant in variants:
+        variant = variant.strip()
+        if not variant or variant in seen:
+            continue
+        seen.add(variant)
+
+        try:
+            resp = musicbrainz.search_artists(variant, page=1)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("resolve_artist_mbid: search failed for '%s': %s", variant, exc)
+            continue
+
+        candidates = (resp or {}).get("artists") or (resp or {}).get("results") or []
+        logger.debug(
+            "resolve_artist_mbid: variant '%s' returned %d candidates",
+            variant,
+            len(candidates),
+        )
+        if not candidates:
+            continue
+
+        target_norm = _norm_name(variant)
+        chosen = None
+        for cand in candidates:
+            cid = cand.get("id")
+            cname = cand.get("name") or ""
+            if cid and _norm_name(cname) == target_norm:
+                chosen = cid
+                break
+        if not chosen:
+            chosen = next((c.get("id") for c in candidates if c.get("id")), None)
+
+        if chosen:
+            return chosen, len(candidates), variant
+
+    return None, 0, None
 
 
 def refresh_album_cover_art(album: Album) -> bool:
@@ -120,6 +190,10 @@ def sync_artist_discography(artist: Artist, force: bool = False) -> int:
         Number of albums synced
     """
     from app.providers import musicbrainz
+    
+    # Ensure artist is saved before using it in queries
+    if not artist.pk:
+        artist.save()
     
     # Skip if no MusicBrainz ID
     if not artist.musicbrainz_id:
@@ -261,6 +335,56 @@ def album_has_musicbrainz_id(album: Album) -> bool:
     return bool(album.musicbrainz_release_id or album.musicbrainz_release_group_id)
 
 
+def populate_album_tracks(album: Album) -> int:
+    """Populate Track rows for an album from MusicBrainz and mark tracks_populated."""
+    from app.providers import musicbrainz
+
+    if album.tracks_populated:
+        return 0
+
+    # Ensure we have a concrete release_id (release_group alone can't list tracks)
+    if not album.musicbrainz_release_id:
+        ensure_album_has_release_id(album)
+    if not album.musicbrainz_release_id:
+        return 0
+
+    try:
+        release_data = musicbrainz.get_release(album.musicbrainz_release_id)
+        tracks_data = release_data.get("tracks", [])
+
+        # Update genres from release if album lacks them
+        if release_data.get("genres") and not album.genres:
+            album.genres = release_data.get("genres")
+
+        created_or_updated = 0
+        for track_data in tracks_data:
+            _, created = Track.objects.update_or_create(
+                album=album,
+                disc_number=track_data.get("disc_number", 1),
+                track_number=track_data.get("track_number"),
+                defaults={
+                    "title": track_data.get("title", "Unknown Track"),
+                    "musicbrainz_recording_id": track_data.get("recording_id"),
+                    "duration_ms": track_data.get("duration_ms"),
+                    "genres": track_data.get("genres", []) or release_data.get("genres", []),
+                },
+            )
+            if created:
+                created_or_updated += 1
+
+        # Also update album image if missing
+        if (not album.image or album.image == settings.IMG_NONE) and release_data.get("image"):
+            album.image = release_data["image"]
+
+        album.tracks_populated = True
+        album.save(update_fields=["tracks_populated", "image", "genres"])
+        logger.info("Populated %d tracks for album %s", len(tracks_data), album.title)
+        return len(tracks_data)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Failed to populate tracks for album %s: %s", album.title, exc)
+        return 0
+
+
 def prefetch_album_covers(artist: Artist, limit: int | None = 20) -> int:
     """Prefetch cover art for albums missing images.
     
@@ -304,3 +428,195 @@ def prefetch_album_covers(artist: Artist, limit: int | None = 20) -> int:
             logger.debug("Failed to prefetch cover for %s: %s", album.title, e)
     
     return updated
+
+
+def _preferred_status(current: str | None, incoming: str | None) -> str | None:
+    """Pick the higher-precedence status between two values."""
+    from app.models import Status
+
+    if not current:
+        return incoming
+    if not incoming:
+        return current
+
+    order = {
+        Status.COMPLETED.value: 5,
+        Status.DROPPED.value: 4,
+        Status.IN_PROGRESS.value: 3,
+        Status.PAUSED.value: 2,
+        Status.PLANNING.value: 1,
+    }
+    return current if order.get(current, 0) >= order.get(incoming, 0) else incoming
+
+
+def merge_artist_records(source_artist: Artist, target_artist: Artist) -> Artist:
+    """Merge a duplicate artist into a canonical one without losing data."""
+    if source_artist.id == target_artist.id:
+        return target_artist
+
+    from django.db import IntegrityError
+    from app.models import (
+        Album,
+        AlbumTracker,
+        ArtistTracker,
+        Music,
+        Status,
+    )
+    from app.services.music_scrobble import dedupe_artist_albums
+
+    # Merge artist trackers (per-user status/score)
+    for tracker in ArtistTracker.objects.filter(artist=source_artist):
+        existing = ArtistTracker.objects.filter(
+            user=tracker.user,
+            artist=target_artist,
+        ).first()
+
+        if existing:
+            updates = set()
+            preferred_status = _preferred_status(existing.status, tracker.status)
+            if preferred_status and preferred_status != existing.status:
+                existing.status = preferred_status
+                updates.add("status")
+
+            # Preserve earliest start and latest end dates
+            start_date = min(
+                [d for d in [existing.start_date, tracker.start_date] if d],
+                default=None,
+            )
+            end_date = max(
+                [d for d in [existing.end_date, tracker.end_date] if d],
+                default=None,
+            )
+            if start_date and start_date != existing.start_date:
+                existing.start_date = start_date
+                updates.add("start_date")
+            if end_date and end_date != existing.end_date:
+                existing.end_date = end_date
+                updates.add("end_date")
+
+            # Fill missing score/notes
+            if existing.score is None and tracker.score is not None:
+                existing.score = tracker.score
+                updates.add("score")
+            if tracker.notes and tracker.notes.strip():
+                if not existing.notes:
+                    existing.notes = tracker.notes
+                    updates.add("notes")
+                elif tracker.notes not in existing.notes:
+                    existing.notes = f"{existing.notes}\n{tracker.notes}"
+                    updates.add("notes")
+
+            if updates:
+                existing.save(update_fields=list(updates))
+            tracker.delete()
+        else:
+            tracker.artist = target_artist
+            tracker.save(update_fields=["artist"])
+
+    def _merge_album_into_target(source_album: Album, target_album: Album):
+        updates = set()
+        if (
+            (not target_album.image or target_album.image == settings.IMG_NONE)
+            and source_album.image
+            and source_album.image != settings.IMG_NONE
+        ):
+            target_album.image = source_album.image
+            updates.add("image")
+        if not target_album.musicbrainz_release_id and source_album.musicbrainz_release_id:
+            target_album.musicbrainz_release_id = source_album.musicbrainz_release_id
+            updates.add("musicbrainz_release_id")
+        if not target_album.musicbrainz_release_group_id and source_album.musicbrainz_release_group_id:
+            target_album.musicbrainz_release_group_id = source_album.musicbrainz_release_group_id
+            updates.add("musicbrainz_release_group_id")
+        if not target_album.release_date and source_album.release_date:
+            target_album.release_date = source_album.release_date
+            updates.add("release_date")
+        if not target_album.release_type and source_album.release_type:
+            target_album.release_type = source_album.release_type
+            updates.add("release_type")
+        if updates:
+            target_album.save(update_fields=list(updates))
+
+        # Merge album trackers
+        for tracker in AlbumTracker.objects.filter(album=source_album):
+            existing = AlbumTracker.objects.filter(
+                user=tracker.user,
+                album=target_album,
+            ).first()
+            if existing:
+                tracker_updates = set()
+                preferred_status = _preferred_status(existing.status, tracker.status)
+                if preferred_status and preferred_status != existing.status:
+                    existing.status = preferred_status
+                    tracker_updates.add("status")
+
+                start_date = min(
+                    [d for d in [existing.start_date, tracker.start_date] if d],
+                    default=None,
+                )
+                end_date = max(
+                    [d for d in [existing.end_date, tracker.end_date] if d],
+                    default=None,
+                )
+                if start_date and start_date != existing.start_date:
+                    existing.start_date = start_date
+                    tracker_updates.add("start_date")
+                if end_date and end_date != existing.end_date:
+                    existing.end_date = end_date
+                    tracker_updates.add("end_date")
+
+                if existing.score is None and tracker.score is not None:
+                    existing.score = tracker.score
+                    tracker_updates.add("score")
+
+                if tracker_updates:
+                    existing.save(update_fields=list(tracker_updates))
+                tracker.delete()
+            else:
+                tracker.album = target_album
+                tracker.save(update_fields=["album"])
+
+        # Re-point music entries to the canonical album
+        Music.objects.filter(album=source_album).update(album=target_album, track=None)
+
+        # Dropping the source album will also drop its tracks; music.track is SET_NULL
+        source_album.delete()
+
+    # Move albums over; if a collision happens, merge then delete source
+    for album in Album.objects.filter(artist=source_artist):
+        album.artist = target_artist
+        try:
+            album.save(update_fields=["artist"])
+            continue
+        except IntegrityError:
+            conflict = (
+                Album.objects.filter(
+                    artist=target_artist,
+                    musicbrainz_release_group_id=album.musicbrainz_release_group_id,
+                ).first()
+                or Album.objects.filter(
+                    artist=target_artist,
+                    musicbrainz_release_id=album.musicbrainz_release_id,
+                ).first()
+                or Album.objects.filter(
+                    artist=target_artist,
+                    title=album.title,
+                ).first()
+            )
+            if conflict:
+                _merge_album_into_target(album, conflict)
+            else:
+                # As a last resort, drop the conflicting album to avoid blocking merge
+                Music.objects.filter(album=album).update(album=None, track=None)
+                album.delete()
+
+    # Move orphaned music entries that reference the artist directly
+    Music.objects.filter(artist=source_artist).update(artist=target_artist)
+
+    # Clean up the old artist now that references are moved
+    source_artist.delete()
+
+    # Final dedupe pass to collapse any remaining duplicate albums for the target artist
+    dedupe_artist_albums(target_artist)
+
+    return target_artist

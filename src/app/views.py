@@ -35,6 +35,7 @@ from app.models import (
     Track,
 )
 from app.providers import manual, services, tmdb
+from app.services import music as sync_services
 from app.templatetags import app_tags
 from users.models import HomeSortChoices, MediaSortChoices, MediaStatusChoices
 from dateutil.relativedelta import relativedelta
@@ -246,7 +247,12 @@ def media_list(request, media_type):
     if media_type == MediaTypes.MUSIC.value:
         from app.models import ArtistTracker
         
-        artist_trackers = ArtistTracker.objects.filter(user=request.user).select_related("artist")
+        artist_trackers = (
+            ArtistTracker.objects.filter(user=request.user)
+            .exclude(artist__name__isnull=True)
+            .exclude(artist__name__exact="")
+            .select_related("artist")
+        )
         
         # Apply status filter to artists
         if status_filter and status_filter != MediaStatusChoices.ALL:
@@ -280,6 +286,7 @@ def media_list(request, media_type):
 
     # Handle HTMX requests for partial updates
     if request.headers.get("HX-Request"):
+        is_artist_list = context.get("is_artist_list", False)
         # Changing from empty list to a status with items
         if request.headers.get("HX-Target") == "empty_list":
             response = HttpResponse()
@@ -288,18 +295,20 @@ def media_list(request, media_type):
         
         # Check if this is a pagination request (has page parameter and is not the first page)
         is_pagination = request.GET.get("page") and int(request.GET.get("page", 1)) > 1
+        context["is_pagination"] = bool(is_pagination)
         
         if layout == "grid":
-            template_name = "app/components/media_grid_items.html"
+            template_name = (
+                "app/components/artist_grid_items.html"
+                if is_artist_list
+                else "app/components/media_grid_items.html"
+            )
         else:
-            if is_pagination:
-                # For pagination, we need to return only the table rows, not the full template
-                # Return only the table rows without headers
-                context["is_pagination"] = True
-                template_name = "app/components/media_table_items.html"
-            else:
-                context["is_pagination"] = False
-                template_name = "app/components/media_table_items.html"
+            template_name = (
+                "app/components/artist_table_items.html"
+                if is_artist_list
+                else "app/components/media_table_items.html"
+            )
     else:
         context["is_pagination"] = False
         template_name = "app/media_list.html"
@@ -1286,15 +1295,81 @@ def artist_detail(request, artist_id):
 
     artist = get_object_or_404(Artist, id=artist_id)
 
+    # If we don't have an MBID yet, attempt a quick lookup so discography can sync
+    if not artist.musicbrainz_id:
+        try:
+            mbid, cand_count, variant = sync_services.resolve_artist_mbid(
+                artist.name or "",
+                artist.sort_name or "",
+            )
+            if mbid:
+                try:
+                    artist.musicbrainz_id = mbid
+                    artist.discography_synced_at = None  # force a fresh sync
+                    artist.save(update_fields=["musicbrainz_id", "discography_synced_at"])
+                    logger.info(
+                        "Attached MBID %s to artist %s on view via '%s' (candidates=%d)",
+                        mbid,
+                        artist.name,
+                        variant,
+                        cand_count,
+                    )
+                except IntegrityError:
+                    # Merge this artist into the existing MBID owner to avoid dupes
+                    from app.services.music import merge_artist_records
+
+                    existing = Artist.objects.filter(musicbrainz_id=mbid).first()
+                    if existing:
+                        existing = merge_artist_records(artist, existing)
+                        artist = existing
+                        logger.info(
+                            "Merged artist %s into existing MBID %s via '%s'",
+                            artist.name,
+                            mbid,
+                            variant,
+                        )
+                    else:
+                        logger.debug(
+                            "Artist MBID attach conflicted for %s with %s via '%s' but no target found",
+                            artist.name,
+                            mbid,
+                            variant,
+                        )
+            else:
+                logger.debug(
+                    "No MBID attached on view for %s after searching variants (candidates=%d)",
+                    artist.name,
+                    cand_count,
+                )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Artist MBID attach failed on view for %s: %s", artist.name, exc)
+
     # Heal duplicate albums for this artist (caused by noisy metadata)
     dedupe_artist_albums(artist)
 
+    # Decide whether we should force a fresh discography sync (e.g., after fast import)
+    albums_qs = Album.objects.filter(artist=artist)
+    existing_album_count = albums_qs.count()
+    missing_mbids = albums_qs.filter(
+        musicbrainz_release_id__isnull=True,
+        musicbrainz_release_group_id__isnull=True,
+    ).exists()
+    # Refresh more aggressively on view: daily, if no albums yet, or if placeholders lack IDs
+    should_sync = (
+        needs_discography_sync(artist, max_age_days=1)
+        or existing_album_count == 0
+        or missing_mbids
+    )
+    force_sync = existing_album_count == 0 or missing_mbids
+
     # Sync discography from MusicBrainz if needed (like TV populates seasons from TMDB)
     synced_count = 0
-    if needs_discography_sync(artist):
-        synced_count = sync_artist_discography(artist)
+    if should_sync and artist.musicbrainz_id:
+        synced_count = sync_artist_discography(artist, force=force_sync)
         if synced_count:
             dedupe_artist_albums(artist)
+    elif should_sync and not artist.musicbrainz_id:
+        logger.debug("Skipping discography sync for %s due to missing MBID", artist.name)
 
     # Get ALL albums for this artist (metadata-driven, like Seasons)
     # Note: Album covers are prefetched asynchronously via HTMX after page load

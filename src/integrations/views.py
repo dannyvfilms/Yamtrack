@@ -16,9 +16,10 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 import users
-from integrations import exports, tasks
+from integrations import exports, plex as plex_api, tasks
 from integrations.imports import anilist, helpers, simkl, trakt
-from integrations.webhooks import emby, jellyfin, plex
+from integrations.models import PlexAccount
+from integrations.webhooks import emby, jellyfin, plex as plex_webhooks
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,160 @@ def import_trakt_public(request):
             import_time=import_time,
             source="Trakt",
         )
+    return redirect("import_data")
+
+
+@require_POST
+def plex_connect(request):
+    """Initiate Plex authentication via the pin-based flow."""
+    redirect_uri = request.build_absolute_uri(reverse("plex_callback"))
+    state_token = secrets.token_urlsafe(16)
+
+    try:
+        pin = plex_api.create_pin()
+    except plex_api.PlexClientError as exc:
+        messages.error(request, f"Could not start Plex connection: {exc}")
+        return redirect("import_data")
+    except Exception as exc:  # pragma: no cover - defensive
+        messages.error(request, f"Unexpected Plex error: {exc}")
+        return redirect("import_data")
+
+    request.session[state_token] = {
+        "plex_pin_id": pin["id"],
+        "plex_pin_code": pin["code"],
+    }
+
+    auth_url = plex_api.build_auth_url(pin["code"], f"{redirect_uri}?state={state_token}")
+    return redirect(auth_url)
+
+
+@require_GET
+def plex_callback(request):
+    """Handle Plex auth callback and persist the token."""
+    state_token = request.GET.get("state")
+    state_data = request.session.pop(state_token, None)
+
+    if not state_data:
+        messages.error(request, "Invalid or expired Plex authorization request.")
+        return redirect("import_data")
+
+    pin_id = state_data.get("plex_pin_id")
+    try:
+        plex_token = plex_api.poll_pin(pin_id)
+    except plex_api.PlexAuthError as exc:
+        messages.error(request, f"Plex authorization failed: {exc}")
+        return redirect("import_data")
+    except plex_api.PlexClientError as exc:  # pragma: no cover - defensive
+        messages.error(request, f"Could not complete Plex authorization: {exc}")
+        return redirect("import_data")
+    except Exception as exc:  # pragma: no cover - defensive
+        messages.error(request, f"Unexpected Plex response: {exc}")
+        return redirect("import_data")
+
+    try:
+        account = plex_api.fetch_account(plex_token)
+    except plex_api.PlexAuthError as exc:
+        messages.error(request, f"Plex rejected the token: {exc}")
+        return redirect("import_data")
+    except plex_api.PlexClientError as exc:  # pragma: no cover - defensive
+        messages.error(request, f"Could not read Plex account details: {exc}")
+        return redirect("import_data")
+    except Exception as exc:  # pragma: no cover - defensive
+        messages.error(request, f"Unexpected Plex account response: {exc}")
+        return redirect("import_data")
+
+    sections: list[dict] = []
+    try:
+        sections = plex_api.list_sections(plex_token)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Connected to Plex but could not fetch libraries: %s", exc)
+        messages.warning(
+            request,
+            "Connected to Plex, but could not load libraries yet. You can refresh from the import page.",
+        )
+
+    # Keep webhook allow list in sync
+    username = (account.get("username") or "").strip()
+    if username:
+        existing = [
+            u.strip()
+            for u in (request.user.plex_usernames or "").split(",")
+            if u.strip()
+        ]
+        if username.lower() not in [u.lower() for u in existing]:
+            request.user.plex_usernames = ", ".join(existing + [username])
+            request.user.save(update_fields=["plex_usernames"])
+
+    defaults = {
+        "plex_token": plex_token,
+        "plex_username": account.get("username") or "",
+        "sections": sections,
+        "sections_refreshed_at": timezone.now(),
+    }
+
+    if sections:
+        defaults["server_name"] = sections[0].get("server_name")
+        defaults["machine_identifier"] = sections[0].get("machine_identifier")
+
+    PlexAccount.objects.update_or_create(
+        user=request.user,
+        defaults=defaults,
+    )
+
+    account_username = account.get("username") or "your Plex account"
+    messages.success(request, f"Connected to Plex as {account_username}.")
+    return redirect("import_data")
+
+
+@require_POST
+def plex_disconnect(request):
+    """Remove stored Plex credentials."""
+    PlexAccount.objects.filter(user=request.user).delete()
+    messages.info(request, "Disconnected Plex.")
+    return redirect("import_data")
+
+
+@require_POST
+def import_plex(request):
+    """Queue a Plex history import for the current user."""
+    plex_account = getattr(request.user, "plex_account", None)
+    if not plex_account:
+        messages.error(request, "Connect Plex before importing.")
+        return redirect("import_data")
+
+    library = request.POST.get("library") or "all"
+    mode = request.POST.get("mode", "new")
+    frequency = request.POST.get("frequency", "once")
+    import_time = request.POST.get("time", "00:00")
+    raw_usernames = request.POST.get("plex_usernames", "")
+
+    if raw_usernames is not None:
+        username_list = [u.strip() for u in raw_usernames.split(",") if u.strip()]
+        seen = set()
+        deduplicated = [u for u in username_list if not (u.lower() in seen or seen.add(u.lower()))]
+        cleaned_usernames = ", ".join(deduplicated)
+        if cleaned_usernames != request.user.plex_usernames:
+            request.user.plex_usernames = cleaned_usernames
+            request.user.save(update_fields=["plex_usernames"])
+
+    if frequency != "once":
+        helpers.create_import_schedule(
+            username=plex_account.plex_username or request.user.username,
+            request=request,
+            mode=mode,
+            frequency=frequency,
+            import_time=import_time,
+            source="Plex",
+            extra_kwargs={"library": library},
+        )
+        return redirect("import_data")
+
+    tasks.import_plex.delay(
+        library=library,
+        user_id=request.user.id,
+        mode=mode,
+    )
+    messages.info(request, "The task to import media from Plex has been queued.")
     return redirect("import_data")
 
 
@@ -476,7 +631,7 @@ def plex_webhook(request, token):
         return HttpResponse("Missing payload", status=400)
 
     payload = json.loads(data)
-    processor = plex.PlexWebhookProcessor()
+    processor = plex_webhooks.PlexWebhookProcessor()
     processor.process_payload(payload, user)
     return HttpResponse(status=200)
 

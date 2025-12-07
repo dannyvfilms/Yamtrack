@@ -66,7 +66,7 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
                 music_entry.status,
                 music_entry.progress,
             )
-            return
+            return music_entry
 
         ids = self._extract_external_ids(payload)
         logger.info("Extracted IDs from payload: %s", ids)
@@ -272,6 +272,10 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
     def _build_music_event(self, payload, user):
         """Build a normalized music playback event from Plex payload."""
         metadata = payload.get("Metadata", {}) or {}
+        played_at = self._get_played_at(payload) or timezone.now().replace(
+            second=0,
+            microsecond=0,
+        )
         duration_ms = metadata.get("duration")
         try:
             duration_ms = int(duration_ms) if duration_ms is not None else None
@@ -293,7 +297,8 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
             plex_rating_key=metadata.get("ratingKey"),
             external_ids=self._extract_music_ids(metadata),
             completed=payload.get("event") == "media.scrobble",
-            played_at=timezone.now().replace(second=0, microsecond=0),
+            played_at=played_at,
+            defer_cover_prefetch=bool(payload.get("_import_batch")),
         )
 
     def _extract_season_episode_from_payload(self, payload):

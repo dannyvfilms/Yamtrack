@@ -1881,9 +1881,19 @@ def get_music_consumption_stats(user_media, start_date, end_date, minutes_per_ty
     """
     music_queryset = (user_media or {}).get(MediaTypes.MUSIC.value)
     
-    # Prefetch related data for efficiency (history manager from simple_history can't be prefetched)
+    # Prefetch related data for efficiency
+    # Note: history manager from simple_history cannot be prefetched, so we access it directly in the loop
+    # Clear any existing prefetches that might include 'history' (which can't be prefetched)
     if music_queryset is not None:
-        music_queryset = music_queryset.select_related("item", "artist", "album")
+        # Get the model and recreate queryset to avoid any problematic prefetches
+        model = music_queryset.model
+        # Get the IDs from the original queryset
+        music_ids = list(music_queryset.values_list('id', flat=True))
+        if music_ids:
+            # Recreate queryset with only safe prefetches
+            music_queryset = model.objects.filter(id__in=music_ids).select_related("item", "artist", "album")
+        else:
+            music_queryset = None
     
     music_datetimes, play_details = _collect_music_play_data(music_queryset, start_date, end_date)
     

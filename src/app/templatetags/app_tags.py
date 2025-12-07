@@ -248,6 +248,9 @@ def media_url(media):
     """Return the media URL for both metadata and model object cases."""
     is_dict = isinstance(media, dict)
 
+    if not is_dict and not hasattr(media, "media_type"):
+        return ""
+
     # Get attributes using either dict access or object attribute
     media_type = media["media_type"] if is_dict else media.media_type
     source = media["source"] if is_dict else media.source
@@ -281,6 +284,8 @@ def media_url(media):
 def media_view_url(view_name, media):
     """Return the modal URL for both metadata and model object cases."""
     is_dict = isinstance(media, dict)
+    if not is_dict and not hasattr(media, "source"):
+        return ""
 
     # Build kwargs using either dict access or object attribute
     kwargs = {
@@ -308,6 +313,9 @@ def media_view_url(view_name, media):
 def component_id(component_type, media, instance_id=None):
     """Return the component ID for both metadata and model object cases."""
     is_dict = isinstance(media, dict)
+
+    if not is_dict and not hasattr(media, "media_type"):
+        return ""
 
     # Get base attributes using either dict access or object attribute
     media_type = media["media_type"] if is_dict else media.media_type

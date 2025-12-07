@@ -10,11 +10,14 @@ from django.db import IntegrityError
 from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.defaultfilters import pluralize
+from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 from django_celery_beat.models import PeriodicTask
 
 from app.models import Item, MediaTypes
 from app.templatetags import app_tags
+from integrations import plex
+from integrations.models import PlexAccount
 from users.forms import NotificationSettingsForm, PasswordChangeForm, UserUpdateForm
 from users.models import (
     ActivityHistoryViewChoices,
@@ -85,6 +88,17 @@ def _normalize_auto_pause_rules(raw_rules: str, allowed_libraries: list[str]) ->
             normalized_rules.append(normalized_entry)
 
     return normalized_rules
+
+
+def _should_refresh_plex_sections(account: PlexAccount) -> bool:
+    """Return True if cached Plex sections should be refreshed."""
+    if not account.sections_refreshed_at:
+        return True
+
+    expiry = account.sections_refreshed_at + timezone.timedelta(
+        hours=settings.PLEX_SECTIONS_TTL_HOURS,
+    )
+    return timezone.now() >= expiry
 
 
 @require_http_methods(["GET", "POST"])
@@ -406,7 +420,48 @@ def integrations(request):
 def import_data(request):
     """Render the import data settings page."""
     import_tasks = request.user.get_import_tasks()
-    return render(request, "users/import_data.html", {"user": request.user, "import_tasks": import_tasks})
+    plex_account = getattr(request.user, "plex_account", None)
+    if plex_account and not plex_account.plex_token:
+        plex_account = None
+    plex_sections: list[dict] = []
+    plex_connected = False
+    plex_error = None
+
+    if plex_account:
+        try:
+            account_data = plex.fetch_account(plex_account.plex_token)
+            plex_connected = True
+
+            username = account_data.get("username")
+            if username and username != plex_account.plex_username:
+                plex_account.plex_username = username
+                plex_account.save(update_fields=["plex_username"])
+        except plex.PlexAuthError:
+            plex_error = "Plex token expired or revoked. Please reconnect."
+        except Exception as exc:  # pragma: no cover - defensive
+            plex_error = str(exc)
+        else:
+            if _should_refresh_plex_sections(plex_account):
+                try:
+                    plex_account.sections = plex.list_sections(plex_account.plex_token)
+                    plex_account.sections_refreshed_at = timezone.now()
+                    plex_account.save(
+                        update_fields=["sections", "sections_refreshed_at"],
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    if not plex_error:
+                        plex_error = f"Could not refresh Plex libraries: {exc}"
+
+            plex_sections = plex_account.sections or []
+
+    context = {
+        "user": request.user,
+        "import_tasks": import_tasks,
+        "plex_account": plex_account if plex_connected else None,
+        "plex_sections": plex_sections,
+        "plex_error": plex_error,
+    }
+    return render(request, "users/import_data.html", context)
 
 
 @require_GET
@@ -468,6 +523,7 @@ def regenerate_token(request):
 def update_plex_usernames(request):
     """Update the Plex usernames for the user."""
     usernames = request.POST.get("plex_usernames", "")
+    redirect_target = request.POST.get("next") or "integrations"
 
     username_list = [u.strip() for u in usernames.split(",") if u.strip()]
 
@@ -484,7 +540,7 @@ def update_plex_usernames(request):
         request.user.save(update_fields=["plex_usernames"])
         messages.success(request, "Plex usernames updated successfully")
 
-    return redirect("integrations")
+    return redirect(redirect_target)
 
 
 @require_POST

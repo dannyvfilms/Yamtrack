@@ -49,6 +49,7 @@ class MusicPlaybackEvent:
     external_ids: Dict[str, Optional[str]] = field(default_factory=dict)
     completed: bool = False
     played_at: Optional[timezone.datetime] = None
+    defer_cover_prefetch: bool = False
 
 
 @dataclass
@@ -85,7 +86,29 @@ def record_music_playback(event: MusicPlaybackEvent) -> Optional[Music]:
     Artist/Album/Track/Item existence, and updates the per-user Music row.
     """
     played_at = event.played_at or timezone.now().replace(second=0, microsecond=0)
-    metadata = _resolve_metadata(event)
+
+    if getattr(event, "defer_cover_prefetch", False):
+        # Fast path: avoid enrichment and heavy lookups during batch imports
+        metadata = ResolvedMusicMetadata(
+            track_title=event.track_title or "Unknown Track",
+            artist_name=event.artist_name or "Unknown Artist",
+            album_title=event.album_title or "Unknown Album",
+            track_number=_coerce_int(event.track_number),
+            duration_ms=_coerce_int(event.duration_ms),
+            musicbrainz_recording_id=None,
+            musicbrainz_release_id=None,
+            musicbrainz_release_group_id=None,
+            musicbrainz_artist_id=None,
+            source=Sources.MANUAL.value,
+            media_id=_select_media_id(
+                None,
+                event.plex_rating_key,
+                event.artist_name,
+                event.track_title,
+            ),
+        )
+    else:
+        metadata = _resolve_metadata(event)
     _validate_against_payload(metadata, event)
 
     with transaction.atomic():
@@ -98,7 +121,7 @@ def record_music_playback(event: MusicPlaybackEvent) -> Optional[Music]:
             return None
         _ensure_trackers(event.user, artist, album, played_at)
 
-        if metadata.musicbrainz_artist_id:
+        if metadata.musicbrainz_artist_id and not getattr(event, "defer_cover_prefetch", False):
             _sync_artist_metadata(artist, metadata.musicbrainz_artist_id, force=artist_created)
             if (
                 (artist_created or artist_mbid_attached or album_created)
@@ -109,11 +132,12 @@ def record_music_playback(event: MusicPlaybackEvent) -> Optional[Music]:
                     dedupe_artist_albums(artist)
                 except Exception as exc:  # pragma: no cover - defensive network guard
                     logger.debug("Failed discography sync for %s: %s", artist, exc)
-        else:
+        elif not getattr(event, "defer_cover_prefetch", False):
             _enrich_missing_artist_metadata(artist, album, track, music, metadata)
 
-        _maybe_refresh_album_cover(album)
-        _prefetch_missing_covers(artist)
+        if not getattr(event, "defer_cover_prefetch", False):
+            _maybe_refresh_album_cover(album)
+            _prefetch_missing_covers(artist)
 
     return music
 
@@ -392,7 +416,7 @@ def _match_release_track(tracks, track_title: str, duration_ms: Optional[int]):
 
 def _get_or_create_artist(metadata: ResolvedMusicMetadata) -> tuple[Artist, bool, bool]:
     """Get or create an Artist."""
-    name = metadata.artist_name or "Unknown Artist"
+    name = (metadata.artist_name or "").strip() or "Unknown Artist"
     artist = None
     created = False
     attached_mbid = False
@@ -435,6 +459,11 @@ def _get_or_create_artist(metadata: ResolvedMusicMetadata) -> tuple[Artist, bool
                 )
             artist = Artist.objects.create(name=name)
             created = True
+
+    # Ensure existing artist has a usable display name
+    if artist and not (artist.name or "").strip():
+        artist.name = name
+        artist.save(update_fields=["name"])
 
     updates = {}
     if metadata.artist_sort_name:

@@ -239,8 +239,12 @@ def create_import_schedule(
     import_time,
     source,
     token=None,
+    extra_kwargs=None,
 ):
-    """Create an import schedule."""
+    """Create an import schedule.
+
+    extra_kwargs: Optional dictionary of additional task kwargs to persist.
+    """
     try:
         import_time = (
             datetime.datetime.strptime(import_time, "%H:%M")
@@ -276,6 +280,8 @@ def create_import_schedule(
 
     if token:
         kwargs["token"] = token
+    if extra_kwargs:
+        kwargs.update(extra_kwargs)
 
     # Create new periodic task
     PeriodicTask.objects.create(

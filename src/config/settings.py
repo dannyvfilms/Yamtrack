@@ -1,5 +1,6 @@
 """Django settings for Yamtrack project."""
 
+import hashlib
 import json
 import subprocess
 import warnings
@@ -541,6 +542,20 @@ SIMKL_SECRET = config(
         "1b548a88ac7884a757cc58a552842913a9337f3cab3a4905836c6dc305dda316",
     ),
 )
+
+DEFAULT_PLEX_CLIENT_IDENTIFIER = hashlib.sha256(SECRET_KEY.encode()).hexdigest()[:24]
+PLEX_CLIENT_IDENTIFIER = config(
+    "PLEX_CLIENT_IDENTIFIER",
+    default=DEFAULT_PLEX_CLIENT_IDENTIFIER,
+)
+PLEX_PRODUCT = config("PLEX_PRODUCT", default="Yamtrack")
+PLEX_DEVICE = config("PLEX_DEVICE", default="Yamtrack Importer")
+PLEX_PLATFORM = config("PLEX_PLATFORM", default="Yamtrack")
+PLEX_PLATFORM_VERSION = config("PLEX_PLATFORM_VERSION", default=VERSION)
+PLEX_SSL_VERIFY = config("PLEX_SSL_VERIFY", default=False, cast=bool)
+PLEX_SECTIONS_TTL_HOURS = config("PLEX_SECTIONS_TTL_HOURS", default=24, cast=int)
+PLEX_HISTORY_PAGE_SIZE = config("PLEX_HISTORY_PAGE_SIZE", default=200, cast=int)
+PLEX_HISTORY_MAX_ITEMS = config("PLEX_HISTORY_MAX_ITEMS", default=0, cast=int)
 
 TESTING = False
 
