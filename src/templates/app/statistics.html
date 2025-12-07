@@ -559,6 +559,7 @@
       </div>
 
       <!-- TV Shows Consumption Section -->
+      {% if tv_consumption.has_data %}
       <section class="bg-[#2a2f35] rounded-lg p-6 mobile-tight-section stat-scroll-safe mb-4 sm:mb-8 space-y-4 sm:space-y-6">
         <div class="flex flex-col space-y-1">
           <span class="text-sm uppercase tracking-widest text-gray-400">TV Shows</span>
@@ -701,8 +702,10 @@
           </div>
         </div>
       </section>
+      {% endif %}
 
       <!-- Movies Consumption Section -->
+      {% if movie_consumption.has_data %}
       <section class="bg-[#2a2f35] rounded-lg p-6 mobile-tight-section stat-scroll-safe mb-4 sm:mb-8 space-y-4 sm:space-y-6">
         <div class="flex flex-col space-y-1">
           <span class="text-sm uppercase tracking-widest text-gray-400">Movies</span>
@@ -845,6 +848,7 @@
           </div>
         </div>
       </section>
+      {% endif %}
 
       <!-- Music Consumption Section -->
       {% if user.music_enabled and music_consumption.has_data %}
