@@ -47,6 +47,8 @@ class PlexHistoryImporter:
         self._metadata_cache: dict[str, dict] = {}
         self.allowed_media_types: set[str] = set()
         self._artists_for_prefetch: set[int] = set()
+        # Track unique music tracks (by item key) for counting purposes
+        self._unique_music_tracks: set[tuple[str, str]] = set()
 
     def import_data(self):
         """Import history for the selected library."""
@@ -75,10 +77,16 @@ class PlexHistoryImporter:
                 raise MediaImportUnexpectedError(msg) from exc
 
         self._prefetch_collected_album_covers()
+        self._enqueue_fast_runtime_backfill()
         self._enqueue_music_enrichment()
 
+        # Add unique track count for music if we have music imports
+        result_counts = dict(self.counts)
+        if MediaTypes.MUSIC.value in result_counts:
+            result_counts["music_unique_tracks"] = len(self._unique_music_tracks)
+
         deduped_warnings = "\n".join(dict.fromkeys(self.warnings))
-        return dict(self.counts), deduped_warnings
+        return result_counts, deduped_warnings
 
     def _ensure_username_matches(self):
         """Persist the Plex username into the user's webhook allow list."""
@@ -313,7 +321,18 @@ class PlexHistoryImporter:
 
         media_type = self.processor._get_media_type(payload)
         result = self.processor.process_payload(payload, self.user)
+        
+        # Track unique music tracks separately from play events
+        if media_type == MediaTypes.MUSIC.value and result:
+            # Music objects have an item attribute with media_id and source
+            if hasattr(result, "item") and result.item:
+                track_key = (result.item.media_id, result.item.source)
+                if track_key not in self._unique_music_tracks:
+                    self._unique_music_tracks.add(track_key)
+            
         if hasattr(result, "artist_id") and result.artist_id:
+            self._artists_for_prefetch.add(result.artist_id)
+        elif result and hasattr(result, "artist_id") and result.artist_id:
             self._artists_for_prefetch.add(result.artist_id)
 
         if media_type:
@@ -378,9 +397,24 @@ class PlexHistoryImporter:
 
         return normalized
 
+    def _enqueue_fast_runtime_backfill(self):
+        """Kick off fast runtime backfill immediately after import for statistics."""
+        from app.tasks import fast_runtime_backfill_task  # local import to avoid cycles
+
+        if MediaTypes.MUSIC.value not in self.counts:
+            return  # No music imported, skip
+
+        try:
+            fast_runtime_backfill_task.delay(self.user.id)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Could not enqueue fast runtime backfill task: %s", exc)
+
     def _enqueue_music_enrichment(self):
         """Kick off a post-import enrichment/dedupe pass for this user's music."""
         from app.tasks import enrich_music_library_task  # local import to avoid cycles
+
+        if MediaTypes.MUSIC.value not in self.counts:
+            return  # No music imported, skip
 
         try:
             enrich_music_library_task.delay(self.user.id)

@@ -638,8 +638,8 @@ def get_artist(artist_id):
     ended = life_span.get("ended", False)
     
     # Area (country/location)
-    area = response.get("area", {})
-    area_name = area.get("name", "")
+    area = response.get("area") or {}
+    area_name = area.get("name", "") if isinstance(area, dict) else ""
     
     # Annotation from MusicBrainz (often just editor notes, not a bio)
     mb_annotation = response.get("annotation", "")
@@ -874,7 +874,7 @@ def get_release_for_group(release_group_id):
         return cached
     
     try:
-        # Query releases for this release group
+        # Query releases for this release group - try official first
         params = {
             "release-group": release_group_id,
             "status": "official",
@@ -890,9 +890,25 @@ def get_release_for_group(release_group_id):
             release_id = releases[0].get("id")
             cache.set(cache_key, release_id, 60 * 60 * 24 * 7)
             return release_id
+        
+        # If no official releases, try without status filter (any release type)
+        logger.debug("No official releases found for release_group %s, trying any release", release_group_id)
+        params = {
+            "release-group": release_group_id,
+            "limit": 5,
+        }
+        
+        response = _mb_request("release", params)
+        releases = response.get("releases", [])
+        
+        if releases:
+            release_id = releases[0].get("id")
+            logger.info("Found non-official release %s for release_group %s", release_id, release_group_id)
+            cache.set(cache_key, release_id, 60 * 60 * 24 * 7)
+            return release_id
             
     except Exception as e:
-        logger.debug("Failed to get release for group %s: %s", release_group_id, e)
+        logger.warning("Failed to get release for group %s: %s", release_group_id, e)
     
     return None
 

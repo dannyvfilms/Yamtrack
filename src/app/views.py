@@ -144,7 +144,10 @@ def media_list(request, media_type):
         request.GET.get("status"),
     )
     search_query = request.GET.get("search", "")
-    page = request.GET.get("page", 1)
+    try:
+        page = int(request.GET.get("page", 1))
+    except (ValueError, TypeError):
+        page = 1
 
     # Prepare status filter for database query
     if not status_filter:
@@ -245,7 +248,9 @@ def media_list(request, media_type):
     # For music, show tracked artists instead of individual tracks
     # This parallels TV which shows TV shows, not seasons/episodes
     if media_type == MediaTypes.MUSIC.value:
-        from app.models import ArtistTracker
+        from app.models import ArtistTracker, Artist
+        from app.services.music import get_artist_hero_image
+        from django.conf import settings
         
         artist_trackers = (
             ArtistTracker.objects.filter(user=request.user)
@@ -276,11 +281,118 @@ def media_list(request, media_type):
             # Default: most recently updated
             artist_trackers = artist_trackers.order_by("-updated_at")
         
-        # Paginate artist trackers
+        # Paginate artist trackers first
         artist_paginator = Paginator(artist_trackers, 32)
         artist_page = artist_paginator.get_page(page)
         
+        # Backfill missing artist images from album covers (no API calls - uses existing data)
+        # Similar to _fix_missing_season_images for TV seasons
+        # First, bulk fetch latest image data from DB for all artists on this page
+        # (images might have been set by background tasks, detail page visits, etc.)
+        # This is more efficient and reliable than individual refresh_from_db calls
+        artist_ids = [tracker.artist.id for tracker in artist_page.object_list]
+        artist_images_map = dict(
+            Artist.objects.filter(id__in=artist_ids)
+            .values_list("id", "image")
+        )
+        
+        refreshed_with_images = 0
+        images_in_db_count = 0
+        for tracker in artist_page.object_list:
+            artist_id = tracker.artist.id
+            old_image = tracker.artist.image
+            # Get the latest image from DB (may be None if not in map or if DB value is None)
+            # Use get() with a sentinel to distinguish "not in map" from "None in DB"
+            new_image = artist_images_map.get(artist_id, object())  # object() as sentinel
+            
+            # Always update the in-memory object with the latest image from DB
+            # This ensures we have the most up-to-date data, even if it's None
+            if artist_id in artist_images_map:
+                # Get the actual value (could be None if DB has None)
+                actual_image = artist_images_map[artist_id]
+                tracker.artist.image = actual_image
+                # Count images that exist in DB (for logging)
+                if actual_image and actual_image != settings.IMG_NONE and actual_image != "":
+                    images_in_db_count += 1
+                # Count if refresh found an image that wasn't there before
+                if (actual_image and actual_image != settings.IMG_NONE and 
+                    actual_image != "" and 
+                    (not old_image or old_image == settings.IMG_NONE or old_image == "")):
+                    refreshed_with_images += 1
+        
+        # Only backfill images for artists on the current page to avoid full queryset evaluation
+        # Use object_list to avoid consuming the page iterator (important for HTMX pagination)
+        artists_to_update = []
+        seen_artist_ids = set()
+        artist_id_to_updated_image = {}  # Track which artists got updated images
+        artists_checked = 0
+        artists_with_images = 0
+        artists_missing_images = 0
+        
+        for tracker in artist_page.object_list:
+            artist = tracker.artist
+            if artist.id not in seen_artist_ids:
+                seen_artist_ids.add(artist.id)
+                artists_checked += 1
+                
+                # Check if artist already has an image (handle both None and empty string)
+                # This check happens AFTER refresh, so we have the latest data
+                has_image = artist.image and artist.image != settings.IMG_NONE and artist.image != ""
+                if has_image:
+                    artists_with_images += 1
+                else:
+                    artists_missing_images += 1
+                    # Try to get hero image from albums
+                    hero_image = get_artist_hero_image(artist)
+                    if hero_image and hero_image != settings.IMG_NONE:
+                        artist.image = hero_image
+                        artists_to_update.append(artist)
+                        artist_id_to_updated_image[artist.id] = hero_image
+        
+        # Log backfill attempt (always, not just when updates happen)
+        is_pagination_req = bool(request.GET.get("page") and int(request.GET.get("page", 1)) > 1)
+        # Use module-level logger via logging module to avoid conflict with local 'logger' variable
+        # (there's a local 'logger' assignment on line 168 that makes Python treat it as local)
+        import logging as _logging_module
+        _log = _logging_module.getLogger(__name__)
+        _log.debug(
+            "Artist image backfill check (page %d, pagination=%s): checked %d artists, %d had images in DB, %d had images after refresh, %d missing, %d updated from albums",
+            page,
+            is_pagination_req,
+            artists_checked,
+            images_in_db_count,
+            artists_with_images,
+            artists_missing_images,
+            len(artists_to_update),
+        )
+        
+        if artists_to_update:
+            Artist.objects.bulk_update(artists_to_update, ["image"])
+            _log.info(
+                "Backfilled %d artist images from album covers (page %d, pagination=%s)",
+                len(artists_to_update),
+                page,
+                is_pagination_req,
+            )
+        
+        # Ensure all tracker artist references have the correct image
+        # Update in-memory objects with images we just set via bulk_update
+        for tracker in artist_page.object_list:
+            if tracker.artist.id in artist_id_to_updated_image:
+                # Update the in-memory artist object with the new image we just set
+                tracker.artist.image = artist_id_to_updated_image[tracker.artist.id]
+        
+        if refreshed_with_images > 0:
+            _log.info(
+                "Refreshed %d artists from DB that now have images (page %d, pagination=%s)",
+                refreshed_with_images,
+                page,
+                is_pagination_req,
+            )
+        
         # Replace media_list with artist trackers for music
+        # Use the page object directly - it's already iterable and has all pagination metadata
+        # This ensures HTMX pagination works correctly and images are backfilled for new pages
         context["media_list"] = artist_page
         context["is_artist_list"] = True
 

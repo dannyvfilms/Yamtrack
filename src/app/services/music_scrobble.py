@@ -579,6 +579,7 @@ def _get_or_create_track(metadata: ResolvedMusicMetadata, album: Album) -> Track
                 "title": title,
                 "track_number": metadata.track_number,
                 "disc_number": metadata.disc_number or 1,
+                "duration_ms": metadata.duration_ms,
             },
         )
     else:
@@ -591,6 +592,9 @@ def _get_or_create_track(metadata: ResolvedMusicMetadata, album: Album) -> Track
                 title=title,
                 track_number=metadata.track_number,
                 disc_number=metadata.disc_number or 1,
+                defaults={
+                    "duration_ms": metadata.duration_ms,
+                },
             )
 
     _dedupe_null_tracks(album, track, _normalize(title))
@@ -676,7 +680,23 @@ def _dedupe_albums(artist: Artist, keep_album: Album, normalized_title: str) -> 
         if not primary.musicbrainz_release_id and dup.musicbrainz_release_id:
             meta_updates["musicbrainz_release_id"] = dup.musicbrainz_release_id
         if not primary.musicbrainz_release_group_id and dup.musicbrainz_release_group_id:
-            meta_updates["musicbrainz_release_group_id"] = dup.musicbrainz_release_group_id
+            # Double-check no conflict before setting
+            conflict = Album.objects.filter(
+                artist=artist,
+                musicbrainz_release_group_id=dup.musicbrainz_release_group_id,
+            ).exclude(id=primary.id).first()
+            if not conflict:
+                meta_updates["musicbrainz_release_group_id"] = dup.musicbrainz_release_group_id
+            else:
+                logger.debug(
+                    "Skipping musicbrainz_release_group_id for primary album '%s' (id=%s): "
+                    "conflicts with album '%s' (id=%s) for artist %s",
+                    primary.title,
+                    primary.id,
+                    conflict.title,
+                    conflict.id,
+                    artist.name,
+                )
         if not primary.release_date and dup.release_date:
             meta_updates["release_date"] = dup.release_date
         if not primary.release_type and dup.release_type:
@@ -686,7 +706,20 @@ def _dedupe_albums(artist: Artist, keep_album: Album, normalized_title: str) -> 
         if meta_updates:
             for f, v in meta_updates.items():
                 setattr(primary, f, v)
-            primary.save(update_fields=list(meta_updates.keys()))
+            try:
+                primary.save(update_fields=list(meta_updates.keys()))
+            except IntegrityError as e:
+                logger.warning(
+                    "Failed to update primary album '%s' (id=%s) with metadata from '%s' (id=%s): %s. "
+                    "Skipping metadata merge for this duplicate.",
+                    primary.title,
+                    primary.id,
+                    dup.title,
+                    dup.id,
+                    e,
+                )
+                # Rollback the attribute changes
+                primary.refresh_from_db()
 
         # Reassign album trackers
         for tracker in AlbumTracker.objects.filter(album=dup):
