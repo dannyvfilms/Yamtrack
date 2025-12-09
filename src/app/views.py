@@ -1,12 +1,14 @@
 import logging
 from datetime import timedelta
+from pathlib import Path
 
+from dateutil.relativedelta import relativedelta
 from django.apps import apps
 from django.conf import settings
 from django.contrib import messages
 from django.core.cache import cache
 from django.core.paginator import EmptyPage, Paginator
-from django.db import IntegrityError, models
+from django.db import IntegrityError
 from django.db.models import prefetch_related_objects
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import redirect, render
@@ -24,10 +26,8 @@ from app.models import (
     Album,
     Artist,
     BasicMedia,
-    Episode,
     Item,
     MediaTypes,
-    Movie,
     Music,
     Season,
     Sources,
@@ -38,7 +38,6 @@ from app.providers import manual, services, tmdb
 from app.services import music as sync_services
 from app.templatetags import app_tags
 from users.models import HomeSortChoices, MediaSortChoices, MediaStatusChoices
-from dateutil.relativedelta import relativedelta
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +165,7 @@ def media_list(request, media_type):
     # Handle time_left sorting for TV shows
     if sort_filter == "time_left" and media_type == MediaTypes.TV.value:
         import logging
+
         from django.core.cache import cache
         
         logger = logging.getLogger(__name__)
@@ -248,9 +248,10 @@ def media_list(request, media_type):
     # For music, show tracked artists instead of individual tracks
     # This parallels TV which shows TV shows, not seasons/episodes
     if media_type == MediaTypes.MUSIC.value:
-        from app.models import ArtistTracker, Artist
-        from app.services.music import get_artist_hero_image
         from django.conf import settings
+
+        from app.models import Artist, ArtistTracker
+        from app.services.music import get_artist_hero_image
         
         artist_trackers = (
             ArtistTracker.objects.filter(user=request.user)
@@ -1394,16 +1395,16 @@ def create_album_from_search(request, musicbrainz_release_id):
 @require_GET
 def artist_detail(request, artist_id):
     """Return the detail page for a music artist."""
-    from django.db.models import Count, Min, Max
+    from django.db.models import Max, Min
     from django.shortcuts import get_object_or_404
+
+    from app.models import ArtistTracker
+    from app.providers import musicbrainz
     from app.services.music import (
         needs_discography_sync,
         sync_artist_discography,
-        prefetch_album_covers,
     )
     from app.services.music_scrobble import dedupe_artist_albums
-    from app.providers import musicbrainz
-    from app.models import ArtistTracker
 
     artist = get_object_or_404(Artist, id=artist_id)
 
@@ -1606,8 +1607,9 @@ def prefetch_artist_covers(request, artist_id):
     Returns the updated album grid HTML.
     """
     from django.shortcuts import get_object_or_404
+
+    from app.models import Album, Artist, Music
     from app.services.music import prefetch_album_covers
-    from app.models import Artist, Album, Music
     
     artist = get_object_or_404(Artist, id=artist_id)
     
@@ -1641,18 +1643,22 @@ def prefetch_artist_covers(request, artist_id):
 @require_GET
 def album_detail(request, album_id):
     """Return the detail page for a music album."""
-    from django.db.models import Min, Max
+    from django.db.models import Max, Min
     from django.shortcuts import get_object_or_404
+
     from app.models import Track
     from app.providers import musicbrainz
-    from app.services.music import ensure_album_has_release_id, album_has_musicbrainz_id
-    from app.services.music_scrobble import (
-        dedupe_artist_albums,
-        _normalize,
-        is_incomplete_album,
-        _choose_primary_album,
+    from app.services.music import (
+        album_has_musicbrainz_id,
+        ensure_album_has_release_id,
+        sync_artist_discography,
     )
-    from app.services.music import sync_artist_discography
+    from app.services.music_scrobble import (
+        _choose_primary_album,
+        _normalize,
+        dedupe_artist_albums,
+        is_incomplete_album,
+    )
 
     album = get_object_or_404(Album.objects.select_related("artist"), id=album_id)
     original_artist = album.artist
@@ -1844,6 +1850,7 @@ def album_detail(request, album_id):
 def sync_artist_discography_view(request, artist_id):
     """Manually trigger discography sync for an artist."""
     from django.shortcuts import get_object_or_404
+
     from app.services.music import sync_artist_discography
     from app.services.music_scrobble import dedupe_artist_albums
 
@@ -1865,8 +1872,9 @@ def sync_artist_discography_view(request, artist_id):
 def artist_track_modal(request, artist_id):
     """Return the tracking form modal for an artist - mirrors TV's track_modal."""
     from django.shortcuts import get_object_or_404
-    from app.models import ArtistTracker
+
     from app.forms import ArtistTrackerForm
+    from app.models import ArtistTracker
 
     artist = get_object_or_404(Artist, id=artist_id)
     return_url = request.GET.get("return_url", "")
@@ -1893,8 +1901,9 @@ def artist_track_modal(request, artist_id):
 def artist_save(request):
     """Save an artist tracker - mirrors media_save for TV."""
     from django.shortcuts import get_object_or_404
-    from app.models import ArtistTracker
+
     from app.forms import ArtistTrackerForm
+    from app.models import ArtistTracker
 
     artist_id = request.POST.get("artist_id")
     artist = get_object_or_404(Artist, id=artist_id)
@@ -1922,6 +1931,7 @@ def artist_save(request):
 def artist_delete(request):
     """Delete an artist tracker - mirrors media_delete for TV."""
     from django.shortcuts import get_object_or_404
+
     from app.models import ArtistTracker
 
     artist_id = request.POST.get("artist_id")
@@ -1941,8 +1951,9 @@ def artist_delete(request):
 def album_track_modal(request, album_id):
     """Return the tracking form modal for an album - mirrors artist_track_modal."""
     from django.shortcuts import get_object_or_404
-    from app.models import AlbumTracker
+
     from app.forms import AlbumTrackerForm
+    from app.models import AlbumTracker
 
     album = get_object_or_404(Album, id=album_id)
     return_url = request.GET.get("return_url", "")
@@ -1969,8 +1980,9 @@ def album_track_modal(request, album_id):
 def album_save(request):
     """Save an album tracker - mirrors artist_save."""
     from django.shortcuts import get_object_or_404
-    from app.models import AlbumTracker
+
     from app.forms import AlbumTrackerForm
+    from app.models import AlbumTracker
 
     album_id = request.POST.get("album_id")
     album = get_object_or_404(Album, id=album_id)
@@ -1998,6 +2010,7 @@ def album_save(request):
 def album_delete(request):
     """Delete an album tracker - mirrors artist_delete."""
     from django.shortcuts import get_object_or_404
+
     from app.models import AlbumTracker
 
     album_id = request.POST.get("album_id")
@@ -2018,7 +2031,8 @@ def album_delete(request):
 def song_save(request):
     """Handle adding a listen for a song - mirrors episode_save for episodes."""
     from django.shortcuts import get_object_or_404
-    from django.utils.dateparse import parse_datetime, parse_date
+    from django.utils.dateparse import parse_date, parse_datetime
+
     from app.models import Track
 
     recording_id = request.POST.get("recording_id")
@@ -2120,6 +2134,7 @@ def song_save(request):
 def sync_album_metadata_view(request, album_id):
     """Manually trigger metadata sync for an album."""
     from django.shortcuts import get_object_or_404
+
     from app.models import Track
     from app.providers import musicbrainz
     from app.services.music import ensure_album_has_release_id
@@ -2297,8 +2312,8 @@ def statistics(request):
 @require_GET
 def service_worker(request):
     """Serve the service worker file from static files."""
-    sw_path = settings.STATICFILES_DIRS[0] / "js" / "serviceworker.js"
-    with open(sw_path, encoding="utf-8") as sw_file:
+    sw_path = Path(settings.STATICFILES_DIRS[0]) / "js" / "serviceworker.js"
+    with sw_path.open(encoding="utf-8") as sw_file:
         response = HttpResponse(sw_file.read(), content_type="application/javascript")
     response["Service-Worker-Allowed"] = "/"
     return response
@@ -2314,9 +2329,11 @@ def _sort_tv_media_by_time_left(media_list, direction="asc"):
       4) Dropped (episodes_left may be 0 or > 0) newest end_date first
       5) Unreleased/unknown runtime at the very end
     """
-    from django.core.cache import cache
-    from app.statistics import parse_runtime_to_minutes
     import logging
+
+    from django.core.cache import cache
+
+    from app.statistics import parse_runtime_to_minutes
     
     logger = logging.getLogger(__name__)
     

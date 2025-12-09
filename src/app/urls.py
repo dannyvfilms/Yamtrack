@@ -85,7 +85,11 @@ urlpatterns = [
     path("serviceworker.js", views.service_worker, name="service_worker"),
     # Music hierarchy navigation
     path("music/artist/<int:artist_id>/", views.artist_detail, name="artist_detail"),
-    path("music/artist/<int:artist_id>/covers/", views.prefetch_artist_covers, name="prefetch_artist_covers"),
+    path(
+        "music/artist/<int:artist_id>/covers/",
+        views.prefetch_artist_covers,
+        name="prefetch_artist_covers",
+    ),
     path("music/album/<int:album_id>/", views.album_detail, name="album_detail"),
     path(
         "music/artist/<int:artist_id>/sync/",
