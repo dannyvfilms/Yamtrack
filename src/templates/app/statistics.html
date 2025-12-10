@@ -340,7 +340,7 @@
     <div id="scoreCopyWrapper" class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 stat-scroll-safe mt-4">
         <h2 class="text-xl font-semibold mb-3 sm:mb-4 text-center">Played Hours by Media Type</h2>
 
-        {% if score_distribution.total_scored %}
+        {% if daily_hours_by_media_type.labels and daily_hours_by_media_type.datasets %}
           <div class="flex justify-center items-stretch min-h-[320px] sm:min-h-[380px]" id="scoreCopyCanvasWrapper">
             <canvas id="scoreStackedChartCopy" class="w-full h-full min-h-[320px] sm:min-h-[380px]" style="width:100%;height:100%;"></canvas>
           </div>
@@ -362,8 +362,8 @@
                 <circle cx="12" cy="8" r="6"></circle>
               </svg>
             </div>
-            <h3 class="text-lg font-medium mb-2">No ratings yet</h3>
-            <p class="text-gray-400 text-center max-w-md">Rate your media items to see score distribution statistics.</p>
+            <h3 class="text-lg font-medium mb-2">No content logged</h3>
+            <p class="text-gray-400 text-center max-w-md">No media items were logged during the selected time period.</p>
           </div>
         {% endif %}
       </div>
