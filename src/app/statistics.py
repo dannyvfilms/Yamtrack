@@ -1083,8 +1083,11 @@ def _calculate_movie_time(media, start_date, end_date, normalized_type, logger):
 def _calculate_music_time(media, start_date, end_date, logger):
     """Calculate total time for music plays using history records within date range.
     
-    Each history record with an end_date represents a play, and we sum up the runtime
-    for each play that falls within the date range.
+    We deduplicate by end_date - each unique end_date represents one play event.
+    Multiple history records with the same end_date are metadata updates, not separate plays.
+    
+    Additionally, we prefer history records where history_date is close to end_date,
+    as those are more likely to be the actual play event rather than later metadata updates.
     """
     total_minutes = 0
     
@@ -1093,18 +1096,49 @@ def _calculate_music_time(media, start_date, end_date, logger):
     if runtime_minutes <= 0:
         return 0
     
-    # Count plays within date range from history records
-    for history_record in media.history.all():
+    # Get all history records ordered by history_date (oldest first)
+    history_records = list(media.history.all().order_by("history_date"))
+    
+    if not history_records:
+        return 0
+    
+    # Group history records by end_date to deduplicate
+    # Each unique end_date represents one play, even if there are multiple history records
+    # We'll use the history record closest to the end_date as the "canonical" one
+    plays_by_end_date = {}  # end_date -> (history_record, history_date)
+    
+    for history_record in history_records:
         history_end_date = getattr(history_record, "end_date", None)
-        if not history_end_date:
+        history_date = getattr(history_record, "history_date", None)
+        
+        # Skip records without end_date (not a completed play)
+        if not history_end_date or not history_date:
             continue
         
+        # If we haven't seen this end_date, or this history_record is closer to the end_date,
+        # use this one as the canonical record for this play
+        if history_end_date not in plays_by_end_date:
+            plays_by_end_date[history_end_date] = (history_record, history_date)
+        else:
+            # Prefer the history record where history_date is closest to end_date
+            # (within reason - if history_date is way after end_date, it's likely a metadata update)
+            existing_history_date = plays_by_end_date[history_end_date][1]
+            time_diff_existing = abs((existing_history_date - history_end_date).total_seconds())
+            time_diff_current = abs((history_date - history_end_date).total_seconds())
+            
+            # Prefer the one closer to end_date, but only if it's within 24 hours
+            # (metadata updates can happen days/weeks later)
+            if time_diff_current < time_diff_existing and time_diff_current < 86400:  # 24 hours
+                plays_by_end_date[history_end_date] = (history_record, history_date)
+    
+    # Count unique plays within date range
+    for play_end_date, (history_record, _) in plays_by_end_date.items():
         # Check if within date range
         if start_date and end_date:
-            if start_date <= history_end_date <= end_date:
+            if start_date <= play_end_date <= end_date:
                 total_minutes += runtime_minutes
         else:
-            # All time - include all history records
+            # All time - include all plays
             total_minutes += runtime_minutes
     
     return total_minutes
@@ -1415,17 +1449,45 @@ def _collect_music_play_data(music_queryset, start_date, end_date):
     for music in music_queryset:
         runtime_minutes = _get_music_runtime_minutes(music)
         
-        for history_record in music.history.all():
+        # Get all history records ordered by history_date (oldest first)
+        history_records = list(music.history.all().order_by("history_date"))
+        
+        # Group history records by end_date to deduplicate
+        # Each unique end_date represents one play, even if there are multiple history records
+        plays_by_end_date = {}  # end_date -> (history_record, history_date)
+        
+        for history_record in history_records:
             history_end_date = getattr(history_record, "end_date", None)
-            if not history_end_date:
+            history_date = getattr(history_record, "history_date", None)
+            
+            # Skip records without end_date (not a completed play)
+            if not history_end_date or not history_date:
                 continue
             
+            # If we haven't seen this end_date, or this history_record is closer to the end_date,
+            # use this one as the canonical record for this play
+            if history_end_date not in plays_by_end_date:
+                plays_by_end_date[history_end_date] = (history_record, history_date)
+            else:
+                # Prefer the history record where history_date is closest to end_date
+                # (within reason - if history_date is way after end_date, it's likely a metadata update)
+                existing_history_date = plays_by_end_date[history_end_date][1]
+                time_diff_existing = abs((existing_history_date - history_end_date).total_seconds())
+                time_diff_current = abs((history_date - history_end_date).total_seconds())
+                
+                # Prefer the one closer to end_date, but only if it's within 24 hours
+                # (metadata updates can happen days/weeks later)
+                if time_diff_current < time_diff_existing and time_diff_current < 86400:  # 24 hours
+                    plays_by_end_date[history_end_date] = (history_record, history_date)
+        
+        # Process unique plays within date range
+        for play_end_date, (history_record, _) in plays_by_end_date.items():
             # Check if within date range
             if start_date and end_date:
-                if not (start_date <= history_end_date <= end_date):
+                if not (start_date <= play_end_date <= end_date):
                     continue
             
-            localized_date = _localize_datetime(history_end_date)
+            localized_date = _localize_datetime(play_end_date)
             datetimes.append(localized_date)
             play_details.append((music, localized_date, runtime_minutes))
     
@@ -2257,17 +2319,26 @@ def get_top_played_media(user_media, start_date, end_date):
                 elif normalized_type == "music":
                     # Music: sum runtime for each play (history record) within date range
                     total_time_minutes = _calculate_music_time(media, start_date, end_date, logger)
-                    # Count plays for display
+                    # Count plays for display - deduplicate by end_date (each unique end_date = one play)
                     play_count = 0
-                    for history_record in media.history.all():
+                    history_records = list(media.history.all().order_by("history_date"))
+                    
+                    # Group by end_date to deduplicate
+                    unique_end_dates = set()
+                    for history_record in history_records:
                         history_end_date = getattr(history_record, "end_date", None)
                         if not history_end_date:
                             continue
+                        unique_end_dates.add(history_end_date)
+                    
+                    # Count unique plays within date range
+                    for play_end_date in unique_end_dates:
                         if start_date and end_date:
-                            if start_date <= history_end_date <= end_date:
+                            if start_date <= play_end_date <= end_date:
                                 play_count += 1
                         else:
                             play_count += 1
+                    
                     episode_count = play_count  # Reuse episode_count for plays
                 else:
                     # For movies and other media types, get runtime from metadata
