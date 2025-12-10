@@ -321,6 +321,368 @@ def resolve_artist_mbid(name: str, sort_name: str | None = None):
     return None, 0, None
 
 
+def resolve_album_mbid(album_title: str, artist_name: str | None = None):
+    """Resolve an album MBID (release_group_id and release_id) using the same heuristics as resolve_artist_mbid.
+
+    Returns (release_group_id, release_id, candidate_count, matched_variant) or (None, None, 0, None).
+    """
+    if not album_title:
+        return None, None, 0, None
+
+    from app.providers import musicbrainz
+
+    # Build query variants - include artist name if available for better matching
+    variants = []
+    base_queries = []
+    
+    # Base query: just album title
+    base_queries.append(album_title)
+    
+    # If artist name is available, add artist + album combinations
+    if artist_name:
+        base_queries.append(f"{artist_name} {album_title}")
+        base_queries.append(f'"{artist_name}" "{album_title}"')
+    
+    for base in base_queries:
+        # Most likely: exact name and quoted exact search
+        variants.append(base)
+        variants.append(f"\"{base}\"")
+        # Try normalization variants if the name has special chars
+        if "/" in base or "-" in base:
+            variants.append(base.replace("/", " ").replace("-", " "))
+            variants.append(f"\"{base.replace('/', ' ').replace('-', ' ')}\"")
+
+    seen = set()
+    variants_tried = []
+    total_candidates_seen = 0
+    for variant in variants:
+        variant = variant.strip()
+        if not variant or variant in seen:
+            continue
+        seen.add(variant)
+        variants_tried.append(variant)
+
+        try:
+            resp = musicbrainz.search_releases(variant, page=1, skip_cover_art=True)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.info(
+                "resolve_album_mbid: search failed for variant '%s': %s",
+                variant,
+                exc,
+            )
+            continue
+
+        candidates = (resp or {}).get("results") or []
+        first_cand_title = candidates[0].get("title", "None") if candidates else "None"
+        total_candidates_seen += len(candidates)
+        
+        logger.info(
+            "resolve_album_mbid: variant '%s' returned %d candidates (first: '%s')",
+            variant,
+            len(candidates),
+            first_cand_title,
+        )
+        if not candidates:
+            logger.info(
+                "resolve_album_mbid: variant '%s' returned no candidates, trying next variant",
+                variant,
+            )
+            continue
+
+        target_norm = _norm_name(album_title)
+        target_artist_norm = _norm_name(artist_name) if artist_name else None
+        chosen_release_id = None
+        chosen_release_group_id = None
+        is_exact_search = variant in base_queries  # Unquoted exact search
+        
+        logger.info(
+            "resolve_album_mbid: processing variant '%s' (is_exact_search=%s, target_norm='%s', artist_norm='%s')",
+            variant,
+            is_exact_search,
+            target_norm,
+            target_artist_norm or "None",
+        )
+        
+        # PRIORITY 1: For exact unquoted name searches, trust MusicBrainz search ranking immediately
+        if is_exact_search and candidates:
+            first_cand = candidates[0]
+            first_cand_release_id = first_cand.get("release_id")
+            first_cand_title = first_cand.get("title", "Unknown")
+            first_cand_artist = first_cand.get("artist_name", "")
+            first_cand_artist_norm = _norm_name(first_cand_artist) if first_cand_artist else None
+            
+            # If artist name was provided, verify artist matches
+            if target_artist_norm and first_cand_artist_norm:
+                if first_cand_artist_norm != target_artist_norm:
+                    logger.info(
+                        "resolve_album_mbid: exact search '%s' first candidate artist '%s' doesn't match target '%s', falling back to strict matching",
+                        variant,
+                        first_cand_artist,
+                        artist_name,
+                    )
+                elif first_cand_release_id:
+                    # Artist matches, use first candidate
+                    chosen_release_id = first_cand_release_id
+                    logger.info(
+                        "resolve_album_mbid: DECISION - using first candidate for exact search '%s' -> '%s' by '%s' (release_id=%s, %d candidates, trusting MB search ranking)",
+                        variant,
+                        first_cand_title,
+                        first_cand_artist,
+                        first_cand_release_id,
+                        len(candidates),
+                    )
+            elif first_cand_release_id:
+                # No artist provided or no artist in result, use first candidate
+                chosen_release_id = first_cand_release_id
+                logger.info(
+                    "resolve_album_mbid: DECISION - using first candidate for exact search '%s' -> '%s' (release_id=%s, %d candidates, trusting MB search ranking)",
+                    variant,
+                    first_cand_title,
+                    first_cand_release_id,
+                    len(candidates),
+                )
+            else:
+                logger.info(
+                    "resolve_album_mbid: exact search '%s' returned candidates but first has no release_id, falling back to strict matching",
+                    variant,
+                )
+        else:
+            if not is_exact_search:
+                logger.info(
+                    "resolve_album_mbid: variant '%s' is not exact search (quoted/normalized), using strict matching",
+                    variant,
+                )
+            elif not candidates:
+                logger.info(
+                    "resolve_album_mbid: exact search '%s' has no candidates, skipping",
+                    variant,
+                )
+        
+        # PRIORITY 2: For quoted/normalized variants, use stricter matching
+        if not chosen_release_id:
+            logger.info(
+                "resolve_album_mbid: attempting strict matching for variant '%s'",
+                variant,
+            )
+            # Try exact normalized match
+            logger.info(
+                "resolve_album_mbid: trying exact normalized match for '%s' (target_norm='%s')",
+                variant,
+                target_norm,
+            )
+            exact_match_attempted = False
+            for cand in candidates:
+                cand_release_id = cand.get("release_id")
+                cand_title = cand.get("title") or ""
+                cand_artist = cand.get("artist_name") or ""
+                cand_title_norm = _norm_name(cand_title)
+                cand_artist_norm = _norm_name(cand_artist) if cand_artist else None
+                exact_match_attempted = True
+                
+                # Check album title match
+                title_matches = cand_title_norm == target_norm
+                
+                # If artist name was provided, also check artist match
+                artist_matches = True
+                if target_artist_norm:
+                    if not cand_artist_norm:
+                        artist_matches = False
+                    else:
+                        artist_matches = cand_artist_norm == target_artist_norm
+                
+                if cand_release_id and title_matches and artist_matches:
+                    chosen_release_id = cand_release_id
+                    logger.info(
+                        "resolve_album_mbid: DECISION - exact normalized match '%s' -> '%s' by '%s' (release_id=%s, norm='%s'=='%s', artist_match=%s)",
+                        variant,
+                        cand_title,
+                        cand_artist,
+                        cand_release_id,
+                        cand_title_norm,
+                        target_norm,
+                        artist_matches,
+                    )
+                    break
+            if not chosen_release_id and exact_match_attempted:
+                logger.info(
+                    "resolve_album_mbid: exact normalized match failed for '%s', trying fuzzy match",
+                    variant,
+                )
+            
+            # Try fuzzy match (similar normalized names)
+            if not chosen_release_id:
+                logger.info(
+                    "resolve_album_mbid: trying fuzzy match for '%s' (target_norm='%s')",
+                    variant,
+                    target_norm,
+                )
+                fuzzy_match_attempted = False
+                for cand in candidates:
+                    cand_release_id = cand.get("release_id")
+                    cand_title = cand.get("title") or ""
+                    cand_artist = cand.get("artist_name") or ""
+                    if not cand_release_id or not cand_title:
+                        continue
+                    fuzzy_match_attempted = True
+                    cand_title_norm = _norm_name(cand_title)
+                    cand_artist_norm = _norm_name(cand_artist) if cand_artist else None
+                    
+                    # Check title similarity
+                    if cand_title_norm and target_norm:
+                        shorter = min(len(cand_title_norm), len(target_norm))
+                        longer = max(len(cand_title_norm), len(target_norm))
+                        contains_match = cand_title_norm in target_norm or target_norm in cand_title_norm
+                        similarity_ratio = shorter / longer if longer > 0 else 0
+                        
+                        # Check artist match if artist name was provided
+                        artist_matches = True
+                        if target_artist_norm:
+                            if not cand_artist_norm:
+                                artist_matches = False
+                            else:
+                                artist_matches = cand_artist_norm == target_artist_norm
+                        
+                        if shorter > 0 and contains_match and similarity_ratio >= 0.8 and artist_matches:
+                            chosen_release_id = cand_release_id
+                            logger.info(
+                                "resolve_album_mbid: DECISION - fuzzy match '%s' -> '%s' by '%s' (release_id=%s, norm: '%s'->'%s', similarity=%.2f, artist_match=%s)",
+                                variant,
+                                cand_title,
+                                cand_artist,
+                                cand_release_id,
+                                target_norm,
+                                cand_title_norm,
+                                similarity_ratio,
+                                artist_matches,
+                            )
+                            break
+                        elif shorter > 0 and contains_match and similarity_ratio >= 0.8:
+                            logger.info(
+                                "resolve_album_mbid: fuzzy match rejected for '%s' vs '%s' (similarity=%.2f >= 0.8 but artist mismatch: '%s' vs '%s')",
+                                variant,
+                                cand_title,
+                                similarity_ratio,
+                                target_artist_norm,
+                                cand_artist_norm,
+                            )
+                if not chosen_release_id and fuzzy_match_attempted:
+                    logger.info(
+                        "resolve_album_mbid: fuzzy match failed for '%s', trying case-insensitive match",
+                        variant,
+                    )
+            
+            # Try case-insensitive exact match
+            if not chosen_release_id:
+                logger.info(
+                    "resolve_album_mbid: trying case-insensitive match for '%s'",
+                    variant,
+                )
+                case_match_attempted = False
+                for cand in candidates:
+                    cand_release_id = cand.get("release_id")
+                    cand_title = cand.get("title") or ""
+                    cand_artist = cand.get("artist_name") or ""
+                    case_match_attempted = True
+                    
+                    title_matches = cand_release_id and cand_title and cand_title.lower() == album_title.lower()
+                    artist_matches = True
+                    if artist_name and cand_artist:
+                        artist_matches = cand_artist.lower() == artist_name.lower()
+                    
+                    if title_matches and artist_matches:
+                        chosen_release_id = cand_release_id
+                        logger.info(
+                            "resolve_album_mbid: DECISION - case-insensitive match '%s' -> '%s' by '%s' (release_id=%s)",
+                            variant,
+                            cand_title,
+                            cand_artist,
+                            cand_release_id,
+                        )
+                        break
+                if not chosen_release_id and case_match_attempted:
+                    logger.info(
+                        "resolve_album_mbid: case-insensitive match failed for '%s', trying first candidate fallback",
+                        variant,
+                    )
+            
+            # Final fallback: use first candidate for non-exact searches
+            if not chosen_release_id and candidates:
+                first_cand = candidates[0]
+                first_cand_release_id = first_cand.get("release_id")
+                first_cand_title = first_cand.get("title", "Unknown")
+                if first_cand_release_id:
+                    # Trust first result if very few candidates (1-3) regardless of search type
+                    if len(candidates) <= 3:
+                        chosen_release_id = first_cand_release_id
+                        logger.info(
+                            "resolve_album_mbid: DECISION - using first candidate for '%s' -> '%s' (release_id=%s, only %d candidates, trusting MB search ranking)",
+                            variant,
+                            first_cand_title,
+                            first_cand_release_id,
+                            len(candidates),
+                        )
+                    # Fallback: use first candidate but log as lower confidence
+                    else:
+                        chosen_release_id = first_cand_release_id
+                        logger.info(
+                            "resolve_album_mbid: DECISION - using first candidate for '%s' -> '%s' (release_id=%s, no exact/fuzzy match, %d total candidates)",
+                            variant,
+                            first_cand_title,
+                            first_cand_release_id,
+                            len(candidates),
+                        )
+                else:
+                    logger.info(
+                        "resolve_album_mbid: first candidate for '%s' has no release_id, cannot use",
+                        variant,
+                    )
+
+        # If we found a release_id, fetch the release to get release_group_id
+        if chosen_release_id:
+            try:
+                # Get release_group_id from the release
+                # We need to make a direct API call since get_release doesn't return release_group_id in the result dict
+                # Import the private function for this specific use case
+                from app.providers.musicbrainz import _mb_request
+                try:
+                    release_response = _mb_request(f"release/{chosen_release_id}", {"inc": "release-groups"})
+                    release_group = release_response.get("release-group", {})
+                    chosen_release_group_id = release_group.get("id")
+                except Exception as e:
+                    logger.debug("Failed to get release_group_id for release %s: %s", chosen_release_id, e)
+                    chosen_release_group_id = None
+                
+                logger.info(
+                    "resolve_album_mbid: SUCCESS - matched '%s' via variant '%s' -> release_id=%s, release_group_id=%s",
+                    album_title,
+                    variant,
+                    chosen_release_id,
+                    chosen_release_group_id or "None",
+                )
+                return chosen_release_group_id, chosen_release_id, len(candidates), variant
+            except Exception as e:
+                logger.warning(
+                    "resolve_album_mbid: Failed to fetch release data for release_id %s: %s",
+                    chosen_release_id,
+                    e,
+                )
+                # Return release_id even without release_group_id
+                return None, chosen_release_id, len(candidates), variant
+        else:
+            logger.info(
+                "resolve_album_mbid: no match found for variant '%s', trying next variant",
+                variant,
+            )
+
+    logger.info(
+        "resolve_album_mbid: FAILED - no match found after trying %d variants: %s (total candidates seen: %d)",
+        len(variants_tried),
+        variants_tried,
+        total_candidates_seen,
+    )
+    return None, None, 0, None
+
+
 def refresh_album_cover_art(album: Album) -> bool:
     """Try to fetch/refresh cover art for an album.
     

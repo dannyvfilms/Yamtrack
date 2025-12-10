@@ -524,12 +524,12 @@ def enrich_music_library_task(user_id: int):
 
             # Ensure artist is saved before filtering
             if artist.pk:
-            music_without_track = Music.objects.filter(
+                music_without_track = Music.objects.filter(
                     artist_id=artist.pk,
-                track__isnull=True,
-                item__media_id__isnull=False,
-                album__isnull=False,
-            )
+                    track__isnull=True,
+                    item__media_id__isnull=False,
+                    album__isnull=False,
+                )
             else:
                 music_without_track = Music.objects.none()
             
@@ -541,8 +541,6 @@ def enrich_music_library_task(user_id: int):
                         musicbrainz_recording_id__isnull=False,
                     )
                 }
-            else:
-                track_map = {}
                 to_update = []
                 for music in music_without_track:
                     track_id = track_map.get(music.item.media_id)
@@ -574,9 +572,9 @@ def enrich_music_library_task(user_id: int):
     items_final_runtime = []
     for music in music_with_new_runtime:
         if music.track and music.track.duration_ms and music.item:
-        runtime = _runtime_minutes_from_ms(music.track.duration_ms)
-        if runtime:
-            music.item.runtime_minutes = runtime
+            runtime = _runtime_minutes_from_ms(music.track.duration_ms)
+            if runtime:
+                music.item.runtime_minutes = runtime
                 items_final_runtime.append(music.item)
     
     if items_final_runtime:
@@ -839,6 +837,412 @@ def populate_album_tracks_batch(album_ids: list[int], user_id: int | None = None
         "populated": populated,
         "skipped_no_release_id": skipped_no_release_id,
         "skipped_already_populated": skipped_already_populated,
+    }
+
+
+@shared_task
+def enrich_albums_task(user_id: int):
+    """Post-import enrichment for albums - resolve MBIDs and populate tracks.
+    
+    This task processes albums that don't have MusicBrainz IDs, similar to how
+    enrich_music_library_task processes artists. Uses the same proven search/matching
+    logic from resolve_artist_mbid adapted for albums.
+    """
+    from app.models import Album, Music
+    from app.services.music import (
+        resolve_album_mbid,
+        populate_album_tracks,
+        link_music_to_tracks,
+        backfill_music_runtimes,
+    )
+    from app.services.music_scrobble import _runtime_minutes_from_ms
+    from app.models import Item, AlbumTracker
+
+    User = get_user_model()
+    try:
+        user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        logger.warning("enrich_albums_task: user %s no longer exists", user_id)
+        return {"albums": 0, "attached_mbid": 0, "merged": 0}
+
+    logger.info(
+        "enrich_albums_task: Starting album enrichment for user %s",
+        user_id,
+    )
+
+    # Get all albums for this user that need MBIDs
+    # Albums are linked to users through Music entries
+    album_ids = (
+        Music.objects.filter(user=user)
+        .exclude(album_id__isnull=True)
+        .values_list("album_id", flat=True)
+        .distinct()
+    )
+
+    albums = list(Album.objects.filter(id__in=album_ids))
+    albums_without_mbid = [
+        a
+        for a in albums
+        if not a.musicbrainz_release_id and not a.musicbrainz_release_group_id
+    ]
+    albums_with_mbid = [
+        a
+        for a in albums
+        if a.musicbrainz_release_id or a.musicbrainz_release_group_id
+    ]
+
+    # Log sample names to verify we're seeing the full set
+    sample_without_mbid = (
+        [f"{a.title} - {a.artist.name if a.artist else 'Unknown'}" for a in albums_without_mbid[:10]]
+        if albums_without_mbid
+        else []
+    )
+    sample_with_mbid = (
+        [f"{a.title} - {a.artist.name if a.artist else 'Unknown'}" for a in albums_with_mbid[:10]]
+        if albums_with_mbid
+        else []
+    )
+
+    logger.info(
+        "enrich_albums_task: Found %d total albums (%d without MBID, %d with MBID). "
+        "Sample without MBID: %s. Sample with MBID: %s",
+        len(albums),
+        len(albums_without_mbid),
+        len(albums_with_mbid),
+        sample_without_mbid,
+        sample_with_mbid,
+    )
+
+    attached = 0
+    merged = 0
+    no_match = 0
+    skipped_already_has_mbid = 0
+    skipped_album_names_sample = []
+    total_candidates = 0
+    albums_to_populate: list[int] = []
+
+    # Phase 1: Fast runtime backfill from existing tracks (DB-only, immediate)
+    music_with_runtime = (
+        Music.objects.filter(user=user, item__runtime_minutes__isnull=True)
+        .exclude(track__duration_ms__isnull=True)
+        .select_related("item", "track")
+    )
+
+    items_to_update_runtime = []
+    for music in music_with_runtime:
+        if music.track and music.track.duration_ms and music.item:
+            runtime = _runtime_minutes_from_ms(music.track.duration_ms)
+            if runtime:
+                music.item.runtime_minutes = runtime
+                items_to_update_runtime.append(music.item)
+
+    if items_to_update_runtime:
+        Item.objects.bulk_update(items_to_update_runtime, ["runtime_minutes"], batch_size=500)
+        logger.info(
+            "enrich_albums_task: Backfilled %d runtimes from existing tracks",
+            len(items_to_update_runtime),
+        )
+
+    # Phase 2: MBID resolution for albums
+    albums_processed_count = 0
+    for album in albums:
+        albums_processed_count += 1
+        # Log progress every 50 albums
+        if albums_processed_count % 50 == 0 or albums_processed_count == len(albums):
+            logger.info(
+                "enrich_albums_task: Progress - processed %d/%d albums (current: '%s', id=%s)",
+                albums_processed_count,
+                len(albums),
+                album.title if album.title else "Unknown",
+                album.id,
+            )
+
+        # If missing MBID, try to attach one
+        if album.musicbrainz_release_id or album.musicbrainz_release_group_id:
+            skipped_already_has_mbid += 1
+            if len(skipped_album_names_sample) < 20:
+                skipped_album_names_sample.append(
+                    f"{album.title} - {album.artist.name if album.artist else 'Unknown'}"
+                )
+        else:
+            artist_name = album.artist.name if album.artist else None
+            logger.info(
+                "enrich_albums_task: Processing album '%s' (id=%s, artist='%s', no MBID)",
+                album.title,
+                album.id,
+                artist_name or "Unknown",
+            )
+            try:
+                release_group_id, release_id, cand_count, variant = resolve_album_mbid(
+                    album.title or "",
+                    artist_name,
+                )
+                total_candidates += cand_count
+                logger.info(
+                    "enrich_albums_task: resolve_album_mbid('%s', '%s') returned: release_group_id=%s, release_id=%s, candidates=%d, variant='%s'",
+                    album.title or "",
+                    artist_name or "None",
+                    release_group_id or "None",
+                    release_id or "None",
+                    cand_count,
+                    variant or "None",
+                )
+                if release_group_id or release_id:
+                    logger.info(
+                        "enrich_albums_task: attempting to attach MBIDs to album '%s' (id=%s) via variant '%s'",
+                        album.title,
+                        album.id,
+                        variant or "None",
+                    )
+                    try:
+                        # Update album with MBIDs
+                        update_fields = []
+                        if release_group_id and not album.musicbrainz_release_group_id:
+                            album.musicbrainz_release_group_id = release_group_id
+                            update_fields.append("musicbrainz_release_group_id")
+                        if release_id and not album.musicbrainz_release_id:
+                            album.musicbrainz_release_id = release_id
+                            update_fields.append("musicbrainz_release_id")
+
+                        if update_fields:
+                            album.save(update_fields=update_fields)
+                            attached += 1
+                            logger.info(
+                                "enrich_albums_task: SUCCESS - attached MBIDs to '%s' (id=%s) via '%s' (candidates=%d)",
+                                album.title,
+                                album.id,
+                                variant or "None",
+                                cand_count,
+                            )
+                    except IntegrityError as integrity_err:
+                        logger.info(
+                            "enrich_albums_task: IntegrityError attaching MBIDs to '%s' (id=%s) - MBID already exists, attempting merge",
+                            album.title,
+                            album.id,
+                        )
+                        # Find existing album with this release_group_id
+                        existing = None
+                        if release_group_id:
+                            existing = Album.objects.filter(
+                                musicbrainz_release_group_id=release_group_id,
+                            ).exclude(id=album.id).first()
+                        if not existing and release_id:
+                            existing = Album.objects.filter(
+                                musicbrainz_release_id=release_id,
+                            ).exclude(id=album.id).first()
+
+                        if existing:
+                            logger.info(
+                                "enrich_albums_task: found existing album '%s' (id=%s, release_group_id=%s) to merge into",
+                                existing.title,
+                                existing.id,
+                                existing.musicbrainz_release_group_id or "None",
+                            )
+                            try:
+                                # Merge album into existing (similar to _merge_album_into_target logic)
+                                updates = set()
+                                if (
+                                    (not existing.image or existing.image == settings.IMG_NONE)
+                                    and album.image
+                                    and album.image != settings.IMG_NONE
+                                ):
+                                    existing.image = album.image
+                                    updates.add("image")
+                                if not existing.musicbrainz_release_id and album.musicbrainz_release_id:
+                                    existing.musicbrainz_release_id = album.musicbrainz_release_id
+                                    updates.add("musicbrainz_release_id")
+                                if not existing.musicbrainz_release_group_id and album.musicbrainz_release_group_id:
+                                    existing.musicbrainz_release_group_id = album.musicbrainz_release_group_id
+                                    updates.add("musicbrainz_release_group_id")
+                                if not existing.release_date and album.release_date:
+                                    existing.release_date = album.release_date
+                                    updates.add("release_date")
+                                if not existing.release_type and album.release_type:
+                                    existing.release_type = album.release_type
+                                    updates.add("release_type")
+                                if updates:
+                                    existing.save(update_fields=list(updates))
+
+                                # Merge album trackers
+                                for tracker in AlbumTracker.objects.filter(album=album):
+                                    existing_tracker = AlbumTracker.objects.filter(
+                                        user=tracker.user,
+                                        album=existing,
+                                    ).first()
+                                    if existing_tracker:
+                                        if (
+                                            tracker.start_date
+                                            and (
+                                                not existing_tracker.start_date
+                                                or tracker.start_date < existing_tracker.start_date
+                                            )
+                                        ):
+                                            existing_tracker.start_date = tracker.start_date
+                                            existing_tracker.save(update_fields=["start_date"])
+                                        tracker.delete()
+                                    else:
+                                        tracker.album = existing
+                                        tracker.save(update_fields=["album"])
+
+                                # Re-point music entries to the canonical album
+                                Music.objects.filter(album=album).update(album=existing, track=None)
+
+                                # Delete the source album
+                                album.delete()
+                                album = existing  # Use existing for further processing
+                                merged += 1
+                                logger.info(
+                                    "enrich_albums_task: SUCCESS - merged album '%s' (id=%s) into '%s' (id=%s, release_group_id=%s) via variant '%s'",
+                                    album.title if hasattr(album, "title") else "Unknown",
+                                    album.id if hasattr(album, "id") else "Unknown",
+                                    existing.title,
+                                    existing.id,
+                                    existing.musicbrainz_release_group_id or "None",
+                                    variant or "None",
+                                )
+                            except Exception as merge_exc:
+                                logger.warning(
+                                    "enrich_albums_task: merge FAILED for '%s' (id=%s) into '%s' (id=%s): %s",
+                                    album.title if hasattr(album, "title") else "Unknown",
+                                    album.id if hasattr(album, "id") else "Unknown",
+                                    existing.title,
+                                    existing.id,
+                                    merge_exc,
+                                    exc_info=True,
+                                )
+                                # After failed merge, album might be invalid - skip remaining processing
+                                if not album.pk:
+                                    logger.warning(
+                                        "enrich_albums_task: album '%s' invalid after failed merge, skipping remaining processing",
+                                        album.title if hasattr(album, "title") else "Unknown",
+                                    )
+                                    continue
+                        else:
+                            logger.warning(
+                                "enrich_albums_task: MBID attach failed for '%s' (id=%s) - MBID conflicts but no target album found (variant '%s', error: %s)",
+                                album.title,
+                                album.id,
+                                variant or "None",
+                                integrity_err,
+                            )
+                else:
+                    no_match += 1
+                    logger.info(
+                        "enrich_albums_task: NO MATCH - resolve_album_mbid returned None for '%s' (id=%s, candidates=%d, variant='%s')",
+                        album.title,
+                        album.id,
+                        cand_count,
+                        variant or "None",
+                    )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning(
+                    "enrich_albums_task: EXCEPTION - MBID resolution failed for '%s' (id=%s): %s",
+                    album.title,
+                    album.id,
+                    exc,
+                    exc_info=True,
+                )
+
+        # Skip remaining processing if album became invalid (e.g., deleted during merge)
+        if not album.pk:
+            logger.debug(
+                "enrich_albums_task: skipping remaining processing for album '%s' (no pk after MBID resolution)",
+                album.title if hasattr(album, "title") else "Unknown",
+            )
+            continue
+
+        # Collect albums that need track population (only albums with MBIDs)
+        if album.pk and (album.musicbrainz_release_id or album.musicbrainz_release_group_id):
+            if not album.tracks_populated:
+                albums_to_populate.append(album.id)
+
+    # Phase 3: Populate tracks for albums that now have MBIDs
+    populated_count = 0
+    for album_id in albums_to_populate:
+        try:
+            album = Album.objects.filter(id=album_id).first()
+            if not album:
+                continue
+            if album.tracks_populated:
+                continue
+            # Skip albums without MBIDs - can't populate tracks without them
+            if not album.musicbrainz_release_id and not album.musicbrainz_release_group_id:
+                continue
+
+            count = populate_album_tracks(album)
+            if count > 0:
+                populated_count += 1
+        except Exception as exc:
+            logger.warning("Track populate failed for album %s: %s", album_id, exc)
+
+    logger.info(
+        "enrich_albums_task: Populated tracks for %d albums",
+        populated_count,
+    )
+
+    # Phase 4: Link Music entries to tracks and backfill runtime
+    if populated_count > 0:
+        try:
+            # Link Music entries to newly populated tracks
+            link_result = link_music_to_tracks(user)
+
+            # Backfill runtime from all available sources
+            backfill_result = backfill_music_runtimes(user)
+
+            logger.info(
+                "enrich_albums_task: After populating tracks, linked %d Music->Track, backfilled %d runtimes",
+                link_result.get("linked", 0),
+                backfill_result.get("backfilled", 0),
+            )
+        except Exception as exc:
+            logger.warning("Failed to link tracks/backfill runtime after track population: %s", exc)
+
+    # Phase 5: Final runtime backfill from newly populated/linked tracks
+    music_with_new_runtime = (
+        Music.objects.filter(user=user, item__runtime_minutes__isnull=True)
+        .exclude(track__duration_ms__isnull=True)
+        .select_related("item", "track")
+    )
+
+    items_final_runtime = []
+    for music in music_with_new_runtime:
+        if music.track and music.track.duration_ms and music.item:
+            runtime = _runtime_minutes_from_ms(music.track.duration_ms)
+            if runtime:
+                music.item.runtime_minutes = runtime
+                items_final_runtime.append(music.item)
+
+    if items_final_runtime:
+        Item.objects.bulk_update(items_final_runtime, ["runtime_minutes"], batch_size=500)
+        logger.info(
+            "enrich_albums_task: Backfilled %d additional runtimes from newly linked tracks",
+            len(items_final_runtime),
+        )
+
+    logger.info(
+        "enrich_albums_task: Completed enrichment for user %s. "
+        "Summary: %d total albums (%d skipped - already had MBID, %d processed without MBID). "
+        "Results: attached %d MBIDs, merged %d, no match %d, populated tracks for %d albums. "
+        "Sample skipped albums: %s",
+        user_id,
+        len(albums),
+        skipped_already_has_mbid,
+        len(albums_without_mbid),
+        attached,
+        merged,
+        no_match,
+        populated_count,
+        skipped_album_names_sample[:10] if skipped_album_names_sample else [],
+    )
+
+    return {
+        "albums": len(albums),
+        "attached_mbid": attached,
+        "merged_albums": merged,
+        "no_mbid_match": no_match,
+        "skipped_already_has_mbid": skipped_already_has_mbid,
+        "candidate_sum": total_candidates,
+        "albums_tracks_populated": populated_count,
     }
 
 

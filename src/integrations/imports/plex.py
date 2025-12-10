@@ -411,13 +411,16 @@ class PlexHistoryImporter:
 
     def _enqueue_music_enrichment(self):
         """Kick off a post-import enrichment/dedupe pass for this user's music."""
-        from app.tasks import enrich_music_library_task  # local import to avoid cycles
+        from app.tasks import enrich_music_library_task, enrich_albums_task  # local import to avoid cycles
 
         if MediaTypes.MUSIC.value not in self.counts:
             return  # No music imported, skip
 
         try:
             enrich_music_library_task.delay(self.user.id)
+            # Schedule album enrichment to run after artist enrichment
+            # This processes albums that don't have MBIDs (those that didn't match discography)
+            enrich_albums_task.delay(self.user.id)
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("Could not enqueue music enrichment task: %s", exc)
 
