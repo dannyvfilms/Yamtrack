@@ -9,9 +9,10 @@ from django.db.models import Exists, OuterRef, Q, Subquery
 from django.utils import timezone
 
 from app import config
-from app.models import Item, MediaTypes, Sources
+from app.models import Item, MediaTypes, Sources, TV, Status
 from app.providers import comicvine, services, tmdb
 from events.models import Event, SentinelDatetime
+from simple_history.utils import bulk_update_with_history
 
 logger = logging.getLogger(__name__)
 
@@ -497,7 +498,7 @@ def process_tv_seasons(tv_item, seasons_to_process, events_bulk):
         season_metadata = process_seasons_data[season_key]
 
         # Get or create season item
-        season_item, _ = Item.objects.get_or_create(
+        season_item, season_created = Item.objects.get_or_create(
             media_id=tv_item.media_id,
             source=tv_item.source,
             media_type=MediaTypes.SEASON.value,
@@ -507,6 +508,15 @@ def process_tv_seasons(tv_item, seasons_to_process, events_bulk):
                 "image": season_metadata["image"],
             },
         )
+
+        # If this is a newly created season, update TV statuses for users
+        if season_created:
+            logger.info(
+                "New season detected: %s - Season %s",
+                tv_item,
+                season_number,
+            )
+            update_tv_status_for_new_season(tv_item, season_number)
 
         # Process episodes for this season
         process_season_episodes(season_item, season_metadata, events_bulk)
@@ -612,6 +622,58 @@ def process_season_episodes(item, metadata, events_bulk):
 
     if items_to_update:
         Item.objects.bulk_update(items_to_update, ["image", "release_datetime"], batch_size=100)
+
+
+def update_tv_status_for_new_season(tv_item, season_number):
+    """Update TV show status for users when a new season is detected.
+    
+    Rules:
+    - Dropped: Do nothing (user chose not to continue)
+    - Planning: Leave as Planning (user hasn't started)
+    - Completed: Change to In Progress (new season available)
+    - Paused: Leave as is (user decision to pause)
+    """
+    # Find all users who have this TV show
+    tv_instances = TV.objects.filter(
+        item__media_id=tv_item.media_id,
+        item__source=tv_item.source,
+        item__media_type=MediaTypes.TV.value,
+    ).select_related('item')
+    
+    if not tv_instances.exists():
+        logger.debug(
+            "No TV instances found for %s (season %s) - skipping status updates",
+            tv_item,
+            season_number,
+        )
+        return
+    
+    # Only update shows that are Completed
+    tv_to_update = [
+        tv for tv in tv_instances 
+        if tv.status == Status.COMPLETED.value
+    ]
+    
+    if not tv_to_update:
+        logger.debug(
+            "No Completed TV shows found for %s (season %s) - skipping status updates",
+            tv_item,
+            season_number,
+        )
+        return
+    
+    # Update to In Progress
+    for tv in tv_to_update:
+        tv.status = Status.IN_PROGRESS.value
+    
+    bulk_update_with_history(tv_to_update, TV, fields=["status"])
+    
+    logger.info(
+        "Updated %d TV show(s) from Completed to In Progress for %s (season %s)",
+        len(tv_to_update),
+        tv_item,
+        season_number,
+    )
 
 
 def get_episode_datetime(episode, season_number, episode_number, tvmaze_map):
