@@ -168,6 +168,13 @@ def refresh_history_cache_task(user_id: int):
 
 
 @shared_task
+def refresh_statistics_cache_task(user_id: int, range_name: str):
+    """Rebuild the cached Statistics page for a user and range."""
+    from app import statistics_cache
+    statistics_cache.refresh_statistics_cache(user_id, range_name)
+
+
+@shared_task
 def populate_runtime_data_continuous():
     """Populate runtime data for ALL items that don't have it (startup task)."""
     from app.models import Item, MediaTypes

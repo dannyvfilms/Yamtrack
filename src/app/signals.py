@@ -8,7 +8,20 @@ from django.dispatch import receiver
 from django_celery_results.models import TaskResult
 
 from app.history_cache import invalidate_history_cache, schedule_history_refresh
-from app.models import Episode, Movie, Music
+from app import statistics_cache
+from app.models import (
+    Anime,
+    BoardGame,
+    Book,
+    Comic,
+    Episode,
+    Game,
+    Manga,
+    Movie,
+    Music,
+    Season,
+    TV,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +65,9 @@ def refresh_history_cache_on_episode_change(sender, instance, **kwargs):  # noqa
     user_id = getattr(getattr(instance, "related_season", None), "user_id", None)
     if user_id:
         schedule_history_refresh(user_id)
+        # Also invalidate statistics cache for all ranges
+        statistics_cache.invalidate_statistics_cache(user_id)
+        statistics_cache.schedule_all_ranges_refresh(user_id)
 
 
 @receiver([post_save, post_delete], sender=Movie)
@@ -60,6 +76,9 @@ def refresh_history_cache_on_movie_change(sender, instance, **kwargs):  # noqa: 
     user_id = getattr(instance, "user_id", None)
     if user_id:
         schedule_history_refresh(user_id)
+        # Also invalidate statistics cache for all ranges
+        statistics_cache.invalidate_statistics_cache(user_id)
+        statistics_cache.schedule_all_ranges_refresh(user_id)
 
 
 @receiver([post_save, post_delete], sender=Music)
@@ -73,3 +92,78 @@ def refresh_history_cache_on_music_change(sender, instance, **kwargs):  # noqa: 
     if user_id:
         invalidate_history_cache(user_id)
         schedule_history_refresh(user_id)
+        # Also invalidate statistics cache for all ranges
+        statistics_cache.invalidate_statistics_cache(user_id)
+        statistics_cache.schedule_all_ranges_refresh(user_id)
+
+
+@receiver([post_save, post_delete], sender=TV)
+def refresh_statistics_cache_on_tv_change(sender, instance, **kwargs):  # noqa: ARG001
+    """Invalidate and schedule statistics cache refresh when TV activity changes."""
+    user_id = getattr(instance, "user_id", None)
+    if user_id:
+        statistics_cache.invalidate_statistics_cache(user_id)
+        statistics_cache.schedule_all_ranges_refresh(user_id)
+
+
+@receiver([post_save, post_delete], sender=Season)
+def refresh_statistics_cache_on_season_change(sender, instance, **kwargs):  # noqa: ARG001
+    """Invalidate and schedule statistics cache refresh when season activity changes."""
+    user_id = getattr(instance, "user_id", None)
+    if user_id:
+        statistics_cache.invalidate_statistics_cache(user_id)
+        statistics_cache.schedule_all_ranges_refresh(user_id)
+
+
+@receiver([post_save, post_delete], sender=Anime)
+def refresh_statistics_cache_on_anime_change(sender, instance, **kwargs):  # noqa: ARG001
+    """Invalidate and schedule statistics cache refresh when anime activity changes."""
+    user_id = getattr(instance, "user_id", None)
+    if user_id:
+        statistics_cache.invalidate_statistics_cache(user_id)
+        statistics_cache.schedule_all_ranges_refresh(user_id)
+
+
+@receiver([post_save, post_delete], sender=Manga)
+def refresh_statistics_cache_on_manga_change(sender, instance, **kwargs):  # noqa: ARG001
+    """Invalidate and schedule statistics cache refresh when manga activity changes."""
+    user_id = getattr(instance, "user_id", None)
+    if user_id:
+        statistics_cache.invalidate_statistics_cache(user_id)
+        statistics_cache.schedule_all_ranges_refresh(user_id)
+
+
+@receiver([post_save, post_delete], sender=Book)
+def refresh_statistics_cache_on_book_change(sender, instance, **kwargs):  # noqa: ARG001
+    """Invalidate and schedule statistics cache refresh when book activity changes."""
+    user_id = getattr(instance, "user_id", None)
+    if user_id:
+        statistics_cache.invalidate_statistics_cache(user_id)
+        statistics_cache.schedule_all_ranges_refresh(user_id)
+
+
+@receiver([post_save, post_delete], sender=Comic)
+def refresh_statistics_cache_on_comic_change(sender, instance, **kwargs):  # noqa: ARG001
+    """Invalidate and schedule statistics cache refresh when comic activity changes."""
+    user_id = getattr(instance, "user_id", None)
+    if user_id:
+        statistics_cache.invalidate_statistics_cache(user_id)
+        statistics_cache.schedule_all_ranges_refresh(user_id)
+
+
+@receiver([post_save, post_delete], sender=Game)
+def refresh_statistics_cache_on_game_change(sender, instance, **kwargs):  # noqa: ARG001
+    """Invalidate and schedule statistics cache refresh when game activity changes."""
+    user_id = getattr(instance, "user_id", None)
+    if user_id:
+        statistics_cache.invalidate_statistics_cache(user_id)
+        statistics_cache.schedule_all_ranges_refresh(user_id)
+
+
+@receiver([post_save, post_delete], sender=BoardGame)
+def refresh_statistics_cache_on_boardgame_change(sender, instance, **kwargs):  # noqa: ARG001
+    """Invalidate and schedule statistics cache refresh when board game activity changes."""
+    user_id = getattr(instance, "user_id", None)
+    if user_id:
+        statistics_cache.invalidate_statistics_cache(user_id)
+        statistics_cache.schedule_all_ranges_refresh(user_id)

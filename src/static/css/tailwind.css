@@ -1782,6 +1782,9 @@
   .text-yellow-400 {
     color: var(--color-yellow-400);
   }
+  .lowercase {
+    text-transform: lowercase;
+  }
   .uppercase {
     text-transform: uppercase;
   }

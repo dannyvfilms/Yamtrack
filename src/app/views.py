@@ -20,6 +20,7 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 
 from app import cache_utils, config, helpers, history_cache, history_processor
 from app import statistics as stats
+from app import statistics_cache
 from app.forms import EpisodeForm, ManualItemForm, get_form_class
 from app.models import (
     TV,
@@ -2218,91 +2219,36 @@ def statistics(request):
                 datetime.combine(end_date, datetime.max.time()),
             )
 
-    # Get all user media data in a single operation
-    user_media, media_count = stats.get_user_media(
+    # Identify predefined range for caching
+    selected_range_name = _identify_predefined_range(start_date, end_date)
+    
+    # Get statistics data (cached for predefined ranges, computed inline for custom ranges)
+    statistics_data = statistics_cache.get_statistics_data(
         request.user,
         start_date,
         end_date,
+        range_name=selected_range_name,
     )
 
-    if not request.user.season_enabled:
-        season_key = MediaTypes.SEASON.value
-        season_count = media_count.pop(season_key, 0)
-        if season_count:
-            media_count["total"] = max(media_count.get("total", 0) - season_count, 0)
-        user_media.pop(season_key, None)
-
-    # Calculate all statistics from the retrieved data
-    media_type_distribution = stats.get_media_type_distribution(
-        media_count,
-    )
-    score_distribution, top_rated = stats.get_score_distribution(user_media)
-    status_distribution = stats.get_status_distribution(user_media)
-    status_pie_chart_data = stats.get_status_pie_chart_data(
-        status_distribution,
-    )
-    top_played = stats.get_top_played_media(user_media, start_date, end_date)
-    
-    # Calculate hours and detailed consumption summaries
-    minutes_per_media_type = stats.calculate_minutes_per_media_type(
-        user_media,
-        start_date,
-        end_date,
-    )
-    hours_per_media_type = stats.get_hours_per_media_type(
-        user_media,
-        start_date,
-        end_date,
-        minutes_per_media_type,
-    )
-    tv_consumption = stats.get_tv_consumption_stats(
-        user_media,
-        start_date,
-        end_date,
-        minutes_per_media_type,
-    )
-    movie_consumption = stats.get_movie_consumption_stats(
-        user_media,
-        start_date,
-        end_date,
-        minutes_per_media_type,
-    )
-    music_consumption = stats.get_music_consumption_stats(
-        user_media,
-        start_date,
-        end_date,
-        minutes_per_media_type,
-    )
-
-    # Daily hours per media type (used by the Activity History-attached chart)
-    daily_hours_by_media_type = stats.get_daily_hours_by_media_type(
-        user_media,
-        start_date,
-        end_date,
-    )
-
-    activity_data = stats.get_activity_data(request.user, start_date, end_date)
-
-    selected_range_name = _identify_predefined_range(start_date, end_date)
     show_year_charts = selected_range_name in (None, "All Time")
 
     context = {
         "user": request.user,
         "start_date": start_date,
         "end_date": end_date,
-        "media_count": media_count,
-        "activity_data": activity_data,
-        "media_type_distribution": media_type_distribution,
-        "score_distribution": score_distribution,
-        "top_rated": top_rated,
-        "top_played": top_played,
-        "status_distribution": status_distribution,
-        "status_pie_chart_data": status_pie_chart_data,
-        "hours_per_media_type": hours_per_media_type,
-        "tv_consumption": tv_consumption,
-        "movie_consumption": movie_consumption,
-        "music_consumption": music_consumption,
-        "daily_hours_by_media_type": daily_hours_by_media_type,
+        "media_count": statistics_data["media_count"],
+        "activity_data": statistics_data["activity_data"],
+        "media_type_distribution": statistics_data["media_type_distribution"],
+        "score_distribution": statistics_data["score_distribution"],
+        "top_rated": statistics_data["top_rated"],
+        "top_played": statistics_data["top_played"],
+        "status_distribution": statistics_data["status_distribution"],
+        "status_pie_chart_data": statistics_data["status_pie_chart_data"],
+        "hours_per_media_type": statistics_data["hours_per_media_type"],
+        "tv_consumption": statistics_data["tv_consumption"],
+        "movie_consumption": statistics_data["movie_consumption"],
+        "music_consumption": statistics_data["music_consumption"],
+        "daily_hours_by_media_type": statistics_data["daily_hours_by_media_type"],
         "show_year_charts": show_year_charts,
     }
 
