@@ -6,6 +6,7 @@ from dateutil.relativedelta import relativedelta
 from django.apps import apps
 from django.conf import settings
 from django.contrib import messages
+from django.contrib.auth.decorators import login_not_required
 from django.core.cache import cache
 from django.core.paginator import EmptyPage, Paginator
 from django.db import IntegrityError
@@ -38,6 +39,7 @@ from app.models import (
 from app.providers import manual, services, tmdb
 from app.services import music as sync_services
 from app.templatetags import app_tags
+from lists.models import CustomList
 from users.models import HomeSortChoices, MediaSortChoices, MediaStatusChoices
 
 logger = logging.getLogger(__name__)
@@ -484,19 +486,51 @@ def media_search(request):
     return render(request, "app/search.html", context)
 
 
+@login_not_required
 @require_GET
 def media_details(
     request, source, media_type, media_id, title
 ):  # noqa: ARG001 title for URL
     """Return the details page for a media item."""
+    # Check if this is a public view (from query parameter)
+    public_view = request.GET.get("public_view") == "1" and not request.user.is_authenticated
+    
+    # For public views, find a public list containing this item to get the owner
+    list_owner = None
+    if public_view:
+        try:
+            # Get or create the Item for this media
+            item, _ = Item.objects.get_or_create(
+                media_id=media_id,
+                source=source,
+                media_type=media_type,
+                defaults={"title": "", "image": settings.IMG_NONE},
+            )
+            # Find a public list containing this item
+            public_list = CustomList.objects.filter(
+                visibility="public",
+                items=item,
+            ).select_related("owner").first()
+            if public_list:
+                list_owner = public_list.owner
+        except Exception:
+            # If we can't find a list owner, list_owner stays None
+            pass
+    
     media_metadata = services.get_media_metadata(media_type, media_id, source)
-    user_medias = BasicMedia.objects.filter_media_prefetch(
-        request.user,
-        media_id,
-        media_type,
-        source,
-    )
-    current_instance = user_medias[0] if user_medias else None
+    
+    # For public views, we don't need user media data
+    if public_view:
+        user_medias = []
+        current_instance = None
+    else:
+        user_medias = BasicMedia.objects.filter_media_prefetch(
+            request.user,
+            media_id,
+            media_type,
+            source,
+        )
+        current_instance = user_medias[0] if user_medias else None
 
     # Apply the same rating aggregation logic as in the media list
     if user_medias and len(user_medias) > 1:
@@ -520,6 +554,7 @@ def media_details(
             current_instance.score = latest_rating
 
     # Enrich related items with user tracking data
+    # For public views, use list owner's data if available
     if media_metadata.get("related"):
         for section_name, related_items in media_metadata["related"].items():
             if related_items:
@@ -527,6 +562,7 @@ def media_details(
                     helpers.enrich_items_with_user_data(
                         request,
                         related_items,
+                        user=list_owner,
                     )
                 )
 
@@ -545,15 +581,43 @@ def media_details(
         "current_instance": current_instance,
         "music_artist": music_artist,
         "music_album": music_album,
+        "public_view": public_view,
     }
     return render(request, "app/media_details.html", context)
 
 
+@login_not_required
 @require_GET
 def season_details(
     request, source, media_id, title, season_number
 ):  # noqa: ARG001 For URL
     """Return the details page for a season."""
+    # Check if this is a public view (from query parameter)
+    public_view = request.GET.get("public_view") == "1" and not request.user.is_authenticated
+    
+    # For public views, find a public list containing this item to get the owner
+    list_owner = None
+    if public_view:
+        try:
+            # Get or create the Item for this season
+            item, _ = Item.objects.get_or_create(
+                media_id=media_id,
+                source=source,
+                media_type=MediaTypes.SEASON.value,
+                season_number=season_number,
+                defaults={"title": "", "image": settings.IMG_NONE},
+            )
+            # Find a public list containing this item
+            public_list = CustomList.objects.filter(
+                visibility="public",
+                items=item,
+            ).select_related("owner").first()
+            if public_list:
+                list_owner = public_list.owner
+        except Exception:
+            # If we can't find a list owner, list_owner stays None
+            pass
+    
     tv_with_seasons_metadata = services.get_media_metadata(
         "tv_with_seasons",
         media_id,
@@ -562,15 +626,19 @@ def season_details(
     )
     season_metadata = tv_with_seasons_metadata[f"season/{season_number}"]
 
-    user_medias = BasicMedia.objects.filter_media_prefetch(
-        request.user,
-        media_id,
-        MediaTypes.SEASON.value,
-        source,
-        season_number=season_number,
-    )
-
-    current_instance = user_medias[0] if user_medias else None
+    # For public views, we don't need user media data
+    if public_view:
+        user_medias = []
+        current_instance = None
+    else:
+        user_medias = BasicMedia.objects.filter_media_prefetch(
+            request.user,
+            media_id,
+            MediaTypes.SEASON.value,
+            source,
+            season_number=season_number,
+        )
+        current_instance = user_medias[0] if user_medias else None
     
     # Apply the same rating aggregation logic as in the media list
     if user_medias and len(user_medias) > 1:
@@ -612,6 +680,7 @@ def season_details(
         )
 
     # Enrich related items with user tracking data
+    # For public views, use list owner's data if available
     if season_metadata.get("related"):
         for section_name, related_items in season_metadata["related"].items():
             if related_items:
@@ -619,6 +688,7 @@ def season_details(
                     helpers.enrich_items_with_user_data(
                         request,
                         related_items,
+                        user=list_owner,
                     )
                 )
 
@@ -629,6 +699,7 @@ def season_details(
         "media_type": MediaTypes.SEASON.value,
         "user_medias": user_medias,
         "current_instance": current_instance,
+        "public_view": public_view,
     }
     return render(request, "app/media_details.html", context)
 

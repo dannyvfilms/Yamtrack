@@ -17,6 +17,7 @@
            class="w-full rounded-lg shadow-lg bg-[#2a2f35] object-cover"
            src="{{ media.image }}">
 
+      {% if not public_view|default:False %}
       <div x-data="{ trackOpen: false }">
         <button class="mt-4 p-3 rounded-lg w-full flex items-center text-white transition duration-300 cursor-pointer {% if user_medias %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}"
                 hx-get="{% media_view_url 'track_modal' media %}"
@@ -48,6 +49,7 @@
           </div>
         </div>
       </div>
+      {% endif %}
     </div>
 
     {# Media details #}
@@ -136,7 +138,7 @@
           </button>
         </div>
 
-        {% if current_instance.notes %}
+        {% if not public_view|default:False and current_instance.notes %}
           <div class="my-3 border-t border-gray-700"></div>
 
           <div class="flex items-start mt-2">
@@ -178,7 +180,7 @@
         {% endif %}
 
         {# User score #}
-        {% if user_medias %}
+        {% if user_medias and not public_view|default:False %}
           <div x-data="{ showRatingPopup: false, rating: {{ current_instance.score|default:'null' }}, hoverRating: null, isHovering: false }"
                class="relative">
             <!-- Rating display -->
@@ -237,11 +239,12 @@
 
     <div class="w-full md:w-1/4 md:max-w-[250px] mx-auto lg:mx-0">
       {# Your History #}
-      {% if user_medias|length > 1 or current_instance.start_date or current_instance.end_date or current_instance.progress and media.media_type != MediaTypes.MOVIE.value %}
+      {% if not public_view|default:False and current_instance and user_medias %}
+        {% if user_medias|length > 1 or current_instance.start_date or current_instance.end_date or current_instance.progress and media.media_type != MediaTypes.MOVIE.value %}
         <div class="flex items-center justify-between mb-4">
           <h2 class="text-xl font-bold">Your History</h2>
 
-          {% if media_type != MediaTypes.TV.value and media_type != MediaTypes.SEASON.value %}
+          {% if media_type != MediaTypes.TV.value and media_type != MediaTypes.SEASON.value and not public_view|default:False %}
             <div x-data="{ trackOpen: false }">
               <button class="p-2  text-white rounded-md bg-indigo-600 hover:bg-indigo-700 transition-colors cursor-pointer"
                       hx-get="{% media_view_url 'track_modal' media %}"
@@ -319,6 +322,7 @@
                         {% endif %}
                       </div>
 
+                      {% if not public_view|default:False %}
                       <div x-data="{ trackOpen: false }">
                         <button class="p-1 text-gray-400 hover:text-white transition-colors cursor-pointer"
                                 hx-get="{% media_view_url 'track_modal' media %}"
@@ -338,6 +342,7 @@
                           </div>
                         </div>
                       </div>
+                      {% endif %}
                     </div>
 
                     <div class="space-y-2">
@@ -384,9 +389,11 @@
             </div>
           {% endif %}
         </div>
+        {% endif %}
       {% endif %}
 
       {# Actions #}
+      {% if not public_view|default:False %}
       <h2 class="text-xl font-bold mb-4">Actions</h2>
       <div class="bg-[#2a2f35] p-4 md:p-2 lg:p-4 rounded-lg flex items-center justify-center gap-x-5 md:gap-x-2 lg:gap-x-5 mb-6">
         {# Custom Lists #}
@@ -446,6 +453,7 @@
           </div>
         </button>
       </div>
+      {% endif %}
 
       {# Media Details #}
       <h2 class="text-xl font-bold mb-4">Details</h2>
@@ -521,6 +529,7 @@
                           Episode {{ episode.episode_number }} • {{ episode.air_date|user_date_format:user|default_if_none:"Unknown air date" }}{% if episode.runtime %} • {{ episode.runtime }}{% endif %}
                         </p>
                       </div>
+                      {% if not public_view|default:False %}
                       <div class="flex space-x-2">
                         {# Track Episode #}
                         <div x-data="{ trackOpen: false }">
@@ -581,6 +590,7 @@
                           </div>
                         </div>
                       </div>
+                      {% endif %}
                     </div>
                     <div class="{% if episode.history %}md:h-[calc(2*1.5rem)]{% else %}md:h-[calc(3*1.5rem)]{% endif %} md:overflow-y-auto px-4">
                       <p class="text-sm text-gray-300 leading-relaxed text-pretty">{{ episode.overview }}</p>

@@ -66,10 +66,21 @@ def format_search_response(page, per_page, total_results, results):
     }
 
 
-def enrich_items_with_user_data(request, items):
+def enrich_items_with_user_data(request, items, user=None):
     """Enrich a list of items with user tracking data."""
     if not items:
         return []
+
+    # Use provided user or fall back to request.user
+    # If user is provided, use it (should be authenticated list owner)
+    # If user is None and request.user is AnonymousUser, skip enrichment
+    if user is not None:
+        target_user = user
+    elif request.user.is_authenticated:
+        target_user = request.user
+    else:
+        # Anonymous user with no provided user - return items without enrichment
+        return [{"item": item, "media": None} for item in items]
 
     # All items are the same media type
     media_type = items[0]["media_type"]
@@ -89,7 +100,7 @@ def enrich_items_with_user_data(request, items):
 
         q_objects |= Q(**filter_params)
 
-    q_objects &= Q(user=request.user)
+    q_objects &= Q(user=target_user)
 
     # Bulk fetch all media with prefetch
     model = apps.get_model(app_label="app", model_name=media_type)
