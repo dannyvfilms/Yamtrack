@@ -6,66 +6,30 @@
 ![Codecov](https://codecov.io/github/FuzzyGrim/Yamtrack/branch/dev/graph/badge.svg?token=PWUG660120)
 ![GitHub](https://img.shields.io/badge/license-AGPL--3.0-blue)
 
-Yamtrack is a self hosted media tracker for movies, tv shows, anime, manga, video games, books, comics, and board games. I need to clean up the repo specific features list below, but music support is here.*
+Yamtrack is a self hosted media tracker for movies, tv shows, music anime, manga, video games, books, comics, and board games. 
 
 ## 📱 Repo Specific Features
 
-| Sort Lists by Ratings                                                                                       | Preferences Tab for Optional Features                                                                                    |
-| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| <img alt="Screenshot 2025-11-13 at 8 45 17 PM" src="https://github.com/user-attachments/assets/77eb1685-d709-485f-a79b-2b4de2698009" /> | <img width="1176" height="583" alt="Screenshot 2025-11-13 at 8 46 54 PM" src="https://github.com/user-attachments/assets/0368c01b-a10c-44a9-9ed1-aa150b78f3aa" /> |
+### Major Features
+- Board Game tracking was developed by zskemp, and can be used with an API Key from BoardGameGeek.com.
+- Music tracking initially supports Plex for automatic scrobbling and imports. Last.fm support to come.
+- Preferences page for optional features and settings, allowing greater flexibility and choice.
+- History page to see exactly what you watched or listened to on particular days.
+- Statistics page revamp to show more data insights and favorites for the year.
 
-
-| Top 10 Statistics                                                                                    | Activity Overview Statistics                                                                                     |
-| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| <img alt="Screenshot 2025-11-13 at 8 48 32 PM" src="https://github.com/user-attachments/assets/9150add3-c7dd-4a18-a422-fcc67c30bb37" /> | <img alt="Screenshot 2025-11-13 at 8 49 48 PM" src="https://github.com/user-attachments/assets/91d85919-30c9-4a9d-b65b-92c4e78f8c5c" /> |
-
-| Combined Duplicates                                                                                         | Sort by Time Left                                                                                    |
-| ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| <img alt="Screenshot 2025-11-13 at 8 51 18 PM" src="https://github.com/user-attachments/assets/4d3c2796-90c7-47fe-b23e-c8104fff92cf" /> | <img alt="Screenshot 2025-11-13 at 8 52 39 PM" src="https://github.com/user-attachments/assets/3966fe33-9f9d-4d4d-bf35-1cbf61ac2e90" /> |
-
-| Refined Mobile Layout Changes                                                                                         | Optionally Convert In Progress to Paused after Delay                                                                                    |
-| ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| <img alt="Screenshot 2025-11-13 at 8 51 18 PM" src="https://github.com/user-attachments/assets/3f0ad1dd-8121-4d31-8641-a6e60fc9d4c4" /> | <img alt="Screenshot 2025-11-15 at 8 17 50 PM" src="https://github.com/user-attachments/assets/8222884e-ac1e-417e-be14-fa744918755a" /> |
-| Added History Page                                                                                         | Placeholder for Second Screenshot                                                                                    |
-| <img  alt="Screenshot 2025-11-26 at 6 12 33 PM" src="https://github.com/user-attachments/assets/65ae9a2c-ad33-4129-85e4-4653ef48658a" />
- | <img/> |
+### Quality of Life
+- Designed with Video Games in mind, any media type can be changed from In Progress to Paused if left unattended for a configured amount of time.
+- Lists now support sorting by rating, and can be filtered by the content contained inside of them (e.g. "find my Movie lists faster")
+- Combine multiple plays of video games into one single line on the library view to see your total time played.
+- Sort TV Shows by Time Left to see what you can clear off your backlog the fastest.
+- Choose between Comfortable (2 columns) or Compact (3 columns) for mobile.
+- Sort lists by ascending and descending, and remember the last direction.
+- Movie collections are displayed on the details page, by andrebk.
+- Statistics page are now cached for faster load times.
 
 
 ## 📱 Repo Specific Installation
 Docker image is now available: ```docker pull ghcr.io/dannyvfilms/yamtrack:release```
-
-I haven't figured out the workflow to publish Docker containers yet. Until then, use the following commands to build locally:
-
-```bash
-cd /mnt/users/appdata
-git clone https://github.com/dannyvfilms/Yamtrack.git
-cd Yamtrack
-
-cat > .env <<EOF
-TMDB_API=CHANGE_ME
-IGDB_ID=CHANGE_ME
-IGDB_SECRET=CHANGE_ME
-BGG_API_TOKEN=CHANGE_ME
-SECRET=$(openssl rand -hex 32)
-DEBUG=FALSE
-REDIS_URL=CHANGE_ME
-ALLOWED_HOSTS=CHANGE_ME
-EOF
-
-git checkout release
-git pull origin release
-docker compose build --no-cache
-docker compose up -d
-```
-
-To update your container:
-```
-cd /mnt/users/appdata/Yamtrack
-git checkout release
-git pull origin release
-docker compose build --no-cache
-```
-Then recreate your container with the new image (e.g. "Recreate" in Portainer).
 
 ## 🚀 Demo
 
