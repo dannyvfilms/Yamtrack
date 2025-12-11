@@ -309,8 +309,8 @@ def schedule_all_ranges_refresh(user_id: int, debounce_seconds: int = 30):
     """Schedule background refresh for all predefined ranges for a user.
     
     This is useful when media changes and we want to refresh all ranges.
-    Uses a single lock to debounce all ranges together, then schedules
-    them individually so they can run in parallel.
+    Optimizes by calculating "All Time" first to pre-populate runtime data,
+    then schedules remaining ranges in parallel.
     """
     # Use a single lock for all ranges to prevent thundering herd
     all_ranges_lock_key = f"{STATISTICS_REFRESH_LOCK_PREFIX}_all_{user_id}"
@@ -318,10 +318,29 @@ def schedule_all_ranges_refresh(user_id: int, debounce_seconds: int = 30):
         # Already scheduled recently, skip
         return
     
-    # Schedule all ranges - they'll run in parallel
+    # Calculate "All Time" first to pre-populate runtime data
+    # This ensures shorter ranges benefit from cached runtime lookups
+    all_time_range = "All Time"
+    try:
+        logger.debug("Calculating 'All Time' statistics first for user %s to pre-populate runtime data", user_id)
+        refresh_statistics_cache(user_id, all_time_range)
+        logger.debug("Completed 'All Time' calculation for user %s, scheduling remaining ranges", user_id)
+    except Exception as exc:
+        logger.warning(
+            "Failed to calculate 'All Time' statistics for user %s, falling back to parallel execution: %s",
+            user_id,
+            exc,
+        )
+        # If "All Time" fails, still schedule all ranges in parallel (original behavior)
+        all_time_range = None
+    
+    # Schedule remaining ranges in parallel
+    # They'll benefit from runtime data pre-populated by "All Time"
     for range_name in PREDEFINED_RANGES:
-        # Don't use debounce here since we already debounced at the all-ranges level
-        # This allows all ranges to be scheduled immediately and run in parallel
+        if range_name == all_time_range:
+            # Already calculated, skip
+            continue
+        
         lock_key = _refresh_lock_key(user_id, range_name)
         # Only add lock if not already present (allows parallel execution)
         cache.add(lock_key, True, debounce_seconds)
@@ -337,3 +356,4 @@ def schedule_all_ranges_refresh(user_id: int, debounce_seconds: int = 30):
                 exc,
             )
             refresh_statistics_cache(user_id, range_name)
+

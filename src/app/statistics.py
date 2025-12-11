@@ -6,7 +6,7 @@ import logging
 from collections import Counter, defaultdict
 from dateutil.relativedelta import relativedelta
 from django.apps import apps
-from django.db import models
+from django.db import models, transaction
 from django.db.models import (
     Prefetch,
     Q,
@@ -1007,6 +1007,18 @@ def _get_media_runtime_from_cache(media, logger, context=""):
         )
         return runtime_minutes
 
+    # Check database directly to see if another task just saved runtime
+    # This helps prevent race conditions when multiple tasks run in parallel
+    from app.models import Item
+    db_runtime = Item.objects.filter(id=media.item.id).values_list('runtime_minutes', flat=True).first()
+    if db_runtime and db_runtime < 999999:
+        logger.info(
+            f"Media '{media.item.title}' {context}: using database runtime {db_runtime} minutes (saved by another task)"
+        )
+        # Update in-memory object to reflect database state
+        media.item.runtime_minutes = db_runtime
+        return db_runtime
+
     metadata_runtime = None
     try:
         metadata = _get_media_metadata_for_statistics(media)
@@ -1041,8 +1053,16 @@ def _get_media_runtime_from_cache(media, logger, context=""):
             f"Media '{media.item.title}' {context}: fetched runtime {metadata_runtime} minutes"
         )
         if hasattr(media.item, "runtime_minutes"):
-            media.item.runtime_minutes = metadata_runtime
-            media.item.save(update_fields=["runtime_minutes"])
+            try:
+                with transaction.atomic():
+                    media.item.runtime_minutes = metadata_runtime
+                    media.item.save(update_fields=["runtime_minutes"])
+                    media.item.refresh_from_db()  # Ensure consistency
+            except Exception as exc:
+                logger.warning(
+                    f"Failed to save runtime for '{media.item.title}' {context}: {exc}"
+                )
+                # Continue with metadata_runtime value even if save fails
         return metadata_runtime
 
     logger.warning(

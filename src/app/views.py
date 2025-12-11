@@ -1247,6 +1247,14 @@ def delete_history_record(request, media_type, history_id):
             str(history_id),
         )
 
+        # Invalidate caches since history changed
+        # This is needed because deleting a historical record doesn't trigger
+        # the model's post_delete signal (we're deleting Historical*, not the actual model)
+        history_cache.invalidate_history_cache(request.user.id)
+        history_cache.schedule_history_refresh(request.user.id)
+        statistics_cache.invalidate_statistics_cache(request.user.id)
+        statistics_cache.schedule_all_ranges_refresh(request.user.id)
+
         # Return empty 200 response - the element will be removed by HTMX
         return HttpResponse()
 
