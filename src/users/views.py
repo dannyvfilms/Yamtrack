@@ -23,6 +23,7 @@ from users.models import (
     ActivityHistoryViewChoices,
     DateFormatChoices,
     GameLoggingStyleChoices,
+    MobileGridLayoutChoices,
     TimeFormatChoices,
 )
 
@@ -350,6 +351,8 @@ def preferences(request):
         time_format = request.POST.get("time_format")
         activity_history_view = request.POST.get("activity_history_view")
         game_logging_style = request.POST.get("game_logging_style")
+        mobile_grid_layout = request.POST.get("mobile_grid_layout")
+        quick_season_update_mobile = request.POST.get("quick_season_update_mobile") == "1"
 
         fields_to_update = []
 
@@ -383,6 +386,18 @@ def preferences(request):
                 history_cache.invalidate_history_cache(request.user.id)
                 history_cache.schedule_history_refresh(request.user.id, game_logging_style, debounce_seconds=0)
 
+        if (
+            mobile_grid_layout
+            and mobile_grid_layout in [choice[0] for choice in MobileGridLayoutChoices.choices]
+        ):
+            if request.user.mobile_grid_layout != mobile_grid_layout:
+                request.user.mobile_grid_layout = mobile_grid_layout
+                fields_to_update.append("mobile_grid_layout")
+
+        if request.user.quick_season_update_mobile != quick_season_update_mobile:
+            request.user.quick_season_update_mobile = quick_season_update_mobile
+            fields_to_update.append("quick_season_update_mobile")
+
         auto_pause_enabled = request.POST.get("auto_pause_enabled") == "1"
         raw_rules = request.POST.get("auto_pause_rules", "[]")
         normalized_rules = _normalize_auto_pause_rules(raw_rules, active_libraries)
@@ -397,6 +412,7 @@ def preferences(request):
 
         if fields_to_update:
             request.user.save(update_fields=fields_to_update)
+            request.user.refresh_from_db()
         messages.success(request, "Preferences updated successfully.")
         return redirect("preferences")
 

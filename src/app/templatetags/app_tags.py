@@ -18,14 +18,23 @@ register = template.Library()
 @register.simple_tag
 def get_static_file_mtime(file_path):
     """Return the last modification time of a static file for cache busting."""
+    # Check STATICFILES_DIRS first (for development), then STATIC_ROOT (for production)
+    for static_dir in getattr(settings, 'STATICFILES_DIRS', []):
+        full_path = Path(static_dir) / file_path
+        try:
+            mtime = int(full_path.stat().st_mtime)
+            return f"?{mtime}"
+        except OSError:
+            continue
+    
+    # Fall back to STATIC_ROOT
     full_path = Path(settings.STATIC_ROOT) / file_path
     try:
         mtime = int(full_path.stat().st_mtime)
+        return f"?{mtime}"
     except OSError:
         # If file doesn't exist or can't be accessed
         return ""
-    else:
-        return f"?{mtime}"
 
 
 @register.filter

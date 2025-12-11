@@ -91,8 +91,13 @@
     margin-top: calc(var(--spacing) * 0.25) !important;
   }
 
+  /* Hide progress adjust buttons on mobile by default, unless user preference allows it */
   .progress-adjust-btn {
     display: none !important;
+  }
+
+  [data-quick-season-mobile="true"] .progress-adjust-btn {
+    display: block !important;
   }
 
   .media-card-poster {
@@ -100,8 +105,32 @@
     border-bottom-right-radius: var(--radius-lg);
   }
 
+  /* When quick season buttons are enabled, restore card styling */
+  [data-quick-season-mobile="true"] .media-card {
+    background-color: var(--color-gray-800, #2a2f35) !important;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05) !important;
+  }
+
+  [data-quick-season-mobile="true"] .media-card-body {
+    padding: calc(var(--spacing) * 3) !important;
+  }
+
+  [data-quick-season-mobile="true"] .media-card-poster {
+    border-bottom-left-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+  }
+
   .media-grid {
     gap: calc(var(--spacing) * 3);
+  }
+
+  /* Mobile grid layout preference */
+  [data-mobile-grid="comfortable"] .media-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  [data-mobile-grid="compact"] .media-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
   }
 
   .media-card-progress,
@@ -121,6 +150,25 @@
 
   .media-card-progress[data-progress-mode="conditional"][data-mobile-show="true"] {
     display: block !important;
+  }
+
+  /* Show progress container when quick season buttons are enabled */
+  [data-quick-season-mobile="true"] .media-card-progress[data-progress-mode="conditional"] {
+    display: block !important;
+  }
+
+  /* Make the progress-changer container visible when quick season buttons are enabled */
+  [data-quick-season-mobile="true"] .media-card-progress[data-progress-mode="conditional"] .progress-changer {
+    background-color: transparent;
+    border-radius: 0;
+    padding: 0;
+  }
+
+  /* Remove any background from the inner div containing episode count */
+  [data-quick-season-mobile="true"] .media-card-progress[data-progress-mode="conditional"] .progress-changer>div {
+    background-color: transparent !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
   }
 
   .media-progress-chip[data-progress-chip-mode="conditional"] {
@@ -268,10 +316,7 @@
   @apply block my-0.5;
 }
 
-.select2-container--tailwindcss-4
-  .select2-selection--multiple
-  .select2-search--inline
-  .select2-search__field {
+.select2-container--tailwindcss-4 .select2-selection--multiple .select2-search--inline .select2-search__field {
   @apply h-[1.5rem] p-0 m-0 text-sm/6 bg-transparent border-0 focus:outline-hidden focus:ring-0 placeholder:text-gray-500 placeholder:text-sm/6 placeholder:font-sans;
 }
 

@@ -60,6 +60,7 @@
     --color-gray-500: oklch(55.1% 0.027 264.364);
     --color-gray-600: oklch(44.6% 0.03 256.802);
     --color-gray-700: oklch(37.3% 0.034 259.733);
+    --color-gray-800: oklch(27.8% 0.033 256.848);
     --color-gray-900: oklch(21% 0.034 264.665);
     --color-black: #000;
     --color-white: #fff;
@@ -3060,12 +3061,32 @@
   .progress-adjust-btn {
     display: none !important;
   }
+  [data-quick-season-mobile="true"] .progress-adjust-btn {
+    display: block !important;
+  }
   .media-card-poster {
     border-bottom-left-radius: var(--radius-lg);
     border-bottom-right-radius: var(--radius-lg);
   }
+  [data-quick-season-mobile="true"] .media-card {
+    background-color: var(--color-gray-800, #2a2f35) !important;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05) !important;
+  }
+  [data-quick-season-mobile="true"] .media-card-body {
+    padding: calc(var(--spacing) * 3) !important;
+  }
+  [data-quick-season-mobile="true"] .media-card-poster {
+    border-bottom-left-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+  }
   .media-grid {
     gap: calc(var(--spacing) * 3);
+  }
+  [data-mobile-grid="comfortable"] .media-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+  [data-mobile-grid="compact"] .media-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
   }
   .media-card-progress, .media-card-progress .progress-changer, .media-card-progress .progress-changer>div {
     text-align: center;
@@ -3079,6 +3100,19 @@
   }
   .media-card-progress[data-progress-mode="conditional"][data-mobile-show="true"] {
     display: block !important;
+  }
+  [data-quick-season-mobile="true"] .media-card-progress[data-progress-mode="conditional"] {
+    display: block !important;
+  }
+  [data-quick-season-mobile="true"] .media-card-progress[data-progress-mode="conditional"] .progress-changer {
+    background-color: transparent;
+    border-radius: 0;
+    padding: 0;
+  }
+  [data-quick-season-mobile="true"] .media-card-progress[data-progress-mode="conditional"] .progress-changer>div {
+    background-color: transparent !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
   }
   .media-progress-chip[data-progress-chip-mode="conditional"] {
     display: none !important;

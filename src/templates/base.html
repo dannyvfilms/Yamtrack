@@ -56,7 +56,7 @@
 
   </head>
 
-  <body>
+  <body data-mobile-grid="{% if user.is_authenticated %}{{ user.mobile_grid_layout }}{% else %}compact{% endif %}" data-quick-season-mobile="{% if user.is_authenticated %}{{ user.quick_season_update_mobile|yesno:'true,false' }}{% else %}false{% endif %}">
     {% block body %}
       {# Main container for the layout #}
       <div class="flex min-h-screen bg-[#212529] text-gray-100"

@@ -29,58 +29,10 @@
     <form method="post">
       {% csrf_token %}
       
-      <!-- Display Preferences Section -->
+      <!-- Display & Layout Section -->
       <div class="mb-6">
-        <h3 class="text-lg font-medium text-gray-200 mb-3">Display Preferences</h3>
+        <h3 class="text-lg font-medium text-gray-200 mb-3">Display & Layout</h3>
 
-        <!-- Activity History View -->
-        <div class="p-3 bg-[#39404b] rounded-md mb-4">
-          <div class="flex items-center justify-between mb-2">
-            <label class="text-gray-200 text-sm font-medium">Activity History View</label>
-            <span class="text-gray-400 text-xs">Choose which visualization to show on the Statistics page.</span>
-          </div>
-          <div class="relative" x-data="{ open: false, selectedValue: '{{ user.activity_history_view }}', selectedLabel: '{{ user.activity_history_view|default:'heatmap' }}' }">
-            <button type="button"
-                    @click="open = !open"
-                    @click.outside="open = false"
-                    class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
-              <span x-text="selectedLabel == 'heatmap' ? 'Activity Heatmap' : 'Stacked Bar Chart'"></span>
-              <svg xmlns="http://www.w3.org/2000/svg"
-                   width="24"
-                   height="24"
-                   viewBox="0 0 24 24"
-                   fill="none"
-                   stroke="currentColor"
-                   stroke-width="2"
-                   stroke-linecap="round"
-                   stroke-linejoin="round"
-                   class="w-4 h-4 text-gray-400">
-                <path d="m6 9 6 6 6-6"></path>
-              </svg>
-            </button>
-            <div x-show="open"
-                 x-transition:enter="transition ease-out duration-100"
-                 x-transition:enter-start="transform opacity-0 scale-95"
-                 x-transition:enter-end="transform opacity-100 scale-100"
-                 x-transition:leave="transition ease-in duration-75"
-                 x-transition:leave-start="transform opacity-100 scale-100"
-                 x-transition:leave-end="transform opacity-0 scale-95"
-                 class="absolute left-0 right-0 mt-2 py-1 bg-[#272c31] rounded-md shadow-lg overflow-hidden z-10 border border-gray-600">
-              <button type="button"
-                      @click="selectedValue = 'heatmap'; selectedLabel = 'Activity Heatmap'; open = false"
-                      class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
-                Activity Heatmap
-              </button>
-              <button type="button"
-                      @click="selectedValue = 'stacked'; selectedLabel = 'Stacked Bar Chart'; open = false"
-                      class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
-                Stacked Bar Chart
-              </button>
-            </div>
-            <input type="hidden" name="activity_history_view" x-bind:value="selectedValue">
-          </div>
-        </div>
-        
         <!-- Date Format -->
         <div class="p-3 bg-[#39404b] rounded-md mb-4">
           <div class="flex items-center justify-between mb-2">
@@ -160,7 +112,7 @@
         </div>
 
         <!-- Time Format -->
-        <div class="p-3 bg-[#39404b] rounded-md">
+        <div class="p-3 bg-[#39404b] rounded-md mb-4">
           <div class="flex items-center justify-between mb-2">
             <label class="text-gray-200 text-sm font-medium">Time Format</label>
             <span class="text-gray-400 text-xs">Choose how times are displayed throughout the application.</span>
@@ -222,6 +174,157 @@
           </div>
         </div>
 
+        <!-- Activity History View -->
+        <div class="p-3 bg-[#39404b] rounded-md mb-4">
+          <div class="flex items-center justify-between mb-2">
+            <label class="text-gray-200 text-sm font-medium">Activity History View</label>
+            <span class="text-gray-400 text-xs">Choose which visualization to show on the Statistics page.</span>
+          </div>
+          <div class="relative" x-data="{ open: false, selectedValue: '{{ user.activity_history_view }}', selectedLabel: '{{ user.activity_history_view|default:'heatmap' }}' }">
+            <button type="button"
+                    @click="open = !open"
+                    @click.outside="open = false"
+                    class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
+              <span x-text="selectedLabel == 'heatmap' ? 'Activity Heatmap' : 'Stacked Bar Chart'"></span>
+              <svg xmlns="http://www.w3.org/2000/svg"
+                   width="24"
+                   height="24"
+                   viewBox="0 0 24 24"
+                   fill="none"
+                   stroke="currentColor"
+                   stroke-width="2"
+                   stroke-linecap="round"
+                   stroke-linejoin="round"
+                   class="w-4 h-4 text-gray-400">
+                <path d="m6 9 6 6 6-6"></path>
+              </svg>
+            </button>
+            <div x-show="open"
+                 x-transition:enter="transition ease-out duration-100"
+                 x-transition:enter-start="transform opacity-0 scale-95"
+                 x-transition:enter-end="transform opacity-100 scale-100"
+                 x-transition:leave="transition ease-in duration-75"
+                 x-transition:leave-start="transform opacity-100 scale-100"
+                 x-transition:leave-end="transform opacity-0 scale-95"
+                 class="absolute left-0 right-0 mt-2 py-1 bg-[#272c31] rounded-md shadow-lg overflow-hidden z-10 border border-gray-600">
+              <button type="button"
+                      @click="selectedValue = 'heatmap'; selectedLabel = 'Activity Heatmap'; open = false"
+                      class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                Activity Heatmap
+              </button>
+              <button type="button"
+                      @click="selectedValue = 'stacked'; selectedLabel = 'Stacked Bar Chart'; open = false"
+                      class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                Stacked Bar Chart
+              </button>
+            </div>
+            <input type="hidden" name="activity_history_view" x-bind:value="selectedValue">
+          </div>
+        </div>
+
+        <!-- Mobile Grid Layout -->
+        <div class="p-3 bg-[#39404b] rounded-md">
+          <div class="flex items-center justify-between mb-2">
+            <label class="text-gray-200 text-sm font-medium">Mobile Grid Layout</label>
+            <span class="text-gray-400 text-xs">Choose how many columns to show on mobile layouts only.</span>
+          </div>
+          <div class="relative" x-data="{ open: false, selectedValue: '{{ user.mobile_grid_layout|default:'compact' }}', selectedLabel: '{{ user.mobile_grid_layout|default:'compact' }}' }">
+            <button type="button"
+                    @click="open = !open"
+                    @click.outside="open = false"
+                    class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
+              <span x-text="selectedValue === 'comfortable' ? 'Comfortable (2 columns)' : 'Compact (3 columns)'"></span>
+              <svg xmlns="http://www.w3.org/2000/svg"
+                   width="24"
+                   height="24"
+                   viewBox="0 0 24 24"
+                   fill="none"
+                   stroke="currentColor"
+                   stroke-width="2"
+                   stroke-linecap="round"
+                   stroke-linejoin="round"
+                   class="w-4 h-4 text-gray-400">
+                <path d="m6 9 6 6 6-6"></path>
+              </svg>
+            </button>
+            <div x-show="open"
+                 x-transition:enter="transition ease-out duration-100"
+                 x-transition:enter-start="transform opacity-0 scale-95"
+                 x-transition:enter-end="transform opacity-100 scale-100"
+                 x-transition:leave="transition ease-in duration-75"
+                 x-transition:leave-start="transform opacity-100 scale-100"
+                 x-transition:leave-end="transform opacity-0 scale-95"
+                 class="absolute left-0 right-0 mt-2 py-1 bg-[#272c31] rounded-md shadow-lg overflow-hidden z-10 border border-gray-600">
+              <button type="button"
+                      @click="selectedValue = 'comfortable'; selectedLabel = 'Comfortable (2 columns)'; open = false"
+                      class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                Comfortable (2 columns)
+              </button>
+              <button type="button"
+                      @click="selectedValue = 'compact'; selectedLabel = 'Compact (3 columns)'; open = false"
+                      class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                Compact (3 columns)
+              </button>
+            </div>
+            <input type="hidden" name="mobile_grid_layout" x-bind:value="selectedValue">
+          </div>
+        </div>
+      </div>
+
+      <div class="border-t border-gray-600 my-5"></div>
+
+      <!-- Tracking & Interaction Section -->
+      <div class="mb-6">
+        <h3 class="text-lg font-medium text-gray-200 mb-3">Tracking & Interaction</h3>
+
+        <!-- Quick Season Updates -->
+        <div class="p-3 bg-[#39404b] rounded-md mb-4">
+          <div class="flex items-center justify-between mb-2">
+            <label class="text-gray-200 text-sm font-medium">Quick Season Updates</label>
+            <span class="text-gray-400 text-xs">Show the quick season update button on mobile home screens.</span>
+          </div>
+          <div class="relative" x-data="{ open: false, selectedValue: '{{ user.quick_season_update_mobile|yesno:'enabled,disabled' }}', selectedLabel: '{{ user.quick_season_update_mobile|yesno:"Enabled - recommended for comfortable grid layout,Disabled - recommended for compact grid layout" }}' }">
+            <button type="button"
+                    @click="open = !open"
+                    @click.outside="open = false"
+                    class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
+              <span x-text="selectedLabel"></span>
+              <svg xmlns="http://www.w3.org/2000/svg"
+                   width="24"
+                   height="24"
+                   viewBox="0 0 24 24"
+                   fill="none"
+                   stroke="currentColor"
+                   stroke-width="2"
+                   stroke-linecap="round"
+                   stroke-linejoin="round"
+                   class="w-4 h-4 text-gray-400">
+                <path d="m6 9 6 6 6-6"></path>
+              </svg>
+            </button>
+            <div x-show="open"
+                 x-transition:enter="transition ease-out duration-100"
+                 x-transition:enter-start="transform opacity-0 scale-95"
+                 x-transition:enter-end="transform opacity-100 scale-100"
+                 x-transition:leave="transition ease-in duration-75"
+                 x-transition:leave-start="transform opacity-100 scale-100"
+                 x-transition:leave-end="transform opacity-0 scale-95"
+                 class="absolute left-0 right-0 mt-2 py-1 bg-[#272c31] rounded-md shadow-lg overflow-hidden z-10 border border-gray-600">
+              <button type="button"
+                      @click="selectedValue = 'enabled'; selectedLabel = 'Enabled - recommended for comfortable grid layout'; open = false"
+                      class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                Enabled - recommended for comfortable grid layout
+              </button>
+              <button type="button"
+                      @click="selectedValue = 'disabled'; selectedLabel = 'Disabled - recommended for compact grid layout'; open = false"
+                      class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                Disabled - recommended for compact grid layout
+              </button>
+            </div>
+            <input type="hidden" name="quick_season_update_mobile" x-bind:value="selectedValue === 'enabled' ? '1' : '0'">
+          </div>
+        </div>
+
         <!-- Game Logging Style -->
         <div class="p-3 bg-[#39404b] rounded-md mt-4">
           <div class="flex items-center justify-between mb-2">
@@ -273,7 +376,9 @@
 
       <div class="border-t border-gray-600 my-5"></div>
 
-      <!-- Library Management Section -->
+      <div class="border-t border-gray-600 my-5"></div>
+
+      <!-- Automation Section -->
       <div class="mb-6"
            x-data="{
              enabled: {{ auto_pause_enabled|yesno:'true,false' }},
@@ -301,6 +406,7 @@
                this.addRule();
              }
            }">
+        <h3 class="text-lg font-medium text-gray-200 mb-3">Automation</h3>
         <div class="p-4 bg-[#39404b] rounded-md border border-gray-700">
           <div class="flex items-start justify-between mb-3 space-x-4">
             <label class="text-gray-200 text-sm font-medium">Library Management</label>

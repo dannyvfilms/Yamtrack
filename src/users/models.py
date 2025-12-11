@@ -127,6 +127,14 @@ class GameLoggingStyleChoices(models.TextChoices):
     SESSIONS = "sessions", "Sessions"
     REPEATS = "repeats", "Repeats"
 
+
+class MobileGridLayoutChoices(models.TextChoices):
+    """Choices for mobile grid layout preference."""
+
+    COMFORTABLE = "comfortable", "Comfortable (2 columns)"
+    COMPACT = "compact", "Compact (3 columns)"
+
+
 class User(AbstractUser):
     """Custom user model."""
 
@@ -455,6 +463,16 @@ class User(AbstractUser):
         default=ActivityHistoryViewChoices.HEATMAP,
         choices=ActivityHistoryViewChoices.choices,
         help_text="Which activity history visualization to show on the Statistics page",
+    )
+    mobile_grid_layout = models.CharField(
+        max_length=20,
+        default=MobileGridLayoutChoices.COMPACT,
+        choices=MobileGridLayoutChoices.choices,
+        help_text="Number of columns to show on mobile layouts",
+    )
+    quick_season_update_mobile = models.BooleanField(
+        default=False,
+        help_text="Show the quick season update button on mobile episode lists",
     )
     auto_pause_in_progress_enabled = models.BooleanField(
         default=False,
