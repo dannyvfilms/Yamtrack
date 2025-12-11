@@ -22,14 +22,23 @@ Yamtrack is a self hosted media tracker for movies, tv shows, music, anime, mang
 - Lists now support sorting by rating, and can be filtered by the content contained inside of them (e.g. "find my Movie lists faster")
 - Combine multiple plays of video games into one single line on the library view to see your total time played.
 - Sort TV Shows by Time Left to see what you can clear off your backlog the fastest.
+- Completed TV shows will be set to In Progress if a new season becomes available.
 - Choose between Comfortable (2 columns) or Compact (3 columns) for mobile.
 - Sort lists by ascending and descending, and remember the last direction.
 - Movie collections are displayed on the details page, by andrebk.
+- Choose the date and time format to display across the app.
 - Statistics page are now cached for faster load times.
+- Including dates in tracked media is now optional.
+
+| History                                                                                       | Statistics                                                                                    |
+| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+<img src="https://github.com/user-attachments/assets/e60ab087-5faa-4cc0-ad15-f1865453ec6e" /> | <img src="https://github.com/user-attachments/assets/5e7b301a-3a92-4c0b-a7d6-573bca240058" />
+<img src="https://github.com/user-attachments/assets/72338fdf-bb24-4c82-92ca-828bd2c1820b" /> | <img src="https://github.com/user-attachments/assets/04853bea-f5d9-4b71-9ea2-0f9414479f4e" />
 
 
 ## 📱 Repo Specific Installation
 Docker image is now available: ```docker pull ghcr.io/dannyvfilms/yamtrack:release```
+
 
 ## 🚀 Demo
 
