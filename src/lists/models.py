@@ -48,6 +48,11 @@ class CustomListManager(models.Manager):
 class CustomList(models.Model):
     """Model for custom lists."""
 
+    VISIBILITY_CHOICES = [
+        ("public", "Public"),
+        ("private", "Private"),
+    ]
+
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True, default="")
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
@@ -61,6 +66,11 @@ class CustomList(models.Model):
         related_name="custom_lists",
         blank=True,
         through="CustomListItem",
+    )
+    visibility = models.CharField(
+        max_length=10,
+        choices=VISIBILITY_CHOICES,
+        default="private",
     )
 
     objects = CustomListManager()
@@ -76,7 +86,13 @@ class CustomList(models.Model):
 
     def user_can_view(self, user):
         """Check if the user can view the list."""
-        return self.owner == user or user in self.collaborators.all()
+        # Public lists are viewable by anyone
+        if self.visibility == "public":
+            return True
+        # Private lists are only viewable by owner or collaborators
+        if user.is_authenticated:
+            return self.owner == user or user in self.collaborators.all()
+        return False
 
     def user_can_edit(self, user):
         """Check if the user can edit the list."""

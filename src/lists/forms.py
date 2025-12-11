@@ -17,7 +17,7 @@ class CustomListForm(forms.ModelForm):
         """Bind form to model."""
 
         model = CustomList
-        fields = ["name", "description", "collaborators"]
+        fields = ["name", "description", "collaborators", "visibility"]
         widgets = {
             "collaborators": CollaboratorsWidget(
                 attrs={
@@ -27,3 +27,12 @@ class CustomListForm(forms.ModelForm):
                 },
             ),
         }
+
+    def __init__(self, *args, **kwargs):
+        """Initialize form and conditionally include visibility field."""
+        super().__init__(*args, **kwargs)
+        # Only show visibility field when editing (instance has pk)
+        if not self.instance.pk:
+            # Remove visibility from fields for creation
+            if "visibility" in self.fields:
+                del self.fields["visibility"]

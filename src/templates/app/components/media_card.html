@@ -5,12 +5,16 @@
 <div class="media-card {% if secondary_color %}bg-[#39404b]{% else %}bg-[#2a2f35]{% endif %} rounded-lg overflow-hidden shadow-lg relative {% if active %}ring-2 ring-indigo-700{% endif %}"
      x-data="{ trackOpen: false, listsOpen: false, historyOpen: false }">
   <div class="relative">
+    {% if not public_view|default:False %}
     <a href="{{ item|media_url }}">
+    {% endif %}
     <img alt="{{ title }}"
          class="media-card-poster lazyload w-full {% if from_grid %}aspect-[2/3] aspect-2/3{% else %}h-48{% endif %} bg-[#3e454d] {% if item.image != IMG_NONE %}object-cover{% endif %}"
          data-src="{{ item.image }}"
          src="{{ IMG_NONE }}">
+    {% if not public_view|default:False %}
     </a>
+    {% endif %}
 
     {% if media.status %}
       <div class="media-status-chip absolute top-2 left-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md"
@@ -115,6 +119,7 @@
       {% endif %}
     {% endif %}
 
+    {% if not public_view|default:False %}
     <div class="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 hover-tap:opacity-100{% if user.clickable_media_cards %} pointer-coarse:hidden{% endif %}">
       <a href="{{ item|media_url }}" class="absolute inset-0"></a>
 
@@ -164,12 +169,18 @@
         </button>
       </div>
     </div>
+    {% endif %}
   </div>
 
   <div class="media-card-body p-3">
+    {% if not public_view|default:False %}
     <a href="{{ item|media_url }}"
        class="media-card-title text-sm font-semibold text-white hover:text-indigo-400 transition duration-300 line-clamp-1"
        title="{{ title }}">{{ title }}</a>
+    {% else %}
+    <span class="media-card-title text-sm font-semibold text-white line-clamp-1"
+          title="{{ title }}">{{ title }}</span>
+    {% endif %}
     {% if duration %}
       <p class="text-xs text-gray-400 mt-1">{{ duration }}</p>
     {% endif %}

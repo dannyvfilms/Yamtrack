@@ -14,7 +14,14 @@
   <div class="flex items-center justify-between mb-6"
        x-data="{ showModal: false }">
     <div>
-      <h1 class="text-3xl font-bold mb-2">{{ custom_list.name }}</h1>
+      <div class="flex items-center gap-3 mb-2">
+        <h1 class="text-3xl font-bold">{{ custom_list.name }}</h1>
+        {% if custom_list.visibility == "public" %}
+          <span class="px-2 py-1 text-xs font-medium bg-green-600/20 text-green-400 rounded-md border border-green-600/30">Public</span>
+        {% else %}
+          <span class="px-2 py-1 text-xs font-medium bg-gray-600/20 text-gray-400 rounded-md border border-gray-600/30">Private</span>
+        {% endif %}
+      </div>
       <div class="flex items-center gap-4">
         <div class="flex items-center">
           <div class="flex -space-x-2 mr-2">
@@ -33,12 +40,18 @@
         </div>
       </div>
     </div>
-    <button @click="showModal = true"
-            class="px-4 py-2 bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex items-center gap-2 text-sm group cursor-pointer">
-      {% include "app/icons/horizontal-sliders.svg" with classes="w-4 h-4 text-gray-400 group-hover:text-white transition-colors" %}
-      <span>Edit List</span>
-    </button>
-    {% include "lists/components/list_form.html" %}
+    {% if not public_view %}
+      {% if user.is_authenticated %}
+        {% if custom_list.user_can_edit %}
+          <button @click="showModal = true"
+                  class="px-4 py-2 bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex items-center gap-2 text-sm group cursor-pointer">
+            {% include "app/icons/horizontal-sliders.svg" with classes="w-4 h-4 text-gray-400 group-hover:text-white transition-colors" %}
+            <span>Edit List</span>
+          </button>
+          {% include "lists/components/list_form.html" %}
+        {% endif %}
+      {% endif %}
+    {% endif %}
   </div>
 
   <div x-data="{ sort: '{{ current_sort }}', type: '{{ request.GET.type|default:'all' }}', query: '{{ request.GET.q|default:'' }}', mediaTypeLabels: {
@@ -52,6 +65,7 @@
       <input type="hidden" name="q" x-model="query">
     </form>
 
+    {% if not public_view %}
     <div class="flex flex-col sm:flex-row gap-4 mb-8">
       {# Search #}
       <div class="relative flex-1">
@@ -150,6 +164,85 @@
         </div>
       </div>
     </div>
+    {% else %}
+    {# Public view: show sort/filter controls but no search #}
+    <div class="flex items-center justify-end gap-2 mb-8">
+      {# Filter by Type #}
+      <div class="relative" x-data="{ open: false }">
+        <button class="h-10 flex items-center gap-2 px-4 bg-[#39404b] rounded-md hover:bg-[#454d5a] transition-colors cursor-pointer"
+                @click="open = !open"
+                type="button">
+          {% include "app/icons/funnel.svg" with classes="w-4 h-4" %}
+          <span class="text-sm" x-text="getMediaTypeLabel(type)"></span>
+          {% include "app/icons/chevron-down.svg" with classes="w-4 h-4" %}
+        </button>
+
+        <div class="absolute right-0 mt-2 py-1 w-48 bg-[#39404b] rounded-md shadow-lg overflow-hidden z-10 border border-gray-700"
+             x-cloak
+             x-show="open"
+             @click.outside="open = false"
+             x-transition:enter="transition ease-out duration-100"
+             x-transition:enter-start="transform opacity-0 scale-95"
+             x-transition:enter-end="transform opacity-100 scale-100"
+             x-transition:leave="transition ease-in duration-75"
+             x-transition:leave-start="transform opacity-100 scale-100"
+             x-transition:leave-end="transform opacity-0 scale-95">
+          <button hx-get="{% url 'list_detail' custom_list.id %}"
+                  {% if items %}hx-target="#items-grid"{% else %}hx-target="this" hx-swap="none"{% endif %}
+                  hx-include="#filter-form"
+                  hx-indicator="#loading-indicator"
+                  class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
+                  :class="type === 'all' ? 'bg-indigo-600 text-white font-medium' : 'text-gray-300 hover:bg-[#454d5a] hover:text-white'"
+                  @click="type = 'all'; open = false"
+                  type="button">All</button>
+          {% for media_type in media_types %}
+            <button hx-get="{% url 'list_detail' custom_list.id %}"
+                    {% if items %}hx-target="#items-grid"{% else %}hx-target="this" hx-swap="none"{% endif %}
+                    hx-include="#filter-form"
+                    hx-indicator="#loading-indicator"
+                    class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
+                    :class="type === '{{ media_type }}' ? 'bg-indigo-600 text-white font-medium' : 'text-gray-300 hover:bg-[#454d5a] hover:text-white'"
+                    @click="type = '{{ media_type }}'; open = false"
+                    type="button">{{ media_type|media_type_readable_plural }}</button>
+          {% endfor %}
+        </div>
+      </div>
+
+      {# Sort by #}
+      <div class="relative" x-data="{ open: false }">
+        <button class="h-10 flex items-center gap-2 px-4 bg-[#39404b] rounded-md hover:bg-[#454d5a] transition-colors cursor-pointer"
+                @click="open = !open"
+                type="button">
+          {% include "app/icons/arrows-up-down.svg" with classes="w-4 h-4" %}
+          <span class="text-sm"
+                x-text="sort === 'date_added' ? 'Date Added' : (sort === 'title' ? 'Title' : (sort === 'media_type' ? 'Media Type' : (sort === 'rating' ? 'Rating' : 'Date Added')))"></span>
+          {% include "app/icons/chevron-down.svg" with classes="w-4 h-4" %}
+        </button>
+
+        <div class="absolute right-0 mt-2 py-1 w-48 bg-[#39404b] rounded-md shadow-lg overflow-hidden z-10 border border-gray-700"
+             x-cloak
+             x-show="open"
+             @click.outside="open = false"
+             x-transition:enter="transition ease-out duration-100"
+             x-transition:enter-start="transform opacity-0 scale-95"
+             x-transition:enter-end="transform opacity-100 scale-100"
+             x-transition:leave="transition ease-in duration-75"
+             x-transition:leave-start="transform opacity-100 scale-100"
+             x-transition:leave-end="transform opacity-0 scale-95">
+          {% for value, label in sort_choices %}
+            <button hx-get="{% url 'list_detail' custom_list.id %}"
+                    {% if items %}hx-target="#items-grid"{% else %}hx-target="this" hx-swap="none"{% endif %}
+                    hx-include="#filter-form"
+                    hx-indicator="#loading-indicator"
+                    class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
+                    :class="sort === '{{ value }}' ? 'bg-indigo-600 text-white font-medium' : 'text-gray-300 hover:bg-[#454d5a] hover:text-white'"
+                    @click="sort = '{{ value }}'; open = false"
+                    type="button">{{ label }}</button>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
     {% if items %}
       <div id="items-grid" class="media-grid">{% include "lists/components/media_grid.html" %}</div>
     {% else %}

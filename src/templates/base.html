@@ -68,6 +68,7 @@
              @click="isMobileMenuOpen = false"></div>
 
         {# Sidebar #}
+        {% if not public_view|default:False %}
         <aside class="fixed top-0 left-0 z-40 h-screen w-64 bg-[#1a1d20] transform transition-transform duration-300 ease-in-out border-r border-[#2c3136] -translate-x-full lg:translate-x-0 lg:sticky flex flex-col"
                :class="isMobileMenuOpen ? 'translate-x-0' : ''">
           <div class="h-16 border-b border-[#2c3136] flex items-center px-6">
@@ -196,6 +197,7 @@
             </div>
           </div>
         </aside>
+        {% endif %}
 
         {# Main content #}
         <div class="flex-1 flex flex-col min-h-screen">
@@ -204,10 +206,12 @@
             <div class="container mx-auto px-4">
               <div class="flex items-center justify-between lg:justify-center h-16">
                 {# Mobile: sidebar toggle button #}
+                {% if not public_view|default:False %}
                 <button @click="isMobileMenuOpen = !isMobileMenuOpen"
                         class="lg:hidden pe-3 text-gray-400 hover:text-white transition-colors duration-200">
                   {% include "app/icons/hamburger.svg" with classes="w-6 h-6" %}
                 </button>
+                {% endif %}
 
                 {# Define search type from current media type (if it exists) or last search type #}
                 {% if media_type == MediaTypes.SEASON.value %}
@@ -217,6 +221,7 @@
                 {% endif %}
 
                 {# Search bar #}
+                {% if not public_view|default:False %}
                 <div class="relative w-full max-w-2xl">
                   <form method="get"
                         action="{% url 'search' %}"
@@ -264,6 +269,7 @@
                     </div>
                   </form>
                 </div>
+                {% endif %}
               </div>
             </div>
           </div>

@@ -2,6 +2,7 @@ import logging
 
 from django.apps import apps
 from django.contrib import messages
+from django.contrib.auth.decorators import login_not_required
 from django.core.paginator import Paginator
 from django.db.models import Count, Exists, F, OuterRef, Q, Subquery
 from django.http import Http404
@@ -105,6 +106,7 @@ def lists(request):
     )
 
 
+@login_not_required
 @require_GET
 def list_detail(request, list_id):
     """Return the detail page of a custom list."""
@@ -113,16 +115,40 @@ def list_detail(request, list_id):
         id=list_id,
     )
 
+    # Check access: public lists are viewable by anyone, private lists require auth
     if not custom_list.user_can_view(request.user):
+        if custom_list.visibility == "private":
+            # Private list - show 404 with message
+            msg = "This list is private."
+            raise Http404(msg)
+        # Should not reach here, but handle gracefully
         msg = "List not found"
         raise Http404(msg)
 
+    # Determine if this is a public view (anonymous user viewing public list)
+    public_view = not request.user.is_authenticated and custom_list.visibility == "public"
+    
+    # Determine which user's data to use for media queries
+    # For public views, use owner's data; otherwise use request.user
+    media_user = custom_list.owner if public_view else request.user
+
     # Get and process request parameters
-    params = {
-        "sort_by": request.user.update_preference(
+    # Handle anonymous users by using default values
+    if request.user.is_authenticated:
+        sort_by = request.user.update_preference(
             "list_detail_sort",
             request.GET.get("sort"),
-        ),
+        )
+    else:
+        # Default sort for anonymous users
+        sort_by = request.GET.get("sort", "date_added")
+        # Validate sort choice
+        valid_sorts = [choice[0] for choice in ListDetailSortChoices.choices]
+        if sort_by not in valid_sorts:
+            sort_by = "date_added"
+    
+    params = {
+        "sort_by": sort_by,
         "media_type": request.GET.get("type", "all"),
         "page": int(request.GET.get("page", 1)),
         "search_query": request.GET.get("q", ""),
@@ -163,12 +189,12 @@ def list_detail(request, list_id):
             if media_type == MediaTypes.EPISODE.value:
                 filter_kwargs = {
                     "item_id__in": [item.id for item in all_items],
-                    "related_season__user": request.user,
+                    "related_season__user": media_user,
                 }
             else:
                 filter_kwargs = {
                     "item_id__in": [item.id for item in all_items],
-                    "user": request.user,
+                    "user": media_user,
                 }
 
             queryset = model.objects.filter(**filter_kwargs).select_related("item")
@@ -217,12 +243,12 @@ def list_detail(request, list_id):
             if media_type == MediaTypes.EPISODE.value:
                 filter_kwargs = {
                     "item_id__in": [item.id for item in items_page],
-                    "related_season__user": request.user,
+                    "related_season__user": media_user,
                 }
             else:
                 filter_kwargs = {
                     "item_id__in": [item.id for item in items_page],
-                    "user": request.user,
+                    "user": media_user,
                 }
 
             queryset = model.objects.filter(**filter_kwargs).select_related("item")
@@ -248,6 +274,7 @@ def list_detail(request, list_id):
         else None,
         "current_sort": params["sort_by"],
         "sort_choices": ListDetailSortChoices.choices,
+        "public_view": public_view,
     }
 
     # Additional context for full page render

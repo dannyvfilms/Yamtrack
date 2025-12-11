@@ -156,7 +156,11 @@ def sources(media_type):
 @register.simple_tag
 def get_search_media_types(user):
     """Return available media types for search based on user preferences."""
-    enabled_types = user.get_enabled_media_types()
+    # Handle anonymous users by returning all media types
+    if not user or not user.is_authenticated:
+        enabled_types = [mt for mt in MediaTypes.values if mt != MediaTypes.EPISODE.value and mt != MediaTypes.SEASON.value]
+    else:
+        enabled_types = user.get_enabled_media_types()
 
     # Filter and format the types for search
     return [
@@ -172,7 +176,11 @@ def get_search_media_types(user):
 @register.simple_tag
 def get_sidebar_media_types(user):
     """Return available media types for sidebar navigation based on user preferences."""
-    enabled_types = user.get_enabled_media_types()
+    # Handle anonymous users by returning all media types
+    if not user or not user.is_authenticated:
+        enabled_types = [mt for mt in MediaTypes.values if mt != MediaTypes.EPISODE.value]
+    else:
+        enabled_types = user.get_enabled_media_types()
 
     # Format the types for sidebar
     return [

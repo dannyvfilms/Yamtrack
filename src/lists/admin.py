@@ -7,8 +7,8 @@ class CustomListAdmin(admin.ModelAdmin):
     """Admin configuration for CustomList model."""
 
     search_fields = ["name", "description", "owner__username"]
-    list_display = ["name", "owner", "item_count", "get_last_update"]
-    list_filter = ["owner"]
+    list_display = ["name", "owner", "visibility", "item_count", "get_last_update"]
+    list_filter = ["owner", "visibility"]
     raw_id_fields = ["owner"]
     autocomplete_fields = ["collaborators"]
     filter_horizontal = ["collaborators"]
