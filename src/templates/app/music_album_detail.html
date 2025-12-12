@@ -15,7 +15,8 @@
       {% if album.image and album.image != IMG_NONE %}
         <img alt="{{ album.title }}"
              class="w-full rounded-lg shadow-lg bg-[#2a2f35] object-cover"
-             src="{{ album.image }}">
+             src="{{ album.image }}"
+             referrerpolicy="origin">
       {% else %}
         <div class="w-full aspect-square rounded-lg shadow-lg bg-[#2a2f35] flex items-center justify-center">
           {% icon 'music' is_active=False extra_classes="w-24 h-24 text-gray-500" %}
@@ -221,7 +222,8 @@
                   {% if album.image and album.image != IMG_NONE %}
                     <img src="{{ album.image }}"
                          alt="{{ track_data.track.title }}"
-                         class="w-full h-full object-cover">
+                         class="w-full h-full object-cover"
+                         referrerpolicy="origin">
                   {% else %}
                     <div class="w-full h-full min-h-[96px] bg-[#1a1d20] flex items-center justify-center">
                       {% icon 'music' is_active=False extra_classes="w-8 h-8 text-gray-600" %}
