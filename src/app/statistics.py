@@ -1529,7 +1529,7 @@ def _compute_music_top_lists(play_details, limit=5):
     # Aggregate by artist, album, and track
     artist_stats = defaultdict(lambda: {"minutes": 0, "plays": 0, "name": "", "image": "", "id": None})
     album_stats = defaultdict(lambda: {"minutes": 0, "plays": 0, "title": "", "artist": "", "image": "", "id": None})
-    track_stats = defaultdict(lambda: {"minutes": 0, "plays": 0, "title": "", "artist": "", "album": "", "album_image": "", "id": None})
+    track_stats = defaultdict(lambda: {"minutes": 0, "plays": 0, "title": "", "artist": "", "album": "", "album_image": "", "album_id": None, "id": None})
     
     for music, dt, runtime in play_details:
         # Track stats (use music.id as key since each Music is a unique track entry)
@@ -1554,6 +1554,7 @@ def _compute_music_top_lists(play_details, limit=5):
         if album:
             track_stats[track_key]["album"] = album.title
             track_stats[track_key]["album_image"] = album.image or track_stats[track_key]["album_image"]
+            track_stats[track_key]["album_id"] = album.id
             album_stats[album.id]["minutes"] += runtime
             album_stats[album.id]["plays"] += 1
             album_stats[album.id]["title"] = album.title
