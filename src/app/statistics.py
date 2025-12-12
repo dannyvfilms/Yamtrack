@@ -2008,8 +2008,8 @@ def get_music_consumption_stats(user_media, start_date, end_date, minutes_per_ty
     charts = _build_media_charts(music_datetimes, color, chart_label)
     
     # Compute top lists
-    top_lists = _compute_music_top_lists(play_details, limit=5)
-    meta_lists = _compute_music_top_rollups(play_details, limit=5)
+    top_lists = _compute_music_top_lists(play_details, limit=20)
+    meta_lists = _compute_music_top_rollups(play_details, limit=20)
     
     return {
         "minutes": minutes_breakdown,

@@ -8,6 +8,28 @@
 {% endblock title %}
 
 {% block content %}
+  <style>
+    /* Custom scrollbar styling for statistics cards */
+    .statistics-card-scroll::-webkit-scrollbar {
+      width: 6px;
+    }
+    .statistics-card-scroll::-webkit-scrollbar-track {
+      background: #2a2f35;
+      border-radius: 3px;
+    }
+    .statistics-card-scroll::-webkit-scrollbar-thumb {
+      background: #4b5563;
+      border-radius: 3px;
+    }
+    .statistics-card-scroll::-webkit-scrollbar-thumb:hover {
+      background: #6b7280;
+    }
+    /* Firefox */
+    .statistics-card-scroll {
+      scrollbar-width: thin;
+      scrollbar-color: #4b5563 #2a2f35;
+    }
+  </style>
   <div x-data="dateRangePicker()" x-init="init()">
     <div class="mb-4 sm:mb-8">
       <h1 class="text-3xl font-bold mb-2">Statistics</h1>
@@ -1001,11 +1023,11 @@
 
           <!-- Top 5 Artists, Albums, Tracks -->
           <div class="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4">
-            <!-- Top 5 Artists -->
+            <!-- Top Artists -->
             <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
-              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top 5 Artists</h3>
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top {{ music_consumption.top_artists|length|default:0 }} Artists</h3>
               {% if music_consumption.top_artists %}
-                <div class="space-y-3">
+                <div class="space-y-3 max-h-[300px] overflow-y-auto pr-1 statistics-card-scroll">
                   {% for artist in music_consumption.top_artists %}
                   <div class="flex items-center space-x-3">
                     <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
@@ -1032,11 +1054,11 @@
               {% endif %}
             </div>
 
-            <!-- Top 5 Albums -->
+            <!-- Top Albums -->
             <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
-              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top 5 Albums</h3>
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top {{ music_consumption.top_albums|length|default:0 }} Albums</h3>
               {% if music_consumption.top_albums %}
-                <div class="space-y-3">
+                <div class="space-y-3 max-h-[300px] overflow-y-auto pr-1 statistics-card-scroll">
                   {% for album in music_consumption.top_albums %}
                   <div class="flex items-center space-x-3">
                     <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
@@ -1063,11 +1085,11 @@
               {% endif %}
             </div>
 
-            <!-- Top 5 Tracks -->
+            <!-- Top Tracks -->
             <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
-              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top 5 Tracks</h3>
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top {{ music_consumption.top_tracks|length|default:0 }} Tracks</h3>
               {% if music_consumption.top_tracks %}
-                <div class="space-y-3">
+                <div class="space-y-3 max-h-[300px] overflow-y-auto pr-1 statistics-card-scroll">
                   {% for track in music_consumption.top_tracks %}
                   <div class="flex items-center space-x-3">
                     <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
@@ -1099,9 +1121,9 @@
           <div class="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4">
             <!-- Top Genres -->
             <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
-              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top 5 Genres</h3>
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top {{ music_consumption.top_genres|length|default:0 }} Genres</h3>
               {% if music_consumption.top_genres %}
-                <div class="space-y-3">
+                <div class="space-y-3 max-h-[300px] overflow-y-auto pr-1 statistics-card-scroll">
                   {% for genre in music_consumption.top_genres %}
                   <div class="flex items-center space-x-3">
                     <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
@@ -1124,9 +1146,9 @@
 
             <!-- Top Decades -->
             <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
-              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top 5 Decades</h3>
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top {{ music_consumption.top_decades|length|default:0 }} Decades</h3>
               {% if music_consumption.top_decades %}
-                <div class="space-y-3">
+                <div class="space-y-3 max-h-[300px] overflow-y-auto pr-1 statistics-card-scroll">
                   {% for decade in music_consumption.top_decades %}
                   <div class="flex items-center space-x-3">
                     <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
@@ -1149,9 +1171,9 @@
 
             <!-- Top Countries -->
             <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
-              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top 5 Countries</h3>
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top {{ music_consumption.top_countries|length|default:0 }} Countries</h3>
               {% if music_consumption.top_countries %}
-                <div class="space-y-3">
+                <div class="space-y-3 max-h-[300px] overflow-y-auto pr-1 statistics-card-scroll">
                   {% for country in music_consumption.top_countries %}
                   <div class="flex items-center space-x-3">
                     <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
