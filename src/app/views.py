@@ -1341,7 +1341,19 @@ def delete_history_record(request, media_type, history_id):
 @require_GET
 def history(request):
     """Show a day-by-day history of episode and movie plays."""
-    history_days_all = history_cache.get_history_days(request.user)
+    # Extract filter parameters from query string
+    filters = {}
+    filter_params = ['album', 'artist', 'tv', 'season']
+    for param in filter_params:
+        value = request.GET.get(param)
+        if value:
+            try:
+                filters[param] = int(value)
+            except (TypeError, ValueError):
+                pass  # Skip invalid filter values
+    
+    # Get history days with filters applied
+    history_days_all = history_cache.get_history_days(request.user, filters=filters)
 
     paginator = Paginator(history_days_all, history_cache.HISTORY_DAYS_PER_PAGE)
 
@@ -1371,6 +1383,7 @@ def history(request):
         "total_pages": paginator.num_pages,
         "total_days": paginator.count,
         "days_per_page": paginator.per_page,
+        "active_filters": filters,  # Pass filters to template for pagination
     }
     return render(request, "app/history.html", context)
 
@@ -2208,6 +2221,32 @@ def song_save(request):
     if next_url:
         return redirect(next_url)
     return redirect("album_detail", album_id=album.id)
+
+
+@require_POST
+def delete_all_album_plays_view(request, album_id):
+    """Delete all music plays (listens) for an album."""
+    from django.shortcuts import get_object_or_404
+
+    album = get_object_or_404(Album, id=album_id)
+    
+    # Get all Music entries for this user and album
+    music_entries = Music.objects.filter(
+        user=request.user,
+        album=album,
+    )
+    
+    count = music_entries.count()
+    if count > 0:
+        music_entries.delete()
+        messages.success(request, f"Deleted {count} play{'s' if count != 1 else ''} for {album.title}")
+    else:
+        messages.info(request, f"No plays found for {album.title}")
+    
+    # Return HX-Refresh header to reload the page
+    response = HttpResponse(status=204)
+    response["HX-Refresh"] = "true"
+    return response
 
 
 @require_POST

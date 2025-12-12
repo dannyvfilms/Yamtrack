@@ -12,7 +12,7 @@
   {% if total_pages|default:0 > 1 %}
     <div class="history-pagination flex flex-wrap items-center justify-center gap-2 sm:gap-3 mb-3">
       {% if current_page > 1 %}
-        <a href="?page={{ current_page|add:'-1' }}"
+        <a href="?{% if active_filters %}{% for key, value in active_filters.items %}{{ key }}={{ value }}{% if not forloop.last %}&{% endif %}{% endfor %}{% if active_filters %}&{% endif %}{% endif %}page={{ current_page|add:'-1' }}"
            class="p-2 rounded-md bg-[#2a2f35] text-white hover:bg-[#39404b] transition-colors cursor-pointer"
            aria-label="Previous page">
           <svg xmlns="http://www.w3.org/2000/svg"
@@ -48,7 +48,7 @@
       {% get_pagination_range current_page total_pages 2 as pages %}
       {% for page_num in pages %}
         {% if page_num %}
-          <a href="?page={{ page_num }}"
+          <a href="?{% if active_filters %}{% for key, value in active_filters.items %}{{ key }}={{ value }}{% if not forloop.last %}&{% endif %}{% endfor %}{% if active_filters %}&{% endif %}{% endif %}page={{ page_num }}"
              class="w-10 h-10 rounded-md {% if current_page == page_num %}bg-indigo-600{% else %}bg-[#2a2f35] hover:bg-[#39404b]{% endif %} text-white flex items-center justify-center cursor-pointer">
             {{ page_num }}
           </a>
@@ -73,7 +73,7 @@
       {% endfor %}
 
       {% if page_obj and page_obj.has_next %}
-        <a href="?page={{ current_page|add:'1' }}"
+        <a href="?{% if active_filters %}{% for key, value in active_filters.items %}{{ key }}={{ value }}{% if not forloop.last %}&{% endif %}{% endfor %}{% if active_filters %}&{% endif %}{% endif %}page={{ current_page|add:'1' }}"
            class="p-2 rounded-md bg-[#2a2f35] text-white hover:bg-[#39404b] transition-colors cursor-pointer"
            aria-label="Next page">
           <svg xmlns="http://www.w3.org/2000/svg"
@@ -180,7 +180,7 @@
     {% if total_pages|default:0 > 1 %}
       <div class="history-pagination flex flex-wrap items-center justify-center gap-2 sm:gap-3 mt-6">
         {% if current_page > 1 %}
-          <a href="?page={{ current_page|add:'-1' }}"
+          <a href="?{% if active_filters %}{% for key, value in active_filters.items %}{{ key }}={{ value }}{% if not forloop.last %}&{% endif %}{% endfor %}{% if active_filters %}&{% endif %}{% endif %}page={{ current_page|add:'-1' }}"
              class="p-2 rounded-md bg-[#2a2f35] text-white hover:bg-[#39404b] transition-colors cursor-pointer"
              aria-label="Previous page">
             <svg xmlns="http://www.w3.org/2000/svg"
@@ -216,7 +216,7 @@
         {% get_pagination_range current_page total_pages 2 as pages %}
         {% for page_num in pages %}
           {% if page_num %}
-            <a href="?page={{ page_num }}"
+            <a href="?{% if active_filters %}{% for key, value in active_filters.items %}{{ key }}={{ value }}{% if not forloop.last %}&{% endif %}{% endfor %}{% if active_filters %}&{% endif %}{% endif %}page={{ page_num }}"
                class="w-10 h-10 rounded-md {% if current_page == page_num %}bg-indigo-600{% else %}bg-[#2a2f35] hover:bg-[#39404b]{% endif %} text-white flex items-center justify-center cursor-pointer">
               {{ page_num }}
             </a>
@@ -241,7 +241,7 @@
         {% endfor %}
 
         {% if page_obj and page_obj.has_next %}
-          <a href="?page={{ current_page|add:'1' }}"
+          <a href="?{% if active_filters %}{% for key, value in active_filters.items %}{{ key }}={{ value }}{% if not forloop.last %}&{% endif %}{% endfor %}{% if active_filters %}&{% endif %}{% endif %}page={{ current_page|add:'1' }}"
              class="p-2 rounded-md bg-[#2a2f35] text-white hover:bg-[#39404b] transition-colors cursor-pointer"
              aria-label="Next page">
             <svg xmlns="http://www.w3.org/2000/svg"
