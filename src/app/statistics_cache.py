@@ -274,13 +274,14 @@ def refresh_statistics_cache(user_id: int, range_name: str):
     return data
 
 
-def schedule_statistics_refresh(user_id: int, range_name: str, debounce_seconds: int = 30):
+def schedule_statistics_refresh(user_id: int, range_name: str, debounce_seconds: int = 30, countdown: int = 3):
     """Queue a background refresh for a user's statistics cache.
     
     Args:
         user_id: User ID
         range_name: Predefined range name
         debounce_seconds: Seconds to debounce refresh requests
+        countdown: Seconds to delay task execution (default 3)
     """
     if range_name not in PREDEFINED_RANGES:
         return False
@@ -292,7 +293,7 @@ def schedule_statistics_refresh(user_id: int, range_name: str, debounce_seconds:
     try:
         from app.tasks import refresh_statistics_cache_task
 
-        refresh_statistics_cache_task.delay(user_id, range_name)
+        refresh_statistics_cache_task.apply_async(args=[user_id, range_name], countdown=countdown)
         return True
     except Exception as exc:  # pragma: no cover - Celery not available
         logger.debug(
@@ -305,12 +306,17 @@ def schedule_statistics_refresh(user_id: int, range_name: str, debounce_seconds:
         return False
 
 
-def schedule_all_ranges_refresh(user_id: int, debounce_seconds: int = 30):
+def schedule_all_ranges_refresh(user_id: int, debounce_seconds: int = 30, countdown: int = 3):
     """Schedule background refresh for all predefined ranges for a user.
     
     This is useful when media changes and we want to refresh all ranges.
     Optimizes by calculating "All Time" first to pre-populate runtime data,
     then schedules remaining ranges in parallel.
+    
+    Args:
+        user_id: User ID
+        debounce_seconds: Seconds to debounce refresh requests
+        countdown: Seconds to delay task execution (default 3)
     """
     # Use a single lock for all ranges to prevent thundering herd
     all_ranges_lock_key = f"{STATISTICS_REFRESH_LOCK_PREFIX}_all_{user_id}"
@@ -318,27 +324,32 @@ def schedule_all_ranges_refresh(user_id: int, debounce_seconds: int = 30):
         # Already scheduled recently, skip
         return
     
-    # Calculate "All Time" first to pre-populate runtime data
+    # Schedule "All Time" first with shorter countdown to pre-populate runtime data
     # This ensures shorter ranges benefit from cached runtime lookups
+    # Use countdown=1 so it runs before other ranges (which use countdown=3)
     all_time_range = "All Time"
+    all_time_lock_key = _refresh_lock_key(user_id, all_time_range)
+    cache.add(all_time_lock_key, True, debounce_seconds)
+    
     try:
-        logger.debug("Calculating 'All Time' statistics first for user %s to pre-populate runtime data", user_id)
-        refresh_statistics_cache(user_id, all_time_range)
-        logger.debug("Completed 'All Time' calculation for user %s, scheduling remaining ranges", user_id)
-    except Exception as exc:
-        logger.warning(
-            "Failed to calculate 'All Time' statistics for user %s, falling back to parallel execution: %s",
+        from app.tasks import refresh_statistics_cache_task
+        logger.debug("Scheduling 'All Time' statistics first for user %s to pre-populate runtime data", user_id)
+        # Schedule "All Time" with shorter countdown so it runs first
+        refresh_statistics_cache_task.apply_async(args=[user_id, all_time_range], countdown=1)
+    except Exception as exc:  # pragma: no cover - Celery not available
+        logger.debug(
+            "Falling back to inline statistics cache rebuild for user %s, range %s: %s",
             user_id,
+            all_time_range,
             exc,
         )
-        # If "All Time" fails, still schedule all ranges in parallel (original behavior)
-        all_time_range = None
+        refresh_statistics_cache(user_id, all_time_range)
     
-    # Schedule remaining ranges in parallel
+    # Schedule remaining ranges in parallel with longer countdown
     # They'll benefit from runtime data pre-populated by "All Time"
     for range_name in PREDEFINED_RANGES:
         if range_name == all_time_range:
-            # Already calculated, skip
+            # Already scheduled, skip
             continue
         
         lock_key = _refresh_lock_key(user_id, range_name)
@@ -347,7 +358,7 @@ def schedule_all_ranges_refresh(user_id: int, debounce_seconds: int = 30):
         
         try:
             from app.tasks import refresh_statistics_cache_task
-            refresh_statistics_cache_task.delay(user_id, range_name)
+            refresh_statistics_cache_task.apply_async(args=[user_id, range_name], countdown=countdown)
         except Exception as exc:  # pragma: no cover - Celery not available
             logger.debug(
                 "Falling back to inline statistics cache rebuild for user %s, range %s: %s",

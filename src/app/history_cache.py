@@ -700,8 +700,15 @@ def refresh_history_cache(user_id: int):
     return history_days
 
 
-def schedule_history_refresh(user_id: int, logging_style: str = "repeats", debounce_seconds: int = 30):
-    """Queue a background refresh for a user's history cache."""
+def schedule_history_refresh(user_id: int, logging_style: str = "repeats", debounce_seconds: int = 30, countdown: int = 3):
+    """Queue a background refresh for a user's history cache.
+    
+    Args:
+        user_id: User ID
+        logging_style: Logging style for history
+        debounce_seconds: Seconds to debounce refresh requests
+        countdown: Seconds to delay task execution (default 3)
+    """
     lock_key = _refresh_lock_key(user_id, logging_style)
     if debounce_seconds and not cache.add(lock_key, True, debounce_seconds):
         return False
@@ -709,7 +716,7 @@ def schedule_history_refresh(user_id: int, logging_style: str = "repeats", debou
     try:
         from app.tasks import refresh_history_cache_task
 
-        refresh_history_cache_task.delay(user_id)
+        refresh_history_cache_task.apply_async(args=[user_id], countdown=countdown)
         return True
     except Exception as exc:  # pragma: no cover - Celery not available
         logger.debug(

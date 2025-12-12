@@ -232,7 +232,7 @@ class Item(CalendarTriggerMixin, models.Model):
             items_to_process = [self]
 
         if delay:
-            events.tasks.reload_calendar.delay(items_to_process=items_to_process)
+            events.tasks.reload_calendar.apply_async(kwargs={"items_to_process": items_to_process}, countdown=3)
         else:
             events.tasks.reload_calendar(items_to_process=items_to_process)
 
