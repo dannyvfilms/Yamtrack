@@ -37,14 +37,16 @@
             </p>
             {% if music and music.history.count > 0 %}
               {% with listen_count=music.history.count %}
-                {% if listen_count == 1 %}
-                  <p class="text-sm text-gray-400 mt-1">Listened once</p>
-                {% else %}
-                  <p class="text-sm text-gray-400 mt-1">Listened {{ listen_count }} times</p>
-                {% endif %}
+                <p id="modal-listen-count-{{ music.id }}" class="text-sm text-gray-400 mt-1">
+                  {% if listen_count == 1 %}
+                    Listened once
+                  {% else %}
+                    Listened {{ listen_count }} times
+                  {% endif %}
+                </p>
               {% endwith %}
             {% else %}
-              <p class="text-sm text-gray-400 mt-1">Not listened yet</p>
+              <p id="modal-listen-count-{% if music %}{{ music.id }}{% else %}0{% endif %}" class="text-sm text-gray-400 mt-1">Not listened yet</p>
             {% endif %}
           </div>
         </div>
@@ -59,18 +61,19 @@
             <div class="max-h-[200px] overflow-y-auto space-y-2">
 
               {% for entry in music.history.all|order_by_end_date %}
-                <div class="flex items-center justify-between bg-[#343a40] rounded-md p-3 border border-gray-600">
-                  <div class="text-sm text-white">{{ entry.end_date|user_datetime_format:user|default_if_none:"No date provided" }}</div>
-                  <form method="post"
-                        action="{% url 'media_delete' %}?next={{ request.path }}">
-                    {% csrf_token %}
-                    <input type="hidden" name="instance_id" value="{{ entry.id }}">
-                    <input type="hidden" name="media_type" value="music">
-                    <button class="text-red-400 hover:text-red-300 transition-colors text-sm px-2 py-1 hover:bg-red-600/20 rounded-md cursor-pointer">
+                {% if entry.history_user == user or not entry.history_user %}
+                  <div id="history-{{ entry.history_id }}"
+                       class="flex items-center justify-between bg-[#343a40] rounded-md p-3 border border-gray-600">
+                    <div class="text-sm text-white">{{ entry.end_date|user_datetime_format:user|default_if_none:"No date provided" }}</div>
+                    <button class="text-red-400 hover:text-red-300 transition-colors text-sm px-2 py-1 hover:bg-red-600/20 rounded-md cursor-pointer"
+                            hx-delete="{% url 'delete_history_record' 'music' entry.history_id %}?music_id={{ music.id }}"
+                            hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+                            hx-target="#history-{{ entry.history_id }}"
+                            hx-swap="outerHTML">
                       Delete
                     </button>
-                  </form>
-                </div>
+                  </div>
+                {% endif %}
               {% endfor %}
             </div>
           </div>

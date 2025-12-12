@@ -310,7 +310,8 @@
 
                   {# History info (like Episode "Last watched") #}
                   {% if track_data.history %}
-                    <p class="text-xs text-gray-400 mt-2 px-4">
+                    <p id="track-history-{% if track_data.music %}{{ track_data.music.id }}{% else %}{{ track_data.track.id }}{% endif %}"
+                       class="text-xs text-gray-400 mt-2 px-4">
                       Last listened: {{ track_data.history.0.end_date|user_date_format:user|default_if_none:"No date provided" }}
                       {% if track_data.history|length > 1 %}• Listened {{ track_data.history|length }} times{% endif %}
                     </p>

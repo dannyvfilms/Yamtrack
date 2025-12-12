@@ -1308,10 +1308,41 @@ def delete_history_record(request, media_type, history_id):
             model_name=f"historical{media_type.lower()}",
         )
 
-        historical_model.objects.get(
-            history_id=history_id,
-            history_user=request.user,
-        ).delete()
+        # Try to get the history record, checking both with and without history_user
+        # This handles cases where history_user might be null (e.g., from old imports)
+        try:
+            history_record = historical_model.objects.get(
+                history_id=history_id,
+                history_user=request.user,
+            )
+        except historical_model.DoesNotExist:
+            # If not found with history_user, check if history_user is null
+            # and verify the record belongs to the user via the actual model instance
+            history_record = historical_model.objects.get(
+                history_id=history_id,
+                history_user__isnull=True,
+            )
+            
+            # For music, verify the Music instance belongs to the user
+            if media_type.lower() == "music":
+                from app.models import Music
+                try:
+                    music = Music.objects.get(id=history_record.id, user=request.user)
+                except Music.DoesNotExist:
+                    raise historical_model.DoesNotExist(
+                        f"History record {history_id} does not belong to user {request.user}"
+                    )
+            else:
+                # For other media types, we can't easily verify ownership without history_user
+                # So we'll only allow deletion if history_user matches
+                raise historical_model.DoesNotExist(
+                    f"History record {history_id} not found for user {request.user}"
+                )
+
+        # Get music_id from query params if provided (for updating count on album page)
+        music_id = request.GET.get("music_id")
+        
+        history_record.delete()
 
         logger.info(
             "Deleted history record %s",
@@ -1325,6 +1356,51 @@ def delete_history_record(request, media_type, history_id):
         history_cache.schedule_history_refresh(request.user.id)
         statistics_cache.invalidate_statistics_cache(request.user.id)
         statistics_cache.schedule_all_ranges_refresh(request.user.id)
+
+        # If music_id is provided, return updated count for out-of-band swap
+        if music_id and media_type.lower() == "music":
+            from app.models import Music
+            from users.templatetags.user_tags import user_date_format
+            
+            try:
+                music = Music.objects.get(id=music_id, user=request.user)
+                # Get remaining history records (filtered by user or null)
+                remaining_history = list(music.history.filter(
+                    history_user=request.user
+                ).order_by("-end_date")) or list(music.history.filter(
+                    history_user__isnull=True
+                ).order_by("-end_date"))
+                
+                remaining_count = len(remaining_history)
+                
+                if remaining_count > 0:
+                    # Get the last entry for date display
+                    last_entry = remaining_history[0]
+                    
+                    # Format the date using the same filter as the template
+                    last_date_formatted = user_date_format(last_entry.end_date, request.user) if last_entry.end_date else "No date provided"
+                    
+                    if remaining_count == 1:
+                        history_text = f"Last listened: {last_date_formatted}"
+                    else:
+                        history_text = f"Last listened: {last_date_formatted} • Listened {remaining_count} times"
+                    
+                    # Return response with out-of-band swaps for both album page and modal
+                    response = HttpResponse()
+                    # Update the count on the album detail page
+                    response.write(f'<p id="track-history-{music_id}" hx-swap-oob="true" class="text-xs text-gray-400 mt-2 px-4">{history_text}</p>')
+                    # Update the count in the modal
+                    modal_text = "Listened once" if remaining_count == 1 else f"Listened {remaining_count} times"
+                    response.write(f'<p id="modal-listen-count-{music_id}" hx-swap-oob="true" class="text-sm text-gray-400 mt-1">{modal_text}</p>')
+                    return response
+                else:
+                    # No history left, hide the album page element and update modal
+                    response = HttpResponse()
+                    response.write(f'<p id="track-history-{music_id}" hx-swap-oob="true" class="text-xs text-gray-400 mt-2 px-4" style="display: none;"></p>')
+                    response.write(f'<p id="modal-listen-count-{music_id}" hx-swap-oob="true" class="text-sm text-gray-400 mt-1">Not listened yet</p>')
+                    return response
+            except Music.DoesNotExist:
+                pass
 
         # Return empty 200 response - the element will be removed by HTMX
         return HttpResponse()
