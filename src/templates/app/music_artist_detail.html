@@ -151,15 +151,24 @@
         </div>
       {% endif %}
 
-      {# Actions - matching TV Show layout #}
+      {# Actions - matching Album page layout #}
       <h2 class="text-xl font-bold mb-4">Actions</h2>
       <div class="bg-[#2a2f35] p-4 md:p-2 lg:p-4 rounded-lg flex items-center justify-center gap-x-5 md:gap-x-2 lg:gap-x-5 mb-6">
-        {# Search for tracks (emerald like Custom Lists) #}
-        <a href="{% url 'search' %}?q={{ artist.name|urlencode }}&media_type=music"
-           class="px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition duration-300 cursor-pointer"
-           title="Search for tracks by this artist">
-          {% include "app/icons/magnifying-glass.svg" with classes="w-4 h-4" %}
-        </a>
+        {# Delete all plays (red) #}
+        <button type="button"
+                title="Delete all plays for this artist"
+                class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition duration-300 cursor-pointer disabled:opacity-75"
+                hx-post="{% url 'delete_all_artist_plays' artist.id %}"
+                hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+                hx-swap="none"
+                hx-confirm="Are you sure you want to delete all plays for this artist? This cannot be undone."
+                x-data="{ loading: false }"
+                @click="loading = true"
+                :disabled="loading">
+          <div :class="{ 'animate-spin': loading }">
+            {% include "app/icons/trashcan.svg" with classes="w-4 h-4" %}
+          </div>
+        </button>
 
         {# View history - link to history page filtered by artist #}
         <a href="{% url 'history' %}?artist={{ artist.id }}"

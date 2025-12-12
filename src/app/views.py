@@ -2250,6 +2250,32 @@ def delete_all_album_plays_view(request, album_id):
 
 
 @require_POST
+def delete_all_artist_plays_view(request, artist_id):
+    """Delete all music plays (listens) for an artist."""
+    from django.shortcuts import get_object_or_404
+
+    artist = get_object_or_404(Artist, id=artist_id)
+    
+    # Get all Music entries for this user and artist (via album)
+    music_entries = Music.objects.filter(
+        user=request.user,
+        album__artist=artist,
+    )
+    
+    count = music_entries.count()
+    if count > 0:
+        music_entries.delete()
+        messages.success(request, f"Deleted {count} play{'s' if count != 1 else ''} for {artist.name}")
+    else:
+        messages.info(request, f"No plays found for {artist.name}")
+    
+    # Return HX-Refresh header to reload the page
+    response = HttpResponse(status=204)
+    response["HX-Refresh"] = "true"
+    return response
+
+
+@require_POST
 def sync_album_metadata_view(request, album_id):
     """Manually trigger metadata sync for an album."""
     from django.shortcuts import get_object_or_404
