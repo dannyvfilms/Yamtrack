@@ -58,7 +58,7 @@
             <label class="block text-sm font-medium text-gray-300 mb-3">Previous Listens</label>
             <div class="max-h-[200px] overflow-y-auto space-y-2">
 
-              {% for entry in music.history.all %}
+              {% for entry in music.history.all|order_by_end_date %}
                 <div class="flex items-center justify-between bg-[#343a40] rounded-md p-3 border border-gray-600">
                   <div class="text-sm text-white">{{ entry.end_date|user_datetime_format:user|default_if_none:"No date provided" }}</div>
                   <form method="post"

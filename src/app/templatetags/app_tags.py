@@ -583,6 +583,18 @@ def _is_predefined_date_range(start_date, end_date, today):
 
 
 @register.filter
+def order_by_end_date(queryset):
+    """Order a queryset by end_date in ascending order (oldest first, chronological)."""
+    if queryset is None:
+        return queryset
+    try:
+        return queryset.order_by('end_date')
+    except (AttributeError, TypeError):
+        # If it's not a queryset or doesn't have end_date, return as-is
+        return queryset
+
+
+@register.filter
 def format_date_range_display(start_date, end_date):
     """Format date range for display in card titles.
     
