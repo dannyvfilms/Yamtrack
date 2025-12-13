@@ -10,6 +10,7 @@ from django.contrib.auth.decorators import login_not_required
 from django.core.cache import cache
 from django.core.paginator import EmptyPage, Paginator
 from django.db import IntegrityError
+from django.db.utils import OperationalError
 from django.db.models import prefetch_related_objects
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import redirect, render
@@ -48,32 +49,45 @@ logger = logging.getLogger(__name__)
 @require_GET
 def home(request):
     """Home page with media items in progress."""
-    sort_by = request.user.update_preference("home_sort", request.GET.get("sort"))
-    media_type_to_load = request.GET.get("load_media_type")
-    items_limit = 14
+    try:
+        sort_by = request.user.update_preference("home_sort", request.GET.get("sort"))
+        media_type_to_load = request.GET.get("load_media_type")
+        items_limit = 14
 
-    list_by_type = BasicMedia.objects.get_in_progress(
-        request.user,
-        sort_by,
-        items_limit,
-        media_type_to_load,
-    )
+        list_by_type = BasicMedia.objects.get_in_progress(
+            request.user,
+            sort_by,
+            items_limit,
+            media_type_to_load,
+        )
 
-    # If this is an HTMX request to load more items for a specific media type
-    if request.headers.get("HX-Request") and media_type_to_load:
+        # If this is an HTMX request to load more items for a specific media type
+        if request.headers.get("HX-Request") and media_type_to_load:
+            context = {
+                "media_list": list_by_type.get(media_type_to_load, []),
+            }
+            return render(request, "app/components/home_grid.html", context)
+
         context = {
-            "media_list": list_by_type.get(media_type_to_load, []),
+            "user": request.user,
+            "list_by_type": list_by_type,
+            "current_sort": sort_by,
+            "sort_choices": HomeSortChoices.choices,
+            "items_limit": items_limit,
         }
-        return render(request, "app/components/home_grid.html", context)
-
-    context = {
-        "user": request.user,
-        "list_by_type": list_by_type,
-        "current_sort": sort_by,
-        "sort_choices": HomeSortChoices.choices,
-        "items_limit": items_limit,
-    }
-    return render(request, "app/home.html", context)
+        return render(request, "app/home.html", context)
+    except OperationalError as error:
+        logger.error("Database error in home view: %s", error, exc_info=True)
+        # Return empty state on database error
+        context = {
+            "user": request.user,
+            "list_by_type": {},
+            "current_sort": request.GET.get("sort", "progress"),
+            "sort_choices": HomeSortChoices.choices,
+            "items_limit": 14,
+            "database_error": True,
+        }
+        return render(request, "app/home.html", context)
 
 
 @require_POST
@@ -1417,51 +1431,67 @@ def delete_history_record(request, media_type, history_id):
 @require_GET
 def history(request):
     """Show a day-by-day history of episode and movie plays."""
-    # Extract filter parameters from query string
-    filters = {}
-    filter_params = ['album', 'artist', 'tv', 'season']
-    for param in filter_params:
-        value = request.GET.get(param)
-        if value:
+    try:
+        # Extract filter parameters from query string
+        filters = {}
+        filter_params = ['album', 'artist', 'tv', 'season']
+        for param in filter_params:
+            value = request.GET.get(param)
+            if value:
+                try:
+                    filters[param] = int(value)
+                except (TypeError, ValueError):
+                    pass  # Skip invalid filter values
+        
+        # Get history days with filters applied
+        history_days_all = history_cache.get_history_days(request.user, filters=filters)
+
+        paginator = Paginator(history_days_all, history_cache.HISTORY_DAYS_PER_PAGE)
+
+        if paginator.count == 0:
+            page_obj = None
+            history_days = []
+            current_page = 1
+        else:
             try:
-                filters[param] = int(value)
+                page_number = int(request.GET.get("page", 1))
             except (TypeError, ValueError):
-                pass  # Skip invalid filter values
-    
-    # Get history days with filters applied
-    history_days_all = history_cache.get_history_days(request.user, filters=filters)
+                page_number = 1
 
-    paginator = Paginator(history_days_all, history_cache.HISTORY_DAYS_PER_PAGE)
+            try:
+                page_obj = paginator.page(page_number)
+            except EmptyPage:
+                page_obj = paginator.page(paginator.num_pages)
 
-    if paginator.count == 0:
-        page_obj = None
-        history_days = []
-        current_page = 1
-    else:
-        try:
-            page_number = int(request.GET.get("page", 1))
-        except (TypeError, ValueError):
-            page_number = 1
+            history_days = page_obj.object_list
+            current_page = page_obj.number
 
-        try:
-            page_obj = paginator.page(page_number)
-        except EmptyPage:
-            page_obj = paginator.page(paginator.num_pages)
-
-        history_days = page_obj.object_list
-        current_page = page_obj.number
-
-    context = {
-        "user": request.user,
-        "history_days": history_days,
-        "page_obj": page_obj,
-        "current_page": current_page,
-        "total_pages": paginator.num_pages,
-        "total_days": paginator.count,
-        "days_per_page": paginator.per_page,
-        "active_filters": filters,  # Pass filters to template for pagination
-    }
-    return render(request, "app/history.html", context)
+        context = {
+            "user": request.user,
+            "history_days": history_days,
+            "page_obj": page_obj,
+            "current_page": current_page,
+            "total_pages": paginator.num_pages,
+            "total_days": paginator.count,
+            "days_per_page": paginator.per_page,
+            "active_filters": filters,  # Pass filters to template for pagination
+        }
+        return render(request, "app/history.html", context)
+    except OperationalError as error:
+        logger.error("Database error in history view: %s", error, exc_info=True)
+        # Return empty state on database error
+        context = {
+            "user": request.user,
+            "history_days": [],
+            "page_obj": None,
+            "current_page": 1,
+            "total_pages": 0,
+            "total_days": 0,
+            "days_per_page": history_cache.HISTORY_DAYS_PER_PAGE,
+            "active_filters": {},
+            "database_error": True,
+        }
+        return render(request, "app/history.html", context)
 
 
 @require_GET
@@ -2412,67 +2442,115 @@ def sync_album_metadata_view(request, album_id):
 @require_GET
 def statistics(request):
     """Return the statistics page."""
-    # Set default date range to last year
-    timeformat = "%Y-%m-%d"
-    today = timezone.localdate()
-    one_year_ago = today.replace(year=today.year - 1)
+    try:
+        # Set default date range to last year
+        timeformat = "%Y-%m-%d"
+        today = timezone.localdate()
+        one_year_ago = today.replace(year=today.year - 1)
 
-    # Get date parameters with defaults
-    start_date_str = request.GET.get("start-date") or one_year_ago.strftime(timeformat)
-    end_date_str = request.GET.get("end-date") or today.strftime(timeformat)
+        # Get date parameters with defaults
+        start_date_str = request.GET.get("start-date") or one_year_ago.strftime(timeformat)
+        end_date_str = request.GET.get("end-date") or today.strftime(timeformat)
 
-    if start_date_str == "all" and end_date_str == "all":
-        start_date = None
-        end_date = None
-    else:
-        start_date = parse_date(start_date_str)
-        end_date = parse_date(end_date_str)
+        if start_date_str == "all" and end_date_str == "all":
+            start_date = None
+            end_date = None
+        else:
+            start_date = parse_date(start_date_str)
+            end_date = parse_date(end_date_str)
 
-        if start_date and end_date:
-            # Convert to datetime with timezone awareness
-            start_date = timezone.make_aware(
-                datetime.combine(start_date, datetime.min.time()),
-            )
+            if start_date and end_date:
+                # Convert to datetime with timezone awareness
+                start_date = timezone.make_aware(
+                    datetime.combine(start_date, datetime.min.time()),
+                )
 
-            # End date should be end of day
-            end_date = timezone.make_aware(
-                datetime.combine(end_date, datetime.max.time()),
-            )
+                # End date should be end of day
+                end_date = timezone.make_aware(
+                    datetime.combine(end_date, datetime.max.time()),
+                )
 
-    # Identify predefined range for caching
-    selected_range_name = _identify_predefined_range(start_date, end_date)
-    
-    # Get statistics data (cached for predefined ranges, computed inline for custom ranges)
-    statistics_data = statistics_cache.get_statistics_data(
-        request.user,
-        start_date,
-        end_date,
-        range_name=selected_range_name,
-    )
+        # Identify predefined range for caching
+        selected_range_name = _identify_predefined_range(start_date, end_date)
+        
+        # Get statistics data (cached for predefined ranges, computed inline for custom ranges)
+        statistics_data = statistics_cache.get_statistics_data(
+            request.user,
+            start_date,
+            end_date,
+            range_name=selected_range_name,
+        )
 
-    show_year_charts = selected_range_name in (None, "All Time")
+        show_year_charts = selected_range_name in (None, "All Time")
 
-    context = {
-        "user": request.user,
-        "start_date": start_date,
-        "end_date": end_date,
-        "media_count": statistics_data["media_count"],
-        "activity_data": statistics_data["activity_data"],
-        "media_type_distribution": statistics_data["media_type_distribution"],
-        "score_distribution": statistics_data["score_distribution"],
-        "top_rated": statistics_data["top_rated"],
-        "top_played": statistics_data["top_played"],
-        "status_distribution": statistics_data["status_distribution"],
-        "status_pie_chart_data": statistics_data["status_pie_chart_data"],
-        "hours_per_media_type": statistics_data["hours_per_media_type"],
-        "tv_consumption": statistics_data["tv_consumption"],
-        "movie_consumption": statistics_data["movie_consumption"],
-        "music_consumption": statistics_data["music_consumption"],
-        "daily_hours_by_media_type": statistics_data["daily_hours_by_media_type"],
-        "show_year_charts": show_year_charts,
-    }
+        context = {
+            "user": request.user,
+            "start_date": start_date,
+            "end_date": end_date,
+            "media_count": statistics_data["media_count"],
+            "activity_data": statistics_data["activity_data"],
+            "media_type_distribution": statistics_data["media_type_distribution"],
+            "score_distribution": statistics_data["score_distribution"],
+            "top_rated": statistics_data["top_rated"],
+            "top_played": statistics_data["top_played"],
+            "status_distribution": statistics_data["status_distribution"],
+            "status_pie_chart_data": statistics_data["status_pie_chart_data"],
+            "hours_per_media_type": statistics_data["hours_per_media_type"],
+            "tv_consumption": statistics_data["tv_consumption"],
+            "movie_consumption": statistics_data["movie_consumption"],
+            "music_consumption": statistics_data["music_consumption"],
+            "daily_hours_by_media_type": statistics_data["daily_hours_by_media_type"],
+            "show_year_charts": show_year_charts,
+        }
 
-    return render(request, "app/statistics.html", context)
+        return render(request, "app/statistics.html", context)
+    except OperationalError as error:
+        logger.error("Database error in statistics view: %s", error, exc_info=True)
+        # Return empty state on database error
+        timeformat = "%Y-%m-%d"
+        today = timezone.localdate()
+        one_year_ago = today.replace(year=today.year - 1)
+        start_date_str = request.GET.get("start-date") or one_year_ago.strftime(timeformat)
+        end_date_str = request.GET.get("end-date") or today.strftime(timeformat)
+        
+        # Create empty statistics data structure
+        empty_statistics_data = {
+            "media_count": {},
+            "activity_data": [],
+            "media_type_distribution": {},
+            "score_distribution": {},
+            "top_rated": [],
+            "top_played": [],
+            "status_distribution": {},
+            "status_pie_chart_data": {},
+            "hours_per_media_type": {},
+            "tv_consumption": {},
+            "movie_consumption": {},
+            "music_consumption": {},
+            "daily_hours_by_media_type": {},
+        }
+        
+        context = {
+            "user": request.user,
+            "start_date": parse_date(start_date_str) if start_date_str != "all" else None,
+            "end_date": parse_date(end_date_str) if end_date_str != "all" else None,
+            "media_count": empty_statistics_data["media_count"],
+            "activity_data": empty_statistics_data["activity_data"],
+            "media_type_distribution": empty_statistics_data["media_type_distribution"],
+            "score_distribution": empty_statistics_data["score_distribution"],
+            "top_rated": empty_statistics_data["top_rated"],
+            "top_played": empty_statistics_data["top_played"],
+            "status_distribution": empty_statistics_data["status_distribution"],
+            "status_pie_chart_data": empty_statistics_data["status_pie_chart_data"],
+            "hours_per_media_type": empty_statistics_data["hours_per_media_type"],
+            "tv_consumption": empty_statistics_data["tv_consumption"],
+            "movie_consumption": empty_statistics_data["movie_consumption"],
+            "music_consumption": empty_statistics_data["music_consumption"],
+            "daily_hours_by_media_type": empty_statistics_data["daily_hours_by_media_type"],
+            "show_year_charts": False,
+            "database_error": True,
+        }
+        return render(request, "app/statistics.html", context)
 
 
 @require_GET

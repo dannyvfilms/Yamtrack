@@ -134,6 +134,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "debug_toolbar.middleware.DebugToolbarMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "app.middleware.DatabaseRetryMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -228,15 +229,30 @@ else:
         if connection.vendor != "sqlite":
             return
 
-        cursor = connection.cursor()
+        cursor = None
         try:
+            cursor = connection.cursor()
             cursor.execute(f"PRAGMA journal_mode={SQLITE_JOURNAL_MODE}")
             cursor.execute(f"PRAGMA synchronous={SQLITE_SYNCHRONOUS}")
             cursor.execute(
                 f"PRAGMA busy_timeout={int(SQLITE_BUSY_TIMEOUT_SECONDS * 1000)}"
             )
+        except Exception as error:
+            # Log but don't raise - allow connection to proceed even if PRAGMA fails
+            # This prevents disk I/O errors during connection setup from blocking all requests
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                "Failed to configure SQLite connection PRAGMA settings: %s",
+                error,
+            )
         finally:
-            cursor.close()
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    # Ignore errors when closing cursor
+                    pass
 
     connection_created.connect(configure_sqlite_connection)
 
@@ -261,6 +277,12 @@ CACHES = {
 # not using Memcached, ignore CacheKeyWarning
 # https://docs.djangoproject.com/en/stable/topics/cache/#cache-key-warnings
 warnings.simplefilter("ignore", CacheKeyWarning)
+
+# Sessions
+# Use Redis cache backend for sessions to avoid database dependency
+# This improves resilience to disk I/O errors
+SESSION_ENGINE = "django.contrib.sessions.backends.cache"
+SESSION_CACHE_ALIAS = "default"
 
 
 # Password validation
