@@ -705,6 +705,9 @@ def cache_history_days(user_id: int, logging_style: str, history_days):
 def get_history_days(user, filters=None):
     """Return cached history, rebuilding if needed.
     
+    Always returns cached data if available (even if stale) to avoid timeouts.
+    Schedules background refresh if cache is stale.
+    
     Args:
         user: User instance
         filters: Optional dict of filter parameters (album, artist, tv, season, etc.)
@@ -716,12 +719,29 @@ def get_history_days(user, filters=None):
     
     logging_style = getattr(user, "game_logging_style", "repeats")
     cache_entry = cache.get(_cache_key(user.id, logging_style))
+    refresh_lock = cache.get(_refresh_lock_key(user.id, logging_style))
+    
     if cache_entry:
+        # Always return cached data if it exists (even if stale)
+        # This prevents timeouts while background refresh is in progress
         built_at = cache_entry.get("built_at")
         if built_at and timezone.now() - built_at > HISTORY_STALE_AFTER:
+            # Schedule background refresh but don't wait for it
             schedule_history_refresh(user.id, logging_style)
+        # Note: Even if cache is not stale, a refresh might be in progress
+        # (e.g., triggered by music addition). The frontend will check via cache-status endpoint.
         return cache_entry.get("history_days", [])
 
+    # Cache miss - check if refresh is in progress
+    refresh_lock = cache.get(_refresh_lock_key(user.id, logging_style))
+    if refresh_lock is not None:
+        # Refresh is in progress, return empty data
+        # Frontend will poll and update when refresh completes
+        logger.debug("History cache miss but refresh in progress for user %s, returning empty", user.id)
+        return []
+
+    # No cache and no refresh in progress - build inline
+    # This handles the case where cache was never built or expired naturally
     history_days = build_history_days(user)
     cache_history_days(user.id, logging_style, history_days)
     return history_days

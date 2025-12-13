@@ -4,6 +4,7 @@ from celery import states
 from celery.signals import before_task_publish
 from django.db.models.signals import post_delete, post_save
 from django.db.backends.signals import connection_created
+from django.db.utils import OperationalError
 from django.dispatch import receiver
 from django_celery_results.models import TaskResult
 
@@ -47,16 +48,24 @@ def create_task_result_on_publish(
     if "task" not in headers:
         return
 
-    TaskResult.objects.store_result(
-        content_type="application/json",
-        content_encoding="utf-8",
-        task_id=headers["id"],
-        result=None,
-        status=states.PENDING,
-        task_name=headers["task"],
-        task_args=headers.get("argsrepr", ""),
-        task_kwargs=headers.get("kwargsrepr", ""),
-    )
+    try:
+        TaskResult.objects.store_result(
+            content_type="application/json",
+            content_encoding="utf-8",
+            task_id=headers["id"],
+            result=None,
+            status=states.PENDING,
+            task_name=headers["task"],
+            task_args=headers.get("argsrepr", ""),
+            task_kwargs=headers.get("kwargsrepr", ""),
+        )
+    except OperationalError as e:
+        # Handle disk I/O errors gracefully - log and continue
+        # This can happen if the database file is locked or there's a disk issue
+        logger.warning("Failed to store task result due to database error: %s", e)
+    except Exception as e:  # pragma: no cover
+        # Catch any other unexpected errors
+        logger.warning("Unexpected error storing task result: %s", e)
 
 
 @receiver([post_save, post_delete], sender=Episode)
@@ -83,14 +92,14 @@ def refresh_history_cache_on_movie_change(sender, instance, **kwargs):  # noqa: 
 
 @receiver([post_save, post_delete], sender=Music)
 def refresh_history_cache_on_music_change(sender, instance, **kwargs):  # noqa: ARG001
-    """Invalidate and schedule history cache refresh when music activity changes.
+    """Schedule history cache refresh when music activity changes.
     
-    We invalidate immediately so the next page load rebuilds fresh,
-    rather than relying on potentially delayed background task.
+    We schedule a refresh but don't delete the cache immediately,
+    so users can see the old data with a notification while refresh happens.
     """
     user_id = getattr(instance, "user_id", None)
     if user_id:
-        invalidate_history_cache(user_id)
+        # Schedule refresh but don't delete cache - old data will show with notification
         schedule_history_refresh(user_id)
         # Also invalidate statistics cache for all ranges
         statistics_cache.invalidate_statistics_cache(user_id)

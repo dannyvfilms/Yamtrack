@@ -7,8 +7,99 @@
 {% endblock title %}
 
 {% block content %}
-<div x-data x-init="$el.closest('.container')?.classList.add('history-page-container')"></div>
-<div class="history-page -mx-4 sm:-mx-8 -mt-3 sm:-mt-6">
+<div x-data="{
+  cacheRefreshing: false,
+  cacheUpdater: null,
+  init() {
+    // Initialize cache updater immediately
+    if (window.CacheUpdater) {
+      this.cacheUpdater = CacheUpdater.init('history', {
+        loggingStyle: '{{ user.game_logging_style|default:"repeats" }}',
+        onRefreshComplete: (success, reason) => {
+          console.log('History page: Refresh complete callback', success, reason);
+          this.cacheRefreshing = false;
+        },
+        onUpdate: () => {
+          console.log('History page: Update callback called, reloading page');
+          // Reload the page to show fresh data
+          setTimeout(() => {
+            window.location.reload();
+          }, 300);
+        }
+      });
+    }
+    
+    // Check initial cache status after a short delay to ensure Alpine.js is ready
+    // Use requestAnimationFrame to ensure DOM is ready
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        this.checkCacheStatus();
+      }, 200);
+    });
+  },
+  async checkCacheStatus() {
+    try {
+      const params = new URLSearchParams({
+        cache_type: 'history',
+        logging_style: '{{ user.game_logging_style|default:"repeats" }}'
+      });
+      const response = await fetch(`/api/cache-status/?${params.toString()}`);
+      if (response.ok) {
+        const data = await response.json();
+        console.log('History page: Initial cache status', data);
+        // Show notification and start polling if:
+        // - Cache is stale (needs refresh)
+        // - Refresh is in progress (lock exists) - THIS IS THE KEY CASE
+        // 
+        // Do NOT start polling if recently_built is true but is_refreshing is false,
+        // as that means the refresh already completed and we're seeing fresh data.
+        // Starting polling in that case would cause an infinite reload loop.
+        if (data.is_stale || data.is_refreshing) {
+          console.log('History page: Showing notification and starting polling', {
+            is_stale: data.is_stale,
+            is_refreshing: data.is_refreshing,
+            recently_built: data.recently_built
+          });
+          this.cacheRefreshing = true;
+          if (this.cacheUpdater) {
+            // Mark that we were refreshing so we can detect completion
+            // Set this BEFORE calling start() so it's preserved
+            this.cacheUpdater.wasRefreshing = data.is_refreshing || false;
+            this.cacheUpdater.start();
+          }
+        } else {
+          console.log('History page: Cache is fresh, no notification needed', {
+            is_stale: data.is_stale,
+            is_refreshing: data.is_refreshing,
+            recently_built: data.recently_built
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error checking cache status:', error);
+    }
+  }
+}" x-init="$el.closest('.container')?.classList.add('history-page-container')">
+  
+  {# Cache refresh notification banner #}
+  <div x-show="cacheRefreshing"
+       x-cloak
+       x-transition
+       class="fixed top-24 right-0 left-0 {% block messages_sidebar_offset %}lg:left-64{% endblock messages_sidebar_offset %} z-50 flex justify-center pointer-events-none mb-4">
+    <div class="w-full max-w-xl px-4 pointer-events-auto">
+      <div class="flex items-center gap-2 rounded-md border px-3 py-2 shadow-lg text-white toast-info opacity-0"
+           x-init="setTimeout(() => $el.classList.add('opacity-100', 'transform-none'), 10); $el.classList.add('transition-all', 'duration-300', 'ease-out', 'transform', 'translate-y-[-1rem]')">
+        {% include "app/icons/info.svg" with classes="w-4 h-4 text-indigo-300 shrink-0 animate-pulse" %}
+        <p class="text-sm font-medium flex-1">Refreshing history in background...</p>
+        <button class="text-current opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
+                @click="cacheRefreshing = false; cacheUpdater?.stop();">
+          {% include "app/icons/x.svg" with classes="w-4 h-4" %}
+        </button>
+      </div>
+    </div>
+  </div>
+  
+  <div class="history-page -mx-4 sm:-mx-8 -mt-3 sm:-mt-6">
   {% if total_pages|default:0 > 1 %}
     <div class="history-pagination flex flex-wrap items-center justify-center gap-2 sm:gap-3 mb-3">
       {% if current_page > 1 %}
@@ -296,5 +387,11 @@
       <p class="text-sm text-gray-400">Start tracking movies and episodes to see them here.</p>
     </div>
   {% endif %}
+  </div>
 </div>
 {% endblock content %}
+
+{% block js %}
+{% load static %}
+<script src="{% static 'js/cache-updater.js' %}"></script>
+{% endblock js %}

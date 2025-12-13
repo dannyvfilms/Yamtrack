@@ -82,6 +82,7 @@ urlpatterns = [
     ),
     path("statistics", views.statistics, name="statistics"),
     path("history", views.history, name="history"),
+    path("api/cache-status/", views.cache_status, name="cache_status"),
     path("serviceworker.js", views.service_worker, name="service_worker"),
     # Music hierarchy navigation
     path("music/artist/<int:artist_id>/", views.artist_detail, name="artist_detail"),

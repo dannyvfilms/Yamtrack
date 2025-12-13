@@ -161,6 +161,9 @@ def cache_statistics_data(user_id: int, range_name: str, data: dict):
 def get_statistics_data(user, start_date, end_date, range_name=None):
     """Return cached statistics, rebuilding if needed.
     
+    Always returns cached data if available (even if stale) to avoid timeouts.
+    Schedules background refresh if cache is stale.
+    
     Args:
         user: User instance
         start_date: Start date for statistics (datetime or None)
@@ -177,13 +180,24 @@ def get_statistics_data(user, start_date, end_date, range_name=None):
     
     cache_entry = cache.get(_cache_key(user.id, range_name))
     if cache_entry:
+        # Always return cached data if it exists (even if stale)
+        # This prevents timeouts while background refresh is in progress
         built_at = cache_entry.get("built_at")
         if built_at and timezone.now() - built_at > STATISTICS_STALE_AFTER:
-            # Cache is stale, schedule background refresh
+            # Cache is stale, schedule background refresh but don't wait for it
             schedule_statistics_refresh(user.id, range_name)
         return cache_entry.get("data", {})
 
-    # Cache miss, build inline
+    # Cache miss - check if refresh is in progress
+    refresh_lock = cache.get(_refresh_lock_key(user.id, range_name))
+    if refresh_lock is not None:
+        # Refresh is in progress, return empty data structure
+        # Frontend will poll and update when refresh completes
+        logger.debug("Statistics cache miss but refresh in progress for user %s, range %s, returning empty", user.id, range_name)
+        return build_statistics_data(user, start_date, end_date)  # Return empty structure with all keys
+
+    # No cache and no refresh in progress - build inline
+    # This handles the case where cache was never built or expired naturally
     data = build_statistics_data(user, start_date, end_date)
     cache_statistics_data(user.id, range_name, data)
     return data
@@ -324,18 +338,18 @@ def schedule_all_ranges_refresh(user_id: int, debounce_seconds: int = 30, countd
         # Already scheduled recently, skip
         return
     
-    # Schedule "All Time" first with shorter countdown to pre-populate runtime data
-    # This ensures shorter ranges benefit from cached runtime lookups
-    # Use countdown=1 so it runs before other ranges (which use countdown=3)
+    # Schedule "All Time" with same countdown as history refresh (countdown=3)
+    # This ensures history and "All Time" run together, then other ranges follow
+    # This prevents history from getting mixed in with the other predefined ranges
     all_time_range = "All Time"
     all_time_lock_key = _refresh_lock_key(user_id, all_time_range)
     cache.add(all_time_lock_key, True, debounce_seconds)
     
     try:
         from app.tasks import refresh_statistics_cache_task
-        logger.debug("Scheduling 'All Time' statistics first for user %s to pre-populate runtime data", user_id)
-        # Schedule "All Time" with shorter countdown so it runs first
-        refresh_statistics_cache_task.apply_async(args=[user_id, all_time_range], countdown=1)
+        logger.debug("Scheduling 'All Time' statistics for user %s (runs with history refresh)", user_id)
+        # Schedule "All Time" with same countdown as history (countdown=3) so they run together
+        refresh_statistics_cache_task.apply_async(args=[user_id, all_time_range], countdown=countdown)
     except Exception as exc:  # pragma: no cover - Celery not available
         logger.debug(
             "Falling back to inline statistics cache rebuild for user %s, range %s: %s",
@@ -346,7 +360,8 @@ def schedule_all_ranges_refresh(user_id: int, debounce_seconds: int = 30, countd
         refresh_statistics_cache(user_id, all_time_range)
     
     # Schedule remaining ranges in parallel with longer countdown
-    # They'll benefit from runtime data pre-populated by "All Time"
+    # They'll run after history and "All Time" complete (which run together)
+    # This prevents history from getting mixed in with the other predefined ranges
     for range_name in PREDEFINED_RANGES:
         if range_name == all_time_range:
             # Already scheduled, skip
@@ -358,7 +373,9 @@ def schedule_all_ranges_refresh(user_id: int, debounce_seconds: int = 30, countd
         
         try:
             from app.tasks import refresh_statistics_cache_task
-            refresh_statistics_cache_task.apply_async(args=[user_id, range_name], countdown=countdown)
+            # Use longer countdown (countdown + 2) so these run after history and "All Time"
+            # This ensures history and "All Time" complete before other ranges start
+            refresh_statistics_cache_task.apply_async(args=[user_id, range_name], countdown=countdown + 2)
         except Exception as exc:  # pragma: no cover - Celery not available
             logger.debug(
                 "Falling back to inline statistics cache rebuild for user %s, range %s: %s",

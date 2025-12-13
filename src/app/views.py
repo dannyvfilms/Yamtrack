@@ -2554,6 +2554,103 @@ def statistics(request):
 
 
 @require_GET
+def cache_status(request):
+    """Return cache status metadata for history or statistics cache.
+    
+    Query params:
+        cache_type: 'history' or 'statistics'
+        range_name: Required for statistics, ignored for history
+        logging_style: Optional for history, defaults to 'repeats'
+    
+    Returns JSON with:
+        exists: bool - Whether cache exists
+        built_at: str - ISO format timestamp when cache was built (or None)
+        is_stale: bool - Whether cache is considered stale
+        is_refreshing: bool - Whether a refresh is currently in progress
+        recently_built: bool - Whether cache was built in the last 30 seconds
+    """
+    cache_type = request.GET.get("cache_type")
+    if cache_type not in ("history", "statistics"):
+        return JsonResponse({"error": "Invalid cache_type. Must be 'history' or 'statistics'"}, status=400)
+    
+    if cache_type == "history":
+        logging_style = request.GET.get("logging_style", "repeats")
+        cache_entry = cache.get(history_cache._cache_key(request.user.id, logging_style))
+        refresh_lock = cache.get(history_cache._refresh_lock_key(request.user.id, logging_style))
+        
+        if cache_entry:
+            built_at = cache_entry.get("built_at")
+            is_stale = False
+            recently_built = False
+            if built_at:
+                age = timezone.now() - built_at
+                is_stale = age > history_cache.HISTORY_STALE_AFTER
+                # Consider cache "recently built" if it was built in the last 60 seconds
+                # This helps catch refreshes that completed just before or during page load
+                recently_built = age < timedelta(seconds=60)
+            
+            return JsonResponse({
+                "exists": True,
+                "built_at": built_at.isoformat() if built_at else None,
+                "is_stale": is_stale,
+                "is_refreshing": refresh_lock is not None,
+                "recently_built": recently_built,
+            })
+        else:
+            return JsonResponse({
+                "exists": False,
+                "built_at": None,
+                "is_stale": False,
+                "is_refreshing": refresh_lock is not None,
+                "recently_built": False,
+            })
+    
+    elif cache_type == "statistics":
+        range_name = request.GET.get("range_name")
+        if not range_name:
+            return JsonResponse({"error": "range_name is required for statistics cache"}, status=400)
+        
+        if range_name not in statistics_cache.PREDEFINED_RANGES:
+            return JsonResponse({
+                "exists": False,
+                "built_at": None,
+                "is_stale": False,
+                "is_refreshing": False,
+                "recently_built": False,
+            })
+        
+        cache_entry = cache.get(statistics_cache._cache_key(request.user.id, range_name))
+        refresh_lock = cache.get(statistics_cache._refresh_lock_key(request.user.id, range_name))
+        
+        if cache_entry:
+            built_at = cache_entry.get("built_at")
+            is_stale = False
+            recently_built = False
+            if built_at:
+                age = timezone.now() - built_at
+                is_stale = age > statistics_cache.STATISTICS_STALE_AFTER
+                # Consider cache "recently built" if it was built in the last 60 seconds
+                # This helps catch refreshes that completed just before or during page load
+                recently_built = age < timedelta(seconds=60)
+            
+            return JsonResponse({
+                "exists": True,
+                "built_at": built_at.isoformat() if built_at else None,
+                "is_stale": is_stale,
+                "is_refreshing": refresh_lock is not None,
+                "recently_built": recently_built,
+            })
+        else:
+            return JsonResponse({
+                "exists": False,
+                "built_at": None,
+                "is_stale": False,
+                "is_refreshing": refresh_lock is not None,
+                "recently_built": False,
+            })
+
+
+@require_GET
 def service_worker(request):
     """Serve the service worker file from static files."""
     sw_path = Path(settings.STATICFILES_DIRS[0]) / "js" / "serviceworker.js"
