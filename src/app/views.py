@@ -2487,6 +2487,7 @@ def statistics(request):
             "user": request.user,
             "start_date": start_date,
             "end_date": end_date,
+            "selected_range_name": selected_range_name,
             "media_count": statistics_data["media_count"],
             "activity_data": statistics_data["activity_data"],
             "media_type_distribution": statistics_data["media_type_distribution"],
@@ -2617,10 +2618,20 @@ def cache_status(request):
                 "is_stale": False,
                 "is_refreshing": False,
                 "recently_built": False,
+                "any_range_refreshing": False,
             })
         
         cache_entry = cache.get(statistics_cache._cache_key(request.user.id, range_name))
         refresh_lock = cache.get(statistics_cache._refresh_lock_key(request.user.id, range_name))
+        
+        # Check if ANY statistics range is still refreshing
+        # This helps determine when all ranges are done
+        any_range_refreshing = False
+        for check_range in statistics_cache.PREDEFINED_RANGES:
+            check_lock = cache.get(statistics_cache._refresh_lock_key(request.user.id, check_range))
+            if check_lock is not None:
+                any_range_refreshing = True
+                break
         
         if cache_entry:
             built_at = cache_entry.get("built_at")
@@ -2639,6 +2650,7 @@ def cache_status(request):
                 "is_stale": is_stale,
                 "is_refreshing": refresh_lock is not None,
                 "recently_built": recently_built,
+                "any_range_refreshing": any_range_refreshing,
             })
         else:
             return JsonResponse({
@@ -2647,6 +2659,7 @@ def cache_status(request):
                 "is_stale": False,
                 "is_refreshing": refresh_lock is not None,
                 "recently_built": False,
+                "any_range_refreshing": any_range_refreshing,
             })
 
 

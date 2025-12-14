@@ -143,6 +143,29 @@ def build_statistics_data(user, start_date, end_date):
     }
 
 
+def _get_empty_statistics_data():
+    """Return an empty statistics data structure with all required keys.
+    
+    Used when cache is missing and refresh is in progress to avoid
+    expensive inline rebuilds that cause page load delays.
+    """
+    return {
+        "media_count": {"total": 0},
+        "activity_data": [],
+        "media_type_distribution": {},
+        "score_distribution": {},
+        "top_rated": [],
+        "top_played": [],
+        "status_distribution": {},
+        "status_pie_chart_data": {},
+        "hours_per_media_type": {},
+        "tv_consumption": {},
+        "movie_consumption": {},
+        "music_consumption": {},
+        "daily_hours_by_media_type": {},
+    }
+
+
 def cache_statistics_data(user_id: int, range_name: str, data: dict):
     """Persist the statistics data in cache."""
     cache_key = _cache_key(user_id, range_name)
@@ -191,10 +214,11 @@ def get_statistics_data(user, start_date, end_date, range_name=None):
     # Cache miss - check if refresh is in progress
     refresh_lock = cache.get(_refresh_lock_key(user.id, range_name))
     if refresh_lock is not None:
-        # Refresh is in progress, return empty data structure
+        # Refresh is in progress, return minimal empty data structure
         # Frontend will poll and update when refresh completes
-        logger.debug("Statistics cache miss but refresh in progress for user %s, range %s, returning empty", user.id, range_name)
-        return build_statistics_data(user, start_date, end_date)  # Return empty structure with all keys
+        # Don't build full statistics here - that's expensive and causes delays
+        logger.debug("Statistics cache miss but refresh in progress for user %s, range %s, returning empty structure", user.id, range_name)
+        return _get_empty_statistics_data()
 
     # No cache and no refresh in progress - build inline
     # This handles the case where cache was never built or expired naturally
@@ -301,8 +325,16 @@ def schedule_statistics_refresh(user_id: int, range_name: str, debounce_seconds:
         return False
     
     lock_key = _refresh_lock_key(user_id, range_name)
+    # Use a longer TTL (5 minutes) to ensure lock exists for entire task duration
+    # The lock is deleted when task completes, but we need it to last longer than
+    # the longest possible task execution time
+    lock_ttl = 300  # 5 minutes should be more than enough for any statistics task
     if debounce_seconds and not cache.add(lock_key, True, debounce_seconds):
         return False
+    
+    # Extend the lock TTL to cover the full task duration
+    # This ensures the lock exists even if the task takes longer than debounce_seconds
+    cache.set(lock_key, True, lock_ttl)
 
     try:
         from app.tasks import refresh_statistics_cache_task
@@ -343,7 +375,11 @@ def schedule_all_ranges_refresh(user_id: int, debounce_seconds: int = 30, countd
     # This prevents history from getting mixed in with the other predefined ranges
     all_time_range = "All Time"
     all_time_lock_key = _refresh_lock_key(user_id, all_time_range)
-    cache.add(all_time_lock_key, True, debounce_seconds)
+    # Use a longer TTL (5 minutes) to ensure lock exists for entire task duration
+    lock_ttl = 300  # 5 minutes should be more than enough for any statistics task
+    if cache.add(all_time_lock_key, True, debounce_seconds):
+        # Extend the lock TTL to cover the full task duration
+        cache.set(all_time_lock_key, True, lock_ttl)
     
     try:
         from app.tasks import refresh_statistics_cache_task
@@ -369,7 +405,9 @@ def schedule_all_ranges_refresh(user_id: int, debounce_seconds: int = 30, countd
         
         lock_key = _refresh_lock_key(user_id, range_name)
         # Only add lock if not already present (allows parallel execution)
-        cache.add(lock_key, True, debounce_seconds)
+        # Use longer TTL to ensure lock exists for entire task duration
+        if cache.add(lock_key, True, debounce_seconds):
+            cache.set(lock_key, True, lock_ttl)
         
         try:
             from app.tasks import refresh_statistics_cache_task

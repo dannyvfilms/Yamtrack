@@ -74,8 +74,8 @@ def refresh_history_cache_on_episode_change(sender, instance, **kwargs):  # noqa
     user_id = getattr(getattr(instance, "related_season", None), "user_id", None)
     if user_id:
         schedule_history_refresh(user_id)
-        # Also invalidate statistics cache for all ranges
-        statistics_cache.invalidate_statistics_cache(user_id)
+        # Schedule statistics cache refresh but don't delete cache immediately
+        # This allows users to see old data with notification while refresh happens
         statistics_cache.schedule_all_ranges_refresh(user_id)
 
 
@@ -85,8 +85,8 @@ def refresh_history_cache_on_movie_change(sender, instance, **kwargs):  # noqa: 
     user_id = getattr(instance, "user_id", None)
     if user_id:
         schedule_history_refresh(user_id)
-        # Also invalidate statistics cache for all ranges
-        statistics_cache.invalidate_statistics_cache(user_id)
+        # Schedule statistics cache refresh but don't delete cache immediately
+        # This allows users to see old data with notification while refresh happens
         statistics_cache.schedule_all_ranges_refresh(user_id)
 
 
@@ -101,78 +101,110 @@ def refresh_history_cache_on_music_change(sender, instance, **kwargs):  # noqa: 
     if user_id:
         # Schedule refresh but don't delete cache - old data will show with notification
         schedule_history_refresh(user_id)
-        # Also invalidate statistics cache for all ranges
-        statistics_cache.invalidate_statistics_cache(user_id)
+        # Schedule statistics cache refresh but don't delete cache immediately
+        # This allows users to see old data with notification while refresh happens
         statistics_cache.schedule_all_ranges_refresh(user_id)
 
 
 @receiver([post_save, post_delete], sender=TV)
 def refresh_statistics_cache_on_tv_change(sender, instance, **kwargs):  # noqa: ARG001
-    """Invalidate and schedule statistics cache refresh when TV activity changes."""
+    """Schedule statistics cache refresh when TV activity changes.
+    
+    We schedule a refresh but don't delete the cache immediately,
+    so users can see the old data with a notification while refresh happens.
+    """
     user_id = getattr(instance, "user_id", None)
     if user_id:
-        statistics_cache.invalidate_statistics_cache(user_id)
+        # Schedule refresh but don't delete cache - old data will show with notification
         statistics_cache.schedule_all_ranges_refresh(user_id)
 
 
 @receiver([post_save, post_delete], sender=Season)
 def refresh_statistics_cache_on_season_change(sender, instance, **kwargs):  # noqa: ARG001
-    """Invalidate and schedule statistics cache refresh when season activity changes."""
+    """Schedule statistics cache refresh when season activity changes.
+    
+    We schedule a refresh but don't delete the cache immediately,
+    so users can see the old data with a notification while refresh happens.
+    """
     user_id = getattr(instance, "user_id", None)
     if user_id:
-        statistics_cache.invalidate_statistics_cache(user_id)
+        # Schedule refresh but don't delete cache - old data will show with notification
         statistics_cache.schedule_all_ranges_refresh(user_id)
 
 
 @receiver([post_save, post_delete], sender=Anime)
 def refresh_statistics_cache_on_anime_change(sender, instance, **kwargs):  # noqa: ARG001
-    """Invalidate and schedule statistics cache refresh when anime activity changes."""
+    """Schedule statistics cache refresh when anime activity changes.
+    
+    We schedule a refresh but don't delete the cache immediately,
+    so users can see the old data with a notification while refresh happens.
+    """
     user_id = getattr(instance, "user_id", None)
     if user_id:
-        statistics_cache.invalidate_statistics_cache(user_id)
+        # Schedule refresh but don't delete cache - old data will show with notification
         statistics_cache.schedule_all_ranges_refresh(user_id)
 
 
 @receiver([post_save, post_delete], sender=Manga)
 def refresh_statistics_cache_on_manga_change(sender, instance, **kwargs):  # noqa: ARG001
-    """Invalidate and schedule statistics cache refresh when manga activity changes."""
+    """Schedule statistics cache refresh when manga activity changes.
+    
+    We schedule a refresh but don't delete the cache immediately,
+    so users can see the old data with a notification while refresh happens.
+    """
     user_id = getattr(instance, "user_id", None)
     if user_id:
-        statistics_cache.invalidate_statistics_cache(user_id)
+        # Schedule refresh but don't delete cache - old data will show with notification
         statistics_cache.schedule_all_ranges_refresh(user_id)
 
 
 @receiver([post_save, post_delete], sender=Book)
 def refresh_statistics_cache_on_book_change(sender, instance, **kwargs):  # noqa: ARG001
-    """Invalidate and schedule statistics cache refresh when book activity changes."""
+    """Schedule statistics cache refresh when book activity changes.
+    
+    We schedule a refresh but don't delete the cache immediately,
+    so users can see the old data with a notification while refresh happens.
+    """
     user_id = getattr(instance, "user_id", None)
     if user_id:
-        statistics_cache.invalidate_statistics_cache(user_id)
+        # Schedule refresh but don't delete cache - old data will show with notification
         statistics_cache.schedule_all_ranges_refresh(user_id)
 
 
 @receiver([post_save, post_delete], sender=Comic)
 def refresh_statistics_cache_on_comic_change(sender, instance, **kwargs):  # noqa: ARG001
-    """Invalidate and schedule statistics cache refresh when comic activity changes."""
+    """Schedule statistics cache refresh when comic activity changes.
+    
+    We schedule a refresh but don't delete the cache immediately,
+    so users can see the old data with a notification while refresh happens.
+    """
     user_id = getattr(instance, "user_id", None)
     if user_id:
-        statistics_cache.invalidate_statistics_cache(user_id)
+        # Schedule refresh but don't delete cache - old data will show with notification
         statistics_cache.schedule_all_ranges_refresh(user_id)
 
 
 @receiver([post_save, post_delete], sender=Game)
 def refresh_statistics_cache_on_game_change(sender, instance, **kwargs):  # noqa: ARG001
-    """Invalidate and schedule statistics cache refresh when game activity changes."""
+    """Schedule statistics cache refresh when game activity changes.
+    
+    We schedule a refresh but don't delete the cache immediately,
+    so users can see the old data with a notification while refresh happens.
+    """
     user_id = getattr(instance, "user_id", None)
     if user_id:
-        statistics_cache.invalidate_statistics_cache(user_id)
+        # Schedule refresh but don't delete cache - old data will show with notification
         statistics_cache.schedule_all_ranges_refresh(user_id)
 
 
 @receiver([post_save, post_delete], sender=BoardGame)
 def refresh_statistics_cache_on_boardgame_change(sender, instance, **kwargs):  # noqa: ARG001
-    """Invalidate and schedule statistics cache refresh when board game activity changes."""
+    """Schedule statistics cache refresh when board game activity changes.
+    
+    We schedule a refresh but don't delete the cache immediately,
+    so users can see the old data with a notification while refresh happens.
+    """
     user_id = getattr(instance, "user_id", None)
     if user_id:
-        statistics_cache.invalidate_statistics_cache(user_id)
+        # Schedule refresh but don't delete cache - old data will show with notification
         statistics_cache.schedule_all_ranges_refresh(user_id)

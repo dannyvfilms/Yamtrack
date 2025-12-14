@@ -87,6 +87,7 @@ class CacheUpdater {
                 is_stale: data.is_stale,
                 is_refreshing: data.is_refreshing,
                 recently_built: data.recently_built,
+                any_range_refreshing: data.any_range_refreshing,
                 wasRefreshing: this.wasRefreshing
             });
 
@@ -102,11 +103,18 @@ class CacheUpdater {
             // 1. Refresh completed during polling (refreshJustCompleted = true)
             // 2. We were waiting for refresh and now it's done (wasRefreshingBefore && !is_refreshing && exists && !stale)
             // 
+            // For statistics: Also check if any other ranges are still refreshing.
+            // Only reload when current range is done AND all ranges are done.
             // Note: We do NOT check recently_built here because if the cache was recently built
             // but we weren't waiting for it (wasRefreshingBefore = false), we shouldn't reload.
             // That would cause an infinite reload loop when the page loads after a refresh completes.
-            const shouldUpdate = refreshJustCompleted ||
+            const currentRangeDone = refreshJustCompleted ||
                 (wasRefreshingBefore && !data.is_refreshing && data.exists && !data.is_stale);
+
+            // For statistics, wait until all ranges are done before reloading
+            // For history, reload as soon as current cache is done
+            const shouldUpdate = currentRangeDone &&
+                (this.cacheType !== 'statistics' || !data.any_range_refreshing);
 
             if (shouldUpdate) {
                 console.log('CacheUpdater: Refresh completed, updating page', {
@@ -115,8 +123,10 @@ class CacheUpdater {
                     exists: data.exists,
                     is_stale: data.is_stale,
                     is_refreshing: data.is_refreshing,
+                    any_range_refreshing: data.any_range_refreshing,
                     wasRefreshingBefore,
                     wasRefreshing: this.wasRefreshing,
+                    currentRangeDone,
                     shouldUpdate
                 });
                 this.stop();
@@ -138,17 +148,26 @@ class CacheUpdater {
                 this.pollTimer = setTimeout(() => this.poll(), this.pollInterval);
             } else if (data.exists && !data.is_stale && !data.is_refreshing) {
                 // Cache exists, is fresh, and not refreshing
-                // If we were waiting for a refresh, we should have caught it above
-                // Otherwise, nothing to do
-                console.log('CacheUpdater: Cache is fresh and not refreshing, stopping', {
-                    wasRefreshingBefore,
-                    exists: data.exists,
-                    is_stale: data.is_stale,
-                    is_refreshing: data.is_refreshing
-                });
-                this.stop();
-                if (this.onRefreshCompleteCallback) {
-                    this.onRefreshCompleteCallback(true, 'complete');
+                // For statistics: if other ranges are still refreshing, continue polling
+                if (this.cacheType === 'statistics' && data.any_range_refreshing) {
+                    console.log('CacheUpdater: Current range done but other ranges still refreshing, continuing to poll', {
+                        any_range_refreshing: data.any_range_refreshing
+                    });
+                    this.pollTimer = setTimeout(() => this.poll(), this.pollInterval);
+                } else {
+                    // If we were waiting for a refresh, we should have caught it above
+                    // Otherwise, nothing to do
+                    console.log('CacheUpdater: Cache is fresh and not refreshing, stopping', {
+                        wasRefreshingBefore,
+                        exists: data.exists,
+                        is_stale: data.is_stale,
+                        is_refreshing: data.is_refreshing,
+                        any_range_refreshing: data.any_range_refreshing
+                    });
+                    this.stop();
+                    if (this.onRefreshCompleteCallback) {
+                        this.onRefreshCompleteCallback(true, 'complete');
+                    }
                 }
             } else if (data.exists && data.is_stale) {
                 // Cache exists but is stale - continue polling in case refresh starts
