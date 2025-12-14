@@ -278,7 +278,7 @@
 
     <div class="space-y-8">
       <!-- Statistics Cards -->
-      <div class="grid grid-cols-2 gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-4 sm:mb-8">
+      <div class="grid grid-cols-2 gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-2 sm:mb-4">
         <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 flex items-center min-w-0">
           <div class="bg-indigo-600/20 p-3 sm:p-4 rounded-full mr-4">
             <svg xmlns="http://www.w3.org/2000/svg"
@@ -456,8 +456,8 @@
       
     <!-- Copied: Score Distribution by Media Type (placed under Activity History) -->
     {% if user.activity_history_view != 'heatmap' %}
-    <div id="scoreCopyWrapper" class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 stat-scroll-safe mt-4">
-        <h2 class="text-xl font-semibold mb-3 sm:mb-4 text-center">Played Hours by Media Type</h2>
+    <div id="scoreCopyWrapper" class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 stat-scroll-safe mt-0">
+      <h2 class="text-xl font-semibold mb-3 sm:mb-4 text-center">Played Hours by Media Type</h2>
 
         {% if daily_hours_by_media_type.labels and daily_hours_by_media_type.datasets %}
           <div class="flex justify-center items-stretch min-h-[320px] sm:min-h-[380px]" id="scoreCopyCanvasWrapper">
