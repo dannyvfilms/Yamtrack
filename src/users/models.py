@@ -382,6 +382,29 @@ class User(AbstractUser):
         choices=MediaStatusChoices.choices,
     )
 
+    # Podcast preferences
+    podcast_enabled = models.BooleanField(default=True)
+    podcast_layout = models.CharField(
+        max_length=20,
+        default=LayoutChoices.GRID,
+        choices=LayoutChoices.choices,
+    )
+    podcast_direction = models.CharField(
+        max_length=4,
+        default=DirectionChoices.DESC,
+        choices=DirectionChoices.choices,
+    )
+    podcast_sort = models.CharField(
+        max_length=20,
+        default=MediaSortChoices.TITLE,
+        choices=MediaSortChoices.choices,
+    )
+    podcast_status = models.CharField(
+        max_length=20,
+        default=MediaStatusChoices.ALL,
+        choices=MediaStatusChoices.choices,
+    )
+
     # UI preferences
     clickable_media_cards = models.BooleanField(
         default=False,
@@ -661,6 +684,22 @@ class User(AbstractUser):
                 name="music_status_valid",
                 condition=models.Q(music_status__in=MediaStatusChoices.values),
             ),
+            models.CheckConstraint(
+                name="podcast_layout_valid",
+                condition=models.Q(podcast_layout__in=LayoutChoices.values),
+            ),
+            models.CheckConstraint(
+                name="podcast_sort_valid",
+                condition=models.Q(podcast_sort__in=MediaSortChoices.values),
+            ),
+            models.CheckConstraint(
+                name="podcast_direction_valid",
+                condition=models.Q(podcast_direction__in=DirectionChoices.values),
+            ),
+            models.CheckConstraint(
+                name="podcast_status_valid",
+                condition=models.Q(podcast_status__in=MediaStatusChoices.values),
+            ),
         ]
 
     def update_preference(self, field_name, new_value):
@@ -762,6 +801,7 @@ class User(AbstractUser):
         "imdb": "Import from IMDB",
         "goodreads": "Import from GoodReads",
         "plex": "Import from Plex",
+        "pocketcasts": "Import from Pocket Casts (Recurring)",
     }
 
         # Reverse mapping to get source from task name
@@ -794,7 +834,8 @@ class User(AbstractUser):
             )
 
         # Get periodic tasks with their crontab schedules
-        periodic_tasks_filter_text = f'"user_id": {self.id},'
+        # Match both "user_id": X, (with comma) and "user_id": X} (without comma, last field)
+        periodic_tasks_filter_text = f'"user_id": {self.id}'
         periodic_tasks = PeriodicTask.objects.filter(
             task__in=import_tasks.values(),
             kwargs__contains=periodic_tasks_filter_text,
@@ -805,11 +846,22 @@ class User(AbstractUser):
         schedules = []
         for periodic_task in periodic_tasks:
             source = task_to_source.get(periodic_task.task, "unknown")
+            
+            # Skip if source is unknown (task not in our mapping)
+            if source == "unknown":
+                continue
 
             # Extract username from task name if available
             username = ""
             if " for " in periodic_task.name:
-                username = periodic_task.name.split(" for ")[1].split(" at ")[0]
+                # Handle both " at " and " (every" patterns
+                username_part = periodic_task.name.split(" for ")[1]
+                if " at " in username_part:
+                    username = username_part.split(" at ")[0]
+                elif " (every" in username_part:
+                    username = username_part.split(" (every")[0]
+                else:
+                    username = username_part
 
             schedule_info = helpers.get_next_run_info(periodic_task)
             if schedule_info:

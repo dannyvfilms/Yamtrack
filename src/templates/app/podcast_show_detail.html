@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% load app_tags %}
+{% load user_tags %}
+{% load humanize %}
+
+{% block title %}
+  {{ show.title }} - Yamtrack
+{% endblock title %}
+
+{% block content %}
+  {# Top section - Hero layout matching TV Show page exactly #}
+  <div class="flex flex-col md:flex-row gap-8 md:gap-10 mb-12 md:mb-8">
+    <div class="w-full md:w-1/4 max-w-[250px] mx-auto md:mx-0">
+      {# Show image #}
+      {% if show.image and show.image != IMG_NONE %}
+        <img alt="{{ show.title }}"
+             class="w-full rounded-lg shadow-lg bg-[#2a2f35] object-cover"
+             src="{{ show.image }}">
+      {% else %}
+        <div class="w-full aspect-square rounded-lg shadow-lg bg-[#2a2f35] flex items-center justify-center">
+          {% include "app/icons/microphone.svg" with classes="w-24 h-24 text-gray-500" %}
+        </div>
+      {% endif %}
+
+      {# Primary CTA button - same as TV shows with track modal #}
+      <div x-data="{ trackOpen: false }">
+        <button class="mt-4 p-3 rounded-lg w-full flex items-center text-white transition duration-300 cursor-pointer {% if tracker %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}"
+                hx-get="{% url 'podcast_show_track_modal' show.id %}"
+                hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
+                hx-target="#podcast-show-track-modal"
+                hx-trigger="click"
+                @click="trackOpen = true">
+          <div class="flex-1 text-center font-medium">
+            {% if tracker %}
+              {{ tracker.status_readable }}
+            {% else %}
+              Add to Library
+            {% endif %}
+          </div>
+          <div class="h-5 mx-2 border-l border-white/30"></div>
+          {% include "app/icons/edit.svg" with classes="w-5 h-5 shrink-0" %}
+        </button>
+
+        {# Track Modal #}
+        <div x-show="trackOpen"
+             @keydown.escape.window="trackOpen = false"
+             class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div class="w-152 max-h-[90vh] px-4 md:px-0 relative z-60"
+               @click.outside="trackOpen = false"
+               @click.stop>
+            <div id="podcast-show-track-modal"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# Show details - Right side of hero, left-aligned like TV #}
+    <div class="md:w-3/4">
+      <h1 class="text-3xl font-bold mb-4 text-center md:text-start">{{ show.title }}</h1>
+
+      {% if show.author %}
+        <p class="text-gray-400 mb-4 text-center md:text-start">by {{ show.author }}</p>
+      {% endif %}
+
+      {# Stats cards #}
+      <div class="flex flex-wrap gap-4 mb-6">
+        <div class="bg-[#2a2f35] p-3 rounded-lg">
+          <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">EPISODES</h3>
+          <div class="text-lg font-bold text-white text-center">{{ total_episodes }}</div>
+        </div>
+        <div class="bg-[#2a2f35] p-3 rounded-lg">
+          <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">LISTENED</h3>
+          <div class="text-lg font-bold text-white text-center">{{ total_listened }}</div>
+        </div>
+        {% if total_minutes %}
+          <div class="bg-[#2a2f35] p-3 rounded-lg">
+            <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">TIME</h3>
+            <div class="text-lg font-bold text-white text-center">{{ total_minutes|intcomma }}m</div>
+          </div>
+        {% endif %}
+        {% if tracker and tracker.score %}
+          <div class="bg-[#2a2f35] p-3 rounded-lg">
+            <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">YOUR SCORE</h3>
+            <div class="flex items-center justify-center">
+              {% include "app/icons/star.svg" with classes="w-5 h-5 mr-1.5 text-yellow-400 fill-yellow-400" %}
+              <span class="text-lg font-bold text-white">{{ tracker.score|floatformat:1 }}</span><span class="text-gray-400 ml-0.5 text-sm">/10</span>
+            </div>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {# Episodes list #}
+  <div class="mb-8">
+    <h2 class="text-2xl font-bold mb-4">Episodes</h2>
+    <div class="bg-[#2a2f35] rounded-lg overflow-hidden">
+      <div class="divide-y divide-gray-700">
+        {% for episode in episodes %}
+          <div class="p-4 hover:bg-[#39404b] transition-colors">
+            <div class="flex items-center justify-between">
+              <div class="flex-1">
+                <h3 class="text-lg font-semibold text-white mb-1">{{ episode.title }}</h3>
+                {% if episode.published %}
+                  <p class="text-sm text-gray-400">{{ episode.published|date:"M d, Y" }}</p>
+                {% endif %}
+                {% if episode.duration %}
+                  <p class="text-sm text-gray-400">{{ episode.duration_formatted }}</p>
+                {% endif %}
+              </div>
+              {% for user_podcast in user_podcasts %}
+                {% if user_podcast.episode_id == episode.id %}
+                  <div class="ml-4">
+                    <span class="px-2 py-1 bg-indigo-600 text-white text-xs rounded">
+                      {{ user_podcast.status|media_status_readable }}
+                    </span>
+                  </div>
+                {% endif %}
+              {% endfor %}
+            </div>
+          </div>
+        {% empty %}
+          <div class="p-8 text-center text-gray-400">
+            <p>No episodes found for this show.</p>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+{% endblock content %}

@@ -220,6 +220,14 @@ def get_media_metadata(
         MediaTypes.COMIC.value: lambda: comicvine.comic(media_id),
         MediaTypes.BOARDGAME.value: lambda: bgg.metadata(media_id),
         MediaTypes.MUSIC.value: lambda: musicbrainz.recording(media_id),
+        MediaTypes.PODCAST.value: lambda s=source: {
+            "max_progress": None,  # Podcasts use runtime_minutes from Item, not external metadata
+            "title": "",
+            "image": "",
+            "related": {},
+            "details": {},
+            "source": s,  # Add source to fix KeyError in template tag
+        },
     }
     if media_type == MediaTypes.MUSIC.value:
         if not media_id or len(str(media_id)) < 30:

@@ -32,10 +32,12 @@ Container for music artists. Not a Media subclass.
 ```python
 class Artist(models.Model):
     name = models.CharField(max_length=255)
-    sort_name = models.CharField(max_length=255)
-    musicbrainz_id = models.CharField(max_length=36, unique=True, null=True)
-    image = models.URLField()  # Wikipedia photo
-    discography_synced_at = models.DateTimeField(null=True)  # When albums were fetched
+    sort_name = models.CharField(max_length=255, blank=True, default="")
+    musicbrainz_id = models.CharField(max_length=36, unique=True, null=True, blank=True)
+    image = models.URLField(blank=True, default="")  # Wikipedia photo
+    country = models.CharField(max_length=5, blank=True, default="")  # ISO country code
+    genres = models.JSONField(default=list, blank=True)  # Top genres/tags from MusicBrainz
+    discography_synced_at = models.DateTimeField(null=True, blank=True)  # When albums were fetched
 ```
 
 #### Album
@@ -44,13 +46,14 @@ Container for albums. Not a Media subclass.
 ```python
 class Album(models.Model):
     title = models.CharField(max_length=255)
-    musicbrainz_release_id = models.CharField(max_length=36, null=True)  # Specific release
-    musicbrainz_release_group_id = models.CharField(max_length=36, null=True)  # Release group
-    artist = models.ForeignKey(Artist, related_name="albums")
-    release_date = models.DateField(null=True)
-    image = models.URLField()  # Cover art from Cover Art Archive
-    release_type = models.CharField()  # "Album", "EP", "Compilation", etc.
-    tracks_populated = models.BooleanField()  # Whether Track rows exist
+    musicbrainz_release_id = models.CharField(max_length=36, null=True, blank=True)  # Specific release
+    musicbrainz_release_group_id = models.CharField(max_length=36, null=True, blank=True)  # Release group
+    artist = models.ForeignKey(Artist, related_name="albums", null=True, blank=True)
+    release_date = models.DateField(null=True, blank=True)
+    image = models.URLField(blank=True, default="")  # Cover art from Cover Art Archive
+    release_type = models.CharField(max_length=50, blank=True, default="")  # "Album", "EP", "Compilation", etc.
+    genres = models.JSONField(default=list, blank=True)  # Genres/tags from release metadata
+    tracks_populated = models.BooleanField(default=False)  # Whether Track rows exist
 ```
 
 #### Track
@@ -64,6 +67,7 @@ class Track(models.Model):
     track_number = models.PositiveIntegerField(null=True)
     disc_number = models.PositiveIntegerField(default=1)
     duration_ms = models.PositiveIntegerField(null=True)
+    genres = models.JSONField(default=list, blank=True)
     
     @property
     def duration_formatted(self):
@@ -91,11 +95,13 @@ Per-user tracking for artists (like TV show tracking).
 class ArtistTracker(models.Model):
     user = models.ForeignKey(User, related_name="artist_trackers")
     artist = models.ForeignKey(Artist, related_name="trackers")
-    status = models.CharField(choices=Status.choices)  # In Progress, Completed, etc.
-    score = models.DecimalField(max_digits=3, decimal_places=1)  # 0-10
+    status = models.CharField(choices=Status.choices, default=Status.IN_PROGRESS.value)  # In Progress, Completed, etc.
+    score = models.DecimalField(max_digits=3, decimal_places=1, null=True, blank=True)  # 0-10
     start_date = models.DateTimeField(null=True)
     end_date = models.DateTimeField(null=True)
-    notes = models.TextField()
+    notes = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 ```
 
 #### AlbumTracker
@@ -105,12 +111,16 @@ Per-user tracking for albums (like Season tracking).
 class AlbumTracker(models.Model):
     user = models.ForeignKey(User, related_name="album_trackers")
     album = models.ForeignKey(Album, related_name="trackers")
-    status = models.CharField(choices=Status.choices)
-    score = models.DecimalField(max_digits=3, decimal_places=1)
+    status = models.CharField(choices=Status.choices, default=Status.IN_PROGRESS.value)
+    score = models.DecimalField(max_digits=3, decimal_places=1, null=True, blank=True)
     start_date = models.DateTimeField(null=True)
     end_date = models.DateTimeField(null=True)
-    notes = models.TextField()
+    notes = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 ```
+
+Trackers are unique per user+artist/album (single tracker per target), default to `In Progress`, and mirror Media fields (status, score, start/end dates, notes).
 
 ### Enums
 
@@ -128,6 +138,7 @@ class MediaTypes(models.TextChoices):
 # Per-user music settings
 music_enabled = models.BooleanField(default=True)
 music_layout = models.CharField(default="grid", choices=LAYOUT_CHOICES)
+music_direction = models.CharField(default="desc", choices=DIRECTION_CHOICES)
 music_sort = models.CharField(default="title", choices=SORT_CHOICES)
 music_status = models.CharField(default="all", choices=STATUS_CHOICES)
 ```
@@ -186,6 +197,17 @@ def recording(media_id):
     """Get detailed track metadata."""
     # Fetches /recording/{id} with inc=releases+artists
     # Returns: title, artist, album, duration, release_date, image
+
+def get_release_for_group(release_group_id):
+    """Get a representative release for a release group."""
+    # Fetches /release filtered by release-group
+    # Used to fill in release_date and cover art when only group MBID is known
+
+def get_release(release_id, skip_cover_art=False):
+    """Get detailed release metadata (album-level)."""
+    # Fetches /release/{id} with inc=recordings+artists
+    # Returns: title, artist, release_date, release_type, image, tracklist (optional)
+    # skip_cover_art avoids cover art calls when hydrating many releases
 ```
 
 #### Cover Art Functions
@@ -209,7 +231,11 @@ def _get_cover_art(release_id):
 def get_wikipedia_data(title):
     """Fetch Wikipedia bio and image."""
     # Uses Wikipedia REST API: /api/rest_v1/page/summary/{title}
+    # Caches hits for 7 days and misses for 1 day
     # Returns: extract (bio text), image (photo URL)
+
+def get_wikipedia_extract(title):
+    """Legacy wrapper returning only the extract string."""
 ```
 
 ### Wikipedia Bio Strategy
@@ -245,11 +271,34 @@ def populate_album_tracks(album: Album) -> int:
     # Creates Track rows with title, number, duration
 ```
 
+### Metadata helpers & MBID resolution
+
+- `resolve_artist_mbid(name, sort_name=None)`: safe MusicBrainz lookup with multiple search variants; used to attach MBIDs to existing artists during enrichment.
+- `resolve_album_mbid(album_title, artist_name=None)`: resolves release and release-group IDs while preferring album/EP/compilation types.
+- `merge_artist_records(source, target)`: re-homes albums, trackers, and music rows into the canonical artist when MBIDs collide.
+- `get_artist_hero_image(artist)`: picks the best hero image (Wikipedia > album art fallback) for detail pages.
+- `refresh_album_cover_art` / `refresh_missing_album_covers`: fetch cover art from Cover Art Archive when MBIDs are present.
+- `ensure_album_has_release_id` / `album_has_musicbrainz_id`: guard helpers used in views/enrichment before API calls.
+
+### Linkage/backfill helpers
+
+- `link_music_to_tracks(user, limit=None)`: connect `Music` rows to `Track` models via MBIDs, track numbers, or normalized titles.
+- `backfill_music_runtimes(user, limit=None)`: set `Item.runtime_minutes` from linked track durations (or album tracklist matches when only recording IDs exist).
+- `fix_music_album_links(user, limit=None)`: move `Music` rows onto canonical albums after dedupe/MBID attachment.
+
+### Library enrichment tasks & validation
+
+- `enrich_music_library_task(user_id)`: post-import job that attaches artist MBIDs, syncs discographies, dedupes albums, populates tracks, prefetches covers (respecting `MUSIC_DEFER_COVER_PREFETCH`), and backfills runtimes.
+- `enrich_albums_task(user_id)`: resolves album MBIDs for user-linked albums, populates tracklists, links `Music` to `Track`, and fills runtimes.
+- `populate_album_tracks_batch` / `prefetch_album_covers_batch`: batch tasks to hydrate tracks/covers for many albums after imports or scrobbles.
+- Validation: `manage.py validate_music_library` (powered by `app/services/music_validation.py`) reports coverage metrics (MBIDs, track links, runtimes, missing metadata) for a user’s music library.
+
 ### Playback / Scrobble Pipeline (`src/app/services/music_scrobble.py`)
 
-- Webhooks (Plex/Jellyfin/Emby) translate music payloads into `MusicPlaybackEvent` and call `record_music_playback`.
+- **Plex webhooks** translate music payloads into `MusicPlaybackEvent` and call `record_music_playback`. Jellyfin and Emby webhooks do not currently support music (only TV and Movie).
+- Plex imports (`src/integrations/imports/plex.py`) can also import music history with `defer_cover_prefetch=True` for faster batch processing.
 - Plays (`media.play`) only update existing Music rows; scrobbles (`media.scrobble`) create or advance progress/history.
-- Metadata resolution prefers MBIDs (recording/release/release-group/artist) and falls back to MusicBrainz search; mismatched MBIDs are dropped to avoid hijacking the wrong artist/album/track.
+- Metadata resolution prefers MBIDs (recording/release/release-group/artist) and falls back to MusicBrainz search; payload validation drops mismatched MBIDs to avoid hijacking the wrong artist/album/track.
 - Healing on scrobble:
   - Attaches artist MBID when found and triggers discography sync.
   - Dedupes albums/tracks by normalized title and re-homes trackers and Music rows to the canonical records.
@@ -276,9 +325,10 @@ def prefetch_album_covers(artist: Artist, limit: int = 20):
 @require_GET
 def artist_detail(request, artist_id):
     """Artist detail page (like TV show detail)."""
-    # Syncs discography if needed
+    # Attaches missing MBIDs/merges duplicates, then syncs discography if needed
     # Gets Wikipedia bio/image
     # Calculates play counts per album
+    # Dedupes albums and kicks off HTMX cover prefetch in the background
     # Shows ArtistTracker modal for tracking
 
 @require_GET
@@ -295,8 +345,10 @@ def prefetch_artist_covers(request, artist_id):
 @require_GET
 def album_detail(request, album_id):
     """Album detail page (like Season detail)."""
-    # Populates tracks if needed
+    # Heals incomplete albums by attaching release/group IDs and deduping to canonical album
+    # Populates tracks if needed (release->release-group fallback)
     # Shows track list with play status
+    # Links user Music rows to Track rows for listen counts/history chips
     # AlbumTracker modal for album tracking
 ```
 
@@ -348,6 +400,12 @@ def create_artist_from_search(request, artist_mbid):
 def create_album_from_search(request, release_mbid):
     """Create Album from MusicBrainz release ID."""
 ```
+
+### Search View
+
+- `search` view renders `search_music.html` when `media_type=music`, calling `musicbrainz.search_combined` (artists + albums + tracks).
+- Page 1 shows top artists/albums plus tracks; page 2+ paginates tracks only. Creation buttons hit `create_artist_from_search` / `create_album_from_search`.
+- Cover art is skipped during search for speed and filled later when visiting detail pages.
 
 ## URL Patterns (`src/app/urls.py`)
 
@@ -421,6 +479,11 @@ When `is_artist_list=True`:
 - Uses `artist_grid_items.html` or `artist_table_items.html`
 - Mirrors TV show list behavior
 
+### Music Search (`src/templates/app/search_music.html`)
+
+- Dedicated layout for MusicBrainz combined search with sections for artists, albums, and tracks.
+- Uses creation buttons that call `create_artist_from_search` / `create_album_from_search`; cover art placeholders swap once details are visited.
+
 ## Forms (`src/app/forms.py`)
 
 ```python
@@ -452,8 +515,10 @@ Custom admin classes for music models:
 ## Statistics
 
 - Music is included in the global statistics rollups (`src/app/statistics.py`).
-- Genre/decade/country rollups come from album → artist metadata; country codes are expanded to full country names for display.
-- Durations use track runtime minutes when available; otherwise fall back to album/track duration heuristics.
+- `get_music_consumption_stats` computes minutes played (not hours), chart data, and top tracks/albums/artists from play history.
+- Genre/decade/country rollups come from album → artist metadata (track genres used as fallback); country codes are expanded to full country names for display.
+- Durations use track runtime minutes when available; otherwise fall back to album track matches or Item runtime. Minutes are multiplied by play count for aggregate time.
+- Statistics cache (`statistics_cache`) and history cache include music so stats/history pages stay fast.
 
 ## Performance Optimizations
 
@@ -475,8 +540,10 @@ Custom admin classes for music models:
 ## What's NOT Implemented (Future Phases)
 
 - Calendar events for album releases
-- Import/export for music library
+- Import/export for music library beyond Plex history import
 - Auto-pause for music playback
+- Jellyfin/Emby webhook support for music (only Plex webhooks currently support music)
+- Last.fm scrobbling support (mentioned in README as "to come")
 
 ## Checklist for Music-Related Changes
 

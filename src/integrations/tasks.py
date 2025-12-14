@@ -15,6 +15,7 @@ from integrations.imports import (
     imdb,
     kitsu,
     mal,
+    pocketcasts,
     plex,
     simkl,
     steam,
@@ -165,3 +166,15 @@ def import_goodreads(file, user_id, mode):
 def import_plex(library, user_id, mode, username=None):  # noqa: ARG001
     """Celery task for importing media data from Plex."""
     return import_media(plex.importer, library, user_id, mode)
+
+
+@shared_task(name="Import from Pocket Casts")
+def import_pocketcasts(user_id, mode="new"):
+    """Celery task for importing podcast history from Pocket Casts."""
+    return import_media(pocketcasts.importer, None, user_id, mode)
+
+
+@shared_task(name="Import from Pocket Casts (Recurring)")
+def import_pocketcasts_history(user_id):
+    """Recurring import task for Pocket Casts (called every 3 hours via Celery beat)."""
+    return import_pocketcasts.delay(user_id, mode="new")

@@ -150,6 +150,75 @@
           {% endif %}
         </div>
 
+        {# Pocket Casts #}
+        <div class="bg-[#39404b] p-4 rounded-lg space-y-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center">{% source_display "pocketcasts" %}</div>
+            {% if pocketcasts_account %}
+              <form method="post" action="{% url 'pocketcasts_disconnect' %}">
+                {% csrf_token %}
+                <button type="submit"
+                        class="px-2 py-1 text-xs rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/20 transition-colors cursor-pointer">
+                  Connected
+                </button>
+              </form>
+            {% else %}
+              <span class="px-2 py-1 text-xs rounded bg-gray-500/20 text-gray-300 border border-gray-600/50">Disconnected</span>
+            {% endif %}
+          </div>
+
+          {% if pocketcasts_account %}
+            <p class="text-sm text-gray-400">
+              Import podcasts every 3 hours (to estimate completion time)
+            </p>
+            
+            <div class="flex items-center gap-2 text-xs text-gray-400">
+              <span class="flex items-center gap-1">
+                <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                Connected and validated
+              </span>
+            </div>
+            
+            {% if pocketcasts_account.last_sync_at %}
+              <p class="text-xs text-gray-500">Last sync: {{ pocketcasts_account.last_sync_at|user_datetime_format:user }}</p>
+            {% endif %}
+            
+            <form method="post" action="{% url 'pocketcasts_disconnect' %}">
+              {% csrf_token %}
+              <button type="submit"
+                      class="w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer bg-red-600 text-white hover:bg-red-700">
+                Disconnect
+              </button>
+            </form>
+
+          {% else %}
+            <p class="text-sm text-gray-400 mb-3">
+              Import podcasts every 3 hours (to estimate completion time)
+            </p>
+            
+            <p class="text-xs text-gray-500 mb-3">
+              <a href="https://pocketcasts.com/history" target="_blank" class="text-indigo-400 hover:text-indigo-300 underline">Pocket Casts History page</a> → Developer Tools → Network → Find History Fetch → Headers → Authorization
+            </p>
+
+            <form method="post" action="{% url 'pocketcasts_connect' %}" class="space-y-3">
+              {% csrf_token %}
+              <div>
+                <label class="block text-sm text-gray-400 mb-2">Authorization (with or without "Bearer " prefix)</label>
+                <textarea name="access_token"
+                          rows="3"
+                          class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 font-mono text-xs"
+                          placeholder="Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9... or just the token"
+                          required></textarea>
+              </div>
+
+              <button type="submit"
+                      class="w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer bg-indigo-600 text-white hover:bg-indigo-700">
+                Connect Pocket Casts
+              </button>
+            </form>
+          {% endif %}
+        </div>
+
         {# Trakt #}
         <div class="bg-[#39404b] p-4 rounded-lg"
              x-data="{ usePrivateImport: false }">
@@ -510,7 +579,9 @@
               </form>
             </div>
             <div class="text-sm text-gray-400 space-y-1">
-              <div>Username: {{ periodic_import.username }}</div>
+              {% if periodic_import.username %}
+                <div>Username: {{ periodic_import.username }}</div>
+              {% endif %}
               <div>Mode: {{ periodic_import.mode }}</div>
               <div>Last Import: {{ periodic_import.last_run|user_datetime_format:user }}</div>
               <div>Next Import: {{ periodic_import.next_run|user_datetime_format:user }}</div>

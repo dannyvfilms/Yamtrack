@@ -470,12 +470,19 @@ def import_data(request):
 
             plex_sections = plex_account.sections or []
 
+    # Get Pocket Casts account
+    pocketcasts_account = getattr(request.user, "pocketcasts_account", None)
+    pocketcasts_connected = False
+    if pocketcasts_account and pocketcasts_account.is_connected:
+        pocketcasts_connected = True
+
     context = {
         "user": request.user,
         "import_tasks": import_tasks,
         "plex_account": plex_account if plex_connected else None,
         "plex_sections": plex_sections,
         "plex_error": plex_error,
+        "pocketcasts_account": pocketcasts_account if pocketcasts_connected else None,
     }
     return render(request, "users/import_data.html", context)
 

@@ -821,6 +821,17 @@ def calculate_minutes_per_media_type(user_media, start_date, end_date):
                 total_minutes += music_minutes
                 continue
 
+            if media_type == MediaTypes.PODCAST.value:
+                # Podcast: use progress (stored in minutes) or runtime_minutes
+                if hasattr(media, "item") and media.item.runtime_minutes:
+                    # Use runtime if available, otherwise use progress
+                    podcast_minutes = media.progress if media.progress > 0 else 0
+                    total_minutes += podcast_minutes
+                else:
+                    # Fallback: use progress (already in minutes)
+                    total_minutes += media.progress
+                continue
+
             if not _is_media_in_date_range(media, start_date, end_date):
                 continue
 

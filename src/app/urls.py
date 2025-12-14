@@ -158,4 +158,21 @@ urlpatterns = [
         views.create_album_from_search,
         name="create_album_from_search",
     ),
+    # Podcast show hierarchy navigation
+    path("podcast/show/<int:show_id>/", views.podcast_show_detail, name="podcast_show_detail"),
+    path(
+        "podcast/show/<int:show_id>/track_modal/",
+        views.podcast_show_track_modal,
+        name="podcast_show_track_modal",
+    ),
+    path(
+        "podcast/show/save/",
+        views.podcast_show_save,
+        name="podcast_show_save",
+    ),
+    path(
+        "podcast/show/delete/",
+        views.podcast_show_delete,
+        name="podcast_show_delete",
+    ),
 ]

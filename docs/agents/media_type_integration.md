@@ -57,7 +57,7 @@ This document explains how media types are defined and wired through the app so 
 ## Imports/exports, webhooks, automation
 - CSV export (`src/integrations/exports.py`) iterates `MediaTypes.values`; prefetch for TV/Season→Episode; game progress formatted hh:mm.
 - Imports (`src/integrations/imports/helpers.py` + source modules) loop over media types (skip season/episode) and expect concrete models per `media_type`. Overwrite mode deletes existing items by type/source. New types need an import handler to create items + trackers.
-- Webhooks (`src/integrations/webhooks/*.py`) handle TV/Movie with optional anime mapping; music scrobbles are ingested from Plex/Emby/Jellyfin and normalized via `music_scrobble.record_music_playback`. Unknown media types are ignored. Extend mapping/handlers for new types.
+- Webhooks (`src/integrations/webhooks/*.py`) handle TV/Movie with optional anime mapping; music scrobbles are currently only supported from Plex webhooks (not Jellyfin/Emby) and normalized via `music_scrobble.record_music_playback`. Unknown media types are ignored. Extend mapping/handlers for new types.
 - Auto-pause (`src/app/services/auto_pause.py` + `AUTO_PAUSE_MEDIA_TYPES` in `users/views.py`) covers game, movie, season, anime, manga, book, comic; extend maps for new types.
 
 ## Edge cases & special rules

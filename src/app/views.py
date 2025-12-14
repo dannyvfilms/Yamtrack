@@ -263,7 +263,85 @@ def media_list(request, media_type):
     }
     
     # For music, show tracked artists instead of individual tracks
+    # For podcasts, show tracked shows instead of individual episodes
     # This parallels TV which shows TV shows, not seasons/episodes
+    if media_type == MediaTypes.PODCAST.value:
+        from app.models import PodcastShow, PodcastShowTracker
+        
+        show_trackers = (
+            PodcastShowTracker.objects.filter(user=request.user)
+            .exclude(show__title__isnull=True)
+            .exclude(show__title__exact="")
+            .select_related("show")
+        )
+        
+        # Apply status filter to shows
+        if status_filter and status_filter != MediaStatusChoices.ALL:
+            show_trackers = show_trackers.filter(status=status_filter)
+        
+        # Apply search filter to shows
+        if search_query:
+            show_trackers = show_trackers.filter(show__title__icontains=search_query)
+        
+        # Apply sorting
+        if sort_filter == "title":
+            order = "show__title" if direction == "asc" else "-show__title"
+            show_trackers = show_trackers.order_by(order)
+        elif sort_filter == "score":
+            order = "score" if direction == "asc" else "-score"
+            show_trackers = show_trackers.order_by(order, "show__title")
+        elif sort_filter == "start_date":
+            order = "start_date" if direction == "asc" else "-start_date"
+            show_trackers = show_trackers.order_by(order)
+        else:
+            # Default: most recently updated
+            show_trackers = show_trackers.order_by("-updated_at")
+        
+        # Paginate show trackers
+        show_paginator = Paginator(show_trackers, 32)
+        show_page = show_paginator.get_page(page)
+        
+        context = {
+            "user": request.user,
+            "media_list": show_page,
+            "media_type": media_type,
+            "current_layout": layout,
+            "current_sort": sort_filter,
+            "current_direction": direction,
+            "current_status": status_filter,
+            "search_query": search_query,
+            "is_show_list": True,  # Similar to is_artist_list for music
+        }
+        
+        # Handle HTMX requests for partial updates
+        if request.headers.get("HX-Request"):
+            is_show_list = context.get("is_show_list", False)
+            if request.headers.get("HX-Target") == "empty_list":
+                response = HttpResponse()
+                response["HX-Redirect"] = reverse("medialist", args=[media_type])
+                return response
+            
+            is_pagination = request.GET.get("page") and int(request.GET.get("page", 1)) > 1
+            context["is_pagination"] = bool(is_pagination)
+            
+            if layout == "grid":
+                template_name = (
+                    "app/components/podcast_show_grid_items.html"
+                    if is_show_list
+                    else "app/components/media_grid_items.html"
+                )
+            else:
+                template_name = (
+                    "app/components/podcast_show_table_items.html"
+                    if is_show_list
+                    else "app/components/media_table_items.html"
+                )
+        else:
+            context["is_pagination"] = False
+            template_name = "app/media_list.html"
+        
+        return render(request, template_name, context)
+    
     if media_type == MediaTypes.MUSIC.value:
         from django.conf import settings
 
@@ -532,6 +610,12 @@ def media_details(
             pass
     
     media_metadata = services.get_media_metadata(media_type, media_id, source)
+    
+    # For podcasts, ensure source is in metadata dict (fixes KeyError in template)
+    if media_type == MediaTypes.PODCAST.value and isinstance(media_metadata, dict):
+        media_metadata["source"] = source
+        media_metadata["media_type"] = media_type
+        media_metadata["media_id"] = media_id
     
     # For public views, we don't need user media data
     if public_view:
@@ -2145,6 +2229,126 @@ def artist_delete(request):
     if next_url:
         return redirect(next_url)
     return redirect("artist_detail", artist_id=artist.id)
+
+
+@require_GET
+def podcast_show_detail(request, show_id):
+    """Return the detail page for a podcast show."""
+    from django.db.models import Sum
+    from django.shortcuts import get_object_or_404
+
+    from app.models import Podcast, PodcastEpisode, PodcastShow, PodcastShowTracker
+
+    show = get_object_or_404(PodcastShow, id=show_id)
+    
+    # Get user's tracker for this show
+    tracker = PodcastShowTracker.objects.filter(user=request.user, show=show).first()
+    
+    # Get all episodes for this show
+    episodes = PodcastEpisode.objects.filter(show=show).order_by("-published", "-episode_number")
+    
+    # Get user's podcast entries for this show
+    user_podcasts = list(Podcast.objects.filter(
+        user=request.user,
+        show=show,
+    ).select_related("episode", "item"))
+    
+    # Calculate stats
+    total_episodes = episodes.count()
+    total_listened = len(user_podcasts)
+    total_minutes = sum(podcast.progress or 0 for podcast in user_podcasts)
+    
+    context = {
+        "user": request.user,
+        "show": show,
+        "episodes": episodes,
+        "user_podcasts": user_podcasts,
+        "tracker": tracker,
+        "total_episodes": total_episodes,
+        "total_listened": total_listened,
+        "total_minutes": total_minutes,
+    }
+    return render(request, "app/podcast_show_detail.html", context)
+
+
+@require_GET
+def podcast_show_track_modal(request, show_id):
+    """Return the tracking form modal for a podcast show - mirrors artist_track_modal."""
+    from django.shortcuts import get_object_or_404
+
+    from app.forms import PodcastShowTrackerForm
+    from app.models import PodcastShow, PodcastShowTracker
+
+    show = get_object_or_404(PodcastShow, id=show_id)
+    return_url = request.GET.get("return_url", "")
+    
+    # Get existing tracker if any
+    tracker = PodcastShowTracker.objects.filter(user=request.user, show=show).first()
+    
+    initial_data = {"show_id": show.id}
+    form = PodcastShowTrackerForm(instance=tracker, initial=initial_data)
+
+    return render(
+        request,
+        "app/components/podcast_show_track_modal.html",
+        {
+            "show": show,
+            "tracker": tracker,
+            "form": form,
+            "return_url": return_url,
+        },
+    )
+
+
+@require_POST
+def podcast_show_save(request):
+    """Save a podcast show tracker - mirrors artist_save."""
+    from django.shortcuts import get_object_or_404
+
+    from app.forms import PodcastShowTrackerForm
+    from app.models import PodcastShow, PodcastShowTracker
+
+    show_id = request.POST.get("show_id")
+    show = get_object_or_404(PodcastShow, id=show_id)
+    
+    # Get existing tracker or None
+    tracker = PodcastShowTracker.objects.filter(user=request.user, show=show).first()
+    
+    form = PodcastShowTrackerForm(request.POST, instance=tracker)
+    if form.is_valid():
+        tracker = form.save(commit=False)
+        tracker.user = request.user
+        tracker.show = show
+        tracker.save()
+        messages.success(request, f"Saved {show.title}")
+    else:
+        messages.error(request, f"Error saving {show.title}: {form.errors}")
+    
+    next_url = request.GET.get("next", "")
+    if next_url:
+        return redirect(next_url)
+    return redirect("podcast_show_detail", show_id=show.id)
+
+
+@require_POST
+def podcast_show_delete(request):
+    """Delete a podcast show tracker - mirrors artist_delete."""
+    from django.shortcuts import get_object_or_404
+
+    from app.models import PodcastShow, PodcastShowTracker
+
+    show_id = request.POST.get("show_id")
+    show = get_object_or_404(PodcastShow, id=show_id)
+    
+    tracker = PodcastShowTracker.objects.filter(user=request.user, show=show).first()
+    if tracker:
+        tracker.delete()
+        messages.success(request, f"Removed {show.title} from your library")
+    
+    next_url = request.GET.get("next", "")
+    if next_url:
+        return redirect(next_url)
+    return redirect("podcast_show_detail", show_id=show.id)
 
 
 def album_track_modal(request, album_id):

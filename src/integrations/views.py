@@ -3,22 +3,25 @@
 import json
 import logging
 import secrets
+from datetime import datetime, timedelta
 
+import jwt
+import requests
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_not_required
 from django.core.exceptions import ObjectDoesNotExist
 from django.http import HttpResponse, StreamingHttpResponse
-from django.shortcuts import redirect
+from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
 import users
-from integrations import exports, plex as plex_api, tasks
-from integrations.imports import anilist, helpers, simkl, trakt
-from integrations.models import PlexAccount
+from integrations import exports, plex as plex_api, pocketcasts_api, tasks
+from integrations.imports import anilist, helpers, pocketcasts, simkl, trakt
+from integrations.models import PlexAccount, PocketCastsAccount
 from integrations.webhooks import emby, jellyfin, plex as plex_webhooks
 
 logger = logging.getLogger(__name__)
@@ -517,6 +520,176 @@ def import_steam(request):
             import_time,
             "Steam",
         )
+    return redirect("import_data")
+
+
+@require_POST
+def pocketcasts_connect(request):
+    """Connect Pocket Casts account using access token."""
+    access_token = request.POST.get("access_token", "").strip()
+    
+    if not access_token:
+        messages.error(request, "Authorization token is required.")
+        return redirect("import_data")
+    
+    # Remove "Bearer " prefix if present
+    if access_token.startswith("Bearer "):
+        access_token = access_token[7:]
+    
+    # Validate token before saving
+    try:
+        if not pocketcasts_api.validate_token(access_token):
+            messages.error(request, "Invalid authorization token. Please check your token and try again.")
+            return redirect("import_data")
+    except Exception as e:
+        logger.error("Failed to validate Pocket Casts token: %s", e)
+        messages.error(request, f"Failed to validate token: {e}")
+        return redirect("import_data")
+    
+    # Encrypt and store token
+    try:
+        encrypted_access = helpers.encrypt(access_token)
+        
+        # Parse expiration from JWT
+        token_expires_at = pocketcasts_api.parse_token_expiration(access_token)
+        
+        PocketCastsAccount.objects.update_or_create(
+            user=request.user,
+            defaults={
+                "access_token": encrypted_access,
+                "refresh_token": None,
+                "token_expires_at": token_expires_at,
+            },
+        )
+        
+        # Set up 3-hour recurring import if it doesn't exist
+        from django_celery_beat.models import CrontabSchedule, PeriodicTask
+        
+        existing_task = PeriodicTask.objects.filter(
+            task="Import from Pocket Casts (Recurring)",
+            kwargs__contains=f'"user_id": {request.user.id}',
+            enabled=True,
+        ).first()
+        
+        if not existing_task:
+            # Create crontab for every 3 hours (0, 3, 6, 9, 12, 15, 18, 21)
+            crontab, _ = CrontabSchedule.objects.get_or_create(
+                minute=0,
+                hour="*/3",
+                day_of_week="*",
+                day_of_month="*",
+                month_of_year="*",
+                timezone=timezone.get_default_timezone(),
+            )
+            
+            task_name = f"Import from Pocket Casts for {request.user.username} (every 3 hours)"
+            PeriodicTask.objects.create(
+                name=task_name,
+                task="Import from Pocket Casts (Recurring)",
+                crontab=crontab,
+                kwargs=json.dumps({
+                    "user_id": request.user.id,
+                }),
+                start_time=timezone.now(),
+                enabled=True,
+            )
+            
+            # Run initial import
+            tasks.import_pocketcasts.delay(
+                user_id=request.user.id,
+                mode="new",
+            )
+            messages.success(request, "Connected to Pocket Casts successfully. Initial import queued. Recurring imports will run every 3 hours.")
+        else:
+            messages.success(request, "Connected to Pocket Casts successfully.")
+    except Exception as e:
+        logger.error("Failed to store Pocket Casts token: %s", e)
+        messages.error(request, f"Failed to store credentials: {e}")
+    
+    return redirect("import_data")
+
+
+@require_POST
+def pocketcasts_disconnect(request):
+    """Remove stored Pocket Casts credentials and delete periodic import task."""
+    from django_celery_beat.models import PeriodicTask
+    
+    # Delete periodic import task if it exists
+    PeriodicTask.objects.filter(
+        task="Import from Pocket Casts (Recurring)",
+        kwargs__contains=f'"user_id": {request.user.id}',
+    ).delete()
+    
+    PocketCastsAccount.objects.filter(user=request.user).delete()
+    messages.info(request, "Disconnected Pocket Casts and removed scheduled imports.")
+    return redirect("import_data")
+
+
+@require_POST
+def import_pocketcasts(request):
+    """Queue a Pocket Casts history import for the current user.
+    
+    Pocket Casts always uses mode="new" and runs every 3 hours automatically.
+    First import is "new", subsequent recurring imports are also "new".
+    """
+    pocketcasts_account = getattr(request.user, "pocketcasts_account", None)
+    if not pocketcasts_account or not pocketcasts_account.is_connected:
+        messages.error(request, "Connect Pocket Casts before importing.")
+        return redirect("import_data")
+    
+    # Check if this is the first import (no existing schedule)
+    from django_celery_beat.models import PeriodicTask
+    
+    existing_task = PeriodicTask.objects.filter(
+        task="Import from Pocket Casts (Recurring)",
+        kwargs__contains=f'"user_id": {request.user.id}',
+        enabled=True,
+    ).first()
+    
+    # Always use mode="new" for Pocket Casts
+    mode = "new"
+    
+    if not existing_task:
+        # First import - run immediately, then set up 3-hour schedule
+        tasks.import_pocketcasts.delay(
+            user_id=request.user.id,
+            mode=mode,
+        )
+        messages.info(request, "The task to import media from Pocket Casts has been queued. Recurring imports will run every 3 hours.")
+        
+        # Set up 3-hour recurring schedule
+        from django_celery_beat.models import CrontabSchedule
+        from django.utils import timezone as tz
+        
+        # Create crontab for every 3 hours (0, 3, 6, 9, 12, 15, 18, 21)
+        crontab, _ = CrontabSchedule.objects.get_or_create(
+            minute=0,
+            hour="*/3",
+            day_of_week="*",
+            day_of_month="*",
+            month_of_year="*",
+            timezone=tz.get_default_timezone(),
+        )
+        
+        task_name = f"Import from Pocket Casts for {request.user.username} (every 3 hours)"
+        PeriodicTask.objects.create(
+            name=task_name,
+            task="Import from Pocket Casts (Recurring)",
+            crontab=crontab,
+            kwargs=json.dumps({
+                "user_id": request.user.id,
+            }),
+            start_time=tz.now(),
+            enabled=True,
+        )
+    else:
+        # Just run a manual import
+        tasks.import_pocketcasts.delay(
+            user_id=request.user.id,
+            mode=mode,
+        )
+        messages.info(request, "The task to import media from Pocket Casts has been queued.")
+    
     return redirect("import_data")
 
 

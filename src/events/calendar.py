@@ -45,6 +45,9 @@ def process_items(items_to_process):
             process_tv(item, events_bulk)
         elif item.media_type == MediaTypes.COMIC.value:
             process_comic(item, events_bulk)
+        elif item.media_type == MediaTypes.PODCAST.value:
+            # Skip podcasts - they don't have future release dates to track
+            continue
         else:
             process_other(item, events_bulk)
 

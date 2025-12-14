@@ -17,6 +17,7 @@ from app.models import (
     MediaTypes,
     Movie,
     Music,
+    PodcastShowTracker,
     Season,
     Sources,
 )
@@ -419,6 +420,49 @@ class ArtistTrackerForm(forms.ModelForm):
         """Define fields and input types."""
 
         model = ArtistTracker
+        fields = [
+            "score",
+            "status",
+            "start_date",
+            "end_date",
+            "notes",
+        ]
+        widgets = {
+            "score": forms.NumberInput(
+                attrs={"min": 0, "max": 10, "step": 0.1, "placeholder": "0-10"},
+            ),
+            "start_date": forms.DateTimeInput(attrs={"type": "datetime-local"})
+            if settings.TRACK_TIME
+            else forms.DateInput(attrs={"type": "date"}),
+            "end_date": forms.DateTimeInput(attrs={"type": "datetime-local"})
+            if settings.TRACK_TIME
+            else forms.DateInput(attrs={"type": "date"}),
+            "notes": forms.Textarea(
+                attrs={"placeholder": "Add any notes or comments...", "rows": "5"},
+            ),
+        }
+
+    def __init__(self, *args, **kwargs):
+        """Initialize the form."""
+        super().__init__(*args, **kwargs)
+        # Make date fields optional
+        if "start_date" in self.fields:
+            self.fields["start_date"].required = False
+            self.fields["start_date"].widget.attrs.pop("required", None)
+        if "end_date" in self.fields:
+            self.fields["end_date"].required = False
+            self.fields["end_date"].widget.attrs.pop("required", None)
+
+
+class PodcastShowTrackerForm(forms.ModelForm):
+    """Form for tracking podcast shows - mirrors ArtistTrackerForm."""
+
+    show_id = forms.IntegerField(widget=forms.HiddenInput(), required=True)
+
+    class Meta:
+        """Define fields and input types."""
+
+        model = PodcastShowTracker
         fields = [
             "score",
             "status",

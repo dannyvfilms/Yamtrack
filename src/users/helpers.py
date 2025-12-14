@@ -84,7 +84,23 @@ def get_next_run_info(periodic_task):
 
     # Determine frequency
     if cron.day_of_week == "*":
-        frequency = "Every Day"
+        # Check for "every 3 hours" pattern by examining the cron expression
+        # Pattern should be: "0 */3 * * *" (minute=0, hour=*/3, all others *)
+        cron_parts = cron_expr.split()
+        if len(cron_parts) >= 2:
+            minute_part = str(cron_parts[0])
+            hour_part = str(cron_parts[1])
+            # Check if it matches "every 3 hours" pattern
+            if hour_part == "*/3" and minute_part in ("0", "00"):
+                frequency = "Every 3 hours"
+            elif cron.day_of_month == "*" and cron.month_of_year == "*":
+                frequency = "Every Day"
+            else:
+                frequency = "Every Day"
+        elif cron.day_of_month == "*" and cron.month_of_year == "*":
+            frequency = "Every Day"
+        else:
+            frequency = "Every Day"
     elif cron.day_of_week == "*/2":
         frequency = "Every 2 days"
     else:

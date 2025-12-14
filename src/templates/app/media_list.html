@@ -192,6 +192,16 @@
           {% include "app/components/artist_table_items.html" %}
         </table>
       </div>
+    {% elif is_show_list and current_layout == "grid" %}
+      {# Podcasts show shows in a grid (like Music shows Artists) #}
+      <div class="media-grid">{% include "app/components/podcast_show_grid_items.html" %}</div>
+    {% elif is_show_list %}
+      {# Podcasts show shows in a table (like Music shows Artists) #}
+      <div class="bg-[#2a2f35] p-4 rounded-lg overflow-hidden max-w-[calc(100svw-4rem)] overflow-x-scroll">
+        <table class="w-full bg-[#2a2f35] media-table">
+          {% include "app/components/podcast_show_table_items.html" %}
+        </table>
+      </div>
     {% elif current_layout == "grid" %}
       <div class="media-grid">{% include "app/components/media_grid_items.html" %}</div>
     {% else %}

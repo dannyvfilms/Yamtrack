@@ -72,7 +72,7 @@ class TrackAdmin(admin.ModelAdmin):
 # Auto-register remaining models
 app_models = apps.get_app_config("app").get_models()
 # Models that don't use MediaAdmin (either registered separately or excluded)
-SpecialModels = ["Item", "Episode", "BasicMedia", "Artist", "Album", "Track", "ArtistTracker", "AlbumTracker"]
+SpecialModels = ["Item", "Episode", "BasicMedia", "Artist", "Album", "Track", "ArtistTracker", "AlbumTracker", "PodcastShow", "PodcastEpisode"]
 for model in app_models:
     if (
         not model.__name__.startswith("Historical")
@@ -109,3 +109,27 @@ admin.site.register(Album, AlbumAdmin)
 admin.site.register(Track, TrackAdmin)
 admin.site.register(ArtistTracker, ArtistTrackerAdmin)
 admin.site.register(AlbumTracker, AlbumTrackerAdmin)
+
+
+class PodcastShowAdmin(admin.ModelAdmin):
+    """Custom admin for PodcastShow model."""
+
+    search_fields = ["title", "podcast_uuid", "author"]
+    list_display = ["title", "author", "podcast_uuid"]
+    list_filter = ["language"]
+
+
+class PodcastEpisodeAdmin(admin.ModelAdmin):
+    """Custom admin for PodcastEpisode model."""
+
+    search_fields = ["title", "episode_uuid", "show__title"]
+    list_display = ["title", "show", "published", "duration_formatted", "is_deleted"]
+    list_filter = ["is_deleted", "episode_type", "show"]
+    raw_id_fields = ["show"]
+
+
+# Register PodcastShow and PodcastEpisode with custom admin classes
+from app.models import PodcastShow, PodcastEpisode  # noqa: E402
+
+admin.site.register(PodcastShow, PodcastShowAdmin)
+admin.site.register(PodcastEpisode, PodcastEpisodeAdmin)

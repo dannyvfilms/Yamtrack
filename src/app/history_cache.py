@@ -11,7 +11,7 @@ from django.db import models
 from django.utils import formats, timezone
 
 from app import helpers
-from app.models import Album, BoardGame, Episode, Game, Item, MediaTypes, Movie, Music, Track
+from app.models import Album, BoardGame, Episode, Game, Item, MediaTypes, Movie, Music, Podcast, Track
 
 logger = logging.getLogger(__name__)
 
@@ -356,6 +356,16 @@ def build_history_days(user, filters=None):
         music_entries = music_entries.filter(album_id=filters['album'])
     if filters.get('artist'):
         music_entries = music_entries.filter(album__artist_id=filters['artist'])
+    
+    # Podcasts - query all podcast entries with end_date
+    podcasts = (
+        Podcast.objects.filter(
+            user=user,
+            end_date__isnull=False,
+        )
+        .select_related("item", "episode", "show")
+        .order_by("-end_date")
+    )
 
     entries = []
 
@@ -483,6 +493,37 @@ def build_history_days(user, filters=None):
             entry = _build_music_album_entries(album_music_entries, album, day_date, track_duration_cache)
             if entry:
                 entries.append(entry)
+
+    # Podcasts - only process if not filtering by specific media type
+    if process_all:
+        for podcast in podcasts:
+            if not podcast.end_date:
+                continue
+            
+            played_at_local = _localize_datetime(podcast.end_date)
+            if not played_at_local:
+                continue
+            
+            # Progress is stored in minutes
+            minutes_listened = podcast.progress or 0
+            runtime_minutes = podcast.item.runtime_minutes if podcast.item and podcast.item.runtime_minutes else minutes_listened
+            
+            entries.append(
+                {
+                    "media_type": MediaTypes.PODCAST.value,
+                    "item": podcast.item,
+                    "poster": podcast.show.image if podcast.show and podcast.show.image else (podcast.item.image or settings.IMG_NONE),
+                    "title": podcast.item.title,
+                    "display_title": podcast.item.title,
+                    "progress_display": f"{minutes_listened}m",
+                    "date_range_display": None,
+                    "episode_label": None,
+                    "episode_code": None,
+                    "played_at_local": played_at_local,
+                    "runtime_minutes": runtime_minutes,
+                    "runtime_display": helpers.minutes_to_hhmm(runtime_minutes) if runtime_minutes else None,
+                },
+            )
 
     # Games - only process if not filtering by specific media type
     if process_all:
