@@ -266,7 +266,9 @@ def media_list(request, media_type):
     # For podcasts, show tracked shows instead of individual episodes
     # This parallels TV which shows TV shows, not seasons/episodes
     if media_type == MediaTypes.PODCAST.value:
-        from app.models import PodcastShow, PodcastShowTracker
+        from django.conf import settings
+        
+        from app.models import Item, PodcastShow, PodcastShowTracker, Sources
         
         show_trackers = (
             PodcastShowTracker.objects.filter(user=request.user)
@@ -297,25 +299,59 @@ def media_list(request, media_type):
             # Default: most recently updated
             show_trackers = show_trackers.order_by("-updated_at")
         
-        # Paginate show trackers
-        show_paginator = Paginator(show_trackers, 32)
-        show_page = show_paginator.get_page(page)
+        # Convert show trackers to Media-like objects for standard templates
+        # Create a simple adapter class to make trackers compatible with media components
+        class PodcastShowAdapter:
+            """Adapter to make PodcastShowTracker compatible with media components."""
+            def __init__(self, tracker):
+                self.tracker = tracker
+                self.id = tracker.id
+                self.status = tracker.status
+                self.score = tracker.score
+                self.start_date = tracker.start_date
+                self.end_date = tracker.end_date
+                self.notes = tracker.notes
+                self.created_at = tracker.created_at
+                self.updated_at = tracker.updated_at
+                
+                # Create a mock Item for compatibility with media components
+                # Use the show's podcast_uuid as media_id for routing
+                self.item, _ = Item.objects.get_or_create(
+                    media_id=tracker.show.podcast_uuid,
+                    source=Sources.POCKETCASTS.value,
+                    media_type=MediaTypes.PODCAST.value,
+                    defaults={
+                        "title": tracker.show.title,
+                        "image": tracker.show.image or settings.IMG_NONE,
+                    },
+                )
+                # Update item if show data changed
+                if self.item.title != tracker.show.title or (self.item.image == settings.IMG_NONE and tracker.show.image):
+                    self.item.title = tracker.show.title
+                    if tracker.show.image:
+                        self.item.image = tracker.show.image
+                    self.item.save(update_fields=["title", "image"])
+        
+        # Convert trackers to adapters
+        adapted_media = [PodcastShowAdapter(tracker) for tracker in show_trackers]
+        
+        # Paginate adapted media
+        media_paginator = Paginator(adapted_media, 32)
+        media_page = media_paginator.get_page(page)
         
         context = {
             "user": request.user,
-            "media_list": show_page,
+            "media_list": media_page,
             "media_type": media_type,
             "current_layout": layout,
             "current_sort": sort_filter,
             "current_direction": direction,
             "current_status": status_filter,
             "search_query": search_query,
-            "is_show_list": True,  # Similar to is_artist_list for music
         }
         
         # Handle HTMX requests for partial updates
         if request.headers.get("HX-Request"):
-            is_show_list = context.get("is_show_list", False)
             if request.headers.get("HX-Target") == "empty_list":
                 response = HttpResponse()
                 response["HX-Redirect"] = reverse("medialist", args=[media_type])
@@ -325,17 +361,9 @@ def media_list(request, media_type):
             context["is_pagination"] = bool(is_pagination)
             
             if layout == "grid":
-                template_name = (
-                    "app/components/podcast_show_grid_items.html"
-                    if is_show_list
-                    else "app/components/media_grid_items.html"
-                )
+                template_name = "app/components/media_grid_items.html"
             else:
-                template_name = (
-                    "app/components/podcast_show_table_items.html"
-                    if is_show_list
-                    else "app/components/media_table_items.html"
-                )
+                template_name = "app/components/media_table_items.html"
         else:
             context["is_pagination"] = False
             template_name = "app/media_list.html"
@@ -608,6 +636,160 @@ def media_details(
         except Exception:
             # If we can't find a list owner, list_owner stays None
             pass
+    
+    # For podcast shows (identified by podcast_uuid), show show detail page
+    if media_type == MediaTypes.PODCAST.value and source == Sources.POCKETCASTS.value:
+        from django.conf import settings
+        
+        from app.models import PodcastEpisode, PodcastShow, PodcastShowTracker
+        
+        # Check if this is a show (podcast_uuid) or an episode (episode_uuid)
+        show = PodcastShow.objects.filter(podcast_uuid=media_id).first()
+        if show:
+            # This is a show, not an episode - show show detail page
+            tracker = PodcastShowTracker.objects.filter(user=request.user, show=show).first() if not public_view else None
+            
+            # Get all episodes for this show
+            episodes = PodcastEpisode.objects.filter(show=show).order_by("-published", "-episode_number")
+            
+            # Get user's podcast entries for this show
+            if not public_view:
+                from app.models import Podcast
+                user_podcasts = list(Podcast.objects.filter(
+                    user=request.user,
+                    show=show,
+                ).select_related("episode", "item"))
+                total_listened = len(user_podcasts)
+                total_minutes = sum(podcast.progress or 0 for podcast in user_podcasts)
+            else:
+                user_podcasts = []
+                total_listened = 0
+                total_minutes = 0
+            
+            # Build episode items - create Item objects for enrichment
+            from app.models import Item
+            episode_items_data = []
+            episode_items_map = {}  # Map media_id to Item object
+            for episode in episodes[:50]:  # Limit to 50 for performance
+                item, _ = Item.objects.get_or_create(
+                    media_id=episode.episode_uuid,
+                    source=source,
+                    media_type=media_type,
+                    defaults={
+                        "title": episode.title,
+                        "image": show.image or settings.IMG_NONE,
+                    },
+                )
+                # Update if needed
+                if item.title != episode.title:
+                    item.title = episode.title
+                    item.save(update_fields=["title"])
+                # enrich_items_with_user_data expects dicts with media_id, source, media_type
+                episode_items_data.append({
+                    "media_id": episode.episode_uuid,
+                    "source": source,
+                    "media_type": media_type,
+                })
+                episode_items_map[episode.episode_uuid] = item
+            
+            # Enrich episodes with user data
+            enriched_episodes_raw = helpers.enrich_items_with_user_data(
+                request,
+                episode_items_data,
+                user=None if public_view else request.user,
+            )
+            
+            # Replace dict items with Item model instances
+            enriched_episodes = []
+            for enriched in enriched_episodes_raw:
+                # Get the Item object from our map
+                item_obj = episode_items_map.get(enriched["item"]["media_id"])
+                if item_obj:
+                    enriched_episodes.append({
+                        "item": item_obj,
+                        "media": enriched["media"],
+                    })
+                else:
+                    # Fallback: fetch Item from database
+                    enriched_episodes.append({
+                        "item": Item.objects.get(
+                            media_id=enriched["item"]["media_id"],
+                            source=enriched["item"]["source"],
+                            media_type=enriched["item"]["media_type"],
+                        ),
+                        "media": enriched["media"],
+                    })
+            
+            # Build episode data in TV season format (inline episodes, not related items)
+            episode_list = []
+            for episode_obj, enriched in zip(episodes[:50], enriched_episodes):
+                # Format duration
+                duration_str = ""
+                if episode_obj.duration:
+                    hours = episode_obj.duration // 3600
+                    minutes = (episode_obj.duration % 3600) // 60
+                    if hours > 0:
+                        duration_str = f"{hours}h {minutes}m"
+                    else:
+                        duration_str = f"{minutes}m"
+                
+                # Get user's podcast media for this episode
+                episode_media = enriched["media"]
+                episode_history = []
+                if episode_media:
+                    # Get history for this episode using simple_history
+                    # Media instances have a .history relationship from HistoricalRecords
+                    episode_history = list(episode_media.history.all().order_by("-end_date")[:10])
+                
+                # Create episode dict compatible with TV episode format
+                # Include media_id, source, media_type for tracking modals
+                episode_item = enriched["item"]
+                episode_list.append({
+                    "title": episode_obj.title,
+                    "episode_number": episode_obj.episode_number or 0,
+                    "image": show.image or settings.IMG_NONE,  # Use show image
+                    "air_date": episode_obj.published,
+                    "runtime": duration_str,
+                    "overview": "",  # Podcast episodes don't have descriptions from API
+                    "history": episode_history,
+                    "media": episode_media,
+                    "item": episode_item,
+                    # Add fields needed for episode tracking modals
+                    "media_id": episode_item.media_id,
+                    "source": episode_item.source,
+                    "media_type": episode_item.media_type,
+                })
+            
+            # Build metadata dict for show
+            media_metadata = {
+                "title": show.title,
+                "image": show.image or settings.IMG_NONE,
+                "source": source,
+                "media_type": media_type,
+                "media_id": media_id,
+                "genres": show.genres or [],
+                "details": {
+                    "author": show.author,
+                    "language": show.language,
+                },
+                "episodes": episode_list,  # Use episodes key like TV seasons
+            }
+            
+            context = {
+                "user": request.user,
+                "media": media_metadata,
+                "media_type": media_type,
+                "current_instance": tracker,  # Use tracker as current_instance for compatibility
+                "user_medias": user_podcasts,  # Episodes user has listened to
+                "podcast_show": show,
+                "podcast_tracker": tracker,
+                "episodes": episodes,
+                "total_episodes": episodes.count(),
+                "total_listened": total_listened,
+                "total_minutes": total_minutes,
+                "public_view": public_view,
+            }
+            return render(request, "app/media_details.html", context)
     
     media_metadata = services.get_media_metadata(media_type, media_id, source)
     
@@ -946,6 +1128,32 @@ def track_modal(
     season_number=None,
 ):
     """Return the tracking form for a media item."""
+    # Handle podcast shows (identified by podcast_uuid)
+    if media_type == MediaTypes.PODCAST.value and source == Sources.POCKETCASTS.value:
+        from app.forms import PodcastShowTrackerForm
+        from app.models import PodcastShow, PodcastShowTracker
+        
+        # Check if this is a show (podcast_uuid) or an episode (episode_uuid)
+        show = PodcastShow.objects.filter(podcast_uuid=media_id).first()
+        if show:
+            # This is a show - use PodcastShowTracker form
+            tracker = PodcastShowTracker.objects.filter(user=request.user, show=show).first()
+            return_url = request.GET.get("return_url", "")
+            
+            initial_data = {"show_id": show.id}
+            form = PodcastShowTrackerForm(instance=tracker, initial=initial_data)
+            
+            return render(
+                request,
+                "app/components/podcast_show_track_modal.html",
+                {
+                    "show": show,
+                    "tracker": tracker,
+                    "form": form,
+                    "return_url": return_url,
+                },
+            )
+    
     instance_id = request.GET.get("instance_id")
     if instance_id:
         media = BasicMedia.objects.get_media(
