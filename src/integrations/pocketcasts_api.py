@@ -140,3 +140,48 @@ def validate_token(access_token: str) -> bool:
         # Network errors - can't validate, assume invalid to be safe
         return False
 
+
+def get_podcast_list(access_token: str) -> Dict[str, Any]:
+    """Fetch the user's podcast list with metadata.
+    
+    Args:
+        access_token: The JWT access token
+        
+    Returns:
+        Dict with 'podcasts' list containing show metadata including descriptions
+    """
+    url = f"{POCKETCASTS_API_BASE_URL}/user/podcast/list"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+        "Accept": "*/*",
+        "X-App-Language": "en",
+        "X-User-Region": "global",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
+    }
+    
+    try:
+        response = requests.post(url, json={}, headers=headers, timeout=10)
+        # Don't raise on 401 - just return empty list so import can continue
+        if response.status_code == 401:
+            logger.warning("Unauthorized access to podcast list - token may be expired")
+            return {"podcasts": []}
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        logger.error("Failed to fetch podcast list: %s", e)
+        return {"podcasts": []}
+
+
+def get_podcast_image_url(podcast_uuid: str, size: int = 130) -> str:
+    """Get the image URL for a podcast show.
+    
+    Args:
+        podcast_uuid: The podcast UUID
+        size: Image size (130 appears to be standard, but other sizes may exist)
+        
+    Returns:
+        URL to the podcast artwork image
+    """
+    return f"{POCKETCASTS_API_BASE_URL}/discover/images/{size}/{podcast_uuid}.jpg"
+

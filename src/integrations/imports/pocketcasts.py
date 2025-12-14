@@ -71,6 +71,15 @@ class PocketCastsImporter:
         # Refresh token if needed
         self._ensure_valid_token()
 
+        # Fetch podcast list to get show metadata (descriptions, images)
+        from integrations import pocketcasts_api
+        access_token = self._get_access_token()
+        podcast_list_data = pocketcasts_api.get_podcast_list(access_token)
+        self.podcast_metadata = {
+            podcast["uuid"]: podcast
+            for podcast in podcast_list_data.get("podcasts", [])
+        }
+
         # Fetch history (last 100 episodes only, no pagination)
         episodes = self._fetch_history()
 
@@ -255,23 +264,86 @@ class PocketCastsImporter:
             # We'll mark them as deleted in the database but still track them
             is_deleted = episode_data.get("isDeleted", False)
 
-            # Ensure show exists
-            show, _ = PodcastShow.objects.get_or_create(
+            # Get show metadata from podcast list if available
+            show_metadata = getattr(self, "podcast_metadata", {}).get(podcast_uuid, {})
+            
+            # Get show title and author for artwork fetching
+            show_title = episode_data.get("podcastTitle", show_metadata.get("title", "Unknown Show"))
+            show_author = episode_data.get("author", show_metadata.get("author", ""))
+            
+            # Construct Pocket Casts image URL (requires auth, so we'll try to replace it)
+            from integrations import pocketcasts_api
+            pocketcasts_image_url = pocketcasts_api.get_podcast_image_url(podcast_uuid, size=130)
+            
+            # Ensure show exists first
+            show, created = PodcastShow.objects.get_or_create(
                 podcast_uuid=podcast_uuid,
                 defaults={
-                    "title": episode_data.get("podcastTitle", "Unknown Show"),
-                    "slug": episode_data.get("podcastSlug", ""),
-                    "author": episode_data.get("author", ""),
+                    "title": show_title,
+                    "slug": episode_data.get("podcastSlug", show_metadata.get("slug", "")),
+                    "author": show_author,
+                    "image": pocketcasts_image_url,  # Temporary, will try to replace
+                    "description": show_metadata.get("description", "") or show_metadata.get("descriptionHtml", ""),
                 },
             )
             
             # Update show fields if we have new data
+            updated = False
             if episode_data.get("podcastTitle") and show.title != episode_data["podcastTitle"]:
                 show.title = episode_data["podcastTitle"]
-                show.save(update_fields=["title"])
+                updated = True
             if episode_data.get("author") and show.author != episode_data["author"]:
                 show.author = episode_data["author"]
-                show.save(update_fields=["author"])
+                updated = True
+            # Update from podcast list metadata if available
+            if show_metadata:
+                # Update description if we have one and show doesn't
+                description = show_metadata.get("description") or show_metadata.get("descriptionHtml", "")
+                if description and (not show.description or show.description != description):
+                    show.description = description
+                    updated = True
+            
+            # Fetch artwork from alternative sources if needed
+            # Only fetch if image is empty or is a Pocket Casts authenticated URL
+            should_fetch_artwork = (
+                not show.image 
+                or show.image == "" 
+                or show.image.startswith(POCKETCASTS_API_BASE_URL)
+            )
+            
+            if should_fetch_artwork:
+                from integrations import pocketcasts_artwork
+                
+                # Check for RSS feed URL in metadata
+                # The podcast list might have 'url' (website) but not explicit RSS feed
+                # We'll check common field names
+                rss_feed_url = (
+                    show_metadata.get("rssUrl") 
+                    or show_metadata.get("rss_url") 
+                    or show_metadata.get("feedUrl")
+                    or show_metadata.get("feed_url")
+                )
+                
+                # Try to fetch artwork from alternative sources
+                alternative_artwork = pocketcasts_artwork.fetch_podcast_artwork(
+                    podcast_uuid=podcast_uuid,
+                    show_title=show.title,
+                    author=show.author,
+                    rss_feed_url=rss_feed_url,
+                )
+                
+                if alternative_artwork:
+                    show.image = alternative_artwork
+                    updated = True
+                    logger.debug("Fetched alternative artwork for %s: %s", show.title, alternative_artwork)
+                elif not show.image or show.image == "":
+                    # Fallback to Pocket Casts URL (even though it requires auth)
+                    # At least it's stored for potential future use
+                    show.image = pocketcasts_image_url
+                    updated = True
+            
+            if updated:
+                show.save(update_fields=["title", "author", "image", "description"])
             
             # Ensure show tracker exists (similar to ArtistTracker for music)
             from app.models import PodcastShowTracker

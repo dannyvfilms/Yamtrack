@@ -583,6 +583,9 @@
   .aspect-2\/3 {
     aspect-ratio: 2/3;
   }
+  .aspect-\[1\/1\] {
+    aspect-ratio: 1/1;
+  }
   .aspect-\[2\/3\] {
     aspect-ratio: 2/3;
   }
@@ -2811,6 +2814,11 @@
   .md\:h-40 {
     @media (width >= 48rem) {
       height: calc(var(--spacing) * 40);
+    }
+  }
+  .md\:h-64 {
+    @media (width >= 48rem) {
+      height: calc(var(--spacing) * 64);
     }
   }
   .md\:h-\[calc\(2\*1\.5rem\)\] {

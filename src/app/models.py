@@ -2366,6 +2366,7 @@ class PodcastShow(models.Model):
     slug = models.CharField(max_length=255, blank=True, default="")
     author = models.CharField(max_length=255, blank=True, default="")
     image = models.URLField(blank=True, default="")
+    description = models.TextField(blank=True, default="", help_text="Show description from Pocket Casts")
     language = models.CharField(max_length=10, blank=True, default="")
     genres = models.JSONField(default=list, blank=True)
 

@@ -326,10 +326,11 @@ def media_list(request, media_type):
                     },
                 )
                 # Update item if show data changed
-                if self.item.title != tracker.show.title or (self.item.image == settings.IMG_NONE and tracker.show.image):
+                # Always sync image to ensure it matches the show (especially after artwork fetch)
+                show_image = tracker.show.image or settings.IMG_NONE
+                if self.item.title != tracker.show.title or self.item.image != show_image:
                     self.item.title = tracker.show.title
-                    if tracker.show.image:
-                        self.item.image = tracker.show.image
+                    self.item.image = show_image
                     self.item.save(update_fields=["title", "image"])
         
         # Convert trackers to adapters
@@ -764,6 +765,7 @@ def media_details(
             media_metadata = {
                 "title": show.title,
                 "image": show.image or settings.IMG_NONE,
+                "synopsis": show.description or "",  # Use description as synopsis
                 "source": source,
                 "media_type": media_type,
                 "media_id": media_id,

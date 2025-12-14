@@ -7,7 +7,7 @@
     <div class="relative">
       <a href="{{ media.item|media_url }}">
       <img alt="{{ media }}"
-           class="media-card-poster lazyload w-full aspect-[2/3] {% if media.item.image != IMG_NONE %}object-cover{% endif %}"
+           class="media-card-poster lazyload w-full {% if media.item.media_type == MediaTypes.PODCAST.value %}aspect-[1/1]{% else %}aspect-[2/3]{% endif %} {% if media.item.image != IMG_NONE %}object-cover{% endif %}"
            data-src="{{ media.item.image }}"
            src="{{ IMG_NONE }}">
       </a>
