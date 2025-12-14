@@ -2916,6 +2916,13 @@ def statistics(request):
             "music_consumption": statistics_data["music_consumption"],
             "daily_hours_by_media_type": statistics_data["daily_hours_by_media_type"],
             "show_year_charts": show_year_charts,
+            "media_type_colors": {
+                "tv": config.get_stats_color(MediaTypes.TV.value),
+                "movie": config.get_stats_color(MediaTypes.MOVIE.value),
+                "game": config.get_stats_color(MediaTypes.GAME.value),
+                "music": config.get_stats_color(MediaTypes.MUSIC.value),
+                "podcast": config.get_stats_color(MediaTypes.PODCAST.value),
+            },
         }
 
         return render(request, "app/statistics.html", context)
@@ -2933,6 +2940,14 @@ def statistics(request):
             "media_count": {},
             "activity_data": [],
             "media_type_distribution": {},
+            "hours_per_media_type": {},
+            "media_type_colors": {
+                "tv": config.get_stats_color(MediaTypes.TV.value),
+                "movie": config.get_stats_color(MediaTypes.MOVIE.value),
+                "game": config.get_stats_color(MediaTypes.GAME.value),
+                "music": config.get_stats_color(MediaTypes.MUSIC.value),
+                "podcast": config.get_stats_color(MediaTypes.PODCAST.value),
+            },
             "score_distribution": {},
             "top_rated": [],
             "top_played": [],
@@ -2962,6 +2977,7 @@ def statistics(request):
             "movie_consumption": empty_statistics_data["movie_consumption"],
             "music_consumption": empty_statistics_data["music_consumption"],
             "daily_hours_by_media_type": empty_statistics_data["daily_hours_by_media_type"],
+            "media_type_colors": empty_statistics_data["media_type_colors"],
             "show_year_charts": False,
             "database_error": True,
         }

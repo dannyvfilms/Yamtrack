@@ -1488,12 +1488,6 @@
   .bg-rose-600 {
     background-color: var(--color-rose-600);
   }
-  .bg-rose-600\/20 {
-    background-color: color-mix(in srgb, oklch(58.6% 0.253 17.585) 20%, transparent);
-    @supports (color: color-mix(in lab, red, red)) {
-      background-color: color-mix(in oklab, var(--color-rose-600) 20%, transparent);
-    }
-  }
   .bg-violet-600 {
     background-color: var(--color-violet-600);
   }

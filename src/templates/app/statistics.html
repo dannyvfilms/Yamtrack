@@ -515,7 +515,7 @@
            }">
         {% if hours_per_media_type.tv and hours_per_media_type.tv != "0h 0min" %}
         <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 flex items-center min-w-0" data-media-card>
-          <div class="bg-indigo-600/20 p-3 sm:p-4 rounded-full mr-4">
+          <div class="p-3 sm:p-4 rounded-full mr-4" style="background-color: {{ media_type_colors.tv }}33;">
             <svg xmlns="http://www.w3.org/2000/svg"
                  width="24"
                  height="24"
@@ -525,7 +525,7 @@
                  stroke-width="2"
                  stroke-linecap="round"
                  stroke-linejoin="round"
-                 class="w-5 h-5 sm:w-8 sm:h-8 text-indigo-400">
+                 class="w-5 h-5 sm:w-8 sm:h-8" style="color: {{ media_type_colors.tv }};">
               <rect width="20" height="15" x="2" y="7" rx="2" ry="2"/>
               <polyline points="17 2 12 7 7 2"/>
             </svg>
@@ -540,7 +540,7 @@
         
         {% if hours_per_media_type.movie and hours_per_media_type.movie != "0h 0min" %}
         <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 flex items-center min-w-0" data-media-card>
-          <div class="bg-red-600/20 p-3 sm:p-4 rounded-full mr-4">
+          <div class="p-3 sm:p-4 rounded-full mr-4" style="background-color: {{ media_type_colors.movie }}33;">
             <svg xmlns="http://www.w3.org/2000/svg"
                  width="24"
                  height="24"
@@ -550,7 +550,7 @@
                  stroke-width="2"
                  stroke-linecap="round"
                  stroke-linejoin="round"
-                 class="w-5 h-5 sm:w-8 sm:h-8 text-red-400">
+                 class="w-5 h-5 sm:w-8 sm:h-8" style="color: {{ media_type_colors.movie }};">
               <rect width="18" height="18" x="3" y="3" rx="2"/>
               <path d="M7 3v18"/>
               <path d="M3 7.5h4"/>
@@ -571,7 +571,7 @@
         
         {% if hours_per_media_type.game and hours_per_media_type.game != "0h 0min" %}
         <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 flex items-center min-w-0" data-media-card>
-          <div class="bg-emerald-600/20 p-3 sm:p-4 rounded-full mr-4">
+          <div class="p-3 sm:p-4 rounded-full mr-4" style="background-color: {{ media_type_colors.game }}33;">
             <svg xmlns="http://www.w3.org/2000/svg"
                  width="24"
                  height="24"
@@ -581,7 +581,7 @@
                  stroke-width="2"
                  stroke-linecap="round"
                  stroke-linejoin="round"
-                 class="w-5 h-5 sm:w-8 sm:h-8 text-emerald-400">
+                 class="w-5 h-5 sm:w-8 sm:h-8" style="color: {{ media_type_colors.game }};">
               <line x1="6" x2="10" y1="11" y2="11"/>
               <line x1="8" x2="8" y1="9" y2="13"/>
               <line x1="15" x2="15.01" y1="12" y2="12"/>
@@ -592,6 +592,33 @@
           <div>
             <h3 class="text-xs sm:text-sm font-medium text-gray-400">Games</h3>
             <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.game }}</p>
+            <p class="text-xs sm:text-sm text-gray-500" x-text="selectedRange"></p>
+          </div>
+        </div>
+        {% endif %}
+        
+        {% if user.podcast_enabled and hours_per_media_type.podcast and hours_per_media_type.podcast != "0h 0min" %}
+        <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 flex items-center min-w-0" data-media-card>
+          <div class="p-3 sm:p-4 rounded-full mr-4" style="background-color: {{ media_type_colors.podcast }}33;">
+            <svg xmlns="http://www.w3.org/2000/svg"
+                 width="24"
+                 height="24"
+                 viewBox="0 0 24 24"
+                 fill="none"
+                 stroke="currentColor"
+                 stroke-width="2"
+                 stroke-linecap="round"
+                 stroke-linejoin="round"
+                 class="w-5 h-5 sm:w-8 sm:h-8" style="color: {{ media_type_colors.podcast }};">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3Z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" x2="12" y1="19" y2="23"/>
+              <line x1="8" x2="16" y1="23" y2="23"/>
+            </svg>
+          </div>
+          <div>
+            <h3 class="text-xs sm:text-sm font-medium text-gray-400">Podcasts</h3>
+            <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.podcast }}</p>
             <p class="text-xs sm:text-sm text-gray-500" x-text="selectedRange"></p>
           </div>
         </div>
@@ -650,9 +677,9 @@
         </div>
         {% endif %}
         
-        {% if hours_per_media_type.music and hours_per_media_type.music != "0h 0min" %}
+        {% if user.music_enabled and hours_per_media_type.music and hours_per_media_type.music != "0h 0min" %}
         <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 flex items-center min-w-0" data-media-card>
-          <div class="bg-rose-600/20 p-3 sm:p-4 rounded-full mr-4">
+          <div class="p-3 sm:p-4 rounded-full mr-4" style="background-color: {{ media_type_colors.music }}33;">
             <svg xmlns="http://www.w3.org/2000/svg"
                  width="24"
                  height="24"
@@ -662,7 +689,7 @@
                  stroke-width="2"
                  stroke-linecap="round"
                  stroke-linejoin="round"
-                 class="w-5 h-5 sm:w-8 sm:h-8 text-rose-400">
+                 class="w-5 h-5 sm:w-8 sm:h-8" style="color: {{ media_type_colors.music }};">
               <path d="M9 18V5l12-2v13"/>
               <circle cx="6" cy="18" r="3"/>
               <circle cx="18" cy="16" r="3"/>

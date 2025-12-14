@@ -2188,6 +2188,32 @@ def get_daily_hours_by_media_type(user_media, start_date, end_date):
                     if media_type in per_type_minutes and label in per_type_minutes[media_type]:
                         per_type_minutes[media_type][label] += runtime_minutes
 
+        # Podcasts: use end_date from Podcast model (similar to TV episodes)
+        # Each Podcast entry represents one episode completion
+        elif media_type == MediaTypes.PODCAST.value:
+            for media in media_list:
+                # Use end_date from the Podcast model (when episode was completed)
+                if not media.end_date:
+                    continue
+                
+                completion_date = _localize_datetime(media.end_date).date()
+                if completion_date < start_date_dt or completion_date > end_date_dt:
+                    continue
+                
+                # Get runtime from item or use progress (stored in minutes)
+                runtime_minutes = 0
+                if hasattr(media, "item") and media.item.runtime_minutes:
+                    runtime_minutes = media.item.runtime_minutes
+                elif media.progress > 0:
+                    runtime_minutes = media.progress
+                
+                if runtime_minutes <= 0:
+                    continue
+                
+                label = completion_date.isoformat()
+                if media_type in per_type_minutes and label in per_type_minutes[media_type]:
+                    per_type_minutes[media_type][label] += runtime_minutes
+
         # Manga, Games, Books, Comics: use progress field and distribute evenly across item's date span
         elif media_type in (
             MediaTypes.MANGA.value,
