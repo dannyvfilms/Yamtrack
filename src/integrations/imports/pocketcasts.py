@@ -97,7 +97,7 @@ class PocketCastsImporter:
         
         # Record history for newly created podcasts
         if hasattr(self, '_pending_history'):
-            for episode_uuid, delta_seconds, import_time in self._pending_history:
+            for episode_uuid, delta_seconds, history_timestamp in self._pending_history:
                 # Reload podcast from DB after bulk create
                 try:
                     podcast = Podcast.objects.get(
@@ -105,7 +105,7 @@ class PocketCastsImporter:
                         item__media_id=episode_uuid,
                         item__source=Sources.POCKETCASTS.value,
                     )
-                    self._record_history(podcast, delta_seconds, import_time)
+                    self._record_history(podcast, delta_seconds, history_timestamp)
                 except Podcast.DoesNotExist:
                     logger.warning("Could not find podcast after bulk create for history recording: %s", episode_uuid)
 
@@ -123,6 +123,16 @@ class PocketCastsImporter:
             self.user.username,
             imported_counts,
         )
+
+        # Trigger cache refresh if any podcasts were imported
+        # (bulk_create doesn't trigger signals, so we need to manually refresh)
+        if MediaTypes.PODCAST.value in imported_counts and imported_counts[MediaTypes.PODCAST.value] > 0:
+            from app.history_cache import schedule_history_refresh
+            from app import statistics_cache
+            
+            logger.debug("Triggering cache refresh for user %s after podcast import", self.user.username)
+            schedule_history_refresh(self.user.id)
+            statistics_cache.schedule_all_ranges_refresh(self.user.id)
 
         return imported_counts, "\n".join(self.warnings) if self.warnings else ""
 
@@ -360,6 +370,9 @@ class PocketCastsImporter:
             if episode_data.get("published"):
                 try:
                     published = datetime.fromisoformat(episode_data["published"].replace("Z", "+00:00"))
+                    # Ensure timezone-aware
+                    if published and timezone.is_naive(published):
+                        published = timezone.make_aware(published)
                 except (ValueError, AttributeError):
                     logger.debug("Failed to parse published date: %s", episode_data.get("published"))
 
@@ -451,6 +464,29 @@ class PocketCastsImporter:
                 old_status,
             )
 
+            # Estimate completion date: use published date + duration as completion time
+            # This gives us a reasonable estimate of when the episode was finished
+            completion_date = None
+            # Calculate completion date for completed episodes (new or existing)
+            if new_status == Status.COMPLETED.value and published:
+                # Estimate completion as published date + duration (when episode would have finished)
+                # This is better than using "today" (import time)
+                if duration_seconds:
+                    completion_date = published + timedelta(seconds=duration_seconds)
+                else:
+                    # Fallback to published date if no duration
+                    completion_date = published
+                # Ensure it's timezone-aware
+                if completion_date and timezone.is_naive(completion_date):
+                    completion_date = timezone.make_aware(completion_date)
+                logger.debug(
+                    "Calculated completion_date for episode %s: published=%s, duration=%s, completion_date=%s",
+                    episode_data.get("title", "Unknown"),
+                    published,
+                    duration_seconds,
+                    completion_date,
+                )
+
             # Create or update podcast entry
             if existing_podcast:
                 # Update existing
@@ -462,16 +498,32 @@ class PocketCastsImporter:
                 existing_podcast.played_up_to_seconds = played_up_to
                 existing_podcast.last_seen_status = playing_status
                 
-                # Set end_date if completed
-                if new_status == Status.COMPLETED.value and not existing_podcast.end_date:
-                    existing_podcast.end_date = timezone.now()
+                # Set end_date if completed (use estimated completion date)
+                # Always update if we have a calculated completion_date (better estimate than import time)
+                if new_status == Status.COMPLETED.value:
+                    if completion_date:
+                        existing_podcast.end_date = completion_date
+                        logger.debug(
+                            "Updated end_date for existing podcast %s: %s",
+                            episode_data.get("title", "Unknown"),
+                            completion_date,
+                        )
+                    elif not existing_podcast.end_date:
+                        # Fallback to now only if we can't calculate completion_date and end_date is missing
+                        existing_podcast.end_date = timezone.now()
+                        logger.debug(
+                            "Set end_date to now for existing podcast %s (no completion_date calculated)",
+                            episode_data.get("title", "Unknown"),
+                        )
                 
                 # Save to create history entry (Media.history tracks progress changes)
                 existing_podcast.save()
                 
                 # Record history for delta time (create history entry manually)
+                # Use completion_date for history timestamp if available, otherwise use published date
+                history_timestamp = completion_date or published or timezone.now()
                 if delta_seconds > 0:
-                    self._record_history(existing_podcast, delta_seconds, timezone.now())
+                    self._record_history(existing_podcast, delta_seconds, history_timestamp)
             else:
                 # Create new
                 podcast = Podcast(
@@ -483,8 +535,8 @@ class PocketCastsImporter:
                     progress=progress_minutes,
                     played_up_to_seconds=played_up_to,
                     last_seen_status=playing_status,
-                    start_date=timezone.now() if progress_minutes > 0 else None,
-                    end_date=timezone.now() if new_status == Status.COMPLETED.value else None,
+                    start_date=published if progress_minutes > 0 else None,  # Use published date as start
+                    end_date=completion_date if new_status == Status.COMPLETED.value else None,
                     notes="Imported from Pocket Casts",
                 )
                 
@@ -495,8 +547,9 @@ class PocketCastsImporter:
                 if delta_seconds > 0:
                     if not hasattr(self, '_pending_history'):
                         self._pending_history = []
-                    # Store episode_uuid and delta for lookup after bulk create
-                    self._pending_history.append((episode_uuid, delta_seconds, timezone.now()))
+                    # Store episode_uuid, delta, and timestamp for lookup after bulk create
+                    history_timestamp = completion_date or published or timezone.now()
+                    self._pending_history.append((episode_uuid, delta_seconds, history_timestamp))
 
         except (ValueError, KeyError, TypeError) as e:
             logger.warning("Failed to process Pocket Casts episode %s: %s", episode_data.get("uuid"), e)

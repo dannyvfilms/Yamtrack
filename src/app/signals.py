@@ -20,6 +20,7 @@ from app.models import (
     Manga,
     Movie,
     Music,
+    Podcast,
     Season,
     TV,
 )
@@ -93,6 +94,22 @@ def refresh_history_cache_on_movie_change(sender, instance, **kwargs):  # noqa: 
 @receiver([post_save, post_delete], sender=Music)
 def refresh_history_cache_on_music_change(sender, instance, **kwargs):  # noqa: ARG001
     """Schedule history cache refresh when music activity changes.
+    
+    We schedule a refresh but don't delete the cache immediately,
+    so users can see the old data with a notification while refresh happens.
+    """
+    user_id = getattr(instance, "user_id", None)
+    if user_id:
+        # Schedule refresh but don't delete cache - old data will show with notification
+        schedule_history_refresh(user_id)
+        # Schedule statistics cache refresh but don't delete cache immediately
+        # This allows users to see old data with notification while refresh happens
+        statistics_cache.schedule_all_ranges_refresh(user_id)
+
+
+@receiver([post_save, post_delete], sender=Podcast)
+def refresh_history_cache_on_podcast_change(sender, instance, **kwargs):  # noqa: ARG001
+    """Schedule history cache refresh when podcast activity changes.
     
     We schedule a refresh but don't delete the cache immediately,
     so users can see the old data with a notification while refresh happens.

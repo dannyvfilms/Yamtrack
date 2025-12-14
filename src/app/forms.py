@@ -17,6 +17,7 @@ from app.models import (
     MediaTypes,
     Movie,
     Music,
+    Podcast,
     PodcastShowTracker,
     Season,
     Sources,
@@ -407,6 +408,21 @@ class MusicForm(MediaForm):
             "progress": (
                 f"Progress "
                 f"({config.get_unit(MediaTypes.MUSIC.value, short=False)}s)"
+            ),
+        }
+
+
+class PodcastForm(MediaForm):
+    """Form for podcast episodes."""
+
+    class Meta(MediaForm.Meta):
+        """Bind form to model."""
+
+        model = Podcast
+        labels = {
+            "progress": (
+                f"Progress "
+                f"({config.get_unit(MediaTypes.PODCAST.value, short=False)}s)"
             ),
         }
 

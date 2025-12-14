@@ -442,6 +442,9 @@
   .-mt-\[3px\] {
     margin-top: calc(3px * -1);
   }
+  .mt-0 {
+    margin-top: calc(var(--spacing) * 0);
+  }
   .mt-0\.5 {
     margin-top: calc(var(--spacing) * 0.5);
   }
@@ -2814,11 +2817,6 @@
   .md\:h-40 {
     @media (width >= 48rem) {
       height: calc(var(--spacing) * 40);
-    }
-  }
-  .md\:h-64 {
-    @media (width >= 48rem) {
-      height: calc(var(--spacing) * 64);
     }
   }
   .md\:h-\[calc\(2\*1\.5rem\)\] {
