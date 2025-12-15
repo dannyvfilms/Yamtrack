@@ -154,7 +154,7 @@
         <div class="bg-[#39404b] p-4 rounded-lg space-y-3">
           <div class="flex items-center justify-between">
             <div class="flex items-center">{% source_display "pocketcasts" %}</div>
-            {% if pocketcasts_account %}
+            {% if pocketcasts_account and pocketcasts_account.is_connected %}
               <form method="post" action="{% url 'pocketcasts_disconnect' %}">
                 {% csrf_token %}
                 <button type="submit"
@@ -171,7 +171,11 @@
             <p class="text-sm text-gray-400">Import podcasts every 3 hours (to estimate completion time)</p>
 
             <div class="flex items-center gap-2 text-sm">
-              <span class="text-gray-300">Connected</span>
+              {% if pocketcasts_account.is_connected %}
+                <span class="text-gray-300">Connected</span>
+              {% else %}
+                <span class="text-gray-300">Disconnected</span>
+              {% endif %}
               {% if pocketcasts_account.last_sync_at %}
                 <span class="text-gray-400">•</span>
                 <span class="text-gray-400">Last sync: {{ pocketcasts_account.last_sync_at|user_datetime_format:user }}</span>

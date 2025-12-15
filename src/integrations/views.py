@@ -612,6 +612,7 @@ def pocketcasts_connect(request):
                 "access_token": encrypted_access,
                 "refresh_token": encrypted_refresh,
                 "token_expires_at": token_expires_at,
+                "connection_broken": False,  # Clear broken flag on successful connection
             },
         )
         
@@ -673,6 +674,7 @@ def pocketcasts_disconnect(request):
         kwargs__contains=f'"user_id": {request.user.id}',
     ).delete()
     
+    # Clear all credentials (full disconnect)
     PocketCastsAccount.objects.filter(user=request.user).delete()
     messages.info(request, "Disconnected Pocket Casts and removed scheduled imports.")
     return redirect("import_data")
@@ -686,9 +688,14 @@ def import_pocketcasts(request):
     First import is "new", subsequent recurring imports are also "new".
     """
     pocketcasts_account = getattr(request.user, "pocketcasts_account", None)
-    if not pocketcasts_account or not pocketcasts_account.is_connected:
+    if not pocketcasts_account:
         messages.error(request, "Connect Pocket Casts before importing.")
         return redirect("import_data")
+    
+    # Refresh from DB to get latest status
+    pocketcasts_account.refresh_from_db()
+    
+    # Allow sync even if connection is broken - importer will attempt refresh
     
     # Check if this is the first import (no existing schedule)
     from django_celery_beat.models import PeriodicTask

@@ -54,6 +54,10 @@ class PocketCastsAccount(models.Model):
     )
     token_expires_at = models.DateTimeField(null=True, blank=True)
     last_sync_at = models.DateTimeField(null=True, blank=True)
+    connection_broken = models.BooleanField(
+        default=False,
+        help_text="True if connection is broken (refresh failed) but credentials are preserved"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -73,9 +77,14 @@ class PocketCastsAccount(models.Model):
         
         A connection is valid if:
         - We have an access token, AND
+        - Connection is not marked as broken, AND
         - Either the token is not expired, OR we have a refresh token to renew it
         """
         if not self.access_token:
+            return False
+        
+        # If connection is marked as broken, not connected
+        if self.connection_broken:
             return False
         
         # If token is not expired, we're connected

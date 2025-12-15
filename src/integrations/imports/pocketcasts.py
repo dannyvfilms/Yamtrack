@@ -42,13 +42,37 @@ class PocketCastsImporter:
         
         try:
             self.account = user.pocketcasts_account
+            # Refresh from DB to get latest connection_broken status
+            self.account.refresh_from_db()
         except integration_models.PocketCastsAccount.DoesNotExist:
             msg = "Pocket Casts account not connected"
             raise MediaImportError(msg)
 
-        if not self.account.is_connected:
+        # We need either an access token OR a refresh token to proceed
+        # If we only have a refresh token, we'll attempt to refresh first
+        has_access_token = bool(self.account.access_token and self.account.access_token.strip())
+        has_refresh_token = bool(self.account.refresh_token)
+        
+        if not has_access_token and not has_refresh_token:
+            logger.error("Pocket Casts account has no tokens - access_token: %s, refresh_token: %s", 
+                        "empty" if not has_access_token else "exists",
+                        "empty" if not has_refresh_token else "exists")
             msg = "Pocket Casts account not connected"
             raise MediaImportError(msg)
+        
+        # If we have a refresh token but no access token, try to refresh immediately
+        if not has_access_token and has_refresh_token:
+            logger.info("No access token but refresh token exists, attempting refresh for user %s", self.user.username)
+            try:
+                self._refresh_token()
+                logger.info("Successfully refreshed token from refresh token for user %s", self.user.username)
+            except Exception as e:
+                logger.error("Failed to refresh token when access token was missing: %s", e)
+                # Mark as broken but don't fail yet - let _ensure_valid_token handle it
+                self.account.connection_broken = True
+                self.account.save()
+        
+        # Allow import even if connection_broken - we'll attempt refresh in _ensure_valid_token
 
         self.existing_media = helpers.get_existing_media(user)
         self.to_delete = defaultdict(lambda: defaultdict(set))
@@ -136,16 +160,26 @@ class PocketCastsImporter:
 
         return imported_counts, "\n".join(self.warnings) if self.warnings else ""
 
-    def _disconnect_account(self, reason="Refresh token failed"):
-        """Disconnect the Pocket Casts account by clearing all tokens.
+    def _disconnect_account(self, reason="Refresh token failed", clear_credentials=False):
+        """Mark the Pocket Casts account as disconnected.
         
         Args:
             reason: Reason for disconnection (for logging)
+            clear_credentials: If True, clear all tokens. If False, preserve tokens but mark as broken.
         """
-        logger.warning("Disconnecting Pocket Casts account for user %s: %s", self.user.username, reason)
-        self.account.access_token = ""
-        self.account.refresh_token = None
-        self.account.token_expires_at = None
+        logger.warning("Marking Pocket Casts account as disconnected for user %s: %s", self.user.username, reason)
+        
+        if clear_credentials:
+            # Clear all tokens (full disconnect)
+            self.account.access_token = ""
+            self.account.refresh_token = None
+            self.account.token_expires_at = None
+            logger.info("Cleared all credentials for user %s", self.user.username)
+        else:
+            # Just mark as broken, preserve credentials for later refresh
+            self.account.connection_broken = True
+            logger.info("Marked connection as broken (credentials preserved) for user %s", self.user.username)
+        
         self.account.save()
         
         # Delete periodic import task
@@ -154,13 +188,24 @@ class PocketCastsImporter:
             task="Import from Pocket Casts (Recurring)",
             kwargs__contains=f'"user_id": {self.user.id}',
         ).delete()
-        logger.info("Disconnected Pocket Casts account and removed scheduled imports for user %s", self.user.username)
+        logger.info("Removed scheduled imports for user %s", self.user.username)
 
     def _ensure_valid_token(self):
         """Ensure we have a valid access token."""
+        # If no access token but we have a refresh token, try to refresh
         if not self.account.access_token:
-            msg = "No access token available"
-            raise MediaImportError(msg)
+            if self.account.refresh_token:
+                logger.info("No access token available, attempting refresh for user %s", self.user.username)
+                try:
+                    self._refresh_token()
+                    logger.info("Successfully refreshed token for user %s", self.user.username)
+                except Exception as e:
+                    logger.error("Failed to refresh token when access token was missing: %s", e)
+                    msg = "No access token available and refresh failed"
+                    raise MediaImportError(msg) from e
+            else:
+                msg = "No access token available"
+                raise MediaImportError(msg)
         
         # Check if token is expired and refresh if we have a refresh token
         if self.account.is_token_expired:
@@ -225,6 +270,8 @@ class PocketCastsImporter:
                 # If we can't parse, set expiration to 1 hour from now as fallback
                 self.account.token_expires_at = timezone.now() + timedelta(hours=1)
             
+            # Clear connection_broken flag on successful refresh
+            self.account.connection_broken = False
             self.account.save()
             logger.info("Successfully refreshed Pocket Casts token for user %s", self.user.username)
             

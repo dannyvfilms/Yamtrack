@@ -472,9 +472,9 @@ def import_data(request):
 
     # Get Pocket Casts account
     pocketcasts_account = getattr(request.user, "pocketcasts_account", None)
-    pocketcasts_connected = False
-    if pocketcasts_account and pocketcasts_account.is_connected:
-        pocketcasts_connected = True
+    # Refresh from DB to get latest connection_broken status
+    if pocketcasts_account:
+        pocketcasts_account.refresh_from_db()
 
     context = {
         "user": request.user,
@@ -482,7 +482,7 @@ def import_data(request):
         "plex_account": plex_account if plex_connected else None,
         "plex_sections": plex_sections,
         "plex_error": plex_error,
-        "pocketcasts_account": pocketcasts_account if pocketcasts_connected else None,
+        "pocketcasts_account": pocketcasts_account,
     }
     return render(request, "users/import_data.html", context)
 
