@@ -230,18 +230,30 @@ def get_statistics_data(user, start_date, end_date, range_name=None):
 def invalidate_statistics_cache(user_id: int, range_name: str = None):
     """Remove cached statistics for a user.
     
+    If a refresh is in progress, keep the old cache so users can see it
+    while the refresh completes. Otherwise, delete the cache.
+    
     Args:
         user_id: User ID
         range_name: Specific range to invalidate, or None to invalidate all ranges
     """
     if range_name:
         if range_name in PREDEFINED_RANGES:
-            cache.delete(_cache_key(user_id, range_name))
-            logger.debug("Invalidated statistics cache for user %s, range %s", user_id, range_name)
+            # Check if refresh is in progress
+            refresh_lock = cache.get(_refresh_lock_key(user_id, range_name))
+            if refresh_lock is None:
+                # No refresh in progress, safe to delete cache
+                cache.delete(_cache_key(user_id, range_name))
+                logger.debug("Invalidated statistics cache for user %s, range %s", user_id, range_name)
+            # If refresh is in progress, keep the old cache - it will be replaced when refresh completes
     else:
         # Invalidate all predefined ranges
         for range_name_item in PREDEFINED_RANGES:
-            cache.delete(_cache_key(user_id, range_name_item))
+            # Check if refresh is in progress for this range
+            refresh_lock = cache.get(_refresh_lock_key(user_id, range_name_item))
+            if refresh_lock is None:
+                # No refresh in progress, safe to delete cache
+                cache.delete(_cache_key(user_id, range_name_item))
         logger.debug("Invalidated all statistics caches for user %s", user_id)
 
 

@@ -820,9 +820,19 @@ def get_history_days(user, filters=None):
 
 
 def invalidate_history_cache(user_id: int):
-    """Remove cached history for a user."""
+    """Remove cached history for a user.
+    
+    If a refresh is in progress, keep the old cache so users can see it
+    while the refresh completes. Otherwise, delete the cache.
+    """
     for style in ("sessions", "repeats", None):
-        cache.delete(_cache_key(user_id, style or "repeats"))
+        logging_style = style or "repeats"
+        # Check if refresh is in progress
+        refresh_lock = cache.get(_refresh_lock_key(user_id, logging_style))
+        if refresh_lock is None:
+            # No refresh in progress, safe to delete cache
+            cache.delete(_cache_key(user_id, logging_style))
+        # If refresh is in progress, keep the old cache - it will be replaced when refresh completes
 
 
 def refresh_history_cache(user_id: int):
