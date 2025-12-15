@@ -234,6 +234,11 @@ def _build_music_album_entries(music_entries_for_album, album, day_date, track_d
         # Check history records for plays on this day
         # Each history record with an end_date on this day counts as a play
         for history_record in music.history.all():
+            # Only include history records for this user (or null history_user for legacy records)
+            history_user = getattr(history_record, "history_user", None)
+            if history_user is not None and history_user != user:
+                continue
+            
             history_end_date = getattr(history_record, "end_date", None)
             if history_end_date:
                 play_time = _localize_datetime(history_end_date)
@@ -456,6 +461,11 @@ def build_history_days(user, filters=None):
             # Find all days this track was played by checking history records
             days_played = set()
             for history_record in music.history.all():
+                # Only include history records for this user (or null history_user for legacy records)
+                history_user = getattr(history_record, "history_user", None)
+                if history_user is not None and history_user != user:
+                    continue
+                
                 history_end_date = getattr(history_record, "end_date", None)
                 if history_end_date:
                     play_time = _localize_datetime(history_end_date)
@@ -527,7 +537,13 @@ def build_history_days(user, filters=None):
                 
                 # Process each history record (like music does)
                 # Each history record with an end_date represents a play
+                # Filter by history_user to match template behavior
                 for history_record in podcast.history.all():
+                    # Only include history records for this user (or null history_user for legacy records)
+                    history_user = getattr(history_record, "history_user", None)
+                    if history_user is not None and history_user != user:
+                        continue
+                    
                     history_end_date = getattr(history_record, "end_date", None)
                     if not history_end_date:
                         continue
