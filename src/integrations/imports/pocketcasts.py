@@ -9,7 +9,7 @@ from django.conf import settings
 from django.utils import timezone
 
 import app
-from app.models import MediaTypes, Sources, Status, PodcastShow, PodcastEpisode, Podcast
+from app.models import MediaTypes, Sources, Status, PodcastShow, PodcastEpisode, Podcast, Music, Episode, Movie
 from app.providers import services
 from integrations import models as integration_models
 from integrations.imports import helpers
@@ -87,6 +87,8 @@ class PocketCastsImporter:
         # Allow import even if connection_broken - we'll attempt refresh/login in _ensure_valid_token
 
         self.existing_media = helpers.get_existing_media(user)
+        # Capture last sync so we can anchor inferred completion times to this window
+        self.previous_sync_at = self.account.last_sync_at
         self.to_delete = defaultdict(lambda: defaultdict(set))
         self.bulk_media = defaultdict(list)
         
@@ -123,9 +125,95 @@ class PocketCastsImporter:
             logger.info("No episodes found for Pocket Casts user %s", self.user.username)
             return {}, ""
 
-        # Process each episode
+        # Check if this is first import
+        is_first_import = not Podcast.objects.filter(user=self.user).exists()
+        
+        # Collect new completed podcasts for inference (if not first import)
+        new_completed_podcasts = []  # List of (episode_data, duration_seconds, published_date)
+        
+        # First pass: process episodes and collect new completed ones
         for episode_data in episodes:
-            self._process_episode(episode_data)
+            episode_uuid = episode_data.get("uuid")
+            # Check if this episode is new (not in existing_podcasts)
+            is_new = (episode_uuid, Sources.POCKETCASTS.value) not in self.existing_podcasts
+            
+            # Process the episode (but don't set completion_date yet for new ones)
+            self._process_episode(episode_data, defer_completion_date=not is_first_import and is_new)
+            
+            # If this is a new completed episode (not first import), collect it for inference
+            if not is_first_import and is_new:
+                playing_status = episode_data.get("playingStatus", 0)
+                duration = episode_data.get("duration", 0)
+                played_up_to = episode_data.get("playedUpTo", 0)
+                published = None
+                if episode_data.get("published"):
+                    try:
+                        published = datetime.fromisoformat(episode_data["published"].replace("Z", "+00:00"))
+                        if published and timezone.is_naive(published):
+                            published = timezone.make_aware(published)
+                    except (ValueError, AttributeError):
+                        pass
+                
+                # Check if completed using same logic as _calculate_progress_delta
+                # (status 3 or played up to duration with 5 second tolerance)
+                epsilon = 5
+                is_completed = (
+                    playing_status == 3 or 
+                    (duration > 0 and played_up_to >= duration - epsilon)
+                )
+                
+                if is_completed and published:
+                    new_completed_podcasts.append((episode_data, duration, published))
+        
+        # Second pass: infer completion dates for new completed podcasts
+        if new_completed_podcasts and not is_first_import:
+            # Get sync window
+            sync_window_end = timezone.now()
+            sync_window_start = self.account.last_sync_at or (sync_window_end - timedelta(hours=2))
+            
+            # Get existing history items in the window
+            existing_history = self._get_history_items_in_range(sync_window_start, sync_window_end)
+            
+            # Infer completion dates for each new podcast
+            for episode_data, duration_seconds, published_date in new_completed_podcasts:
+                episode_uuid = episode_data.get("uuid")
+                
+                # Get other new podcasts (excluding this one)
+                other_podcasts = [(p, d, pub) for (e, d, pub) in new_completed_podcasts 
+                                 if e.get("uuid") != episode_uuid]
+                
+                # Infer completion date
+                inferred_date = self._infer_completion_date(
+                    duration_seconds,
+                    sync_window_start,
+                    sync_window_end,
+                    existing_history,
+                    [(pub, d) for (_, d, pub) in other_podcasts],
+                    published_date
+                )
+                
+                # Update the podcast's completion_date in bulk_media
+                # Find the podcast in bulk_media and update it
+                for podcast in self.bulk_media.get(MediaTypes.PODCAST.value, []):
+                    if podcast.item.media_id == episode_uuid:
+                        podcast.end_date = inferred_date
+                        logger.debug(
+                            "Inferred completion_date for episode %s: %s (published: %s, duration: %d seconds)",
+                            episode_data.get("title", "Unknown"),
+                            inferred_date,
+                            published_date,
+                            duration_seconds,
+                        )
+                        # Update pending history timestamp to inferred date for this episode
+                        if hasattr(self, "_pending_history"):
+                            updated_history = []
+                            for ep_uuid, delta_seconds, history_timestamp in self._pending_history:
+                                if ep_uuid == episode_uuid:
+                                    updated_history.append((ep_uuid, delta_seconds, inferred_date))
+                                else:
+                                    updated_history.append((ep_uuid, delta_seconds, history_timestamp))
+                            self._pending_history = updated_history
+                        break
 
         # Cleanup and bulk create
         helpers.cleanup_existing_media(self.to_delete, self.user)
@@ -354,6 +442,253 @@ class PocketCastsImporter:
             msg = f"Failed to login to Pocket Casts: {e}"
             raise MediaImportError(msg) from e
 
+    def _get_history_items_in_range(self, start_time, end_time):
+        """Get all history items with end_date in the specified time range.
+        
+        Args:
+            start_time: Start of time range (datetime)
+            end_time: End of time range (datetime)
+            
+        Returns:
+            List of tuples: (end_date, duration_seconds, media_type, is_scrobbled)
+            - end_date: When the item was completed
+            - duration_seconds: Duration of the item in seconds (None if unknown)
+            - media_type: Type of media ('music', 'podcast', 'episode', 'movie')
+            - is_scrobbled: True if item has precise timestamp (Music/Episode), False otherwise
+            Sorted by end_date ascending
+        """
+        history_items = []
+        
+        # Music - scrobbled items with precise timestamps
+        music_items = Music.objects.filter(
+            user=self.user,
+            end_date__isnull=False,
+            end_date__gte=start_time,
+            end_date__lte=end_time,
+        ).select_related("item", "track")
+        
+        for music in music_items:
+            # Get duration from track or item runtime
+            duration_seconds = None
+            if music.track and music.track.duration:
+                duration_seconds = music.track.duration
+            elif music.item and music.item.runtime_minutes:
+                duration_seconds = music.item.runtime_minutes * 60
+            
+            history_items.append((music.end_date, duration_seconds, 'music', True))
+        
+        # Podcasts - already imported podcasts
+        podcast_items = Podcast.objects.filter(
+            user=self.user,
+            end_date__isnull=False,
+            end_date__gte=start_time,
+            end_date__lte=end_time,
+        ).select_related("item", "episode")
+        
+        for podcast in podcast_items:
+            duration_seconds = None
+            if podcast.episode and podcast.episode.duration:
+                duration_seconds = podcast.episode.duration
+            elif podcast.item and podcast.item.runtime_minutes:
+                duration_seconds = podcast.item.runtime_minutes * 60
+            
+            history_items.append((podcast.end_date, duration_seconds, 'podcast', False))
+        
+        # Episodes (TV) - scrobbled items with precise timestamps
+        episode_items = Episode.objects.filter(
+            related_season__user=self.user,
+            end_date__isnull=False,
+            end_date__gte=start_time,
+            end_date__lte=end_time,
+        ).select_related("item")
+        
+        for episode in episode_items:
+            duration_seconds = None
+            if episode.item and episode.item.runtime_minutes:
+                duration_seconds = episode.item.runtime_minutes * 60
+            
+            history_items.append((episode.end_date, duration_seconds, 'episode', True))
+        
+        # Movies
+        movie_items = Movie.objects.filter(
+            user=self.user,
+            end_date__isnull=False,
+            end_date__gte=start_time,
+            end_date__lte=end_time,
+        ).select_related("item")
+        
+        for movie in movie_items:
+            duration_seconds = None
+            if movie.item and movie.item.runtime_minutes:
+                duration_seconds = movie.item.runtime_minutes * 60
+            
+            history_items.append((movie.end_date, duration_seconds, 'movie', False))
+        
+        # Sort by end_date ascending
+        history_items.sort(key=lambda x: x[0])
+        
+        return history_items
+
+    def _infer_completion_date(self, podcast_duration_seconds, sync_window_start, sync_window_end, existing_history_items, other_new_podcasts, this_podcast_published):
+        """Infer completion date for a podcast by fitting it into timeline gaps.
+        
+        Args:
+            podcast_duration_seconds: Duration of the podcast in seconds
+            sync_window_start: Start of sync window (datetime)
+            sync_window_end: End of sync window (datetime)
+            existing_history_items: List from _get_history_items_in_range()
+            other_new_podcasts: List of other new podcasts being processed, each as (published_date, duration_seconds)
+            this_podcast_published: Published date of this podcast (for ordering)
+            
+        Returns:
+            Inferred completion datetime
+        """
+        # Sort other new podcasts by published date (oldest first)
+        sorted_other_podcasts = sorted(other_new_podcasts, key=lambda x: x[0])
+        
+        # Build timeline: combine existing items and other new podcasts
+        timeline = []
+        
+        # Add existing history items
+        for end_date, duration, media_type, is_scrobbled in existing_history_items:
+            timeline.append({
+                'end_date': end_date,
+                'duration_seconds': duration,
+                'media_type': media_type,
+                'is_scrobbled': is_scrobbled,
+                'is_new_podcast': False,
+            })
+        
+        # Add other new podcasts (sorted by published date)
+        for published_date, duration_seconds in sorted_other_podcasts:
+            # Estimate start time (we'll refine this when placing)
+            timeline.append({
+                'end_date': None,  # Will be calculated
+                'duration_seconds': duration_seconds,
+                'media_type': 'podcast',
+                'is_scrobbled': False,
+                'is_new_podcast': True,
+                'published_date': published_date,
+            })
+        
+        # Sort timeline by end_date (existing items) or published_date (new podcasts)
+        timeline.sort(key=lambda x: x['end_date'] if x['end_date'] else x.get('published_date', sync_window_start))
+        
+        # Determine this podcast's position in the ordered list
+        this_podcast_index = 0
+        for i, other_podcast in enumerate(sorted_other_podcasts):
+            if other_podcast[0] < this_podcast_published:
+                this_podcast_index = i + 1
+            else:
+                break
+        
+        # Find where to place this podcast
+        # Start from sync_window_start
+        current_time = sync_window_start
+        
+        # If there are other new podcasts before this one, we need to account for them
+        # For now, we'll try to fit it after existing items and before/after other new podcasts
+        
+        # Strategy: Look for gaps in the timeline
+        # 1. Try to fit after scrobbled items (Music/Episode) - these have precise timestamps
+        # 2. Try to fit in gaps between items
+        # 3. If no gap, place at end of window or before next scrobbled item
+        
+        # Check if podcast is too long for the window
+        window_duration = (sync_window_end - sync_window_start).total_seconds()
+        if podcast_duration_seconds and podcast_duration_seconds > window_duration:
+            # Too long - place at end of window
+            logger.debug("Podcast duration (%d seconds) exceeds window size (%d seconds), placing at end", 
+                        podcast_duration_seconds, window_duration)
+            return sync_window_end
+        
+        # Build timeline with start/end times for existing items only
+        # (We'll handle other new podcasts separately)
+        timeline_with_times = []
+        for item in timeline:
+            if item['is_new_podcast']:
+                continue  # Skip other new podcasts for now
+            
+            item_end = item['end_date']
+            item_duration = item['duration_seconds'] or 0
+            
+            # Estimate start time from end and duration
+            item_start = item_end - timedelta(seconds=item_duration) if item_duration > 0 else item_end
+            
+            timeline_with_times.append({
+                'start': item_start,
+                'end': item_end,
+                'duration': item_duration,
+                'is_scrobbled': item['is_scrobbled'],
+            })
+        
+        # Sort by end time
+        timeline_with_times.sort(key=lambda x: x['end'])
+        
+        # Strategy 1: Try to place after scrobbled items (Music/Episode) - these have precise timestamps
+        # Example: Music ends at 12:30pm, place podcast to end at 12:30pm + duration
+        for i, item in enumerate(timeline_with_times):
+            if not item['is_scrobbled']:
+                continue
+            
+            # Calculate where podcast would end if we start it right after this scrobbled item
+            podcast_start = item['end']
+            podcast_end = podcast_start + timedelta(seconds=podcast_duration_seconds)
+            
+            # Check if it fits before the next item or end of window
+            next_item = timeline_with_times[i + 1] if i + 1 < len(timeline_with_times) else None
+            if next_item:
+                gap_end = next_item['start']
+            else:
+                gap_end = sync_window_end
+            
+            # Check if podcast fits in this gap
+            if podcast_end <= gap_end and podcast_start >= sync_window_start:
+                logger.debug("Placing podcast after scrobbled item %s: start=%s, end=%s", 
+                           item['end'], podcast_start, podcast_end)
+                return podcast_end
+        
+        # Strategy 2: Try to fit in any gap between items
+        prev_end = sync_window_start
+        for item in timeline_with_times:
+            gap_start = prev_end
+            gap_end = item['start']
+            gap_size = (gap_end - gap_start).total_seconds()
+            
+            if gap_size >= podcast_duration_seconds:
+                # Fit it in this gap
+                completion_time = gap_start + timedelta(seconds=podcast_duration_seconds)
+                logger.debug("Placing podcast in gap: start=%s, end=%s", gap_start, completion_time)
+                return completion_time
+            
+            prev_end = item['end']
+        
+        # Check gap after last item
+        if timeline_with_times:
+            last_item = timeline_with_times[-1]
+            gap_start = last_item['end']
+            gap_end = sync_window_end
+            gap_size = (gap_end - gap_start).total_seconds()
+            
+            if gap_size >= podcast_duration_seconds:
+                completion_time = gap_start + timedelta(seconds=podcast_duration_seconds)
+                logger.debug("Placing podcast after last item: start=%s, end=%s", gap_start, completion_time)
+                return completion_time
+        
+        # Strategy 3: No suitable gap found
+        # Place before next scrobbled item, or at end of window
+        for item in timeline_with_times:
+            if item['is_scrobbled']:
+                # Place before this scrobbled item (but make sure it's within window)
+                completion_time = item['start'] - timedelta(seconds=1)
+                if completion_time >= sync_window_start:
+                    logger.debug("No gap found, placing before scrobbled item at %s", completion_time)
+                    return completion_time
+        
+        # Last resort: place at end of window
+        logger.debug("No suitable position found, placing at end of window: %s", sync_window_end)
+        return sync_window_end
+
     def _refresh_token(self):
         """Refresh the access token using the refresh token."""
         url = f"{POCKETCASTS_API_BASE_URL}/user/refresh"
@@ -503,8 +838,13 @@ class PocketCastsImporter:
             msg = f"Pocket Casts API error: {e.response.status_code}"
             raise MediaImportError(msg) from e
 
-    def _process_episode(self, episode_data):
-        """Process single episode: create/update show/episode, calculate delta."""
+    def _process_episode(self, episode_data, defer_completion_date=False):
+        """Process single episode: create/update show/episode, calculate delta.
+        
+        Args:
+            episode_data: Episode data from API
+            defer_completion_date: If True, don't set completion_date (will be inferred later)
+        """
         try:
             episode_uuid = episode_data.get("uuid")
             podcast_uuid = episode_data.get("podcastUuid")
@@ -657,16 +997,24 @@ class PocketCastsImporter:
             if updated:
                 episode.save()
 
+            # Get existing podcast or create new
+            existing_podcast = self.existing_podcasts.get((episode_uuid, Sources.POCKETCASTS.value))
+
             # Check if we should process this media
-            if not helpers.should_process_media(
-                self.existing_media,
-                self.to_delete,
-                MediaTypes.PODCAST.value,
-                Sources.POCKETCASTS.value,
-                episode_uuid,
-                self.mode,
-            ):
-                return
+            if existing_podcast:
+                # In "new" mode we still want to update progress/end_date for existing podcasts
+                if self.mode == "overwrite":
+                    self.to_delete[MediaTypes.PODCAST.value][Sources.POCKETCASTS.value].add(episode_uuid)
+            else:
+                if not helpers.should_process_media(
+                    self.existing_media,
+                    self.to_delete,
+                    MediaTypes.PODCAST.value,
+                    Sources.POCKETCASTS.value,
+                    episode_uuid,
+                    self.mode,
+                ):
+                    return
 
             # Get or create Item
             runtime_minutes = duration // 60 if duration else None
@@ -683,21 +1031,40 @@ class PocketCastsImporter:
             )
             
             # Update item if needed
+            item_update_fields = []
             if runtime_minutes and item.runtime_minutes != runtime_minutes:
                 item.runtime_minutes = runtime_minutes
-                item.save(update_fields=["runtime_minutes"])
-
-            # Get existing podcast or create new
-            existing_podcast = self.existing_podcasts.get((episode_uuid, Sources.POCKETCASTS.value))
+                item_update_fields.append("runtime_minutes")
+            if published and item.release_datetime != published:
+                item.release_datetime = published
+                item_update_fields.append("release_datetime")
+            if item_update_fields:
+                item.save(update_fields=item_update_fields)
             
             # Extract progress data
             playing_status = episode_data.get("playingStatus", 0)  # 2=in-progress, 3=completed
             played_up_to = episode_data.get("playedUpTo", 0)  # in seconds
             duration_seconds = duration or 0
+            if playing_status == 3 and duration_seconds and not played_up_to:
+                played_up_to = duration_seconds
             
             # Calculate progress delta and determine status
-            old_played_up_to = existing_podcast.played_up_to_seconds if existing_podcast else 0
-            old_status = existing_podcast.last_seen_status if existing_podcast else None
+            if existing_podcast:
+                old_played_up_to = existing_podcast.played_up_to_seconds
+                if old_played_up_to is None:
+                    # If we previously marked as completed but never stored played_up_to, treat as fully played
+                    if existing_podcast.status == Status.COMPLETED.value and duration_seconds:
+                        old_played_up_to = duration_seconds
+                    else:
+                        old_played_up_to = 0
+                old_status = (
+                    existing_podcast.last_seen_status
+                    if existing_podcast.last_seen_status is not None
+                    else existing_podcast.status
+                )
+            else:
+                old_played_up_to = 0
+                old_status = None
             
             delta_seconds, new_status, progress_minutes = self._calculate_progress_delta(
                 old_played_up_to,
@@ -707,60 +1074,103 @@ class PocketCastsImporter:
                 old_status,
             )
 
-            # Estimate completion date: use published date + duration as completion time
-            # This gives us a reasonable estimate of when the episode was finished
+            # If we already marked this episode completed, avoid re-counting plays
+            already_completed = existing_podcast and existing_podcast.status == Status.COMPLETED.value
+            if already_completed:
+                # Always set delta_seconds to 0 for already-completed episodes
+                # regardless of new_status to prevent duplicate history entries
+                delta_seconds = 0
+                progress_minutes = existing_podcast.progress
+            
+            # Estimate completion date
             completion_date = None
-            # Calculate completion date for completed episodes (new or existing)
-            if new_status == Status.COMPLETED.value and published:
-                # Estimate completion as published date + duration (when episode would have finished)
-                # This is better than using "today" (import time)
-                if duration_seconds:
-                    completion_date = published + timedelta(seconds=duration_seconds)
+            if already_completed and existing_podcast.end_date:
+                completion_date = existing_podcast.end_date
+            elif already_completed and self.previous_sync_at:
+                completion_date = self.previous_sync_at
+
+            should_set_completion_date = new_status == Status.COMPLETED.value
+
+            if should_set_completion_date and existing_podcast:
+                # Existing podcast just completed or missing completion data
+                if completion_date is None:
+                    if (
+                        existing_podcast.status != Status.COMPLETED.value
+                        or not existing_podcast.end_date
+                        or delta_seconds > 0
+                    ):
+                        completion_date = timezone.now()
+                        if self.previous_sync_at:
+                            completion_date = max(self.previous_sync_at, completion_date)
+            elif should_set_completion_date and published:
+                if defer_completion_date:
+                    # Will be inferred later in import_data()
+                    completion_date = None
+                    logger.debug(
+                        "Deferring completion_date inference for episode %s (published: %s, duration: %d seconds)",
+                        episode_data.get("title", "Unknown"),
+                        published,
+                        duration_seconds,
+                    )
                 else:
-                    # Fallback to published date if no duration
-                    completion_date = published
-                # Ensure it's timezone-aware
-                if completion_date and timezone.is_naive(completion_date):
-                    completion_date = timezone.make_aware(completion_date)
-                logger.debug(
-                    "Calculated completion_date for episode %s: published=%s, duration=%s, completion_date=%s",
-                    episode_data.get("title", "Unknown"),
-                    published,
-                    duration_seconds,
-                    completion_date,
-                )
+                    # First import: use published + duration
+                    if duration_seconds:
+                        completion_date = published + timedelta(seconds=duration_seconds)
+                    else:
+                        completion_date = published
+                    if completion_date and timezone.is_naive(completion_date):
+                        completion_date = timezone.make_aware(completion_date)
+                    logger.debug(
+                        "Calculated completion_date for episode %s: published=%s, duration=%s, completion_date=%s",
+                        episode_data.get("title", "Unknown"),
+                        published,
+                        duration_seconds,
+                        completion_date,
+                    )
 
             # Create or update podcast entry
             if existing_podcast:
-                # Update existing
-                existing_podcast.item = item
-                existing_podcast.show = show
-                existing_podcast.episode = episode
-                existing_podcast.status = new_status
-                existing_podcast.progress = progress_minutes  # Store in minutes
-                existing_podcast.played_up_to_seconds = played_up_to
-                existing_podcast.last_seen_status = playing_status
+                # Track if any fields actually changed
+                fields_changed = False
+                
+                # Only update fields if they've actually changed
+                if existing_podcast.item != item:
+                    existing_podcast.item = item
+                    fields_changed = True
+                if existing_podcast.show != show:
+                    existing_podcast.show = show
+                    fields_changed = True
+                if existing_podcast.episode != episode:
+                    existing_podcast.episode = episode
+                    fields_changed = True
+                if existing_podcast.status != new_status:
+                    existing_podcast.status = new_status
+                    fields_changed = True
+                if existing_podcast.progress != progress_minutes:
+                    existing_podcast.progress = progress_minutes  # Store in minutes
+                    fields_changed = True
+                if existing_podcast.played_up_to_seconds != played_up_to:
+                    existing_podcast.played_up_to_seconds = played_up_to
+                    fields_changed = True
+                if existing_podcast.last_seen_status != playing_status:
+                    existing_podcast.last_seen_status = playing_status
+                    fields_changed = True
                 
                 # Set end_date if completed (use estimated completion date)
-                # Always update if we have a calculated completion_date (better estimate than import time)
-                if new_status == Status.COMPLETED.value:
-                    if completion_date:
+                # Only update if it's None or actually different
+                if new_status == Status.COMPLETED.value and completion_date:
+                    if existing_podcast.end_date is None or existing_podcast.end_date != completion_date:
                         existing_podcast.end_date = completion_date
+                        fields_changed = True
                         logger.debug(
                             "Updated end_date for existing podcast %s: %s",
                             episode_data.get("title", "Unknown"),
                             completion_date,
                         )
-                    elif not existing_podcast.end_date:
-                        # Fallback to now only if we can't calculate completion_date and end_date is missing
-                        existing_podcast.end_date = timezone.now()
-                        logger.debug(
-                            "Set end_date to now for existing podcast %s (no completion_date calculated)",
-                            episode_data.get("title", "Unknown"),
-                        )
                 
-                # Save to create history entry (Media.history tracks progress changes)
-                existing_podcast.save()
+                # Only save if there are actual changes to prevent unnecessary history entries
+                if fields_changed:
+                    existing_podcast.save()
                 
                 # Record history for delta time (create history entry manually)
                 # Use completion_date for history timestamp if available, otherwise use published date
@@ -869,4 +1279,3 @@ class PocketCastsImporter:
                 # We went over, adjust back
                 podcast.progress = old_progress + delta_minutes
                 podcast.save()
-
