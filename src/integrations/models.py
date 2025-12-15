@@ -69,8 +69,25 @@ class PocketCastsAccount(models.Model):
 
     @property
     def is_connected(self):
-        """Return True when we have a token stored."""
-        return bool(self.access_token)
+        """Return True when we have a valid connection.
+        
+        A connection is valid if:
+        - We have an access token, AND
+        - Either the token is not expired, OR we have a refresh token to renew it
+        """
+        if not self.access_token:
+            return False
+        
+        # If token is not expired, we're connected
+        if not self.is_token_expired:
+            return True
+        
+        # If token is expired but we have a refresh token, we can still refresh
+        if self.refresh_token:
+            return True
+        
+        # Token is expired and no refresh token - not connected
+        return False
 
     @property
     def is_token_expired(self):

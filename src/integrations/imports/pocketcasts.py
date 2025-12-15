@@ -136,16 +136,53 @@ class PocketCastsImporter:
 
         return imported_counts, "\n".join(self.warnings) if self.warnings else ""
 
+    def _disconnect_account(self, reason="Refresh token failed"):
+        """Disconnect the Pocket Casts account by clearing all tokens.
+        
+        Args:
+            reason: Reason for disconnection (for logging)
+        """
+        logger.warning("Disconnecting Pocket Casts account for user %s: %s", self.user.username, reason)
+        self.account.access_token = ""
+        self.account.refresh_token = None
+        self.account.token_expires_at = None
+        self.account.save()
+        
+        # Delete periodic import task
+        from django_celery_beat.models import PeriodicTask
+        PeriodicTask.objects.filter(
+            task="Import from Pocket Casts (Recurring)",
+            kwargs__contains=f'"user_id": {self.user.id}',
+        ).delete()
+        logger.info("Disconnected Pocket Casts account and removed scheduled imports for user %s", self.user.username)
+
     def _ensure_valid_token(self):
         """Ensure we have a valid access token."""
         if not self.account.access_token:
             msg = "No access token available"
             raise MediaImportError(msg)
         
-        # Check if token is expired (but we can't refresh without refresh token)
+        # Check if token is expired and refresh if we have a refresh token
         if self.account.is_token_expired:
-            logger.warning("Pocket Casts token is expired for user %s. User may need to reconnect.", self.user.username)
-            # Try to use it anyway - it might still work or the expiration might be wrong
+            if self.account.refresh_token:
+                logger.info("Pocket Casts token is expired for user %s. Attempting to refresh.", self.user.username)
+                try:
+                    self._refresh_token()
+                    logger.info("Successfully refreshed expired token for user %s", self.user.username)
+                except requests.HTTPError as e:
+                    # If refresh fails with 401, the refresh token is invalid - disconnect
+                    if e.response and e.response.status_code == requests.codes.unauthorized:
+                        self._disconnect_account("Refresh token is invalid or expired")
+                        msg = "Refresh token is invalid. Please reconnect your Pocket Casts account."
+                        raise MediaImportError(msg) from e
+                    # For other HTTP errors, log and try to continue
+                    logger.warning("Failed to refresh expired token for user %s: %s", self.user.username, e)
+                except Exception as e:
+                    # For non-HTTP errors, log but try to continue
+                    logger.warning("Failed to refresh expired token for user %s: %s", self.user.username, e)
+            else:
+                logger.warning("Pocket Casts token is expired for user %s and no refresh token available. User may need to reconnect.", self.user.username)
+                # Try to use it anyway - it might still work or the expiration might be wrong
 
     def _refresh_token(self):
         """Refresh the access token using the refresh token."""
@@ -155,6 +192,8 @@ class PocketCastsImporter:
             decrypted_refresh_token = decrypt(self.account.refresh_token)
         except Exception as e:
             logger.error("Failed to decrypt refresh token: %s", e)
+            # If we can't decrypt, the token is corrupted - disconnect
+            self._disconnect_account("Refresh token decryption failed - token may be corrupted")
             msg = "Invalid refresh token"
             raise MediaImportError(msg) from e
 
@@ -191,6 +230,8 @@ class PocketCastsImporter:
             
         except requests.HTTPError as e:
             if e.response.status_code == requests.codes.unauthorized:
+                # Refresh token is invalid - disconnect the account
+                self._disconnect_account("Refresh token returned 401 unauthorized")
                 msg = "Invalid refresh token. Please reconnect your Pocket Casts account."
                 raise MediaImportError(msg) from e
             msg = f"Token refresh failed: {e.response.status_code}"
@@ -251,12 +292,26 @@ class PocketCastsImporter:
                             if "episodes" in response:
                                 return response["episodes"]
                         except requests.HTTPError:
-                            pass
-                    except Exception:
-                        pass
-                
-                msg = "Authentication failed. Your token may have expired. Please reconnect your Pocket Casts account."
-                raise MediaImportError(msg) from e
+                            # If retry still fails, disconnect
+                            self._disconnect_account("Token refresh succeeded but API calls still return 401")
+                            msg = "Authentication failed after token refresh. Please reconnect your Pocket Casts account."
+                            raise MediaImportError(msg) from e
+                    except requests.HTTPError as refresh_error:
+                        # Refresh failed with HTTP error - if it's 401, disconnect
+                        if refresh_error.response and refresh_error.response.status_code == requests.codes.unauthorized:
+                            self._disconnect_account("Refresh token returned 401 during API call")
+                        msg = "Authentication failed. Your token may have expired. Please reconnect your Pocket Casts account."
+                        raise MediaImportError(msg) from refresh_error
+                    except Exception as refresh_error:
+                        # Other refresh errors - log but don't disconnect (might be temporary)
+                        logger.error("Token refresh failed during API call: %s", refresh_error)
+                        msg = "Authentication failed. Your token may have expired. Please reconnect your Pocket Casts account."
+                        raise MediaImportError(msg) from e
+                else:
+                    # No refresh token and got 401 - disconnect
+                    self._disconnect_account("Access token invalid and no refresh token available")
+                    msg = "Authentication failed. Your token may have expired. Please reconnect your Pocket Casts account."
+                    raise MediaImportError(msg) from e
             msg = f"Pocket Casts API error: {e.response.status_code}"
             raise MediaImportError(msg) from e
 

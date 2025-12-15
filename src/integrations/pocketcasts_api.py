@@ -74,17 +74,27 @@ def refresh_token(refresh_token: str) -> Dict[str, Any]:
         data = response.json()
         
         if "accessToken" not in data:
+            logger.error("Token refresh response missing accessToken. Response keys: %s", list(data.keys()) if isinstance(data, dict) else "not a dict")
             raise PocketCastsAuthError("Invalid response from token refresh")
         
+        logger.debug("Token refresh successful")
         return {
             "accessToken": data["accessToken"],
             "refreshToken": data.get("refreshToken", refresh_token),
         }
     except requests.HTTPError as e:
-        if e.response.status_code == 401:
+        status_code = e.response.status_code if e.response else None
+        try:
+            error_body = e.response.text[:500] if e.response else "No response"
+            logger.error("Token refresh failed with status %d. Response: %s", status_code, error_body)
+        except Exception:
+            logger.error("Token refresh failed with status %d (could not read response body)", status_code)
+        
+        if status_code == 401:
             raise PocketCastsAuthError("Refresh token is invalid or expired")
-        raise PocketCastsClientError(f"Pocket Casts API error: {e.response.status_code}") from e
+        raise PocketCastsClientError(f"Pocket Casts API error: {status_code}") from e
     except requests.RequestException as e:
+        logger.error("Network error during token refresh: %s", e)
         raise PocketCastsClientError(f"Failed to refresh token: {e}") from e
 
 
@@ -129,15 +139,23 @@ def validate_token(access_token: str) -> bool:
         response = requests.post(url, json={}, headers=headers, timeout=10)
         # 200 or 201 means valid token (even if no episodes)
         if response.status_code in (200, 201):
+            logger.debug("Access token validation successful (status %d)", response.status_code)
             return True
         # 401 means invalid token
         if response.status_code == 401:
+            try:
+                error_body = response.text[:500]  # Limit to first 500 chars
+                logger.warning("Access token validation failed with 401. Response: %s", error_body)
+            except Exception:
+                logger.warning("Access token validation failed with 401 (could not read response body)")
             return False
         # Other errors might be temporary, but we'll consider token potentially valid
         # if it's not an auth error
+        logger.warning("Access token validation returned unexpected status %d", response.status_code)
         return response.status_code < 500
-    except requests.RequestException:
+    except requests.RequestException as e:
         # Network errors - can't validate, assume invalid to be safe
+        logger.error("Network error during access token validation: %s", e)
         return False
 
 
