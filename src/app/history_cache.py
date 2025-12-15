@@ -500,45 +500,61 @@ def build_history_days(user, filters=None):
             if not podcast.end_date:
                 continue
             
-            played_at_local = _localize_datetime(podcast.end_date)
-            if not played_at_local:
+            # Skip if podcast doesn't have required data
+            if not podcast.item:
+                logger.warning("Skipping podcast entry %s without item", podcast.id)
                 continue
             
-            # Progress is stored in minutes
-            minutes_listened = podcast.progress or 0
-            runtime_minutes = podcast.item.runtime_minutes if podcast.item and podcast.item.runtime_minutes else minutes_listened
-            
-            # Get show - prefer episode.show (authoritative source), fallback to podcast.show
-            show = None
-            if podcast.episode:
-                show = podcast.episode.show
-            if not show:
-                show = podcast.show
-            
-            # Get show URL components for navigation
-            show_podcast_uuid = show.podcast_uuid if show else None
-            # Use show.slug if available, otherwise use show.title for URL slug
-            show_slug = show.slug if show and show.slug else (show.title if show else "")
-            
-            entries.append(
-                {
-                    "media_type": MediaTypes.PODCAST.value,
-                    "item": podcast.item,
-                    "show": show,
-                    "show_podcast_uuid": show_podcast_uuid,
-                    "show_slug": show_slug,
-                    "poster": show.image if show and show.image else (podcast.item.image or settings.IMG_NONE),
-                    "title": podcast.item.title,
-                    "display_title": podcast.item.title,
-                    "progress_display": f"{minutes_listened}m",
-                    "date_range_display": None,
-                    "episode_label": None,
-                    "episode_code": None,
-                    "played_at_local": played_at_local,
-                    "runtime_minutes": runtime_minutes,
-                    "runtime_display": helpers.minutes_to_hhmm(runtime_minutes) if runtime_minutes else None,
-                },
-            )
+            try:
+                played_at_local = _localize_datetime(podcast.end_date)
+                if not played_at_local:
+                    continue
+                
+                # Progress is stored in minutes
+                minutes_listened = podcast.progress or 0
+                runtime_minutes = podcast.item.runtime_minutes if podcast.item.runtime_minutes else minutes_listened
+                
+                # Get show - prefer episode.show (authoritative source), fallback to podcast.show
+                show = None
+                if podcast.episode:
+                    show = podcast.episode.show
+                if not show:
+                    show = podcast.show
+                
+                # Get show URL components for navigation
+                show_podcast_uuid = show.podcast_uuid if show else None
+                # Use show.slug if available, otherwise use show.title for URL slug
+                show_slug = show.slug if show and show.slug else (show.title if show else "")
+                
+                # Get poster - prefer show image, fallback to item image, then IMG_NONE
+                poster = settings.IMG_NONE
+                if show and show.image:
+                    poster = show.image
+                elif podcast.item.image:
+                    poster = podcast.item.image
+                
+                entries.append(
+                    {
+                        "media_type": MediaTypes.PODCAST.value,
+                        "item": podcast.item,
+                        "show": show,
+                        "show_podcast_uuid": show_podcast_uuid,
+                        "show_slug": show_slug,
+                        "poster": poster,
+                        "title": podcast.item.title,
+                        "display_title": podcast.item.title,
+                        "progress_display": f"{minutes_listened}m",
+                        "date_range_display": None,
+                        "episode_label": None,
+                        "episode_code": None,
+                        "played_at_local": played_at_local,
+                        "runtime_minutes": runtime_minutes,
+                        "runtime_display": helpers.minutes_to_hhmm(runtime_minutes) if runtime_minutes else None,
+                    },
+                )
+            except Exception as e:
+                logger.error("Error processing podcast entry %s: %s", podcast.id, e, exc_info=True)
+                continue
 
     # Games - only process if not filtering by specific media type
     if process_all:
@@ -812,16 +828,25 @@ def invalidate_history_cache(user_id: int):
 def refresh_history_cache(user_id: int):
     """Rebuild and store history for a user."""
     user_model = get_user_model()
+    logging_style = "repeats"
     try:
         user = user_model.objects.get(id=user_id)
+        logging_style = getattr(user, "game_logging_style", "repeats")
     except user_model.DoesNotExist:
+        # Clear lock if user doesn't exist
+        cache.delete(_refresh_lock_key(user_id, logging_style))
         return None
 
-    history_days = build_history_days(user)
-    logging_style = getattr(user, "game_logging_style", "repeats")
-    cache_history_days(user_id, logging_style, history_days)
-    cache.delete(_refresh_lock_key(user_id, logging_style))
-    return history_days
+    try:
+        history_days = build_history_days(user)
+        cache_history_days(user_id, logging_style, history_days)
+        cache.delete(_refresh_lock_key(user_id, logging_style))
+        return history_days
+    except Exception as e:
+        # Always clear the lock, even on error, to prevent it from being stuck
+        logger.error("Error refreshing history cache for user %s: %s", user_id, e, exc_info=True)
+        cache.delete(_refresh_lock_key(user_id, logging_style))
+        raise
 
 
 def schedule_history_refresh(user_id: int, logging_style: str = "repeats", debounce_seconds: int = 30, countdown: int = 3):
@@ -834,8 +859,16 @@ def schedule_history_refresh(user_id: int, logging_style: str = "repeats", debou
         countdown: Seconds to delay task execution (default 3)
     """
     lock_key = _refresh_lock_key(user_id, logging_style)
+    # Use a longer TTL (5 minutes) to ensure lock exists for entire task duration
+    # The lock is deleted when task completes, but we need it to last longer than
+    # the longest possible task execution time
+    lock_ttl = 300  # 5 minutes should be more than enough for any history task
     if debounce_seconds and not cache.add(lock_key, True, debounce_seconds):
         return False
+    
+    # Extend the lock TTL to cover the full task duration
+    # This ensures the lock exists even if the task takes longer than debounce_seconds
+    cache.set(lock_key, True, lock_ttl)
 
     try:
         from app.tasks import refresh_history_cache_task
