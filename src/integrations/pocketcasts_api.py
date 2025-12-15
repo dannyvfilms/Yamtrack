@@ -7,7 +7,7 @@ import jwt
 import requests
 from django.conf import settings
 from django.utils import timezone
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone as dt_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +98,7 @@ def parse_token_expiration(access_token: str) -> datetime:
         decoded = jwt.decode(access_token, options={"verify_signature": False})
         exp = decoded.get("exp")
         if exp:
-            return datetime.fromtimestamp(exp, tz=timezone.utc)
+            return datetime.fromtimestamp(exp, tz=dt_timezone.utc)
     except Exception:
         pass
     

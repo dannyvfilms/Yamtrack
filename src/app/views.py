@@ -1,5 +1,5 @@
 import logging
-from datetime import timedelta
+from datetime import timedelta, timezone as dt_timezone
 from pathlib import Path
 
 from dateutil.relativedelta import relativedelta
@@ -788,7 +788,7 @@ def media_details(
                     
                     # Sort by end_date descending (most recent first) for display
                     all_history.sort(
-                        key=lambda x: x.end_date if x.end_date else timezone.datetime.min.replace(tzinfo=timezone.utc),
+                        key=lambda x: x.end_date if x.end_date else timezone.datetime.min.replace(tzinfo=dt_timezone.utc),
                         reverse=True
                     )
                     
@@ -826,12 +826,12 @@ def media_details(
                                     if order == 'end_date':
                                         sorted_list = sorted(
                                             self._history,
-                                            key=lambda x: x.end_date if x.end_date else timezone.datetime.min.replace(tzinfo=timezone.utc)
+                                            key=lambda x: x.end_date if x.end_date else timezone.datetime.min.replace(tzinfo=dt_timezone.utc)
                                         )
                                     elif order == '-end_date':
                                         sorted_list = sorted(
                                             self._history,
-                                            key=lambda x: x.end_date if x.end_date else timezone.datetime.min.replace(tzinfo=timezone.utc),
+                                            key=lambda x: x.end_date if x.end_date else timezone.datetime.min.replace(tzinfo=dt_timezone.utc),
                                             reverse=True
                                         )
                                     else:
@@ -1341,7 +1341,7 @@ def track_modal(
                 # Sort by end_date descending (most recent first) for display
                 # The template filter will re-sort if needed
                 all_history.sort(
-                    key=lambda x: x.end_date if x.end_date else timezone.datetime.min.replace(tzinfo=timezone.utc),
+                    key=lambda x: x.end_date if x.end_date else timezone.datetime.min.replace(tzinfo=dt_timezone.utc),
                     reverse=True
                 )
                 
@@ -1379,12 +1379,12 @@ def track_modal(
                                 if order == 'end_date':
                                     sorted_list = sorted(
                                         self._history,
-                                        key=lambda x: x.end_date if x.end_date else timezone.datetime.min.replace(tzinfo=timezone.utc)
+                                        key=lambda x: x.end_date if x.end_date else timezone.datetime.min.replace(tzinfo=dt_timezone.utc)
                                     )
                                 elif order == '-end_date':
                                     sorted_list = sorted(
                                         self._history,
-                                        key=lambda x: x.end_date if x.end_date else timezone.datetime.min.replace(tzinfo=timezone.utc),
+                                        key=lambda x: x.end_date if x.end_date else timezone.datetime.min.replace(tzinfo=dt_timezone.utc),
                                         reverse=True
                                     )
                                 else:
@@ -1932,7 +1932,13 @@ def delete_history_record(request, media_type, history_id):
         # Invalidate caches since history changed
         # This is needed because deleting a historical record doesn't trigger
         # the model's post_delete signal (we're deleting Historical*, not the actual model)
-        history_cache.invalidate_history_cache(request.user.id)
+        # Schedule refresh first to set the lock, then invalidate (which will preserve cache if lock exists)
+        # This ensures the old cache is preserved during refresh so users see something
+        # The refresh will rebuild with correct data (querying HistoricalPodcast directly
+        # ensures deleted records won't be included)
+        # For deletes, invalidate immediately (force) so the stale entry disappears,
+        # then schedule the refresh to rebuild. This shows the banner and reloads.
+        history_cache.invalidate_history_cache(request.user.id, force=True)
         history_cache.schedule_history_refresh(request.user.id)
         statistics_cache.invalidate_statistics_cache(request.user.id)
         statistics_cache.schedule_all_ranges_refresh(request.user.id)
@@ -2015,17 +2021,21 @@ def delete_history_record(request, media_type, history_id):
                     # Update the count in the modal
                     modal_text = "Played once" if remaining_count == 1 else f"Played {remaining_count} times"
                     response.write(f'<p id="modal-listen-count-{podcast_id}" hx-swap-oob="true" class="text-sm text-gray-400 mt-1">{modal_text}</p>')
+                    response["HX-Trigger"] = "history-refresh-start"
                     return response
                 else:
                     # No history left, update modal
                     response = HttpResponse()
                     response.write(f'<p id="modal-listen-count-{podcast_id}" hx-swap-oob="true" class="text-sm text-gray-400 mt-1">Not played yet</p>')
+                    response["HX-Trigger"] = "history-refresh-start"
                     return response
             except Podcast.DoesNotExist:
                 pass
 
         # Return empty 200 response - the element will be removed by HTMX
-        return HttpResponse()
+        response = HttpResponse()
+        response["HX-Trigger"] = "history-refresh-start"
+        return response
 
     except historical_model.DoesNotExist:
         logger.exception(
@@ -3393,7 +3403,29 @@ def cache_status(request):
     if cache_type == "history":
         logging_style = request.GET.get("logging_style", "repeats")
         cache_entry = cache.get(history_cache._cache_key(request.user.id, logging_style))
-        refresh_lock = cache.get(history_cache._refresh_lock_key(request.user.id, logging_style))
+        refresh_lock_key = history_cache._refresh_lock_key(request.user.id, logging_style)
+        refresh_lock = cache.get(refresh_lock_key)
+        
+        # If lock is too old, clear it to avoid a stuck "refreshing" state
+        if refresh_lock:
+            if isinstance(refresh_lock, dict):
+                started_at = refresh_lock.get("started_at")
+                if started_at and timezone.now() - started_at > history_cache.HISTORY_REFRESH_LOCK_MAX_AGE:
+                    cache.delete(refresh_lock_key)
+                    refresh_lock = None
+            else:
+                # Legacy lock with no metadata - clear it
+                cache.delete(refresh_lock_key)
+                refresh_lock = None
+        
+        # Debug logging to help diagnose lock issues
+        logger.debug(
+            "Cache status check for user %s, logging_style %s: lock_key=%s, lock_exists=%s",
+            request.user.id,
+            logging_style,
+            refresh_lock_key,
+            refresh_lock is not None,
+        )
         
         if cache_entry:
             built_at = cache_entry.get("built_at")
@@ -3405,6 +3437,15 @@ def cache_status(request):
                 # Consider cache "recently built" if it was built in the last 60 seconds
                 # This helps catch refreshes that completed just before or during page load
                 recently_built = age < timedelta(seconds=60)
+                # If the cache was just rebuilt but the lock is still set, clear it
+                # to avoid a stuck "refreshing" state on the frontend.
+                if refresh_lock and recently_built:
+                    cache.delete(refresh_lock_key)
+                    refresh_lock = None
+                # If cache is fresh (not stale), ignore any lingering lock so UI doesn't loop
+                if not is_stale and refresh_lock:
+                    cache.delete(refresh_lock_key)
+                    refresh_lock = None
             
             return JsonResponse({
                 "exists": True,

@@ -1,7 +1,7 @@
 import logging
 import time
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone as dt_timezone
 
 import jwt
 import requests
@@ -181,7 +181,7 @@ class PocketCastsImporter:
                 decoded = jwt.decode(response["accessToken"], options={"verify_signature": False})
                 exp = decoded.get("exp")
                 if exp:
-                    self.account.token_expires_at = datetime.fromtimestamp(exp, tz=timezone.utc)
+                    self.account.token_expires_at = datetime.fromtimestamp(exp, tz=dt_timezone.utc)
             except Exception:
                 # If we can't parse, set expiration to 1 hour from now as fallback
                 self.account.token_expires_at = timezone.now() + timedelta(hours=1)
