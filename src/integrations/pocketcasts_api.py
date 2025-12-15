@@ -40,12 +40,63 @@ def login(email: str, password: str) -> Dict[str, Any]:
         response.raise_for_status()
         data = response.json()
         
-        if "accessToken" not in data:
-            raise PocketCastsAuthError("Invalid response from Pocket Casts login")
+        # Log response keys for debugging (but not the actual values for security)
+        if isinstance(data, dict):
+            logger.debug("Pocket Casts login response keys: %s", list(data.keys()))
+            # Log a sanitized version of the response (hide token values)
+            sanitized = {k: ("***" if "token" in k.lower() or "password" in k.lower() else v) 
+                        for k, v in data.items() if not isinstance(v, (dict, list))}
+            logger.debug("Pocket Casts login response (sanitized): %s", sanitized)
+        else:
+            logger.debug("Pocket Casts login response type: %s", type(data).__name__)
+        
+        # Check for accessToken in various possible field names
+        access_token = None
+        refresh_token = None
+        
+        # First, check if data is nested (e.g., {"data": {...}})
+        if isinstance(data, dict) and "data" in data and isinstance(data["data"], dict):
+            data = data["data"]
+        
+        # Try different possible field names
+        if "accessToken" in data:
+            access_token = data["accessToken"]
+        elif "access_token" in data:
+            access_token = data["access_token"]
+        elif "token" in data:
+            access_token = data["token"]
+        elif isinstance(data, dict) and len(data) == 1:
+            # Sometimes APIs return just the token as a single value
+            first_value = next(iter(data.values()))
+            if isinstance(first_value, str) and len(first_value) > 50:
+                access_token = first_value
+        
+        if not access_token:
+            # Log the response structure (sanitized) for debugging
+            error_msg = "Invalid response from Pocket Casts login"
+            if isinstance(data, dict):
+                logger.error("Login response missing accessToken. Response keys: %s", list(data.keys()))
+                # Check for error messages in the response
+                if "error" in data:
+                    error_msg = f"Pocket Casts error: {data['error']}"
+                elif "message" in data:
+                    error_msg = f"Pocket Casts message: {data['message']}"
+            else:
+                logger.error("Login response is not a dict. Type: %s, Value (first 200 chars): %s", 
+                           type(data).__name__, str(data)[:200])
+            raise PocketCastsAuthError(error_msg)
+        
+        # Check for refreshToken in various possible field names
+        if "refreshToken" in data:
+            refresh_token = data["refreshToken"]
+        elif "refresh_token" in data:
+            refresh_token = data["refresh_token"]
+        elif "refreshToken" in data:
+            refresh_token = data.get("refreshToken", "")
         
         return {
-            "accessToken": data["accessToken"],
-            "refreshToken": data.get("refreshToken", ""),
+            "accessToken": access_token,
+            "refreshToken": refresh_token or "",
         }
     except requests.HTTPError as e:
         if e.response.status_code == 401:

@@ -205,28 +205,36 @@
               Import podcasts every 3 hours (to estimate completion time)
             </p>
             
-            <p class="text-xs text-gray-500 mb-3">
-              <a href="https://pocketcasts.com/" target="_blank" class="text-indigo-400 hover:text-indigo-300 underline">Pocket Casts</a> → Developer Tools → Network → Find `/user/token` request → Response → Copy `accessToken` and `refreshToken`
-            </p>
+            <div class="text-xs text-gray-500 mb-3 space-y-2">
+              <p>
+                Enter your Pocket Casts email and password to connect. Your credentials are encrypted and stored securely.
+              </p>
+              <p class="text-yellow-400">
+                <strong>For accounts created via "Sign in with Apple" or "Sign in with Google":</strong><br>
+                Please set a password first using Pocket Casts' 
+                <a href="https://pocketcasts.com/forgot-password" target="_blank" class="text-indigo-400 hover:text-indigo-300 underline">Forgot Password</a> 
+                feature, then enter your email and new password here.
+              </p>
+            </div>
 
             <form method="post" action="{% url 'pocketcasts_connect' %}" class="space-y-3">
               {% csrf_token %}
               <div>
-                <label class="block text-sm text-gray-400 mb-2">Access Token</label>
-                <textarea name="access_token"
-                          rows="3"
-                          class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 font-mono text-xs"
-                          placeholder="eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9..."
-                          required></textarea>
+                <label class="block text-sm text-gray-400 mb-2">Email</label>
+                <input type="email"
+                       name="email"
+                       class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                       placeholder="your.email@example.com"
+                       required>
               </div>
 
               <div>
-                <label class="block text-sm text-gray-400 mb-2">Refresh Token</label>
-                <textarea name="refresh_token"
-                          rows="3"
-                          class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 font-mono text-xs"
-                          placeholder="eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9..."
-                          required></textarea>
+                <label class="block text-sm text-gray-400 mb-2">Password</label>
+                <input type="password"
+                       name="password"
+                       class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                       placeholder="Your Pocket Casts password"
+                       required>
               </div>
 
               <button type="submit"

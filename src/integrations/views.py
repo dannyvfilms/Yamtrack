@@ -526,82 +526,46 @@ def import_steam(request):
 
 @require_POST
 def pocketcasts_connect(request):
-    """Connect Pocket Casts account using access token and refresh token."""
-    access_token = request.POST.get("access_token", "").strip()
-    refresh_token = request.POST.get("refresh_token", "").strip()
+    """Connect Pocket Casts account using email and password."""
+    email = request.POST.get("email", "").strip()
+    password = request.POST.get("password", "").strip()
     
-    if not access_token:
-        messages.error(request, "Access token is required.")
+    if not email:
+        messages.error(request, "Email is required.")
         return redirect("import_data")
     
-    if not refresh_token:
-        messages.error(request, "Refresh token is required.")
+    if not password:
+        messages.error(request, "Password is required.")
         return redirect("import_data")
     
-    # Remove "Bearer " prefix if present
-    if access_token.startswith("Bearer "):
-        access_token = access_token[7:]
-    
-    if refresh_token.startswith("Bearer "):
-        refresh_token = refresh_token[7:]
-    
-    # Validate token before saving
-    # If we have a refresh token, we can refresh expired access tokens, so validation is less critical
+    # Attempt to login with credentials
     try:
-        logger.debug("Validating Pocket Casts access token (token length: %d chars)", len(access_token))
-        token_valid = pocketcasts_api.validate_token(access_token)
-        if not token_valid and refresh_token:
-            # Access token is invalid, but we have a refresh token - try to refresh it
-            logger.info("Access token validation failed, attempting to refresh with provided refresh token (refresh token length: %d chars)", len(refresh_token))
-            try:
-                refresh_response = pocketcasts_api.refresh_token(refresh_token)
-                access_token = refresh_response["accessToken"]
-                # Update refresh token if a new one is provided
-                if "refreshToken" in refresh_response:
-                    refresh_token = refresh_response["refreshToken"]
-                    logger.debug("Received new refresh token from refresh endpoint")
-                logger.info("Successfully refreshed token during connection")
-            except PocketCastsAuthError as refresh_error:
-                logger.error("Refresh token authentication failed: %s (type: %s)", refresh_error, type(refresh_error).__name__)
-                messages.error(request, "Invalid access token and refresh token failed. Please check your tokens and try again.")
-                return redirect("import_data")
-            except Exception as refresh_error:
-                logger.error("Failed to refresh token during connection: %s (type: %s, traceback: %s)", 
-                           refresh_error, type(refresh_error).__name__, 
-                           __import__('traceback').format_exc())
-                messages.error(request, "Invalid access token and refresh token failed. Please check your tokens and try again.")
-                return redirect("import_data")
-        elif not token_valid:
-            # No refresh token and access token is invalid
-            logger.warning("Access token validation failed and no refresh token provided")
-            messages.error(request, "Invalid access token. Please check your token and try again.")
-            return redirect("import_data")
+        logger.debug("Attempting Pocket Casts login for email: %s", email)
+        login_response = pocketcasts_api.login(email, password)
+        access_token = login_response["accessToken"]
+        refresh_token = login_response.get("refreshToken", "")
+        
+        logger.info("Successfully logged in to Pocket Casts for user %s", request.user.username)
+    except PocketCastsAuthError as auth_error:
+        logger.error("Pocket Casts login failed: %s", auth_error)
+        messages.error(
+            request,
+            "Invalid email or password. For accounts created via 'Sign in with Apple' or 'Sign in with Google', "
+            "please set a password first using Pocket Casts' 'Forgot Password' feature, then enter your email and new password here."
+        )
+        return redirect("import_data")
     except Exception as e:
-        logger.error("Failed to validate Pocket Casts token: %s (type: %s, traceback: %s)", 
+        logger.error("Failed to login to Pocket Casts: %s (type: %s, traceback: %s)", 
                    e, type(e).__name__, __import__('traceback').format_exc())
-        # If we have a refresh token, try refreshing instead of failing
-        if refresh_token:
-            try:
-                logger.info("Token validation exception occurred, attempting refresh with refresh token")
-                refresh_response = pocketcasts_api.refresh_token(refresh_token)
-                access_token = refresh_response["accessToken"]
-                if "refreshToken" in refresh_response:
-                    refresh_token = refresh_response["refreshToken"]
-                logger.info("Token validation error, but successfully refreshed token")
-            except Exception as refresh_error:
-                logger.error("Failed to refresh token after validation error: %s (type: %s, traceback: %s)", 
-                           refresh_error, type(refresh_error).__name__,
-                           __import__('traceback').format_exc())
-                messages.error(request, f"Failed to validate token: {e}")
-                return redirect("import_data")
-        else:
-            messages.error(request, f"Failed to validate token: {e}")
-            return redirect("import_data")
+        messages.error(request, f"Failed to connect to Pocket Casts: {e}")
+        return redirect("import_data")
     
-    # Encrypt and store tokens
+    # Encrypt and store credentials and tokens
     try:
+        encrypted_email = helpers.encrypt(email)
+        encrypted_password = helpers.encrypt(password)
         encrypted_access = helpers.encrypt(access_token)
-        encrypted_refresh = helpers.encrypt(refresh_token)
+        encrypted_refresh = helpers.encrypt(refresh_token) if refresh_token else None
         
         # Parse expiration from JWT
         token_expires_at = pocketcasts_api.parse_token_expiration(access_token)
@@ -609,6 +573,8 @@ def pocketcasts_connect(request):
         PocketCastsAccount.objects.update_or_create(
             user=request.user,
             defaults={
+                "email": encrypted_email,
+                "password": encrypted_password,
                 "access_token": encrypted_access,
                 "refresh_token": encrypted_refresh,
                 "token_expires_at": token_expires_at,
@@ -657,7 +623,7 @@ def pocketcasts_connect(request):
         else:
             messages.success(request, "Connected to Pocket Casts successfully.")
     except Exception as e:
-        logger.error("Failed to store Pocket Casts token: %s", e)
+        logger.error("Failed to store Pocket Casts credentials: %s", e)
         messages.error(request, f"Failed to store credentials: {e}")
     
     return redirect("import_data")

@@ -46,11 +46,25 @@ class PocketCastsAccount(models.Model):
         on_delete=models.CASCADE,
         related_name="pocketcasts_account",
     )
-    access_token = models.TextField(help_text="Encrypted JWT access token")
+    access_token = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Encrypted JWT access token (cached from login)"
+    )
     refresh_token = models.TextField(
         blank=True,
         null=True,
-        help_text="Encrypted refresh token",
+        help_text="Encrypted refresh token (cached from login)",
+    )
+    email = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Encrypted email address for login"
+    )
+    password = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Encrypted password for login"
     )
     token_expires_at = models.DateTimeField(null=True, blank=True)
     last_sync_at = models.DateTimeField(null=True, blank=True)
@@ -76,10 +90,22 @@ class PocketCastsAccount(models.Model):
         """Return True when we have a valid connection.
         
         A connection is valid if:
-        - We have an access token, AND
-        - Connection is not marked as broken, AND
-        - Either the token is not expired, OR we have a refresh token to renew it
+        - We have email AND password (can always re-login), OR
+        - We have an access token (and it's not expired, or we have refresh token to renew it)
+        - Connection is not marked as broken
         """
+        # If we have credentials (email and password), we can always reconnect
+        has_credentials = bool(self.email and self.password)
+        
+        # If connection is marked as broken and we don't have credentials, not connected
+        if self.connection_broken and not has_credentials:
+            return False
+        
+        # If we have credentials, we're connected (can always re-login)
+        if has_credentials:
+            return True
+        
+        # Legacy: check for access token
         if not self.access_token:
             return False
         

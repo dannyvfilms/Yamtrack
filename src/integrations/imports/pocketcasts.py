@@ -48,20 +48,32 @@ class PocketCastsImporter:
             msg = "Pocket Casts account not connected"
             raise MediaImportError(msg)
 
-        # We need either an access token OR a refresh token to proceed
-        # If we only have a refresh token, we'll attempt to refresh first
+        # We need either credentials (email/password), access token, or refresh token to proceed
+        has_credentials = bool(self.account.email and self.account.password)
         has_access_token = bool(self.account.access_token and self.account.access_token.strip())
         has_refresh_token = bool(self.account.refresh_token)
         
-        if not has_access_token and not has_refresh_token:
-            logger.error("Pocket Casts account has no tokens - access_token: %s, refresh_token: %s", 
-                        "empty" if not has_access_token else "exists",
-                        "empty" if not has_refresh_token else "exists")
+        if not has_credentials and not has_access_token and not has_refresh_token:
+            logger.error("Pocket Casts account has no credentials or tokens - email: %s, access_token: %s, refresh_token: %s", 
+                        "exists" if self.account.email else "empty",
+                        "exists" if has_access_token else "empty",
+                        "exists" if has_refresh_token else "empty")
             msg = "Pocket Casts account not connected"
             raise MediaImportError(msg)
         
-        # If we have a refresh token but no access token, try to refresh immediately
-        if not has_access_token and has_refresh_token:
+        # If we have credentials but no access token, try to login immediately
+        if not has_access_token and has_credentials:
+            logger.info("No access token but credentials exist, attempting login for user %s", self.user.username)
+            try:
+                self._login_with_credentials()
+                logger.info("Successfully logged in from credentials for user %s", self.user.username)
+            except Exception as e:
+                logger.error("Failed to login when access token was missing: %s", e)
+                # Mark as broken but don't fail yet - let _ensure_valid_token handle it
+                self.account.connection_broken = True
+                self.account.save()
+        # If we have a refresh token but no access token (and no credentials), try to refresh immediately
+        elif not has_access_token and has_refresh_token:
             logger.info("No access token but refresh token exists, attempting refresh for user %s", self.user.username)
             try:
                 self._refresh_token()
@@ -72,7 +84,7 @@ class PocketCastsImporter:
                 self.account.connection_broken = True
                 self.account.save()
         
-        # Allow import even if connection_broken - we'll attempt refresh in _ensure_valid_token
+        # Allow import even if connection_broken - we'll attempt refresh/login in _ensure_valid_token
 
         self.existing_media = helpers.get_existing_media(user)
         self.to_delete = defaultdict(lambda: defaultdict(set))
@@ -191,43 +203,156 @@ class PocketCastsImporter:
         logger.info("Removed scheduled imports for user %s", self.user.username)
 
     def _ensure_valid_token(self):
-        """Ensure we have a valid access token."""
-        # If no access token but we have a refresh token, try to refresh
+        """Ensure we have a valid access token.
+        
+        Prefers login with credentials over refresh token when credentials are available,
+        as login is more reliable than refresh tokens which may expire or be revoked.
+        """
+        has_credentials = bool(self.account.email and self.account.password)
+        
+        # If no access token, try to get one
         if not self.account.access_token:
-            if self.account.refresh_token:
+            if has_credentials:
+                # Prefer login when credentials are available
+                logger.info("No access token available, attempting login with credentials for user %s", self.user.username)
+                try:
+                    self._login_with_credentials()
+                    logger.info("Successfully logged in for user %s", self.user.username)
+                    return
+                except Exception as e:
+                    logger.error("Failed to login when access token was missing: %s", e)
+                    # If login fails, try refresh token as fallback (legacy accounts)
+                    if self.account.refresh_token:
+                        logger.info("Login failed, attempting refresh token fallback for user %s", self.user.username)
+                        try:
+                            self._refresh_token()
+                            logger.info("Successfully refreshed token for user %s", self.user.username)
+                            return
+                        except Exception:
+                            pass  # Will raise below
+                    msg = "No access token available and authentication failed"
+                    raise MediaImportError(msg) from e
+            elif self.account.refresh_token:
+                # Legacy: only refresh token available
                 logger.info("No access token available, attempting refresh for user %s", self.user.username)
                 try:
                     self._refresh_token()
                     logger.info("Successfully refreshed token for user %s", self.user.username)
+                    return
                 except Exception as e:
                     logger.error("Failed to refresh token when access token was missing: %s", e)
                     msg = "No access token available and refresh failed"
                     raise MediaImportError(msg) from e
             else:
-                msg = "No access token available"
+                msg = "No access token available and no credentials or refresh token"
                 raise MediaImportError(msg)
         
-        # Check if token is expired and refresh if we have a refresh token
+        # Check if token is expired
         if self.account.is_token_expired:
-            if self.account.refresh_token:
+            if has_credentials:
+                # Prefer login when credentials are available (more reliable)
+                logger.info("Pocket Casts token is expired for user %s. Attempting login with credentials.", self.user.username)
+                try:
+                    self._login_with_credentials()
+                    logger.info("Successfully logged in to refresh expired token for user %s", self.user.username)
+                    return
+                except Exception as login_error:
+                    logger.warning("Login failed for expired token, trying refresh token fallback: %s", login_error)
+                    # Fall back to refresh token if login fails
+                    if self.account.refresh_token:
+                        try:
+                            self._refresh_token()
+                            logger.info("Successfully refreshed expired token for user %s", self.user.username)
+                            return
+                        except Exception:
+                            pass  # Will raise below
+                    # Both login and refresh failed
+                    raise MediaImportError("Token expired and both login and refresh failed") from login_error
+            elif self.account.refresh_token:
+                # Legacy: only refresh token available
                 logger.info("Pocket Casts token is expired for user %s. Attempting to refresh.", self.user.username)
                 try:
                     self._refresh_token()
                     logger.info("Successfully refreshed expired token for user %s", self.user.username)
+                    return
                 except requests.HTTPError as e:
-                    # If refresh fails with 401, the refresh token is invalid - disconnect
+                    # If refresh fails with 401, _refresh_token will handle fallback to login if credentials exist
+                    # For legacy accounts without credentials, disconnect
                     if e.response and e.response.status_code == requests.codes.unauthorized:
-                        self._disconnect_account("Refresh token is invalid or expired")
-                        msg = "Refresh token is invalid. Please reconnect your Pocket Casts account."
-                        raise MediaImportError(msg) from e
+                        if not has_credentials:
+                            self._disconnect_account("Refresh token is invalid or expired")
+                            msg = "Refresh token is invalid. Please reconnect your Pocket Casts account."
+                            raise MediaImportError(msg) from e
                     # For other HTTP errors, log and try to continue
                     logger.warning("Failed to refresh expired token for user %s: %s", self.user.username, e)
                 except Exception as e:
                     # For non-HTTP errors, log but try to continue
                     logger.warning("Failed to refresh expired token for user %s: %s", self.user.username, e)
             else:
-                logger.warning("Pocket Casts token is expired for user %s and no refresh token available. User may need to reconnect.", self.user.username)
+                logger.warning("Pocket Casts token is expired for user %s and no refresh token or credentials available. User may need to reconnect.", self.user.username)
                 # Try to use it anyway - it might still work or the expiration might be wrong
+
+    def _login_with_credentials(self):
+        """Login to Pocket Casts using stored email and password credentials.
+        
+        This method decrypts the stored credentials, calls the login API,
+        and stores the resulting tokens.
+        
+        Raises:
+            MediaImportError: If credentials are missing, decryption fails, or login fails
+        """
+        if not self.account.email or not self.account.password:
+            msg = "No credentials available for login"
+            raise MediaImportError(msg)
+        
+        try:
+            decrypted_email = decrypt(self.account.email)
+            decrypted_password = decrypt(self.account.password)
+        except Exception as e:
+            logger.error("Failed to decrypt credentials for user %s: %s", self.user.username, e)
+            msg = "Failed to decrypt stored credentials"
+            raise MediaImportError(msg) from e
+        
+        # Call login API
+        from integrations import pocketcasts_api
+        try:
+            logger.info("Attempting to login with credentials for user %s", self.user.username)
+            login_response = pocketcasts_api.login(decrypted_email, decrypted_password)
+            
+            access_token = login_response["accessToken"]
+            refresh_token = login_response.get("refreshToken", "")
+            
+            # Encrypt and store new tokens
+            self.account.access_token = encrypt(access_token)
+            if refresh_token:
+                self.account.refresh_token = encrypt(refresh_token)
+            
+            # Parse expiration from JWT
+            try:
+                decoded = jwt.decode(access_token, options={"verify_signature": False})
+                exp = decoded.get("exp")
+                if exp:
+                    self.account.token_expires_at = datetime.fromtimestamp(exp, tz=dt_timezone.utc)
+            except Exception:
+                # If we can't parse, set expiration to 1 hour from now as fallback
+                self.account.token_expires_at = timezone.now() + timedelta(hours=1)
+            
+            # Clear connection_broken flag on successful login
+            self.account.connection_broken = False
+            self.account.save()
+            logger.info("Successfully logged in to Pocket Casts for user %s", self.user.username)
+            
+        except pocketcasts_api.PocketCastsAuthError as e:
+            logger.error("Pocket Casts login failed for user %s: %s", self.user.username, e)
+            # Mark as broken but preserve credentials (user might fix password)
+            self.account.connection_broken = True
+            self.account.save()
+            msg = "Invalid email or password. Please update your credentials in settings."
+            raise MediaImportError(msg) from e
+        except Exception as e:
+            logger.error("Failed to login to Pocket Casts for user %s: %s", self.user.username, e)
+            msg = f"Failed to login to Pocket Casts: {e}"
+            raise MediaImportError(msg) from e
 
     def _refresh_token(self):
         """Refresh the access token using the refresh token."""
@@ -277,10 +402,26 @@ class PocketCastsImporter:
             
         except requests.HTTPError as e:
             if e.response.status_code == requests.codes.unauthorized:
-                # Refresh token is invalid - disconnect the account
-                self._disconnect_account("Refresh token returned 401 unauthorized")
-                msg = "Invalid refresh token. Please reconnect your Pocket Casts account."
-                raise MediaImportError(msg) from e
+                # Refresh token is invalid - try falling back to login if we have credentials
+                has_credentials = bool(self.account.email and self.account.password)
+                if has_credentials:
+                    logger.warning("Refresh token returned 401, falling back to login with credentials for user %s", self.user.username)
+                    try:
+                        self._login_with_credentials()
+                        logger.info("Successfully recovered from refresh failure using login for user %s", self.user.username)
+                        return  # Successfully logged in, tokens are now stored
+                    except MediaImportError:
+                        # Login also failed - mark as broken but preserve credentials
+                        logger.error("Both refresh and login failed for user %s", self.user.username)
+                        self.account.connection_broken = True
+                        self.account.save()
+                        msg = "Token refresh failed and login with stored credentials also failed. Please update your credentials."
+                        raise MediaImportError(msg) from e
+                else:
+                    # No credentials available - disconnect the account (legacy behavior)
+                    self._disconnect_account("Refresh token returned 401 unauthorized")
+                    msg = "Invalid refresh token. Please reconnect your Pocket Casts account."
+                    raise MediaImportError(msg) from e
             msg = f"Token refresh failed: {e.response.status_code}"
             raise MediaImportError(msg) from e
 
