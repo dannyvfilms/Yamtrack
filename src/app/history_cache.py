@@ -357,14 +357,16 @@ def build_history_days(user, filters=None):
     if filters.get('artist'):
         music_entries = music_entries.filter(album__artist_id=filters['artist'])
     
-    # Podcasts - query all podcast entries with end_date
+    # Podcasts - query all podcast entries that have history records
+    # We'll use history records to determine plays, not end_date
+    # This ensures deleted history records don't show up
     podcasts = (
         Podcast.objects.filter(
             user=user,
-            end_date__isnull=False,
         )
         .select_related("item", "episode", "episode__show", "show")
-        .order_by("-end_date")
+        .prefetch_related("history")
+        .order_by("-id")
     )
 
     entries = []
@@ -495,25 +497,15 @@ def build_history_days(user, filters=None):
                 entries.append(entry)
 
     # Podcasts - only process if not filtering by specific media type
+    # Use history records like music, so deleted history records don't show up
     if process_all:
         for podcast in podcasts:
-            if not podcast.end_date:
-                continue
-            
             # Skip if podcast doesn't have required data
             if not podcast.item:
                 logger.warning("Skipping podcast entry %s without item", podcast.id)
                 continue
             
             try:
-                played_at_local = _localize_datetime(podcast.end_date)
-                if not played_at_local:
-                    continue
-                
-                # Progress is stored in minutes
-                minutes_listened = podcast.progress or 0
-                runtime_minutes = podcast.item.runtime_minutes if podcast.item.runtime_minutes else minutes_listened
-                
                 # Get show - prefer episode.show (authoritative source), fallback to podcast.show
                 show = None
                 if podcast.episode:
@@ -533,25 +525,40 @@ def build_history_days(user, filters=None):
                 elif podcast.item.image:
                     poster = podcast.item.image
                 
-                entries.append(
-                    {
-                        "media_type": MediaTypes.PODCAST.value,
-                        "item": podcast.item,
-                        "show": show,
-                        "show_podcast_uuid": show_podcast_uuid,
-                        "show_slug": show_slug,
-                        "poster": poster,
-                        "title": podcast.item.title,
-                        "display_title": podcast.item.title,
-                        "progress_display": f"{minutes_listened}m",
-                        "date_range_display": None,
-                        "episode_label": None,
-                        "episode_code": None,
-                        "played_at_local": played_at_local,
-                        "runtime_minutes": runtime_minutes,
-                        "runtime_display": helpers.minutes_to_hhmm(runtime_minutes) if runtime_minutes else None,
-                    },
-                )
+                # Process each history record (like music does)
+                # Each history record with an end_date represents a play
+                for history_record in podcast.history.all():
+                    history_end_date = getattr(history_record, "end_date", None)
+                    if not history_end_date:
+                        continue
+                    
+                    played_at_local = _localize_datetime(history_end_date)
+                    if not played_at_local:
+                        continue
+                    
+                    # Progress is stored in minutes
+                    minutes_listened = podcast.progress or 0
+                    runtime_minutes = podcast.item.runtime_minutes if podcast.item.runtime_minutes else minutes_listened
+                    
+                    entries.append(
+                        {
+                            "media_type": MediaTypes.PODCAST.value,
+                            "item": podcast.item,
+                            "show": show,
+                            "show_podcast_uuid": show_podcast_uuid,
+                            "show_slug": show_slug,
+                            "poster": poster,
+                            "title": podcast.item.title,
+                            "display_title": podcast.item.title,
+                            "progress_display": f"{minutes_listened}m",
+                            "date_range_display": None,
+                            "episode_label": None,
+                            "episode_code": None,
+                            "played_at_local": played_at_local,
+                            "runtime_minutes": runtime_minutes,
+                            "runtime_display": helpers.minutes_to_hhmm(runtime_minutes) if runtime_minutes else None,
+                        },
+                    )
             except Exception as e:
                 logger.error("Error processing podcast entry %s: %s", podcast.id, e, exc_info=True)
                 continue
