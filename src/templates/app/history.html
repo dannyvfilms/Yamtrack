@@ -216,7 +216,7 @@
           <div class="media-grid">
             {% for entry in day.entries %}
               <div class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg transition-all duration-200 hover:-translate-y-1 hover:shadow-xl">
-                <a href="{% if entry.media_type == MediaTypes.MUSIC.value and entry.album %}{% url 'album_detail' entry.album.id %}{% else %}{{ entry.item|media_url }}{% endif %}" class="relative block">
+                <a href="{% if entry.media_type == MediaTypes.MUSIC.value and entry.album %}{% url 'album_detail' entry.album.id %}{% elif entry.media_type == MediaTypes.PODCAST.value and entry.show and entry.show.podcast_uuid %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=entry.show.podcast_uuid title=entry.show.slug|default:entry.show.title|slug %}{% else %}{{ entry.item|media_url }}{% endif %}" class="relative block">
                   <img alt="{{ entry.title }}"
                        class="media-card-poster lazyload w-full aspect-[2/3] {% if entry.poster != IMG_NONE %}object-cover{% endif %}"
                        data-src="{{ entry.poster }}"

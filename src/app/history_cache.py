@@ -363,7 +363,7 @@ def build_history_days(user, filters=None):
             user=user,
             end_date__isnull=False,
         )
-        .select_related("item", "episode", "show")
+        .select_related("item", "episode", "episode__show", "show")
         .order_by("-end_date")
     )
 
@@ -508,11 +508,26 @@ def build_history_days(user, filters=None):
             minutes_listened = podcast.progress or 0
             runtime_minutes = podcast.item.runtime_minutes if podcast.item and podcast.item.runtime_minutes else minutes_listened
             
+            # Get show - prefer episode.show (authoritative source), fallback to podcast.show
+            show = None
+            if podcast.episode:
+                show = podcast.episode.show
+            if not show:
+                show = podcast.show
+            
+            # Get show URL components for navigation
+            show_podcast_uuid = show.podcast_uuid if show else None
+            # Use show.slug if available, otherwise use show.title for URL slug
+            show_slug = show.slug if show and show.slug else (show.title if show else "")
+            
             entries.append(
                 {
                     "media_type": MediaTypes.PODCAST.value,
                     "item": podcast.item,
-                    "poster": podcast.show.image if podcast.show and podcast.show.image else (podcast.item.image or settings.IMG_NONE),
+                    "show": show,
+                    "show_podcast_uuid": show_podcast_uuid,
+                    "show_slug": show_slug,
+                    "poster": show.image if show and show.image else (podcast.item.image or settings.IMG_NONE),
                     "title": podcast.item.title,
                     "display_title": podcast.item.title,
                     "progress_display": f"{minutes_listened}m",
