@@ -10,14 +10,14 @@
        @click.outside="trackOpen = false">
     <div class="bg-[#2a2f35] p-6 rounded-lg max-h-[70svh] overflow-y-auto">
       <div class="flex items-center justify-between mb-4">
-        <h2 class="text-xl font-bold text-white">Track Song</h2>
+        <h2 class="text-xl font-bold text-white">{% if music and music.item and music.item.media_type == 'podcast' %}Track Episode{% else %}Track Song{% endif %}</h2>
         <button class="text-gray-400 hover:text-white transition-colors cursor-pointer"
                 @click="trackOpen = false">
           {% include "app/icons/x.svg" with classes="w-5 h-5" %}
         </button>
       </div>
 
-      {# Song preview data #}
+      {# Song/Episode preview data #}
       <div class="bg-[#343a40] rounded-lg p-4 mb-6">
         <div class="flex items-start gap-4">
           {% if album.image and album.image != IMG_NONE %}
@@ -26,38 +26,58 @@
                  src="{{ album.image }}">
           {% else %}
             <div class="w-20 h-20 rounded bg-[#1a1d20] flex items-center justify-center shrink-0">
-              {% icon 'music' is_active=False extra_classes="w-8 h-8 text-gray-600" %}
+              {% if music and music.item and music.item.media_type == 'podcast' %}
+                {% icon 'microphone' is_active=False extra_classes="w-8 h-8 text-gray-600" %}
+              {% else %}
+                {% icon 'music' is_active=False extra_classes="w-8 h-8 text-gray-600" %}
+              {% endif %}
             </div>
           {% endif %}
           <div>
             <h3 class="text-lg font-semibold mb-1 line-clamp-1">{{ track.title }}</h3>
             <p class="text-sm text-gray-400">
-              {% if track.track_number %}Track {{ track.track_number }}{% endif %}
+              {% if music and music.item and music.item.media_type == 'podcast' %}
+                {% if track.track_number %}Episode {{ track.track_number }}{% endif %}
+              {% else %}
+                {% if track.track_number %}Track {{ track.track_number }}{% endif %}
+              {% endif %}
               {% if track.duration_formatted %}{% if track.track_number %} • {% endif %}{{ track.duration_formatted }}{% endif %}
             </p>
             {% if music and music.history.count > 0 %}
               {% with listen_count=music.history.count %}
                 <p id="modal-listen-count-{{ music.id }}" class="text-sm text-gray-400 mt-1">
-                  {% if listen_count == 1 %}
-                    Listened once
+                  {% if music.item and music.item.media_type == 'podcast' %}
+                    {% if listen_count == 1 %}
+                      Played once
+                    {% else %}
+                      Played {{ listen_count }} times
+                    {% endif %}
                   {% else %}
-                    Listened {{ listen_count }} times
+                    {% if listen_count == 1 %}
+                      Listened once
+                    {% else %}
+                      Listened {{ listen_count }} times
+                    {% endif %}
                   {% endif %}
                 </p>
               {% endwith %}
             {% else %}
-              <p id="modal-listen-count-{% if music %}{{ music.id }}{% else %}0{% endif %}" class="text-sm text-gray-400 mt-1">Not listened yet</p>
+              <p id="modal-listen-count-{% if music %}{{ music.id }}{% else %}0{% endif %}" class="text-sm text-gray-400 mt-1">
+                {% if music and music.item and music.item.media_type == 'podcast' %}Not played yet{% else %}Not listened yet{% endif %}
+              </p>
             {% endif %}
           </div>
         </div>
       </div>
 
-      {# Song form #}
+      {# Song/Episode form #}
       <div class="space-y-4">
 
         {% if music and music.history.count > 0 %}
           <div>
-            <label class="block text-sm font-medium text-gray-300 mb-3">Previous Listens</label>
+            <label class="block text-sm font-medium text-gray-300 mb-3">
+              {% if music.item and music.item.media_type == 'podcast' %}Previous Plays{% else %}Previous Listens{% endif %}
+            </label>
             <div class="max-h-[200px] overflow-y-auto space-y-2">
 
               {% for entry in music.history.all|order_by_end_date %}
@@ -66,7 +86,7 @@
                        class="flex items-center justify-between bg-[#343a40] rounded-md p-3 border border-gray-600">
                     <div class="text-sm text-white">{{ entry.end_date|user_datetime_format:user|default_if_none:"No date provided" }}</div>
                     <button class="text-red-400 hover:text-red-300 transition-colors text-sm px-2 py-1 hover:bg-red-600/20 rounded-md cursor-pointer"
-                            hx-delete="{% url 'delete_history_record' 'music' entry.history_id %}?music_id={{ music.id }}"
+                            hx-delete="{% url 'delete_history_record' music.item.media_type|default:'music' entry.history_id %}?{% if music.item and music.item.media_type == 'podcast' %}podcast_id{% else %}music_id{% endif %}={{ music.id }}"
                             hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
                             hx-target="#history-{{ entry.history_id }}"
                             hx-swap="outerHTML">
@@ -82,13 +102,26 @@
         {% endif %}
 
         <form method="post"
-              action="{% url 'song_save' %}?next={{ request.path }}">
+              action="{% if music and music.item and music.item.media_type == 'podcast' %}{% url 'podcast_save' %}{% else %}{% url 'song_save' %}{% endif %}?next={{ request.path }}">
           {% csrf_token %}
-          <input type="hidden" name="recording_id" value="{{ track.musicbrainz_recording_id }}">
-          <input type="hidden" name="album_id" value="{{ album.id }}">
-          <input type="hidden" name="track_id" value="{{ track.id }}">
+          {% if music and music.item and music.item.media_type == 'podcast' %}
+            <input type="hidden" name="episode_uuid" value="{{ music.item.media_id }}">
+            <input type="hidden" name="show_id" value="{{ album.id }}">
+            <input type="hidden" name="episode_id" value="{{ track.id }}">
+          {% elif not music and track.episode_uuid %}
+            {# New podcast episode - get episode_uuid from track adapter #}
+            <input type="hidden" name="episode_uuid" value="{{ track.episode_uuid }}">
+            <input type="hidden" name="show_id" value="{{ album.id }}">
+            <input type="hidden" name="episode_id" value="{{ track.id }}">
+          {% else %}
+            <input type="hidden" name="recording_id" value="{{ track.musicbrainz_recording_id }}">
+            <input type="hidden" name="album_id" value="{{ album.id }}">
+            <input type="hidden" name="track_id" value="{{ track.id }}">
+          {% endif %}
 
-          <label class="block text-sm font-medium text-gray-300 mb-2">Listen Date</label>
+          <label class="block text-sm font-medium text-gray-300 mb-2">
+            {% if music and music.item and music.item.media_type == 'podcast' %}Play Date{% else %}Listen Date{% endif %}
+          </label>
 
           {# djlint:off #}
           <div class="relative" x-data="{ 
@@ -100,13 +133,24 @@
                    name="end_date"
                    onfocus="this.showPicker?.()"
                    x-model="inputDateTime">
-            {% if album.release_date %}
-              <button type="button"
-                      @click="inputDateTime = inputType === 'datetime-local' ? '{{ album.release_date|date:'Y-m-d' }}T{% now "H:i" %}' : '{{ album.release_date|date:'Y-m-d' }}'"
-                      class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center text-sm text-indigo-400 hover:text-indigo-300 transition-colors bg-[#2a2f35] px-2 py-1 rounded cursor-pointer">
-                {% include "app/icons/calendar.svg" with classes="w-4 h-4 mr-1" %}
-                Release date
-              </button>
+            {% if music and music.item and music.item.media_type == 'podcast' %}
+              {% if track.published %}
+                <button type="button"
+                        @click="inputDateTime = inputType === 'datetime-local' ? '{{ track.published|date:'Y-m-d' }}T{% now "H:i" %}' : '{{ track.published|date:'Y-m-d' }}'"
+                        class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center text-sm text-indigo-400 hover:text-indigo-300 transition-colors bg-[#2a2f35] px-2 py-1 rounded cursor-pointer">
+                  {% include "app/icons/calendar.svg" with classes="w-4 h-4 mr-1" %}
+                  Published date
+                </button>
+              {% endif %}
+            {% else %}
+              {% if album.release_date %}
+                <button type="button"
+                        @click="inputDateTime = inputType === 'datetime-local' ? '{{ album.release_date|date:'Y-m-d' }}T{% now "H:i" %}' : '{{ album.release_date|date:'Y-m-d' }}'"
+                        class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center text-sm text-indigo-400 hover:text-indigo-300 transition-colors bg-[#2a2f35] px-2 py-1 rounded cursor-pointer">
+                  {% include "app/icons/calendar.svg" with classes="w-4 h-4 mr-1" %}
+                  Release date
+                </button>
+              {% endif %}
             {% endif %}
           </div>
           {# djlint:on #}
@@ -114,7 +158,7 @@
           <div class="flex justify-end-safe gap-3 mt-6">
             <button type="submit"
                     class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors cursor-pointer">
-              Add listen
+              {% if music and music.item and music.item.media_type == 'podcast' %}Add play{% else %}Add listen{% endif %}
             </button>
           </div>
         </form>

@@ -133,6 +133,11 @@ urlpatterns = [
         name="song_save",
     ),
     path(
+        "podcast/episode/save/",
+        views.podcast_save,
+        name="podcast_save",
+    ),
+    path(
         "music/album/<int:album_id>/delete_plays/",
         views.delete_all_album_plays_view,
         name="delete_all_album_plays",

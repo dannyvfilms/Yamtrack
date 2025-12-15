@@ -742,6 +742,115 @@ def media_details(
                     # Media instances have a .history relationship from HistoricalRecords
                     episode_history = list(episode_media.history.all().order_by("-end_date")[:10])
                 
+                # Create adapter objects for music-style modal (like track_modal does)
+                class PodcastEpisodeAdapter:
+                    """Adapter to make PodcastEpisode work like Track in template."""
+                    def __init__(self, episode):
+                        self.title = episode.title
+                        self.track_number = episode.episode_number
+                        self.duration_formatted = self._format_duration(episode.duration) if episode.duration else None
+                        self.musicbrainz_recording_id = None  # Not used for podcasts
+                        self.id = episode.id
+                        self.published = episode.published  # For "Published date" button
+                        self.episode_uuid = episode.episode_uuid  # For form submission when music is None
+                    
+                    def _format_duration(self, seconds):
+                        """Format duration in seconds to MM:SS or H:MM:SS."""
+                        hours = seconds // 3600
+                        minutes = (seconds % 3600) // 60
+                        secs = seconds % 60
+                        if hours > 0:
+                            return f"{hours}:{minutes:02d}:{secs:02d}"
+                        return f"{minutes}:{secs:02d}"
+                
+                class PodcastShowAdapter:
+                    """Adapter to make PodcastShow work like Album in template."""
+                    def __init__(self, show):
+                        self.image = show.image or settings.IMG_NONE
+                        self.release_date = None  # Podcasts don't have release dates
+                        self.id = show.id
+                
+                # Get all Podcast entries for this episode to aggregate history
+                all_podcasts = list(Podcast.objects.filter(
+                    user=request.user if not public_view else None,
+                    show=show,
+                    episode=episode_obj,
+                ).order_by("-end_date")) if not public_view else []
+                
+                # Create a wrapper object that aggregates history from all podcast entries
+                if all_podcasts:
+                    from django.utils import timezone
+                    
+                    # Aggregate all history records from all podcast entries
+                    all_history = []
+                    for podcast in all_podcasts:
+                        all_history.extend(podcast.history.all())
+                    
+                    # Sort by end_date descending (most recent first) for display
+                    all_history.sort(
+                        key=lambda x: x.end_date if x.end_date else timezone.datetime.min.replace(tzinfo=timezone.utc),
+                        reverse=True
+                    )
+                    
+                    class PodcastHistoryWrapper:
+                        """Wrapper to aggregate history from multiple Podcast entries."""
+                        def __init__(self, podcasts, item, history_list):
+                            self.item = item
+                            self.id = podcasts[0].id if podcasts else 0
+                            self._podcasts = podcasts
+                            self._history_list = history_list
+                        
+                        @property
+                        def history(self):
+                            """Return a queryset-like object that aggregates all history."""
+                            class HistoryProxy:
+                                def __init__(self, history_list):
+                                    self._history = history_list
+                                
+                                def all(self):
+                                    return self._history
+                                
+                                def count(self):
+                                    return len(self._history)
+                                
+                                def filter(self, **kwargs):
+                                    # Simple filtering for history_user
+                                    if 'history_user' in kwargs:
+                                        user = kwargs['history_user']
+                                        filtered = [h for h in self._history if getattr(h, 'history_user', None) == user or getattr(h, 'history_user', None) is None]
+                                        return HistoryProxy(filtered)
+                                    return self
+                                
+                                def order_by(self, order):
+                                    # Re-sort based on order string (e.g., 'end_date' or '-end_date')
+                                    if order == 'end_date':
+                                        sorted_list = sorted(
+                                            self._history,
+                                            key=lambda x: x.end_date if x.end_date else timezone.datetime.min.replace(tzinfo=timezone.utc)
+                                        )
+                                    elif order == '-end_date':
+                                        sorted_list = sorted(
+                                            self._history,
+                                            key=lambda x: x.end_date if x.end_date else timezone.datetime.min.replace(tzinfo=timezone.utc),
+                                            reverse=True
+                                        )
+                                    else:
+                                        sorted_list = self._history
+                                    return HistoryProxy(sorted_list)
+                            
+                            return HistoryProxy(self._history_list)
+                    
+                    podcast_wrapper = PodcastHistoryWrapper(all_podcasts, enriched["item"], all_history)
+                else:
+                    # Create a dummy Podcast object with item for template compatibility when podcast is None
+                    class DummyPodcast:
+                        def __init__(self, item):
+                            self.item = item
+                            self.id = 0
+                            self.history = type('History', (), {'count': lambda: 0, 'all': lambda: []})()
+                    
+                    podcast_wrapper = DummyPodcast(enriched["item"])
+                
                 # Create episode dict compatible with TV episode format
                 # Include media_id, source, media_type for tracking modals
                 episode_item = enriched["item"]
@@ -759,6 +868,10 @@ def media_details(
                     "media_id": episode_item.media_id,
                     "source": episode_item.source,
                     "media_type": episode_item.media_type,
+                    # Add adapter objects for music-style modal
+                    "track_adapter": PodcastEpisodeAdapter(episode_obj),
+                    "album_adapter": PodcastShowAdapter(show),
+                    "music_wrapper": podcast_wrapper,
                 })
             
             # Build metadata dict for show
@@ -785,11 +898,13 @@ def media_details(
                 "user_medias": user_podcasts,  # Episodes user has listened to
                 "podcast_show": show,
                 "podcast_tracker": tracker,
-                "episodes": episodes,
+                "episodes": episode_list,  # Use episode_list with adapter objects
                 "total_episodes": episodes.count(),
                 "total_listened": total_listened,
                 "total_minutes": total_minutes,
                 "public_view": public_view,
+                "IMG_NONE": settings.IMG_NONE,
+                "TRACK_TIME": True,
             }
             return render(request, "app/media_details.html", context)
     
@@ -1133,7 +1248,7 @@ def track_modal(
     # Handle podcast shows (identified by podcast_uuid)
     if media_type == MediaTypes.PODCAST.value and source == Sources.POCKETCASTS.value:
         from app.forms import PodcastShowTrackerForm
-        from app.models import PodcastShow, PodcastShowTracker
+        from app.models import PodcastEpisode, PodcastShow, PodcastShowTracker
         
         # Check if this is a show (podcast_uuid) or an episode (episode_uuid)
         show = PodcastShow.objects.filter(podcast_uuid=media_id).first()
@@ -1153,6 +1268,154 @@ def track_modal(
                     "tracker": tracker,
                     "form": form,
                     "return_url": return_url,
+                },
+            )
+        
+        # This is an episode (episode_uuid) - use music-style modal
+        episode = PodcastEpisode.objects.filter(episode_uuid=media_id).first()
+        if episode:
+            from django.conf import settings
+            from app.models import Item, Podcast
+            
+            show = episode.show
+            instance_id = request.GET.get("instance_id")
+            
+            # Get all Podcast entries for this episode to aggregate history
+            # Each Podcast entry has its own history, so we need to combine them
+            all_podcasts = list(Podcast.objects.filter(
+                user=request.user,
+                show=show,
+                episode=episode,
+            ).order_by("-end_date"))
+            
+            # Get or create Item for this episode
+            item, _ = Item.objects.get_or_create(
+                media_id=episode.episode_uuid,
+                source=source,
+                media_type=media_type,
+                defaults={
+                    "title": episode.title,
+                    "image": show.image or settings.IMG_NONE,
+                    "runtime_minutes": (episode.duration // 60) if episode.duration else None,
+                },
+            )
+            
+            # Create adapter objects to match template expectations
+            class PodcastEpisodeAdapter:
+                """Adapter to make PodcastEpisode work like Track in template."""
+                def __init__(self, episode):
+                    self.title = episode.title
+                    self.track_number = episode.episode_number
+                    self.duration_formatted = self._format_duration(episode.duration) if episode.duration else None
+                    self.musicbrainz_recording_id = None  # Not used for podcasts
+                    self.id = episode.id
+                    self.published = episode.published  # For "Published date" button
+                    self.episode_uuid = episode.episode_uuid  # For form submission when music is None
+                
+                def _format_duration(self, seconds):
+                    """Format duration in seconds to MM:SS or H:MM:SS."""
+                    hours = seconds // 3600
+                    minutes = (seconds % 3600) // 60
+                    secs = seconds % 60
+                    if hours > 0:
+                        return f"{hours}:{minutes:02d}:{secs:02d}"
+                    return f"{minutes}:{secs:02d}"
+            
+            class PodcastShowAdapter:
+                """Adapter to make PodcastShow work like Album in template."""
+                def __init__(self, show):
+                    self.image = show.image or settings.IMG_NONE
+                    self.release_date = None  # Podcasts don't have release dates
+                    self.id = show.id
+            
+            # Create a wrapper object that aggregates history from all podcast entries
+            # This allows the template to show all history records like music does
+            if all_podcasts:
+                from django.utils import timezone
+                
+                # Aggregate all history records from all podcast entries
+                all_history = []
+                for podcast in all_podcasts:
+                    all_history.extend(podcast.history.all())
+                
+                # Sort by end_date descending (most recent first) for display
+                # The template filter will re-sort if needed
+                all_history.sort(
+                    key=lambda x: x.end_date if x.end_date else timezone.datetime.min.replace(tzinfo=timezone.utc),
+                    reverse=True
+                )
+                
+                class PodcastHistoryWrapper:
+                    """Wrapper to aggregate history from multiple Podcast entries."""
+                    def __init__(self, podcasts, item, history_list):
+                        self.item = item
+                        self.id = podcasts[0].id if podcasts else 0
+                        self._podcasts = podcasts
+                        self._history_list = history_list
+                    
+                    @property
+                    def history(self):
+                        """Return a queryset-like object that aggregates all history."""
+                        class HistoryProxy:
+                            def __init__(self, history_list):
+                                self._history = history_list
+                            
+                            def all(self):
+                                return self._history
+                            
+                            def count(self):
+                                return len(self._history)
+                            
+                            def filter(self, **kwargs):
+                                # Simple filtering for history_user
+                                if 'history_user' in kwargs:
+                                    user = kwargs['history_user']
+                                    filtered = [h for h in self._history if getattr(h, 'history_user', None) == user or getattr(h, 'history_user', None) is None]
+                                    return HistoryProxy(filtered)
+                                return self
+                            
+                            def order_by(self, order):
+                                # Re-sort based on order string (e.g., 'end_date' or '-end_date')
+                                if order == 'end_date':
+                                    sorted_list = sorted(
+                                        self._history,
+                                        key=lambda x: x.end_date if x.end_date else timezone.datetime.min.replace(tzinfo=timezone.utc)
+                                    )
+                                elif order == '-end_date':
+                                    sorted_list = sorted(
+                                        self._history,
+                                        key=lambda x: x.end_date if x.end_date else timezone.datetime.min.replace(tzinfo=timezone.utc),
+                                        reverse=True
+                                    )
+                                else:
+                                    sorted_list = self._history
+                                return HistoryProxy(sorted_list)
+                        
+                        return HistoryProxy(self._history_list)
+                
+                podcast = PodcastHistoryWrapper(all_podcasts, item, all_history)
+            else:
+                # Create a dummy Podcast object with item for template compatibility when podcast is None
+                class DummyPodcast:
+                    def __init__(self, item):
+                        self.item = item
+                        self.id = 0
+                        self.history = type('History', (), {'count': lambda: 0, 'all': lambda: []})()
+                
+                podcast = DummyPodcast(item)
+            
+            return render(
+                request,
+                "app/components/fill_track_song.html",
+                {
+                    "user": request.user,
+                    "album": PodcastShowAdapter(show),  # Use show as "album" for template compatibility
+                    "track": PodcastEpisodeAdapter(episode),  # Use episode as "track" for template compatibility
+                    "music": podcast,  # Use podcast as "music" for template compatibility
+                    "request": request,
+                    "csrf_token": request.META.get("CSRF_COOKIE", ""),
+                    "TRACK_TIME": True,
+                    "IMG_NONE": settings.IMG_NONE,
                 },
             )
     
@@ -1631,12 +1894,20 @@ def delete_history_record(request, media_type, history_id):
                 history_user__isnull=True,
             )
             
-            # For music, verify the Music instance belongs to the user
+            # For music and podcasts, verify the instance belongs to the user
             if media_type.lower() == "music":
                 from app.models import Music
                 try:
                     music = Music.objects.get(id=history_record.id, user=request.user)
                 except Music.DoesNotExist:
+                    raise historical_model.DoesNotExist(
+                        f"History record {history_id} does not belong to user {request.user}"
+                    )
+            elif media_type.lower() == "podcast":
+                from app.models import Podcast
+                try:
+                    podcast = Podcast.objects.get(id=history_record.id, user=request.user)
+                except Podcast.DoesNotExist:
                     raise historical_model.DoesNotExist(
                         f"History record {history_id} does not belong to user {request.user}"
                     )
@@ -1647,8 +1918,9 @@ def delete_history_record(request, media_type, history_id):
                     f"History record {history_id} not found for user {request.user}"
                 )
 
-        # Get music_id from query params if provided (for updating count on album page)
+        # Get music_id or podcast_id from query params if provided (for updating count)
         music_id = request.GET.get("music_id")
+        podcast_id = request.GET.get("podcast_id")
         
         history_record.delete()
 
@@ -1665,7 +1937,7 @@ def delete_history_record(request, media_type, history_id):
         statistics_cache.invalidate_statistics_cache(request.user.id)
         statistics_cache.schedule_all_ranges_refresh(request.user.id)
 
-        # If music_id is provided, return updated count for out-of-band swap
+        # If music_id or podcast_id is provided, return updated count for out-of-band swap
         if music_id and media_type.lower() == "music":
             from app.models import Music
             from users.templatetags.user_tags import user_date_format
@@ -1708,6 +1980,48 @@ def delete_history_record(request, media_type, history_id):
                     response.write(f'<p id="modal-listen-count-{music_id}" hx-swap-oob="true" class="text-sm text-gray-400 mt-1">Not listened yet</p>')
                     return response
             except Music.DoesNotExist:
+                pass
+        
+        # If podcast_id is provided, return updated count for out-of-band swap
+        if podcast_id and media_type.lower() == "podcast":
+            from app.models import Podcast
+            from users.templatetags.user_tags import user_date_format
+            
+            try:
+                podcast = Podcast.objects.get(id=podcast_id, user=request.user)
+                # Get remaining history records (filtered by user or null)
+                remaining_history = list(podcast.history.filter(
+                    history_user=request.user
+                ).order_by("-end_date")) or list(podcast.history.filter(
+                    history_user__isnull=True
+                ).order_by("-end_date"))
+                
+                remaining_count = len(remaining_history)
+                
+                if remaining_count > 0:
+                    # Get the last entry for date display
+                    last_entry = remaining_history[0]
+                    
+                    # Format the date using the same filter as the template
+                    last_date_formatted = user_date_format(last_entry.end_date, request.user) if last_entry.end_date else "No date provided"
+                    
+                    if remaining_count == 1:
+                        history_text = f"Last played: {last_date_formatted}"
+                    else:
+                        history_text = f"Last played: {last_date_formatted} • Played {remaining_count} times"
+                    
+                    # Return response with out-of-band swaps for both show page and modal
+                    response = HttpResponse()
+                    # Update the count in the modal
+                    modal_text = "Played once" if remaining_count == 1 else f"Played {remaining_count} times"
+                    response.write(f'<p id="modal-listen-count-{podcast_id}" hx-swap-oob="true" class="text-sm text-gray-400 mt-1">{modal_text}</p>')
+                    return response
+                else:
+                    # No history left, update modal
+                    response = HttpResponse()
+                    response.write(f'<p id="modal-listen-count-{podcast_id}" hx-swap-oob="true" class="text-sm text-gray-400 mt-1">Not played yet</p>')
+                    return response
+            except Podcast.DoesNotExist:
                 pass
 
         # Return empty 200 response - the element will be removed by HTMX
@@ -2741,6 +3055,78 @@ def song_save(request):
     if next_url:
         return redirect(next_url)
     return redirect("album_detail", album_id=album.id)
+
+
+@require_POST
+def podcast_save(request):
+    """Handle adding a play for a podcast episode - mirrors song_save for music."""
+    from django.shortcuts import get_object_or_404
+    from django.utils.dateparse import parse_date, parse_datetime
+
+    from app.models import Podcast, PodcastEpisode, PodcastShow
+
+    episode_uuid = request.POST.get("episode_uuid")
+    show_id = request.POST.get("show_id")
+    episode_id = request.POST.get("episode_id")
+    end_date_str = request.POST.get("end_date")
+
+    # Parse the end date
+    end_date = None
+    if end_date_str:
+        end_date = parse_datetime(end_date_str)
+        if not end_date:
+            parsed_date = parse_date(end_date_str)
+            if parsed_date:
+                from django.utils import timezone
+                end_date = timezone.make_aware(
+                    timezone.datetime.combine(parsed_date, timezone.datetime.min.time())
+                )
+
+    # Get the show and episode
+    show = get_object_or_404(PodcastShow, id=show_id)
+    episode = get_object_or_404(PodcastEpisode, id=episode_id) if episode_id else None
+
+    # Calculate runtime from episode duration if available
+    runtime_minutes = None
+    if episode and episode.duration:
+        runtime_minutes = episode.duration // 60  # Convert seconds to minutes
+    
+    # Always create a new Podcast entry to create a new history record
+    # This is the key difference from the old behavior - we always create new entries
+    # First, get or create the Item for this episode
+    item_defaults = {
+        "title": episode.title if episode else "Unknown Episode",
+        "image": show.image or settings.IMG_NONE,
+    }
+    if runtime_minutes:
+        item_defaults["runtime_minutes"] = runtime_minutes
+    
+    item, created = Item.objects.get_or_create(
+        media_id=episode_uuid,
+        source=Sources.POCKETCASTS.value,
+        media_type=MediaTypes.PODCAST.value,
+        defaults=item_defaults,
+    )
+    # Update runtime if item existed but didn't have it
+    if not created and not item.runtime_minutes and runtime_minutes:
+        item.runtime_minutes = runtime_minutes
+        item.save(update_fields=["runtime_minutes"])
+
+    Podcast.objects.create(
+        item=item,
+        user=request.user,
+        show=show,
+        episode=episode,
+        status=Status.COMPLETED.value,
+        end_date=end_date,
+        progress=runtime_minutes if runtime_minutes else 0,
+    )
+    messages.success(request, f"Added play for {episode.title if episode else 'episode'}")
+
+    next_url = request.GET.get("next", "")
+    if next_url:
+        return redirect(next_url)
+    return redirect("podcast_show_detail", show_id=show.id)
 
 
 @require_POST

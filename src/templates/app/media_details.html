@@ -533,29 +533,20 @@
                       <div class="flex space-x-2">
                         {# Track Episode #}
                         {% if media_type == MediaTypes.PODCAST.value %}
-                          {# Podcast episodes use standard track_modal #}
+                          {# Podcast episodes use music-style modal (fill_track_song.html) #}
                           <div x-data="{ trackOpen: false }">
                             <button @click="trackOpen = true"
                                     title="Track Episode"
-                                    hx-get="{% media_view_url 'track_modal' episode.item %}"
-                                    hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}", "instance_id": "{% if episode.media %}{{ episode.media.id }}{% endif %}"}'
-                                    hx-target="#track-modal-{{ episode.media_id }}"
-                                    hx-trigger="click once"
-                                    class="p-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full transition duration-300 cursor-pointer">
-                              {% if episode.history %}
+                                    class="p-2 {% if episode.music_wrapper and episode.music_wrapper.history.count > 0 %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-500{% endif %} text-white rounded-full transition duration-300 cursor-pointer">
+                              {% if episode.music_wrapper and episode.music_wrapper.history.count > 0 %}
                                 {% include "app/icons/eye.svg" with classes="w-4 h-4" %}
                               {% else %}
                                 {% include "app/icons/eye-closed.svg" with classes="w-4 h-4" %}
                               {% endif %}
                             </button>
-                            <div x-show="trackOpen"
-                                 @keydown.escape.window="trackOpen = false"
-                                 class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                              <div class="w-152 max-h-[90vh] px-4 md:px-0 relative z-60"
-                                   @click.outside="trackOpen = false">
-                                <div id="track-modal-{{ episode.media_id }}"></div>
-                              </div>
-                            </div>
+
+                            {# Include the music-style modal directly (like music tracks) #}
+                            {% include "app/components/fill_track_song.html" with request=request album=episode.album_adapter track=episode.track_adapter music=episode.music_wrapper csrf_token=csrf_token TRACK_TIME=TRACK_TIME user=user IMG_NONE=IMG_NONE only %}
                           </div>
                         {% else %}
                           {# TV episodes use episode_save #}
