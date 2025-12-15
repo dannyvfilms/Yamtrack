@@ -1,0 +1,108 @@
+{% load app_tags %}
+{% load user_tags %}
+
+{% for episode in episodes %}
+  <div class="bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg">
+    <div class="flex flex-col md:flex-row">
+      <img src="{{ IMG_NONE }}"
+           alt="E{{ episode.episode_number }}"
+           data-src="{{ episode.image }}"
+           class="lazyload md:w-40 md:h-40 shrink-0 {% if episode.image != IMG_NONE %}object-cover{% endif %}">
+      <div class="py-3 flex-1 flex flex-col">
+        <div class="flex-1">
+          <div class="flex justify-between items-start mb-2 space-x-2 px-4">
+            <div>
+              <h2 class="text-xl font-semibold mb-1 line-clamp-1">{{ episode.title }}</h2>
+              <p class="text-sm text-gray-400">
+                {% if episode.episode_number %}Episode {{ episode.episode_number }} • {% endif %}{{ episode.air_date|user_date_format:user|default_if_none:"Unknown date" }}{% if episode.runtime %} • {{ episode.runtime }}{% endif %}
+              </p>
+            </div>
+            <div class="flex space-x-2">
+              {# Track Episode #}
+              <div x-data="{ trackOpen: false }">
+                <button @click="trackOpen = true"
+                        title="Track Episode"
+                        class="p-2 {% if episode.music_wrapper and episode.music_wrapper.history.count > 0 %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-500{% endif %} text-white rounded-full transition duration-300 cursor-pointer">
+                  {% if episode.music_wrapper and episode.music_wrapper.history.count > 0 %}
+                    {% include "app/icons/eye.svg" with classes="w-4 h-4" %}
+                  {% else %}
+                    {% include "app/icons/eye-closed.svg" with classes="w-4 h-4" %}
+                  {% endif %}
+                </button>
+
+                {# Include the music-style modal directly #}
+                {% include "app/components/fill_track_song.html" with request=request album=episode.album_adapter track=episode.track_adapter music=episode.music_wrapper csrf_token=csrf_token TRACK_TIME=TRACK_TIME user=user IMG_NONE=IMG_NONE only %}
+              </div>
+
+              {# Lists #}
+              {% if episode.item %}
+              <div x-data="{ listsOpen: false }">
+                <button class="p-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full transition duration-300 cursor-pointer"
+                        title="Add to custom lists"
+                        hx-get="{% media_view_url 'lists_modal' episode.item %}"
+                        hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
+                        hx-target="#{% component_id 'lists' episode.item %}"
+                        hx-trigger="click once"
+                        @click="listsOpen = true">
+                  {% include "app/icons/list-add.svg" with classes="w-4 h-4" %}
+                </button>
+
+                <div x-show="listsOpen"
+                     @keydown.escape.window="listsOpen = false"
+                     class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                  <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
+                       @click.outside="listsOpen = false">
+                    <div id="{% component_id 'lists' episode.item %}"></div>
+                  </div>
+                </div>
+              </div>
+
+              {# History #}
+              <div x-data="{ historyOpen: false }">
+                <button class="p-2 bg-amber-600 hover:bg-amber-700 text-white rounded-full transition duration-300 cursor-pointer"
+                        title="View your activity history"
+                        hx-get="{% media_view_url 'history_modal' episode.item %}"
+                        hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
+                        hx-target="#{% component_id 'history' episode.item %}"
+                        hx-trigger="click once"
+                        @click="historyOpen = true">
+                  {% include "app/icons/history.svg" with classes="w-4 h-4" %}
+                </button>
+                <div x-show="historyOpen"
+                     @keydown.escape.window="historyOpen = false"
+                     class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                  <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
+                       @click.outside="historyOpen = false">
+                    <div id="{% component_id 'history' episode.item %}"></div>
+                  </div>
+                </div>
+              </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        {% if episode.history %}
+          <p class="text-xs text-gray-400 mt-2 px-4">
+            Last watched: {{ episode.history.0.end_date|user_date_format:user|default_if_none:"No date provided" }}
+            {% if episode.history|length > 1 %}• Watched {{ episode.history|length }} times{% endif %}
+          </p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+{% endfor %}
+
+{% if has_more|default:False and next_page|default:None %}
+  {# Infinite scroll trigger for next page #}
+  <div hx-get="{% url 'podcast_episodes_api' show_id %}?page={{ next_page }}&page_size=20&format=html"
+       hx-trigger="revealed threshold:200px"
+       hx-target="#episodes-list"
+       hx-swap="beforeend"
+       class="py-4 episodes-load-more-trigger"
+       data-page="{{ next_page }}">
+    <div class="htmx-indicator text-center text-gray-400">
+      <p>Loading more episodes...</p>
+    </div>
+  </div>
+{% endif %}
+

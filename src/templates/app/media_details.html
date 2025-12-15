@@ -512,7 +512,11 @@
     {% if media.episodes %}
       <div class="w-full">
         <h2 class="text-xl font-bold mb-4">Episodes</h2>
-        <div class="space-y-6">
+        <div class="space-y-6" id="episodes-list">
+          {% if media_type == MediaTypes.PODCAST.value %}
+            {# Use fragment for podcasts to enable infinite scroll #}
+            {% include "app/components/podcast_episode_list.html" with episodes=paginated_episodes|default:media.episodes user=user show=podcast_show IMG_NONE=IMG_NONE TRACK_TIME=TRACK_TIME has_more=has_more|default:has_more_episodes|default:False next_page=next_page|default:2 show_id=show_id request=request csrf_token=csrf_token only %}
+          {% else %}
           {% for episode in media.episodes %}
             <div class="bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg">
               <div class="flex flex-col md:flex-row">
@@ -629,6 +633,7 @@
               </div>
             </div>
           {% endfor %}
+          {% endif %}
         </div>
       </div>
     {% endif %}

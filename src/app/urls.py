@@ -171,6 +171,11 @@ urlpatterns = [
         name="podcast_show_track_modal",
     ),
     path(
+        "podcast/show/<int:show_id>/episodes/",
+        views.podcast_episodes_api,
+        name="podcast_episodes_api",
+    ),
+    path(
         "podcast/show/save/",
         views.podcast_show_save,
         name="podcast_show_save",

@@ -7,7 +7,7 @@ from public APIs that don't require auth: RSS feeds, Podcast Index, and iTunes.
 import logging
 import re
 import xml.etree.ElementTree as ET
-from typing import Optional
+from typing import Optional, Tuple
 from urllib.parse import quote
 
 import requests
@@ -74,6 +74,77 @@ def fetch_podcast_artwork(
     # Cache the miss to avoid repeated failed lookups
     cache.set(cache_key, "", 60 * 60 * 24)  # Cache miss for 1 day
     return None
+
+
+def fetch_podcast_artwork_and_rss(
+    show_title: str,
+    author: Optional[str] = None,
+) -> Tuple[Optional[str], Optional[str]]:
+    """Fetch podcast artwork and RSS feed URL from iTunes API in a single call.
+    
+    Args:
+        show_title: Podcast show title
+        author: Podcast author (optional, helps narrow search)
+        
+    Returns:
+        Tuple of (artwork_url, rss_feed_url) or (None, None) if not found
+    """
+    try:
+        # Build search query
+        if author:
+            query = f"{show_title} {author}"
+        else:
+            query = show_title
+        
+        # iTunes API expects URL-encoded query
+        params = {
+            "term": query,
+            "media": "podcast",
+            "limit": 5,  # Get top 5 results
+        }
+        
+        response = requests.get(
+            ITUNES_API_BASE,
+            params=params,
+            headers={"User-Agent": USER_AGENT},
+            timeout=10,
+        )
+        response.raise_for_status()
+        
+        data = response.json()
+        results = data.get("results", [])
+        
+        if not results:
+            return None, None
+        
+        # Try to find best match by title
+        show_title_lower = show_title.lower()
+        for result in results:
+            result_title = result.get("collectionName", "").lower()
+            # Check if titles are similar (exact match or one contains the other)
+            if (
+                result_title == show_title_lower
+                or show_title_lower in result_title
+                or result_title in show_title_lower
+            ):
+                artwork_url = result.get("artworkUrl600") or result.get("artworkUrl100")
+                feed_url = result.get("feedUrl")
+                if artwork_url or feed_url:
+                    logger.debug("Found iTunes match for %s: artwork=%s, feed=%s", show_title, bool(artwork_url), bool(feed_url))
+                    return artwork_url, feed_url
+        
+        # If no exact match, use first result
+        if results:
+            artwork_url = results[0].get("artworkUrl600") or results[0].get("artworkUrl100")
+            feed_url = results[0].get("feedUrl")
+            if artwork_url or feed_url:
+                logger.debug("Using first iTunes result for %s: artwork=%s, feed=%s", show_title, bool(artwork_url), bool(feed_url))
+                return artwork_url, feed_url
+                
+    except Exception as e:
+        logger.debug("Failed to fetch from iTunes for %s: %s", show_title, e)
+    
+    return None, None
 
 
 def _fetch_from_rss_feed(rss_feed_url: str) -> Optional[str]:

@@ -176,5 +176,5 @@ def import_pocketcasts(user_id, mode="new"):
 
 @shared_task(name="Import from Pocket Casts (Recurring)")
 def import_pocketcasts_history(user_id):
-    """Recurring import task for Pocket Casts (called every 3 hours via Celery beat)."""
+    """Recurring import task for Pocket Casts (called every 2 hours via Celery beat)."""
     return import_pocketcasts.delay(user_id, mode="new")

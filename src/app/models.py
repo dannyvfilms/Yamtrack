@@ -2372,6 +2372,7 @@ class PodcastShow(models.Model):
     description = models.TextField(blank=True, default="", help_text="Show description from Pocket Casts")
     language = models.CharField(max_length=10, blank=True, default="")
     genres = models.JSONField(default=list, blank=True)
+    rss_feed_url = models.URLField(blank=True, default="", help_text="RSS feed URL for fetching full episode list")
 
     class Meta:
         """Meta options for the model."""

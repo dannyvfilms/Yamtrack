@@ -97,6 +97,9 @@ class PocketCastsImporter:
             (podcast.item.media_id, podcast.item.source): podcast
             for podcast in Podcast.objects.filter(user=user).select_related("item", "episode", "show")
         }
+        
+        # Track shows we've processed to sync episodes from RSS
+        self.processed_shows = set()
 
         logger.info(
             "Initialized Pocket Casts importer for user %s with mode %s",
@@ -232,6 +235,15 @@ class PocketCastsImporter:
                     self._record_history(podcast, delta_seconds, history_timestamp)
                 except Podcast.DoesNotExist:
                     logger.warning("Could not find podcast after bulk create for history recording: %s", episode_uuid)
+
+        # Sync episodes from RSS feeds for processed shows
+        for show in self.processed_shows:
+            if show.rss_feed_url:
+                try:
+                    self._sync_episodes_from_rss(show, show.rss_feed_url)
+                except Exception as e:
+                    logger.warning("Failed to sync episodes from RSS for show %s: %s", show.title, e)
+                    self.warnings.append(f"Failed to sync episodes for {show.title}: {e!s}")
 
         # Update last sync time
         self.account.last_sync_at = timezone.now()
@@ -896,6 +908,37 @@ class PocketCastsImporter:
                     show.description = description
                     updated = True
             
+            # Always try to discover RSS feed URL if we don't have one
+            # Check for RSS feed URL in metadata first
+            # The podcast list might have 'url' (website) but not explicit RSS feed
+            # We'll check common field names
+            rss_feed_url = (
+                show_metadata.get("rssUrl") 
+                or show_metadata.get("rss_url") 
+                or show_metadata.get("feedUrl")
+                or show_metadata.get("feed_url")
+            )
+            
+            # If no RSS feed URL found in metadata and show doesn't have one, try to discover it from iTunes
+            itunes_artwork = None
+            if not rss_feed_url and not show.rss_feed_url:
+                from integrations import pocketcasts_artwork
+                logger.debug("Attempting to discover RSS feed URL from iTunes for %s", show.title)
+                itunes_artwork, itunes_feed_url = pocketcasts_artwork.fetch_podcast_artwork_and_rss(
+                    show_title=show.title,
+                    author=show.author,
+                )
+                if itunes_feed_url:
+                    rss_feed_url = itunes_feed_url
+                    logger.info("Discovered RSS feed URL from iTunes for %s: %s", show.title, rss_feed_url)
+                else:
+                    logger.debug("No RSS feed URL found in iTunes results for %s", show.title)
+            
+            # Store RSS feed URL if we found one and show doesn't have it
+            if rss_feed_url and not show.rss_feed_url:
+                show.rss_feed_url = rss_feed_url
+                updated = True
+            
             # Fetch artwork from alternative sources if needed
             # Only fetch if image is empty or is a Pocket Casts authenticated URL
             should_fetch_artwork = (
@@ -907,23 +950,19 @@ class PocketCastsImporter:
             if should_fetch_artwork:
                 from integrations import pocketcasts_artwork
                 
-                # Check for RSS feed URL in metadata
-                # The podcast list might have 'url' (website) but not explicit RSS feed
-                # We'll check common field names
-                rss_feed_url = (
-                    show_metadata.get("rssUrl") 
-                    or show_metadata.get("rss_url") 
-                    or show_metadata.get("feedUrl")
-                    or show_metadata.get("feed_url")
-                )
-                
                 # Try to fetch artwork from alternative sources
-                alternative_artwork = pocketcasts_artwork.fetch_podcast_artwork(
-                    podcast_uuid=podcast_uuid,
-                    show_title=show.title,
-                    author=show.author,
-                    rss_feed_url=rss_feed_url,
-                )
+                # Use artwork from iTunes if we already fetched it above
+                alternative_artwork = None
+                if itunes_artwork:
+                    alternative_artwork = itunes_artwork
+                else:
+                    # Try other sources (RSS feed, Podcast Index, or iTunes again)
+                    alternative_artwork = pocketcasts_artwork.fetch_podcast_artwork(
+                        podcast_uuid=podcast_uuid,
+                        show_title=show.title,
+                        author=show.author,
+                        rss_feed_url=rss_feed_url or show.rss_feed_url,
+                    )
                 
                 if alternative_artwork:
                     show.image = alternative_artwork
@@ -936,7 +975,10 @@ class PocketCastsImporter:
                     updated = True
             
             if updated:
-                show.save(update_fields=["title", "author", "image", "description"])
+                show.save(update_fields=["title", "author", "image", "description", "rss_feed_url"])
+            
+            # Track this show for RSS episode sync
+            self.processed_shows.add(show)
             
             # Ensure show tracker exists (similar to ArtistTracker for music)
             from app.models import PodcastShowTracker
@@ -1279,3 +1321,185 @@ class PocketCastsImporter:
                 # We went over, adjust back
                 podcast.progress = old_progress + delta_minutes
                 podcast.save()
+    
+    def _sync_episodes_from_rss(self, show, rss_feed_url):
+        """Sync episodes from RSS feed and merge with existing episodes.
+        
+        Fetches all episodes from RSS feed and creates/updates PodcastEpisode
+        records. This ensures we have the complete episode list, not just
+        what's in Pocket Casts history.
+        
+        Args:
+            show: PodcastShow instance
+            rss_feed_url: RSS feed URL to fetch from
+        """
+        from integrations import podcast_rss
+        from app.models import PodcastEpisode
+        
+        # Fetch episodes from RSS
+        rss_episodes = podcast_rss.fetch_episodes_from_rss(rss_feed_url)
+        
+        if not rss_episodes:
+            logger.debug("No episodes found in RSS feed for show %s", show.title)
+            return
+        
+        # Get existing episodes for this show
+        existing_episodes = {
+            episode.episode_uuid: episode
+            for episode in PodcastEpisode.objects.filter(show=show)
+        }
+        
+        # Also create a lookup by title + published date for fuzzy matching
+        existing_by_title_date = {}
+        for episode in existing_episodes.values():
+            if episode.title and episode.published:
+                key = (episode.title.lower().strip(), episode.published.date())
+                existing_by_title_date[key] = episode
+        
+        created_count = 0
+        updated_count = 0
+        
+        for rss_ep in rss_episodes:
+            # Try to find matching episode
+            matched_episode = None
+            
+            # First try by GUID if available
+            if rss_ep.get("guid"):
+                # Check if GUID matches any episode_uuid
+                for ep_uuid, episode in existing_episodes.items():
+                    if ep_uuid == rss_ep["guid"]:
+                        matched_episode = episode
+                        break
+            
+            # If no GUID match, try by title + published date
+            if not matched_episode and rss_ep.get("title") and rss_ep.get("published"):
+                title_key = (rss_ep["title"].lower().strip(), rss_ep["published"].date())
+                matched_episode = existing_by_title_date.get(title_key)
+            
+            if matched_episode:
+                # Update existing episode
+                updated = False
+                if rss_ep.get("title") and matched_episode.title != rss_ep["title"]:
+                    matched_episode.title = rss_ep["title"]
+                    updated = True
+                if rss_ep.get("published") and matched_episode.published != rss_ep["published"]:
+                    matched_episode.published = rss_ep["published"]
+                    updated = True
+                if rss_ep.get("duration") and matched_episode.duration != rss_ep["duration"]:
+                    matched_episode.duration = rss_ep["duration"]
+                    updated = True
+                if rss_ep.get("audio_url") and matched_episode.audio_url != rss_ep["audio_url"]:
+                    matched_episode.audio_url = rss_ep["audio_url"]
+                    updated = True
+                if rss_ep.get("episode_number") is not None and matched_episode.episode_number != rss_ep["episode_number"]:
+                    matched_episode.episode_number = rss_ep["episode_number"]
+                    updated = True
+                if rss_ep.get("season_number") is not None and matched_episode.season_number != rss_ep["season_number"]:
+                    matched_episode.season_number = rss_ep["season_number"]
+                    updated = True
+                
+                if updated:
+                    matched_episode.save()
+                    updated_count += 1
+            else:
+                # Create new episode
+                # Generate a UUID for the episode if RSS doesn't have one
+                episode_uuid = rss_ep.get("guid")
+                if not episode_uuid:
+                    # Use a hash of title + published date as fallback UUID
+                    import hashlib
+                    uuid_str = f"{rss_ep.get('title', '')}{rss_ep.get('published', '')}"
+                    episode_uuid = hashlib.md5(uuid_str.encode()).hexdigest()[:36]
+                
+                # Check if this UUID already exists (shouldn't happen, but be safe)
+                if episode_uuid in existing_episodes:
+                    continue
+                
+                new_episode = PodcastEpisode.objects.create(
+                    show=show,
+                    episode_uuid=episode_uuid,
+                    title=rss_ep.get("title", "Unknown Episode"),
+                    published=rss_ep.get("published"),
+                    duration=rss_ep.get("duration"),
+                    audio_url=rss_ep.get("audio_url", ""),
+                    episode_number=rss_ep.get("episode_number"),
+                    season_number=rss_ep.get("season_number"),
+                )
+                created_count += 1
+                logger.debug("Created new episode from RSS: %s", new_episode.title)
+        
+        logger.info(
+            "Synced episodes from RSS for show %s: %d created, %d updated",
+            show.title,
+            created_count,
+            updated_count,
+        )
+    
+    def _discover_rss_feed_url(self, show_title, author=None):
+        """Discover RSS feed URL from iTunes API.
+        
+        Args:
+            show_title: Podcast show title
+            author: Podcast author (optional)
+            
+        Returns:
+            RSS feed URL or None if not found
+        """
+        try:
+            import requests
+            from urllib.parse import quote
+            
+            # Build search query
+            if author:
+                query = f"{show_title} {author}"
+            else:
+                query = show_title
+            
+            # iTunes API expects URL-encoded query
+            params = {
+                "term": query,
+                "media": "podcast",
+                "limit": 5,  # Get top 5 results
+            }
+            
+            ITUNES_API_BASE = "https://itunes.apple.com/search"
+            response = requests.get(
+                ITUNES_API_BASE,
+                params=params,
+                headers={"User-Agent": "Yamtrack/1.0 (https://github.com/FuzzyGrim/Yamtrack)"},
+                timeout=10,
+            )
+            response.raise_for_status()
+            
+            data = response.json()
+            results = data.get("results", [])
+            
+            if not results:
+                return None
+            
+            # Try to find best match by title
+            show_title_lower = show_title.lower()
+            for result in results:
+                result_title = result.get("collectionName", "").lower()
+                # Check if titles are similar (exact match or one contains the other)
+                if (
+                    result_title == show_title_lower
+                    or show_title_lower in result_title
+                    or result_title in show_title_lower
+                ):
+                    feed_url = result.get("feedUrl")
+                    if feed_url:
+                        logger.debug("Discovered RSS feed URL from iTunes for %s: %s", show_title, feed_url)
+                        return feed_url
+            
+            # If no exact match, use first result's feed URL
+            if results:
+                feed_url = results[0].get("feedUrl")
+                if feed_url:
+                    logger.debug("Discovered RSS feed URL from iTunes (first result) for %s: %s", show_title, feed_url)
+                    return feed_url
+                    
+        except Exception as e:
+            logger.debug("Failed to discover RSS feed URL from iTunes for %s: %s", show_title, e)
+        
+        return None

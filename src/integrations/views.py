@@ -582,7 +582,7 @@ def pocketcasts_connect(request):
             },
         )
         
-        # Set up 3-hour recurring import if it doesn't exist
+        # Set up 2-hour recurring import if it doesn't exist
         from django_celery_beat.models import CrontabSchedule, PeriodicTask
         
         existing_task = PeriodicTask.objects.filter(
@@ -592,17 +592,17 @@ def pocketcasts_connect(request):
         ).first()
         
         if not existing_task:
-            # Create crontab for every 3 hours (0, 3, 6, 9, 12, 15, 18, 21)
+            # Create crontab for every 2 hours (0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22)
             crontab, _ = CrontabSchedule.objects.get_or_create(
                 minute=0,
-                hour="*/3",
+                hour="*/2",
                 day_of_week="*",
                 day_of_month="*",
                 month_of_year="*",
                 timezone=timezone.get_default_timezone(),
             )
             
-            task_name = f"Import from Pocket Casts for {request.user.username} (every 3 hours)"
+            task_name = f"Import from Pocket Casts for {request.user.username} (every 2 hours)"
             PeriodicTask.objects.create(
                 name=task_name,
                 task="Import from Pocket Casts (Recurring)",
@@ -619,7 +619,7 @@ def pocketcasts_connect(request):
                 user_id=request.user.id,
                 mode="new",
             )
-            messages.success(request, "Connected to Pocket Casts successfully. Initial import queued. Recurring imports will run every 3 hours.")
+            messages.success(request, "Connected to Pocket Casts successfully. Initial import queued. Recurring imports will run every 2 hours.")
         else:
             messages.success(request, "Connected to Pocket Casts successfully.")
     except Exception as e:
@@ -650,7 +650,7 @@ def pocketcasts_disconnect(request):
 def import_pocketcasts(request):
     """Queue a Pocket Casts history import for the current user.
     
-    Pocket Casts always uses mode="new" and runs every 3 hours automatically.
+    Pocket Casts always uses mode="new" and runs every 2 hours automatically.
     First import is "new", subsequent recurring imports are also "new".
     """
     pocketcasts_account = getattr(request.user, "pocketcasts_account", None)
@@ -676,28 +676,28 @@ def import_pocketcasts(request):
     mode = "new"
     
     if not existing_task:
-        # First import - run immediately, then set up 3-hour schedule
+        # First import - run immediately, then set up 2-hour schedule
         tasks.import_pocketcasts.delay(
             user_id=request.user.id,
             mode=mode,
         )
-        messages.info(request, "The task to import media from Pocket Casts has been queued. Recurring imports will run every 3 hours.")
+        messages.info(request, "The task to import media from Pocket Casts has been queued. Recurring imports will run every 2 hours.")
         
-        # Set up 3-hour recurring schedule
+        # Set up 2-hour recurring schedule
         from django_celery_beat.models import CrontabSchedule
         from django.utils import timezone as tz
         
-        # Create crontab for every 3 hours (0, 3, 6, 9, 12, 15, 18, 21)
+        # Create crontab for every 2 hours (0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22)
         crontab, _ = CrontabSchedule.objects.get_or_create(
             minute=0,
-            hour="*/3",
+            hour="*/2",
             day_of_week="*",
             day_of_month="*",
             month_of_year="*",
             timezone=tz.get_default_timezone(),
         )
         
-        task_name = f"Import from Pocket Casts for {request.user.username} (every 3 hours)"
+        task_name = f"Import from Pocket Casts for {request.user.username} (every 2 hours)"
         PeriodicTask.objects.create(
             name=task_name,
             task="Import from Pocket Casts (Recurring)",

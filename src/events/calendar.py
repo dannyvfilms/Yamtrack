@@ -9,7 +9,7 @@ from django.db.models import Exists, OuterRef, Q, Subquery
 from django.utils import timezone
 
 from app import config
-from app.models import Item, MediaTypes, Sources, TV, Status
+from app.models import Item, MediaTypes, Sources, TV, Status, PodcastEpisode
 from app.providers import comicvine, services, tmdb
 from events.models import Event, SentinelDatetime
 from simple_history.utils import bulk_update_with_history
@@ -46,8 +46,7 @@ def process_items(items_to_process):
         elif item.media_type == MediaTypes.COMIC.value:
             process_comic(item, events_bulk)
         elif item.media_type == MediaTypes.PODCAST.value:
-            # Skip podcasts - they don't have future release dates to track
-            continue
+            process_podcast(item, events_bulk)
         else:
             process_other(item, events_bulk)
 
@@ -881,6 +880,37 @@ def process_other(item, events_bulk):
                 datetime=content_datetime,
             ),
         )
+
+
+def process_podcast(item, events_bulk):
+    """Process podcast episodes using stored publish dates."""
+    logger.info("Processing podcast episode: %s", item)
+
+    release_datetime = item.release_datetime
+    episode_number = None
+
+    try:
+        episode = PodcastEpisode.objects.get(episode_uuid=item.media_id)
+        episode_number = episode.episode_number or None
+        if not release_datetime and episode.published:
+            release_datetime = episode.published
+    except PodcastEpisode.DoesNotExist:
+        logger.debug("Podcast episode metadata not found for item %s", item.media_id)
+
+    if not release_datetime:
+        logger.debug("Skipping podcast %s - no release date available", item)
+        return
+
+    if timezone.is_naive(release_datetime):
+        release_datetime = timezone.make_aware(release_datetime)
+
+    events_bulk.append(
+        Event(
+            item=item,
+            content_number=episode_number,
+            datetime=release_datetime,
+        )
+    )
 
 
 def date_parser(date_value):

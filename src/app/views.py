@@ -650,8 +650,19 @@ def media_details(
             # This is a show, not an episode - show show detail page
             tracker = PodcastShowTracker.objects.filter(user=request.user, show=show).first() if not public_view else None
             
-            # Get all episodes for this show
-            episodes = PodcastEpisode.objects.filter(show=show).order_by("-published", "-episode_number")
+            # Get all episodes for this show, ordered by published date (newest first)
+            # Use Coalesce to handle None published dates (put them at the end)
+            from django.db.models.functions import Coalesce
+            from datetime import datetime, timezone as dt_timezone
+            from django.db.models import Value, DateTimeField
+            
+            episodes = PodcastEpisode.objects.filter(show=show).annotate(
+                published_or_old=Coalesce(
+                    'published',
+                    Value(datetime(1970, 1, 1, tzinfo=dt_timezone.utc),
+                          output_field=DateTimeField())
+                )
+            ).order_by("-published_or_old", "-episode_number")
             
             # Get user's podcast entries for this show
             if not public_view:
@@ -668,10 +679,12 @@ def media_details(
                 total_minutes = 0
             
             # Build episode items - create Item objects for enrichment
+            # Initially load first 20 episodes, rest will be loaded via infinite scroll
             from app.models import Item
             episode_items_data = []
             episode_items_map = {}  # Map media_id to Item object
-            for episode in episodes[:50]:  # Limit to 50 for performance
+            initial_limit = 20
+            for episode in episodes[:initial_limit]:
                 item, _ = Item.objects.get_or_create(
                     media_id=episode.episode_uuid,
                     source=source,
@@ -723,7 +736,7 @@ def media_details(
             
             # Build episode data in TV season format (inline episodes, not related items)
             episode_list = []
-            for episode_obj, enriched in zip(episodes[:50], enriched_episodes):
+            for episode_obj, enriched in zip(episodes[:initial_limit], enriched_episodes):
                 # Format duration
                 duration_str = ""
                 if episode_obj.duration:
@@ -890,6 +903,11 @@ def media_details(
                 "episodes": episode_list,  # Use episodes key like TV seasons
             }
             
+            # For pagination, calculate if there are more episodes
+            total_episodes_count = episodes.count()
+            has_more = total_episodes_count > initial_limit
+            next_page = 2 if has_more else None
+            
             context = {
                 "user": request.user,
                 "media": media_metadata,
@@ -899,12 +917,17 @@ def media_details(
                 "podcast_show": show,
                 "podcast_tracker": tracker,
                 "episodes": episode_list,  # Use episode_list with adapter objects
-                "total_episodes": episodes.count(),
+                "paginated_episodes": episode_list,  # For fragment compatibility
+                "total_episodes": total_episodes_count,
                 "total_listened": total_listened,
                 "total_minutes": total_minutes,
                 "public_view": public_view,
                 "IMG_NONE": settings.IMG_NONE,
                 "TRACK_TIME": True,
+                "has_more_episodes": has_more,  # Keep for backward compatibility
+                "has_more": has_more,  # For fragment compatibility
+                "next_page": next_page,
+                "show_id": show.id,  # For API endpoint
             }
             return render(request, "app/media_details.html", context)
     
@@ -2779,7 +2802,19 @@ def podcast_show_detail(request, show_id):
     tracker = PodcastShowTracker.objects.filter(user=request.user, show=show).first()
     
     # Get all episodes for this show
-    episodes = PodcastEpisode.objects.filter(show=show).order_by("-published", "-episode_number")
+    # Get all episodes for this show, ordered by published date (newest first)
+    # Use Coalesce to handle None published dates (put them at the end)
+    from django.db.models.functions import Coalesce
+    from datetime import datetime, timezone as dt_timezone
+    from django.db.models import Value, DateTimeField
+    
+    episodes = PodcastEpisode.objects.filter(show=show).annotate(
+        published_or_old=Coalesce(
+            'published',
+            Value(datetime(1970, 1, 1, tzinfo=dt_timezone.utc),
+                  output_field=DateTimeField())
+        )
+    ).order_by("-published_or_old", "-episode_number")
     
     # Get user's podcast entries for this show
     user_podcasts = list(Podcast.objects.filter(
@@ -2832,6 +2867,264 @@ def podcast_show_track_modal(request, show_id):
             "return_url": return_url,
         },
     )
+
+
+@require_GET
+def podcast_episodes_api(request, show_id):
+    """API endpoint for paginated podcast episodes.
+    
+    Returns HTML fragments for infinite scroll if format=html, otherwise JSON.
+    """
+    from django.conf import settings
+    from django.shortcuts import get_object_or_404
+    from django.utils import timezone
+    from datetime import timezone as dt_timezone
+
+    from app.models import Podcast, PodcastEpisode, PodcastShow, Item, Sources, MediaTypes
+
+    show = get_object_or_404(PodcastShow, id=show_id)
+    format_type = request.GET.get("format", "json")  # 'json' or 'html'
+    
+    # Get pagination parameters
+    try:
+        page = int(request.GET.get("page", 1))
+        page_size = int(request.GET.get("page_size", 20))
+    except ValueError:
+        page = 1
+        page_size = 20
+    
+    # Get all episodes for this show, ordered by published date (newest first)
+    # Use Coalesce to handle None published dates (put them at the end)
+    from django.db.models import F, Value, DateTimeField
+    from django.db.models.functions import Coalesce
+    from datetime import datetime, timezone as dt_timezone
+    
+    # Episodes with published dates first (newest), then episodes without dates
+    episodes_qs = PodcastEpisode.objects.filter(show=show).annotate(
+        published_or_old=Coalesce(
+            'published',
+            Value(datetime(1970, 1, 1, tzinfo=dt_timezone.utc),
+                  output_field=DateTimeField())
+        )
+    ).order_by("-published_or_old", "-episode_number")
+    total_count = episodes_qs.count()
+    
+    # Calculate pagination
+    start = (page - 1) * page_size
+    end = start + page_size
+    episodes = episodes_qs[start:end]
+    
+    # Get user's podcast entries for this show
+    user_podcasts = list(Podcast.objects.filter(
+        user=request.user,
+        show=show,
+    ).select_related("episode", "item"))
+    
+    # Create a map of episode_id to user podcast
+    episode_podcast_map = {}
+    for podcast in user_podcasts:
+        if podcast.episode_id:
+            episode_podcast_map[podcast.episode_id] = podcast
+    
+    # Build episode items for enrichment
+    episode_items_data = []
+    episode_items_map = {}
+    for episode in episodes:
+        item, _ = Item.objects.get_or_create(
+            media_id=episode.episode_uuid,
+            source=Sources.POCKETCASTS.value,
+            media_type=MediaTypes.PODCAST.value,
+            defaults={
+                "title": episode.title,
+                "image": show.image or settings.IMG_NONE,
+            },
+        )
+        if item.title != episode.title:
+            item.title = episode.title
+            item.save(update_fields=["title"])
+        episode_items_data.append({
+            "media_id": episode.episode_uuid,
+            "source": Sources.POCKETCASTS.value,
+            "media_type": MediaTypes.PODCAST.value,
+        })
+        episode_items_map[episode.episode_uuid] = item
+    
+    # Enrich episodes with user data
+    enriched_episodes_raw = helpers.enrich_items_with_user_data(
+        request,
+        episode_items_data,
+        user=request.user,
+    )
+    
+    # Calculate pagination info
+    has_more = end < total_count
+    next_page = page + 1 if has_more else None
+    
+    if format_type == "html":
+        # Return HTML fragments for HTMX
+        from django.template.loader import render_to_string
+        
+        # Build episode data similar to media_details view
+        episode_list = []
+        for episode_obj in episodes:
+            # Find enriched data
+            enriched = None
+            for e in enriched_episodes_raw:
+                if e["item"]["media_id"] == episode_obj.episode_uuid:
+                    enriched = e
+                    break
+            
+            # Format duration
+            duration_str = ""
+            if episode_obj.duration:
+                hours = episode_obj.duration // 3600
+                minutes = (episode_obj.duration % 3600) // 60
+                if hours > 0:
+                    duration_str = f"{hours}h {minutes}m"
+                else:
+                    duration_str = f"{minutes}m"
+            
+            # Get user's podcast for this episode
+            user_podcast = episode_podcast_map.get(episode_obj.id)
+            
+            # Create adapter objects (same as media_details view)
+            class PodcastEpisodeAdapter:
+                def __init__(self, episode):
+                    self.title = episode.title
+                    self.track_number = episode.episode_number
+                    self.duration_formatted = self._format_duration(episode.duration) if episode.duration else None
+                    self.musicbrainz_recording_id = None
+                    self.id = episode.id
+                    self.published = episode.published
+                    self.episode_uuid = episode.episode_uuid
+                
+                def _format_duration(self, seconds):
+                    hours = seconds // 3600
+                    minutes = (seconds % 3600) // 60
+                    secs = seconds % 60
+                    if hours > 0:
+                        return f"{hours}:{minutes:02d}:{secs:02d}"
+                    return f"{minutes}:{secs:02d}"
+            
+            class PodcastShowAdapter:
+                def __init__(self, show):
+                    self.image = show.image or settings.IMG_NONE
+                    self.release_date = None
+                    self.id = show.id
+            
+            # Create history wrapper
+            all_history = []
+            if user_podcast:
+                all_history = list(user_podcast.history.all().order_by("-end_date")[:10])
+                class PodcastHistoryWrapper:
+                    def __init__(self, podcast, item, history_list):
+                        self.item = item
+                        self.id = podcast.id
+                        self._history_list = history_list
+                    
+                    @property
+                    def history(self):
+                        class HistoryProxy:
+                            def __init__(self, history_list):
+                                self._history = history_list
+                            def all(self):
+                                return self._history
+                            def count(self):
+                                return len(self._history)
+                        return HistoryProxy(self._history_list)
+                
+                podcast_wrapper = PodcastHistoryWrapper(user_podcast, enriched["item"] if enriched else item, all_history)
+            else:
+                class DummyPodcast:
+                    def __init__(self, item):
+                        self.item = item
+                        self.id = 0
+                        self.history = type('History', (), {'count': lambda: 0, 'all': lambda: []})()
+                podcast_wrapper = DummyPodcast(enriched["item"] if enriched else item)
+            
+            episode_list.append({
+                "title": episode_obj.title,
+                "episode_number": episode_obj.episode_number or 0,
+                "image": show.image or settings.IMG_NONE,
+                "air_date": episode_obj.published,
+                "runtime": duration_str,
+                "overview": "",
+                "history": all_history,
+                "media": enriched["media"] if enriched else None,
+                "item": enriched["item"] if enriched else item,
+                "media_id": episode_obj.episode_uuid,
+                "source": Sources.POCKETCASTS.value,
+                "media_type": MediaTypes.PODCAST.value,
+                "track_adapter": PodcastEpisodeAdapter(episode_obj),
+                "album_adapter": PodcastShowAdapter(show),
+                "music_wrapper": podcast_wrapper,
+            })
+        
+        # Render HTML fragment
+        html = render_to_string(
+            "app/components/podcast_episode_list.html",
+            {
+                "episodes": episode_list,
+                "user": request.user,
+                "show": show,
+                "IMG_NONE": settings.IMG_NONE,
+                "TRACK_TIME": True,
+                "has_more": has_more,
+                "next_page": next_page,
+                "show_id": show_id,
+            },
+            request=request,
+        )
+        return HttpResponse(html)
+    else:
+        # Return JSON
+        episode_list = []
+        for episode_obj in episodes:
+            # Find enriched data
+            enriched = None
+            for e in enriched_episodes_raw:
+                if e["item"]["media_id"] == episode_obj.episode_uuid:
+                    enriched = e
+                    break
+            
+            # Format duration
+            duration_str = ""
+            if episode_obj.duration:
+                hours = episode_obj.duration // 3600
+                minutes = (episode_obj.duration % 3600) // 60
+                if hours > 0:
+                    duration_str = f"{hours}h {minutes}m"
+                else:
+                    duration_str = f"{minutes}m"
+            
+            # Get status if user has listened
+            user_podcast = episode_podcast_map.get(episode_obj.id)
+            status = user_podcast.status if user_podcast else None
+            
+            episode_data = {
+                "id": episode_obj.id,
+                "title": episode_obj.title,
+                "published": episode_obj.published.isoformat() if episode_obj.published else None,
+                "duration": duration_str,
+                "duration_seconds": episode_obj.duration,
+                "episode_number": episode_obj.episode_number,
+                "status": status,
+                "has_history": enriched and enriched.get("media") is not None,
+            }
+            episode_list.append(episode_data)
+        
+        total_pages = (total_count + page_size - 1) // page_size
+        
+        return JsonResponse({
+            "episodes": episode_list,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total_count": total_count,
+                "total_pages": total_pages,
+                "has_more": has_more,
+            },
+        })
 
 
 @require_POST
