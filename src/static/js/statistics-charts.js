@@ -752,6 +752,24 @@ document.addEventListener("DOMContentLoaded", function () {
     "music_plays_by_time"
   );
 
+  // Podcast charts
+  initializeSingleSeriesBarChart(
+    "podcastPlaysByYearChart",
+    "podcast_plays_by_year"
+  );
+  initializeSingleSeriesBarChart(
+    "podcastPlaysByMonthChart",
+    "podcast_plays_by_month"
+  );
+  initializeSingleSeriesBarChart(
+    "podcastPlaysByWeekdayChart",
+    "podcast_plays_by_weekday"
+  );
+  initializeSingleSeriesBarChart(
+    "podcastPlaysByTimeChart",
+    "podcast_plays_by_time"
+  );
+
   // Initial sizing and on resize for the copied score chart wrapper
   matchScoreCopyHeight();
   window.addEventListener("resize", function () {

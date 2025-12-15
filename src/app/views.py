@@ -3603,6 +3603,7 @@ def statistics(request):
             "tv_consumption": statistics_data["tv_consumption"],
             "movie_consumption": statistics_data["movie_consumption"],
             "music_consumption": statistics_data["music_consumption"],
+            "podcast_consumption": statistics_data["podcast_consumption"],
             "daily_hours_by_media_type": statistics_data["daily_hours_by_media_type"],
             "show_year_charts": show_year_charts,
             "media_type_colors": {

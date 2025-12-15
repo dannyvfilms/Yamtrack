@@ -1332,6 +1332,279 @@
       </section>
       {% endif %}
 
+      <!-- Podcast Consumption Section -->
+      {% if user.podcast_enabled and podcast_consumption.has_data %}
+      <section class="bg-[#2a2f35] rounded-lg p-6 mobile-tight-section stat-scroll-safe mb-4 sm:mb-8 space-y-4 sm:space-y-6">
+        <div class="flex flex-col space-y-1">
+          <span class="text-sm uppercase tracking-widest text-gray-400">Podcast</span>
+          <h2 class="text-2xl font-semibold text-white">Activity Overview</h2>
+          <span class="text-sm text-gray-500" x-text="selectedRange"></span>
+        </div>
+
+        <div class="space-y-4 sm:space-y-6">
+          <!-- Minutes Listened row - 3 or 4 columns based on show_year_charts -->
+          <div class="grid grid-cols-2 sm:grid-cols-2 {% if show_year_charts %}lg:grid-cols-4{% else %}md:grid-cols-3 lg:grid-cols-3{% endif %} gap-3 sm:gap-4">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Minutes Listened</p>
+              {% if podcast_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ podcast_consumption.minutes.total|floatformat:0 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Total</p>
+            </div>
+            {% if show_year_charts %}
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Year</p>
+              {% if podcast_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ podcast_consumption.minutes.per_year|floatformat:1 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Minutes</p>
+            </div>
+            {% endif %}
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Month</p>
+              {% if podcast_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ podcast_consumption.minutes.per_month|floatformat:1 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Minutes</p>
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Day</p>
+              {% if podcast_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ podcast_consumption.minutes.per_day|floatformat:2 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Minutes</p>
+            </div>
+          </div>
+
+          <!-- Podcast Plays row - 3 or 4 columns based on show_year_charts -->
+          <div class="grid grid-cols-2 sm:grid-cols-2 {% if show_year_charts %}lg:grid-cols-4{% else %}md:grid-cols-3 lg:grid-cols-3{% endif %} gap-3 sm:gap-4">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Podcast Plays</p>
+              {% if podcast_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ podcast_consumption.plays.total|floatformat:0 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Total</p>
+            </div>
+            {% if show_year_charts %}
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Year</p>
+              {% if podcast_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ podcast_consumption.plays.per_year|floatformat:1 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Plays</p>
+            </div>
+            {% endif %}
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Month</p>
+              {% if podcast_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ podcast_consumption.plays.per_month|floatformat:1 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Plays</p>
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Day</p>
+              {% if podcast_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ podcast_consumption.plays.per_day|floatformat:2 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Plays</p>
+            </div>
+          </div>
+
+          {% if show_year_charts %}
+          <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+            <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Podcast Plays by Year</h3>
+            {% if podcast_consumption.charts.by_year.labels %}
+              <div class="h-64">
+                <canvas id="podcastPlaysByYearChart"></canvas>
+              </div>
+            {% else %}
+              <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+                <p class="text-sm">No podcast plays available for this range.</p>
+              </div>
+            {% endif %}
+          </div>
+          {% endif %}
+
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Podcast Plays by Month</h3>
+              {% if podcast_consumption.charts.by_month.labels %}
+                <div class="h-64">
+                  <canvas id="podcastPlaysByMonthChart"></canvas>
+                </div>
+              {% else %}
+                <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+                  <p class="text-sm">No monthly podcast plays recorded.</p>
+                </div>
+              {% endif %}
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Podcast Plays by Day of Week</h3>
+              {% if podcast_consumption.charts.by_weekday.labels %}
+                <div class="h-64">
+                  <canvas id="podcastPlaysByWeekdayChart"></canvas>
+                </div>
+              {% else %}
+                <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+                  <p class="text-sm">No weekday data available.</p>
+                </div>
+              {% endif %}
+            </div>
+          </div>
+
+          <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+            <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Podcast Plays by Time of Day</h3>
+            {% if podcast_consumption.charts.by_time_of_day.labels %}
+              <div class="h-64">
+                <canvas id="podcastPlaysByTimeChart"></canvas>
+              </div>
+            {% else %}
+              <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+                <p class="text-sm">No time-of-day data available.</p>
+              </div>
+            {% endif %}
+          </div>
+
+          <!-- Top 3 Podcast Lists: Most Played, Most Listened, Longest Episodes -->
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4">
+            <!-- Most Played -->
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Most Played</h3>
+              {% if podcast_consumption.most_played %}
+                <div class="space-y-3 max-h-[300px] overflow-y-auto pr-1 statistics-card-scroll">
+                  {% for episode in podcast_consumption.most_played %}
+                  {% if episode.show_id %}
+                  <a href="{% url 'podcast_show_detail' episode.show_id %}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
+                  {% else %}
+                  <div class="flex items-center space-x-3">
+                  {% endif %}
+                    <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
+                    {% if episode.image %}
+                    <img src="{{ episode.image }}" alt="{{ episode.title|default:'Podcast' }}" class="w-10 h-10 rounded object-cover">
+                    {% else %}
+                    <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                      </svg>
+                    </div>
+                    {% endif %}
+                    <div class="flex-1 min-w-0">
+                      <p class="text-sm font-medium text-white truncate">{{ episode.title|default:"Unknown Show" }}</p>
+                      <p class="text-xs text-gray-400">{{ episode.plays }} play{{ episode.plays|pluralize }}</p>
+                    </div>
+                  {% if episode.show_id %}
+                  </a>
+                  {% else %}
+                  </div>
+                  {% endif %}
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="flex flex-col items-center justify-center py-8 text-gray-400">
+                  <p class="text-sm">No show data available.</p>
+                </div>
+              {% endif %}
+            </div>
+
+            <!-- Most Listened -->
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Most Listened</h3>
+              {% if podcast_consumption.most_listened %}
+                <div class="space-y-3 max-h-[300px] overflow-y-auto pr-1 statistics-card-scroll">
+                  {% for episode in podcast_consumption.most_listened %}
+                  {% if episode.show_id %}
+                  <a href="{% url 'podcast_show_detail' episode.show_id %}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
+                  {% else %}
+                  <div class="flex items-center space-x-3">
+                  {% endif %}
+                    <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
+                    {% if episode.image %}
+                    <img src="{{ episode.image }}" alt="{{ episode.title|default:'Podcast' }}" class="w-10 h-10 rounded object-cover">
+                    {% else %}
+                    <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                      </svg>
+                    </div>
+                    {% endif %}
+                    <div class="flex-1 min-w-0">
+                      <p class="text-sm font-medium text-white truncate">{{ episode.title|default:"Unknown Show" }}</p>
+                      <p class="text-xs text-gray-400">{{ episode.formatted_duration }} · {{ episode.plays }} play{{ episode.plays|pluralize }}</p>
+                    </div>
+                  {% if episode.show_id %}
+                  </a>
+                  {% else %}
+                  </div>
+                  {% endif %}
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="flex flex-col items-center justify-center py-8 text-gray-400">
+                  <p class="text-sm">No episode data available.</p>
+                </div>
+              {% endif %}
+            </div>
+
+            <!-- Longest Episodes -->
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Longest Episodes</h3>
+              {% if podcast_consumption.longest_episodes %}
+                <div class="space-y-3 max-h-[300px] overflow-y-auto pr-1 statistics-card-scroll">
+                  {% for episode in podcast_consumption.longest_episodes %}
+                  {% if episode.show_id %}
+                  <a href="{% url 'podcast_show_detail' episode.show_id %}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
+                  {% else %}
+                  <div class="flex items-center space-x-3">
+                  {% endif %}
+                    <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
+                    {% if episode.image %}
+                    <img src="{{ episode.image }}" alt="{{ episode.title|default:'Podcast' }}" class="w-10 h-10 rounded object-cover">
+                    {% else %}
+                    <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                      </svg>
+                    </div>
+                    {% endif %}
+                    <div class="flex-1 min-w-0">
+                      <p class="text-sm font-medium text-white truncate">{{ episode.title }}</p>
+                      <p class="text-xs text-gray-500 truncate">{{ episode.show|default:"Unknown Show" }}</p>
+                      <p class="text-xs text-gray-400">{{ episode.formatted_duration }}</p>
+                    </div>
+                  {% if episode.show_id %}
+                  </a>
+                  {% else %}
+                  </div>
+                  {% endif %}
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="flex flex-col items-center justify-center py-8 text-gray-400">
+                  <p class="text-sm">No episode data available.</p>
+                </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </section>
+      {% endif %}
+
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <!-- Media Type Distribution Section -->
         <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 stat-scroll-safe">
@@ -1969,6 +2242,14 @@
     {{ music_consumption.charts.by_month|json_script:"music_plays_by_month" }}
     {{ music_consumption.charts.by_weekday|json_script:"music_plays_by_weekday" }}
     {{ music_consumption.charts.by_time_of_day|json_script:"music_plays_by_time" }}
+  {% endif %}
+  {% if user.podcast_enabled and podcast_consumption.has_data %}
+    {% if show_year_charts %}
+      {{ podcast_consumption.charts.by_year|json_script:"podcast_plays_by_year" }}
+    {% endif %}
+    {{ podcast_consumption.charts.by_month|json_script:"podcast_plays_by_month" }}
+    {{ podcast_consumption.charts.by_weekday|json_script:"podcast_plays_by_weekday" }}
+    {{ podcast_consumption.charts.by_time_of_day|json_script:"podcast_plays_by_time" }}
   {% endif %}
 
   <script src="{% static 'js/statistics-charts.js' %}{% get_static_file_mtime 'js/statistics-charts.js' %}"></script>
