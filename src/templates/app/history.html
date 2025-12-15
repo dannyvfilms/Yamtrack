@@ -11,6 +11,15 @@
   cacheRefreshing: false,
   cacheUpdater: null,
   init() {
+    // Listen for HTMX-triggered refresh requests (e.g., deletes)
+    window.addEventListener('history-refresh-start', () => {
+      this.cacheRefreshing = true;
+      if (this.cacheUpdater) {
+        this.cacheUpdater.wasRefreshing = true;
+        this.cacheUpdater.start();
+      }
+    });
+
     // Initialize cache updater immediately
     if (window.CacheUpdater) {
       this.cacheUpdater = CacheUpdater.init('history', {

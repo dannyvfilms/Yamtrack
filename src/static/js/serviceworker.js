@@ -20,6 +20,7 @@ self.addEventListener("install", (event) => {
 // Fetch event
 self.addEventListener("fetch", (event) => {
   const request = event.request;
+  const url = new URL(request.url);
 
   // Never serve HTML from cache; always go to network first so pages stay fresh
   const isNavigationRequest =
@@ -27,6 +28,12 @@ self.addEventListener("fetch", (event) => {
     (request.headers.get("accept") || "").includes("text/html");
 
   if (isNavigationRequest) {
+    event.respondWith(fetch(request));
+    return;
+  }
+
+  // Never cache API responses; they must stay real-time (e.g., cache-status)
+  if (url.pathname.startsWith("/api/")) {
     event.respondWith(fetch(request));
     return;
   }

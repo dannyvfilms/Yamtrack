@@ -20,6 +20,7 @@ HISTORY_CACHE_TIMEOUT = 60 * 60 * 6  # 6 hours
 HISTORY_STALE_AFTER = timedelta(minutes=15)
 HISTORY_DAYS_PER_PAGE = 30
 HISTORY_REFRESH_LOCK_PREFIX = f"{HISTORY_CACHE_PREFIX}_refresh_lock"
+HISTORY_REFRESH_LOCK_MAX_AGE = timedelta(minutes=5)  # safety to clear stuck locks
 
 
 def _cache_key(user_id: int, logging_style: str) -> str:
@@ -208,7 +209,7 @@ def _get_music_runtime_minutes(music_entry, track_duration_cache=None):
     return 0
 
 
-def _build_music_album_entries(music_entries_for_album, album, day_date, track_duration_cache=None):
+def _build_music_album_entries(music_entries_for_album, album, day_date, user, track_duration_cache=None):
     """Build a single history entry for an album's plays on a given day.
     
     Groups all track plays for an album on a day into one card showing:
@@ -362,17 +363,34 @@ def build_history_days(user, filters=None):
     if filters.get('artist'):
         music_entries = music_entries.filter(album__artist_id=filters['artist'])
     
-    # Podcasts - query all podcast entries that have history records
-    # We'll use history records to determine plays, not end_date
-    # This ensures deleted history records don't show up
-    podcasts = (
-        Podcast.objects.filter(
-            user=user,
+    # Podcasts - query history records directly to ensure deleted records don't show up
+    # Query HistoricalPodcast directly, filtering by user and end_date at database level
+    from django.apps import apps
+    HistoricalPodcast = apps.get_model("app", "HistoricalPodcast")
+    
+    # Get all podcast history records for this user with end_date
+    # Filter by history_user at database level to match template behavior
+    podcast_history_records = (
+        HistoricalPodcast.objects.filter(
+            models.Q(history_user=user) | models.Q(history_user__isnull=True),
+            end_date__isnull=False,
         )
-        .select_related("item", "episode", "episode__show", "show")
-        .prefetch_related("history")
-        .order_by("-id")
+        .order_by("-end_date")
     )
+    
+    # Get unique podcast IDs from history records to fetch podcast metadata
+    podcast_ids = list(set(podcast_history_records.values_list("id", flat=True)))
+    if podcast_ids:
+        podcasts_lookup = {
+            p.id: p
+            for p in Podcast.objects.filter(
+                id__in=podcast_ids,
+                user=user,
+            )
+            .select_related("item", "episode", "episode__show", "show")
+        }
+    else:
+        podcasts_lookup = {}
 
     entries = []
 
@@ -502,20 +520,34 @@ def build_history_days(user, filters=None):
         # Now build one entry per album per day
         for (album_id, day_date), album_music_entries in music_by_album_day.items():
             album = album_lookup.get(album_id)
-            entry = _build_music_album_entries(album_music_entries, album, day_date, track_duration_cache)
+            entry = _build_music_album_entries(album_music_entries, album, day_date, user, track_duration_cache)
             if entry:
                 entries.append(entry)
 
     # Podcasts - only process if not filtering by specific media type
-    # Use history records like music, so deleted history records don't show up
+    # Query history records directly to ensure deleted records don't show up
     if process_all:
-        for podcast in podcasts:
+        for history_record in podcast_history_records:
+            # Get the podcast instance for metadata
+            podcast = podcasts_lookup.get(history_record.id)
+            if not podcast:
+                # Podcast was deleted, skip this history record
+                continue
+            
             # Skip if podcast doesn't have required data
             if not podcast.item:
                 logger.warning("Skipping podcast entry %s without item", podcast.id)
                 continue
             
             try:
+                history_end_date = getattr(history_record, "end_date", None)
+                if not history_end_date:
+                    continue
+                
+                played_at_local = _localize_datetime(history_end_date)
+                if not played_at_local:
+                    continue
+                
                 # Get show - prefer episode.show (authoritative source), fallback to podcast.show
                 show = None
                 if podcast.episode:
@@ -535,48 +567,31 @@ def build_history_days(user, filters=None):
                 elif podcast.item.image:
                     poster = podcast.item.image
                 
-                # Process each history record (like music does)
-                # Each history record with an end_date represents a play
-                # Filter by history_user to match template behavior
-                for history_record in podcast.history.all():
-                    # Only include history records for this user (or null history_user for legacy records)
-                    history_user = getattr(history_record, "history_user", None)
-                    if history_user is not None and history_user != user:
-                        continue
-                    
-                    history_end_date = getattr(history_record, "end_date", None)
-                    if not history_end_date:
-                        continue
-                    
-                    played_at_local = _localize_datetime(history_end_date)
-                    if not played_at_local:
-                        continue
-                    
-                    # Progress is stored in minutes
-                    minutes_listened = podcast.progress or 0
-                    runtime_minutes = podcast.item.runtime_minutes if podcast.item.runtime_minutes else minutes_listened
-                    
-                    entries.append(
-                        {
-                            "media_type": MediaTypes.PODCAST.value,
-                            "item": podcast.item,
-                            "show": show,
-                            "show_podcast_uuid": show_podcast_uuid,
-                            "show_slug": show_slug,
-                            "poster": poster,
-                            "title": podcast.item.title,
-                            "display_title": podcast.item.title,
-                            "progress_display": f"{minutes_listened}m",
-                            "date_range_display": None,
-                            "episode_label": None,
-                            "episode_code": None,
-                            "played_at_local": played_at_local,
-                            "runtime_minutes": runtime_minutes,
-                            "runtime_display": helpers.minutes_to_hhmm(runtime_minutes) if runtime_minutes else None,
-                        },
-                    )
+                # Progress is stored in minutes
+                minutes_listened = podcast.progress or 0
+                runtime_minutes = podcast.item.runtime_minutes if podcast.item.runtime_minutes else minutes_listened
+                
+                entries.append(
+                    {
+                        "media_type": MediaTypes.PODCAST.value,
+                        "item": podcast.item,
+                        "show": show,
+                        "show_podcast_uuid": show_podcast_uuid,
+                        "show_slug": show_slug,
+                        "poster": poster,
+                        "title": podcast.item.title,
+                        "display_title": podcast.item.title,
+                        "progress_display": f"{minutes_listened}m",
+                        "date_range_display": None,
+                        "episode_label": None,
+                        "episode_code": None,
+                        "played_at_local": played_at_local,
+                        "runtime_minutes": runtime_minutes,
+                        "runtime_display": helpers.minutes_to_hhmm(runtime_minutes) if runtime_minutes else None,
+                    },
+                )
             except Exception as e:
-                logger.error("Error processing podcast entry %s: %s", podcast.id, e, exc_info=True)
+                logger.error("Error processing podcast history record %s: %s", history_record.history_id, e, exc_info=True)
                 continue
 
     # Games - only process if not filtering by specific media type
@@ -815,14 +830,29 @@ def get_history_days(user, filters=None):
     logging_style = getattr(user, "game_logging_style", "repeats")
     cache_entry = cache.get(_cache_key(user.id, logging_style))
     refresh_lock = cache.get(_refresh_lock_key(user.id, logging_style))
+    # Clean up stale/legacy locks so refresh can proceed
+    if refresh_lock:
+        # Legacy True/False locks (no metadata) or expired metadata get cleared
+        if not isinstance(refresh_lock, dict):
+            cache.delete(_refresh_lock_key(user.id, logging_style))
+            refresh_lock = None
+        else:
+            started_at = refresh_lock.get("started_at")
+            if started_at and timezone.now() - started_at > HISTORY_REFRESH_LOCK_MAX_AGE:
+                cache.delete(_refresh_lock_key(user.id, logging_style))
+                refresh_lock = None
     
     if cache_entry:
         # Always return cached data if it exists (even if stale)
         # This prevents timeouts while background refresh is in progress
         built_at = cache_entry.get("built_at")
         if built_at and timezone.now() - built_at > HISTORY_STALE_AFTER:
-            # Schedule background refresh but don't wait for it
-            schedule_history_refresh(user.id, logging_style)
+            # Check if a refresh is already in progress before scheduling a new one
+            # This prevents re-scheduling a refresh immediately after one completes
+            refresh_lock = cache.get(_refresh_lock_key(user.id, logging_style))
+            if refresh_lock is None:
+                # No refresh in progress, safe to schedule a new one
+                schedule_history_refresh(user.id, logging_style)
         # Note: Even if cache is not stale, a refresh might be in progress
         # (e.g., triggered by music addition). The frontend will check via cache-status endpoint.
         return cache_entry.get("history_days", [])
@@ -842,20 +872,29 @@ def get_history_days(user, filters=None):
     return history_days
 
 
-def invalidate_history_cache(user_id: int):
+def invalidate_history_cache(user_id: int, force: bool = False):
     """Remove cached history for a user.
     
     If a refresh is in progress, keep the old cache so users can see it
     while the refresh completes. Otherwise, delete the cache.
+    
+    Args:
+        user_id: User ID
+        force: If True, always delete cache even if refresh is in progress.
+               Use this when data has been deleted to ensure deleted records don't persist.
+               Note: This will cause the page to show empty until refresh completes,
+               but the refresh will rebuild with correct data (excluding deleted records).
     """
     for style in ("sessions", "repeats", None):
         logging_style = style or "repeats"
         # Check if refresh is in progress
         refresh_lock = cache.get(_refresh_lock_key(user_id, logging_style))
-        if refresh_lock is None:
-            # No refresh in progress, safe to delete cache
+        if refresh_lock is None or force:
+            # No refresh in progress, or force deletion requested
+            # When force=True, we delete even during refresh to ensure deleted records don't persist
+            # The refresh will rebuild with correct data
             cache.delete(_cache_key(user_id, logging_style))
-        # If refresh is in progress, keep the old cache - it will be replaced when refresh completes
+        # If refresh is in progress and not forcing, keep the old cache - it will be replaced when refresh completes
 
 
 def refresh_history_cache(user_id: int):
@@ -873,7 +912,18 @@ def refresh_history_cache(user_id: int):
     try:
         history_days = build_history_days(user)
         cache_history_days(user_id, logging_style, history_days)
-        cache.delete(_refresh_lock_key(user_id, logging_style))
+        # Delete the refresh lock AFTER cache is saved to ensure frontend sees
+        # the new cache when it detects refresh completion
+        lock_key = _refresh_lock_key(user_id, logging_style)
+        cache.delete(lock_key)
+        # Verify the lock was actually deleted
+        verify_lock = cache.get(lock_key)
+        logger.debug(
+            "History cache refresh completed for user %s, lock released. Lock key: %s, still exists: %s",
+            user_id,
+            lock_key,
+            verify_lock is not None,
+        )
         return history_days
     except Exception as e:
         # Always clear the lock, even on error, to prevent it from being stuck
@@ -892,16 +942,16 @@ def schedule_history_refresh(user_id: int, logging_style: str = "repeats", debou
         countdown: Seconds to delay task execution (default 3)
     """
     lock_key = _refresh_lock_key(user_id, logging_style)
-    # Use a longer TTL (5 minutes) to ensure lock exists for entire task duration
-    # The lock is deleted when task completes, but we need it to last longer than
-    # the longest possible task execution time
-    lock_ttl = 300  # 5 minutes should be more than enough for any history task
-    if debounce_seconds and not cache.add(lock_key, True, debounce_seconds):
+    # Keep TTL close to the frontend polling timeout so locks don't appear "stuck"
+    # while still covering normal task execution time.
+    lock_ttl = 120  # Matches CacheUpdater timeout window
+    lock_payload = {"started_at": timezone.now()}
+    if debounce_seconds and not cache.add(lock_key, lock_payload, debounce_seconds):
         return False
     
     # Extend the lock TTL to cover the full task duration
     # This ensures the lock exists even if the task takes longer than debounce_seconds
-    cache.set(lock_key, True, lock_ttl)
+    cache.set(lock_key, lock_payload, lock_ttl)
 
     try:
         from app.tasks import refresh_history_cache_task

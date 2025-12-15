@@ -17,6 +17,7 @@ class CacheUpdater {
         this.pollTimer = null;
         this.isPolling = false;
         this.wasRefreshing = false; // Track if we were refreshing in previous poll
+        this.lastBuiltAt = null; // Track built_at to detect fresh builds even if lock lingers
         this.onUpdateCallback = options.onUpdate || null;
         this.onRefreshCompleteCallback = options.onRefreshComplete || null;
     }
@@ -82,21 +83,28 @@ class CacheUpdater {
             }
 
             const data = await response.json();
+            const prevBuiltAt = this.lastBuiltAt;
             console.log('CacheUpdater: Poll result', {
                 exists: data.exists,
                 is_stale: data.is_stale,
                 is_refreshing: data.is_refreshing,
                 recently_built: data.recently_built,
                 any_range_refreshing: data.any_range_refreshing,
-                wasRefreshing: this.wasRefreshing
+                wasRefreshing: this.wasRefreshing,
+                wasRefreshingBefore: this.wasRefreshing, // Show before update
+                built_at: data.built_at
             });
 
             // Check if refresh just completed (was refreshing, now not)
             const refreshJustCompleted = this.wasRefreshing && !data.is_refreshing;
+            // Detect if cache was rebuilt even though lock still looks active
+            const builtAtChanged = this.wasRefreshing && prevBuiltAt && data.built_at && data.built_at !== prevBuiltAt;
 
             // Update wasRefreshing for next poll (but keep old value for this check)
             const wasRefreshingBefore = this.wasRefreshing;
             this.wasRefreshing = data.is_refreshing;
+            // Track latest built_at
+            this.lastBuiltAt = data.built_at || null;
 
             // If refresh just completed, update the page
             // This handles:
@@ -108,8 +116,13 @@ class CacheUpdater {
             // Note: We do NOT check recently_built here because if the cache was recently built
             // but we weren't waiting for it (wasRefreshingBefore = false), we shouldn't reload.
             // That would cause an infinite reload loop when the page loads after a refresh completes.
+            // For history, we should update if refresh just completed OR if we were waiting
+            // and the refresh is now done (lock released). Also check recently_built to catch
+            // refreshes that completed just before we started polling.
             const currentRangeDone = refreshJustCompleted ||
-                (wasRefreshingBefore && !data.is_refreshing && data.exists && !data.is_stale);
+                builtAtChanged ||
+                (wasRefreshingBefore && !data.is_refreshing && data.exists) ||
+                (wasRefreshingBefore && data.recently_built && !data.is_refreshing);
 
             // For statistics, wait until all ranges are done before reloading
             // For history, reload as soon as current cache is done
@@ -220,4 +233,3 @@ if (typeof module !== 'undefined' && module.exports) {
 
 // Make available globally
 window.CacheUpdater = CacheUpdater;
-
