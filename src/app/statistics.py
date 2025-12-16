@@ -2124,6 +2124,8 @@ def _compute_podcast_top_lists(play_details, limit=20):
         "title": "",
         "show": "",
         "show_id": None,
+        "podcast_uuid": None,
+        "slug": "",
         "image": "",
     })
     
@@ -2132,6 +2134,8 @@ def _compute_podcast_top_lists(play_details, limit=20):
         "title": "",
         "show": "",
         "show_id": None,
+        "podcast_uuid": None,
+        "slug": "",
         "episode_id": None,
         "image": "",
         "duration_seconds": 0,
@@ -2144,6 +2148,10 @@ def _compute_podcast_top_lists(play_details, limit=20):
             show_stats[show_key]["show_id"] = show_key
             show_stats[show_key]["show"] = podcast.show.title
             show_stats[show_key]["title"] = podcast.show.title  # Use show title as display title
+            # Always set podcast_uuid if available (it should be the same for all podcasts of the same show)
+            if podcast.show.podcast_uuid:
+                show_stats[show_key]["podcast_uuid"] = podcast.show.podcast_uuid
+            show_stats[show_key]["slug"] = podcast.show.slug or ""
             show_stats[show_key]["image"] = podcast.show.image or ""
         else:
             # Fallback if no show
@@ -2176,9 +2184,25 @@ def _compute_podcast_top_lists(play_details, limit=20):
         if podcast.show:
             episode_stats[episode_key]["show"] = podcast.show.title
             episode_stats[episode_key]["show_id"] = podcast.show.id
+            # Always set podcast_uuid if available (it should be the same for all podcasts of the same show)
+            if podcast.show.podcast_uuid:
+                episode_stats[episode_key]["podcast_uuid"] = podcast.show.podcast_uuid
+            episode_stats[episode_key]["slug"] = podcast.show.slug or ""
             episode_stats[episode_key]["image"] = podcast.show.image or ""
         elif podcast.item:
             episode_stats[episode_key]["image"] = podcast.item.image or ""
+    
+    # Ensure podcast_uuid is populated for all shows (look up from show_id if missing)
+    from app.models import PodcastShow
+    for show_stat in show_stats.values():
+        if show_stat["show_id"] and not show_stat["podcast_uuid"]:
+            try:
+                show = PodcastShow.objects.get(id=show_stat["show_id"])
+                if show.podcast_uuid:
+                    show_stat["podcast_uuid"] = show.podcast_uuid
+                    show_stat["slug"] = show.slug or show_stat["slug"]
+            except PodcastShow.DoesNotExist:
+                pass
     
     # Most played shows (by number of plays)
     most_played = sorted(
@@ -2193,6 +2217,17 @@ def _compute_podcast_top_lists(play_details, limit=20):
         key=lambda x: (x["minutes"], x["plays"]),
         reverse=True
     )[:limit]
+    
+    # Ensure podcast_uuid is populated for all episodes (look up from show_id if missing)
+    for episode_stat in episode_stats.values():
+        if episode_stat["show_id"] and not episode_stat["podcast_uuid"]:
+            try:
+                show = PodcastShow.objects.get(id=episode_stat["show_id"])
+                if show.podcast_uuid:
+                    episode_stat["podcast_uuid"] = show.podcast_uuid
+                    episode_stat["slug"] = show.slug or episode_stat["slug"]
+            except PodcastShow.DoesNotExist:
+                pass
     
     # Longest episodes (by duration_seconds, only episodes with duration)
     longest_episodes = sorted(
