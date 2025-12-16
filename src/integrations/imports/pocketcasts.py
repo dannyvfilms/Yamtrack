@@ -1030,23 +1030,53 @@ class PocketCastsImporter:
                     logger.debug("Failed to parse published date: %s", episode_data.get("published"))
 
             # Ensure episode exists
+            # First try to get by UUID (most reliable)
             duration = episode_data.get("duration", 0)  # in seconds
-            episode, created = PodcastEpisode.objects.get_or_create(
-                episode_uuid=episode_uuid,
-                defaults={
-                    "show": show,
-                    "title": episode_data.get("title", "Unknown Episode"),
-                    "slug": episode_data.get("slug", ""),
-                    "published": published,
-                    "duration": duration,
-                    "audio_url": episode_data.get("url", ""),
-                    "episode_number": episode_data.get("episodeNumber") or episode_data.get("episode_number", 0),
-                    "season_number": episode_data.get("episodeSeason") or episode_data.get("season_number", 0),
-                    "file_type": episode_data.get("fileType", ""),
-                    "episode_type": episode_data.get("episodeType", ""),
-                    "is_deleted": is_deleted,
-                },
-            )
+            episode = None
+            try:
+                episode = PodcastEpisode.objects.get(episode_uuid=episode_uuid)
+                created = False
+            except PodcastEpisode.DoesNotExist:
+                # If not found by UUID, try to match by title + published date
+                # This prevents duplicates when RSS sync creates episodes with different GUIDs
+                if episode_data.get("title") and published:
+                    title_key = (episode_data["title"].lower().strip(), published.date())
+                    matching_episodes = PodcastEpisode.objects.filter(
+                        show=show,
+                        title__iexact=episode_data["title"].strip(),
+                        published__date=published.date()
+                    )
+                    if matching_episodes.exists():
+                        episode = matching_episodes.first()
+                        # Update the UUID to match Pocket Casts UUID for consistency
+                        if episode.episode_uuid != episode_uuid:
+                            logger.info(
+                                "Updating episode UUID from %s to %s for episode %s",
+                                episode.episode_uuid,
+                                episode_uuid,
+                                episode.title
+                            )
+                            episode.episode_uuid = episode_uuid
+                            episode.save(update_fields=["episode_uuid"])
+                        created = False
+                
+                # If still no match, create new episode
+                if not episode:
+                    episode = PodcastEpisode.objects.create(
+                        episode_uuid=episode_uuid,
+                        show=show,
+                        title=episode_data.get("title", "Unknown Episode"),
+                        slug=episode_data.get("slug", ""),
+                        published=published,
+                        duration=duration,
+                        audio_url=episode_data.get("url", ""),
+                        episode_number=episode_data.get("episodeNumber") or episode_data.get("episode_number", 0),
+                        season_number=episode_data.get("episodeSeason") or episode_data.get("season_number", 0),
+                        file_type=episode_data.get("fileType", ""),
+                        episode_type=episode_data.get("episodeType", ""),
+                        is_deleted=is_deleted,
+                    )
+                    created = True
             
             # Update is_deleted flag if it changed
             if not created and episode.is_deleted != is_deleted:
