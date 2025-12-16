@@ -753,7 +753,8 @@ def media_details(
                 if episode_media:
                     # Get history for this episode using simple_history
                     # Media instances have a .history relationship from HistoricalRecords
-                    episode_history = list(episode_media.history.all().order_by("-end_date")[:10])
+                    # Only include history records with end_date (completed plays)
+                    episode_history = list(episode_media.history.filter(end_date__isnull=False).order_by("-end_date")[:10])
                 
                 # Create adapter objects for music-style modal (like track_modal does)
                 class PodcastEpisodeAdapter:
@@ -797,7 +798,9 @@ def media_details(
                     # Aggregate all history records from all podcast entries
                     all_history = []
                     for podcast in all_podcasts:
-                        all_history.extend(podcast.history.all())
+                        # Only include history records with end_date (completed plays)
+                        history = podcast.history.filter(end_date__isnull=False) if hasattr(podcast.history, 'filter') else [h for h in podcast.history.all() if h.end_date]
+                        all_history.extend(history)
                     
                     # Sort by end_date descending (most recent first) for display
                     all_history.sort(
@@ -1871,7 +1874,10 @@ def history_modal(
     total_medias = user_medias.count()
     timeline_entries = []
     for index, media in enumerate(user_medias, start=1):
-        if history := media.history.all():
+        # Filter history to only include records with end_date (completed plays)
+        # This prevents showing invalid history records from in-progress episodes
+        history = media.history.filter(end_date__isnull=False) if hasattr(media.history, 'filter') else [h for h in media.history.all() if h.end_date]
+        if history:
             media_entry_number = total_medias - index + 1
             timeline_entries.extend(
                 history_processor.process_history_entries(

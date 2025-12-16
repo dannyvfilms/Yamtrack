@@ -173,17 +173,29 @@ class PocketCastsImporter:
             # Get sync window
             sync_window_end = timezone.now()
             sync_window_start = self.account.last_sync_at or (sync_window_end - timedelta(hours=2))
+            previous_sync_at = self.account.last_sync_at
             
             # Get existing history items in the window
             existing_history = self._get_history_items_in_range(sync_window_start, sync_window_end)
             
-            # Infer completion dates for each new podcast
-            for episode_data, duration_seconds, published_date in new_completed_podcasts:
+            # Sort podcasts by published date for consistent sequencing
+            new_completed_podcasts_sorted = sorted(new_completed_podcasts, key=lambda x: x[2])  # Sort by published_date
+            
+            # Track completion times for sequencing
+            completion_times = {}
+            
+            # Infer completion dates for each new podcast in order
+            for episode_data, duration_seconds, published_date in new_completed_podcasts_sorted:
                 episode_uuid = episode_data.get("uuid")
                 
-                # Get other new podcasts (excluding this one)
-                other_podcasts = [(p, d, pub) for (e, d, pub) in new_completed_podcasts 
-                                 if e.get("uuid") != episode_uuid]
+                # Get other new podcasts that have already been processed (with their completion times)
+                other_podcasts = []
+                for (e, d, pub) in new_completed_podcasts_sorted:
+                    other_uuid = e.get("uuid")
+                    if other_uuid != episode_uuid:
+                        # Include completion time if already calculated
+                        completion_time = completion_times.get(other_uuid)
+                        other_podcasts.append((pub, d, completion_time))
                 
                 # Infer completion date
                 inferred_date = self._infer_completion_date(
@@ -191,9 +203,14 @@ class PocketCastsImporter:
                     sync_window_start,
                     sync_window_end,
                     existing_history,
-                    [(pub, d) for (_, d, pub) in other_podcasts],
-                    published_date
+                    other_podcasts,
+                    published_date,
+                    episode_uuid,
+                    previous_sync_at
                 )
+                
+                # Store completion time for sequencing
+                completion_times[episode_uuid] = inferred_date
                 
                 # Update the podcast's completion_date in bulk_media
                 # Find the podcast in bulk_media and update it
@@ -541,7 +558,45 @@ class PocketCastsImporter:
         
         return history_items
 
-    def _infer_completion_date(self, podcast_duration_seconds, sync_window_start, sync_window_end, existing_history_items, other_new_podcasts, this_podcast_published):
+    def _get_last_in_progress_record(self, episode_uuid):
+        """Get the last in-progress history record for an episode.
+        
+        Args:
+            episode_uuid: The episode UUID to search for
+            
+        Returns:
+            tuple: (history_date, progress_minutes) or (None, None) if not found
+        """
+        from django.apps import apps
+        HistoricalPodcast = apps.get_model("app", "HistoricalPodcast")
+        
+        # Try to find the Podcast object first to get its ID
+        try:
+            podcast = Podcast.objects.get(
+                user=self.user,
+                item__media_id=episode_uuid,
+                item__source=Sources.POCKETCASTS.value,
+            )
+        except Podcast.DoesNotExist:
+            return None, None
+        
+        # Find the most recent history record where end_date is None and status is IN_PROGRESS
+        last_record = (
+            HistoricalPodcast.objects.filter(
+                id=podcast.id,
+                end_date__isnull=True,
+                status=Status.IN_PROGRESS.value,
+            )
+            .order_by('-history_date')
+            .first()
+        )
+        
+        if last_record and last_record.progress:
+            return last_record.history_date, last_record.progress
+        
+        return None, None
+    
+    def _infer_completion_date(self, podcast_duration_seconds, sync_window_start, sync_window_end, existing_history_items, other_new_podcasts, this_podcast_published, episode_uuid, previous_sync_at):
         """Infer completion date for a podcast by fitting it into timeline gaps.
         
         Args:
@@ -549,157 +604,130 @@ class PocketCastsImporter:
             sync_window_start: Start of sync window (datetime)
             sync_window_end: End of sync window (datetime)
             existing_history_items: List from _get_history_items_in_range()
-            other_new_podcasts: List of other new podcasts being processed, each as (published_date, duration_seconds)
+            other_new_podcasts: List of other new podcasts being processed, each as (published_date, duration_seconds, completion_time)
             this_podcast_published: Published date of this podcast (for ordering)
+            episode_uuid: UUID of the episode
+            previous_sync_at: Previous sync time (datetime or None)
             
         Returns:
             Inferred completion datetime
         """
-        # Sort other new podcasts by published date (oldest first)
-        sorted_other_podcasts = sorted(other_new_podcasts, key=lambda x: x[0])
+        # Try to get last in-progress record for this episode
+        last_in_progress_date, last_progress_minutes = self._get_last_in_progress_record(episode_uuid)
         
-        # Build timeline: combine existing items and other new podcasts
-        timeline = []
+        base_completion_time = None
         
-        # Add existing history items
-        for end_date, duration, media_type, is_scrobbled in existing_history_items:
-            timeline.append({
-                'end_date': end_date,
-                'duration_seconds': duration,
-                'media_type': media_type,
-                'is_scrobbled': is_scrobbled,
-                'is_new_podcast': False,
-            })
-        
-        # Add other new podcasts (sorted by published date)
-        for published_date, duration_seconds in sorted_other_podcasts:
-            # Estimate start time (we'll refine this when placing)
-            timeline.append({
-                'end_date': None,  # Will be calculated
-                'duration_seconds': duration_seconds,
-                'media_type': 'podcast',
-                'is_scrobbled': False,
-                'is_new_podcast': True,
-                'published_date': published_date,
-            })
-        
-        # Sort timeline by end_date (existing items) or published_date (new podcasts)
-        timeline.sort(key=lambda x: x['end_date'] if x['end_date'] else x.get('published_date', sync_window_start))
-        
-        # Determine this podcast's position in the ordered list
-        this_podcast_index = 0
-        for i, other_podcast in enumerate(sorted_other_podcasts):
-            if other_podcast[0] < this_podcast_published:
-                this_podcast_index = i + 1
+        if last_in_progress_date and last_progress_minutes is not None:
+            # Calculate remaining time from last in-progress record
+            progress_seconds = last_progress_minutes * 60
+            remaining_seconds = max(0, podcast_duration_seconds - progress_seconds)
+            
+            # Completion time = last in-progress record time + remaining time
+            base_completion_time = last_in_progress_date + timedelta(seconds=remaining_seconds)
+            logger.debug(
+                "Using last in-progress record for episode %s: progress=%d min, remaining=%d sec, completion=%s",
+                episode_uuid,
+                last_progress_minutes,
+                remaining_seconds,
+                base_completion_time,
+            )
+        else:
+            # No in-progress record: assume episode started at previous sync
+            if previous_sync_at:
+                base_start_time = previous_sync_at
             else:
-                break
+                base_start_time = sync_window_start
+            
+            base_completion_time = base_start_time + timedelta(seconds=podcast_duration_seconds)
+            logger.debug(
+                "No in-progress record for episode %s, using previous_sync_at + duration: start=%s, completion=%s",
+                episode_uuid,
+                base_start_time,
+                base_completion_time,
+            )
+        # Handle sequencing with other new podcasts
+        # other_new_podcasts contains (published_date, duration_seconds, completion_time) tuples
+        # Find the latest completion time from podcasts that were processed before this one (published_date < this_podcast_published)
+        latest_prev_completion = None
+        for pub_date, duration, completion_time in other_new_podcasts:
+            if pub_date < this_podcast_published and completion_time:
+                if latest_prev_completion is None or completion_time > latest_prev_completion:
+                    latest_prev_completion = completion_time
         
-        # Find where to place this podcast
-        # Start from sync_window_start
-        current_time = sync_window_start
+        # If there's a previous podcast's completion time, sequence this one after it
+        # Otherwise, use our calculated base_completion_time
+        if latest_prev_completion:
+            # Start immediately after previous podcast completed
+            base_completion_time = latest_prev_completion + timedelta(seconds=podcast_duration_seconds)
+            logger.debug(
+                "Sequencing podcast %s after previous: previous_completion=%s, new_completion=%s",
+                episode_uuid,
+                latest_prev_completion,
+                base_completion_time,
+            )
+        # else: use base_completion_time as calculated above (from in-progress record or previous_sync_at)
         
-        # If there are other new podcasts before this one, we need to account for them
-        # For now, we'll try to fit it after existing items and before/after other new podcasts
-        
-        # Strategy: Look for gaps in the timeline
-        # 1. Try to fit after scrobbled items (Music/Episode) - these have precise timestamps
-        # 2. Try to fit in gaps between items
-        # 3. If no gap, place at end of window or before next scrobbled item
-        
-        # Check if podcast is too long for the window
-        window_duration = (sync_window_end - sync_window_start).total_seconds()
-        if podcast_duration_seconds and podcast_duration_seconds > window_duration:
-            # Too long - place at end of window
-            logger.debug("Podcast duration (%d seconds) exceeds window size (%d seconds), placing at end", 
-                        podcast_duration_seconds, window_duration)
-            return sync_window_end
-        
-        # Build timeline with start/end times for existing items only
-        # (We'll handle other new podcasts separately)
+        # Now try to integrate with scrobbled items in timeline
+        # Build timeline with existing history items
         timeline_with_times = []
-        for item in timeline:
-            if item['is_new_podcast']:
-                continue  # Skip other new podcasts for now
-            
-            item_end = item['end_date']
-            item_duration = item['duration_seconds'] or 0
-            
-            # Estimate start time from end and duration
-            item_start = item_end - timedelta(seconds=item_duration) if item_duration > 0 else item_end
+        for end_date, duration, media_type, is_scrobbled in existing_history_items:
+            item_duration = duration or 0
+            item_start = end_date - timedelta(seconds=item_duration) if item_duration > 0 else end_date
             
             timeline_with_times.append({
                 'start': item_start,
-                'end': item_end,
+                'end': end_date,
                 'duration': item_duration,
-                'is_scrobbled': item['is_scrobbled'],
+                'is_scrobbled': is_scrobbled,
+                'media_type': media_type,
             })
         
         # Sort by end time
         timeline_with_times.sort(key=lambda x: x['end'])
         
-        # Strategy 1: Try to place after scrobbled items (Music/Episode) - these have precise timestamps
-        # Example: Music ends at 12:30pm, place podcast to end at 12:30pm + duration
-        for i, item in enumerate(timeline_with_times):
+        # Check if our calculated completion time conflicts with scrobbled items
+        # If it does, try to adjust placement while respecting sequencing
+        podcast_start = base_completion_time - timedelta(seconds=podcast_duration_seconds)
+        
+        # Check for conflicts with scrobbled items
+        conflict_found = False
+        for item in timeline_with_times:
             if not item['is_scrobbled']:
                 continue
             
-            # Calculate where podcast would end if we start it right after this scrobbled item
-            podcast_start = item['end']
-            podcast_end = podcast_start + timedelta(seconds=podcast_duration_seconds)
-            
-            # Check if it fits before the next item or end of window
-            next_item = timeline_with_times[i + 1] if i + 1 < len(timeline_with_times) else None
-            if next_item:
-                gap_end = next_item['start']
-            else:
-                gap_end = sync_window_end
-            
-            # Check if podcast fits in this gap
-            if podcast_end <= gap_end and podcast_start >= sync_window_start:
-                logger.debug("Placing podcast after scrobbled item %s: start=%s, end=%s", 
-                           item['end'], podcast_start, podcast_end)
-                return podcast_end
+            # Check if podcast overlaps with this scrobbled item
+            if (podcast_start < item['end'] and base_completion_time > item['start']):
+                conflict_found = True
+                logger.debug(
+                    "Conflict detected with scrobbled item: podcast_start=%s, podcast_end=%s, scrobbled_start=%s, scrobbled_end=%s",
+                    podcast_start,
+                    base_completion_time,
+                    item['start'],
+                    item['end'],
+                )
+                
+                # Try to place before scrobbled item if there's enough space
+                required_start = item['start'] - timedelta(seconds=podcast_duration_seconds)
+                if required_start >= sync_window_start:
+                    # Place before scrobbled item
+                    base_completion_time = item['start'] - timedelta(seconds=1)
+                    logger.debug("Placed before scrobbled item: completion=%s", base_completion_time)
+                    break
+                else:
+                    # Not enough space before, try to place after scrobbled item
+                    base_completion_time = item['end'] + timedelta(seconds=podcast_duration_seconds)
+                    logger.debug("Placed after scrobbled item: completion=%s", base_completion_time)
+                    break
         
-        # Strategy 2: Try to fit in any gap between items
-        prev_end = sync_window_start
-        for item in timeline_with_times:
-            gap_start = prev_end
-            gap_end = item['start']
-            gap_size = (gap_end - gap_start).total_seconds()
-            
-            if gap_size >= podcast_duration_seconds:
-                # Fit it in this gap
-                completion_time = gap_start + timedelta(seconds=podcast_duration_seconds)
-                logger.debug("Placing podcast in gap: start=%s, end=%s", gap_start, completion_time)
-                return completion_time
-            
-            prev_end = item['end']
+        # Ensure completion time is within sync window
+        if base_completion_time < sync_window_start:
+            base_completion_time = sync_window_start + timedelta(seconds=podcast_duration_seconds)
+            logger.debug("Adjusted completion time to sync_window_start: %s", base_completion_time)
+        elif base_completion_time > sync_window_end:
+            base_completion_time = sync_window_end
+            logger.debug("Adjusted completion time to sync_window_end: %s", base_completion_time)
         
-        # Check gap after last item
-        if timeline_with_times:
-            last_item = timeline_with_times[-1]
-            gap_start = last_item['end']
-            gap_end = sync_window_end
-            gap_size = (gap_end - gap_start).total_seconds()
-            
-            if gap_size >= podcast_duration_seconds:
-                completion_time = gap_start + timedelta(seconds=podcast_duration_seconds)
-                logger.debug("Placing podcast after last item: start=%s, end=%s", gap_start, completion_time)
-                return completion_time
-        
-        # Strategy 3: No suitable gap found
-        # Place before next scrobbled item, or at end of window
-        for item in timeline_with_times:
-            if item['is_scrobbled']:
-                # Place before this scrobbled item (but make sure it's within window)
-                completion_time = item['start'] - timedelta(seconds=1)
-                if completion_time >= sync_window_start:
-                    logger.debug("No gap found, placing before scrobbled item at %s", completion_time)
-                    return completion_time
-        
-        # Last resort: place at end of window
-        logger.debug("No suitable position found, placing at end of window: %s", sync_window_end)
-        return sync_window_end
+        return base_completion_time
 
     def _refresh_token(self):
         """Refresh the access token using the refresh token."""
@@ -1141,9 +1169,32 @@ class PocketCastsImporter:
                         or not existing_podcast.end_date
                         or delta_seconds > 0
                     ):
-                        completion_date = timezone.now()
-                        if self.previous_sync_at:
-                            completion_date = max(self.previous_sync_at, completion_date)
+                        # Use inference logic to calculate completion date from last in-progress record
+                        episode_uuid = episode_data.get("uuid")
+                        last_in_progress_date, last_progress_minutes = self._get_last_in_progress_record(episode_uuid)
+                        
+                        if last_in_progress_date and last_progress_minutes is not None:
+                            # Calculate remaining time from last in-progress record
+                            progress_seconds = last_progress_minutes * 60
+                            remaining_seconds = max(0, duration_seconds - progress_seconds)
+                            completion_date = last_in_progress_date + timedelta(seconds=remaining_seconds)
+                            logger.debug(
+                                "Existing podcast completion from in-progress record: episode=%s, progress=%d min, remaining=%d sec, completion=%s",
+                                episode_uuid,
+                                last_progress_minutes,
+                                remaining_seconds,
+                                completion_date,
+                            )
+                        else:
+                            # No in-progress record, use sync time
+                            completion_date = timezone.now()
+                            if self.previous_sync_at:
+                                completion_date = max(self.previous_sync_at, completion_date)
+                            logger.debug(
+                                "Existing podcast completion (no in-progress record): episode=%s, completion=%s",
+                                episode_uuid,
+                                completion_date,
+                            )
             elif should_set_completion_date and published:
                 if defer_completion_date:
                     # Will be inferred later in import_data()
