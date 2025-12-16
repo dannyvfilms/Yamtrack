@@ -673,10 +673,15 @@ def media_details(
                 ).select_related("episode", "item"))
                 total_listened = len(user_podcasts)
                 total_minutes = sum(podcast.progress or 0 for podcast in user_podcasts)
+                
+                # Count unplayed episodes (episodes without a completed Podcast entry for this user)
+                completed_episode_ids = set(podcast.episode.id for podcast in user_podcasts if podcast.episode and podcast.end_date)
+                unplayed_count = episodes.exclude(id__in=completed_episode_ids).count() if completed_episode_ids else episodes.count()
             else:
                 user_podcasts = []
                 total_listened = 0
                 total_minutes = 0
+                unplayed_count = 0
             
             # Build episode items - create Item objects for enrichment
             # Initially load first 20 episodes, rest will be loaded via infinite scroll
@@ -931,6 +936,7 @@ def media_details(
                 "has_more": has_more,  # For fragment compatibility
                 "next_page": next_page,
                 "show_id": show.id,  # For API endpoint
+                "unplayed_episodes_count": unplayed_count,  # Count of unplayed episodes
             }
             return render(request, "app/media_details.html", context)
     
@@ -3182,6 +3188,98 @@ def podcast_show_delete(request):
     if next_url:
         return redirect(next_url)
     return redirect("podcast_show_detail", show_id=show.id)
+
+
+@require_POST
+def podcast_mark_all_played(request, show_id):
+    """Mark all unplayed episodes for a podcast show as completed on their release date."""
+    from django.shortcuts import get_object_or_404
+    from django.conf import settings
+    from django.utils import timezone
+
+    from app.models import PodcastShow, PodcastEpisode, Podcast, Item, Sources, MediaTypes, Status
+    from app.mixins import disable_fetch_releases
+    import events
+
+    show = get_object_or_404(PodcastShow, id=show_id)
+
+    # Get all episodes for this show
+    all_episodes = PodcastEpisode.objects.filter(show=show)
+
+    # Get all episodes the user has already completed (has end_date)
+    completed_episodes = set(
+        Podcast.objects.filter(
+            user=request.user,
+            show=show,
+            episode__isnull=False,
+            end_date__isnull=False,  # Only count completed episodes
+        ).values_list("episode_id", flat=True)
+    )
+
+    # Find unplayed episodes (episodes without a completed Podcast entry)
+    unplayed_episodes = all_episodes.exclude(id__in=completed_episodes)
+
+    if not unplayed_episodes.exists():
+        messages.info(request, f"All episodes of {show.title} are already marked as played")
+        return redirect("media_details", source=Sources.POCKETCASTS.value, media_type=MediaTypes.PODCAST.value, media_id=show.podcast_uuid, title=show.slug or show.title)
+
+    created_count = 0
+    items_created = []
+    
+    # Disable calendar triggers during bulk operations to avoid queuing hundreds of tasks
+    with disable_fetch_releases():
+        for episode in unplayed_episodes:
+            # Get or create Item for this episode
+            runtime_minutes = episode.duration // 60 if episode.duration else None
+            item_defaults = {
+                "title": episode.title,
+                "image": show.image or settings.IMG_NONE,
+            }
+            if runtime_minutes:
+                item_defaults["runtime_minutes"] = runtime_minutes
+
+            item, item_created = Item.objects.get_or_create(
+                media_id=episode.episode_uuid,
+                source=Sources.POCKETCASTS.value,
+                media_type=MediaTypes.PODCAST.value,
+                defaults=item_defaults,
+            )
+
+            # Update runtime if item existed but didn't have it
+            if not item_created and not item.runtime_minutes and runtime_minutes:
+                item.runtime_minutes = runtime_minutes
+                item.save(update_fields=["runtime_minutes"])
+
+            # Track items for calendar reload
+            if item_created:
+                items_created.append(item)
+
+            # Use episode's published date as end_date, or current time if no published date
+            end_date = episode.published if episode.published else timezone.now()
+
+            # Create Podcast entry marking as completed
+            Podcast.objects.create(
+                item=item,
+                user=request.user,
+                show=show,
+                episode=episode,
+                status=Status.COMPLETED.value,
+                end_date=end_date,
+                progress=runtime_minutes if runtime_minutes else 0,
+            )
+            created_count += 1
+
+    # Trigger a single calendar reload for all created items (if any)
+    if items_created:
+        events.tasks.reload_calendar.apply_async(kwargs={"items_to_process": items_created}, countdown=3)
+
+    episode_word = "episodes" if created_count != 1 else "episode"
+    messages.success(
+        request,
+        f"Marked {created_count} {episode_word} of {show.title} as played"
+    )
+
+    return redirect("media_details", source=Sources.POCKETCASTS.value, media_type=MediaTypes.PODCAST.value, media_id=show.podcast_uuid, title=show.slug or show.title)
 
 
 def album_track_modal(request, album_id):
