@@ -19,35 +19,68 @@
 
       {% if not public_view|default:False %}
       <div x-data="{ trackOpen: false }">
-        <button class="mt-4 p-3 rounded-lg w-full flex items-center text-white transition duration-300 cursor-pointer {% if user_medias %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}"
-                hx-get="{% media_view_url 'track_modal' media %}"
-                hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}", "instance_id": "{{ current_instance.id }}"}'
-                hx-target="#{% component_id 'track' media current_instance.id %}"
-                hx-trigger="click"
-                @click="trackOpen = true">
-          <div class="flex-1 text-center font-medium">
-            {% if user_medias %}
-              {{ current_instance.status|media_status_readable }}
-            {% else %}
-              Add to tracker
-            {% endif %}
-          </div>
+        {% if media_type == MediaTypes.PODCAST.value and podcast_show %}
+          {# Podcast show tracker button #}
+          <button class="mt-4 p-3 rounded-lg w-full flex items-center text-white transition duration-300 cursor-pointer {% if podcast_tracker %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}"
+                  hx-get="{% url 'podcast_show_track_modal' podcast_show.id %}"
+                  hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
+                  hx-target="#podcast-show-track-modal"
+                  hx-trigger="click"
+                  @click="trackOpen = true">
+            <div class="flex-1 text-center font-medium">
+              {% if podcast_tracker %}
+                {{ podcast_tracker.status_readable }}
+              {% else %}
+                Add to Library
+              {% endif %}
+            </div>
 
-          <div class="h-5 mx-2 border-l border-white/30"></div>
-          {% include "app/icons/edit.svg" with classes="w-5 h-5 shrink-0" %}
-        </button>
+            <div class="h-5 mx-2 border-l border-white/30"></div>
+            {% include "app/icons/edit.svg" with classes="w-5 h-5 shrink-0" %}
+          </button>
 
-        {# Track Modal #}
-        <div x-show="trackOpen"
-             @keydown.escape.window="trackOpen = false"
-             class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div class="w-152 max-h-[90vh] px-4 md:px-0 relative z-60"
-               @click.outside="trackOpen = false"
-               @click.stop>
-            {# stop click propagation to avoid resetting the modal because this one doesn't have click once #}
-            <div id="{% component_id 'track' media current_instance.id %}"></div>
+          {# Track Modal #}
+          <div x-show="trackOpen"
+               @keydown.escape.window="trackOpen = false"
+               class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div class="w-152 max-h-[90vh] px-4 md:px-0 relative z-60"
+                 @click.outside="trackOpen = false"
+                 @click.stop>
+              <div id="podcast-show-track-modal"></div>
+            </div>
           </div>
-        </div>
+        {% else %}
+          {# Standard media tracker button #}
+          <button class="mt-4 p-3 rounded-lg w-full flex items-center text-white transition duration-300 cursor-pointer {% if user_medias %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}"
+                  hx-get="{% media_view_url 'track_modal' media %}"
+                  hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}", "instance_id": "{{ current_instance.id }}"}'
+                  hx-target="#{% component_id 'track' media current_instance.id %}"
+                  hx-trigger="click"
+                  @click="trackOpen = true">
+            <div class="flex-1 text-center font-medium">
+              {% if user_medias %}
+                {{ current_instance.status|media_status_readable }}
+              {% else %}
+                Add to tracker
+              {% endif %}
+            </div>
+
+            <div class="h-5 mx-2 border-l border-white/30"></div>
+            {% include "app/icons/edit.svg" with classes="w-5 h-5 shrink-0" %}
+          </button>
+
+          {# Track Modal #}
+          <div x-show="trackOpen"
+               @keydown.escape.window="trackOpen = false"
+               class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div class="w-152 max-h-[90vh] px-4 md:px-0 relative z-60"
+                 @click.outside="trackOpen = false"
+                 @click.stop>
+              {# stop click propagation to avoid resetting the modal because this one doesn't have click once #}
+              <div id="{% component_id 'track' media current_instance.id %}"></div>
+            </div>
+          </div>
+        {% endif %}
       </div>
       {% endif %}
     </div>

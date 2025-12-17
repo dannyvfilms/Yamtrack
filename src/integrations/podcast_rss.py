@@ -20,6 +20,73 @@ logger = logging.getLogger(__name__)
 USER_AGENT = "Yamtrack/1.0 (https://github.com/FuzzyGrim/Yamtrack)"
 
 
+def fetch_show_metadata_from_rss(rss_feed_url: str) -> dict:
+    """Fetch show metadata from RSS feed channel.
+    
+    Args:
+        rss_feed_url: URL to the podcast RSS feed
+        
+    Returns:
+        Dict with show metadata:
+        - description: Show description
+        - language: Show language (optional)
+        - author: Show author (optional)
+    """
+    try:
+        response = requests.get(rss_feed_url, headers={"User-Agent": USER_AGENT}, timeout=30)
+        response.raise_for_status()
+        
+        # Parse XML
+        try:
+            root = ET.fromstring(response.content)
+        except ET.ParseError as e:
+            logger.error("Failed to parse RSS feed XML: %s", e)
+            return {}
+        
+        metadata = {}
+        namespaces = {
+            "itunes": "http://www.itunes.com/dtds/podcast-1.0.dtd",
+        }
+        
+        # Find channel element (RSS) or feed element (Atom)
+        channel = root.find(".//channel")
+        if channel is None:
+            # Try Atom feed
+            channel = root if root.tag == "feed" or root.tag.endswith("}feed") else None
+        
+        if channel is not None:
+            # Description
+            desc_elem = channel.find("description")
+            if desc_elem is None:
+                desc_elem = channel.find("itunes:summary", namespaces)
+            if desc_elem is None:
+                desc_elem = channel.find("{http://www.w3.org/2005/Atom}summary")
+            if desc_elem is not None and desc_elem.text:
+                description = desc_elem.text.strip()
+                # Remove HTML tags
+                description = re.sub(r'<[^>]+>', '', description)
+                metadata["description"] = description
+            
+            # Language
+            lang_elem = channel.find("language")
+            if lang_elem is not None and lang_elem.text:
+                metadata["language"] = lang_elem.text.strip()
+            
+            # Author (iTunes)
+            author_elem = channel.find("itunes:author", namespaces)
+            if author_elem is not None and author_elem.text:
+                metadata["author"] = author_elem.text.strip()
+        
+        return metadata
+        
+    except requests.RequestException as e:
+        logger.error("Failed to fetch RSS feed %s: %s", rss_feed_url, e)
+        return {}
+    except Exception as e:
+        logger.error("Unexpected error parsing RSS feed %s: %s", rss_feed_url, e, exc_info=True)
+        return {}
+
+
 def fetch_episodes_from_rss(rss_feed_url: str, limit: Optional[int] = None) -> List[dict]:
     """Fetch and parse episodes from RSS feed.
     

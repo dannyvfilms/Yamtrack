@@ -646,6 +646,123 @@ def media_details(
         
         # Check if this is a show (podcast_uuid) or an episode (episode_uuid)
         show = PodcastShow.objects.filter(podcast_uuid=media_id).first()
+        
+        # If show not found, check if media_id is an iTunes ID and enrich
+        if not show:
+            # Check if media_id looks like an iTunes collection ID (numeric string)
+            try:
+                int(media_id)  # Will raise ValueError if not numeric
+                # This looks like an iTunes ID, try to enrich
+                from app.providers import pocketcasts
+                from integrations import podcast_rss
+                from django.shortcuts import redirect
+                from django.contrib import messages
+                import hashlib
+                import uuid as uuid_lib
+                
+                try:
+                    # Look up podcast by iTunes ID
+                    itunes_data = pocketcasts.lookup_by_itunes_id(media_id)
+                    rss_feed_url = itunes_data.get("feed_url", "")
+                    
+                    if not rss_feed_url:
+                        messages.error(request, "Could not find RSS feed for this podcast.")
+                        # Fall through to empty metadata
+                    else:
+                        # Check if show already exists with this RSS feed
+                        existing_show = PodcastShow.objects.filter(rss_feed_url=rss_feed_url).first()
+                        if existing_show:
+                            # Redirect to existing show
+                            from django.utils.text import slugify
+                            return redirect(
+                                "media_details",
+                                source=Sources.POCKETCASTS.value,
+                                media_type=MediaTypes.PODCAST.value,
+                                media_id=existing_show.podcast_uuid,
+                                title=slugify(existing_show.title or "podcast")
+                            )
+                        
+                        # Create new show with iTunes ID as UUID prefix
+                        podcast_uuid = f"itunes:{media_id}"
+                        
+                        # Check if UUID already exists (shouldn't, but be safe)
+                        if PodcastShow.objects.filter(podcast_uuid=podcast_uuid).exists():
+                            show = PodcastShow.objects.get(podcast_uuid=podcast_uuid)
+                        else:
+                            # Try to get description from RSS feed if iTunes doesn't have it or it's empty
+                            description = itunes_data.get("description", "")
+                            if not description and rss_feed_url:
+                                try:
+                                    rss_metadata = podcast_rss.fetch_show_metadata_from_rss(rss_feed_url)
+                                    description = rss_metadata.get("description", description)
+                                    # Update author and language from RSS if not in iTunes data
+                                    if not itunes_data.get("author") and rss_metadata.get("author"):
+                                        itunes_data["author"] = rss_metadata["author"]
+                                    if not itunes_data.get("language") and rss_metadata.get("language"):
+                                        itunes_data["language"] = rss_metadata["language"]
+                                except Exception as e:
+                                    logger.debug("Failed to fetch show metadata from RSS: %s", e)
+                            
+                            # Create the show
+                            show = PodcastShow.objects.create(
+                                podcast_uuid=podcast_uuid,
+                                title=itunes_data.get("title", "Unknown Podcast"),
+                                author=itunes_data.get("author", ""),
+                                image=itunes_data.get("artwork_url", ""),
+                                description=description,
+                                genres=itunes_data.get("genres", []),
+                                language=itunes_data.get("language", ""),
+                                rss_feed_url=rss_feed_url,
+                            )
+                            
+                            # Fetch episodes from RSS feed
+                            try:
+                                episodes_data = podcast_rss.fetch_episodes_from_rss(rss_feed_url, limit=100)
+                                
+                                for episode_data in episodes_data:
+                                    # Generate episode UUID from GUID or create one
+                                    episode_guid = episode_data.get("guid", "")
+                                    if episode_guid:
+                                        # Use a hash of the GUID to create a consistent UUID
+                                        guid_hash = hashlib.md5(episode_guid.encode()).hexdigest()
+                                        episode_uuid = f"{guid_hash[:8]}-{guid_hash[8:12]}-{guid_hash[12:16]}-{guid_hash[16:20]}-{guid_hash[20:32]}"
+                                    else:
+                                        # Generate a UUID if no GUID
+                                        episode_uuid = str(uuid_lib.uuid4())
+                                    
+                                    # Check if episode already exists
+                                    if not PodcastEpisode.objects.filter(episode_uuid=episode_uuid).exists():
+                                        PodcastEpisode.objects.create(
+                                            show=show,
+                                            episode_uuid=episode_uuid,
+                                            title=episode_data.get("title", "Unknown Episode"),
+                                            published=episode_data.get("published"),
+                                            duration=episode_data.get("duration"),
+                                            audio_url=episode_data.get("audio_url", ""),
+                                            episode_number=episode_data.get("episode_number"),
+                                            season_number=episode_data.get("season_number"),
+                                        )
+                            except Exception as e:
+                                logger.warning("Failed to fetch episodes from RSS feed %s: %s", rss_feed_url, e)
+                                # Continue without episodes
+                        
+                        # Redirect to the new/enriched show
+                        from django.utils.text import slugify
+                        return redirect(
+                            "media_details",
+                            source=Sources.POCKETCASTS.value,
+                            media_type=MediaTypes.PODCAST.value,
+                            media_id=show.podcast_uuid,
+                            title=slugify(show.title or "podcast")
+                        )
+                except Exception as e:
+                    logger.error("Failed to enrich podcast from iTunes ID %s: %s", media_id, e, exc_info=True)
+                    messages.error(request, f"Failed to load podcast details: {e}")
+                    # Fall through to empty metadata
+            except ValueError:
+                # media_id is not numeric, not an iTunes ID - fall through to empty metadata
+                pass
+        
         if show:
             # This is a show, not an episode - show show detail page
             tracker = PodcastShowTracker.objects.filter(user=request.user, show=show).first() if not public_view else None
