@@ -3324,13 +3324,56 @@ def podcast_mark_all_played(request, show_id):
     from django.conf import settings
     from django.utils import timezone
 
-    from app.models import PodcastShow, PodcastEpisode, Podcast, Item, Sources, MediaTypes, Status
+    from app.models import PodcastShow, PodcastEpisode, Podcast, Item, Sources, MediaTypes, Status, PodcastShowTracker
     from app.mixins import disable_fetch_releases
+    from integrations import podcast_rss
     import events
+    import hashlib
+    import uuid as uuid_lib
 
     show = get_object_or_404(PodcastShow, id=show_id)
 
-    # Get all episodes for this show
+    # Create tracker if it doesn't exist (user hasn't added show to library yet)
+    tracker, _ = PodcastShowTracker.objects.get_or_create(
+        user=request.user,
+        show=show,
+        defaults={"status": Status.IN_PROGRESS.value}
+    )
+
+    # If show has RSS feed, fetch full episode list and ensure all episodes are in database
+    if show.rss_feed_url:
+        try:
+            # Fetch ALL episodes (no limit) from RSS feed
+            episodes_data = podcast_rss.fetch_episodes_from_rss(show.rss_feed_url, limit=None)
+            
+            for episode_data in episodes_data:
+                # Generate episode UUID from GUID or create one
+                episode_guid = episode_data.get("guid", "")
+                if episode_guid:
+                    # Use a hash of the GUID to create a consistent UUID
+                    guid_hash = hashlib.md5(episode_guid.encode()).hexdigest()
+                    episode_uuid = f"{guid_hash[:8]}-{guid_hash[8:12]}-{guid_hash[12:16]}-{guid_hash[16:20]}-{guid_hash[20:32]}"
+                else:
+                    # Generate a UUID if no GUID
+                    episode_uuid = str(uuid_lib.uuid4())
+                
+                # Check if episode already exists, create if not
+                if not PodcastEpisode.objects.filter(episode_uuid=episode_uuid).exists():
+                    PodcastEpisode.objects.create(
+                        show=show,
+                        episode_uuid=episode_uuid,
+                        title=episode_data.get("title", "Unknown Episode"),
+                        published=episode_data.get("published"),
+                        duration=episode_data.get("duration"),
+                        audio_url=episode_data.get("audio_url", ""),
+                        episode_number=episode_data.get("episode_number"),
+                        season_number=episode_data.get("season_number"),
+                    )
+        except Exception as e:
+            logger.warning("Failed to fetch full episode list from RSS feed %s: %s", show.rss_feed_url, e)
+            # Continue with existing episodes in database
+
+    # Get all episodes for this show (now including any newly fetched ones)
     all_episodes = PodcastEpisode.objects.filter(show=show)
 
     # Get all episodes the user has already completed (has end_date)
