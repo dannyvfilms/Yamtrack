@@ -715,9 +715,9 @@ def media_details(
                                 rss_feed_url=rss_feed_url,
                             )
                             
-                            # Fetch episodes from RSS feed
+                            # Fetch episodes from RSS feed (fetch all, no limit)
                             try:
-                                episodes_data = podcast_rss.fetch_episodes_from_rss(rss_feed_url, limit=100)
+                                episodes_data = podcast_rss.fetch_episodes_from_rss(rss_feed_url, limit=None)
                                 
                                 for episode_data in episodes_data:
                                     # Generate episode UUID from GUID or create one
@@ -766,6 +766,56 @@ def media_details(
         if show:
             # This is a show, not an episode - show show detail page
             tracker = PodcastShowTracker.objects.filter(user=request.user, show=show).first() if not public_view else None
+            
+            # If show has RSS feed, check if we need to fetch more episodes
+            # This ensures we get the full episode list even if initial enrichment only got partial list
+            if show.rss_feed_url and not public_view:
+                try:
+                    from integrations import podcast_rss
+                    import hashlib
+                    import uuid as uuid_lib
+                    
+                    # Fetch all episodes from RSS to see what's available
+                    episodes_data = podcast_rss.fetch_episodes_from_rss(show.rss_feed_url, limit=None)
+                    
+                    # Get existing episode UUIDs
+                    existing_uuids = set(
+                        PodcastEpisode.objects.filter(show=show).values_list("episode_uuid", flat=True)
+                    )
+                    
+                    # Create any missing episodes
+                    new_episodes_count = 0
+                    for episode_data in episodes_data:
+                        # Generate episode UUID from GUID or create one
+                        episode_guid = episode_data.get("guid", "")
+                        if episode_guid:
+                            # Use a hash of the GUID to create a consistent UUID
+                            guid_hash = hashlib.md5(episode_guid.encode()).hexdigest()
+                            episode_uuid = f"{guid_hash[:8]}-{guid_hash[8:12]}-{guid_hash[12:16]}-{guid_hash[16:20]}-{guid_hash[20:32]}"
+                        else:
+                            # Generate a UUID if no GUID
+                            episode_uuid = str(uuid_lib.uuid4())
+                        
+                        # Create episode if it doesn't exist
+                        if episode_uuid not in existing_uuids:
+                            PodcastEpisode.objects.create(
+                                show=show,
+                                episode_uuid=episode_uuid,
+                                title=episode_data.get("title", "Unknown Episode"),
+                                published=episode_data.get("published"),
+                                duration=episode_data.get("duration"),
+                                audio_url=episode_data.get("audio_url", ""),
+                                episode_number=episode_data.get("episode_number"),
+                                season_number=episode_data.get("season_number"),
+                            )
+                            new_episodes_count += 1
+                            existing_uuids.add(episode_uuid)
+                    
+                    if new_episodes_count > 0:
+                        logger.info("Fetched %d additional episodes for show %s (ID: %d)", new_episodes_count, show.title, show.id)
+                except Exception as e:
+                    logger.debug("Failed to refresh episode list from RSS feed %s: %s", show.rss_feed_url, e)
+                    # Continue with existing episodes
             
             # Get all episodes for this show, ordered by published date (newest first)
             # Use Coalesce to handle None published dates (put them at the end)
