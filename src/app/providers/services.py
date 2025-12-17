@@ -19,6 +19,7 @@ from app.providers import (
     manual,
     musicbrainz,
     openlibrary,
+    pocketcasts,
     tmdb,
 )
 
@@ -279,5 +280,12 @@ def search(media_type, query, page, source=None):
         response = bgg.search(query, page)
     elif media_type == MediaTypes.MUSIC.value:
         response = musicbrainz.search_combined(query, page)
+    elif media_type == MediaTypes.PODCAST.value:
+        if source == Sources.POCKETCASTS.value:
+            response = pocketcasts.search(query, page)
+        else:
+            # Return empty results for other sources (if any are added in future)
+            from app import helpers
+            response = helpers.format_search_response(page, settings.PER_PAGE, 0, [])
 
     return response
