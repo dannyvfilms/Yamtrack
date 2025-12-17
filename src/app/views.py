@@ -3530,10 +3530,16 @@ def podcast_save(request):
     )
     messages.success(request, f"Added play for {episode.title if episode else 'episode'}")
 
-    next_url = request.GET.get("next", "")
-    if next_url:
-        return redirect(next_url)
-    return redirect("podcast_show_detail", show_id=show.id)
+    # Always redirect to media_details page for the podcast show
+    # Don't trust the 'next' parameter as it might point to the API endpoint
+    from django.utils.text import slugify
+    return redirect(
+        "media_details",
+        source=Sources.POCKETCASTS.value,
+        media_type=MediaTypes.PODCAST.value,
+        media_id=show.podcast_uuid,
+        title=show.slug or slugify(show.title),
+    )
 
 
 @require_POST
