@@ -63,7 +63,7 @@ SOURCES_CONFIG = {
     },
     "pocketcasts": {
         "name": "Pocket Casts",
-        "logo": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/ca/Pocket_Casts_icon.svg/1600px-Pocket_Casts_icon.svg.png",
+        "logo": static("img/pocketcasts-logo.svg"),
     },
 }
 

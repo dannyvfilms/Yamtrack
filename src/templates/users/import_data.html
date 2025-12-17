@@ -204,18 +204,6 @@
             <p class="text-sm text-gray-400 mb-3">
               Import podcasts every 2 hours (to estimate completion time)
             </p>
-            
-            <div class="text-xs text-gray-500 mb-3 space-y-2">
-              <p>
-                Enter your Pocket Casts email and password to connect. Your credentials are encrypted and stored securely.
-              </p>
-              <p class="text-yellow-400">
-                <strong>For accounts created via "Sign in with Apple" or "Sign in with Google":</strong><br>
-                Please set a password first using Pocket Casts' 
-                <a href="https://pocketcasts.com/forgot-password" target="_blank" class="text-indigo-400 hover:text-indigo-300 underline">Forgot Password</a> 
-                feature, then enter your email and new password here.
-              </p>
-            </div>
 
             <form method="post" action="{% url 'pocketcasts_connect' %}" class="space-y-3">
               {% csrf_token %}
@@ -242,6 +230,12 @@
                 Connect Pocket Casts
               </button>
             </form>
+            
+            <div class="text-xs text-gray-500 mt-3 space-y-2">
+              <p>
+                For Apple or Google sign-ins, set a password via Forgot Password first, then enter your credentials here.
+              </p>
+            </div>
           {% endif %}
         </div>
 
