@@ -793,12 +793,17 @@ def media_details(
                 
                 # Count unplayed episodes (episodes without a completed Podcast entry for this user)
                 completed_episode_ids = set(podcast.episode.id for podcast in user_podcasts if podcast.episode and podcast.end_date)
-                unplayed_count = episodes.exclude(id__in=completed_episode_ids).count() if completed_episode_ids else episodes.count()
+                if completed_episode_ids:
+                    unplayed_count = episodes.exclude(id__in=completed_episode_ids).count()
+                else:
+                    # If no episodes have been completed, all episodes are unplayed
+                    unplayed_count = episodes.count()
             else:
                 user_podcasts = []
                 total_listened = 0
                 total_minutes = 0
-                unplayed_count = 0
+                # For public views, still count total episodes (but button won't show due to public_view check)
+                unplayed_count = episodes.count()
             
             # Build episode items - create Item objects for enrichment
             # Initially load first 20 episodes, rest will be loaded via infinite scroll
