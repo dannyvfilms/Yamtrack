@@ -2,7 +2,7 @@
 {% load user_tags %}
 
 {% for episode in episodes %}
-  <div class="bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg">
+  <div class="bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg episode-card" data-episode-uuid="{% if episode.track_adapter %}{{ episode.track_adapter.episode_uuid }}{% elif episode.music_wrapper and episode.music_wrapper.item %}{{ episode.music_wrapper.item.media_id }}{% endif %}">
     <div class="flex flex-col md:flex-row">
       <img src="{{ IMG_NONE }}"
            alt="E{{ episode.episode_number }}"
@@ -98,6 +98,7 @@
        hx-trigger="revealed threshold:200px"
        hx-target="#episodes-list"
        hx-swap="beforeend"
+       hx-disinherit="*"
        class="py-4 episodes-load-more-trigger"
        data-page="{{ next_page }}">
     <div class="htmx-indicator text-center text-gray-400">

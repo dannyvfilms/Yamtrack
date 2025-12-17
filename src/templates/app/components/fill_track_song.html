@@ -105,7 +105,13 @@
         {% endif %}
 
         <form method="post"
-              action="{% if music and music.item and music.item.media_type == 'podcast' %}{% url 'podcast_save' %}{% else %}{% url 'song_save' %}{% endif %}?next={{ request.path }}">
+              action="{% if music and music.item and music.item.media_type == 'podcast' %}{% url 'podcast_save' %}{% else %}{% url 'song_save' %}{% endif %}?next={{ request.path }}"
+              {% if music and music.item and music.item.media_type == 'podcast' %}
+              hx-post="{% url 'podcast_save' %}"
+              hx-target="[data-episode-uuid='{% if music.item %}{{ music.item.media_id }}{% elif track.episode_uuid %}{{ track.episode_uuid }}{% endif %}']"
+              hx-swap="outerHTML"
+              hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+              {% endif %}>
           {% csrf_token %}
           {% if music and music.item and music.item.media_type == 'podcast' %}
             <input type="hidden" name="episode_uuid" value="{{ music.item.media_id }}">

@@ -674,4 +674,21 @@
       </div>
     {% endif %}
   </div>
+
+  {# Script to close track modal after successful podcast save via HTMX #}
+  <script>
+    (function() {
+      // Close modal after successful podcast save via HTMX
+      document.body.addEventListener('closeModal', function() {
+        // Find and close any open track modals
+        const modals = document.querySelectorAll('[x-data*="trackOpen"]');
+        modals.forEach(function(modal) {
+          const alpineData = Alpine.$data(modal);
+          if (alpineData && alpineData.trackOpen !== undefined) {
+            alpineData.trackOpen = false;
+          }
+        });
+      });
+    })();
+  </script>
 {% endblock content %}

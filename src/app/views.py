@@ -3027,7 +3027,7 @@ def podcast_episodes_api(request, show_id):
             # Create history wrapper
             all_history = []
             if user_podcast:
-                all_history = list(user_podcast.history.all().order_by("-end_date")[:10])
+                all_history = list(user_podcast.history.filter(end_date__isnull=False).order_by("-end_date")[:10])
                 class PodcastHistoryWrapper:
                     def __init__(self, podcast, item, history_list):
                         self.item = item
@@ -3087,7 +3087,12 @@ def podcast_episodes_api(request, show_id):
             },
             request=request,
         )
-        return HttpResponse(html)
+        response = HttpResponse(html)
+        # Prevent caching of episode list fragments
+        response["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response["Pragma"] = "no-cache"
+        response["Expires"] = "0"
+        return response
     else:
         # Return JSON
         episode_list = []
@@ -3529,6 +3534,140 @@ def podcast_save(request):
         progress=runtime_minutes if runtime_minutes else 0,
     )
     messages.success(request, f"Added play for {episode.title if episode else 'episode'}")
+
+    # If this is an HTMX request, return the updated episode card HTML
+    if request.headers.get("HX-Request"):
+        # Reuse the podcast_episodes_api logic to get the updated episode card
+        from django.template.loader import render_to_string
+        from app import helpers
+        
+        # Get the single episode with fresh data
+        episode_obj = episode
+        if not episode_obj:
+            return HttpResponse("Episode not found", status=404)
+        
+        # Get user's podcast entry for this episode (should exist now)
+        user_podcast = Podcast.objects.filter(
+            user=request.user,
+            show=show,
+            episode=episode_obj,
+        ).order_by("-created_at").first()
+        
+        # Build enriched episode data (similar to podcast_episodes_api)
+        episode_items_data = [{
+            "media_id": episode_obj.episode_uuid,
+            "source": Sources.POCKETCASTS.value,
+            "media_type": MediaTypes.PODCAST.value,
+        }]
+        enriched_episodes_raw = helpers.enrich_items_with_user_data(
+            request,
+            episode_items_data,
+            user=request.user,
+        )
+        enriched = enriched_episodes_raw[0] if enriched_episodes_raw else {"item": {"media_id": episode_obj.episode_uuid}, "media": None}
+        
+        # Format duration
+        duration_str = ""
+        if episode_obj.duration:
+            hours = episode_obj.duration // 3600
+            minutes = (episode_obj.duration % 3600) // 60
+            if hours > 0:
+                duration_str = f"{hours}h {minutes}m"
+            else:
+                duration_str = f"{minutes}m"
+        
+        # Get history
+        all_history = []
+        if user_podcast:
+            all_history = list(user_podcast.history.filter(end_date__isnull=False).order_by("-end_date")[:10])
+            
+            class PodcastHistoryWrapper:
+                def __init__(self, podcast, item, history_list):
+                    self.item = item
+                    self.id = podcast.id
+                    self._history_list = history_list
+                
+                @property
+                def history(self):
+                    class HistoryProxy:
+                        def __init__(self, history_list):
+                            self._history = history_list
+                        def all(self):
+                            return self._history
+                        def count(self):
+                            return len(self._history)
+                    return HistoryProxy(self._history_list)
+            
+            podcast_wrapper = PodcastHistoryWrapper(user_podcast, item, all_history)
+        else:
+            class DummyPodcast:
+                def __init__(self, item):
+                    self.item = item
+                    self.id = 0
+                    self.history = type('History', (), {'count': lambda: 0, 'all': lambda: []})()
+            podcast_wrapper = DummyPodcast(item)
+        
+        # Create adapter classes
+        class PodcastEpisodeAdapter:
+            def __init__(self, episode):
+                self.title = episode.title
+                self.track_number = episode.episode_number
+                self.duration_formatted = self._format_duration(episode.duration) if episode.duration else None
+                self.musicbrainz_recording_id = None
+                self.id = episode.id
+                self.published = episode.published
+                self.episode_uuid = episode.episode_uuid
+            
+            def _format_duration(self, seconds):
+                hours = seconds // 3600
+                minutes = (seconds % 3600) // 60
+                secs = seconds % 60
+                if hours > 0:
+                    return f"{hours}:{minutes:02d}:{secs:02d}"
+                return f"{minutes}:{secs:02d}"
+        
+        class PodcastShowAdapter:
+            def __init__(self, show):
+                self.image = show.image or settings.IMG_NONE
+                self.id = show.id
+        
+        # Build episode data
+        episode_data = {
+            "title": episode_obj.title,
+            "episode_number": episode_obj.episode_number or 0,
+            "image": show.image or settings.IMG_NONE,
+            "air_date": episode_obj.published,
+            "runtime": duration_str,
+            "overview": "",
+            "history": all_history,
+            "media": enriched["media"] if enriched else None,
+            "item": item,
+            "media_id": episode_obj.episode_uuid,
+            "source": Sources.POCKETCASTS.value,
+            "media_type": MediaTypes.PODCAST.value,
+            "track_adapter": PodcastEpisodeAdapter(episode_obj),
+            "album_adapter": PodcastShowAdapter(show),
+            "music_wrapper": podcast_wrapper,
+        }
+        
+        # Render just the single episode card
+        html = render_to_string(
+            "app/components/podcast_episode_list.html",
+            {
+                "episodes": [episode_data],
+                "user": request.user,
+                "show": show,
+                "IMG_NONE": settings.IMG_NONE,
+                "TRACK_TIME": True,
+                "has_more": False,
+                "show_id": show.id,
+            },
+            request=request,
+        )
+        response = HttpResponse(html)
+        # Close the modal after successful save
+        response["HX-Trigger"] = "closeModal"
+        return response
 
     # Always redirect to media_details page for the podcast show
     # Don't trust the 'next' parameter as it might point to the API endpoint
