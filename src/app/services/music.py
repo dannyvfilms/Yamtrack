@@ -713,9 +713,25 @@ def refresh_album_cover_art(album: Album) -> bool:
             album.save(update_fields=["image"])
             logger.info("Updated cover art for album %s", album.title)
             return True
-            
     except Exception as e:
         logger.debug("Failed to fetch cover art for album %s: %s", album.title, e)
+    
+    # Try iTunes as fallback if MusicBrainz didn't find artwork
+    if album.image == settings.IMG_NONE or not album.image:
+        if album.artist and album.title:
+            try:
+                from integrations import itunes_music_artwork
+                itunes_image = itunes_music_artwork.fetch_album_artwork(
+                    album_title=album.title,
+                    artist_name=album.artist.name,
+                )
+                if itunes_image:
+                    album.image = itunes_image
+                    album.save(update_fields=["image"])
+                    logger.info("Updated cover art for album %s from iTunes", album.title)
+                    return True
+            except Exception as e:
+                logger.debug("Failed to fetch cover art from iTunes for album %s: %s", album.title, e)
     
     return False
 
@@ -998,8 +1014,26 @@ def prefetch_album_covers(artist: Artist, limit: int | None = 20) -> int:
                 album.save(update_fields=["image"])
                 updated += 1
                 logger.debug("Prefetched cover for album: %s", album.title)
+                continue  # Skip iTunes fallback if MusicBrainz succeeded
         except Exception as e:
             logger.debug("Failed to prefetch cover for %s: %s", album.title, e)
+        
+        # Try iTunes as fallback if MusicBrainz didn't find artwork
+        if album.image == settings.IMG_NONE or not album.image:
+            if album.title:
+                try:
+                    from integrations import itunes_music_artwork
+                    itunes_image = itunes_music_artwork.fetch_album_artwork(
+                        album_title=album.title,
+                        artist_name=artist.name,
+                    )
+                    if itunes_image:
+                        album.image = itunes_image
+                        album.save(update_fields=["image"])
+                        updated += 1
+                        logger.debug("Prefetched cover for album %s from iTunes", album.title)
+                except Exception as e:
+                    logger.debug("Failed to prefetch cover from iTunes for %s: %s", album.title, e)
     
     return updated
 
