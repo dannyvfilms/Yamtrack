@@ -281,10 +281,12 @@ class PocketCastsImporter:
                         pass
                 
                 # Check if completed using same logic as _calculate_progress_delta
-                # (status 3 or played up to duration with 5 second tolerance)
+                # (status 3 with significant progress, or played up to duration with 5 second tolerance)
                 epsilon = 5
+                # Only mark as completed if there's significant progress to avoid false positives
+                significant_progress = duration > 0 and (played_up_to > 60 or played_up_to > duration * 0.1)
                 is_completed = (
-                    playing_status == 3 or 
+                    (playing_status == 3 and significant_progress) or 
                     (duration > 0 and played_up_to >= duration - epsilon)
                 )
                 
@@ -1531,8 +1533,13 @@ class PocketCastsImporter:
         
         # Determine if completed
         epsilon = 5  # 5 second tolerance
+        # Only mark as completed if:
+        # 1. Playing status is 3 (completed) AND played_up_to is significant (> 60 seconds or > 10% of duration)
+        # 2. OR played_up_to is within 5 seconds of duration
+        # This prevents false positives where Pocket Casts marks episodes as completed but played_up_to is 0
+        significant_progress = duration > 0 and (new_played > 60 or new_played > duration * 0.1)
         is_completed = (
-            playing_status == 3 or 
+            (playing_status == 3 and significant_progress) or 
             (duration > 0 and new_played >= duration - epsilon)
         )
         

@@ -110,8 +110,15 @@ def enrich_items_with_user_data(request, items, user=None):
         media_type,
     )
     BasicMedia.objects.annotate_max_progress(media_queryset, media_type)
+    
+    # For podcasts, order by created_at descending to get most recent entry when multiple exist
+    # This allows multiple plays of the same episode to be tracked separately in the DB
+    # but we show the most recent one in the UI
+    if media_type == MediaTypes.PODCAST.value:
+        media_queryset = media_queryset.order_by("item__media_id", "item__source", "-created_at")
 
     # Create a lookup dictionary for fast matching
+    # For podcasts with multiple entries, keep only the most recent one (first after ordering)
     media_lookup = {}
     for media in media_queryset:
         if media_type == MediaTypes.SEASON.value:
@@ -119,7 +126,9 @@ def enrich_items_with_user_data(request, items, user=None):
         else:
             key = (media.item.media_id, media.item.source)
 
-        media_lookup[key] = media
+        # Only store the first (most recent for podcasts) entry for each key
+        if key not in media_lookup:
+            media_lookup[key] = media
 
     # Enrich items with matched media
     enriched_items = []

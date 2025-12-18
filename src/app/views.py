@@ -3142,16 +3142,22 @@ def podcast_episodes_api(request, show_id):
     episodes = episodes_qs[start:end]
     
     # Get user's podcast entries for this show
+    # Order by created_at descending so we get the most recent entry when multiple exist
+    # This allows multiple plays of the same episode to be tracked separately in the DB
+    # but we show the most recent one in the UI
     user_podcasts = list(Podcast.objects.filter(
         user=request.user,
         show=show,
-    ).select_related("episode", "item"))
+    ).select_related("episode", "item").order_by("episode_id", "-created_at"))
     
     # Create a map of episode_id to user podcast
+    # When multiple entries exist for the same episode, keep only the most recent one
     episode_podcast_map = {}
     for podcast in user_podcasts:
         if podcast.episode_id:
-            episode_podcast_map[podcast.episode_id] = podcast
+            # Only store the first (most recent after ordering) entry for each episode
+            if podcast.episode_id not in episode_podcast_map:
+                episode_podcast_map[podcast.episode_id] = podcast
     
     # Build episode items for enrichment
     episode_items_data = []
@@ -3777,8 +3783,6 @@ def podcast_save(request):
     if episode and episode.duration:
         runtime_minutes = episode.duration // 60  # Convert seconds to minutes
     
-    # Always create a new Podcast entry to create a new history record
-    # This is the key difference from the old behavior - we always create new entries
     # First, get or create the Item for this episode
     item_defaults = {
         "title": episode.title if episode else "Unknown Episode",
@@ -3798,16 +3802,35 @@ def podcast_save(request):
         item.runtime_minutes = runtime_minutes
         item.save(update_fields=["runtime_minutes"])
 
-    Podcast.objects.create(
-        item=item,
+    # Check if user already has a Podcast entry for this episode
+    existing_podcast = Podcast.objects.filter(
         user=request.user,
-        show=show,
-        episode=episode,
-        status=Status.COMPLETED.value,
-        end_date=end_date,
-        progress=runtime_minutes if runtime_minutes else 0,
-    )
-    messages.success(request, f"Added play for {episode.title if episode else 'episode'}")
+        item=item,
+    ).first()
+
+    if existing_podcast:
+        # Add a new history entry (replay) by updating end_date
+        # This creates a new history record via the historical records system
+        existing_podcast.end_date = end_date
+        
+        # Update progress if needed
+        if runtime_minutes and existing_podcast.progress != runtime_minutes:
+            existing_podcast.progress = runtime_minutes
+        
+        existing_podcast.save()
+        messages.success(request, f"Added play for {episode.title if episode else 'episode'}")
+    else:
+        # Create new Podcast entry
+        Podcast.objects.create(
+            item=item,
+            user=request.user,
+            show=show,
+            episode=episode,
+            status=Status.COMPLETED.value,
+            end_date=end_date,
+            progress=runtime_minutes if runtime_minutes else 0,
+        )
+        messages.success(request, f"Added play for {episode.title if episode else 'episode'}")
 
     # If this is an HTMX request, return the updated episode card HTML
     if request.headers.get("HX-Request"):
