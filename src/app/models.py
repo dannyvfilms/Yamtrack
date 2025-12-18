@@ -2494,8 +2494,40 @@ class Podcast(Media):
     )
 
     @property
+    def completed_play_count(self):
+        """Return count of completed plays (excludes in-progress records).
+        
+        For podcasts, we only count history records with end_date (completed plays),
+        not in-progress records where end_date is None.
+        """
+        from django.apps import apps
+        HistoricalPodcast = apps.get_model("app", "HistoricalPodcast")
+        
+        # Count only history records with end_date (completed plays)
+        return HistoricalPodcast.objects.filter(
+            id=self.id,
+            end_date__isnull=False,
+        ).count()
+    
+    @property
     def formatted_progress(self):
-        """Return progress as minutes listened."""
+        """Return progress as minutes listened.
+        
+        For in-progress episodes, shows actual progress from played_up_to_seconds.
+        Otherwise shows progress from the progress field.
+        """
+        # Check if episode is in-progress and has actual progress stored
+        is_in_progress = (
+            self.status == Status.IN_PROGRESS.value or
+            self.last_seen_status == 2  # 2 = in-progress from API
+        )
+        
+        if is_in_progress and self.played_up_to_seconds and self.played_up_to_seconds > 0:
+            # Use actual progress from played_up_to_seconds for in-progress episodes
+            minutes = self.played_up_to_seconds // 60
+            return f"{minutes}m"
+        
+        # Fall back to progress field (in minutes)
         minutes = (self.progress or 0) // 60
         return f"{minutes}m"
 

@@ -44,24 +44,42 @@
               {% endif %}
               {% if track.duration_formatted %}{% if track.track_number %} • {% endif %}{{ track.duration_formatted }}{% endif %}
             </p>
-            {% if music and music.history.count > 0 %}
-              {% with listen_count=music.history.count %}
-                <p id="modal-listen-count-{{ music.id }}" class="text-sm text-gray-400 mt-1">
-                  {% if music.item and music.item.media_type == 'podcast' %}
-                    {% if listen_count == 1 %}
-                      Played once
-                    {% else %}
-                      Played {{ listen_count }} times
-                    {% endif %}
+            {% if music %}
+              {% if music.item and music.item.media_type == 'podcast' %}
+                {# For podcasts, only count completed plays (exclude in-progress) #}
+                {% with listen_count=music.completed_play_count %}
+                  {% if listen_count > 0 %}
+                    <p id="modal-listen-count-{{ music.id }}" class="text-sm text-gray-400 mt-1">
+                      {% if listen_count == 1 %}
+                        Played once
+                      {% else %}
+                        Played {{ listen_count }} times
+                      {% endif %}
+                    </p>
                   {% else %}
-                    {% if listen_count == 1 %}
-                      Listened once
-                    {% else %}
-                      Listened {{ listen_count }} times
-                    {% endif %}
+                    <p id="modal-listen-count-{{ music.id }}" class="text-sm text-gray-400 mt-1">
+                      Not played yet
+                    </p>
                   {% endif %}
-                </p>
-              {% endwith %}
+                {% endwith %}
+              {% else %}
+                {# For music, count all history records #}
+                {% if music.history.count > 0 %}
+                  {% with listen_count=music.history.count %}
+                    <p id="modal-listen-count-{{ music.id }}" class="text-sm text-gray-400 mt-1">
+                      {% if listen_count == 1 %}
+                        Listened once
+                      {% else %}
+                        Listened {{ listen_count }} times
+                      {% endif %}
+                    </p>
+                  {% endwith %}
+                {% else %}
+                  <p id="modal-listen-count-{{ music.id }}" class="text-sm text-gray-400 mt-1">
+                    Not listened yet
+                  </p>
+                {% endif %}
+              {% endif %}
             {% else %}
               <p id="modal-listen-count-{% if music %}{{ music.id }}{% else %}0{% endif %}" class="text-sm text-gray-400 mt-1">
                 {% if music and music.item and music.item.media_type == 'podcast' %}Not played yet{% else %}Not listened yet{% endif %}
@@ -74,34 +92,70 @@
       {# Song/Episode form #}
       <div class="space-y-4">
 
-        {% if music and music.history.count > 0 %}
-          <div>
-            <label class="block text-sm font-medium text-gray-300 mb-3">
-              {% if music.item and music.item.media_type == 'podcast' %}Previous Plays{% else %}Previous Listens{% endif %}
-            </label>
-            <div class="max-h-[200px] overflow-y-auto space-y-2">
+        {% if music %}
+          {% if music.item and music.item.media_type == 'podcast' %}
+            {# For podcasts, check completed_play_count to exclude in-progress plays #}
+            {% if music.completed_play_count > 0 %}
+              <div>
+                <label class="block text-sm font-medium text-gray-300 mb-3">
+                  Previous Plays
+                </label>
+                <div class="max-h-[200px] overflow-y-auto space-y-2">
 
-              {% for entry in music.history.all|order_by_end_date %}
-                {% if entry.history_user == user or not entry.history_user %}
-                  {% if entry.end_date %}
-                  <div id="history-{{ entry.history_id }}"
-                       class="flex items-center justify-between bg-[#343a40] rounded-md p-3 border border-gray-600">
-                    <div class="text-sm text-white">{{ entry.end_date|user_datetime_format:user|default_if_none:"No date provided" }}</div>
-                    <button class="text-red-400 hover:text-red-300 transition-colors text-sm px-2 py-1 hover:bg-red-600/20 rounded-md cursor-pointer"
-                            hx-delete="{% url 'delete_history_record' music.item.media_type|default:'music' entry.history_id %}?{% if music.item and music.item.media_type == 'podcast' %}podcast_id{% else %}music_id{% endif %}={{ music.id }}"
-                            hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
-                            hx-target="#history-{{ entry.history_id }}"
-                            hx-swap="outerHTML">
-                      Delete
-                    </button>
-                  </div>
-                  {% endif %}
-                {% endif %}
-              {% endfor %}
-            </div>
-          </div>
+                  {% for entry in music.history.all|order_by_end_date %}
+                    {% if entry.history_user == user or not entry.history_user %}
+                      {% if entry.end_date %}
+                      <div id="history-{{ entry.history_id }}"
+                           class="flex items-center justify-between bg-[#343a40] rounded-md p-3 border border-gray-600">
+                        <div class="text-sm text-white">{{ entry.end_date|user_datetime_format:user|default_if_none:"No date provided" }}</div>
+                        <button class="text-red-400 hover:text-red-300 transition-colors text-sm px-2 py-1 hover:bg-red-600/20 rounded-md cursor-pointer"
+                                hx-delete="{% url 'delete_history_record' music.item.media_type|default:'music' entry.history_id %}?podcast_id={{ music.id }}"
+                                hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+                                hx-target="#history-{{ entry.history_id }}"
+                                hx-swap="outerHTML">
+                          Delete
+                        </button>
+                      </div>
+                      {% endif %}
+                    {% endif %}
+                  {% endfor %}
+                </div>
+              </div>
 
-          <div class="border-t border-gray-600 my-6"></div>
+              <div class="border-t border-gray-600 my-6"></div>
+            {% endif %}
+          {% else %}
+            {# For music, check all history records #}
+            {% if music.history.count > 0 %}
+              <div>
+                <label class="block text-sm font-medium text-gray-300 mb-3">
+                  Previous Listens
+                </label>
+                <div class="max-h-[200px] overflow-y-auto space-y-2">
+
+                  {% for entry in music.history.all|order_by_end_date %}
+                    {% if entry.history_user == user or not entry.history_user %}
+                      {% if entry.end_date %}
+                      <div id="history-{{ entry.history_id }}"
+                           class="flex items-center justify-between bg-[#343a40] rounded-md p-3 border border-gray-600">
+                        <div class="text-sm text-white">{{ entry.end_date|user_datetime_format:user|default_if_none:"No date provided" }}</div>
+                        <button class="text-red-400 hover:text-red-300 transition-colors text-sm px-2 py-1 hover:bg-red-600/20 rounded-md cursor-pointer"
+                                hx-delete="{% url 'delete_history_record' music.item.media_type|default:'music' entry.history_id %}?music_id={{ music.id }}"
+                                hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+                                hx-target="#history-{{ entry.history_id }}"
+                                hx-swap="outerHTML">
+                          Delete
+                        </button>
+                      </div>
+                      {% endif %}
+                    {% endif %}
+                  {% endfor %}
+                </div>
+              </div>
+
+              <div class="border-t border-gray-600 my-6"></div>
+            {% endif %}
+          {% endif %}
         {% endif %}
 
         <form method="post"
