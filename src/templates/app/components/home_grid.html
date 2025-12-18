@@ -76,48 +76,53 @@
       </div>
       
       {# Enhanced aggregated data display for duplicates #}
+      {# Hide total progress and repeat indicators for in-progress podcast episodes #}
       {% if media.repeats > 1 %}
         {% if media.item.media_type != MediaTypes.GAME.value and media.item.media_type != MediaTypes.BOARDGAME.value or user.game_logging_style != 'sessions' %}
-          <div class="space-y-1 text-xs text-gray-400">
-            {% if media.aggregated_progress and media.item.media_type != MediaTypes.MOVIE.value %}
-              <div class="text-center media-status-chip"
-                   data-mobile-hide-on-mobile="true">
-                <span class="text-indigo-400 font-medium">Total Progress:</span>
-                {{ media.formatted_aggregated_progress }}
-                {% if media.max_progress %}/ {{ media.max_progress }}{% endif %}
+          {% with is_in_progress_podcast=media.item.media_type == MediaTypes.PODCAST.value and media.status == 'In progress' %}
+            {% if not is_in_progress_podcast %}
+              <div class="space-y-1 text-xs text-gray-400">
+                {% if media.aggregated_progress and media.item.media_type != MediaTypes.MOVIE.value %}
+                  <div class="text-center media-status-chip"
+                       data-mobile-hide-on-mobile="true">
+                    <span class="text-indigo-400 font-medium">Total Progress:</span>
+                    {{ media.formatted_aggregated_progress }}
+                    {% if media.max_progress %}/ {{ media.max_progress }}{% endif %}
+                  </div>
+                {% endif %}
+                
+                {# Removed date range display to reduce clutter #}
+                
+                {% if media.aggregated_score %}
+                  <div class="text-center media-status-chip"
+                       data-mobile-hide-on-mobile="true">
+                    <span class="text-indigo-400 font-medium">Rating:</span>
+                    <span class="text-yellow-400">{{ media.aggregated_score }}</span>
+                  </div>
+                {% endif %}
+                
+                <div class="text-center text-slate-400 media-status-chip"
+                     data-mobile-hide-on-mobile="true">
+                  <svg xmlns="http://www.w3.org/2000/svg"
+                       width="16"
+                       height="16"
+                       viewBox="0 0 24 24"
+                       fill="none"
+                       stroke="currentColor"
+                       stroke-width="2"
+                       stroke-linecap="round"
+                       stroke-linejoin="round"
+                       class="inline w-3 h-3 mr-1">
+                    <path d="m17 2 4 4-4 4" />
+                    <path d="M3 11v-1a4 4 0 0 1 4-4h14" />
+                    <path d="m7 22-4-4 4-4" />
+                    <path d="M21 13v1a4 4 0 0 1-4 4H3" />
+                  </svg>
+                  {{ media.repeats }} repeat{{ media.repeats|pluralize }}
+                </div>
               </div>
             {% endif %}
-            
-            {# Removed date range display to reduce clutter #}
-            
-            {% if media.aggregated_score %}
-              <div class="text-center media-status-chip"
-                   data-mobile-hide-on-mobile="true">
-                <span class="text-indigo-400 font-medium">Rating:</span>
-                <span class="text-yellow-400">{{ media.aggregated_score }}</span>
-              </div>
-            {% endif %}
-            
-            <div class="text-center text-slate-400 media-status-chip"
-                 data-mobile-hide-on-mobile="true">
-              <svg xmlns="http://www.w3.org/2000/svg"
-                   width="16"
-                   height="16"
-                   viewBox="0 0 24 24"
-                   fill="none"
-                   stroke="currentColor"
-                   stroke-width="2"
-                   stroke-linecap="round"
-                   stroke-linejoin="round"
-                   class="inline w-3 h-3 mr-1">
-                <path d="m17 2 4 4-4 4" />
-                <path d="M3 11v-1a4 4 0 0 1 4-4h14" />
-                <path d="m7 22-4-4 4-4" />
-                <path d="M21 13v1a4 4 0 0 1-4 4H3" />
-              </svg>
-              {{ media.repeats }} repeat{{ media.repeats|pluralize }}
-            </div>
-          </div>
+          {% endwith %}
         {% endif %}
       {% endif %}
     </div>
