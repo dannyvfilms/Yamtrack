@@ -213,7 +213,7 @@
         {% endif %}
 
         {# User score #}
-        {% if user_medias and not public_view|default:False %}
+        {% if user_medias and current_instance and not public_view|default:False %}
           <div x-data="{ showRatingPopup: false, rating: {{ current_instance.score|default:'null' }}, hoverRating: null, isHovering: false }"
                class="relative">
             <!-- Rating display -->
