@@ -1003,10 +1003,14 @@ def media_details(
                     from django.utils import timezone
                     
                     # Aggregate all history records from all podcast entries
+                    # Only include history records with end_date (completed plays)
                     all_history = []
                     for podcast in all_podcasts:
                         # Only include history records with end_date (completed plays)
                         history = podcast.history.filter(end_date__isnull=False) if hasattr(podcast.history, 'filter') else [h for h in podcast.history.all() if h.end_date]
+                        # Convert queryset to list if needed to ensure proper evaluation
+                        if hasattr(history, '__iter__') and not isinstance(history, (list, tuple)):
+                            history = list(history)
                         all_history.extend(history)
                     
                     # Sort by end_date descending (most recent first) for display
@@ -1022,6 +1026,13 @@ def media_details(
                             self.id = podcasts[0].id if podcasts else 0
                             self._podcasts = podcasts
                             self._history_list = history_list
+                        
+                        @property
+                        def completed_play_count(self):
+                            """Return count of completed plays (history records with end_date)."""
+                            # Since we already filtered all_history to only include records with end_date,
+                            # we can just count the length of the filtered history_list
+                            return len(self._history_list)
                         
                         @property
                         def history(self):
@@ -1583,6 +1594,9 @@ def track_modal(
                 for podcast in all_podcasts:
                     # Only include history records with end_date (completed plays)
                     history = podcast.history.filter(end_date__isnull=False) if hasattr(podcast.history, 'filter') else [h for h in podcast.history.all() if h.end_date]
+                    # Convert queryset to list if needed to ensure proper evaluation
+                    if hasattr(history, '__iter__') and not isinstance(history, (list, tuple)):
+                        history = list(history)
                     all_history.extend(history)
                 
                 # Sort by end_date descending (most recent first) for display
@@ -1604,8 +1618,8 @@ def track_modal(
                     def completed_play_count(self):
                         """Return count of completed plays (history records with end_date)."""
                         # Since we already filtered all_history to only include records with end_date,
-                        # we can just count the filtered history_list
-                        return len([h for h in self._history_list if h.end_date])
+                        # we can just count the length of the filtered history_list
+                        return len(self._history_list)
                     
                     @property
                     def history(self):
@@ -1655,6 +1669,11 @@ def track_modal(
                         self.item = item
                         self.id = 0
                         self.history = type('History', (), {'count': lambda: 0, 'all': lambda: []})()
+                    
+                    @property
+                    def completed_play_count(self):
+                        """Return 0 for dummy podcast (no plays)."""
+                        return 0
                 
                 podcast = DummyPodcast(item)
             
@@ -3264,6 +3283,13 @@ def podcast_episodes_api(request, show_id):
                         self.item = item
                         self.id = podcast.id
                         self._history_list = history_list
+                    
+                    @property
+                    def completed_play_count(self):
+                        """Return count of completed plays (history records with end_date)."""
+                        # Since we already filtered all_history to only include records with end_date,
+                        # we can just count the length of the filtered history_list
+                        return len(self._history_list)
                     
                     @property
                     def history(self):
