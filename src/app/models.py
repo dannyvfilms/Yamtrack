@@ -674,8 +674,19 @@ class MediaManager(models.Manager):
                         season.item.source,
                         [season.item.season_number],
                     )
-                    if season_metadata.get("image"):
-                        season.item.image = season_metadata["image"]
+                    # Use season poster if available, otherwise fallback to TV show poster
+                    season_image = season_metadata.get("image")
+                    if not season_image:
+                        # Get TV show metadata for fallback
+                        tv_metadata = providers.services.get_media_metadata(
+                            MediaTypes.TV.value,
+                            season.item.media_id,
+                            season.item.source,
+                        )
+                        season_image = tv_metadata.get("image")
+                    
+                    if season_image:
+                        season.item.image = season_image
                         items_to_update.append(season.item)
                 except Exception as e:
                     logger.warning(
@@ -1326,6 +1337,9 @@ class TV(Media):
         for season_number in season_numbers:
             season_metadata = tv_with_seasons_metadata[f"season/{season_number}"]
 
+            # Use season poster if available, otherwise fallback to TV show poster
+            season_image = season_metadata.get("image") or self.item.image
+
             item, _ = Item.objects.get_or_create(
                 media_id=self.item.media_id,
                 source=self.item.source,
@@ -1333,7 +1347,7 @@ class TV(Media):
                 season_number=season_number,
                 defaults={
                     "title": self.item.title,
-                    "image": season_metadata["image"],
+                    "image": season_image,
                 },
             )
             try:
@@ -1411,6 +1425,9 @@ class TV(Media):
             for season_data in tv_metadata["related"]["seasons"]:
                 season_number = season_data["season_number"]
                 if season_number > 0 and season_number not in existing_season_numbers:
+                    # Use season poster if available, otherwise fallback to TV show poster
+                    season_image = season_data.get("image") or self.item.image
+                    
                     item, _ = Item.objects.get_or_create(
                         media_id=self.item.media_id,
                         source=self.item.source,
@@ -1418,7 +1435,7 @@ class TV(Media):
                         season_number=season_data["season_number"],
                         defaults={
                             "title": self.item.title,
-                            "image": season_data["image"],
+                            "image": season_image,
                         },
                     )
 

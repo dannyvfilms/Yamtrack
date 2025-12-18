@@ -499,6 +499,9 @@ def process_tv_seasons(tv_item, seasons_to_process, events_bulk):
 
         season_metadata = process_seasons_data[season_key]
 
+        # Use season poster if available, otherwise fallback to TV show poster
+        season_image = season_metadata.get("image") or tv_item.image
+
         # Get or create season item
         season_item, season_created = Item.objects.get_or_create(
             media_id=tv_item.media_id,
@@ -507,7 +510,7 @@ def process_tv_seasons(tv_item, seasons_to_process, events_bulk):
             season_number=season_number,
             defaults={
                 "title": tv_item.title,
-                "image": season_metadata["image"],
+                "image": season_image,
             },
         )
 

@@ -481,6 +481,9 @@ class BaseWebhookProcessor:
                 tv_metadata["title"],
             )
 
+        # Use season poster if available, otherwise fallback to TV show poster
+        season_image = season_metadata.get("image") or tv_metadata.get("image")
+
         season_item, _ = app.models.Item.objects.get_or_create(
             media_id=media_id,
             source=Sources.TMDB.value,
@@ -488,7 +491,7 @@ class BaseWebhookProcessor:
             season_number=season_number,
             defaults={
                 "title": tv_metadata["title"],
-                "image": season_metadata["image"],
+                "image": season_image,
             },
         )
 

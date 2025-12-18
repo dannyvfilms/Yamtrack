@@ -217,6 +217,8 @@ def get_cached_seasons(media_id, season_numbers):
 
 def enrich_season_with_tv_data(season_data, tv_data, media_id, season_number):
     """Add TV show metadata to season metadata."""
+    from django.conf import settings
+    
     season_data["media_id"] = media_id
     season_data["source_url"] = (
         f"https://www.themoviedb.org/tv/{media_id}/season/{season_number}"
@@ -226,6 +228,11 @@ def enrich_season_with_tv_data(season_data, tv_data, media_id, season_number):
     season_data["genres"] = tv_data["genres"]
     if season_data["synopsis"] == "No synopsis available.":
         season_data["synopsis"] = tv_data["synopsis"]
+    # Use TV show poster as fallback if season doesn't have its own poster
+    # Check if image is None, empty, or the default placeholder
+    season_image = season_data.get("image")
+    if not season_image or season_image == settings.IMG_NONE:
+        season_data["image"] = tv_data.get("image")
     return season_data
 
 
@@ -584,10 +591,21 @@ def get_related(related_medias, media_type, parent_response=None):
     """Return list of related media for the selected media."""
     related = []
     for media in related_medias:
+        # For seasons, use TV show poster as fallback if season doesn't have its own poster
+        if media_type == MediaTypes.SEASON.value and parent_response:
+            season_poster_path = media.get("poster_path")
+            # If season doesn't have a poster, use TV show poster as fallback
+            if season_poster_path:
+                season_image = get_image_url(season_poster_path)
+            else:
+                season_image = get_image_url(parent_response.get("poster_path"))
+        else:
+            season_image = get_image_url(media["poster_path"])
+        
         data = {
             "source": Sources.TMDB.value,
             "media_type": media_type,
-            "image": get_image_url(media["poster_path"]),
+            "image": season_image,
         }
         if media_type == MediaTypes.SEASON.value:
             data["media_id"] = parent_response["id"]

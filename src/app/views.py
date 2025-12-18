@@ -640,8 +640,6 @@ def media_details(
     
     # For podcast shows (identified by podcast_uuid), show show detail page
     if media_type == MediaTypes.PODCAST.value and source == Sources.POCKETCASTS.value:
-        from django.conf import settings
-        
         from app.models import PodcastEpisode, PodcastShow, PodcastShowTracker
         
         # Check if this is a show (podcast_uuid) or an episode (episode_uuid)
@@ -1151,6 +1149,16 @@ def media_details(
         media_metadata["source"] = source
         media_metadata["media_type"] = media_type
         media_metadata["media_id"] = media_id
+    
+    # For TV shows, apply fallback for seasons without posters (handles cached metadata)
+    if media_type == MediaTypes.TV.value and isinstance(media_metadata, dict):
+        tv_poster = media_metadata.get("image")
+        if tv_poster:
+            seasons = media_metadata.get("related", {}).get("seasons", [])
+            for season in seasons:
+                season_image = season.get("image")
+                if not season_image or season_image == settings.IMG_NONE:
+                    season["image"] = tv_poster
     
     # For public views, we don't need user media data
     if public_view:
@@ -1916,6 +1924,9 @@ def episode_save(request):
         )
         season_metadata = tv_with_seasons_metadata[f"season/{season_number}"]
 
+        # Use season poster if available, otherwise fallback to TV show poster
+        season_image = season_metadata.get("image") or tv_with_seasons_metadata.get("image")
+
         item, _ = Item.objects.get_or_create(
             media_id=media_id,
             source=Sources.TMDB.value,
@@ -1923,7 +1934,7 @@ def episode_save(request):
             season_number=season_number,
             defaults={
                 "title": tv_with_seasons_metadata["title"],
-                "image": season_metadata["image"],
+                "image": season_image,
             },
         )
         related_season = Season.objects.create(

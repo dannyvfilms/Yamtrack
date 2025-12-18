@@ -261,6 +261,9 @@ class SimklImporter:
             episodes = season["episodes"]
             season_metadata = metadata[f"season/{season_number}"]
 
+            # Use season poster if available, otherwise fallback to TV show poster
+            season_image = season_metadata.get("image") or metadata.get("image")
+
             season_item, _ = app.models.Item.objects.get_or_create(
                 media_id=tmdb_id,
                 source=Sources.TMDB.value,
@@ -268,7 +271,7 @@ class SimklImporter:
                 season_number=season_number,
                 defaults={
                     "title": metadata["title"],
-                    "image": season_metadata["image"],
+                    "image": season_image,
                 },
             )
 
