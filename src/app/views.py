@@ -1578,9 +1578,12 @@ def track_modal(
                 from django.utils import timezone
                 
                 # Aggregate all history records from all podcast entries
+                # Only include history records with end_date (completed plays)
                 all_history = []
                 for podcast in all_podcasts:
-                    all_history.extend(podcast.history.all())
+                    # Only include history records with end_date (completed plays)
+                    history = podcast.history.filter(end_date__isnull=False) if hasattr(podcast.history, 'filter') else [h for h in podcast.history.all() if h.end_date]
+                    all_history.extend(history)
                 
                 # Sort by end_date descending (most recent first) for display
                 # The template filter will re-sort if needed
@@ -1596,6 +1599,13 @@ def track_modal(
                         self.id = podcasts[0].id if podcasts else 0
                         self._podcasts = podcasts
                         self._history_list = history_list
+                    
+                    @property
+                    def completed_play_count(self):
+                        """Return count of completed plays (history records with end_date)."""
+                        # Since we already filtered all_history to only include records with end_date,
+                        # we can just count the filtered history_list
+                        return len([h for h in self._history_list if h.end_date])
                     
                     @property
                     def history(self):
