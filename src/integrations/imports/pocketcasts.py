@@ -755,15 +755,32 @@ class PocketCastsImporter:
             progress_seconds = last_progress_minutes * 60
             remaining_seconds = max(0, podcast_duration_seconds - progress_seconds)
             
-            # Completion time = last in-progress record time + remaining time
-            base_completion_time = last_in_progress_date + timedelta(seconds=remaining_seconds)
-            logger.debug(
-                "Using last in-progress record for episode %s: progress=%d min, remaining=%d sec, completion=%s",
-                episode_uuid,
-                last_progress_minutes,
-                remaining_seconds,
-                base_completion_time,
-            )
+            # Determine the anchor point for completion time calculation
+            # If the last in-progress record is before the sync window, we should
+            # use the progress information but anchor the completion to the sync window
+            # to ensure it falls within the valid time range
+            anchor_time = previous_sync_at or sync_window_start
+            if last_in_progress_date < anchor_time:
+                # Old in-progress record: use progress info but anchor to sync window
+                base_completion_time = anchor_time + timedelta(seconds=remaining_seconds)
+                logger.debug(
+                    "Using last in-progress record (old, before sync window) for episode %s: progress=%d min, remaining=%d sec, anchor=%s, completion=%s",
+                    episode_uuid,
+                    last_progress_minutes,
+                    remaining_seconds,
+                    anchor_time,
+                    base_completion_time,
+                )
+            else:
+                # Recent in-progress record: use it directly
+                base_completion_time = last_in_progress_date + timedelta(seconds=remaining_seconds)
+                logger.debug(
+                    "Using last in-progress record (within sync window) for episode %s: progress=%d min, remaining=%d sec, completion=%s",
+                    episode_uuid,
+                    last_progress_minutes,
+                    remaining_seconds,
+                    base_completion_time,
+                )
         else:
             # No in-progress record: assume episode started at previous sync
             if previous_sync_at:
