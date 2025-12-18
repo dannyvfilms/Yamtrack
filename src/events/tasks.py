@@ -116,27 +116,53 @@ def refresh_podcast_episodes():
                 if matched_episode:
                     # Update existing
                     updated = False
+                    update_fields = []
+                    
+                    # If UUID differs and we have RSS GUID, update to RSS GUID
+                    # This ensures consistency when Pocket Casts UUID and RSS GUID differ
+                    # But prefer keeping Pocket Casts UUID format if it looks like one
+                    if rss_ep.get("guid") and matched_episode.episode_uuid != rss_ep["guid"]:
+                        # Only update if the matched episode doesn't look like a Pocket Casts UUID
+                        # Pocket Casts UUIDs typically have hyphens in specific positions
+                        is_pocketcasts_uuid = len(matched_episode.episode_uuid) == 36 and matched_episode.episode_uuid.count("-") == 4
+                        if not is_pocketcasts_uuid:
+                            logger.info(
+                                "Updating episode UUID from %s to %s for episode %s (RSS GUID)",
+                                matched_episode.episode_uuid,
+                                rss_ep["guid"],
+                                matched_episode.title
+                            )
+                            matched_episode.episode_uuid = rss_ep["guid"]
+                            updated = True
+                            update_fields.append("episode_uuid")
+                    
                     if rss_ep.get("title") and matched_episode.title != rss_ep["title"]:
                         matched_episode.title = rss_ep["title"]
                         updated = True
+                        update_fields.append("title")
                     if rss_ep.get("published") and matched_episode.published != rss_ep["published"]:
                         matched_episode.published = rss_ep["published"]
                         updated = True
+                        update_fields.append("published")
                     if rss_ep.get("duration") and matched_episode.duration != rss_ep["duration"]:
                         matched_episode.duration = rss_ep["duration"]
                         updated = True
+                        update_fields.append("duration")
                     if rss_ep.get("audio_url") and matched_episode.audio_url != rss_ep["audio_url"]:
                         matched_episode.audio_url = rss_ep["audio_url"]
                         updated = True
+                        update_fields.append("audio_url")
                     if rss_ep.get("episode_number") is not None and matched_episode.episode_number != rss_ep["episode_number"]:
                         matched_episode.episode_number = rss_ep["episode_number"]
                         updated = True
+                        update_fields.append("episode_number")
                     if rss_ep.get("season_number") is not None and matched_episode.season_number != rss_ep["season_number"]:
                         matched_episode.season_number = rss_ep["season_number"]
                         updated = True
+                        update_fields.append("season_number")
                     
                     if updated:
-                        matched_episode.save()
+                        matched_episode.save(update_fields=update_fields)
                         updated_count_show += 1
                 else:
                     # Create new episode
@@ -173,6 +199,21 @@ def refresh_podcast_episodes():
         except Exception as e:
             logger.error("Failed to refresh episodes for show %s: %s", show.title, e, exc_info=True)
             error_count += 1
+    
+    # Clean up duplicate episodes after refreshing
+    try:
+        from integrations.imports.pocketcasts import _cleanup_duplicate_episodes_global
+        
+        logger.info("Running duplicate episode cleanup after RSS refresh")
+        cleanup_stats = _cleanup_duplicate_episodes_global()
+        if cleanup_stats.get("duplicates_removed", 0) > 0:
+            logger.info(
+                "Cleaned up %d duplicate podcast episodes after RSS refresh",
+                cleanup_stats["duplicates_removed"],
+            )
+    except Exception as e:
+        logger.error("Failed to cleanup duplicate episodes: %s", e, exc_info=True)
+        # Don't fail the whole task if cleanup fails
     
     result = f"Refreshed {updated_count} shows, {error_count} errors"
     logger.info("Podcast episode refresh completed: %s", result)

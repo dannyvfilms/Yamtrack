@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone as dt_timezone
 import jwt
 import requests
 from django.conf import settings
+from django.db import models, transaction
 from django.utils import timezone
 
 import app
@@ -18,6 +19,128 @@ from integrations.imports.helpers import MediaImportError, MediaImportUnexpected
 logger = logging.getLogger(__name__)
 
 POCKETCASTS_API_BASE_URL = "https://api.pocketcasts.com"
+
+
+def _cleanup_duplicate_episodes_global():
+    """Clean up duplicate podcast episodes globally (standalone function).
+    
+    Finds duplicate episodes (same show, title, published date, different UUIDs)
+    and merges them. Can be called from tasks that don't have a PocketCastsImporter instance.
+    
+    Returns:
+        dict: Statistics about the cleanup (duplicates_removed, episodes_merged, items_merged)
+    """
+    from app.models import Item
+    from django.db.models.functions import TruncDate
+    
+    stats = {
+        "duplicates_removed": 0,
+        "episodes_merged": 0,
+        "items_merged": 0,
+    }
+    
+    # Find all duplicate episodes grouped by show, title (normalized), and published date (date portion only)
+    # Use TruncDate to group by date portion, handling timezone differences
+    # We'll need to normalize titles (lowercase, strip) in Python since Django doesn't have a strip function
+    # For now, use Lower() for case-insensitive matching - we'll handle whitespace in the filter
+    from django.db.models.functions import Lower
+    
+    # First, get all episodes with their normalized data
+    all_episodes_data = {}
+    for episode in PodcastEpisode.objects.select_related('show').all():
+        show_id = episode.show_id
+        title_normalized = episode.title.lower().strip() if episode.title else ""
+        published_date = episode.published.date() if episode.published else None
+        
+        key = (show_id, title_normalized, published_date)
+        if key not in all_episodes_data:
+            all_episodes_data[key] = []
+        all_episodes_data[key].append(episode)
+    
+    # Find duplicate groups
+    duplicate_groups = {k: v for k, v in all_episodes_data.items() if len(v) > 1}
+    
+    with transaction.atomic():
+        for (show_id, title_normalized, published_date), episodes_list in duplicate_groups.items():
+            # Sort episodes by id (higher id = more recent)
+            episodes_list_sorted = sorted(episodes_list, key=lambda ep: ep.id)
+            
+            if len(episodes_list_sorted) <= 1:
+                continue
+            
+            # Choose which episode to keep
+            # Prefer Pocket Casts UUID format (36 chars with 4 hyphens)
+            kept_episode = None
+            for episode in episodes_list_sorted:
+                is_pocketcasts_uuid = (
+                    len(episode.episode_uuid) == 36 and 
+                    episode.episode_uuid.count("-") == 4
+                )
+                if is_pocketcasts_uuid:
+                    kept_episode = episode
+                    break
+            
+            # If no Pocket Casts UUID found, use most recent (last in sorted list)
+            if not kept_episode:
+                kept_episode = episodes_list_sorted[-1]
+            
+            duplicate_episodes = [ep for ep in episodes_list_sorted if ep.id != kept_episode.id]
+            
+            # Merge each duplicate episode
+            for dup_episode in duplicate_episodes:
+                try:
+                    # Find the Item for the duplicate episode
+                    dup_item = Item.objects.filter(
+                        media_id=dup_episode.episode_uuid,
+                        source=Sources.POCKETCASTS.value,
+                        media_type=MediaTypes.PODCAST.value,
+                    ).first()
+                    
+                    # Find the Item for the kept episode (create if it doesn't exist)
+                    kept_item, _ = Item.objects.get_or_create(
+                        media_id=kept_episode.episode_uuid,
+                        source=Sources.POCKETCASTS.value,
+                        media_type=MediaTypes.PODCAST.value,
+                        defaults={
+                            "title": kept_episode.title,
+                            "image": dup_item.image if dup_item else "",
+                        }
+                    )
+                    
+                    # Update all Podcast entries that reference the duplicate episode
+                    podcasts_updated = Podcast.objects.filter(episode=dup_episode).update(episode=kept_episode)
+                    
+                    # Update all Podcast entries that reference the duplicate item
+                    items_updated = Podcast.objects.filter(item=dup_item).update(item=kept_item) if dup_item else 0
+                    
+                    # Delete the duplicate item if it exists and is different from kept item
+                    if dup_item and dup_item.id != kept_item.id:
+                        dup_item.delete()
+                        stats["items_merged"] += 1
+                    
+                    # Delete the duplicate episode
+                    dup_episode.delete()
+                    stats["duplicates_removed"] += 1
+                    stats["episodes_merged"] += 1
+                    
+                    logger.info(
+                        "Merged duplicate episode: kept %s (%s), removed %s (%s), updated %d podcasts, %d items",
+                        kept_episode.episode_uuid,
+                        kept_episode.title,
+                        dup_episode.episode_uuid,
+                        dup_episode.title,
+                        podcasts_updated + items_updated,
+                        items_updated if dup_item else 0,
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Failed to merge duplicate episode %s: %s",
+                        dup_episode.episode_uuid,
+                        e,
+                        exc_info=True,
+                    )
+    
+    return stats
 
 
 def importer(identifier, user, mode):
@@ -265,6 +388,15 @@ class PocketCastsImporter:
         # Update last sync time
         self.account.last_sync_at = timezone.now()
         self.account.save(update_fields=["last_sync_at"])
+
+        # Clean up duplicate episodes
+        cleanup_stats = self._cleanup_duplicate_episodes()
+        if cleanup_stats.get("duplicates_removed", 0) > 0:
+            logger.info(
+                "Cleaned up %d duplicate podcast episodes for user %s",
+                cleanup_stats["duplicates_removed"],
+                self.user.username,
+            )
 
         imported_counts = {
             media_type: len(media_list)
@@ -570,14 +702,15 @@ class PocketCastsImporter:
         from django.apps import apps
         HistoricalPodcast = apps.get_model("app", "HistoricalPodcast")
         
-        # Try to find the Podcast object first to get its ID
-        try:
-            podcast = Podcast.objects.get(
-                user=self.user,
-                item__media_id=episode_uuid,
-                item__source=Sources.POCKETCASTS.value,
-            )
-        except Podcast.DoesNotExist:
+        # Try to find the most recent Podcast object first to get its ID
+        # There may be multiple Podcast entries for the same episode, so we use filter().first()
+        podcast = Podcast.objects.filter(
+            user=self.user,
+            item__media_id=episode_uuid,
+            item__source=Sources.POCKETCASTS.value,
+        ).order_by('-created_at').first()
+        
+        if not podcast:
             return None, None
         
         # Find the most recent history record where end_date is None and status is IN_PROGRESS
@@ -1048,8 +1181,43 @@ class PocketCastsImporter:
                     )
                     if matching_episodes.exists():
                         episode = matching_episodes.first()
-                        # Update the UUID to match Pocket Casts UUID for consistency
-                        if episode.episode_uuid != episode_uuid:
+                        # Check if there's already an episode with the Pocket Casts UUID
+                        existing_uuid_episode = PodcastEpisode.objects.filter(episode_uuid=episode_uuid).first()
+                        if existing_uuid_episode and existing_uuid_episode.id != episode.id:
+                            # There's already an episode with this UUID, merge the duplicate
+                            logger.info(
+                                "Found duplicate episode: episode %s (UUID: %s) matches by title+date, "
+                                "but episode %s (UUID: %s) already exists with Pocket Casts UUID. "
+                                "Merging duplicate episode.",
+                                episode.id,
+                                episode.episode_uuid,
+                                existing_uuid_episode.id,
+                                episode_uuid,
+                            )
+                            # Find Items for both episodes
+                            from app.models import Item
+                            duplicate_item = Item.objects.filter(
+                                media_id=episode.episode_uuid,
+                                source=Sources.POCKETCASTS.value,
+                                media_type=MediaTypes.PODCAST.value,
+                            ).first()
+                            existing_item = Item.objects.filter(
+                                media_id=episode_uuid,
+                                source=Sources.POCKETCASTS.value,
+                                media_type=MediaTypes.PODCAST.value,
+                            ).first()
+                            
+                            # Update any Podcast entries pointing to the duplicate episode/item to point to existing ones
+                            Podcast.objects.filter(episode=episode).update(episode=existing_uuid_episode)
+                            if duplicate_item and existing_item and duplicate_item.id != existing_item.id:
+                                Podcast.objects.filter(item=duplicate_item).update(item=existing_item)
+                                duplicate_item.delete()
+                            
+                            # Delete the duplicate episode
+                            episode.delete()
+                            episode = existing_uuid_episode
+                        elif episode.episode_uuid != episode_uuid:
+                            # Update the UUID to match Pocket Casts UUID for consistency
                             logger.info(
                                 "Updating episode UUID from %s to %s for episode %s",
                                 episode.episode_uuid,
@@ -1460,27 +1628,53 @@ class PocketCastsImporter:
             if matched_episode:
                 # Update existing episode
                 updated = False
+                update_fields = []
+                
+                # If UUID differs and we have RSS GUID, update to RSS GUID
+                # This ensures consistency when Pocket Casts UUID and RSS GUID differ
+                # But prefer keeping Pocket Casts UUID format if it looks like one (has hyphens in UUID format)
+                if rss_ep.get("guid") and matched_episode.episode_uuid != rss_ep["guid"]:
+                    # Only update if the matched episode doesn't look like a Pocket Casts UUID
+                    # Pocket Casts UUIDs typically have hyphens in specific positions
+                    is_pocketcasts_uuid = len(matched_episode.episode_uuid) == 36 and matched_episode.episode_uuid.count("-") == 4
+                    if not is_pocketcasts_uuid:
+                        logger.info(
+                            "Updating episode UUID from %s to %s for episode %s (RSS GUID)",
+                            matched_episode.episode_uuid,
+                            rss_ep["guid"],
+                            matched_episode.title
+                        )
+                        matched_episode.episode_uuid = rss_ep["guid"]
+                        updated = True
+                        update_fields.append("episode_uuid")
+                
                 if rss_ep.get("title") and matched_episode.title != rss_ep["title"]:
                     matched_episode.title = rss_ep["title"]
                     updated = True
+                    update_fields.append("title")
                 if rss_ep.get("published") and matched_episode.published != rss_ep["published"]:
                     matched_episode.published = rss_ep["published"]
                     updated = True
+                    update_fields.append("published")
                 if rss_ep.get("duration") and matched_episode.duration != rss_ep["duration"]:
                     matched_episode.duration = rss_ep["duration"]
                     updated = True
+                    update_fields.append("duration")
                 if rss_ep.get("audio_url") and matched_episode.audio_url != rss_ep["audio_url"]:
                     matched_episode.audio_url = rss_ep["audio_url"]
                     updated = True
+                    update_fields.append("audio_url")
                 if rss_ep.get("episode_number") is not None and matched_episode.episode_number != rss_ep["episode_number"]:
                     matched_episode.episode_number = rss_ep["episode_number"]
                     updated = True
+                    update_fields.append("episode_number")
                 if rss_ep.get("season_number") is not None and matched_episode.season_number != rss_ep["season_number"]:
                     matched_episode.season_number = rss_ep["season_number"]
                     updated = True
+                    update_fields.append("season_number")
                 
                 if updated:
-                    matched_episode.save()
+                    matched_episode.save(update_fields=update_fields)
                     updated_count += 1
             else:
                 # Create new episode
@@ -1515,6 +1709,17 @@ class PocketCastsImporter:
             created_count,
             updated_count,
         )
+    
+    def _cleanup_duplicate_episodes(self):
+        """Clean up duplicate podcast episodes.
+        
+        Calls the global cleanup function and handles warnings.
+        
+        Returns:
+            dict: Statistics about the cleanup (duplicates_removed, episodes_merged, items_merged)
+        """
+        stats = _cleanup_duplicate_episodes_global()
+        return stats
     
     def _discover_rss_feed_url(self, show_title, author=None):
         """Discover RSS feed URL from iTunes API.

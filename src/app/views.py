@@ -721,17 +721,33 @@ def media_details(
                                 
                                 for episode_data in episodes_data:
                                     # Generate episode UUID from GUID or create one
-                                    episode_guid = episode_data.get("guid", "")
-                                    if episode_guid:
-                                        # Use a hash of the GUID to create a consistent UUID
-                                        guid_hash = hashlib.md5(episode_guid.encode()).hexdigest()
-                                        episode_uuid = f"{guid_hash[:8]}-{guid_hash[8:12]}-{guid_hash[12:16]}-{guid_hash[16:20]}-{guid_hash[20:32]}"
-                                    else:
-                                        # Generate a UUID if no GUID
-                                        episode_uuid = str(uuid_lib.uuid4())
+                                    # Use GUID directly (consistent with _sync_episodes_from_rss logic)
+                                    episode_uuid = episode_data.get("guid")
+                                    if not episode_uuid:
+                                        # Use a hash of title + published date as fallback UUID
+                                        import hashlib
+                                        uuid_str = f"{episode_data.get('title', '')}{episode_data.get('published', '')}"
+                                        episode_uuid = hashlib.md5(uuid_str.encode()).hexdigest()[:36]
                                     
-                                    # Check if episode already exists
-                                    if not PodcastEpisode.objects.filter(episode_uuid=episode_uuid).exists():
+                                    # Check if episode already exists by UUID, or try to match by title + date
+                                    episode = None
+                                    try:
+                                        episode = PodcastEpisode.objects.get(episode_uuid=episode_uuid)
+                                    except PodcastEpisode.DoesNotExist:
+                                        # Try to match by title + published date
+                                        if episode_data.get("title") and episode_data.get("published"):
+                                            matching = PodcastEpisode.objects.filter(
+                                                show=show,
+                                                title__iexact=episode_data["title"].strip(),
+                                                published__date=episode_data["published"].date()
+                                            ).first()
+                                            if matching:
+                                                episode = matching
+                                    except PodcastEpisode.MultipleObjectsReturned:
+                                        # If multiple found, use first one
+                                        episode = PodcastEpisode.objects.filter(episode_uuid=episode_uuid).first()
+                                    
+                                    if not episode:
                                         PodcastEpisode.objects.create(
                                             show=show,
                                             episode_uuid=episode_uuid,
@@ -787,17 +803,33 @@ def media_details(
                     new_episodes_count = 0
                     for episode_data in episodes_data:
                         # Generate episode UUID from GUID or create one
-                        episode_guid = episode_data.get("guid", "")
-                        if episode_guid:
-                            # Use a hash of the GUID to create a consistent UUID
-                            guid_hash = hashlib.md5(episode_guid.encode()).hexdigest()
-                            episode_uuid = f"{guid_hash[:8]}-{guid_hash[8:12]}-{guid_hash[12:16]}-{guid_hash[16:20]}-{guid_hash[20:32]}"
-                        else:
-                            # Generate a UUID if no GUID
-                            episode_uuid = str(uuid_lib.uuid4())
+                        # Use GUID directly (consistent with _sync_episodes_from_rss logic)
+                        episode_uuid = episode_data.get("guid")
+                        if not episode_uuid:
+                            # Use a hash of title + published date as fallback UUID
+                            uuid_str = f"{episode_data.get('title', '')}{episode_data.get('published', '')}"
+                            episode_uuid = hashlib.md5(uuid_str.encode()).hexdigest()[:36]
+                        
+                        # Check if episode already exists by UUID, or try to match by title + date
+                        episode = None
+                        try:
+                            episode = PodcastEpisode.objects.get(episode_uuid=episode_uuid)
+                        except PodcastEpisode.DoesNotExist:
+                            # Try to match by title + published date
+                            if episode_data.get("title") and episode_data.get("published"):
+                                matching = PodcastEpisode.objects.filter(
+                                    show=show,
+                                    title__iexact=episode_data["title"].strip(),
+                                    published__date=episode_data["published"].date()
+                                ).first()
+                                if matching:
+                                    episode = matching
+                        except PodcastEpisode.MultipleObjectsReturned:
+                            # If multiple found, use first one
+                            episode = PodcastEpisode.objects.filter(episode_uuid=episode_uuid).first()
                         
                         # Create episode if it doesn't exist
-                        if episode_uuid not in existing_uuids:
+                        if not episode and episode_uuid not in existing_uuids:
                             PodcastEpisode.objects.create(
                                 show=show,
                                 episode_uuid=episode_uuid,
@@ -3398,17 +3430,33 @@ def podcast_mark_all_played(request, show_id):
             
             for episode_data in episodes_data:
                 # Generate episode UUID from GUID or create one
-                episode_guid = episode_data.get("guid", "")
-                if episode_guid:
-                    # Use a hash of the GUID to create a consistent UUID
-                    guid_hash = hashlib.md5(episode_guid.encode()).hexdigest()
-                    episode_uuid = f"{guid_hash[:8]}-{guid_hash[8:12]}-{guid_hash[12:16]}-{guid_hash[16:20]}-{guid_hash[20:32]}"
-                else:
-                    # Generate a UUID if no GUID
-                    episode_uuid = str(uuid_lib.uuid4())
+                # Use GUID directly (consistent with _sync_episodes_from_rss logic)
+                episode_uuid = episode_data.get("guid")
+                if not episode_uuid:
+                    # Use a hash of title + published date as fallback UUID
+                    import hashlib
+                    uuid_str = f"{episode_data.get('title', '')}{episode_data.get('published', '')}"
+                    episode_uuid = hashlib.md5(uuid_str.encode()).hexdigest()[:36]
                 
-                # Check if episode already exists, create if not
-                if not PodcastEpisode.objects.filter(episode_uuid=episode_uuid).exists():
+                # Check if episode already exists by UUID, or try to match by title + date
+                episode = None
+                try:
+                    episode = PodcastEpisode.objects.get(episode_uuid=episode_uuid)
+                except PodcastEpisode.DoesNotExist:
+                    # Try to match by title + published date
+                    if episode_data.get("title") and episode_data.get("published"):
+                        matching = PodcastEpisode.objects.filter(
+                            show=show,
+                            title__iexact=episode_data["title"].strip(),
+                            published__date=episode_data["published"].date()
+                        ).first()
+                        if matching:
+                            episode = matching
+                except PodcastEpisode.MultipleObjectsReturned:
+                    # If multiple found, use first one
+                    episode = PodcastEpisode.objects.filter(episode_uuid=episode_uuid).first()
+                
+                if not episode:
                     PodcastEpisode.objects.create(
                         show=show,
                         episode_uuid=episode_uuid,
