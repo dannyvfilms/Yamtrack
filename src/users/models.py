@@ -135,6 +135,14 @@ class MobileGridLayoutChoices(models.TextChoices):
     COMPACT = "compact", "Compact (3 columns)"
 
 
+class PlannedHomeDisplayChoices(models.TextChoices):
+    """Choices for how planned items are displayed on home page."""
+
+    DISABLED = "disabled", "Disabled"
+    COMBINED = "combined", "Combined"
+    SEPARATED = "separated", "Separated"
+
+
 class User(AbstractUser):
     """Custom user model."""
 
@@ -496,6 +504,12 @@ class User(AbstractUser):
     quick_season_update_mobile = models.BooleanField(
         default=False,
         help_text="Show the quick season update button on mobile episode lists",
+    )
+    show_planned_on_home = models.CharField(
+        max_length=20,
+        default=PlannedHomeDisplayChoices.DISABLED,
+        choices=PlannedHomeDisplayChoices.choices,
+        help_text="Show planned items on the home screen alongside in-progress items",
     )
     auto_pause_in_progress_enabled = models.BooleanField(
         default=False,

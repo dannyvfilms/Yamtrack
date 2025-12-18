@@ -24,6 +24,7 @@ from users.models import (
     DateFormatChoices,
     GameLoggingStyleChoices,
     MobileGridLayoutChoices,
+    PlannedHomeDisplayChoices,
     TimeFormatChoices,
 )
 
@@ -397,6 +398,13 @@ def preferences(request):
         if request.user.quick_season_update_mobile != quick_season_update_mobile:
             request.user.quick_season_update_mobile = quick_season_update_mobile
             fields_to_update.append("quick_season_update_mobile")
+
+        show_planned_on_home = request.POST.get("show_planned_on_home", PlannedHomeDisplayChoices.DISABLED)
+
+        if show_planned_on_home in [choice[0] for choice in PlannedHomeDisplayChoices.choices]:
+            if request.user.show_planned_on_home != show_planned_on_home:
+                request.user.show_planned_on_home = show_planned_on_home
+                fields_to_update.append("show_planned_on_home")
 
         auto_pause_enabled = request.POST.get("auto_pause_enabled") == "1"
         raw_rules = request.POST.get("auto_pause_rules", "[]")

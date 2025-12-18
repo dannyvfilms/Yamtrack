@@ -593,47 +593,159 @@ class MediaManager(models.Manager):
         """Get a media list of in progress media by type."""
         list_by_type = {}
         media_types = self._get_media_types_to_process(user, specific_media_type)
+        
+        # Get user preference for planned items display mode
+        planned_mode = getattr(user, 'show_planned_on_home', users.models.PlannedHomeDisplayChoices.DISABLED)
 
         for media_type in media_types:
+            base_media_type = media_type
+            
             # Get base media list for in-progress media
-            media_list = self.get_media_list(
+            in_progress_list = self.get_media_list(
                 user=user,
-                media_type=media_type,
+                media_type=base_media_type,
                 status_filter=Status.IN_PROGRESS.value,
                 sort_filter=None,
             )
+            in_progress_list = list(in_progress_list)
 
-            if not media_list:
-                continue
+            # Get planned items if needed
+            planned_list = []
+            if planned_mode != users.models.PlannedHomeDisplayChoices.DISABLED:
+                planned_queryset = self.get_media_list(
+                    user=user,
+                    media_type=base_media_type,
+                    status_filter=Status.PLANNING.value,
+                    sort_filter=None,
+                )
+                planned_list = list(planned_queryset)
 
-            # Annotate with max_progress and next_event
-            self.annotate_max_progress(media_list, media_type)
-            self._annotate_next_event(media_list)
-            
-            # Fix missing season images
-            if media_type == MediaTypes.SEASON.value:
-                self._fix_missing_season_images(media_list)
-
-            # Sort the media list
-            sorted_list = self._sort_in_progress_media(media_list, sort_by)
-
-            # Apply pagination
-            total_count = len(sorted_list)
-            if specific_media_type:
-                paginated_list = sorted_list[items_limit:]
-            else:
-                paginated_list = sorted_list[:items_limit]
-
-            list_by_type[media_type] = {
-                "items": paginated_list,
-                "total": total_count,
-            }
+            # Handle different modes
+            if planned_mode == users.models.PlannedHomeDisplayChoices.DISABLED:
+                # Only in-progress items
+                media_list = in_progress_list
+                if not media_list:
+                    continue
+                
+                # Process in-progress items
+                self.annotate_max_progress(media_list, base_media_type)
+                self._annotate_next_event(media_list)
+                
+                if base_media_type == MediaTypes.SEASON.value:
+                    self._fix_missing_season_images(media_list)
+                
+                sorted_list = self._sort_in_progress_media(media_list, sort_by)
+                total_count = len(sorted_list)
+                if specific_media_type:
+                    paginated_list = sorted_list[items_limit:]
+                else:
+                    paginated_list = sorted_list[:items_limit]
+                
+                list_by_type[base_media_type] = {
+                    "items": paginated_list,
+                    "total": total_count,
+                }
+                
+            elif planned_mode == users.models.PlannedHomeDisplayChoices.COMBINED:
+                # Combine in-progress and planned items
+                media_list = list(in_progress_list)
+                existing_item_ids = {media.item.id for media in media_list}
+                for planned_media in planned_list:
+                    if planned_media.item.id not in existing_item_ids:
+                        media_list.append(planned_media)
+                        existing_item_ids.add(planned_media.item.id)
+                
+                if not media_list:
+                    continue
+                
+                # Process combined items
+                self.annotate_max_progress(media_list, base_media_type)
+                self._annotate_next_event(media_list)
+                
+                if base_media_type == MediaTypes.SEASON.value:
+                    self._fix_missing_season_images(media_list)
+                
+                sorted_list = self._sort_in_progress_media(media_list, sort_by)
+                total_count = len(sorted_list)
+                if specific_media_type:
+                    paginated_list = sorted_list[items_limit:]
+                else:
+                    paginated_list = sorted_list[:items_limit]
+                
+                list_by_type[base_media_type] = {
+                    "items": paginated_list,
+                    "total": total_count,
+                }
+                
+            elif planned_mode == users.models.PlannedHomeDisplayChoices.SEPARATED:
+                # Separated mode: two distinct sections
+                # Determine which sections to process based on specific_media_type request
+                process_in_progress = True
+                process_planned = True
+                
+                if specific_media_type:
+                    if specific_media_type.endswith("_in_progress"):
+                        process_planned = False
+                    elif specific_media_type.endswith("_planned"):
+                        process_in_progress = False
+                
+                # Handle in-progress section
+                if process_in_progress and in_progress_list:
+                    in_progress_processed = list(in_progress_list)
+                    self.annotate_max_progress(in_progress_processed, base_media_type)
+                    self._annotate_next_event(in_progress_processed)
+                    
+                    if base_media_type == MediaTypes.SEASON.value:
+                        self._fix_missing_season_images(in_progress_processed)
+                    
+                    sorted_in_progress = self._sort_in_progress_media(in_progress_processed, sort_by)
+                    total_in_progress = len(sorted_in_progress)
+                    
+                    if specific_media_type and specific_media_type.endswith("_in_progress"):
+                        paginated_in_progress = sorted_in_progress[items_limit:]
+                    else:
+                        paginated_in_progress = sorted_in_progress[:items_limit]
+                    
+                    list_by_type[f"{base_media_type}_in_progress"] = {
+                        "items": paginated_in_progress,
+                        "total": total_in_progress,
+                        "section_label": "In Progress",
+                        "media_type": base_media_type,
+                    }
+                
+                # Handle planned section
+                if process_planned and planned_list:
+                    planned_processed = list(planned_list)
+                    self.annotate_max_progress(planned_processed, base_media_type)
+                    self._annotate_next_event(planned_processed)
+                    
+                    if base_media_type == MediaTypes.SEASON.value:
+                        self._fix_missing_season_images(planned_processed)
+                    
+                    sorted_planned = self._sort_in_progress_media(planned_processed, sort_by)
+                    total_planned = len(sorted_planned)
+                    
+                    if specific_media_type and specific_media_type.endswith("_planned"):
+                        paginated_planned = sorted_planned[items_limit:]
+                    else:
+                        paginated_planned = sorted_planned[:items_limit]
+                    
+                    list_by_type[f"{base_media_type}_planned"] = {
+                        "items": paginated_planned,
+                        "total": total_planned,
+                        "section_label": "Planned",
+                        "media_type": base_media_type,
+                    }
 
         return list_by_type
 
     def _get_media_types_to_process(self, user, specific_media_type):
         """Determine which media types to process based on user settings."""
         if specific_media_type:
+            # Extract base media_type if it has a suffix (e.g., "movie_in_progress" -> "movie")
+            if "_" in specific_media_type:
+                base_type = specific_media_type.rsplit("_", 1)[0]
+                return [base_type]
             return [specific_media_type]
 
         # Get active types excluding TV
