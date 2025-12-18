@@ -79,8 +79,7 @@
       {# Hide total progress and repeat indicators for in-progress podcast episodes #}
       {% if media.repeats > 1 %}
         {% if media.item.media_type != MediaTypes.GAME.value and media.item.media_type != MediaTypes.BOARDGAME.value or user.game_logging_style != 'sessions' %}
-          {% with is_in_progress_podcast=media.item.media_type == MediaTypes.PODCAST.value and media.status == 'In progress' %}
-            {% if not is_in_progress_podcast %}
+          {% if media.item.media_type != MediaTypes.PODCAST.value or media.status != 'In progress' %}
               <div class="space-y-1 text-xs text-gray-400">
                 {% if media.aggregated_progress and media.item.media_type != MediaTypes.MOVIE.value %}
                   <div class="text-center media-status-chip"
@@ -121,8 +120,7 @@
                   {{ media.repeats }} repeat{{ media.repeats|pluralize }}
                 </div>
               </div>
-            {% endif %}
-          {% endwith %}
+          {% endif %}
         {% endif %}
       {% endif %}
     </div>
