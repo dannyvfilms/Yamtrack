@@ -514,14 +514,16 @@ def process_tv_seasons(tv_item, seasons_to_process, events_bulk):
             },
         )
 
-        # If this is a newly created season, update TV statuses for users
+        # Always check and update TV statuses for users when processing this season
+        # This ensures Completed shows are updated to In Progress even if the season
+        # Item already existed from a previous calendar run
         if season_created:
             logger.info(
-                "New season detected: %s - Season %s",
+                "New season Item created: %s - Season %s",
                 tv_item,
                 season_number,
             )
-            update_tv_status_for_new_season(tv_item, season_number)
+        update_tv_status_for_new_season(tv_item, season_number)
 
         # Process episodes for this season
         process_season_episodes(season_item, season_metadata, events_bulk)
