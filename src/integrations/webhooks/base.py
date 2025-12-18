@@ -172,7 +172,7 @@ class BaseWebhookProcessor:
                     )
                     try:
                         search_results = app.providers.tmdb.search(
-                            MediaTypes.TV.value, series_title
+                            MediaTypes.TV.value, series_title, page=1
                         )
                         if search_results and search_results.get("results"):
                             top_result = search_results["results"][0]
@@ -280,20 +280,11 @@ class BaseWebhookProcessor:
 
     def _find_tv_media_id(self, ids):
         """Find TV media ID from external IDs."""
-        # Check tmdb_id first - if provided, it's likely the show ID directly
-        if ids["tmdb_id"]:
-            try:
-                media_id = int(ids["tmdb_id"])
-                # Validate it's a valid TV show by checking if it exists
-                # We'll return None for season/episode to indicate they should come from payload
-                return media_id, None, None
-            except (ValueError, TypeError):
-                logger.debug("Invalid TMDB ID format: %s", ids["tmdb_id"])
-
-        # Fall back to IMDB/TVDB lookups
+        # Prioritize TVDB/IMDB lookups as they can properly resolve episode IDs via TMDB's find API
+        # Plex often provides episode-level TMDB IDs which cannot be used directly as show IDs
         for ext_id, ext_type in [
-            (ids["imdb_id"], "imdb_id"),
             (ids["tvdb_id"], "tvdb_id"),
+            (ids["imdb_id"], "imdb_id"),
         ]:
             if ext_id:
                 response = app.providers.tmdb.find(ext_id, ext_type)
@@ -310,6 +301,17 @@ class BaseWebhookProcessor:
                     result = response["tv_results"][0]
                     # Return show ID only, season/episode should come from payload
                     return result.get("id"), None, None
+
+        # Fall back to direct TMDB ID usage if TVDB/IMDB are not available
+        # Note: This may fail if the TMDB ID is actually an episode ID, but the fallback
+        # logic in _process_tv will handle it via title search
+        if ids["tmdb_id"]:
+            try:
+                media_id = int(ids["tmdb_id"])
+                # We'll return None for season/episode to indicate they should come from payload
+                return media_id, None, None
+            except (ValueError, TypeError):
+                logger.debug("Invalid TMDB ID format: %s", ids["tmdb_id"])
 
         return None, None, None
 
