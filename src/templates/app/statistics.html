@@ -886,7 +886,7 @@
               {% if tv_consumption.top_genres %}
                 <div class="space-y-3 max-h-[300px] overflow-y-auto pr-1 statistics-card-scroll">
                   {% for genre in tv_consumption.top_genres %}
-                  <div class="flex items-center space-x-3">
+                  <a href="{% url 'history' %}?genre={{ genre.name|urlencode }}&media_type=tv{% if start_date_str and start_date_str != 'all' %}&start-date={{ start_date_str }}{% endif %}{% if end_date_str and end_date_str != 'all' %}&end-date={{ end_date_str }}{% endif %}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
                     <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
                     <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center text-gray-300 text-sm font-semibold uppercase">
                       {{ genre.name|slice:":2" }}
@@ -895,7 +895,7 @@
                       <p class="text-sm font-medium text-white truncate">{{ genre.name }}</p>
                       <p class="text-xs text-gray-500 truncate">{{ genre.formatted_duration }} · {{ genre.plays }} play{{ genre.plays|pluralize }}</p>
                     </div>
-                  </div>
+                  </a>
                   {% endfor %}
                 </div>
               {% else %}
@@ -1127,7 +1127,7 @@
               {% if movie_consumption.top_genres %}
                 <div class="space-y-3 max-h-[300px] overflow-y-auto pr-1 statistics-card-scroll">
                   {% for genre in movie_consumption.top_genres %}
-                  <div class="flex items-center space-x-3">
+                  <a href="{% url 'history' %}?genre={{ genre.name|urlencode }}&media_type=movie{% if start_date_str and start_date_str != 'all' %}&start-date={{ start_date_str }}{% endif %}{% if end_date_str and end_date_str != 'all' %}&end-date={{ end_date_str }}{% endif %}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
                     <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
                     <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center text-gray-300 text-sm font-semibold uppercase">
                       {{ genre.name|slice:":2" }}
@@ -1136,7 +1136,7 @@
                       <p class="text-sm font-medium text-white truncate">{{ genre.name }}</p>
                       <p class="text-xs text-gray-500 truncate">{{ genre.formatted_duration }} · {{ genre.plays }} play{{ genre.plays|pluralize }}</p>
                     </div>
-                  </div>
+                  </a>
                   {% endfor %}
                 </div>
               {% else %}
@@ -1447,7 +1447,7 @@
               {% if music_consumption.top_genres %}
                 <div class="space-y-3 max-h-[300px] overflow-y-auto pr-1 statistics-card-scroll">
                   {% for genre in music_consumption.top_genres %}
-                  <div class="flex items-center space-x-3">
+                  <a href="{% url 'history' %}?genre={{ genre.name|urlencode }}&media_type=music{% if start_date_str and start_date_str != 'all' %}&start-date={{ start_date_str }}{% endif %}{% if end_date_str and end_date_str != 'all' %}&end-date={{ end_date_str }}{% endif %}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
                     <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
                     <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center text-gray-300 text-sm font-semibold uppercase">
                       {{ genre.name|slice:":2" }}
@@ -1456,7 +1456,7 @@
                       <p class="text-sm font-medium text-white truncate">{{ genre.name }}</p>
                       <p class="text-xs text-gray-500 truncate">{{ genre.formatted_duration }} · {{ genre.plays }} play{{ genre.plays|pluralize }}</p>
                     </div>
-                  </div>
+                  </a>
                   {% endfor %}
                 </div>
               {% else %}

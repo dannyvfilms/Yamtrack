@@ -2331,17 +2331,30 @@ def history(request):
     try:
         # Extract filter parameters from query string
         filters = {}
-        filter_params = ['album', 'artist', 'tv', 'season']
+        filter_params = ['album', 'artist', 'tv', 'season', 'genre', 'media_type']
         for param in filter_params:
             value = request.GET.get(param)
             if value:
-                try:
-                    filters[param] = int(value)
-                except (TypeError, ValueError):
-                    pass  # Skip invalid filter values
+                if param in ['album', 'artist', 'tv', 'season']:
+                    try:
+                        filters[param] = int(value)
+                    except (TypeError, ValueError):
+                        pass  # Skip invalid filter values
+                else:
+                    # genre and media_type are strings
+                    filters[param] = value
+        
+        # Extract date range filters
+        date_filters = {}
+        start_date_str = request.GET.get("start-date")
+        end_date_str = request.GET.get("end-date")
+        if start_date_str:
+            date_filters['start_date'] = start_date_str
+        if end_date_str:
+            date_filters['end_date'] = end_date_str
         
         # Get history days with filters applied
-        history_days_all = history_cache.get_history_days(request.user, filters=filters)
+        history_days_all = history_cache.get_history_days(request.user, filters=filters, date_filters=date_filters)
 
         paginator = Paginator(history_days_all, history_cache.HISTORY_DAYS_PER_PAGE)
 
@@ -2363,6 +2376,13 @@ def history(request):
             history_days = page_obj.object_list
             current_page = page_obj.number
 
+        # Combine all filters for pagination (including date filters as query params)
+        active_filters = filters.copy()
+        if date_filters.get('start_date'):
+            active_filters['start-date'] = date_filters['start_date']
+        if date_filters.get('end_date'):
+            active_filters['end-date'] = date_filters['end_date']
+        
         context = {
             "user": request.user,
             "history_days": history_days,
@@ -2371,7 +2391,7 @@ def history(request):
             "total_pages": paginator.num_pages,
             "total_days": paginator.count,
             "days_per_page": paginator.per_page,
-            "active_filters": filters,  # Pass filters to template for pagination
+            "active_filters": active_filters,  # Pass filters to template for pagination
         }
         return render(request, "app/history.html", context)
     except OperationalError as error:
@@ -4173,10 +4193,16 @@ def statistics(request):
         top_rated_movie = [m for m in top_rated if m.item.media_type == MediaTypes.MOVIE.value]
         top_rated_tv = [m for m in top_rated if m.item.media_type == MediaTypes.TV.value]
 
+        # Format dates as strings for URL parameters
+        start_date_str_for_url = start_date_str if start_date_str else ""
+        end_date_str_for_url = end_date_str if end_date_str else ""
+        
         context = {
             "user": request.user,
             "start_date": start_date,
             "end_date": end_date,
+            "start_date_str": start_date_str_for_url,
+            "end_date_str": end_date_str_for_url,
             "selected_range_name": selected_range_name,
             "media_count": statistics_data["media_count"],
             "activity_data": statistics_data["activity_data"],

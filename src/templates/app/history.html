@@ -47,6 +47,18 @@
     });
   },
   async checkCacheStatus() {
+    // Skip cache status check if filters are applied (filtered results bypass cache)
+    const urlParams = new URLSearchParams(window.location.search);
+    const hasFilters = urlParams.has('genre') || urlParams.has('media_type') || 
+                       urlParams.has('album') || urlParams.has('artist') || 
+                       urlParams.has('tv') || urlParams.has('season') ||
+                       urlParams.has('start-date') || urlParams.has('end-date');
+    
+    if (hasFilters) {
+      console.log('History page: Filters detected, skipping cache status check');
+      return;
+    }
+    
     try {
       const params = new URLSearchParams({
         cache_type: 'history',
