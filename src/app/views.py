@@ -4168,11 +4168,13 @@ def statistics(request):
                 # Convert to datetime with timezone awareness
                 start_date = timezone.make_aware(
                     datetime.combine(start_date, datetime.min.time()),
+                    timezone.get_current_timezone(),
                 )
 
                 # End date should be end of day
                 end_date = timezone.make_aware(
                     datetime.combine(end_date, datetime.max.time()),
+                    timezone.get_current_timezone(),
                 )
 
         # Identify predefined range for caching

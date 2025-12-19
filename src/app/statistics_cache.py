@@ -287,45 +287,45 @@ def refresh_statistics_cache(user_id: int, range_name: str):
         start_date = None
         end_date = None
     elif range_name == "Today":
-        start_date = timezone.make_aware(datetime.combine(today, datetime.min.time()))
-        end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()))
+        start_date = timezone.make_aware(datetime.combine(today, datetime.min.time()), timezone.get_current_timezone())
+        end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()), timezone.get_current_timezone())
     elif range_name == "Yesterday":
         yesterday = today - timedelta(days=1)
-        start_date = timezone.make_aware(datetime.combine(yesterday, datetime.min.time()))
-        end_date = timezone.make_aware(datetime.combine(yesterday, datetime.max.time()))
+        start_date = timezone.make_aware(datetime.combine(yesterday, datetime.min.time()), timezone.get_current_timezone())
+        end_date = timezone.make_aware(datetime.combine(yesterday, datetime.max.time()), timezone.get_current_timezone())
     elif range_name == "This Week":
         monday = today - timedelta(days=today.weekday())
-        start_date = timezone.make_aware(datetime.combine(monday, datetime.min.time()))
-        end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()))
+        start_date = timezone.make_aware(datetime.combine(monday, datetime.min.time()), timezone.get_current_timezone())
+        end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()), timezone.get_current_timezone())
     elif range_name == "Last 7 Days":
-        start_date = timezone.make_aware(datetime.combine(today - timedelta(days=6), datetime.min.time()))
-        end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()))
+        start_date = timezone.make_aware(datetime.combine(today - timedelta(days=6), datetime.min.time()), timezone.get_current_timezone())
+        end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()), timezone.get_current_timezone())
     elif range_name == "This Month":
         month_start = today.replace(day=1)
-        start_date = timezone.make_aware(datetime.combine(month_start, datetime.min.time()))
-        end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()))
+        start_date = timezone.make_aware(datetime.combine(month_start, datetime.min.time()), timezone.get_current_timezone())
+        end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()), timezone.get_current_timezone())
     elif range_name == "Last 30 Days":
-        start_date = timezone.make_aware(datetime.combine(today - timedelta(days=29), datetime.min.time()))
-        end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()))
+        start_date = timezone.make_aware(datetime.combine(today - timedelta(days=29), datetime.min.time()), timezone.get_current_timezone())
+        end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()), timezone.get_current_timezone())
     elif range_name == "Last 90 Days":
-        start_date = timezone.make_aware(datetime.combine(today - timedelta(days=89), datetime.min.time()))
-        end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()))
+        start_date = timezone.make_aware(datetime.combine(today - timedelta(days=89), datetime.min.time()), timezone.get_current_timezone())
+        end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()), timezone.get_current_timezone())
     elif range_name == "This Year":
         year_start = today.replace(month=1, day=1)
-        start_date = timezone.make_aware(datetime.combine(year_start, datetime.min.time()))
-        end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()))
+        start_date = timezone.make_aware(datetime.combine(year_start, datetime.min.time()), timezone.get_current_timezone())
+        end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()), timezone.get_current_timezone())
     elif range_name == "Last 6 Months":
         six_months_start = today - relativedelta(months=6)
         if six_months_start.day != today.day:
             six_months_start = (six_months_start.replace(day=1) + relativedelta(months=1)) - timedelta(days=1)
-        start_date = timezone.make_aware(datetime.combine(six_months_start, datetime.min.time()))
-        end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()))
+        start_date = timezone.make_aware(datetime.combine(six_months_start, datetime.min.time()), timezone.get_current_timezone())
+        end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()), timezone.get_current_timezone())
     elif range_name == "Last 12 Months":
         twelve_months_start = today - relativedelta(months=12)
         if twelve_months_start.day != today.day:
             twelve_months_start = (twelve_months_start.replace(day=1) + relativedelta(months=1)) - timedelta(days=1)
-        start_date = timezone.make_aware(datetime.combine(twelve_months_start, datetime.min.time()))
-        end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()))
+        start_date = timezone.make_aware(datetime.combine(twelve_months_start, datetime.min.time()), timezone.get_current_timezone())
+        end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()), timezone.get_current_timezone())
     
     data = build_statistics_data(user, start_date, end_date)
     cache_statistics_data(user_id, range_name, data)

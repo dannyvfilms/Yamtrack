@@ -183,7 +183,11 @@ function dateRangePicker() {
     },
 
     formatDisplayDate(dateString) {
-      const date = new Date(dateString);
+      // Parse date string (YYYY-MM-DD) as local date to avoid timezone conversion issues
+      // When using new Date("YYYY-MM-DD"), it's interpreted as UTC midnight,
+      // which can shift to the previous day in local time zones ahead of UTC
+      const [year, month, day] = dateString.split("-").map(Number);
+      const date = new Date(year, month - 1, day); // month is 0-indexed
       return date.toLocaleDateString("en-US", {
         month: "short",
         day: "numeric",
@@ -197,9 +201,15 @@ function dateRangePicker() {
         this.selectedRange = "All Time";
         return;
       }
-      // Parse the current start and end dates
-      const startDate = new Date(this.startDate);
-      const endDate = new Date(this.endDate);
+      // Parse the current start and end dates as local dates to avoid timezone conversion issues
+      // When using new Date("YYYY-MM-DD"), it's interpreted as UTC midnight,
+      // which can shift to the previous day in local time zones ahead of UTC
+      const parseLocalDate = (dateString) => {
+        const [year, month, day] = dateString.split("-").map(Number);
+        return new Date(year, month - 1, day); // month is 0-indexed
+      };
+      const startDate = parseLocalDate(this.startDate);
+      const endDate = parseLocalDate(this.endDate);
 
       // Get today's date with time set to 00:00:00
       const today = new Date();
