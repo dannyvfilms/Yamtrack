@@ -4167,6 +4167,11 @@ def statistics(request):
         )
 
         show_year_charts = selected_range_name in (None, "All Time")
+        
+        # Filter top_rated by media type for compact cards
+        top_rated = statistics_data["top_rated"]
+        top_rated_movie = [m for m in top_rated if m.item.media_type == MediaTypes.MOVIE.value]
+        top_rated_tv = [m for m in top_rated if m.item.media_type == MediaTypes.TV.value]
 
         context = {
             "user": request.user,
@@ -4178,6 +4183,8 @@ def statistics(request):
             "media_type_distribution": statistics_data["media_type_distribution"],
             "score_distribution": statistics_data["score_distribution"],
             "top_rated": statistics_data["top_rated"],
+            "top_rated_movie": top_rated_movie,
+            "top_rated_tv": top_rated_tv,
             "top_played": statistics_data["top_played"],
             "status_distribution": statistics_data["status_distribution"],
             "status_pie_chart_data": statistics_data["status_pie_chart_data"],

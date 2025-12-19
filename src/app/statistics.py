@@ -1391,10 +1391,94 @@ def _collect_movie_datetimes(movie_queryset, start_date, end_date):
     return datetimes
 
 
+def _collect_movie_play_data(movie_queryset, start_date, end_date):
+    """Collect movie play datetimes and per-play runtime.
+    
+    Returns:
+        tuple: (list of datetimes, list of (movie_entry, datetime, runtime_minutes) tuples)
+    """
+    datetimes = []
+    play_details = []  # (movie_entry, datetime, runtime_minutes)
+    
+    if movie_queryset is None:
+        return datetimes, play_details
+    
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    for movie in movie_queryset:
+        activity_date = _get_activity_datetime(movie)
+        if activity_date is None:
+            continue
+        
+        if start_date and end_date:
+            if not (start_date <= activity_date <= end_date):
+                continue
+        
+        # Get runtime for this movie
+        runtime_minutes = _get_media_runtime_from_cache(movie, logger, context="movie play data")
+        if runtime_minutes <= 0:
+            # Skip if no runtime available
+            continue
+        
+        localized_date = _localize_datetime(activity_date)
+        datetimes.append(localized_date)
+        play_details.append((movie, localized_date, runtime_minutes))
+    
+    return datetimes, play_details
+
+
+def _collect_tv_play_data(tv_queryset, start_date, end_date):
+    """Collect TV episode play datetimes and per-play runtime.
+    
+    Returns:
+        tuple: (list of datetimes, list of (episode_entry, datetime, runtime_minutes) tuples)
+    """
+    datetimes = []
+    play_details = []  # (episode_entry, datetime, runtime_minutes)
+    
+    if tv_queryset is None:
+        return datetimes, play_details
+    
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    for tv in tv_queryset:
+        seasons = getattr(tv, "seasons", None)
+        if seasons is None:
+            continue
+        
+        for season in seasons.all():
+            episodes = getattr(season, "episodes", None)
+            if episodes is None:
+                continue
+            
+            for episode in episodes.all():
+                if not episode.end_date:
+                    continue
+                if not _is_episode_in_range(episode, start_date, end_date):
+                    continue
+                
+                # Get runtime for this episode
+                runtime_minutes = _get_media_runtime_from_cache(episode, logger, context="TV episode play data")
+                if runtime_minutes <= 0:
+                    # Skip if no runtime available
+                    continue
+                
+                localized_date = _localize_datetime(episode.end_date)
+                datetimes.append(localized_date)
+                play_details.append((episode, localized_date, runtime_minutes))
+    
+    return datetimes, play_details
+
+
 def get_tv_consumption_stats(user_media, start_date, end_date, minutes_per_type=None):
     """Return aggregate metrics and chart data for TV episode activity."""
     tv_queryset = (user_media or {}).get(MediaTypes.TV.value)
     episode_datetimes = _collect_episode_datetimes(tv_queryset, start_date, end_date)
+    
+    # Collect play details for genre calculation
+    _, play_details = _collect_tv_play_data(tv_queryset, start_date, end_date)
 
     if minutes_per_type is None:
         minutes_per_type = calculate_minutes_per_media_type(user_media or {}, start_date, end_date)
@@ -1419,12 +1503,16 @@ def get_tv_consumption_stats(user_media, start_date, end_date, minutes_per_type=
     color = config.get_stats_color(MediaTypes.TV.value)
     chart_label = "Episode Plays"
     charts = _build_media_charts(episode_datetimes, color, chart_label)
+    
+    # Compute top genres
+    top_genres = _compute_movie_tv_top_genres(play_details, limit=20)
 
     return {
         "hours": hours_breakdown,
         "plays": plays_breakdown,
         "charts": charts,
         "has_data": total_plays > 0,
+        "top_genres": top_genres,
     }
 
 
@@ -1432,6 +1520,9 @@ def get_movie_consumption_stats(user_media, start_date, end_date, minutes_per_ty
     """Return aggregate metrics and chart data for movie activity."""
     movie_queryset = (user_media or {}).get(MediaTypes.MOVIE.value)
     movie_datetimes = _collect_movie_datetimes(movie_queryset, start_date, end_date)
+    
+    # Collect play details for genre calculation
+    _, play_details = _collect_movie_play_data(movie_queryset, start_date, end_date)
 
     if minutes_per_type is None:
         minutes_per_type = calculate_minutes_per_media_type(user_media or {}, start_date, end_date)
@@ -1456,12 +1547,16 @@ def get_movie_consumption_stats(user_media, start_date, end_date, minutes_per_ty
     color = config.get_stats_color(MediaTypes.MOVIE.value)
     chart_label = "Movie Plays"
     charts = _build_media_charts(movie_datetimes, color, chart_label)
+    
+    # Compute top genres
+    top_genres = _compute_movie_tv_top_genres(play_details, limit=20)
 
     return {
         "hours": hours_breakdown,
         "plays": plays_breakdown,
         "charts": charts,
         "has_data": total_plays > 0,
+        "top_genres": top_genres,
     }
 
 
@@ -1965,6 +2060,84 @@ def _compute_music_top_rollups(play_details, limit=5):
         "top_decades": _format_top(decade_stats, "label"),
         "top_countries": _format_top(country_stats, "code"),
     }
+
+
+def _compute_movie_tv_top_genres(play_details, limit=20):
+    """Compute top genres from movie/TV play details.
+    
+    Args:
+        play_details: List of (media_entry, datetime, runtime_minutes) tuples
+        limit: Number of genres to return
+        
+    Returns:
+        list of genre dicts with name, minutes, plays, formatted_duration
+    """
+    from app.helpers import minutes_to_hhmm
+    from app.models import Episode
+
+    genre_stats = defaultdict(lambda: {"minutes": 0, "plays": 0, "name": ""})
+
+    for media, dt, runtime in play_details:
+        minutes = runtime or 0
+
+        # Get genres from media.item.details or metadata
+        genres = []
+        
+        # For TV episodes, get genres from the parent TV show
+        # For movies, get genres directly from the movie
+        media_to_use = media
+        if isinstance(media, Episode):
+            # Episode -> Season -> TV show
+            if hasattr(media, 'related_season') and media.related_season:
+                if hasattr(media.related_season, 'related_tv') and media.related_season.related_tv:
+                    media_to_use = media.related_season.related_tv
+                else:
+                    # Skip if we can't get the TV show
+                    continue
+            else:
+                # Skip if we can't get the season
+                continue
+        
+        if hasattr(media_to_use, 'item') and media_to_use.item:
+            # Try to get genres from item details
+            try:
+                metadata = _get_media_metadata_for_statistics(media_to_use)
+                if metadata:
+                    details = metadata.get("details") if isinstance(metadata, dict) else None
+                    if isinstance(details, dict):
+                        genres_raw = details.get("genres", [])
+                        if genres_raw:
+                            genres = _coerce_genre_list(genres_raw)
+                    # Also check top-level genres
+                    if not genres:
+                        genres_raw = metadata.get("genres", [])
+                        if genres_raw:
+                            genres = _coerce_genre_list(genres_raw)
+            except (ValueError, TypeError, KeyError, AttributeError) as e:
+                # Skip this media if metadata retrieval fails
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.debug(f"Skipping genre calculation for {getattr(media_to_use.item, 'title', 'unknown')}: {e}")
+                continue
+
+        for genre in genres:
+            key = str(genre).title()
+            genre_stats[key]["minutes"] += minutes
+            genre_stats[key]["plays"] += 1
+            genre_stats[key]["name"] = key
+
+    # Sort by minutes (descending), then by plays (descending)
+    items = sorted(
+        genre_stats.values(),
+        key=lambda x: (x["minutes"], x["plays"]),
+        reverse=True,
+    )[:limit]
+    
+    # Format durations
+    for item in items:
+        item["formatted_duration"] = minutes_to_hhmm(item["minutes"])
+    
+    return items
 
 
 def get_music_consumption_stats(user_media, start_date, end_date, minutes_per_type=None):
