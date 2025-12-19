@@ -1898,6 +1898,11 @@
       </div>
 
       <!-- Top Movies Section -->
+      {% comment %}
+      COMMENTED OUT: Old "Movies - Most Played" section
+      REPLACED BY: New 3-card row in Movies Activity Overview section (Most Played, Top Genres, Top Rated)
+      Location: After "Movie Plays by Time of Day" chart
+      To restore: Uncomment this entire section
       {% if top_played.movie %}
         <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 mobile-tight-section stat-scroll-safe mb-4 sm:mb-6">
           <div class="flex flex-col space-y-1 mb-3 sm:mb-4">
@@ -1980,8 +1985,14 @@
           </div>
         </div>
       {% endif %}
+      {% endcomment %}
 
       <!-- Top TV Shows Section -->
+      {% comment %}
+      COMMENTED OUT: Old "TV Shows - Most Played" section
+      REPLACED BY: New 3-card row in TV Shows Activity Overview section (Most Played, Top Genres, Top Rated)
+      Location: After "Episode Plays by Time of Day" chart
+      To restore: Uncomment this entire section
       {% if top_played.tv %}
         <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 mobile-tight-section stat-scroll-safe mb-4 sm:mb-6">
           <div class="flex flex-col space-y-1 mb-3 sm:mb-4">
@@ -2062,6 +2073,7 @@
           </div>
         </div>
       {% endif %}
+      {% endcomment %}
 
       <!-- Top Games Section -->
       {% if top_played.game %}
@@ -2334,6 +2346,11 @@
       {% endif %}
 
       <!-- Top Rated Media Section -->
+      {% comment %}
+      COMMENTED OUT: Old "ALL MEDIA - Top Rated Media" section
+      REPLACED BY: New 3-card rows in Movies and TV Shows Activity Overview sections (Top Rated cards)
+      Location: After "Movie Plays by Time of Day" chart (Movies) and "Episode Plays by Time of Day" chart (TV Shows)
+      To restore: Uncomment this entire section
       <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 mobile-tight-section stat-scroll-safe mb-4 sm:mb-6">
         <div class="flex flex-col space-y-1 mb-3 sm:mb-4">
           <span class="text-sm uppercase tracking-widest text-gray-400">All Media</span>
@@ -2369,6 +2386,7 @@
           </div>
         {% endif %}
       </div>
+      {% endcomment %}
 
     </div>
   </div>
