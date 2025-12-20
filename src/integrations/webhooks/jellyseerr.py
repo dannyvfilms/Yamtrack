@@ -13,7 +13,7 @@ class JellyseerrWebhookProcessor:
     """
     Processor for Jellyseerr webhook events.
 
-    Expected payload keys (you control this in Jellyseerr webhook JSON):
+    Expected payload keys (configure in Jellyseerr webhook JSON):
       - media_type: "movie" or "tv"
       - media_tmdbid: TMDB ID
       - media_status: UNKNOWN|PENDING|PROCESSING|PARTIALLY_AVAILABLE|AVAILABLE
@@ -205,16 +205,6 @@ class JellyseerrWebhookProcessor:
         except IntegrityError:
             media_obj = model.objects.filter(user=user, item=item).first()
             created = False
-
-        if created:
-            logger.info(
-                "Jellyseerr: added %s to %s with status=%s",
-                item,
-                user.username,
-                desired_status,
-            )
-        else:
-            logger.debug("Jellyseerr: %s already exists for %s (no-op)", item, user.username)
 
         return media_obj
 
