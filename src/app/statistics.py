@@ -234,8 +234,13 @@ def get_score_distribution(user_media):
     total_scored = 0
     total_score_sum = 0
 
+    # Global top rated (for backward compatibility with existing "ALL MEDIA" section)
     top_rated = []
     top_rated_count = 14
+    # Per-media-type top rated (for the new compact cards)
+    top_rated_by_type = {}
+    top_rated_per_type_count = 20  # Match the limit used in other cards
+    
     counter = itertools.count()  # Ensures stable sorting for equal scores
     score_range = range(11)
 
@@ -243,7 +248,12 @@ def get_score_distribution(user_media):
         score_counts = dict.fromkeys(score_range, 0)
         scored_media = media_list.exclude(score__isnull=True).select_related("item")
 
+        # Initialize per-type heap for this media type
+        type_top_rated = []
+        type_counter = itertools.count()
+
         for media in scored_media:
+            # Add to global top rated (for backward compatibility)
             if len(top_rated) < top_rated_count:
                 heapq.heappush(
                     top_rated,
@@ -254,6 +264,18 @@ def get_score_distribution(user_media):
                     top_rated,
                     (float(media.score), next(counter), media),
                 )
+            
+            # Add to per-type top rated
+            if len(type_top_rated) < top_rated_per_type_count:
+                heapq.heappush(
+                    type_top_rated,
+                    (float(media.score), next(type_counter), media),
+                )
+            else:
+                heapq.heappushpop(
+                    type_top_rated,
+                    (float(media.score), next(type_counter), media),
+                )
 
             binned_score = int(media.score)
             score_counts[binned_score] += 1
@@ -261,6 +283,12 @@ def get_score_distribution(user_media):
             total_score_sum += media.score
 
         distribution[media_type] = score_counts
+        
+        # Sort and annotate per-type top rated
+        type_top_rated_sorted = [
+            media for _, _, media in sorted(type_top_rated, key=lambda x: (-x[0], x[1]))
+        ]
+        top_rated_by_type[media_type] = _annotate_top_rated_media(type_top_rated_sorted)
 
     average_score = (
         round(total_score_sum / total_scored, 2) if total_scored > 0 else None
@@ -284,7 +312,7 @@ def get_score_distribution(user_media):
         ],
         "average_score": average_score,
         "total_scored": total_scored,
-    }, top_rated_media
+    }, top_rated_media, top_rated_by_type
 
 
 def _annotate_top_rated_media(top_rated_media):

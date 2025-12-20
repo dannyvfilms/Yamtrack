@@ -4190,10 +4190,11 @@ def statistics(request):
 
         show_year_charts = selected_range_name in (None, "All Time")
         
-        # Filter top_rated by media type for compact cards
-        top_rated = statistics_data["top_rated"]
-        top_rated_movie = [m for m in top_rated if m.item.media_type == MediaTypes.MOVIE.value]
-        top_rated_tv = [m for m in top_rated if m.item.media_type == MediaTypes.TV.value]
+        # Get top rated by media type for compact cards
+        top_rated = statistics_data["top_rated"]  # Keep for backward compatibility with "ALL MEDIA" section
+        top_rated_by_type = statistics_data.get("top_rated_by_type", {})
+        top_rated_movie = top_rated_by_type.get("movie", [])
+        top_rated_tv = top_rated_by_type.get("tv", [])
 
         # Format dates as strings for URL parameters
         start_date_str_for_url = start_date_str if start_date_str else ""

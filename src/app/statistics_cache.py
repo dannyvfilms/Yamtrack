@@ -79,7 +79,7 @@ def build_statistics_data(user, start_date, end_date):
     media_type_distribution = stats.get_media_type_distribution(
         media_count,
     )
-    score_distribution, top_rated = stats.get_score_distribution(user_media)
+    score_distribution, top_rated, top_rated_by_type = stats.get_score_distribution(user_media)
     status_distribution = stats.get_status_distribution(user_media)
     status_pie_chart_data = stats.get_status_pie_chart_data(
         status_distribution,
@@ -139,6 +139,7 @@ def build_statistics_data(user, start_date, end_date):
         "media_type_distribution": media_type_distribution,
         "score_distribution": score_distribution,
         "top_rated": top_rated,
+        "top_rated_by_type": top_rated_by_type,
         "top_played": top_played,
         "status_distribution": status_distribution,
         "status_pie_chart_data": status_pie_chart_data,
@@ -163,6 +164,7 @@ def _get_empty_statistics_data():
         "media_type_distribution": {},
         "score_distribution": {},
         "top_rated": [],
+        "top_rated_by_type": {},
         "top_played": [],
         "status_distribution": {},
         "status_pie_chart_data": {},
