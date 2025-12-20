@@ -143,6 +143,13 @@ class PlannedHomeDisplayChoices(models.TextChoices):
     SEPARATED = "separated", "Separated"
 
 
+class JellyseerrDefaultAddedStatusChoices(models.TextChoices):
+    """Choices for status applied to media added via Jellyseerr webhook."""
+
+    PLANNING = Status.PLANNING.value, Status.PLANNING.label
+    IN_PROGRESS = Status.IN_PROGRESS.value, Status.IN_PROGRESS.label
+
+
 class User(AbstractUser):
     """Custom user model."""
 
@@ -468,6 +475,31 @@ class User(AbstractUser):
     plex_usernames = models.TextField(
         blank=True,
         help_text="Comma-separated list of Plex usernames for webhook matching",
+    )
+
+    jellyseerr_enabled = models.BooleanField(
+        default=False,
+        help_text="Enable Jellyseerr webhook auto-add for this user",
+    )
+    jellyseerr_allowed_usernames = models.TextField(
+        blank=True,
+        help_text=(
+            "Comma-separated list of Jellyseerr usernames allowed to trigger adds. "
+            "Blank = allow all."
+        ),
+    )
+    jellyseerr_trigger_statuses = models.TextField(
+        blank=True,
+        help_text=(
+            "Comma-separated Jellyseerr media_status values that trigger add "
+            "(e.g. PENDING,PROCESSING,AVAILABLE). Blank = default behaviour (skips UNKNOWN)."
+        ),
+    )
+    jellyseerr_default_added_status = models.CharField(
+        max_length=20,
+        choices=JellyseerrDefaultAddedStatusChoices.choices,
+        default=Status.PLANNING.value,
+        help_text="Status to set when adding media via Jellyseerr webhook",
     )
 
     date_format = models.CharField(

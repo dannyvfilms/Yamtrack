@@ -57,4 +57,10 @@ urlpatterns = [
         views.emby_webhook,
         name="emby_webhook",
     ),
+    path(
+        "webhook/jellyseerr/<str:token>",
+        views.jellyseerr_webhook,
+        name="jellyseerr_webhook",
+    ),
+
 ]
