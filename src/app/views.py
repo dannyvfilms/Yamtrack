@@ -3865,16 +3865,35 @@ def podcast_save(request):
     ).first()
 
     if existing_podcast:
-        # Add a new history entry (replay) by updating end_date
-        # This creates a new history record via the historical records system
-        existing_podcast.end_date = end_date
-        
-        # Update progress if needed
-        if runtime_minutes and existing_podcast.progress != runtime_minutes:
-            existing_podcast.progress = runtime_minutes
-        
-        existing_podcast.save()
-        messages.success(request, f"Added play for {episode.title if episode else 'episode'}")
+        # Check for duplicate before creating new history entry
+        latest_history = existing_podcast.history.filter(end_date__isnull=False).order_by("-end_date").first()
+        if latest_history and latest_history.end_date and end_date:
+            time_diff = abs((end_date - latest_history.end_date).total_seconds())
+            if time_diff < 300:  # 5 minutes threshold
+                logger.debug("Skipping duplicate podcast history entry (time difference: %d seconds)", time_diff)
+                messages.info(request, f"Play already recorded for {episode.title if episode else 'episode'}")
+                # Continue to HTMX/redirect handling below - don't create duplicate but still return proper response
+            else:
+                # Add a new history entry (replay) by updating end_date
+                # This creates a new history record via the historical records system
+                existing_podcast.end_date = end_date
+                
+                # Update progress if needed
+                if runtime_minutes and existing_podcast.progress != runtime_minutes:
+                    existing_podcast.progress = runtime_minutes
+                
+                existing_podcast.save()
+                messages.success(request, f"Added play for {episode.title if episode else 'episode'}")
+        else:
+            # No existing history or missing dates, proceed with creating history entry
+            existing_podcast.end_date = end_date
+            
+            # Update progress if needed
+            if runtime_minutes and existing_podcast.progress != runtime_minutes:
+                existing_podcast.progress = runtime_minutes
+            
+            existing_podcast.save()
+            messages.success(request, f"Added play for {episode.title if episode else 'episode'}")
     else:
         # Create new Podcast entry
         Podcast.objects.create(

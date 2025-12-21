@@ -1574,6 +1574,17 @@ class PocketCastsImporter:
         if delta_seconds <= 0:
             return
         
+        # Check for recent history entry to avoid duplicates from frequent syncs
+        latest_history = podcast.history.filter(end_date__isnull=False).order_by("-history_date").first()
+        if latest_history:
+            from django.utils import timezone
+            from datetime import timedelta
+            time_since_last = timezone.now() - latest_history.history_date
+            # If history was created in the last 2 hours, skip to avoid duplicates from frequent syncs
+            if time_since_last < timedelta(hours=2):
+                logger.debug("Skipping duplicate history entry for podcast %s (created %s ago)", podcast.id, time_since_last)
+                return
+        
         # Convert to minutes for history
         delta_minutes = delta_seconds // 60
         if delta_minutes == 0 and delta_seconds > 0:
