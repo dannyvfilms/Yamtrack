@@ -5,6 +5,7 @@ import apprise
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import update_session_auth_hash
+from django.contrib.auth.decorators import login_required
 from django.core.cache import cache
 from django.db import IntegrityError
 from django.db.models import Q
@@ -14,7 +15,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 from django_celery_beat.models import PeriodicTask
 
-from app.models import Item, MediaTypes
+from app.models import Item, MediaTypes, Status
 from app.templatetags import app_tags
 from integrations import plex
 from integrations.models import PlexAccount
@@ -572,6 +573,72 @@ def update_plex_usernames(request):
         messages.success(request, "Plex usernames updated successfully")
 
     return redirect(redirect_target)
+
+@login_required
+@require_POST
+def update_jellyseerr_settings(request):
+    user = request.user
+
+    enabled = bool(request.POST.get("jellyseerr_enabled"))
+
+    raw_trigger = (request.POST.get("jellyseerr_trigger_statuses") or "").strip()
+    raw_allowed = (request.POST.get("jellyseerr_allowed_usernames") or "").strip()
+    default_status = (request.POST.get("jellyseerr_default_added_status") or "").strip()
+
+    # Validate + normalize default status
+    valid_default_statuses = {Status.PLANNING.value, Status.IN_PROGRESS.value}
+    if default_status not in valid_default_statuses:
+        default_status = Status.PLANNING.value
+
+    # Normalize trigger statuses: "pending, processing" -> "PENDING,PROCESSING"
+    valid_jellyseerr_statuses = {
+        "UNKNOWN",
+        "PENDING",
+        "PROCESSING",
+        "PARTIALLY_AVAILABLE",
+        "AVAILABLE",
+    }
+
+    if raw_trigger:
+        tokens = [t.strip().upper() for t in raw_trigger.split(",") if t.strip()]
+        unknown = [t for t in tokens if t not in valid_jellyseerr_statuses]
+        if unknown:
+            messages.error(
+                request,
+                "Jellyseerr trigger statuses contain invalid values: "
+                + ", ".join(unknown)
+                + ". Valid: "
+                + ", ".join(sorted(valid_jellyseerr_statuses)),
+            )
+            return redirect(request.META.get("HTTP_REFERER", "/settings/integrations"))
+        trigger_statuses = ",".join(tokens)
+    else:
+        # Blank means "default behaviour" (processor skips UNKNOWN)
+        trigger_statuses = ""
+
+    # Normalize allowed usernames: " bob, alice " -> "bob,alice"
+    if raw_allowed:
+        allowed_tokens = [t.strip() for t in raw_allowed.split(",") if t.strip()]
+        allowed_usernames = ",".join(allowed_tokens)
+    else:
+        allowed_usernames = ""
+
+    # Save
+    user.jellyseerr_enabled = enabled
+    user.jellyseerr_trigger_statuses = trigger_statuses
+    user.jellyseerr_allowed_usernames = allowed_usernames
+    user.jellyseerr_default_added_status = default_status
+    user.save(
+        update_fields=[
+            "jellyseerr_enabled",
+            "jellyseerr_trigger_statuses",
+            "jellyseerr_allowed_usernames",
+            "jellyseerr_default_added_status",
+        ]
+    )
+
+    messages.success(request, "Jellyseerr settings saved.")
+    return redirect(request.META.get("HTTP_REFERER", "/settings/integrations"))
 
 
 @require_POST
