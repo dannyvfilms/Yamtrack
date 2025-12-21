@@ -13,3 +13,8 @@ src/.DS_Store
 CLAUDE.md
 requests.http
 TODO.txt
+
+# Local dev-only
+.env.dev
+docker-compose.dev.yml
+db-dev/
