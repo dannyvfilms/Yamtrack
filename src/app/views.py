@@ -4222,6 +4222,7 @@ def statistics(request):
             "movie_consumption": statistics_data["movie_consumption"],
             "music_consumption": statistics_data["music_consumption"],
             "podcast_consumption": statistics_data["podcast_consumption"],
+            "game_consumption": statistics_data["game_consumption"],
             "daily_hours_by_media_type": statistics_data["daily_hours_by_media_type"],
             "show_year_charts": show_year_charts,
             "media_type_colors": {
@@ -4265,6 +4266,8 @@ def statistics(request):
             "tv_consumption": {},
             "movie_consumption": {},
             "music_consumption": {},
+            "podcast_consumption": {},
+            "game_consumption": {},
             "daily_hours_by_media_type": {},
         }
         
@@ -4284,6 +4287,8 @@ def statistics(request):
             "tv_consumption": empty_statistics_data["tv_consumption"],
             "movie_consumption": empty_statistics_data["movie_consumption"],
             "music_consumption": empty_statistics_data["music_consumption"],
+            "podcast_consumption": empty_statistics_data["podcast_consumption"],
+            "game_consumption": empty_statistics_data["game_consumption"],
             "daily_hours_by_media_type": empty_statistics_data["daily_hours_by_media_type"],
             "media_type_colors": empty_statistics_data["media_type_colors"],
             "show_year_charts": False,

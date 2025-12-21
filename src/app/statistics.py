@@ -1588,6 +1588,449 @@ def get_movie_consumption_stats(user_media, start_date, end_date, minutes_per_ty
     }
 
 
+def _collect_game_data(game_queryset, start_date, end_date):
+    """Collect game data with hours, dates, and daily averages.
+    
+    Returns:
+        list of dicts with keys: game, hours, start_date, end_date, daily_average, activity_datetime
+    """
+    game_data = []
+    
+    if game_queryset is None:
+        return game_data
+    
+    for game in game_queryset:
+        # Get total hours from progress (stored in minutes)
+        total_minutes = game.progress or 0
+        total_hours = total_minutes / 60 if total_minutes else 0
+        
+        if total_hours <= 0:
+            continue
+        
+        # Get activity datetime (for range calculation)
+        activity_datetime = _get_activity_datetime(game)
+        if activity_datetime is None:
+            continue
+        
+        # Check if game is within date range
+        if start_date and end_date:
+            # Convert filter dates to date objects
+            filter_start = start_date.date() if hasattr(start_date, 'date') else start_date
+            filter_end = end_date.date() if hasattr(end_date, 'date') else end_date
+            
+            # For games, check if the date range overlaps with filter range
+            game_start = game.start_date.date() if game.start_date else None
+            game_end = game.end_date.date() if game.end_date else None
+            
+            # If game has both dates, check overlap
+            if game_start and game_end:
+                # Game ends before filter starts or starts after filter ends
+                if game_end < filter_start or game_start > filter_end:
+                    continue
+            # If only end_date, check if end_date is in range
+            elif game_end:
+                if not (filter_start <= game_end <= filter_end):
+                    continue
+            # If only start_date, check if start_date is in range
+            elif game_start:
+                if not (filter_start <= game_start <= filter_end):
+                    continue
+            # If no dates, check activity_datetime
+            else:
+                activity_date = _localize_datetime(activity_datetime).date()
+                if not (filter_start <= activity_date <= filter_end):
+                    continue
+        
+        # Calculate daily average
+        game_start_date = game.start_date.date() if game.start_date else None
+        game_end_date = game.end_date.date() if game.end_date else None
+        
+        if game_start_date and game_end_date:
+            # Calculate days between start and end (inclusive)
+            # If start_date == end_date, days = 1 (same day)
+            days = (game_end_date - game_start_date).days + 1
+            if days <= 0:
+                days = 1
+            # Calculate daily average: total hours divided by number of days
+            # Note: If days = 1 (same start/end date), daily_average = total_hours
+            # This is correct but may not be meaningful for single-day games
+            daily_average_hours = total_hours / days
+        else:
+            # If no date range, can't calculate daily average
+            daily_average_hours = 0
+        
+        game_data.append({
+            "game": game,
+            "hours": total_hours,
+            "start_date": game_start_date,
+            "end_date": game_end_date,
+            "daily_average": daily_average_hours,
+            "activity_datetime": activity_datetime,
+        })
+    
+    return game_data
+
+
+def _collect_game_play_data(game_queryset, start_date, end_date):
+    """Collect game play data for genre calculation.
+    
+    Returns:
+        tuple: (list of datetimes, list of (game_entry, datetime, runtime_minutes) tuples)
+    """
+    datetimes = []
+    play_details = []  # (game_entry, datetime, runtime_minutes)
+    
+    if game_queryset is None:
+        return datetimes, play_details
+    
+    for game in game_queryset:
+        activity_date = _get_activity_datetime(game)
+        if activity_date is None:
+            continue
+        
+        # Check if game is within date range (similar logic to _collect_game_data)
+        if start_date and end_date:
+            # Convert filter dates to date objects
+            filter_start = start_date.date() if hasattr(start_date, 'date') else start_date
+            filter_end = end_date.date() if hasattr(end_date, 'date') else end_date
+            
+            game_start = game.start_date.date() if game.start_date else None
+            game_end = game.end_date.date() if game.end_date else None
+            
+            if game_start and game_end:
+                if game_end < filter_start or game_start > filter_end:
+                    continue
+            elif game_end:
+                if not (filter_start <= game_end <= filter_end):
+                    continue
+            elif game_start:
+                if not (filter_start <= game_start <= filter_end):
+                    continue
+            else:
+                activity_date_only = _localize_datetime(activity_date).date()
+                if not (filter_start <= activity_date_only <= filter_end):
+                    continue
+        
+        # Get runtime in minutes (from progress field)
+        runtime_minutes = game.progress or 0
+        if runtime_minutes <= 0:
+            continue
+        
+        localized_date = _localize_datetime(activity_date)
+        datetimes.append(localized_date)
+        play_details.append((game, localized_date, runtime_minutes))
+    
+    return datetimes, play_details
+
+
+def _build_game_hours_charts(game_data, start_date, end_date, color, dataset_label):
+    """Build hours-by-year and hours-by-month charts for games.
+    
+    Hours are evenly distributed across the date range of each game.
+    """
+    empty_chart = {"labels": [], "datasets": []}
+    
+    if not game_data:
+        return {
+            "by_year": empty_chart,
+            "by_month": empty_chart,
+        }
+    
+    # Initialize counters
+    year_hours = defaultdict(float)
+    month_hours = defaultdict(float)
+    
+    # Determine filter range dates
+    if start_date and hasattr(start_date, 'date'):
+        filter_start_date = start_date.date()
+    elif start_date:
+        filter_start_date = start_date
+    else:
+        filter_start_date = None
+    
+    if end_date and hasattr(end_date, 'date'):
+        filter_end_date = end_date.date()
+    elif end_date:
+        filter_end_date = end_date
+    else:
+        filter_end_date = None
+    
+    for data in game_data:
+        game = data["game"]
+        total_hours = data["hours"]
+        game_start = data["start_date"]
+        game_end = data["end_date"]
+        
+        if not game_start or not game_end:
+            # If no date range, assign all hours to activity date
+            activity_date = _localize_datetime(data["activity_datetime"]).date()
+            if filter_start_date and filter_end_date:
+                if filter_start_date <= activity_date <= filter_end_date:
+                    year_hours[activity_date.year] += total_hours
+                    month_hours[activity_date.month] += total_hours
+            elif not filter_start_date and not filter_end_date:
+                year_hours[activity_date.year] += total_hours
+                month_hours[activity_date.month] += total_hours
+            continue
+        
+        # Calculate daily average based on full game duration
+        game_total_days = (game_end - game_start).days + 1
+        if game_total_days <= 0:
+            game_total_days = 1
+        
+        # Calculate hours per day based on full game duration
+        hours_per_day = total_hours / game_total_days
+        
+        # Calculate date range (intersection with filter range if applicable)
+        range_start = game_start
+        range_end = game_end
+        
+        if filter_start_date and filter_end_date:
+            # Intersect with filter range
+            range_start = max(range_start, filter_start_date)
+            range_end = min(range_end, filter_end_date)
+            if range_start > range_end:
+                continue
+        
+        # Aggregate hours by year and month
+        current_date = range_start
+        while current_date <= range_end:
+            if not filter_start_date or filter_start_date <= current_date <= filter_end_date:
+                year_hours[current_date.year] += hours_per_day
+                month_hours[current_date.month] += hours_per_day
+            
+            current_date += datetime.timedelta(days=1)
+    
+    # Build year chart
+    if year_hours:
+        sorted_years = sorted(year_hours.keys())
+        year_labels = [str(year) for year in sorted_years]
+        year_values = [year_hours[year] for year in sorted_years]
+        year_chart = _build_single_series_chart(year_labels, year_values, color, dataset_label)
+    else:
+        year_chart = empty_chart
+    
+    # Build month chart
+    month_labels = [calendar.month_abbr[i] for i in range(1, 13)]
+    month_values = [month_hours.get(i, 0) for i in range(1, 13)]
+    month_chart = _build_single_series_chart(month_labels, month_values, color, dataset_label)
+    
+    return {
+        "by_year": year_chart,
+        "by_month": month_chart,
+    }
+
+
+def _build_daily_average_distribution_chart(game_data, color, dataset_label):
+    """Build chart showing distribution of games by daily average time bands.
+    
+    Returns chart data with labels (time bands) and values (number of games).
+    """
+    empty_chart = {"labels": [], "datasets": []}
+    
+    if not game_data:
+        return empty_chart
+    
+    # Define time bands (in hours per day)
+    bands = [
+        (0, 5/60, "5 min"),             # 0 to 5 minutes
+        (5/60, 15/60, "15 min"),        # 5 to 15 minutes
+        (15/60, 30/60, "30 min"),       # 15 to 30 minutes
+        (30/60, 1, "60 min"),           # 30 minutes to 1 hour
+        (1, 2, "2 hr"),                 # 1 to 2 hours
+        (2, 4, "4 hr"),                 # 2 to 4 hours
+        (4, float('inf'), "4+ hr"),     # 4+ hours
+    ]
+    
+    # Count games in each band
+    band_counts = [0] * len(bands)
+    
+    for data in game_data:
+        daily_avg_hours = data["daily_average"]
+        
+        # Find which band this game belongs to
+        for i, (min_hours, max_hours, _) in enumerate(bands):
+            if min_hours <= daily_avg_hours < max_hours:
+                band_counts[i] += 1
+                break
+        else:
+            # If we get here, it must be >= the last band's max (infinity case)
+            # For the last band (4+ hr/day), we check if >= 4
+            if daily_avg_hours >= bands[-1][0]:
+                band_counts[-1] += 1
+    
+    # Extract labels
+    labels = [label for _, _, label in bands]
+    
+    # Build chart
+    return _build_single_series_chart(labels, band_counts, color, dataset_label)
+
+
+def _compute_game_top_genres(play_details, limit=20):
+    """Compute top genres from game play details using cached metadata only.
+    
+    Args:
+        play_details: List of (game_entry, datetime, runtime_minutes) tuples
+        limit: Number of genres to return
+        
+    Returns:
+        list of genre dicts with name, minutes, plays, formatted_duration
+    """
+    from app.helpers import minutes_to_hhmm
+    from django.core.cache import cache
+    from app.models import Sources
+    
+    genre_stats = defaultdict(lambda: {"minutes": 0, "plays": 0, "name": ""})
+    
+    for game, dt, runtime in play_details:
+        minutes = runtime or 0
+        
+        # Get genres from cached metadata only (don't trigger API calls)
+        genres = []
+        if hasattr(game, 'item') and game.item:
+            # Try to get genres from cache directly
+            cache_key = f"{Sources.IGDB.value}_{MediaTypes.GAME.value}_{game.item.media_id}"
+            cached_metadata = cache.get(cache_key)
+            
+            if cached_metadata:
+                # Extract genres from cached metadata
+                genres_raw = cached_metadata.get("genres", [])
+                if genres_raw:
+                    genres = _coerce_genre_list(genres_raw)
+                # Also check details.genres if top-level is empty
+                if not genres:
+                    details = cached_metadata.get("details", {})
+                    if isinstance(details, dict):
+                        genres_raw = details.get("genres", [])
+                        if genres_raw:
+                            genres = _coerce_genre_list(genres_raw)
+        
+        for genre in genres:
+            key = str(genre).title()
+            genre_stats[key]["minutes"] += minutes
+            genre_stats[key]["plays"] += 1
+            genre_stats[key]["name"] = key
+    
+    # Sort by minutes (descending), then by plays (descending)
+    items = sorted(
+        genre_stats.values(),
+        key=lambda x: (x["minutes"], x["plays"]),
+        reverse=True,
+    )[:limit]
+    
+    # Format durations
+    for item in items:
+        item["formatted_duration"] = minutes_to_hhmm(item["minutes"])
+    
+    return items
+
+
+def _compute_game_top_daily_average(game_data, limit=20):
+    """Compute top games by daily average time spent.
+    
+    Args:
+        game_data: List of game data dicts from _collect_game_data
+        limit: Number of games to return
+        
+    Returns:
+        list of dicts with game info and daily_average
+    """
+    from app.helpers import minutes_to_hhmm
+    
+    # Filter games with valid daily averages and sort
+    games_with_average = [
+        data for data in game_data
+        if data["daily_average"] > 0
+    ]
+    
+    # Sort by daily average (descending)
+    sorted_games = sorted(
+        games_with_average,
+        key=lambda x: x["daily_average"],
+        reverse=True,
+    )[:limit]
+    
+    # Format results
+    results = []
+    for data in sorted_games:
+        game = data["game"]
+        daily_avg_hours = data["daily_average"]
+        daily_avg_minutes = daily_avg_hours * 60
+        
+        results.append({
+            "game": game,
+            "daily_average_hours": daily_avg_hours,
+            "daily_average_minutes": daily_avg_minutes,
+            "formatted_daily_average": minutes_to_hhmm(daily_avg_minutes) + "/day",
+            "total_hours": data["hours"],
+            "formatted_total": minutes_to_hhmm(data["hours"] * 60),
+        })
+    
+    return results
+
+
+def get_game_consumption_stats(user_media, start_date, end_date, minutes_per_type=None):
+    """Return aggregate metrics and chart data for game activity."""
+    game_queryset = (user_media or {}).get(MediaTypes.GAME.value)
+    game_data = _collect_game_data(game_queryset, start_date, end_date)
+    
+    # Collect play details for genre calculation
+    _, play_details = _collect_game_play_data(game_queryset, start_date, end_date)
+    
+    if minutes_per_type is None:
+        minutes_per_type = calculate_minutes_per_media_type(user_media or {}, start_date, end_date)
+    
+    total_minutes = minutes_per_type.get(MediaTypes.GAME.value, 0)
+    total_hours = total_minutes / 60 if total_minutes else 0
+    
+    # Get activity datetimes for breakdown calculation
+    game_datetimes = [
+        _localize_datetime(data["activity_datetime"])
+        for data in game_data
+        if data["activity_datetime"]
+    ]
+    
+    hours_breakdown = _compute_metric_breakdown(
+        total_hours,
+        game_datetimes,
+        start_date,
+        end_date,
+    )
+    
+    color = config.get_stats_color(MediaTypes.GAME.value)
+    chart_label = "Game Hours"
+    
+    # Build hours charts
+    hours_charts = _build_game_hours_charts(game_data, start_date, end_date, color, chart_label)
+    
+    # Build daily average distribution chart
+    daily_avg_chart = _build_daily_average_distribution_chart(game_data, color, "Games")
+    
+    # Combine charts
+    charts = {
+        "by_year": hours_charts["by_year"],
+        "by_month": hours_charts["by_month"],
+        "by_daily_average": daily_avg_chart,
+    }
+    
+    # Compute top genres (using cached metadata only, no API calls)
+    top_genres = _compute_game_top_genres(play_details, limit=20)
+    
+    # Compute top daily average games
+    top_daily_average_games = _compute_game_top_daily_average(game_data, limit=20)
+    
+    # has_data should be True if we have any game data, not just hours
+    has_data = len(game_data) > 0 or total_hours > 0
+    
+    return {
+        "hours": hours_breakdown,
+        "charts": charts,
+        "has_data": has_data,
+        "top_genres": top_genres,
+        "top_daily_average_games": top_daily_average_games,
+    }
+
+
 def _collect_music_play_data(music_queryset, start_date, end_date):
     """Collect music play datetimes and per-play runtime from history records.
     
@@ -2860,13 +3303,46 @@ def get_top_played_media(user_media, start_date, end_date):
                 elif normalized_type == "anime":
                     total_time_minutes, episode_count = _calculate_anime_time(media, start_date, end_date, logger)
                 elif normalized_type == "game":
-                    # For games, use progress field (stored in minutes)
-                    if media.end_date and start_date and end_date:
-                        if start_date <= media.end_date <= end_date:
-                            total_time_minutes += media.progress
+                    # For games, distribute progress evenly across the game's date range
+                    # and only count the portion within the filtered date range
+                    game_start_date = media.start_date.date() if media.start_date else None
+                    game_end_date = media.end_date.date() if media.end_date else None
+                    
+                    if game_start_date and game_end_date:
+                        # Calculate daily average based on full game duration
+                        game_total_days = (game_end_date - game_start_date).days + 1
+                        if game_total_days <= 0:
+                            game_total_days = 1
+                        
+                        game_total_minutes = media.progress or 0
+                        game_total_hours = game_total_minutes / 60 if game_total_minutes else 0
+                        
+                        if game_total_hours > 0:
+                            # Calculate hours per day
+                            hours_per_day = game_total_hours / game_total_days
+                            
+                            # Find intersection of game range with filter range
+                            if start_date and end_date:
+                                filter_start = start_date.date() if hasattr(start_date, 'date') else start_date
+                                filter_end = end_date.date() if hasattr(end_date, 'date') else end_date
+                                
+                                # Intersect game range with filter range
+                                intersection_start = max(game_start_date, filter_start)
+                                intersection_end = min(game_end_date, filter_end)
+                                
+                                if intersection_start <= intersection_end:
+                                    # Calculate days in intersection
+                                    intersection_days = (intersection_end - intersection_start).days + 1
+                                    if intersection_days > 0:
+                                        # Calculate hours in filtered range
+                                        filtered_hours = hours_per_day * intersection_days
+                                        total_time_minutes += filtered_hours * 60
+                            else:
+                                # No filter (All Time) - use total hours
+                                total_time_minutes += game_total_minutes
                     elif not start_date and not end_date:
-                        # All time
-                        total_time_minutes += media.progress
+                        # All time and no date range - use total progress
+                        total_time_minutes += media.progress or 0
                 elif normalized_type == "boardgame":
                     if (
                         media.end_date

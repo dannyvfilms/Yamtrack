@@ -733,6 +733,18 @@ document.addEventListener("DOMContentLoaded", function () {
     "moviePlaysByTimeChart",
     "movie_plays_by_time"
   );
+  initializeSingleSeriesBarChart(
+    "gameHoursByYearChart",
+    "game_hours_by_year"
+  );
+  initializeSingleSeriesBarChart(
+    "gameHoursByMonthChart",
+    "game_hours_by_month"
+  );
+  initializeSingleSeriesBarChart(
+    "gameDailyAverageChart",
+    "game_daily_average"
+  );
 
   // Music consumption charts
   initializeSingleSeriesBarChart(

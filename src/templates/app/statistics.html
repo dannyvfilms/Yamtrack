@@ -1186,6 +1186,192 @@
       </section>
       {% endif %}
 
+      <!-- Video Games Consumption Section -->
+      {% if game_consumption.has_data %}
+      <section class="bg-[#2a2f35] rounded-lg p-6 mobile-tight-section stat-scroll-safe mb-4 sm:mb-8 space-y-4 sm:space-y-6">
+        <div class="flex flex-col space-y-1">
+          <span class="text-sm uppercase tracking-widest text-gray-400">Video Games</span>
+          <h2 class="text-2xl font-semibold text-white">Activity Overview</h2>
+          <span class="text-sm text-gray-500" x-text="selectedRange"></span>
+        </div>
+
+        <div class="space-y-4 sm:space-y-6">
+          <div class="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Hours Played</p>
+              {% if game_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ game_consumption.hours.total|default:0|floatformat:1 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Total</p>
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Year</p>
+              {% if game_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ game_consumption.hours.per_year|default:0|floatformat:1 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Hours</p>
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Month</p>
+              {% if game_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ game_consumption.hours.per_month|default:0|floatformat:1 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Hours</p>
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+              <p class="text-xs uppercase tracking-widest text-gray-400">Per Day</p>
+              {% if game_consumption.has_data %}
+                <p class="text-3xl font-bold mt-2">{{ game_consumption.hours.per_day|default:0|floatformat:2 }}</p>
+              {% else %}
+                <p class="text-3xl font-bold mt-2 text-gray-500">--</p>
+              {% endif %}
+              <p class="text-xs text-gray-500 mt-1">Hours</p>
+            </div>
+          </div>
+
+          {% if show_year_charts %}
+          <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+            <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Game Hours by Year</h3>
+            {% if game_consumption.charts.by_year.labels|default:False %}
+              <div class="h-64">
+                <canvas id="gameHoursByYearChart"></canvas>
+              </div>
+            {% else %}
+              <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+                <p class="text-sm">No game hours available for this range.</p>
+              </div>
+            {% endif %}
+          </div>
+          {% endif %}
+
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Game Hours by Month</h3>
+              {% if game_consumption.charts.by_month.labels|default:False %}
+                <div class="h-64">
+                  <canvas id="gameHoursByMonthChart"></canvas>
+                </div>
+              {% else %}
+                <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+                  <p class="text-sm">No monthly game hours recorded.</p>
+                </div>
+              {% endif %}
+            </div>
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Daily Average Distribution</h3>
+              {% if game_consumption.charts.by_daily_average.labels|default:False %}
+                <div class="h-64">
+                  <canvas id="gameDailyAverageChart"></canvas>
+                </div>
+              {% else %}
+                <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+                  <p class="text-sm">No daily average data available.</p>
+                </div>
+              {% endif %}
+            </div>
+          </div>
+
+          <!-- Top 3 Cards: Most Played, Top Genres, Top Daily Average -->
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4">
+            <!-- Most Played -->
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Most Played</h3>
+              {% if top_played.game %}
+                <div class="space-y-3 max-h-[300px] overflow-y-auto pr-1 statistics-card-scroll">
+                  {% for item in top_played.game %}
+                  <a href="{{ item.media.item|media_url }}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
+                    <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
+                    {% if item.media.item.image and item.media.item.image != IMG_NONE %}
+                    <img src="{{ item.media.item.image }}" alt="{{ item.media.item.title }}" class="w-10 h-10 rounded object-cover">
+                    {% else %}
+                    <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    </div>
+                    {% endif %}
+                    <div class="flex-1 min-w-0">
+                      <p class="text-sm font-medium text-white truncate">{{ item.media.item.title }}</p>
+                      <p class="text-xs text-gray-500">{{ item.formatted_duration }}</p>
+                    </div>
+                  </a>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="flex flex-col items-center justify-center py-8 text-gray-400">
+                  <p class="text-sm">No game data available.</p>
+                </div>
+              {% endif %}
+            </div>
+
+            <!-- Top Genres -->
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top {{ game_consumption.top_genres|length|default:0 }} Genres</h3>
+              {% if game_consumption.top_genres %}
+                <div class="space-y-3 max-h-[300px] overflow-y-auto pr-1 statistics-card-scroll">
+                  {% for genre in game_consumption.top_genres %}
+                  <a href="{% url 'history' %}?genre={{ genre.name|urlencode }}&media_type=game{% if start_date_str and start_date_str != 'all' %}&start-date={{ start_date_str }}{% endif %}{% if end_date_str and end_date_str != 'all' %}&end-date={{ end_date_str }}{% endif %}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
+                    <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
+                    <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center text-gray-300 text-sm font-semibold uppercase">
+                      {{ genre.name|slice:":2" }}
+                    </div>
+                    <div class="flex-1 min-w-0">
+                      <p class="text-sm font-medium text-white truncate">{{ genre.name }}</p>
+                      <p class="text-xs text-gray-500 truncate">{{ genre.formatted_duration }} · {{ genre.plays }} play{{ genre.plays|pluralize }}</p>
+                    </div>
+                  </a>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="flex flex-col items-center justify-center py-8 text-gray-400">
+                  <p class="text-sm">No genre data available.</p>
+                </div>
+              {% endif %}
+            </div>
+
+            <!-- Top Daily Average -->
+            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top Daily Average</h3>
+              {% if game_consumption.top_daily_average_games %}
+                <div class="space-y-3 max-h-[300px] overflow-y-auto pr-1 statistics-card-scroll">
+                  {% for item in game_consumption.top_daily_average_games %}
+                  <a href="{{ item.game.item|media_url }}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
+                    <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
+                    {% if item.game.item.image and item.game.item.image != IMG_NONE %}
+                    <img src="{{ item.game.item.image }}" alt="{{ item.game.item.title }}" class="w-10 h-10 rounded object-cover">
+                    {% else %}
+                    <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    </div>
+                    {% endif %}
+                    <div class="flex-1 min-w-0">
+                      <p class="text-sm font-medium text-white truncate">{{ item.game.item.title }}</p>
+                      <p class="text-xs text-gray-500 truncate">{{ item.formatted_daily_average }}</p>
+                    </div>
+                  </a>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="flex flex-col items-center justify-center py-8 text-gray-400">
+                  <p class="text-sm">No daily average data available.</p>
+                </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </section>
+      {% endif %}
+
       <!-- Music Consumption Section -->
       {% if user.music_enabled and music_consumption.has_data %}
       <section class="bg-[#2a2f35] rounded-lg p-6 mobile-tight-section stat-scroll-safe mb-4 sm:mb-8 space-y-4 sm:space-y-6">
@@ -2418,6 +2604,11 @@
   {{ movie_consumption.charts.by_month|json_script:"movie_plays_by_month" }}
   {{ movie_consumption.charts.by_weekday|json_script:"movie_plays_by_weekday" }}
   {{ movie_consumption.charts.by_time_of_day|json_script:"movie_plays_by_time" }}
+  {% if show_year_charts %}
+    {{ game_consumption.charts.by_year|json_script:"game_hours_by_year" }}
+  {% endif %}
+  {{ game_consumption.charts.by_month|json_script:"game_hours_by_month" }}
+  {{ game_consumption.charts.by_daily_average|json_script:"game_daily_average" }}
   {% if user.music_enabled and music_consumption.has_data %}
     {% if show_year_charts %}
       {{ music_consumption.charts.by_year|json_script:"music_plays_by_year" }}

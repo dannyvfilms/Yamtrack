@@ -123,6 +123,12 @@ def build_statistics_data(user, start_date, end_date):
         minutes_per_media_type,
         user=user,
     )
+    game_consumption = stats.get_game_consumption_stats(
+        user_media,
+        start_date,
+        end_date,
+        minutes_per_media_type,
+    )
 
     # Daily hours per media type (used by the Activity History-attached chart)
     daily_hours_by_media_type = stats.get_daily_hours_by_media_type(
@@ -148,6 +154,7 @@ def build_statistics_data(user, start_date, end_date):
         "movie_consumption": movie_consumption,
         "music_consumption": music_consumption,
         "podcast_consumption": podcast_consumption,
+        "game_consumption": game_consumption,
         "daily_hours_by_media_type": daily_hours_by_media_type,
     }
 
@@ -173,6 +180,22 @@ def _get_empty_statistics_data():
         "movie_consumption": {},
         "music_consumption": {},
         "podcast_consumption": {},
+        "game_consumption": {
+            "hours": {
+                "total": 0,
+                "per_year": 0,
+                "per_month": 0,
+                "per_day": 0,
+            },
+            "charts": {
+                "by_year": {"labels": [], "datasets": []},
+                "by_month": {"labels": [], "datasets": []},
+                "by_daily_average": {"labels": [], "datasets": []},
+            },
+            "has_data": False,
+            "top_genres": [],
+            "top_daily_average_games": [],
+        },
         "daily_hours_by_media_type": {},
     }
 
