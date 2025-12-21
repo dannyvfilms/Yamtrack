@@ -5,6 +5,7 @@ import json
 import subprocess
 import warnings
 import zoneinfo
+import os
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
@@ -333,7 +334,7 @@ LOGGING = {
 
 LANGUAGE_CODE = "en-us"
 
-TIME_ZONE = config("TZ", default="UTC")
+TIME_ZONE = os.getenv("TIME_ZONE", "UTC")
 
 USE_I18N = True
 
