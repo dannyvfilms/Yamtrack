@@ -3408,7 +3408,8 @@ def get_top_played_media(user_media, start_date, end_date):
             reverse=True
         )
         
-        # Take top 10
-        top_played[normalized_type] = media_with_progress[:10]
+        # Take top 20 for games, top 10 for other media types
+        limit = 20 if normalized_type == "game" else 10
+        top_played[normalized_type] = media_with_progress[:limit]
     
     return top_played
