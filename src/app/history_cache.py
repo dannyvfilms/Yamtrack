@@ -669,6 +669,16 @@ def build_history_days(user, filters=None, date_filters=None):
     # Podcasts - only process if not filtering by specific media type
     # Query history records directly to ensure deleted records don't show up
     if process_all:
+        # Count podcast plays by (media_id, source) similar to movies
+        # Group history records by podcast item to count total plays per episode
+        podcast_play_counts = {}
+        for history_record in podcast_history_records:
+            podcast = podcasts_lookup.get(history_record.id)
+            if not podcast or not podcast.item:
+                continue
+            key = (podcast.item.media_id, podcast.item.source)
+            podcast_play_counts[key] = podcast_play_counts.get(key, 0) + 1
+        
         for history_record in podcast_history_records:
             # Get the podcast instance for metadata
             podcast = podcasts_lookup.get(history_record.id)
@@ -713,6 +723,10 @@ def build_history_days(user, filters=None, date_filters=None):
                 minutes_listened = podcast.progress or 0
                 runtime_minutes = podcast.item.runtime_minutes if podcast.item.runtime_minutes else minutes_listened
                 
+                # Get play count for this episode (only counting completed records with end_date)
+                key = (podcast.item.media_id, podcast.item.source)
+                play_count = podcast_play_counts.get(key, 1)
+                
                 entries.append(
                     {
                         "media_type": MediaTypes.PODCAST.value,
@@ -730,6 +744,7 @@ def build_history_days(user, filters=None, date_filters=None):
                         "played_at_local": played_at_local,
                         "runtime_minutes": runtime_minutes,
                         "runtime_display": helpers.minutes_to_hhmm(runtime_minutes) if runtime_minutes else None,
+                        "play_count": play_count,
                     },
                 )
             except Exception as e:

@@ -264,6 +264,10 @@
                         <span class="font-semibold text-indigo-400">
                           {{ entry.play_count|default:1 }} play{{ entry.play_count|default:1|pluralize }}
                         </span>
+                      {% elif entry.media_type == MediaTypes.PODCAST.value %}
+                        <span class="font-semibold text-indigo-400">
+                          {{ entry.play_count|default:1 }} play{{ entry.play_count|default:1|pluralize }}
+                        </span>
                       {% elif entry.episode_label %}
                         <span class="font-semibold text-indigo-400">{{ entry.episode_label }}</span>
                       {% elif entry.episode_code %}
