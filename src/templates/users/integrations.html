@@ -293,6 +293,37 @@
         </ol>
       </div>
     </div>
+    <div class="mt-6 bg-[#1f242a] rounded-lg p-4">
+  <div class="flex items-center mb-2">
+    <h3 class="text-lg font-semibold">Jellyseerr Integration</h3>
+  </div>
+
+  <p class="text-gray-400 mb-3">
+    Use a Jellyseerr webhook to automatically add requested/approved items into Yamtrack.
+  </p>
+
+  <div class="bg-[#2a2f35] rounded-lg p-4">
+    <h4 class="font-semibold mb-2">Webhook URL</h4>
+
+    <div class="mt-2 flex items-center gap-2">
+      <code class="bg-black/30 px-3 py-2 rounded w-full overflow-x-auto">
+        {{ request.scheme }}://{{ request.get_host }}/webhook/jellyseerr/{{ user.token }}
+      </code>
+    </div>
+
+    <h4 class="font-semibold mt-4 mb-2">Jellyseerr Setup</h4>
+    <ol class="list-decimal list-inside text-gray-300 space-y-1">
+      <li>In Jellyseerr go to <strong>Settings → Notifications → Webhook</strong>.</li>
+      <li>Create a webhook with method <strong>POST</strong> and content type <strong>application/json</strong>.</li>
+      <li>Set the URL to the one above.</li>
+    </ol>
+
+    <p class="text-gray-400 mt-3">
+      Note: Jellyseerr processing is disabled by default per user. Enable it in your user settings/admin.
+    </p>
+  </div>
+</div>
+
   </div>
 {% endblock settings_content %}
 
