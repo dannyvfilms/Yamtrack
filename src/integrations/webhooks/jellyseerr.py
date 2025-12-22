@@ -197,14 +197,14 @@ class JellyseerrWebhookProcessor:
         model = Movie if media_type == MediaTypes.MOVIE.value else TV
 
         try:
-            media_obj, created = model.objects.get_or_create(
+            media_obj, _created = model.objects.get_or_create(
                 user=user,
                 item=item,
                 defaults=defaults,
             )
+
         except IntegrityError:
             media_obj = model.objects.filter(user=user, item=item).first()
-            created = False
 
         return media_obj
 

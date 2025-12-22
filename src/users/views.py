@@ -574,16 +574,24 @@ def update_plex_usernames(request):
 
     return redirect(redirect_target)
 
+
 @login_required
 @require_POST
 def update_jellyseerr_settings(request):
     """Update Jellyseerr integration settings for the current user."""
     user = request.user
 
-    # Checkbox semantics:
-    # - checked: key present, value usually "on" (sometimes "1"/"true")
-    # - unchecked: key absent
-    enabled = "jellyseerr_enabled" in request.POST
+    raw_enabled = request.POST.get("jellyseerr_enabled")
+    if raw_enabled is None:
+        enabled = False
+    else:
+        enabled = str(raw_enabled).strip().lower() in {
+            "on",
+            "1",
+            "true",
+            "yes",
+            "enabled",
+        }
 
     raw_trigger = (request.POST.get("jellyseerr_trigger_statuses") or "").strip()
     raw_allowed = (request.POST.get("jellyseerr_allowed_usernames") or "").strip()
