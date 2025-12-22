@@ -22,7 +22,7 @@
               Release
             {% endif %}
 
-            • {{ media.next_event.datetime|natural_day }} {{ media.next_event|user_event_time:user }}
+            • {{ media.next_event.datetime|user_date_format:user }} {{ media.next_event|user_event_time:user }}
           </span>
         </div>
       {% endif %}
