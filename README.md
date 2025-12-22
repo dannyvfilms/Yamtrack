@@ -42,9 +42,7 @@ Docker image is now available: ```docker pull ghcr.io/dannyvfilms/yamtrack:lates
 Available tags:
 - `:latest` - Points to the stable release branch (default when no tag is specified)
 - `:release` - Explicit tag for the release branch
-- `:dev` - Development branch
-- Semantic version tags (e.g., `:v1.0.0`, `:v1.0`, `:v1`)
-
+- `:dev` - Exact copy of upstream repo (FuzzyGrim/Yamtrack)
 
 ## 🚀 Demo
 
