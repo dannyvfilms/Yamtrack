@@ -37,7 +37,13 @@ Yamtrack is a self hosted media tracker for movies, tv shows, music, anime, mang
 
 
 ## 📱 Repo Specific Installation
-Docker image is now available: ```docker pull ghcr.io/dannyvfilms/yamtrack:release```
+Docker image is now available: ```docker pull ghcr.io/dannyvfilms/yamtrack:latest```
+
+Available tags:
+- `:latest` - Points to the stable release branch (default when no tag is specified)
+- `:release` - Explicit tag for the release branch
+- `:dev` - Development branch
+- Semantic version tags (e.g., `:v1.0.0`, `:v1.0`, `:v1`)
 
 
 ## 🚀 Demo
@@ -90,6 +96,11 @@ You can try the app at [yamtrack.fuzzygrim.com](https://yamtrack.fuzzygrim.com) 
 ## 🐳 Installing with Docker
 
 Copy the default `docker-compose.yml` file from the repository and set the environment variables. This would use a SQlite database, which is enough for most use cases.
+
+The Docker image can be used with or without a tag:
+- `ghcr.io/dannyvfilms/yamtrack` (defaults to `:latest`)
+- `ghcr.io/dannyvfilms/yamtrack:latest` (explicit latest tag)
+- `ghcr.io/dannyvfilms/yamtrack:release` (explicit release tag)
 
 To start the containers run:
 

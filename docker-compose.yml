@@ -1,6 +1,8 @@
 services:
   yamtrack:
     container_name: yamtrack
+    # Image defaults to :latest tag (points to stable release branch)
+    # You can also explicitly use :latest, :release, or :dev
     image: ghcr.io/dannyvfilms/yamtrack
     restart: unless-stopped
     depends_on:
