@@ -638,7 +638,7 @@ def update_jellyseerr_settings(request):
             "jellyseerr_trigger_statuses",
             "jellyseerr_allowed_usernames",
             "jellyseerr_default_added_status",
-        ]
+        ],
     )
 
     messages.success(request, "Jellyseerr settings saved.")
