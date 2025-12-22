@@ -24,6 +24,7 @@ from integrations.imports import anilist, helpers, pocketcasts, simkl, trakt
 from integrations.models import PlexAccount, PocketCastsAccount
 from integrations.pocketcasts_api import PocketCastsAuthError
 from integrations.webhooks import emby, jellyfin, plex as plex_webhooks
+from integrations.webhooks import jellyseerr as jellyseerr_webhooks
 
 logger = logging.getLogger(__name__)
 
@@ -864,3 +865,36 @@ def emby_webhook(request, token):
     processor = emby.EmbyWebhookProcessor()
     processor.process_payload(payload, user)
     return HttpResponse(status=200)
+
+@login_not_required
+@csrf_exempt
+@require_POST
+def jellyseerr_webhook(request, token):
+    """Handle Jellyseerr webhook notifications for requested/approved media."""
+    try:
+        user = users.models.User.objects.get(token=token)
+    except ObjectDoesNotExist:
+        logger.warning(
+            "Could not process Jellyseerr webhook: Invalid token: %s",
+            token,
+        )
+        return HttpResponse(status=401)
+
+    # Attach User instance so history_user_id is populated consistently
+    request.user = user
+
+    data = request.body
+    if not data:
+        logger.warning("Missing payload in Jellyseerr webhook request")
+        return HttpResponse("Missing payload", status=400)
+
+    try:
+        payload = json.loads(data)
+    except Exception:
+        logger.warning("Invalid JSON payload in Jellyseerr webhook request")
+        return HttpResponse("Invalid JSON", status=400)
+
+    processor = jellyseerr_webhooks.JellyseerrWebhookProcessor()
+    processor.process_payload(payload, user)
+    return HttpResponse(status=200)
+

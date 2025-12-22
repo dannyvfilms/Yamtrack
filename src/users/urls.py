@@ -37,4 +37,9 @@ urlpatterns = [
         views.update_plex_usernames,
         name="update_plex_usernames",
     ),
+    path(
+        "settings/integrations/jellyseerr/",
+        views.update_jellyseerr_settings,
+        name="update_jellyseerr_settings",
+    ),
 ]

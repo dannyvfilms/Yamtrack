@@ -13,6 +13,7 @@
       <h2 class="text-xl font-semibold">Integrations</h2>
     </div>
     <p class="text-gray-400 mb-5 text-sm">Connect your media servers to automatically track your watching progress.</p>
+
     <div class="bg-[#39404b] p-5 rounded-lg mb-6">
       <div class="flex items-center mb-3">
         {% include "app/icons/padlock.svg" with classes="w-5 h-5 text-indigo-400 mr-2" %}
@@ -50,6 +51,7 @@
         </div>
       </div>
     </div>
+
     <div class="bg-[#39404b] p-5 rounded-lg mb-6">
       <div class="flex items-center mb-3">
         {% include "app/icons/server.svg" with classes="w-5 h-5 text-indigo-400 mr-2" %}
@@ -66,7 +68,7 @@
             <ul class="list-disc list-inside ml-6 mt-2 space-y-1 text-gray-400">
               <li>Click on the "Add Generic Destination" button to create a new webhook. Type "Yamtrack" into "Webhook Name".</li>
               <li>
-                <div class="inline-flex items-center gap-2 w-[calc(100%-30px)]">Webhook-URL: 
+                <div class="inline-flex items-center gap-2 w-[calc(100%-30px)]">Webhook-URL:
                   <input readonly
                          id="jellyfin-webhook-url-official"
                          class="w-full bg-[#262a2f] rounded-md text-gray-400 text-sm border-0 focus:ring-0 outline-none font-mono"
@@ -96,7 +98,7 @@
                             id="jellyfin-json-template"
                             class="w-full bg-[#262a2f] rounded-md text-gray-300 text-sm border-0 focus:ring-0 outline-none font-mono p-3 resize-none overflow-auto max-h-72"
                             rows="14">{% verbatim %}
-{ 
+{
   {{#if_equals NotificationType 'PlaybackStart'}}
     "Event": "Play",
   {{/if_equals}}
@@ -135,6 +137,7 @@
         </ol>
       </div>
     </div>
+
     <div class="bg-[#39404b] p-5 rounded-lg mb-6">
       <div class="flex items-center mb-3">
         {% include "app/icons/server.svg" with classes="w-5 h-5 text-indigo-400 mr-2" %}
@@ -165,7 +168,7 @@
             <ul class="list-disc list-inside ml-6 mt-2 space-y-1 text-gray-400">
               {# djlint:off #}
               <li>
-                <div class="inline-flex items-center gap-2 w-[calc(100%-30px)]">URL: 
+                <div class="inline-flex items-center gap-2 w-[calc(100%-30px)]">URL:
                   <input readonly
                          id="jellyfin-webhook-url-unofficial"
                          class="w-full bg-[#262a2f] rounded-md text-gray-400 text-sm border-0 focus:ring-0 outline-none font-mono"
@@ -270,7 +273,7 @@
             <ul class="list-disc list-inside ml-6 mt-2 space-y-2 text-gray-400">
               {# djlint:off #}
               <li>
-                <div class="inline-flex items-center gap-2 w-[calc(100%-30px)]">URL: 
+                <div class="inline-flex items-center gap-2 w-[calc(100%-30px)]">URL:
                   <input readonly
                          id="emby-webhook-url"
                          class="w-full bg-[#262a2f] rounded-md text-gray-400 text-sm border-0 focus:ring-0 outline-none font-mono"
@@ -293,6 +296,183 @@
         </ol>
       </div>
     </div>
+
+    {# Jellyseerr Integration #}
+    <div class="bg-[#39404b] p-5 rounded-lg mb-6">
+      <div class="flex items-center mb-3">
+        {% include "app/icons/server.svg" with classes="w-5 h-5 text-indigo-400 mr-2" %}
+        <h3 class="text-base font-medium">Jellyseerr Integration</h3>
+      </div>
+      <p class="text-gray-400 mb-4 text-sm">Use a Jellyseerr webhook to automatically add requested/approved media into Yamtrack.</p>
+
+      <div class="bg-[#262a2f] p-3 rounded-md mb-4">
+        <h4 class="text-sm font-medium mb-3">Jellyseerr Settings</h4>
+        <form method="post" action="{% url 'update_jellyseerr_settings' %}" class="space-y-3">
+          {% csrf_token %}
+
+          <div class="flex items-start gap-3">
+            <input
+              id="jellyseerr_enabled"
+              name="jellyseerr_enabled"
+              type="checkbox"
+              class="mt-1 h-4 w-4 rounded border-gray-600 bg-[#39404b] text-indigo-600 focus:ring-indigo-500"
+              {% if request.user.jellyseerr_enabled %}checked{% endif %}
+            >
+            <div>
+              <label for="jellyseerr_enabled" class="text-gray-200 text-sm font-medium">
+                Enable Jellyseerr auto-add
+              </label>
+              <p class="text-gray-400 text-sm">
+                When enabled, webhook events can add items to your Yamtrack list.
+              </p>
+            </div>
+          </div>
+
+          <div>
+            <label for="jellyseerr_trigger_statuses" class="block text-gray-200 text-sm font-medium mb-1">
+              Trigger statuses (comma-separated)
+            </label>
+            <p class="text-gray-400 text-sm mb-2">
+              Examples: PENDING,PROCESSING,PARTIALLY_AVAILABLE,AVAILABLE. Leave blank for default behaviour (UNKNOWN is ignored).
+            </p>
+            <input
+              id="jellyseerr_trigger_statuses"
+              name="jellyseerr_trigger_statuses"
+              class="w-full py-2 px-3 bg-[#39404b] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+              type="text"
+              placeholder="PENDING,PROCESSING,PARTIALLY_AVAILABLE,AVAILABLE"
+              value="{{ request.user.jellyseerr_trigger_statuses }}"
+            >
+          </div>
+
+          <div>
+            <label for="jellyseerr_allowed_usernames" class="block text-gray-200 text-sm font-medium mb-1">
+              Allowed Jellyseerr usernames (comma-separated)
+            </label>
+            <p class="text-gray-400 text-sm mb-2">
+              Leave blank to allow any requester. If set, only those usernames can trigger adds.
+            </p>
+            <input
+              id="jellyseerr_allowed_usernames"
+              name="jellyseerr_allowed_usernames"
+              class="w-full py-2 px-3 bg-[#39404b] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+              type="text"
+              placeholder="john, someoneelse"
+              value="{{ request.user.jellyseerr_allowed_usernames }}"
+            >
+          </div>
+
+          <div>
+            <label for="jellyseerr_default_added_status" class="block text-gray-200 text-sm font-medium mb-1">
+              Default Yamtrack status for added items
+            </label>
+            <div class="relative" x-data="{ open: false, selectedValue: '{{ request.user.jellyseerr_default_added_status|default:"Planning" }}', selectedLabel: '{{ request.user.jellyseerr_default_added_status|default:"Planning" }}' }">
+              <button type="button"
+                      @click="open = !open"
+                      @click.outside="open = false"
+                      class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
+                <span x-text="selectedLabel"></span>
+                <svg xmlns="http://www.w3.org/2000/svg"
+                     width="24"
+                     height="24"
+                     viewBox="0 0 24 24"
+                     fill="none"
+                     stroke="currentColor"
+                     stroke-width="2"
+                     stroke-linecap="round"
+                     stroke-linejoin="round"
+                     class="w-4 h-4 text-gray-400">
+                  <path d="m6 9 6 6 6-6"></path>
+                </svg>
+              </button>
+              <div x-show="open"
+                   x-transition:enter="transition ease-out duration-100"
+                   x-transition:enter-start="transform opacity-0 scale-95"
+                   x-transition:enter-end="transform opacity-100 scale-100"
+                   x-transition:leave="transition ease-in duration-75"
+                   x-transition:leave-start="transform opacity-100 scale-100"
+                   x-transition:leave-end="transform opacity-0 scale-95"
+                   class="absolute left-0 right-0 mt-2 py-1 bg-[#272c31] rounded-md shadow-lg overflow-hidden z-10 border border-gray-600">
+                <button type="button"
+                        @click="selectedValue = 'Planning'; selectedLabel = 'Planning'; open = false"
+                        class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                  Planning
+                </button>
+                <button type="button"
+                        @click="selectedValue = 'In progress'; selectedLabel = 'In progress'; open = false"
+                        class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                  In progress
+                </button>
+              </div>
+              <input type="hidden" name="jellyseerr_default_added_status" x-bind:value="selectedValue">
+            </div>
+          </div>
+
+          <div class="pt-2">
+            <button type="submit"
+                    class="flex items-center px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors text-sm cursor-pointer">
+              {% include "app/icons/save.svg" with classes="w-4 h-4 mr-2" %}
+              Save Changes
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <div class="bg-[#262a2f] p-4 rounded-md">
+        <h4 class="text-sm font-medium mb-3">Setup Instructions</h4>
+        <ol class="list-decimal list-inside space-y-2 text-sm text-gray-300">
+          <li>In Jellyseerr go to <strong>Settings → Notifications → Webhook</strong>.</li>
+          <li>Create a webhook with method <strong>POST</strong> and content type <strong>application/json</strong>.</li>
+          <li>
+            Set the webhook URL to:
+            <div class="inline-flex items-center gap-2 w-[calc(100%-30px)] mt-2">
+              <input readonly
+                     id="jellyseerr-webhook-url"
+                     class="w-full bg-[#262a2f] rounded-md text-gray-400 text-sm border-0 focus:ring-0 outline-none font-mono"
+                     type="text"
+                     value="{{ request.scheme }}://{{ request.get_host }}/webhook/jellyseerr/{{ request.user.token|default_if_none:"&lttoken&gt" }}">
+              <span class="flex items-center cursor-pointer group"
+                    title="Copy"
+                    data-copy-target="#jellyseerr-webhook-url">
+                {% include "app/icons/copy.svg" with classes="w-5 h-5 text-gray-400 group-hover:text-indigo-400 transition-colors" %}
+              </span>
+            </div>
+          </li>
+          <li>
+            Paste this <strong>JSON Payload</strong> template into Jellyseerr:
+            <div class="bg-[#39404b] p-5 rounded-lg mt-2">
+              <div class="flex items-center justify-end mb-2">
+                <span class="flex items-center cursor-pointer group"
+                      title="Copy"
+                      role="button"
+                      aria-label="Copy JSON template"
+                      data-copy-target="#jellyseerr-json-template">
+                  {% include "app/icons/copy.svg" with classes="w-5 h-5 text-gray-400 group-hover:text-indigo-400 transition-colors" %}
+                </span>
+              </div>
+              <textarea readonly
+                        id="jellyseerr-json-template"
+                        class="w-full bg-[#262a2f] rounded-md text-gray-300 text-sm border-0 focus:ring-0 outline-none font-mono p-3 resize-none overflow-auto max-h-72"
+                        rows="7">{% verbatim %}
+{
+  "media_type": "{{media_type}}",
+  "media_tmdbid": "{{media_tmdbid}}",
+  "media_status": "{{media_status}}",
+  "requestedBy_username": "{{requestedBy_username}}"
+}
+{% endverbatim %}</textarea>
+              <p class="text-gray-400 text-sm mt-3">
+                Important: Jellyseerr's default payload will not work with Yamtrack. You must use the template above.
+                If you see logs like <code class="px-1 rounded bg-black/30">unsupported media_type='{media_type}'</code>,
+                Jellyseerr is sending the literal template (it was pasted/escaped incorrectly).
+              </p>
+            </div>
+          </li>
+          <li>Select the notification types you want (commonly request/approval events).</li>
+        </ol>
+      </div>
+    </div>
+
   </div>
 {% endblock settings_content %}
 
