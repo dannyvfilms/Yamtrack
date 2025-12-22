@@ -67,7 +67,19 @@ def search(query, page):
                 headers={"Authorization": settings.HARDCOVER_API},
             )
         except requests.exceptions.HTTPError as error:
-            response = handle_error(error)
+            handle_error(error)
+
+        # Check for GraphQL errors in the response
+        if "errors" in response:
+            error_messages = [err.get("message", "Unknown error") for err in response["errors"]]
+            logger.error("GraphQL errors from Hardcover API: %s", error_messages)
+            # Return empty results on GraphQL errors
+            return helpers.format_search_response(page, settings.PER_PAGE, 0, [])
+
+        # Check if data key exists
+        if "data" not in response or "search" not in response["data"]:
+            logger.error("Invalid response structure from Hardcover API: %s", response)
+            return helpers.format_search_response(page, settings.PER_PAGE, 0, [])
 
         hits = response["data"]["search"]["results"]["hits"]
         results = [
@@ -101,7 +113,7 @@ def book(media_id):
 
     if data is None:
         book_query = """
-        query GetBookDetails($book_id: Int!, $rec_id: bigint!) {
+        query GetBookDetails($book_id: Int!) {
           books_by_pk(id: $book_id) {
             id
             title
@@ -123,26 +135,11 @@ def book(media_id):
               }
             }
           }
-          recommendations(
-            where: {
-              subject_id: {_eq: $rec_id},
-              subject_type: {_eq: "Book"},
-              item_type: {_eq: "Book"}
-            }
-            limit: 10
-          ) {
-            item_book {
-              id
-              title
-              cached_image(path: "url")
-            }
-          }
         }
         """
 
         variables = {
             "book_id": int(media_id),
-            "rec_id": str(media_id),
         }
 
         try:
@@ -156,7 +153,20 @@ def book(media_id):
         except requests.exceptions.HTTPError as error:
             handle_error(error)
 
-        book_data = response["data"]["books_by_pk"]
+        # Check for GraphQL errors in the response
+        if "errors" in response:
+            error_messages = [err.get("message", "Unknown error") for err in response["errors"]]
+            logger.warning("GraphQL errors from Hardcover API: %s", error_messages)
+            # Continue processing if we can still get book data despite errors
+
+        # Check if data key exists
+        if "data" not in response:
+            logger.error("No 'data' key in Hardcover API response: %s", response)
+            services.raise_not_found_error(
+                Sources.HARDCOVER.value, media_id, "book",
+            )
+
+        book_data = response["data"].get("books_by_pk")
 
         if not book_data:
             services.raise_not_found_error(
@@ -164,7 +174,8 @@ def book(media_id):
             )
 
         edition_details = get_edition_details(book_data.get("default_cover_edition"))
-        recommendations = response["data"]["recommendations"]
+        # Recommendations field no longer exists in the API schema
+        recommendations = []
 
         data = {
             "media_id": book_data["id"],
