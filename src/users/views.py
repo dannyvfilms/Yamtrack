@@ -577,6 +577,7 @@ def update_plex_usernames(request):
 @login_required
 @require_POST
 def update_jellyseerr_settings(request):
+    """Update Jellyseerr integration settings for the current user."""
     user = request.user
 
     # Checkbox semantics:
