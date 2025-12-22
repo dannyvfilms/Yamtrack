@@ -579,7 +579,8 @@ def update_plex_usernames(request):
 def update_jellyseerr_settings(request):
     user = request.user
 
-    enabled = bool(request.POST.get("jellyseerr_enabled"))
+    # Handle enabled/disabled dropdown (sends '1' or '0' as string)
+    enabled = request.POST.get("jellyseerr_enabled") == "1"
 
     raw_trigger = (request.POST.get("jellyseerr_trigger_statuses") or "").strip()
     raw_allowed = (request.POST.get("jellyseerr_allowed_usernames") or "").strip()
