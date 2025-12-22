@@ -18,3 +18,6 @@ TODO.txt
 .env.dev
 docker-compose.dev.yml
 db-dev/
+
+# Local dev DB
+db/
