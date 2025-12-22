@@ -579,8 +579,11 @@ def update_plex_usernames(request):
 def update_jellyseerr_settings(request):
     user = request.user
 
-    # Handle enabled/disabled dropdown (sends '1' or '0' as string)
-    enabled = request.POST.get("jellyseerr_enabled") == "1"
+    # Checkbox semantics:
+    # - checked: key present, value usually "on" (sometimes "1"/"true")
+    # - unchecked: key absent
+    raw_enabled = request.POST.get("jellyseerr_enabled")
+    enabled = str(raw_enabled).lower() in {"on", "1", "true", "yes"} if raw_enabled is not None else False
 
     raw_trigger = (request.POST.get("jellyseerr_trigger_statuses") or "").strip()
     raw_allowed = (request.POST.get("jellyseerr_allowed_usernames") or "").strip()
@@ -640,6 +643,7 @@ def update_jellyseerr_settings(request):
 
     messages.success(request, "Jellyseerr settings saved.")
     return redirect(request.META.get("HTTP_REFERER", "/settings/integrations"))
+
 
 
 @require_POST
