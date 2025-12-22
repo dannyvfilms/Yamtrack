@@ -1467,9 +1467,11 @@ class PocketCastsImporter:
                     fields_changed = True
                 
                 # Set end_date if completed (use estimated completion date)
-                # Only update if it's None or actually different
+                # For already-completed episodes, don't update end_date if it already exists
+                # to prevent HistoricalRecords from creating duplicate history entries
                 if new_status == Status.COMPLETED.value and completion_date:
-                    if existing_podcast.end_date is None or existing_podcast.end_date != completion_date:
+                    if existing_podcast.end_date is None:
+                        # Only update if missing - don't update if already set for completed episodes
                         existing_podcast.end_date = completion_date
                         fields_changed = True
                         logger.debug(
@@ -1477,6 +1479,16 @@ class PocketCastsImporter:
                             episode_data.get("title", "Unknown"),
                             completion_date,
                         )
+                    elif not already_completed:
+                        # Only update if different AND episode is newly completing (not already completed)
+                        if existing_podcast.end_date != completion_date:
+                            existing_podcast.end_date = completion_date
+                            fields_changed = True
+                            logger.debug(
+                                "Updated end_date for newly completed podcast %s: %s",
+                                episode_data.get("title", "Unknown"),
+                                completion_date,
+                            )
                 
                 # Only save if there are actual changes to prevent unnecessary history entries
                 if fields_changed:
