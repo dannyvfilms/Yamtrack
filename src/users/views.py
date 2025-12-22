@@ -582,8 +582,7 @@ def update_jellyseerr_settings(request):
     # Checkbox semantics:
     # - checked: key present, value usually "on" (sometimes "1"/"true")
     # - unchecked: key absent
-    raw_enabled = request.POST.get("jellyseerr_enabled")
-    enabled = str(raw_enabled).lower() in {"on", "1", "true", "yes"} if raw_enabled is not None else False
+    enabled = "jellyseerr_enabled" in request.POST
 
     raw_trigger = (request.POST.get("jellyseerr_trigger_statuses") or "").strip()
     raw_allowed = (request.POST.get("jellyseerr_allowed_usernames") or "").strip()
