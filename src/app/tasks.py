@@ -1,14 +1,15 @@
 """Celery tasks for the app."""
 
 import logging
+
 from celery import shared_task
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
 
 from app import history_cache
 from app.models import Item, MediaTypes
 from app.providers import services
-from django.contrib.auth import get_user_model
 
 logger = logging.getLogger(__name__)
 
@@ -16,25 +17,26 @@ logger = logging.getLogger(__name__)
 @shared_task
 def populate_runtime_data_batch(batch_size=10, delay_seconds=1.0):
     """Populate runtime data for a batch of items that don't have it."""
-    from app.statistics import parse_runtime_to_minutes
     import time
-    
+
+    from app.statistics import parse_runtime_to_minutes
+
     # Get items that need runtime data (exclude manual items, episodes, and previously failed items)
     items_to_update = Item.objects.filter(
         runtime_minutes__isnull=True,
         media_type__in=[MediaTypes.MOVIE.value, MediaTypes.TV.value, MediaTypes.ANIME.value],  # Episodes get runtime from season metadata, not individually
-        source__in=['tmdb', 'mal', 'simkl']  # Only process items from providers that have runtime data
+        source__in=["tmdb", "mal", "simkl"],  # Only process items from providers that have runtime data
     ).exclude(
-        runtime_minutes=999999  # Exclude items marked as failed
-    ).order_by('id')[:batch_size]
-    
+        runtime_minutes=999999,  # Exclude items marked as failed
+    ).order_by("id")[:batch_size]
+
     if not items_to_update.exists():
         logger.info("No items need runtime data")
         return {"updated": 0, "errors": 0}
-    
+
     updated_count = 0
     error_count = 0
-    
+
     for item in items_to_update:
         try:
             # Get metadata from provider
@@ -43,30 +45,30 @@ def populate_runtime_data_batch(batch_size=10, delay_seconds=1.0):
                 item.media_id,
                 item.source,
             )
-            
+
             # Check if metadata is None or doesn't have the expected structure
             if not metadata:
                 logger.warning(f"No metadata returned for {item.title} ({item.media_type}, {item.source})")
                 error_count += 1
                 continue
-                
+
             if not isinstance(metadata, dict):
                 logger.warning(f"Invalid metadata format for {item.title}: {type(metadata)}")
                 error_count += 1
                 continue
-                
+
             if not metadata.get("details"):
                 logger.warning(f"No details in metadata for {item.title}")
                 error_count += 1
                 continue
-                
+
             details = metadata["details"]
             runtime_str = details.get("runtime")
-            
+
             if not runtime_str:
                 logger.warning(f"No runtime data available for {item.title}")
                 error_count += 1
-                
+
                 # Mark item as failed to avoid endless retries
                 try:
                     with transaction.atomic():
@@ -75,15 +77,15 @@ def populate_runtime_data_batch(batch_size=10, delay_seconds=1.0):
                     logger.warning(f"Marked {item.title} as failed (runtime_minutes=999999) - no runtime data available")
                 except Exception as save_error:
                     logger.error(f"Failed to mark {item.title} as failed: {save_error}")
-                
+
                 continue
-            
+
             runtime_minutes = parse_runtime_to_minutes(runtime_str)
-            
+
             if runtime_minutes is None:
                 logger.warning(f"Failed to parse runtime '{runtime_str}' for {item.title}")
                 error_count += 1
-                
+
                 # Mark item as failed to avoid endless retries
                 try:
                     with transaction.atomic():
@@ -92,25 +94,25 @@ def populate_runtime_data_batch(batch_size=10, delay_seconds=1.0):
                     logger.warning(f"Marked {item.title} as failed (runtime_minutes=999999) - failed to parse runtime")
                 except Exception as save_error:
                     logger.error(f"Failed to mark {item.title} as failed: {save_error}")
-                
+
                 continue
-            
+
             # Update the item
             with transaction.atomic():
                 item.runtime_minutes = runtime_minutes
                 item.save()
-            
+
             updated_count += 1
             logger.info(f"Updated runtime for {item.title}: {runtime_minutes} minutes")
-            
+
             # Add delay to avoid rate limiting
             if delay_seconds > 0:
                 time.sleep(delay_seconds)
-                
+
         except Exception as e:
             error_count += 1
             logger.error(f"Error updating runtime for {item.title}: {e}")
-            
+
             # Mark item as failed by setting runtime_minutes to 999999 to avoid endless retries
             # This is a simple way to skip items that consistently fail
             try:
@@ -120,45 +122,44 @@ def populate_runtime_data_batch(batch_size=10, delay_seconds=1.0):
                 logger.warning(f"Marked {item.title} as failed (runtime_minutes=999999) to avoid endless retries")
             except Exception as save_error:
                 logger.error(f"Failed to mark {item.title} as failed: {save_error}")
-    
+
     logger.info(f"Runtime population batch completed: {updated_count} updated, {error_count} errors")
-    
+
     # Check if there are more items to process (exclude previously failed items)
     remaining_items = Item.objects.filter(
         runtime_minutes__isnull=True,
         media_type__in=[MediaTypes.MOVIE.value, MediaTypes.TV.value, MediaTypes.ANIME.value],
-        source__in=['tmdb', 'mal', 'simkl']
+        source__in=["tmdb", "mal", "simkl"],
     ).exclude(
-        runtime_minutes=999999  # Exclude items marked as failed
+        runtime_minutes=999999,  # Exclude items marked as failed
     ).count()
-    
+
     if remaining_items > 0:
         logger.info(f"Found {remaining_items} remaining items. Scheduling next batch...")
         # Schedule the next batch with a small delay
         populate_runtime_data_batch.apply_async(
-            kwargs={'batch_size': batch_size, 'delay_seconds': delay_seconds},
-            countdown=5  # 5 second delay between batches
+            kwargs={"batch_size": batch_size, "delay_seconds": delay_seconds},
+            countdown=5,  # 5 second delay between batches
         )
         return {
-            "updated": updated_count, 
+            "updated": updated_count,
             "errors": error_count,
             "remaining_items": remaining_items,
-            "next_batch_scheduled": True
+            "next_batch_scheduled": True,
         }
-    else:
-        logger.info("🎉 All runtime data population completed! No more items need processing.")
-        
-        # Mark as completed in cache to prevent repeated runs
-        from django.core.cache import cache
-        cache.set("runtime_population_completed", True, timeout=3600)  # 1 hour
-        
-        return {
-            "updated": updated_count, 
-            "errors": error_count,
-            "remaining_items": 0,
-            "next_batch_scheduled": False,
-            "completion_message": "All runtime data populated successfully!"
-        }
+    logger.info("🎉 All runtime data population completed! No more items need processing.")
+
+    # Mark as completed in cache to prevent repeated runs
+    from django.core.cache import cache
+    cache.set("runtime_population_completed", True, timeout=3600)  # 1 hour
+
+    return {
+        "updated": updated_count,
+        "errors": error_count,
+        "remaining_items": 0,
+        "next_batch_scheduled": False,
+        "completion_message": "All runtime data populated successfully!",
+    }
 
 
 @shared_task
@@ -177,9 +178,10 @@ def refresh_statistics_cache_task(user_id: int, range_name: str):
 @shared_task
 def populate_runtime_data_continuous():
     """Populate runtime data for ALL items that don't have it (startup task)."""
-    from app.models import Item, MediaTypes
     from django.core.cache import cache
-    
+
+    from app.models import Item, MediaTypes
+
     # Check if runtime population has already been completed recently (within last hour)
     cache_key = "runtime_population_completed"
     if cache.get(cache_key):
@@ -187,11 +189,11 @@ def populate_runtime_data_continuous():
         episodes_needing_runtime = Item.objects.filter(
             runtime_minutes__isnull=True,
             media_type=MediaTypes.EPISODE.value,
-            source__in=['tmdb', 'mal', 'simkl']
+            source__in=["tmdb", "mal", "simkl"],
         ).exclude(
-            runtime_minutes=999999
+            runtime_minutes=999999,
         ).count()
-        
+
         if episodes_needing_runtime > 0:
             logger.info(f"Runtime population completed for movies/TV/anime, but {episodes_needing_runtime} episodes still need runtime data. Starting episode population...")
             # Clear the cache and continue with episode population
@@ -199,26 +201,26 @@ def populate_runtime_data_continuous():
         else:
             logger.info("Runtime population already completed recently - skipping")
             return {"total_items": 0, "batches_scheduled": 0, "message": "Already completed recently"}
-    
+
     # Count total items that need runtime data (exclude previously failed items)
     total_items = Item.objects.filter(
         runtime_minutes__isnull=True,
         media_type__in=[MediaTypes.MOVIE.value, MediaTypes.TV.value, MediaTypes.ANIME.value],
-        source__in=['tmdb', 'mal', 'simkl']
+        source__in=["tmdb", "mal", "simkl"],
     ).exclude(
-        runtime_minutes=999999  # Exclude items marked as failed
+        runtime_minutes=999999,  # Exclude items marked as failed
     ).count()
-    
+
     if total_items == 0:
         # Check if episodes also need runtime data
         episodes_needing_runtime = Item.objects.filter(
             runtime_minutes__isnull=True,
             media_type=MediaTypes.EPISODE.value,
-            source__in=['tmdb', 'mal', 'simkl']
+            source__in=["tmdb", "mal", "simkl"],
         ).exclude(
-            runtime_minutes=999999
+            runtime_minutes=999999,
         ).count()
-        
+
         if episodes_needing_runtime > 0:
             logger.info(f"No movies/TV/anime need runtime data, but {episodes_needing_runtime} episodes still need runtime data. Starting episode population...")
             # Start episode population
@@ -226,41 +228,38 @@ def populate_runtime_data_continuous():
             return {
                 "total_items": 0,
                 "episode_task_id": episode_result.id,
-                "message": f"Movies/TV/anime up to date, starting episode population for {episodes_needing_runtime} episodes"
+                "message": f"Movies/TV/anime up to date, starting episode population for {episodes_needing_runtime} episodes",
             }
-        else:
-            logger.info("No items need runtime data - all up to date!")
-            # Mark as completed for 1 hour to prevent repeated runs
-            cache.set(cache_key, True, timeout=3600)
-            return {"total_items": 0, "batches_scheduled": 0, "message": "All up to date - marked as completed"}
-    
+        logger.info("No items need runtime data - all up to date!")
+        # Mark as completed for 1 hour to prevent repeated runs
+        cache.set(cache_key, True, timeout=3600)
+        return {"total_items": 0, "batches_scheduled": 0, "message": "All up to date - marked as completed"}
+
     logger.info(f"Found {total_items} items that need runtime data. Starting comprehensive population...")
-    
+
     # Start the first batch - it will chain itself if more items remain
     first_batch = populate_runtime_data_batch.delay(batch_size=20, delay_seconds=1.0)
-    
+
     # Also start episode runtime population
     episode_result = populate_episode_runtime_data.delay()
-    
+
     return {
         "total_items": total_items,
         "first_task_id": first_batch.id,
         "episode_task_id": episode_result.id,
-        "message": "Started comprehensive runtime population for movies/TV/anime and episodes. Check logs for progress."
+        "message": "Started comprehensive runtime population for movies/TV/anime and episodes. Check logs for progress.",
     }
 
 
 @shared_task
 def enrich_music_library_task(user_id: int):
     """Post-import enrichment/dedupe for a user's music library."""
-    from app.models import Artist, Music, Album
-    from app.providers import musicbrainz
+    from app.models import Album, Artist, Music
     from app.services.music import (
         merge_artist_records,
+        prefetch_album_covers,
         resolve_artist_mbid,
         sync_artist_discography,
-        populate_album_tracks,
-        prefetch_album_covers,
     )
     from app.services.music_scrobble import dedupe_artist_albums
     from app.services.music_validation import validate_music_library
@@ -289,11 +288,11 @@ def enrich_music_library_task(user_id: int):
     artists = list(Artist.objects.filter(id__in=artist_ids))
     artists_without_mbid = [a for a in artists if not a.musicbrainz_id]
     artists_with_mbid = [a for a in artists if a.musicbrainz_id]
-    
+
     # Log sample names to verify we're seeing the full set (not just "A" names)
     sample_without_mbid = [a.name for a in artists_without_mbid[:10]] if artists_without_mbid else []
     sample_with_mbid = [a.name for a in artists_with_mbid[:10]] if artists_with_mbid else []
-    
+
     logger.info(
         "enrich_music_library_task: Found %d total artists (%d without MBID, %d with MBID). "
         "Sample without MBID: %s. Sample with MBID: %s",
@@ -303,7 +302,7 @@ def enrich_music_library_task(user_id: int):
         sample_without_mbid,
         sample_with_mbid,
     )
-    
+
     synced = 0
     deduped = 0
     attached = 0
@@ -318,15 +317,15 @@ def enrich_music_library_task(user_id: int):
     defer_covers = getattr(settings, "MUSIC_DEFER_COVER_PREFETCH", True)
 
     # Phase 1: Fast runtime backfill from existing tracks (DB-only, immediate)
-    from app.services.music_scrobble import _runtime_minutes_from_ms
     from app.models import Item
-    
+    from app.services.music_scrobble import _runtime_minutes_from_ms
+
     music_with_runtime = (
         Music.objects.filter(user=user, item__runtime_minutes__isnull=True)
         .exclude(track__duration_ms__isnull=True)
         .select_related("item", "track")
     )
-    
+
     items_to_update_runtime = []
     for music in music_with_runtime:
         if music.track and music.track.duration_ms and music.item:
@@ -334,7 +333,7 @@ def enrich_music_library_task(user_id: int):
             if runtime:
                 music.item.runtime_minutes = runtime
                 items_to_update_runtime.append(music.item)
-    
+
     if items_to_update_runtime:
         Item.objects.bulk_update(items_to_update_runtime, ["runtime_minutes"], batch_size=500)
         logger.info(
@@ -432,8 +431,8 @@ def enrich_music_library_task(user_id: int):
                                 merged += 1
                                 logger.info(
                                     "enrich_music_library_task: SUCCESS - merged artist '%s' (id=%s) into '%s' (id=%s, MBID=%s) via variant '%s'",
-                                    artist.name if hasattr(artist, 'name') else "Unknown",
-                                    artist.id if hasattr(artist, 'id') else "Unknown",
+                                    artist.name if hasattr(artist, "name") else "Unknown",
+                                    artist.id if hasattr(artist, "id") else "Unknown",
                                     existing.name,
                                     existing.id,
                                     mbid,
@@ -442,8 +441,8 @@ def enrich_music_library_task(user_id: int):
                             except Exception as merge_exc:
                                 logger.warning(
                                     "enrich_music_library_task: merge FAILED for '%s' (id=%s) into '%s' (id=%s, MBID=%s): %s",
-                                    artist.name if hasattr(artist, 'name') else "Unknown",
-                                    artist.id if hasattr(artist, 'id') else "Unknown",
+                                    artist.name if hasattr(artist, "name") else "Unknown",
+                                    artist.id if hasattr(artist, "id") else "Unknown",
                                     existing.name,
                                     existing.id,
                                     mbid,
@@ -454,7 +453,7 @@ def enrich_music_library_task(user_id: int):
                                 if not artist.pk:
                                     logger.warning(
                                         "enrich_music_library_task: artist '%s' invalid after failed merge, skipping remaining processing for this artist, continuing with next",
-                                        artist.name if hasattr(artist, 'name') else "Unknown",
+                                        artist.name if hasattr(artist, "name") else "Unknown",
                                     )
                                     continue
                         else:
@@ -483,12 +482,12 @@ def enrich_music_library_task(user_id: int):
                     exc,
                     exc_info=True,
                 )
-        
+
         # Skip remaining processing if artist became invalid (e.g., deleted during merge)
         if not artist.pk:
             logger.debug(
                 "enrich_music_library_task: skipping remaining processing for artist '%s' (no pk after MBID resolution)",
-                artist.name if hasattr(artist, 'name') else "Unknown",
+                artist.name if hasattr(artist, "name") else "Unknown",
             )
             continue
 
@@ -539,7 +538,7 @@ def enrich_music_library_task(user_id: int):
                 )
             else:
                 music_without_track = Music.objects.none()
-            
+
             if music_without_track.exists() and artist.pk:
                 track_map = {
                     t.musicbrainz_recording_id: t.id
@@ -575,7 +574,7 @@ def enrich_music_library_task(user_id: int):
         .exclude(track__duration_ms__isnull=True)
         .select_related("item", "track")
     )
-    
+
     items_final_runtime = []
     for music in music_with_new_runtime:
         if music.track and music.track.duration_ms and music.item:
@@ -583,7 +582,7 @@ def enrich_music_library_task(user_id: int):
             if runtime:
                 music.item.runtime_minutes = runtime
                 items_final_runtime.append(music.item)
-    
+
     if items_final_runtime:
         Item.objects.bulk_update(items_final_runtime, ["runtime_minutes"], batch_size=500)
         logger.info(
@@ -595,7 +594,7 @@ def enrich_music_library_task(user_id: int):
     if defer_covers and artists_for_covers:
         result = prefetch_album_covers_batch.delay(artists_for_covers, limit_per_artist=5)
         cover_task_id = result.id
-    
+
     # Queue track population as background task (only for albums with MBIDs)
     # Pass user_id so we can link tracks and backfill runtime after population
     track_population_task_id = None
@@ -610,7 +609,7 @@ def enrich_music_library_task(user_id: int):
     # Run validation after enrichment (optional - can be disabled for speed)
     run_validation = getattr(settings, "MUSIC_ENRICHMENT_VALIDATION", False)
     validation_result = None
-    
+
     if run_validation:
         validation_after = validate_music_library(user)
         validation_result = {
@@ -681,16 +680,16 @@ def fast_runtime_backfill_task(user_id: int):
     
     This runs BEFORE enrichment to get statistics working immediately.
     """
-    from app.models import Music, Track, Item
+    from app.models import Item, Music, Track
     from app.services.music_scrobble import _runtime_minutes_from_ms
-    
+
     User = get_user_model()
     try:
         user = User.objects.get(id=user_id)
     except User.DoesNotExist:
         logger.warning("fast_runtime_backfill_task: user %s no longer exists", user_id)
         return {"backfilled": 0}
-    
+
     # Strategy 1: Backfill from linked Track.duration_ms (fastest path)
     music_with_track_duration = (
         Music.objects.filter(
@@ -700,7 +699,7 @@ def fast_runtime_backfill_task(user_id: int):
         )
         .select_related("item", "track")
     )
-    
+
     items_to_update = []
     for music in music_with_track_duration:
         if music.track and music.track.duration_ms and music.item:
@@ -708,7 +707,7 @@ def fast_runtime_backfill_task(user_id: int):
             if runtime:
                 music.item.runtime_minutes = runtime
                 items_to_update.append(music.item)
-    
+
     # Bulk update items
     if items_to_update:
         Item.objects.bulk_update(items_to_update, ["runtime_minutes"], batch_size=500)
@@ -716,7 +715,7 @@ def fast_runtime_backfill_task(user_id: int):
             "fast_runtime_backfill_task: Backfilled %d runtimes from linked Track records",
             len(items_to_update),
         )
-    
+
     # Strategy 2: Backfill from album tracklists (for tracks not yet linked)
     # Find Music entries without runtime that have albums with populated tracks
     music_with_album_tracks = (
@@ -729,25 +728,25 @@ def fast_runtime_backfill_task(user_id: int):
         .exclude(track__duration_ms__isnull=False)  # Skip if already linked
         .select_related("item", "album")
     )
-    
+
     additional_items = []
     for music in music_with_album_tracks:
         if not music.item or not music.item.media_id or not music.album:
             continue
-        
+
         # Try to find track in album's tracklist by recording ID
         track = Track.objects.filter(
             album=music.album,
             musicbrainz_recording_id=music.item.media_id,
             duration_ms__isnull=False,
         ).first()
-        
+
         if track and track.duration_ms:
             runtime = _runtime_minutes_from_ms(track.duration_ms)
             if runtime:
                 music.item.runtime_minutes = runtime
                 additional_items.append(music.item)
-    
+
     # Bulk update additional items
     if additional_items:
         Item.objects.bulk_update(additional_items, ["runtime_minutes"], batch_size=500)
@@ -755,7 +754,7 @@ def fast_runtime_backfill_task(user_id: int):
             "fast_runtime_backfill_task: Backfilled %d runtimes from album tracklists",
             len(additional_items),
         )
-    
+
     total_backfilled = len(items_to_update) + len(additional_items)
     return {"backfilled": total_backfilled}
 
@@ -775,26 +774,30 @@ def populate_album_tracks_batch(album_ids: list[int], user_id: int | None = None
         user_id: Optional user ID - if provided, links tracks and backfills runtime after population
     """
     from app.models import Album
-    from app.services.music import populate_album_tracks, link_music_to_tracks, backfill_music_runtimes
-    
+    from app.services.music import (
+        backfill_music_runtimes,
+        link_music_to_tracks,
+        populate_album_tracks,
+    )
+
     populated = 0
     skipped_no_release_id = 0
     skipped_already_populated = 0
-    
+
     for album_id in album_ids:
         try:
             album = Album.objects.filter(id=album_id).first()
             if not album:
                 continue
-            
+
             if album.tracks_populated:
                 skipped_already_populated += 1
                 continue
-            
+
             # Skip albums without MBIDs - can't populate tracks without them
             if not album.musicbrainz_release_id and not album.musicbrainz_release_group_id:
                 continue
-            
+
             count = populate_album_tracks(album)
             if count > 0:
                 populated += 1
@@ -802,32 +805,32 @@ def populate_album_tracks_batch(album_ids: list[int], user_id: int | None = None
                 skipped_no_release_id += 1
         except Exception as exc:
             logger.warning("Track populate failed for album %s: %s", album_id, exc)
-    
+
     if skipped_no_release_id > 0:
         logger.info(
             "populate_album_tracks_batch: Skipped %d albums that couldn't get release_id from release_group",
             skipped_no_release_id,
         )
-    
+
     logger.info(
         "populate_album_tracks_batch: Populated tracks for %d albums (skipped: %d no release_id, %d already populated)",
         populated,
         skipped_no_release_id,
         skipped_already_populated,
     )
-    
+
     # After populating tracks, link Music entries to tracks and backfill runtime
     if populated > 0 and user_id:
         try:
             User = get_user_model()
             user = User.objects.get(id=user_id)
-            
+
             # Link Music entries to newly populated tracks
             link_result = link_music_to_tracks(user)
-            
+
             # Backfill runtime from all available sources
             backfill_result = backfill_music_runtimes(user)
-            
+
             logger.info(
                 "populate_album_tracks_batch: After populating %d albums, linked %d Music->Track, backfilled %d runtimes",
                 populated,
@@ -838,7 +841,7 @@ def populate_album_tracks_batch(album_ids: list[int], user_id: int | None = None
             logger.warning("populate_album_tracks_batch: User %s not found, skipping track linking", user_id)
         except Exception as exc:
             logger.warning("Failed to link tracks/backfill runtime after track population: %s", exc)
-    
+
     return {
         "albums": len(album_ids),
         "populated": populated,
@@ -855,15 +858,14 @@ def enrich_albums_task(user_id: int):
     enrich_music_library_task processes artists. Uses the same proven search/matching
     logic from resolve_artist_mbid adapted for albums.
     """
-    from app.models import Album, Music
+    from app.models import Album, AlbumTracker, Item, Music
     from app.services.music import (
-        resolve_album_mbid,
-        populate_album_tracks,
-        link_music_to_tracks,
         backfill_music_runtimes,
+        link_music_to_tracks,
+        populate_album_tracks,
+        resolve_album_mbid,
     )
     from app.services.music_scrobble import _runtime_minutes_from_ms
-    from app.models import Item, AlbumTracker
 
     User = get_user_model()
     try:
@@ -969,7 +971,7 @@ def enrich_albums_task(user_id: int):
             skipped_already_has_mbid += 1
             if len(skipped_album_names_sample) < 20:
                 skipped_album_names_sample.append(
-                    f"{album.title} - {album.artist.name if album.artist else 'Unknown'}"
+                    f"{album.title} - {album.artist.name if album.artist else 'Unknown'}",
                 )
         else:
             artist_name = album.artist.name if album.artist else None
@@ -1274,57 +1276,58 @@ def prefetch_album_covers_batch(artist_ids: list[int], limit_per_artist: int | N
 @shared_task
 def populate_episode_runtime_data():
     """Populate runtime data for episodes by syncing season metadata."""
-    from app.models import Item, MediaTypes, Season
+    import time
+
+    from app.models import Item, MediaTypes
     from app.providers import services
     from app.statistics import parse_runtime_to_minutes
-    import time
-    
+
     # Find episodes that need runtime data
     episodes_needing_runtime = Item.objects.filter(
         runtime_minutes__isnull=True,
         media_type=MediaTypes.EPISODE.value,
-        source__in=['tmdb', 'mal', 'simkl']
+        source__in=["tmdb", "mal", "simkl"],
     ).exclude(
-        runtime_minutes=999999
+        runtime_minutes=999999,
     )
-    
+
     if not episodes_needing_runtime.exists():
         logger.info("No episodes need runtime data")
         return {"updated": 0, "errors": 0, "message": "No episodes need runtime data"}
-    
+
     updated_count = 0
     error_count = 0
     processed_seasons = set()
-    
+
     for episode in episodes_needing_runtime:
         try:
             # Create a season key to avoid processing the same season multiple times
             season_key = (episode.media_id, episode.source, episode.season_number)
-            
+
             if season_key in processed_seasons:
                 continue
-                
+
             processed_seasons.add(season_key)
-            
+
             # Get season metadata to populate episode runtime data
             season_metadata = services.get_media_metadata(
                 "tv_with_seasons",
                 episode.media_id,
                 episode.source,
-                [episode.season_number]
+                [episode.season_number],
             )
-            
+
             if not season_metadata or f"season/{episode.season_number}" not in season_metadata:
                 logger.warning(f"No season metadata for {episode.title} S{episode.season_number}")
                 error_count += 1
                 continue
-            
+
             season_data = season_metadata[f"season/{episode.season_number}"]
-            
+
             # Process episodes to get runtime data
             from app.providers import tmdb
             episodes_metadata = tmdb.process_episodes(season_data, [])
-            
+
             # Update episodes with runtime data
             for ep_data in episodes_metadata:
                 if ep_data.get("runtime"):
@@ -1337,31 +1340,31 @@ def populate_episode_runtime_data():
                         defaults={
                             "title": episode.title,  # Keep existing title
                             "image": ep_data.get("image", episode.image),
-                            "runtime_minutes": parse_runtime_to_minutes(ep_data["runtime"])
-                        }
+                            "runtime_minutes": parse_runtime_to_minutes(ep_data["runtime"]),
+                        },
                     )
-                    
+
                     if not created and episode_item.runtime_minutes:
                         updated_count += 1
                         logger.info(f"Updated runtime for {episode_item.title} S{episode.season_number}E{ep_data['episode_number']}: {episode_item.runtime_minutes} minutes")
-            
+
             # Small delay to avoid rate limiting
             time.sleep(0.1)
-            
+
         except Exception as e:
             logger.error(f"Error processing episode {episode.title}: {e}")
             error_count += 1
             continue
-    
+
     logger.info(f"Episode runtime population completed: {updated_count} episodes updated, {error_count} errors")
-    
+
     # Mark runtime population as completed since both movies/TV/anime and episodes are done
     from django.core.cache import cache
     cache.set("runtime_population_completed", True, timeout=3600)  # 1 hour
     logger.info("🎉 All runtime data population completed! Movies, TV shows, anime, and episodes all processed.")
-    
+
     return {
         "updated": updated_count,
         "errors": error_count,
-        "message": f"Processed {len(processed_seasons)} seasons, updated {updated_count} episodes. All runtime data population completed!"
+        "message": f"Processed {len(processed_seasons)} seasons, updated {updated_count} episodes. All runtime data population completed!",
     }

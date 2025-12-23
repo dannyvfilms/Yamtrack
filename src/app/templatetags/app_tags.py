@@ -1,5 +1,5 @@
-from pathlib import Path
 from datetime import date, timedelta
+from pathlib import Path
 
 from django import template
 from django.conf import settings
@@ -19,14 +19,14 @@ register = template.Library()
 def get_static_file_mtime(file_path):
     """Return the last modification time of a static file for cache busting."""
     # Check STATICFILES_DIRS first (for development), then STATIC_ROOT (for production)
-    for static_dir in getattr(settings, 'STATICFILES_DIRS', []):
+    for static_dir in getattr(settings, "STATICFILES_DIRS", []):
         full_path = Path(static_dir) / file_path
         try:
             mtime = int(full_path.stat().st_mtime)
             return f"?{mtime}"
         except OSError:
             continue
-    
+
     # Fall back to STATIC_ROOT
     full_path = Path(settings.STATIC_ROOT) / file_path
     try:
@@ -234,10 +234,10 @@ def user_event_time(event, user):
     """Format event time according to user's time format preference."""
     if not event or not user or event.is_sentinel_time:
         return ""
-    
+
     try:
         local_dt = timezone.localtime(event.datetime)
-        
+
         if user.time_format == TimeFormatChoices.SYSTEM_DEFAULT:
             time_str = formats.date_format(local_dt, "TIME_FORMAT")
         elif user.time_format == TimeFormatChoices.H_MM_AMPM:
@@ -252,7 +252,7 @@ def user_event_time(event, user):
             time_str = local_dt.strftime("%H:%M:%S")
         else:
             time_str = formats.date_format(local_dt, "TIME_FORMAT")
-        
+
         return f"at {time_str}"
     except (ValueError, TypeError, AttributeError):
         # Fallback to default format if there's an error
@@ -507,7 +507,7 @@ def _check_same_day_ranges(start_date, end_date, today):
     if start_date == end_date:
         if start_date == today:
             return "Today"
-        elif start_date == today - timedelta(days=1):
+        if start_date == today - timedelta(days=1):
             return "Yesterday"
     return None
 
@@ -518,10 +518,9 @@ def _check_week_ranges(start_date, end_date, today):
     if days_diff == 6:  # 7 days including start and end
         if start_date == today - timedelta(days=6):
             return "This Week"
-        elif start_date == today - timedelta(days=13):
+        if start_date == today - timedelta(days=13):
             return "Last Week"
-        else:
-            return "Last 7 Days"
+        return "Last 7 Days"
     return None
 
 
@@ -531,29 +530,28 @@ def _check_month_ranges(start_date, end_date, today):
     if days_diff == 29:  # 30 days including start and end
         if start_date == today - timedelta(days=29):
             return "This Month"
-        elif start_date == today - timedelta(days=59):
+        if start_date == today - timedelta(days=59):
             return "Last Month"
-        else:
-            return "Last 30 Days"
+        return "Last 30 Days"
     return None
 
 
 def _check_extended_ranges(start_date, end_date):
     """Check for extended date ranges like 90 days, 6 months, and 1 year."""
     days_diff = (end_date - start_date).days
-    
+
     # Check for 90 days
     if days_diff == 89:  # 90 days including start and end
         return "Last 90 Days"
-    
+
     # Check for 6 months (approximately 180 days)
     if 175 <= days_diff <= 185:
         return "Last 6 Months"
-    
+
     # Check for year ranges
     if days_diff == 364:  # 365 days including start and end
         return "Last 12 Months"
-    
+
     return None
 
 
@@ -563,22 +561,22 @@ def _is_predefined_date_range(start_date, end_date, today):
     result = _check_same_day_ranges(start_date, end_date, today)
     if result:
         return result
-    
+
     # Check week ranges
     result = _check_week_ranges(start_date, end_date, today)
     if result:
         return result
-    
+
     # Check month ranges
     result = _check_month_ranges(start_date, end_date, today)
     if result:
         return result
-    
+
     # Check extended ranges
     result = _check_extended_ranges(start_date, end_date)
     if result:
         return result
-    
+
     return None
 
 
@@ -588,7 +586,7 @@ def order_by_end_date(queryset):
     if queryset is None:
         return queryset
     try:
-        return queryset.order_by('end_date')
+        return queryset.order_by("end_date")
     except (AttributeError, TypeError):
         # If it's not a queryset or doesn't have end_date, return as-is
         return queryset
@@ -603,22 +601,22 @@ def format_date_range_display(start_date, end_date):
     """
     if start_date is None and end_date is None:
         return "All Time"
-    
+
     if start_date is None or end_date is None:
         return "Date Range"
-    
+
     # Convert to date objects if they're datetime
-    if hasattr(start_date, 'date'):
+    if hasattr(start_date, "date"):
         start_date = start_date.date()
-    if hasattr(end_date, 'date'):
+    if hasattr(end_date, "date"):
         end_date = end_date.date()
-    
+
     today = date.today()
-    
+
     # Check for predefined ranges
     predefined_range = _is_predefined_date_range(start_date, end_date, today)
     if predefined_range:
         return predefined_range
-    
+
     # If none of the predefined ranges match, return "Date Range"
     return "Date Range"

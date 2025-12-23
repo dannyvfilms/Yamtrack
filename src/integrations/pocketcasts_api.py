@@ -1,13 +1,12 @@
 """Helpers for interacting with the Pocket Casts API."""
 
 import logging
-from typing import Any, Dict
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import jwt
 import requests
-from django.conf import settings
 from django.utils import timezone
-from datetime import datetime, timedelta, timezone as dt_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +21,7 @@ class PocketCastsAuthError(PocketCastsClientError):
     """Raised when Pocket Casts authentication fails or a token is invalid."""
 
 
-def login(email: str, password: str) -> Dict[str, Any]:
+def login(email: str, password: str) -> dict[str, Any]:
     """Login to Pocket Casts with email and password.
     
     Returns:
@@ -34,30 +33,30 @@ def login(email: str, password: str) -> Dict[str, Any]:
         "Content-Type": "application/json",
         "Accept": "*/*",
     }
-    
+
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=10)
         response.raise_for_status()
         data = response.json()
-        
+
         # Log response keys for debugging (but not the actual values for security)
         if isinstance(data, dict):
             logger.debug("Pocket Casts login response keys: %s", list(data.keys()))
             # Log a sanitized version of the response (hide token values)
-            sanitized = {k: ("***" if "token" in k.lower() or "password" in k.lower() else v) 
+            sanitized = {k: ("***" if "token" in k.lower() or "password" in k.lower() else v)
                         for k, v in data.items() if not isinstance(v, (dict, list))}
             logger.debug("Pocket Casts login response (sanitized): %s", sanitized)
         else:
             logger.debug("Pocket Casts login response type: %s", type(data).__name__)
-        
+
         # Check for accessToken in various possible field names
         access_token = None
         refresh_token = None
-        
+
         # First, check if data is nested (e.g., {"data": {...}})
         if isinstance(data, dict) and "data" in data and isinstance(data["data"], dict):
             data = data["data"]
-        
+
         # Try different possible field names
         if "accessToken" in data:
             access_token = data["accessToken"]
@@ -70,7 +69,7 @@ def login(email: str, password: str) -> Dict[str, Any]:
             first_value = next(iter(data.values()))
             if isinstance(first_value, str) and len(first_value) > 50:
                 access_token = first_value
-        
+
         if not access_token:
             # Log the response structure (sanitized) for debugging
             error_msg = "Invalid response from Pocket Casts login"
@@ -82,10 +81,10 @@ def login(email: str, password: str) -> Dict[str, Any]:
                 elif "message" in data:
                     error_msg = f"Pocket Casts message: {data['message']}"
             else:
-                logger.error("Login response is not a dict. Type: %s, Value (first 200 chars): %s", 
+                logger.error("Login response is not a dict. Type: %s, Value (first 200 chars): %s",
                            type(data).__name__, str(data)[:200])
             raise PocketCastsAuthError(error_msg)
-        
+
         # Check for refreshToken in various possible field names
         if "refreshToken" in data:
             refresh_token = data["refreshToken"]
@@ -93,7 +92,7 @@ def login(email: str, password: str) -> Dict[str, Any]:
             refresh_token = data["refresh_token"]
         elif "refreshToken" in data:
             refresh_token = data.get("refreshToken", "")
-        
+
         return {
             "accessToken": access_token,
             "refreshToken": refresh_token or "",
@@ -106,7 +105,7 @@ def login(email: str, password: str) -> Dict[str, Any]:
         raise PocketCastsClientError(f"Failed to connect to Pocket Casts: {e}") from e
 
 
-def refresh_token(refresh_token: str) -> Dict[str, Any]:
+def refresh_token(refresh_token: str) -> dict[str, Any]:
     """Refresh an access token using a refresh token.
     
     Returns:
@@ -118,16 +117,16 @@ def refresh_token(refresh_token: str) -> Dict[str, Any]:
         "Content-Type": "application/json",
         "Accept": "*/*",
     }
-    
+
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=10)
         response.raise_for_status()
         data = response.json()
-        
+
         if "accessToken" not in data:
             logger.error("Token refresh response missing accessToken. Response keys: %s", list(data.keys()) if isinstance(data, dict) else "not a dict")
             raise PocketCastsAuthError("Invalid response from token refresh")
-        
+
         logger.debug("Token refresh successful")
         return {
             "accessToken": data["accessToken"],
@@ -140,7 +139,7 @@ def refresh_token(refresh_token: str) -> Dict[str, Any]:
             logger.error("Token refresh failed with status %d. Response: %s", status_code, error_body)
         except Exception:
             logger.error("Token refresh failed with status %d (could not read response body)", status_code)
-        
+
         if status_code == 401:
             raise PocketCastsAuthError("Refresh token is invalid or expired")
         raise PocketCastsClientError(f"Pocket Casts API error: {status_code}") from e
@@ -159,10 +158,10 @@ def parse_token_expiration(access_token: str) -> datetime:
         decoded = jwt.decode(access_token, options={"verify_signature": False})
         exp = decoded.get("exp")
         if exp:
-            return datetime.fromtimestamp(exp, tz=dt_timezone.utc)
+            return datetime.fromtimestamp(exp, tz=UTC)
     except Exception:
         pass
-    
+
     # Fallback: assume 1 hour expiration
     return timezone.now() + timedelta(hours=1)
 
@@ -185,7 +184,7 @@ def validate_token(access_token: str) -> bool:
         "X-User-Region": "global",
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
     }
-    
+
     try:
         response = requests.post(url, json={}, headers=headers, timeout=10)
         # 200 or 201 means valid token (even if no episodes)
@@ -210,7 +209,7 @@ def validate_token(access_token: str) -> bool:
         return False
 
 
-def get_podcast_list(access_token: str) -> Dict[str, Any]:
+def get_podcast_list(access_token: str) -> dict[str, Any]:
     """Fetch the user's podcast list with metadata.
     
     Args:
@@ -228,7 +227,7 @@ def get_podcast_list(access_token: str) -> Dict[str, Any]:
         "X-User-Region": "global",
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
     }
-    
+
     try:
         response = requests.post(url, json={}, headers=headers, timeout=10)
         # Don't raise on 401 - just return empty list so import can continue

@@ -2,10 +2,11 @@ import json
 import logging
 import re
 
+from django.utils import timezone
+
 import app
 from app.models import MediaTypes
 from app.services import music_scrobble
-from django.utils import timezone
 
 from .base import BaseWebhookProcessor
 
@@ -27,7 +28,7 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
         event_type = payload.get("event")
         if not self._is_supported_event(payload.get("event")):
             logger.debug("Ignoring Plex webhook event type: %s", event_type)
-            return
+            return None
 
         payload_user = payload["Account"]["title"].strip().lower()
         if not self._is_valid_user(payload_user, user):
@@ -35,7 +36,7 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
                 "Ignoring Plex webhook event for user %s: not a valid user",
                 payload_user,
             )
-            return
+            return None
 
         media_type = self._get_media_type(payload)
         if media_type == MediaTypes.MUSIC.value:
@@ -44,7 +45,7 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
                     "Ignoring Plex music webhook for user %s: music disabled",
                     payload_user,
                 )
-                return
+                return None
 
             music_event = self._build_music_event(payload, user)
             music_entry = music_scrobble.record_music_playback(music_event)
@@ -56,7 +57,7 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
                     music_event.track_title,
                     music_event.artist_name or "Unknown Artist",
                 )
-                return
+                return None
             logger.info(
                 "Processed Plex music %s for %s: %s - %s (status=%s, progress=%s)",
                 "scrobble" if music_event.completed else "play",
@@ -74,7 +75,7 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
         ids = self._resolve_ids_if_missing(payload, ids)
         if not any(ids.get(key) for key in ("tmdb_id", "imdb_id", "tvdb_id")):
             logger.warning("Ignoring Plex webhook call because no ID was found.")
-            return
+            return None
 
         self._process_media(payload, user, ids)
 
@@ -145,7 +146,7 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
         if media_type == MediaTypes.TV.value:
             # Extract season/episode from Plex payload
             season_number, episode_number = self._extract_season_episode_from_payload(
-                payload
+                payload,
             )
             self._process_tv(payload, user, ids, season_number, episode_number)
         elif media_type == MediaTypes.MOVIE.value:
@@ -306,12 +307,12 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
         metadata = payload.get("Metadata", {})
         season_number = metadata.get("parentIndex")
         episode_number = metadata.get("index")
-        
+
         # Convert to int if they exist
         try:
             season_number = int(season_number) if season_number is not None else None
             episode_number = int(episode_number) if episode_number is not None else None
         except (ValueError, TypeError):
             return None, None
-        
+
         return season_number, episode_number

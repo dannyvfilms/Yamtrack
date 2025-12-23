@@ -1,6 +1,5 @@
 import logging
 from collections import defaultdict
-from datetime import datetime
 
 from django.apps import apps
 from django.conf import settings
@@ -217,7 +216,7 @@ class Item(CalendarTriggerMixin, models.Model):
                 if tv_metadata.get("details", {}).get("runtime"):
                     from app.statistics import parse_runtime_to_minutes
                     runtime_minutes = parse_runtime_to_minutes(tv_metadata["details"]["runtime"])
-                
+
                 tv_item = Item.objects.create(
                     media_id=self.media_id,
                     source=self.source,
@@ -263,21 +262,21 @@ class MediaManager(models.Manager):
         """Get a media list by type with filtering and sorting."""
         model = apps.get_model(app_label="app", model_name=media_type)
         direction = self.resolve_direction(sort_filter, direction)
-        
+
         # Build base queryset
         queryset = model.objects.filter(user=user.id)
-        
+
         # Apply status filter
         if status_filter != users.models.MediaStatusChoices.ALL:
             queryset = queryset.filter(status=status_filter)
-        
+
         # Apply search filter
         if search:
             queryset = queryset.filter(
                 models.Q(item__title__icontains=search)
-                | models.Q(item__media_id__icontains=search)
+                | models.Q(item__media_id__icontains=search),
             )
-        
+
         # Handle duplicate entries by selecting the most recent record for each item
         has_progress_field = any(
             getattr(field, "attname", "") == "progress"
@@ -313,14 +312,14 @@ class MediaManager(models.Manager):
 
         queryset = queryset.select_related("item")
         queryset = self._apply_prefetch_related(queryset, media_type)
-        
+
         # Aggregate data from duplicate entries FIRST
         queryset = self._aggregate_duplicate_data(queryset, user, media_type)
-        
+
         # Apply sorting AFTER aggregation
         if sort_filter:
             queryset = self._sort_media_list(queryset, sort_filter, media_type, direction)
-        
+
         return queryset
 
     def _aggregate_duplicate_data(self, queryset, user, media_type):
@@ -328,7 +327,7 @@ class MediaManager(models.Manager):
         # Get all media entries for the user to aggregate data
         model = apps.get_model(app_label="app", model_name=media_type)
         all_media = model.objects.filter(user=user.id).select_related("item")
-        
+
         # Group media by item_id
         media_by_item = {}
         for media in all_media:
@@ -336,49 +335,49 @@ class MediaManager(models.Manager):
             if item_id not in media_by_item:
                 media_by_item[item_id] = []
             media_by_item[item_id].append(media)
-        
+
         # Aggregate data for each item in the queryset
         for media in queryset:
             item_id = media.item.id
             if item_id in media_by_item and len(media_by_item[item_id]) > 1:
                 # Aggregate data from all duplicates
                 self._aggregate_item_data(media, media_by_item[item_id])
-        
+
         return queryset
 
     def _aggregate_item_data(self, display_media, all_media_entries):
         """Aggregate data from multiple media entries for the same item."""
         # Sort by created_at to get chronological order
         sorted_entries = sorted(all_media_entries, key=lambda x: x.created_at)
-        
+
         # Aggregate progress (sum all progress values)
         total_progress = sum(entry.progress for entry in all_media_entries)
         display_media.aggregated_progress = total_progress
-        
+
         # Aggregate start date (earliest start date)
         start_dates = [entry.start_date for entry in all_media_entries if entry.start_date]
         if start_dates:
             display_media.aggregated_start_date = min(start_dates)
         else:
             display_media.aggregated_start_date = None
-        
+
         # Aggregate end date (latest end date)
         end_dates = [entry.end_date for entry in all_media_entries if entry.end_date]
         if end_dates:
             display_media.aggregated_end_date = max(end_dates)
         else:
             display_media.aggregated_end_date = None
-        
+
         # Aggregate status (most recent status)
         display_media.aggregated_status = display_media.status  # Already the most recent due to row_number=1
-        
+
         # Aggregate rating (find the most recent rating among all entries)
         # Since created_at only represents when the entry was first created,
         # we need to use a different approach to find the most recent rating
         # We'll prioritize entries with more recent activity (end_date, progressed_at)
         latest_rating = None
         latest_activity = None
-        
+
         for entry in all_media_entries:
             if entry.score is not None:
                 # Determine the most recent activity for this entry
@@ -389,17 +388,17 @@ class MediaManager(models.Manager):
                     entry_activity = entry.progressed_at
                 else:
                     entry_activity = entry.created_at
-                
+
                 # If this entry has more recent activity, use its rating
                 if latest_activity is None or entry_activity > latest_activity:
                     latest_activity = entry_activity
                     latest_rating = entry.score
-        
+
         if latest_rating is not None:
             display_media.aggregated_score = latest_rating
         else:
             display_media.aggregated_score = None
-        
+
         # Store the number of repeats for display
         display_media.repeats = len(all_media_entries)
 
@@ -552,10 +551,10 @@ class MediaManager(models.Manager):
             media_list = list(queryset)
             return sorted(
                 media_list,
-                key=lambda x: (getattr(x, 'aggregated_progress', x.progress), x.item.title.lower()),
+                key=lambda x: (getattr(x, "aggregated_progress", x.progress), x.item.title.lower()),
                 reverse=(direction == "desc"),
             )
-        
+
         # Handle sorting by date fields with special null handling
         if sort_filter in ("start_date", "end_date"):
             order = (
@@ -593,13 +592,13 @@ class MediaManager(models.Manager):
         """Get a media list of in progress media by type."""
         list_by_type = {}
         media_types = self._get_media_types_to_process(user, specific_media_type)
-        
+
         # Get user preference for planned items display mode
-        planned_mode = getattr(user, 'show_planned_on_home', users.models.PlannedHomeDisplayChoices.DISABLED)
+        planned_mode = getattr(user, "show_planned_on_home", users.models.PlannedHomeDisplayChoices.DISABLED)
 
         for media_type in media_types:
             base_media_type = media_type
-            
+
             # Get base media list for in-progress media
             in_progress_list = self.get_media_list(
                 user=user,
@@ -626,26 +625,26 @@ class MediaManager(models.Manager):
                 media_list = in_progress_list
                 if not media_list:
                     continue
-                
+
                 # Process in-progress items
                 self.annotate_max_progress(media_list, base_media_type)
                 self._annotate_next_event(media_list)
-                
+
                 if base_media_type == MediaTypes.SEASON.value:
                     self._fix_missing_season_images(media_list)
-                
+
                 sorted_list = self._sort_in_progress_media(media_list, sort_by)
                 total_count = len(sorted_list)
                 if specific_media_type:
                     paginated_list = sorted_list[items_limit:]
                 else:
                     paginated_list = sorted_list[:items_limit]
-                
+
                 list_by_type[base_media_type] = {
                     "items": paginated_list,
                     "total": total_count,
                 }
-                
+
             elif planned_mode == users.models.PlannedHomeDisplayChoices.COMBINED:
                 # Combine in-progress and planned items
                 media_list = list(in_progress_list)
@@ -654,82 +653,82 @@ class MediaManager(models.Manager):
                     if planned_media.item.id not in existing_item_ids:
                         media_list.append(planned_media)
                         existing_item_ids.add(planned_media.item.id)
-                
+
                 if not media_list:
                     continue
-                
+
                 # Process combined items
                 self.annotate_max_progress(media_list, base_media_type)
                 self._annotate_next_event(media_list)
-                
+
                 if base_media_type == MediaTypes.SEASON.value:
                     self._fix_missing_season_images(media_list)
-                
+
                 sorted_list = self._sort_in_progress_media(media_list, sort_by)
                 total_count = len(sorted_list)
                 if specific_media_type:
                     paginated_list = sorted_list[items_limit:]
                 else:
                     paginated_list = sorted_list[:items_limit]
-                
+
                 list_by_type[base_media_type] = {
                     "items": paginated_list,
                     "total": total_count,
                 }
-                
+
             elif planned_mode == users.models.PlannedHomeDisplayChoices.SEPARATED:
                 # Separated mode: two distinct sections
                 # Determine which sections to process based on specific_media_type request
                 process_in_progress = True
                 process_planned = True
-                
+
                 if specific_media_type:
                     if specific_media_type.endswith("_in_progress"):
                         process_planned = False
                     elif specific_media_type.endswith("_planned"):
                         process_in_progress = False
-                
+
                 # Handle in-progress section
                 if process_in_progress and in_progress_list:
                     in_progress_processed = list(in_progress_list)
                     self.annotate_max_progress(in_progress_processed, base_media_type)
                     self._annotate_next_event(in_progress_processed)
-                    
+
                     if base_media_type == MediaTypes.SEASON.value:
                         self._fix_missing_season_images(in_progress_processed)
-                    
+
                     sorted_in_progress = self._sort_in_progress_media(in_progress_processed, sort_by)
                     total_in_progress = len(sorted_in_progress)
-                    
+
                     if specific_media_type and specific_media_type.endswith("_in_progress"):
                         paginated_in_progress = sorted_in_progress[items_limit:]
                     else:
                         paginated_in_progress = sorted_in_progress[:items_limit]
-                    
+
                     list_by_type[f"{base_media_type}_in_progress"] = {
                         "items": paginated_in_progress,
                         "total": total_in_progress,
                         "section_label": "In Progress",
                         "media_type": base_media_type,
                     }
-                
+
                 # Handle planned section
                 if process_planned and planned_list:
                     planned_processed = list(planned_list)
                     self.annotate_max_progress(planned_processed, base_media_type)
                     self._annotate_next_event(planned_processed)
-                    
+
                     if base_media_type == MediaTypes.SEASON.value:
                         self._fix_missing_season_images(planned_processed)
-                    
+
                     sorted_planned = self._sort_in_progress_media(planned_processed, sort_by)
                     total_planned = len(sorted_planned)
-                    
+
                     if specific_media_type and specific_media_type.endswith("_planned"):
                         paginated_planned = sorted_planned[items_limit:]
                     else:
                         paginated_planned = sorted_planned[:items_limit]
-                    
+
                     list_by_type[f"{base_media_type}_planned"] = {
                         "items": paginated_planned,
                         "total": total_planned,
@@ -771,11 +770,11 @@ class MediaManager(models.Manager):
             )
 
             media.next_event = future_events[0] if future_events else None
-    
+
     def _fix_missing_season_images(self, season_list):
         """Backfill missing season poster images from metadata."""
         from django.conf import settings
-        
+
         items_to_update = []
         for season in season_list:
             if season.item.image == settings.IMG_NONE:
@@ -796,15 +795,15 @@ class MediaManager(models.Manager):
                             season.item.source,
                         )
                         season_image = tv_metadata.get("image")
-                    
+
                     if season_image:
                         season.item.image = season_image
                         items_to_update.append(season.item)
                 except Exception as e:
                     logger.warning(
-                        f"Failed to fetch image for {season}: {e}"
+                        f"Failed to fetch image for {season}: {e}",
                     )
-        
+
         if items_to_update:
             Item.objects.bulk_update(items_to_update, ["image"])
             logger.info(f"Updated {len(items_to_update)} season poster(s)")
@@ -1214,9 +1213,9 @@ class Media(models.Model):
     @property
     def formatted_aggregated_progress(self):
         """Return formatted aggregated progress string."""
-        if hasattr(self, 'aggregated_progress') and self.aggregated_progress is not None:
+        if hasattr(self, "aggregated_progress") and self.aggregated_progress is not None:
             # Format based on media type
-            if hasattr(self, 'item') and self.item.media_type == MediaTypes.GAME.value:
+            if hasattr(self, "item") and self.item.media_type == MediaTypes.GAME.value:
                 return app.helpers.minutes_to_hhmm(self.aggregated_progress)
             return str(self.aggregated_progress)
         return str(self.progress)
@@ -1224,32 +1223,32 @@ class Media(models.Model):
     @property
     def episodes_left(self):
         """Return the number of episodes left to watch."""
-        if not hasattr(self, 'max_progress') or self.max_progress is None:
+        if not hasattr(self, "max_progress") or self.max_progress is None:
             return 0
         return max(0, self.max_progress - self.progress)
 
     @property
     def time_left(self):
         """Return the estimated time left to complete the show in minutes."""
-        if not hasattr(self, 'max_progress') or self.max_progress is None:
+        if not hasattr(self, "max_progress") or self.max_progress is None:
             return 0
-        
+
         episodes_left = self.episodes_left
         if episodes_left <= 0:
             return 0
-        
+
         # Try to get runtime from cached data using the same approach as statistics
         runtime_minutes = None
-        
+
         # First, try to get from TV show runtime (like statistics does)
-        if hasattr(self, 'item') and self.item.runtime_minutes:
+        if hasattr(self, "item") and self.item.runtime_minutes:
             runtime_minutes = self.item.runtime_minutes
         else:
             # Try to get from season cache
             from django.core.cache import cache
             season_cache_key = f"tmdb_season_{self.item.media_id}_1"
             cached_season_data = cache.get(season_cache_key)
-            
+
             if cached_season_data and cached_season_data.get("details", {}).get("runtime"):
                 from app.statistics import parse_runtime_to_minutes
                 runtime_str = cached_season_data["details"]["runtime"]
@@ -1264,7 +1263,7 @@ class Media(models.Model):
                         runtime_str = cached_season_data["details"]["runtime"]
                         runtime_minutes = parse_runtime_to_minutes(runtime_str)
                         break
-        
+
         # If we still don't have runtime, use fallback values
         if runtime_minutes is None:
             if self.item.source == "tmdb":
@@ -1273,11 +1272,11 @@ class Media(models.Model):
                 runtime_minutes = 23  # MAL default
             else:
                 runtime_minutes = 30  # Generic default
-        
+
         # Skip shows with unrealistic runtime (999999 fallback)
         if runtime_minutes >= 999999:
             return 0  # Don't count these episodes
-        
+
         return episodes_left * runtime_minutes
 
     @property
@@ -1286,17 +1285,15 @@ class Media(models.Model):
         time_left_minutes = self.time_left
         if time_left_minutes <= 0:
             return "0m"
-        
+
         hours = time_left_minutes // 60
         minutes = time_left_minutes % 60
-        
+
         if hours > 0:
             if minutes > 0:
                 return f"{hours}h {minutes}m"
-            else:
-                return f"{hours}h"
-        else:
-            return f"{minutes}m"
+            return f"{hours}h"
+        return f"{minutes}m"
 
     def increase_progress(self):
         """Increase the progress of the media by one."""
@@ -1539,7 +1536,7 @@ class TV(Media):
                 if season_number > 0 and season_number not in existing_season_numbers:
                     # Use season poster if available, otherwise fallback to TV show poster
                     season_image = season_data.get("image") or self.item.image
-                    
+
                     item, _ = Item.objects.get_or_create(
                         media_id=self.item.media_id,
                         source=self.item.source,
@@ -1956,9 +1953,9 @@ class Season(Media):
                     image = episode["image"]
                 else:
                     image = settings.IMG_NONE
-                
+
                 # Extract runtime from episode metadata
-                if "runtime" in episode and episode["runtime"]:
+                if episode.get("runtime"):
                     from app.statistics import parse_runtime_to_minutes
                     runtime_minutes = parse_runtime_to_minutes(episode["runtime"])
                 break
@@ -1975,7 +1972,7 @@ class Season(Media):
                 "runtime_minutes": runtime_minutes,
             },
         )
-        
+
         # Update runtime if it's not set and we have it now
         if not created and not item.runtime_minutes and runtime_minutes:
             item.runtime_minutes = runtime_minutes
@@ -2416,7 +2413,7 @@ class ArtistTracker(models.Model):
     def __str__(self):
         """Return the tracker string."""
         return f"{self.user.username} - {self.artist.name}"
-    
+
     @property
     def status_readable(self):
         """Return the human-readable status."""
@@ -2476,7 +2473,7 @@ class AlbumTracker(models.Model):
     def __str__(self):
         """Return the tracker string."""
         return f"{self.user.username} - {self.album.title}"
-    
+
     @property
     def status_readable(self):
         """Return the human-readable status."""
@@ -2614,13 +2611,13 @@ class Podcast(Media):
         """
         from django.apps import apps
         HistoricalPodcast = apps.get_model("app", "HistoricalPodcast")
-        
+
         # Count only history records with end_date (completed plays)
         return HistoricalPodcast.objects.filter(
             id=self.id,
             end_date__isnull=False,
         ).count()
-    
+
     @property
     def formatted_progress(self):
         """Return progress as minutes listened.
@@ -2633,12 +2630,12 @@ class Podcast(Media):
             self.status == Status.IN_PROGRESS.value or
             self.last_seen_status == 2  # 2 = in-progress from API
         )
-        
+
         if is_in_progress and self.played_up_to_seconds and self.played_up_to_seconds > 0:
             # Use actual progress from played_up_to_seconds for in-progress episodes
             minutes = self.played_up_to_seconds // 60
             return f"{minutes}m"
-        
+
         # Fall back to progress field (in minutes)
         minutes = (self.progress or 0) // 60
         return f"{minutes}m"
@@ -2698,7 +2695,7 @@ class PodcastShowTracker(models.Model):
     def __str__(self):
         """Return the tracker string."""
         return f"{self.user.username} - {self.show.title}"
-    
+
     @property
     def status_readable(self):
         """Return the human-readable status."""

@@ -3,28 +3,27 @@
 import json
 import logging
 import secrets
-from datetime import datetime, timedelta
 
-import jwt
-import requests
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_not_required
 from django.core.exceptions import ObjectDoesNotExist
 from django.http import HttpResponse, StreamingHttpResponse
-from django.shortcuts import redirect, render
+from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_GET, require_POST, require_http_methods
+from django.views.decorators.http import require_GET, require_POST
 
 import users
-from integrations import exports, plex as plex_api, pocketcasts_api, tasks
-from integrations.imports import anilist, helpers, pocketcasts, simkl, trakt
+from integrations import exports, pocketcasts_api, tasks
+from integrations import plex as plex_api
+from integrations.imports import anilist, helpers, simkl, trakt
 from integrations.models import PlexAccount, PocketCastsAccount
 from integrations.pocketcasts_api import PocketCastsAuthError
-from integrations.webhooks import emby, jellyfin, plex as plex_webhooks
+from integrations.webhooks import emby, jellyfin
 from integrations.webhooks import jellyseerr as jellyseerr_webhooks
+from integrations.webhooks import plex as plex_webhooks
 
 logger = logging.getLogger(__name__)
 
@@ -530,47 +529,47 @@ def pocketcasts_connect(request):
     """Connect Pocket Casts account using email and password."""
     email = request.POST.get("email", "").strip()
     password = request.POST.get("password", "").strip()
-    
+
     if not email:
         messages.error(request, "Email is required.")
         return redirect("import_data")
-    
+
     if not password:
         messages.error(request, "Password is required.")
         return redirect("import_data")
-    
+
     # Attempt to login with credentials
     try:
         logger.debug("Attempting Pocket Casts login for email: %s", email)
         login_response = pocketcasts_api.login(email, password)
         access_token = login_response["accessToken"]
         refresh_token = login_response.get("refreshToken", "")
-        
+
         logger.info("Successfully logged in to Pocket Casts for user %s", request.user.username)
     except PocketCastsAuthError as auth_error:
         logger.error("Pocket Casts login failed: %s", auth_error)
         messages.error(
             request,
             "Invalid email or password. For accounts created via 'Sign in with Apple' or 'Sign in with Google', "
-            "please set a password first using Pocket Casts' 'Forgot Password' feature, then enter your email and new password here."
+            "please set a password first using Pocket Casts' 'Forgot Password' feature, then enter your email and new password here.",
         )
         return redirect("import_data")
     except Exception as e:
-        logger.error("Failed to login to Pocket Casts: %s (type: %s, traceback: %s)", 
-                   e, type(e).__name__, __import__('traceback').format_exc())
+        logger.error("Failed to login to Pocket Casts: %s (type: %s, traceback: %s)",
+                   e, type(e).__name__, __import__("traceback").format_exc())
         messages.error(request, f"Failed to connect to Pocket Casts: {e}")
         return redirect("import_data")
-    
+
     # Encrypt and store credentials and tokens
     try:
         encrypted_email = helpers.encrypt(email)
         encrypted_password = helpers.encrypt(password)
         encrypted_access = helpers.encrypt(access_token)
         encrypted_refresh = helpers.encrypt(refresh_token) if refresh_token else None
-        
+
         # Parse expiration from JWT
         token_expires_at = pocketcasts_api.parse_token_expiration(access_token)
-        
+
         PocketCastsAccount.objects.update_or_create(
             user=request.user,
             defaults={
@@ -582,16 +581,16 @@ def pocketcasts_connect(request):
                 "connection_broken": False,  # Clear broken flag on successful connection
             },
         )
-        
+
         # Set up 2-hour recurring import if it doesn't exist
         from django_celery_beat.models import CrontabSchedule, PeriodicTask
-        
+
         existing_task = PeriodicTask.objects.filter(
             task="Import from Pocket Casts (Recurring)",
             kwargs__contains=f'"user_id": {request.user.id}',
             enabled=True,
         ).first()
-        
+
         if not existing_task:
             # Create crontab for every 2 hours (0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22)
             crontab, _ = CrontabSchedule.objects.get_or_create(
@@ -602,7 +601,7 @@ def pocketcasts_connect(request):
                 month_of_year="*",
                 timezone=timezone.get_default_timezone(),
             )
-            
+
             task_name = f"Import from Pocket Casts for {request.user.username} (every 2 hours)"
             PeriodicTask.objects.create(
                 name=task_name,
@@ -614,7 +613,7 @@ def pocketcasts_connect(request):
                 start_time=timezone.now(),
                 enabled=True,
             )
-            
+
             # Run initial import
             tasks.import_pocketcasts.delay(
                 user_id=request.user.id,
@@ -626,7 +625,7 @@ def pocketcasts_connect(request):
     except Exception as e:
         logger.error("Failed to store Pocket Casts credentials: %s", e)
         messages.error(request, f"Failed to store credentials: {e}")
-    
+
     return redirect("import_data")
 
 
@@ -634,13 +633,13 @@ def pocketcasts_connect(request):
 def pocketcasts_disconnect(request):
     """Remove stored Pocket Casts credentials and delete periodic import task."""
     from django_celery_beat.models import PeriodicTask
-    
+
     # Delete periodic import task if it exists
     PeriodicTask.objects.filter(
         task="Import from Pocket Casts (Recurring)",
         kwargs__contains=f'"user_id": {request.user.id}',
     ).delete()
-    
+
     # Clear all credentials (full disconnect)
     PocketCastsAccount.objects.filter(user=request.user).delete()
     messages.info(request, "Disconnected Pocket Casts and removed scheduled imports.")
@@ -658,24 +657,24 @@ def import_pocketcasts(request):
     if not pocketcasts_account:
         messages.error(request, "Connect Pocket Casts before importing.")
         return redirect("import_data")
-    
+
     # Refresh from DB to get latest status
     pocketcasts_account.refresh_from_db()
-    
+
     # Allow sync even if connection is broken - importer will attempt refresh
-    
+
     # Check if this is the first import (no existing schedule)
     from django_celery_beat.models import PeriodicTask
-    
+
     existing_task = PeriodicTask.objects.filter(
         task="Import from Pocket Casts (Recurring)",
         kwargs__contains=f'"user_id": {request.user.id}',
         enabled=True,
     ).first()
-    
+
     # Always use mode="new" for Pocket Casts
     mode = "new"
-    
+
     if not existing_task:
         # First import - run immediately, then set up 2-hour schedule
         tasks.import_pocketcasts.delay(
@@ -683,11 +682,11 @@ def import_pocketcasts(request):
             mode=mode,
         )
         messages.info(request, "The task to import media from Pocket Casts has been queued. Recurring imports will run every 2 hours.")
-        
+
         # Set up 2-hour recurring schedule
-        from django_celery_beat.models import CrontabSchedule
         from django.utils import timezone as tz
-        
+        from django_celery_beat.models import CrontabSchedule
+
         # Create crontab for every 2 hours (0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22)
         crontab, _ = CrontabSchedule.objects.get_or_create(
             minute=0,
@@ -697,7 +696,7 @@ def import_pocketcasts(request):
             month_of_year="*",
             timezone=tz.get_default_timezone(),
         )
-        
+
         task_name = f"Import from Pocket Casts for {request.user.username} (every 2 hours)"
         PeriodicTask.objects.create(
             name=task_name,
@@ -716,7 +715,7 @@ def import_pocketcasts(request):
             mode=mode,
         )
         messages.info(request, "The task to import media from Pocket Casts has been queued.")
-    
+
     return redirect("import_data")
 
 

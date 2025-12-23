@@ -139,7 +139,7 @@ class YamtrackImporter:
                     "title": row["title"],
                     "image": row["image"],
                 },
-            )
+            ),
         )
 
         model = apps.get_model(app_label="app", model_name=media_type)

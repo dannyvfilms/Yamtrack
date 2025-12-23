@@ -119,7 +119,7 @@ def user_date_format(date, user):
     """Format a date according to user's date format preference."""
     if not date or not user:
         return ""
-    
+
     try:
         # Simplified version - just handle the basic case
         if isinstance(date, str):
@@ -130,32 +130,31 @@ def user_date_format(date, user):
             except (ValueError, TypeError):
                 # If parsing fails, return the original string
                 return date
-        
+
         # Ensure we have a datetime object
-        if not hasattr(date, 'month'):
+        if not hasattr(date, "month"):
             return str(date)
-        
+
         local_dt = timezone.localtime(date)
-        
+
         # Simple formatting based on user preference
         if user.date_format == DateFormatChoices.ISO_8601:
             return local_dt.strftime("%Y-%m-%d")
-        elif user.date_format == DateFormatChoices.MONTH_D_YYYY:
+        if user.date_format == DateFormatChoices.MONTH_D_YYYY:
             return local_dt.strftime("%b %d, %Y")
-        elif user.date_format == DateFormatChoices.D_MON_YYYY:
+        if user.date_format == DateFormatChoices.D_MON_YYYY:
             return local_dt.strftime("%d %b %Y")
-        elif user.date_format == DateFormatChoices.M_D_YYYY:
+        if user.date_format == DateFormatChoices.M_D_YYYY:
             return f"{local_dt.month}/{local_dt.day}/{local_dt.year}"
-        elif user.date_format == DateFormatChoices.D_M_YYYY:
+        if user.date_format == DateFormatChoices.D_M_YYYY:
             return f"{local_dt.day}/{local_dt.month}/{local_dt.year}"
-        elif user.date_format == DateFormatChoices.DD_MM_YYYY:
+        if user.date_format == DateFormatChoices.DD_MM_YYYY:
             return local_dt.strftime("%d.%m.%Y")
-        elif user.date_format == DateFormatChoices.YYYY_MM_DD:
+        if user.date_format == DateFormatChoices.YYYY_MM_DD:
             return f"{local_dt.year}/{local_dt.month:02d}/{local_dt.day:02d}"
-        else:
-            # Default to system format
-            return formats.date_format(local_dt, "DATE_FORMAT")
-            
+        # Default to system format
+        return formats.date_format(local_dt, "DATE_FORMAT")
+
     except (ValueError, TypeError, AttributeError):
         # Fallback to default format if there's an error
         try:
@@ -170,18 +169,18 @@ def user_time_format(datetime_obj, user):
     """Format a time according to user's time format preference."""
     if not datetime_obj or not user:
         return ""
-    
+
     try:
         # Parse string dates if needed
         datetime_obj = _parse_datetime_string(datetime_obj)
-        
+
         # Ensure we have a datetime object
-        if not hasattr(datetime_obj, 'hour'):
+        if not hasattr(datetime_obj, "hour"):
             return str(datetime_obj)
-        
+
         local_dt = timezone.localtime(datetime_obj)
         return _format_time_by_preference(local_dt, user, formats)
-        
+
     except (ValueError, TypeError, AttributeError):
         # Fallback to default format if there's an error
         try:
@@ -196,7 +195,7 @@ def _parse_datetime_string(datetime_obj):
     if isinstance(datetime_obj, str):
         try:
             # Try to parse common datetime formats
-            for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M', '%H:%M:%S', '%H:%M']:
+            for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M", "%H:%M:%S", "%H:%M"]:
                 try:
                     return datetime.strptime(datetime_obj, fmt)
                 except ValueError:
@@ -213,18 +212,17 @@ def _format_time_by_preference(local_dt, user, formats):
     """Format time according to user preference."""
     if user.time_format == TimeFormatChoices.SYSTEM_DEFAULT:
         return formats.date_format(local_dt, "TIME_FORMAT")
-    elif user.time_format == TimeFormatChoices.H_MM_AMPM:
+    if user.time_format == TimeFormatChoices.H_MM_AMPM:
         # Use %I and manually remove leading zero for cross-platform compatibility
         hour = str(local_dt.hour % 12 or 12)  # Convert 0 to 12 for 12-hour format
         return f"{hour}:{local_dt.strftime('%M %p')}"
-    elif user.time_format == TimeFormatChoices.HH_MM_AMPM:
+    if user.time_format == TimeFormatChoices.HH_MM_AMPM:
         return local_dt.strftime("%I:%M %p")
-    elif user.time_format == TimeFormatChoices.HH_MM:
+    if user.time_format == TimeFormatChoices.HH_MM:
         return local_dt.strftime("%H:%M")
-    elif user.time_format == TimeFormatChoices.HH_MM_SS:
+    if user.time_format == TimeFormatChoices.HH_MM_SS:
         return local_dt.strftime("%H:%M:%S")
-    else:
-        return formats.date_format(local_dt, "TIME_FORMAT")
+    return formats.date_format(local_dt, "TIME_FORMAT")
 
 
 @register.filter
@@ -232,15 +230,15 @@ def user_datetime_format(datetime_obj, user):
     """Format a datetime according to user's date and time format preferences."""
     if not datetime_obj or not user:
         return ""
-    
+
     try:
         # Parse string dates if needed
         datetime_obj = _parse_datetime_string(datetime_obj)
-        
+
         # Ensure we have a datetime object
-        if not hasattr(datetime_obj, 'month') or not hasattr(datetime_obj, 'hour'):
+        if not hasattr(datetime_obj, "month") or not hasattr(datetime_obj, "hour"):
             return str(datetime_obj)
-        
+
         date_part = user_date_format(datetime_obj, user)
         time_part = user_time_format(datetime_obj, user)
         return f"{date_part} {time_part}"

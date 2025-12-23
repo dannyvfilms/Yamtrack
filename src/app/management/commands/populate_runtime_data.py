@@ -2,11 +2,12 @@
 
 import logging
 import time
+
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from app.models import Item, MediaTypes
 from app import providers
+from app.models import Item, MediaTypes
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +49,8 @@ class Command(BaseCommand):
         items_to_update = Item.objects.filter(
             runtime_minutes__isnull=True,
             media_type__in=[MediaTypes.MOVIE.value, MediaTypes.ANIME.value, MediaTypes.EPISODE.value],
-            source__in=['tmdb', 'mal', 'simkl']  # Only process items from providers that have runtime data
-        ).order_by('id')
+            source__in=["tmdb", "mal", "simkl"],  # Only process items from providers that have runtime data
+        ).order_by("id")
 
         total_items = items_to_update.count()
         self.stdout.write(f"Found {total_items} items that need runtime data")
@@ -76,11 +77,11 @@ class Command(BaseCommand):
                     self._update_item_runtime(item)
                     updated_count += 1
                     self.stdout.write(f"  ✓ Updated {item.title}")
-                    
+
                     # Add delay to avoid rate limiting
                     if delay > 0:
                         time.sleep(delay)
-                        
+
                 except Exception as e:
                     error_count += 1
                     self.stdout.write(f"  ✗ Error updating {item.title}: {e}")
@@ -97,30 +98,30 @@ class Command(BaseCommand):
                 item.media_id,
                 item.source,
             )
-            
+
             if not metadata:
                 raise ValueError("No metadata returned from provider")
-            
+
             if not metadata.get("details"):
                 raise ValueError("No details in metadata")
-            
+
             if not metadata["details"].get("runtime"):
                 raise ValueError("No runtime data in metadata")
-            
+
             runtime_str = metadata["details"]["runtime"]
-            
+
             # Parse runtime to minutes
             from app.statistics import parse_runtime_to_minutes
             runtime_minutes = parse_runtime_to_minutes(runtime_str)
-            
+
             if runtime_minutes is None:
                 raise ValueError(f"Failed to parse runtime '{runtime_str}'")
-            
+
             # Update the item
             with transaction.atomic():
                 item.runtime_minutes = runtime_minutes
                 item.save()
-                
+
         except Exception as e:
             logger.error(f"Failed to update runtime for {item.title}: {e}")
             raise

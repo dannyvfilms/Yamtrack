@@ -65,7 +65,7 @@ def search(query, page):
 
             # Get title from collectionName (preferred) or trackName
             title = item.get("collectionName") or item.get("trackName", "Unknown Podcast")
-            
+
             # Get image URL - prefer artworkUrl600, fallback to artworkUrl100
             image = item.get("artworkUrl600") or item.get("artworkUrl100") or settings.IMG_NONE
 
@@ -108,12 +108,12 @@ def lookup_by_itunes_id(itunes_collection_id):
     """
     cache_key = f"itunes_lookup_{itunes_collection_id}"
     data = cache.get(cache_key)
-    
+
     if data is None:
         params = {
             "id": itunes_collection_id,
         }
-        
+
         try:
             response = requests.get(
                 ITUNES_LOOKUP_BASE,
@@ -125,22 +125,22 @@ def lookup_by_itunes_id(itunes_collection_id):
             response_data = response.json()
         except requests.RequestException as e:
             handle_error(e)
-        
+
         results = response_data.get("results", [])
         if not results:
             raise services.ProviderAPIError(
                 Sources.POCKETCASTS.value,
                 type("obj", (object,), {"response": type("obj", (object,), {"status_code": 404, "text": "Podcast not found"})()}),
-                "Podcast not found in iTunes"
+                "Podcast not found in iTunes",
             )
-        
+
         # Get the first result (should be the collection/podcast)
         item = results[0]
-        
+
         # Extract metadata
         # iTunes description might be HTML, we'll clean it if needed
         description = item.get("description", "") or item.get("longDescription", "")
-        
+
         data = {
             "feed_url": item.get("feedUrl", ""),
             "title": item.get("collectionName") or item.get("trackName", "Unknown Podcast"),
@@ -150,8 +150,8 @@ def lookup_by_itunes_id(itunes_collection_id):
             "genres": item.get("genres", []),
             "language": item.get("primaryLanguageName", ""),
         }
-        
+
         # Cache for 7 days
         cache.set(cache_key, data, 60 * 60 * 24 * 7)
-    
+
     return data

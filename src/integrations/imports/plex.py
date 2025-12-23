@@ -6,8 +6,8 @@ from collections import defaultdict
 from django.conf import settings
 from django.utils import timezone
 
-from app.services.music import prefetch_album_covers
 from app.models import MediaTypes
+from app.services.music import prefetch_album_covers
 from integrations import plex as plex_api
 from integrations.imports import helpers
 from integrations.imports.helpers import MediaImportError, MediaImportUnexpectedError
@@ -70,7 +70,7 @@ class PlexHistoryImporter:
         for section in sections:
             try:
                 self._import_section(section)
-            except MediaImportError as exc:
+            except MediaImportError:
                 raise
             except Exception as exc:  # pragma: no cover - defensive
                 msg = f"Unexpected error importing Plex section {section.get('title')}: {exc}"
@@ -158,7 +158,7 @@ class PlexHistoryImporter:
         connections = [c for c in connections if c and not (c in seen or seen.append(c))]
         if not connections:
             raise MediaImportError(
-                f"Could not find a Plex connection for {section.get('server_name') or 'server'}."
+                f"Could not find a Plex connection for {section.get('server_name') or 'server'}.",
             )
 
         entries, uri_used = self._fetch_history_entries(connections, section.get("id"))
@@ -230,7 +230,7 @@ class PlexHistoryImporter:
         )
         if not entries and failures:
             raise MediaImportUnexpectedError(
-                f"Could not fetch Plex history after trying connections: {failures}"
+                f"Could not fetch Plex history after trying connections: {failures}",
             )
         if max_items is None:
             return entries, uri_used
@@ -259,7 +259,7 @@ class PlexHistoryImporter:
                 mapped_types.add(MediaTypes.MOVIE.value)
             elif section_type == "show":
                 mapped_types.update(
-                    {MediaTypes.TV.value, MediaTypes.SEASON.value, MediaTypes.EPISODE.value}
+                    {MediaTypes.TV.value, MediaTypes.SEASON.value, MediaTypes.EPISODE.value},
                 )
 
         if not mapped_types:
@@ -270,7 +270,7 @@ class PlexHistoryImporter:
                     MediaTypes.SEASON.value,
                     MediaTypes.EPISODE.value,
                     MediaTypes.MUSIC.value,
-                }
+                },
             )
 
         return mapped_types
@@ -289,13 +289,12 @@ class PlexHistoryImporter:
 
             if rating_key in self._metadata_cache:
                 details = self._metadata_cache[rating_key]
+            elif self.fast_mode:
+                details = None
             else:
-                if self.fast_mode:
-                    details = None
-                else:
-                    details = plex_api.fetch_metadata(self.account.plex_token, uri, rating_key)
-                    if details:
-                        self._metadata_cache[rating_key] = details
+                details = plex_api.fetch_metadata(self.account.plex_token, uri, rating_key)
+                if details:
+                    self._metadata_cache[rating_key] = details
 
             if details:
                 metadata = {**metadata, **details}
@@ -321,7 +320,7 @@ class PlexHistoryImporter:
 
         media_type = self.processor._get_media_type(payload)
         result = self.processor.process_payload(payload, self.user)
-        
+
         # Track unique music tracks separately from play events
         if media_type == MediaTypes.MUSIC.value and result:
             # Music objects have an item attribute with media_id and source
@@ -329,10 +328,8 @@ class PlexHistoryImporter:
                 track_key = (result.item.media_id, result.item.source)
                 if track_key not in self._unique_music_tracks:
                     self._unique_music_tracks.add(track_key)
-            
-        if hasattr(result, "artist_id") and result.artist_id:
-            self._artists_for_prefetch.add(result.artist_id)
-        elif result and hasattr(result, "artist_id") and result.artist_id:
+
+        if (hasattr(result, "artist_id") and result.artist_id) or (result and hasattr(result, "artist_id") and result.artist_id):
             self._artists_for_prefetch.add(result.artist_id)
 
         if media_type:
@@ -411,7 +408,10 @@ class PlexHistoryImporter:
 
     def _enqueue_music_enrichment(self):
         """Kick off a post-import enrichment/dedupe pass for this user's music."""
-        from app.tasks import enrich_music_library_task, enrich_albums_task  # local import to avoid cycles
+        from app.tasks import (  # local import to avoid cycles
+            enrich_albums_task,
+            enrich_music_library_task,
+        )
 
         if MediaTypes.MUSIC.value not in self.counts:
             return  # No music imported, skip
@@ -428,7 +428,9 @@ class PlexHistoryImporter:
         """Fetch missing album covers after the full import completes."""
         if not self._artists_for_prefetch:
             return
-        from app.models import Artist  # local import to avoid circular import at module load
+        from app.models import (
+            Artist,  # local import to avoid circular import at module load
+        )
 
         for artist_id in self._artists_for_prefetch:
             try:

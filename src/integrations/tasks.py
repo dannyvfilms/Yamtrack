@@ -15,8 +15,8 @@ from integrations.imports import (
     imdb,
     kitsu,
     mal,
-    pocketcasts,
     plex,
+    pocketcasts,
     simkl,
     steam,
     trakt,
@@ -39,22 +39,22 @@ def format_media_type_display(count, media_type):
 def format_import_message(imported_counts, warning_messages=None):
     """Format the import result message based on counts and warnings."""
     parts = []
-    
+
     # Handle music specially - show both play events and unique tracks
     music_play_events = imported_counts.get(MediaTypes.MUSIC.value, 0)
     music_unique_tracks = imported_counts.get("music_unique_tracks", 0)
-    
+
     if music_play_events > 0:
         if music_unique_tracks > 0:
             # Show both play events and unique tracks
             parts.append(
                 f"{music_play_events} music play event{'s' if music_play_events != 1 else ''} "
-                f"({music_unique_tracks} unique track{'s' if music_unique_tracks != 1 else ''})"
+                f"({music_unique_tracks} unique track{'s' if music_unique_tracks != 1 else ''})",
             )
         else:
             # Fallback to standard format if unique tracks not available
             parts.append(format_media_type_display(music_play_events, MediaTypes.MUSIC.value))
-    
+
     # Add other media types (excluding music which we handled above)
     for media_type, count in imported_counts.items():
         if media_type == MediaTypes.MUSIC.value or media_type == "music_unique_tracks":
@@ -62,7 +62,7 @@ def format_import_message(imported_counts, warning_messages=None):
         formatted = format_media_type_display(count, media_type)
         if formatted:
             parts.append(formatted)
-    
+
     parts = [p for p in parts if p is not None]
 
     if not parts:

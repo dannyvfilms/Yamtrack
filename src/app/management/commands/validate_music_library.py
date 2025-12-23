@@ -1,14 +1,13 @@
 """Management command to validate music library and compare with Plex data."""
 
-from django.core.management.base import BaseCommand
 from django.contrib.auth import get_user_model
+from django.core.management.base import BaseCommand
 
 from app.services.music_validation import (
-    validate_music_library,
     count_user_tracks,
     get_enrichment_status,
     get_missing_linkages,
-    compare_plex_track_count,
+    validate_music_library,
 )
 
 User = get_user_model()
@@ -78,18 +77,18 @@ class Command(BaseCommand):
             self.stdout.write("-" * 70)
             self.stdout.write(f"Plex Tracks with Plays:  {plex_count:,}")
             self.stdout.write(f"Yamtrack Unique Tracks:  {validation['unique_tracks']:,}")
-            difference = validation['unique_tracks'] - plex_count
+            difference = validation["unique_tracks"] - plex_count
             if difference > 0:
                 self.stdout.write(
                     self.style.WARNING(
-                        f"Difference:                +{difference:,} (Yamtrack has more tracks)"
-                    )
+                        f"Difference:                +{difference:,} (Yamtrack has more tracks)",
+                    ),
                 )
             elif difference < 0:
                 self.stdout.write(
                     self.style.WARNING(
-                        f"Difference:                {difference:,} (Yamtrack has fewer tracks)"
-                    )
+                        f"Difference:                {difference:,} (Yamtrack has fewer tracks)",
+                    ),
                 )
             else:
                 self.stdout.write(self.style.SUCCESS("Difference:                0 (Perfect match!)"))
@@ -100,11 +99,11 @@ class Command(BaseCommand):
         self.stdout.write(f"Total Artists:            {validation['artists']['total']:,}")
         self.stdout.write(f"Artists with MBID:        {validation['artists']['with_mbid']:,} ({validation['percentages']['artist_mbid']:.1f}%)")
         self.stdout.write(f"Artists Missing MBID:     {validation['artists']['missing_mbid']:,}")
-        if validation['artists']['missing_mbid'] > 0:
+        if validation["artists"]["missing_mbid"] > 0:
             self.stdout.write(
                 self.style.WARNING(
-                    f"  → {validation['artists']['missing_mbid']} artists need MBID matching"
-                )
+                    f"  → {validation['artists']['missing_mbid']} artists need MBID matching",
+                ),
             )
 
         # Display album statistics
@@ -113,11 +112,11 @@ class Command(BaseCommand):
         self.stdout.write(f"Total Albums:             {validation['albums']['total']:,}")
         self.stdout.write(f"Albums with Tracks:       {validation['albums']['with_tracks_populated']:,} ({validation['percentages']['album_tracks']:.1f}%)")
         self.stdout.write(f"Albums Missing Tracks:    {validation['albums']['missing_tracks']:,}")
-        if validation['albums']['missing_tracks'] > 0:
+        if validation["albums"]["missing_tracks"] > 0:
             self.stdout.write(
                 self.style.WARNING(
-                    f"  → {validation['albums']['missing_tracks']} albums need track population"
-                )
+                    f"  → {validation['albums']['missing_tracks']} albums need track population",
+                ),
             )
 
         # Display missing linkages
@@ -130,16 +129,16 @@ class Command(BaseCommand):
         self.stdout.write(f"Music entries missing multiple:    {missing_linkages['missing_multiple']:,}")
 
         # Display enrichment status details
-        if enrichment_status['artists']['without_mbid'] > 0:
+        if enrichment_status["artists"]["without_mbid"] > 0:
             self.stdout.write("\n⚠️  ARTISTS WITHOUT MBID (sample)")
             self.stdout.write("-" * 70)
-            for artist in enrichment_status['artists']['without_mbid_list'][:10]:
+            for artist in enrichment_status["artists"]["without_mbid_list"][:10]:
                 self.stdout.write(f"  • {artist['name']} (ID: {artist['id']})")
 
-        if enrichment_status['albums']['without_tracks'] > 0:
+        if enrichment_status["albums"]["without_tracks"] > 0:
             self.stdout.write("\n⚠️  ALBUMS WITHOUT TRACKS (sample)")
             self.stdout.write("-" * 70)
-            for album in enrichment_status['albums']['without_tracks_list'][:10]:
+            for album in enrichment_status["albums"]["without_tracks_list"][:10]:
                 self.stdout.write(f"  • {album['title']} - {album['artist']} (ID: {album['id']})")
 
         # Summary and recommendations
@@ -148,13 +147,13 @@ class Command(BaseCommand):
         self.stdout.write("=" * 70)
 
         issues = []
-        if validation['artists']['missing_mbid'] > 0:
+        if validation["artists"]["missing_mbid"] > 0:
             issues.append(f"• {validation['artists']['missing_mbid']} artists need MBID matching")
-        if validation['albums']['missing_tracks'] > 0:
+        if validation["albums"]["missing_tracks"] > 0:
             issues.append(f"• {validation['albums']['missing_tracks']} albums need track population")
-        if missing_linkages['missing_track_link'] > 0:
+        if missing_linkages["missing_track_link"] > 0:
             issues.append(f"• {missing_linkages['missing_track_link']} Music entries need Track links")
-        if missing_linkages['missing_runtime'] > 0:
+        if missing_linkages["missing_runtime"] > 0:
             issues.append(f"• {missing_linkages['missing_runtime']} Music entries need runtime data")
 
         if issues:
@@ -164,16 +163,16 @@ class Command(BaseCommand):
             self.stdout.write("\n💡 RECOMMENDATIONS:")
             self.stdout.write(
                 "  • Run enrichment task: This will match artist MBIDs, populate album tracks, "
-                "and link Music entries to Tracks"
+                "and link Music entries to Tracks",
             )
-            if missing_linkages['missing_track_link'] > 0 or missing_linkages['missing_runtime'] > 0:
+            if missing_linkages["missing_track_link"] > 0 or missing_linkages["missing_runtime"] > 0:
                 self.stdout.write(
                     "  • Run cleanup utilities: Use link_music_to_tracks() and backfill_music_runtimes() "
-                    "to fix missing links and runtimes"
+                    "to fix missing links and runtimes",
                 )
             self.stdout.write(
                 "  • Re-import from Plex: The new import workflow will track unique tracks properly "
-                "and run enrichment automatically"
+                "and run enrichment automatically",
             )
         else:
             self.stdout.write(self.style.SUCCESS("\n✅ No issues found! Your music library is in good shape."))

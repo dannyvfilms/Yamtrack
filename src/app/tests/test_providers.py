@@ -172,8 +172,9 @@ class Metadata(TestCase):
         response = tmdb.tv("1396")
         self.assertEqual(response["title"], "Breaking Bad")
         # Check that first_air_date is now a datetime object
-        from django.utils import timezone
         from datetime import datetime
+
+        from django.utils import timezone
         expected_date = timezone.make_aware(datetime(2008, 1, 20), timezone.get_current_timezone())
         self.assertEqual(response["details"]["first_air_date"], expected_date)
         self.assertEqual(response["details"]["status"], "Ended")
@@ -272,8 +273,9 @@ class Metadata(TestCase):
         self.assertEqual(result[0]["episode_number"], 1)
         self.assertEqual(result[0]["title"], "Pilot")
         # Check that air_date is now a datetime object
-        from django.utils import timezone
         from datetime import datetime
+
+        from django.utils import timezone
         expected_date = timezone.make_aware(datetime(2008, 1, 20), timezone.get_current_timezone())
         self.assertEqual(result[0]["air_date"], expected_date)
         self.assertTrue(result[0]["history"], [episode_1])
@@ -362,8 +364,9 @@ class Metadata(TestCase):
         response = tmdb.movie("10494")
         self.assertEqual(response["title"], "Perfect Blue")
         # Check that release_date is now a datetime object
-        from django.utils import timezone
         from datetime import datetime
+
+        from django.utils import timezone
         expected_date = timezone.make_aware(datetime(1998, 2, 28), timezone.get_current_timezone())
         self.assertEqual(response["details"]["release_date"], expected_date)
         self.assertEqual(response["details"]["status"], "Released")

@@ -127,7 +127,7 @@ def list_detail(request, list_id):
 
     # Determine if this is a public view (anonymous user viewing public list)
     public_view = not request.user.is_authenticated and custom_list.visibility == "public"
-    
+
     # Determine which user's data to use for media queries
     # For public views, use owner's data; otherwise use request.user
     media_user = custom_list.owner if public_view else request.user
@@ -146,7 +146,7 @@ def list_detail(request, list_id):
         valid_sorts = [choice[0] for choice in ListDetailSortChoices.choices]
         if sort_by not in valid_sorts:
             sort_by = "date_added"
-    
+
     params = {
         "sort_by": sort_by,
         "media_type": request.GET.get("type", "all"),
@@ -172,12 +172,12 @@ def list_detail(request, list_id):
         "media_type": ["media_type"],
         "rating": ["-customlistitem__date_added"],  # Will be overridden below for rating sort
     }
-    
+
     # Handle rating sort specially - need to get all items first to sort by rating
     if params["sort_by"] == "rating":
         # Get all items without pagination first
         all_items = items.order_by(*sort_mapping.get(params["sort_by"], ["-customlistitem__date_added"]))
-        
+
         # Get all media objects for rating sort
         media_by_item_id = {}
         media_types_in_all_items = {item.media_type for item in all_items}
@@ -218,7 +218,7 @@ def list_detail(request, list_id):
             ),
             reverse=True,
         )
-        
+
         # Now paginate the sorted items
         paginator = Paginator(all_items, 16)
         items_page = paginator.get_page(params["page"])
@@ -227,7 +227,7 @@ def list_detail(request, list_id):
         items = items.order_by(
             *sort_mapping.get(params["sort_by"], ["-customlistitem__date_added"]),
         )
-        
+
         # Paginate and prepare media objects
         paginator = Paginator(items, 16)
         items_page = paginator.get_page(params["page"])

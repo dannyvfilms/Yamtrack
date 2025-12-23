@@ -2,15 +2,16 @@ import logging
 
 from celery import states
 from celery.signals import before_task_publish
-from django.db.models.signals import post_delete, post_save
 from django.db.backends.signals import connection_created
+from django.db.models.signals import post_delete, post_save
 from django.db.utils import OperationalError
 from django.dispatch import receiver
 from django_celery_results.models import TaskResult
 
-from app.history_cache import invalidate_history_cache, schedule_history_refresh
 from app import statistics_cache
+from app.history_cache import schedule_history_refresh
 from app.models import (
+    TV,
     Anime,
     BoardGame,
     Book,
@@ -22,7 +23,6 @@ from app.models import (
     Music,
     Podcast,
     Season,
-    TV,
 )
 
 logger = logging.getLogger(__name__)
@@ -40,8 +40,8 @@ def setup_sqlite_pragmas(sender, connection, **kwargs):  # noqa: ARG001
 
 @before_task_publish.connect
 def create_task_result_on_publish(
-    sender=None, headers=None, body=None, **kwargs
-):  # noqa: ARG001
+    sender=None, headers=None, body=None, **kwargs,
+):
     """Create a TaskResult object with PENDING status on task publish.
 
     https://github.com/celery/django-celery-results/issues/286#issuecomment-1279161047

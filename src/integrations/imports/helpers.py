@@ -148,7 +148,7 @@ def cleanup_existing_media(to_delete, user):
                     item__media_id__in=media_ids,
                     item__source=source,
                     user=user,
-                ).delete()
+                ).delete(),
             )
             total_deleted += deleted_count
 
@@ -248,7 +248,7 @@ def bulk_create_media(bulk_media_list, user):
                 model,
                 batch_size=500,
                 default_user=user,
-            )
+            ),
         )
 
 
