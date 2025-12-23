@@ -1328,6 +1328,20 @@ class PocketCastsImporter:
             if item_update_fields:
                 item.save(update_fields=item_update_fields)
             
+            # Fallback lookup: if dict lookup failed, try querying by Item directly
+            # This handles cases where episode UUID changed due to duplicate episode merging
+            # or where existing_podcasts dict was built with stale UUIDs
+            if not existing_podcast:
+                existing_podcast = Podcast.objects.filter(item=item, user=self.user).order_by('-created_at').first()
+                if existing_podcast:
+                    # Cache it in the dict for future lookups in this import
+                    self.existing_podcasts[(episode_uuid, Sources.POCKETCASTS.value)] = existing_podcast
+                    logger.debug(
+                        "Found existing podcast via fallback lookup by Item for episode %s (UUID: %s)",
+                        episode_data.get("title", "Unknown"),
+                        episode_uuid
+                    )
+            
             # Extract progress data
             playing_status = episode_data.get("playingStatus", 0)  # 2=in-progress, 3=completed
             played_up_to = episode_data.get("playedUpTo", 0)  # in seconds
@@ -1470,8 +1484,12 @@ class PocketCastsImporter:
                 # For already-completed episodes, don't update end_date if it already exists
                 # to prevent HistoricalRecords from creating duplicate history entries
                 if new_status == Status.COMPLETED.value and completion_date:
-                    if existing_podcast.end_date is None:
-                        # Only update if missing - don't update if already set for completed episodes
+                    # Never update end_date if episode is already completed and end_date exists
+                    if already_completed and existing_podcast.end_date is not None:
+                        # Preserve existing end_date for already-completed episodes
+                        pass
+                    elif existing_podcast.end_date is None:
+                        # Only update if missing
                         existing_podcast.end_date = completion_date
                         fields_changed = True
                         logger.debug(
@@ -1586,15 +1604,18 @@ class PocketCastsImporter:
         if delta_seconds <= 0:
             return
         
-        # Check for recent history entry to avoid duplicates from frequent syncs
-        latest_history = podcast.history.filter(end_date__isnull=False).order_by("-history_date").first()
-        if latest_history:
-            from django.utils import timezone
-            from datetime import timedelta
-            time_since_last = timezone.now() - latest_history.history_date
-            # If history was created in the last 2 hours, skip to avoid duplicates from frequent syncs
-            if time_since_last < timedelta(hours=2):
-                logger.debug("Skipping duplicate history entry for podcast %s (created %s ago)", podcast.id, time_since_last)
+        # Check for duplicate history entry by comparing end_date (actual play completion time)
+        # instead of history_date (when the history record was created)
+        latest_history = podcast.history.filter(end_date__isnull=False).order_by("-end_date").first()
+        if latest_history and latest_history.end_date and import_time:
+            # Check if we're trying to record history with the same or very similar end_date
+            time_diff = abs((import_time - latest_history.end_date).total_seconds())
+            if time_diff < 300:  # Within 5 minutes
+                logger.debug(
+                    "Skipping duplicate history entry for podcast %s (end_date difference: %d seconds)",
+                    podcast.id,
+                    time_diff
+                )
                 return
         
         # Convert to minutes for history
