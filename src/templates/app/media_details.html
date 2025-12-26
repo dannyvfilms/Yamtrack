@@ -548,9 +548,16 @@
           {% endfor %}
           <div>
             <h3 class="text-sm font-semibold text-gray-400">Source</h3>
-            <a href="{{ media.source_url }}"
-               class="text-gray-200 hover:text-indigo-500 transition-colors duration-200"
-               target="_blank">{{ media.source|source_readable }}</a>
+            <div class="flex flex-col gap-1">
+              <a href="{{ media.source_url }}"
+                 class="text-gray-200 hover:text-indigo-500 transition-colors duration-200"
+                 target="_blank">{{ media.source|source_readable }}</a>
+              {% if media_type == MediaTypes.MOVIE.value and media.source == Sources.TMDB.value and media.media_id %}
+                <a href="https://letterboxd.com/tmdb/{{ media.media_id }}"
+                   class="text-gray-200 hover:text-indigo-500 transition-colors duration-200"
+                   target="_blank">Letterboxd</a>
+              {% endif %}
+            </div>
           </div>
         {% else %}
           <div class="text-gray-200">No details available</div>
