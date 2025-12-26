@@ -215,6 +215,7 @@ class PocketCastsImporter:
         self.previous_sync_at = self.account.last_sync_at
         self.to_delete = defaultdict(lambda: defaultdict(set))
         self.bulk_media = defaultdict(list)
+        self.debug_uuid = os.getenv("POCKETCASTS_DEBUG_UUID")
         
         # Track existing podcasts to calculate deltas
         # Use Sources.POCKETCASTS.value for consistency with lookup keys
@@ -1054,6 +1055,16 @@ class PocketCastsImporter:
             if not episode_uuid or not podcast_uuid:
                 logger.warning("Skipping episode with missing UUIDs: %s", episode_data)
                 return
+            incoming_uuid = episode_uuid
+            if self.debug_uuid and episode_uuid == self.debug_uuid:
+                logger.info(
+                    "Processing Pocket Casts history entry %s: title=%s published=%s playingStatus=%s playedUpTo=%s",
+                    episode_uuid,
+                    episode_data.get("title", "Unknown Episode"),
+                    episode_data.get("published"),
+                    episode_data.get("playingStatus"),
+                    episode_data.get("playedUpTo"),
+                )
 
             # Note: We import deleted episodes too - they're still in history
             # We'll mark them as deleted in the database but still track them
@@ -1182,14 +1193,13 @@ class PocketCastsImporter:
 
             # Parse published date
             published = None
-            if episode_data.get("published"):
-                try:
-                    published = datetime.fromisoformat(episode_data["published"].replace("Z", "+00:00"))
-                    # Ensure timezone-aware
-                    if published and timezone.is_naive(published):
-                        published = timezone.make_aware(published)
-                except (ValueError, AttributeError):
-                    logger.debug("Failed to parse published date: %s", episode_data.get("published"))
+            published_raw = episode_data.get("published")
+            if published_raw:
+                published_ts = self._parse_history_timestamp(published_raw)
+                if published_ts is not None:
+                    published = datetime.fromtimestamp(published_ts, tz=dt_timezone.utc)
+                else:
+                    logger.debug("Failed to parse published date: %s", published_raw)
 
             # Ensure episode exists
             # First try to get by UUID (most reliable)
@@ -1245,16 +1255,18 @@ class PocketCastsImporter:
                             # Delete the duplicate episode
                             episode.delete()
                             episode = existing_uuid_episode
-                        elif episode.episode_uuid != episode_uuid:
-                            # Update the UUID to match Pocket Casts UUID for consistency
-                            logger.info(
-                                "Updating episode UUID from %s to %s for episode %s",
-                                episode.episode_uuid,
-                                episode_uuid,
-                                episode.title
-                            )
-                            episode.episode_uuid = episode_uuid
-                            episode.save(update_fields=["episode_uuid"])
+                            episode_uuid = episode.episode_uuid
+                        else:
+                            episode_uuid = self._resolve_episode_uuid(episode, episode_uuid)
+                        created = False
+                if not episode and episode_data.get("title"):
+                    matching_episodes = PodcastEpisode.objects.filter(
+                        show=show,
+                        title__iexact=episode_data["title"].strip(),
+                    )
+                    if matching_episodes.count() == 1:
+                        episode = matching_episodes.first()
+                        episode_uuid = self._resolve_episode_uuid(episode, episode_uuid)
                         created = False
                 
                 # If still no match, create new episode
@@ -1367,6 +1379,15 @@ class PocketCastsImporter:
                             existing_podcast.id
                         )
                         return
+            if self.debug_uuid and (
+                incoming_uuid == self.debug_uuid or episode_uuid == self.debug_uuid
+            ):
+                logger.info(
+                    "Resolved episode UUID %s (incoming %s). Existing podcast: %s",
+                    episode_uuid,
+                    incoming_uuid,
+                    existing_podcast.id if existing_podcast else None,
+                )
             
             # Extract progress data
             playing_status = episode_data.get("playingStatus", 0)  # 2=in-progress, 3=completed
@@ -1384,11 +1405,20 @@ class PocketCastsImporter:
                 duration_seconds,
                 playing_status,
             ):
-                logger.debug(
-                    "Skipping duplicate completed episode %s (UUID: %s)",
-                    episode_data.get("title", "Unknown"),
-                    episode_uuid,
-                )
+                if self.debug_uuid and (
+                    incoming_uuid == self.debug_uuid or episode_uuid == self.debug_uuid
+                ):
+                    logger.info(
+                        "Skipping duplicate completed episode %s (UUID: %s)",
+                        episode_data.get("title", "Unknown"),
+                        episode_uuid,
+                    )
+                else:
+                    logger.debug(
+                        "Skipping duplicate completed episode %s (UUID: %s)",
+                        episode_data.get("title", "Unknown"),
+                        episode_uuid,
+                    )
                 return
             
             # Calculate progress delta and determine status
@@ -1884,6 +1914,8 @@ class PocketCastsImporter:
         if isinstance(value, str):
             try:
                 parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                if timezone.is_naive(parsed):
+                    parsed = parsed.replace(tzinfo=dt_timezone.utc)
                 return parsed.timestamp()
             except ValueError:
                 return None
@@ -1920,19 +1952,59 @@ class PocketCastsImporter:
         """Return True if candidate is a better entry than existing."""
         return self._history_entry_sort_key(candidate) > self._history_entry_sort_key(existing)
 
+    def _should_keep_existing_episode_uuid(self, episode):
+        """Return True if the episode UUID already has tracked identity we should preserve."""
+        if Podcast.objects.filter(episode=episode).exists():
+            return True
+        return app.models.Item.objects.filter(
+            media_id=episode.episode_uuid,
+            source=Sources.POCKETCASTS.value,
+            media_type=MediaTypes.PODCAST.value,
+        ).exists()
+
+    def _resolve_episode_uuid(self, episode, incoming_uuid):
+        """Return the UUID to use for tracking this episode."""
+        if episode.episode_uuid == incoming_uuid:
+            return incoming_uuid
+
+        if self._should_keep_existing_episode_uuid(episode):
+            if self.debug_uuid and (
+                incoming_uuid == self.debug_uuid or episode.episode_uuid == self.debug_uuid
+            ):
+                logger.info(
+                    "Keeping existing episode UUID %s for %s (incoming %s)",
+                    episode.episode_uuid,
+                    episode.title,
+                    incoming_uuid,
+                )
+            return episode.episode_uuid
+
+        if self.debug_uuid and (
+            incoming_uuid == self.debug_uuid or episode.episode_uuid == self.debug_uuid
+        ):
+            logger.info(
+                "Updating episode UUID %s -> %s for %s",
+                episode.episode_uuid,
+                incoming_uuid,
+                episode.title,
+            )
+
+        episode.episode_uuid = incoming_uuid
+        episode.save(update_fields=["episode_uuid"])
+        return incoming_uuid
+
     def _dedupe_history(self, episodes):
         """Deduplicate history entries by episode UUID."""
         if not episodes:
             return episodes
 
-        debug_uuid = os.getenv("POCKETCASTS_DEBUG_UUID")
         deduped = {}
         extras = []
 
         for episode_data in episodes:
             episode_uuid = episode_data.get("uuid")
-            if debug_uuid and episode_uuid == debug_uuid:
-                logger.debug(
+            if self.debug_uuid and episode_uuid == self.debug_uuid:
+                logger.info(
                     "Pocket Casts history raw entry for %s: %s",
                     episode_uuid,
                     episode_data,
