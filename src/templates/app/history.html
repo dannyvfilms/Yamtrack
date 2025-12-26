@@ -52,7 +52,10 @@
     const hasFilters = urlParams.has('genre') || urlParams.has('media_type') || 
                        urlParams.has('album') || urlParams.has('artist') || 
                        urlParams.has('tv') || urlParams.has('season') ||
-                       urlParams.has('start-date') || urlParams.has('end-date');
+                       urlParams.has('media_id') || urlParams.has('source') ||
+                       urlParams.has('season_number') || urlParams.has('podcast_show') ||
+                       urlParams.has('start-date') || urlParams.has('end-date') ||
+                       urlParams.has('logging_style');
     
     if (hasFilters) {
       console.log('History page: Filters detected, skipping cache status check');
@@ -242,6 +245,26 @@
                        class="media-card-poster lazyload w-full aspect-[2/3] {% if entry.poster != IMG_NONE %}object-cover{% endif %}"
                        data-src="{{ entry.poster }}"
                        src="{{ IMG_NONE }}">
+
+                  {% if entry.status %}
+                    <span class="media-status-chip absolute top-2 left-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md">
+                      {% with status_value=entry.status %}
+                        <span class="w-4 h-4 {{ status_value|status_color }}">
+                          {% if status_value == "Completed" %}
+                            {% include "app/icons/states/completed.svg" %}
+                          {% elif status_value == "In progress" %}
+                            {% include "app/icons/states/in-progress.svg" %}
+                          {% elif status_value == "Paused" %}
+                            {% include "app/icons/states/paused.svg" %}
+                          {% elif status_value == "Planning" %}
+                            {% include "app/icons/states/planning.svg" %}
+                          {% elif status_value == "Dropped" %}
+                            {% include "app/icons/states/dropped.svg" %}
+                          {% endif %}
+                        </span>
+                      {% endwith %}
+                    </span>
+                  {% endif %}
 
                   {% if entry.runtime_display %}
                     <span class="absolute top-2 right-2 bg-black/80 text-white text-xs px-2 py-1 rounded-md shadow">

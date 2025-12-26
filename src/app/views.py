@@ -2331,18 +2331,23 @@ def history(request):
     try:
         # Extract filter parameters from query string
         filters = {}
-        filter_params = ['album', 'artist', 'tv', 'season', 'genre', 'media_type']
-        for param in filter_params:
+        int_params = ['album', 'artist', 'tv', 'season', 'season_number', 'podcast_show']
+        str_params = ['genre', 'media_type', 'media_id', 'source']
+        for param in int_params:
             value = request.GET.get(param)
             if value:
-                if param in ['album', 'artist', 'tv', 'season']:
-                    try:
-                        filters[param] = int(value)
-                    except (TypeError, ValueError):
-                        pass  # Skip invalid filter values
-                else:
-                    # genre and media_type are strings
-                    filters[param] = value
+                try:
+                    filters[param] = int(value)
+                except (TypeError, ValueError):
+                    pass  # Skip invalid filter values
+        for param in str_params:
+            value = request.GET.get(param)
+            if value:
+                filters[param] = value
+
+        logging_style = request.GET.get("logging_style")
+        if logging_style not in ("sessions", "repeats"):
+            logging_style = None
         
         # Extract date range filters
         date_filters = {}
@@ -2354,7 +2359,12 @@ def history(request):
             date_filters['end_date'] = end_date_str
         
         # Get history days with filters applied
-        history_days_all = history_cache.get_history_days(request.user, filters=filters, date_filters=date_filters)
+        history_days_all = history_cache.get_history_days(
+            request.user,
+            filters=filters,
+            date_filters=date_filters,
+            logging_style_override=logging_style,
+        )
 
         paginator = Paginator(history_days_all, history_cache.HISTORY_DAYS_PER_PAGE)
 
@@ -2382,6 +2392,8 @@ def history(request):
             active_filters['start-date'] = date_filters['start_date']
         if date_filters.get('end_date'):
             active_filters['end-date'] = date_filters['end_date']
+        if logging_style:
+            active_filters['logging_style'] = logging_style
         
         context = {
             "user": request.user,

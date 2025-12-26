@@ -490,24 +490,11 @@
         </div>
 
         {# Activity History #}
-        <div x-data="{ historyOpen: false }">
-          <button class="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 transition duration-300 cursor-pointer"
-                  title="View your activity history"
-                  hx-get="{% media_view_url 'history_modal' media %}"
-                  hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
-                  hx-target="#{% component_id 'history' media %}"
-                  hx-trigger="click once"
-                  @click="historyOpen = true">{% include "app/icons/history.svg" with classes="w-4 h-4" %}</button>
-
-          <div x-show="historyOpen"
-               @keydown.escape.window="historyOpen = false"
-               class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
-                 @click.outside="historyOpen = false">
-              <div id="{% component_id 'history' media %}"></div>
-            </div>
-          </div>
-        </div>
+        <a class="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 transition duration-300 cursor-pointer"
+           title="View your activity history"
+           href="{% url 'history' %}?{% if media_type == MediaTypes.SEASON.value %}media_type={{ MediaTypes.TV.value }}&media_id={{ media.media_id|urlencode }}&source={{ media.source|urlencode }}&season_number={{ media.season_number }}{% elif media_type == MediaTypes.TV.value %}media_type={{ MediaTypes.TV.value }}&media_id={{ media.media_id|urlencode }}&source={{ media.source|urlencode }}{% elif media_type == MediaTypes.PODCAST.value and podcast_show %}media_type={{ MediaTypes.PODCAST.value }}&podcast_show={{ podcast_show.id }}{% else %}media_type={{ media_type }}&media_id={{ media.media_id|urlencode }}&source={{ media.source|urlencode }}{% endif %}{% if media_type == MediaTypes.GAME.value or media_type == MediaTypes.BOARDGAME.value %}&logging_style=sessions{% endif %}">
+          {% include "app/icons/history.svg" with classes="w-4 h-4" %}
+        </a>
 
         {# Sync metadata #}
         <button type="button"
