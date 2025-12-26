@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone as dt_timezone
@@ -217,11 +218,17 @@ class PocketCastsImporter:
         
         # Track existing podcasts to calculate deltas
         # Use Sources.POCKETCASTS.value for consistency with lookup keys
-        self.existing_podcasts = {
-            (podcast.item.media_id, Sources.POCKETCASTS.value): podcast
-            for podcast in Podcast.objects.filter(user=user).select_related("item", "episode", "show")
-            if podcast.item.source == Sources.POCKETCASTS.value
-        }
+        self.existing_podcasts = {}
+        for podcast in (
+            Podcast.objects.filter(user=user)
+            .select_related("item", "episode", "show")
+            .order_by("-created_at")
+        ):
+            if podcast.item.source != Sources.POCKETCASTS.value:
+                continue
+            key = (podcast.item.media_id, Sources.POCKETCASTS.value)
+            if key not in self.existing_podcasts:
+                self.existing_podcasts[key] = podcast
         
         # Track shows we've processed to sync episodes from RSS
         self.processed_shows = set()
@@ -248,6 +255,7 @@ class PocketCastsImporter:
 
         # Fetch history (last 100 episodes only, no pagination)
         episodes = self._fetch_history()
+        episodes = self._dedupe_history(episodes)
 
         if not episodes:
             logger.info("No episodes found for Pocket Casts user %s", self.user.username)
@@ -1366,6 +1374,22 @@ class PocketCastsImporter:
             duration_seconds = duration or 0
             if playing_status == 3 and duration_seconds and not played_up_to:
                 played_up_to = duration_seconds
+
+            latest_podcast = existing_podcast
+            if not latest_podcast:
+                latest_podcast = Podcast.objects.filter(user=self.user, item=item).order_by("-created_at").first()
+            if self._is_duplicate_completion(
+                latest_podcast,
+                played_up_to,
+                duration_seconds,
+                playing_status,
+            ):
+                logger.debug(
+                    "Skipping duplicate completed episode %s (UUID: %s)",
+                    episode_data.get("title", "Unknown"),
+                    episode_uuid,
+                )
+                return
             
             # Calculate progress delta and determine status
             if existing_podcast:
@@ -1633,6 +1657,28 @@ class PocketCastsImporter:
         
         return delta, status, progress_minutes
 
+    def _is_duplicate_completion(self, existing_podcast, played_up_to, duration_seconds, playing_status):
+        """Return True when an incoming completed entry matches an existing completed play."""
+        if playing_status != 3:
+            return False
+        if not existing_podcast or existing_podcast.status != Status.COMPLETED.value or not existing_podcast.end_date:
+            return False
+
+        epsilon = 5
+        if played_up_to and existing_podcast.played_up_to_seconds:
+            if abs(existing_podcast.played_up_to_seconds - played_up_to) <= epsilon:
+                return True
+
+        if duration_seconds and played_up_to >= duration_seconds - epsilon:
+            return True
+
+        if duration_seconds:
+            duration_minutes = duration_seconds // 60
+            if existing_podcast.progress and existing_podcast.progress >= duration_minutes:
+                return True
+
+        return False
+
     def _record_history(self, podcast, delta_seconds, import_time):
         """Record play history entry for delta time.
         
@@ -1825,6 +1871,88 @@ class PocketCastsImporter:
         """
         stats = _cleanup_duplicate_episodes_global()
         return stats
+
+    def _parse_history_timestamp(self, value):
+        """Parse a history timestamp into epoch seconds."""
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            timestamp = float(value)
+            if timestamp > 1_000_000_000_000:
+                timestamp /= 1000
+            return timestamp
+        if isinstance(value, str):
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                return parsed.timestamp()
+            except ValueError:
+                return None
+        return None
+
+    def _get_history_event_timestamp(self, episode_data):
+        """Return a usable event timestamp if present in history data."""
+        for field in (
+            "playedAt",
+            "played_at",
+            "completedAt",
+            "completed_at",
+            "modifiedAt",
+            "modified_at",
+            "lastModified",
+            "last_modified",
+            "timestamp",
+        ):
+            if field in episode_data and episode_data[field]:
+                parsed = self._parse_history_timestamp(episode_data[field])
+                if parsed is not None:
+                    return parsed
+        return None
+
+    def _history_entry_sort_key(self, episode_data):
+        """Return a sort key to pick the best entry for a duplicate UUID."""
+        playing_status = episode_data.get("playingStatus", 0)
+        is_completed = 1 if playing_status == 3 else 0
+        played_up_to = episode_data.get("playedUpTo") or 0
+        event_time = self._get_history_event_timestamp(episode_data) or 0
+        return (is_completed, event_time, played_up_to)
+
+    def _is_better_history_entry(self, candidate, existing):
+        """Return True if candidate is a better entry than existing."""
+        return self._history_entry_sort_key(candidate) > self._history_entry_sort_key(existing)
+
+    def _dedupe_history(self, episodes):
+        """Deduplicate history entries by episode UUID."""
+        if not episodes:
+            return episodes
+
+        debug_uuid = os.getenv("POCKETCASTS_DEBUG_UUID")
+        deduped = {}
+        extras = []
+
+        for episode_data in episodes:
+            episode_uuid = episode_data.get("uuid")
+            if debug_uuid and episode_uuid == debug_uuid:
+                logger.debug(
+                    "Pocket Casts history raw entry for %s: %s",
+                    episode_uuid,
+                    episode_data,
+                )
+            if not episode_uuid:
+                extras.append(episode_data)
+                continue
+
+            existing = deduped.get(episode_uuid)
+            if not existing or self._is_better_history_entry(episode_data, existing):
+                deduped[episode_uuid] = episode_data
+
+        if len(deduped) + len(extras) < len(episodes):
+            logger.debug(
+                "Deduped Pocket Casts history: %d -> %d entries",
+                len(episodes),
+                len(deduped) + len(extras),
+            )
+
+        return list(deduped.values()) + extras
     
     def _discover_rss_feed_url(self, show_title, author=None):
         """Discover RSS feed URL from iTunes API.
