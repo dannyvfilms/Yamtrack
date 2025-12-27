@@ -18,6 +18,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.utils.timezone import datetime
+from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from app import cache_utils, config, helpers, history_cache, history_processor
@@ -1184,6 +1185,13 @@ def media_details(
                 source,
             )
         )
+        if user_medias:
+            def _activity_key(entry):
+                dates = [d for d in (entry.end_date, entry.start_date) if d]
+                primary_date = max(dates) if dates else entry.created_at
+                return (primary_date, entry.start_date or entry.created_at, entry.created_at)
+
+            user_medias.sort(key=_activity_key, reverse=True)
         current_instance = user_medias[0] if user_medias else None
 
     # Apply the same rating aggregation logic as in the media list
@@ -1258,6 +1266,16 @@ def media_details(
         music_artist = getattr(current_instance, "artist", None)
         music_album = getattr(current_instance, "album", None)
 
+    notes_entry = None
+    if not public_view and user_medias:
+        if current_instance and current_instance.notes and current_instance.notes.strip():
+            notes_entry = current_instance
+        else:
+            for entry in user_medias:
+                if entry.notes and entry.notes.strip():
+                    notes_entry = entry
+                    break
+
     context = {
         "user": request.user,
         "media": media_metadata,
@@ -1268,6 +1286,7 @@ def media_details(
         "music_album": music_album,
         "public_view": public_view,
         "play_stats": play_stats,
+        "notes_entry": notes_entry,
     }
     return render(request, "app/media_details.html", context)
 
@@ -1525,6 +1544,7 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
     return helpers.redirect_back(request)
 
 
+@never_cache
 @require_GET
 def track_modal(
     request,

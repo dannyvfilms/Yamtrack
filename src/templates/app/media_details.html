@@ -171,7 +171,7 @@
           </button>
         </div>
 
-        {% if not public_view|default:False and current_instance.notes %}
+        {% if not public_view|default:False and notes_entry %}
           <div class="my-3 border-t border-gray-700"></div>
 
           <div class="flex items-start mt-2">
@@ -179,17 +179,40 @@
             <div class="font-medium text-gray-400 mb-1">YOUR NOTES</div>
           </div>
 
-          <div x-data="{ isExpanded: false, isClamped: false, checkClamp() { const element = this.$refs.notesText; this.isClamped = element.scrollHeight > element.clientHeight; } }"
-               x-init="$nextTick(() => checkClamp())">
-            <p x-ref="notesText"
-               :class="isExpanded ? '' : 'line-clamp-2'"
-               class="text-gray-300 italic">"{{ current_instance.notes|linebreaksbr }}"</p>
-            <button x-show="isClamped"
-                    @click="isExpanded = !isExpanded"
-                    class="text-indigo-400 hover:text-indigo-300 text-xs mt-1 focus:outline-none transition-colors cursor-pointer">
-              <span x-text="isExpanded ? 'Show less' : 'Read more'"></span>
-            </button>
-          </div>
+          {% with notes_modal_id=notes_entry.id|stringformat:"s"|add:"-notes" %}
+            <div x-data="{ isExpanded: false, isClamped: false, trackOpen: false, checkClamp() { const element = this.$refs.notesText; this.isClamped = element.scrollHeight > element.clientHeight; } }"
+                 x-init="$nextTick(() => checkClamp())">
+              <p x-ref="notesText"
+                 :class="isExpanded ? '' : 'line-clamp-2'"
+                 class="text-gray-300 italic">"{{ notes_entry.notes|linebreaksbr }}"</p>
+              <div class="flex items-center gap-2 mt-1">
+                <button x-show="isClamped"
+                        @click="isExpanded = !isExpanded"
+                        class="text-indigo-400 hover:text-indigo-300 text-xs focus:outline-none transition-colors cursor-pointer inline-flex items-center gap-1">
+                  {% include "app/icons/book-open.svg" with classes="w-3.5 h-3.5" %}
+                  <span x-text="isExpanded ? 'Show less' : 'Show more'"></span>
+                </button>
+
+                <button class="text-indigo-400 hover:text-indigo-300 text-xs focus:outline-none transition-colors cursor-pointer inline-flex items-center gap-1"
+                        hx-get="{% media_view_url 'track_modal' media %}?instance_id={{ notes_entry.id }}&return_url={{ request.get_full_path|urlencode }}"
+                        hx-target="#{% component_id 'track' media notes_modal_id %}"
+                        hx-trigger="click"
+                        @click="trackOpen = true">
+                  {% include "app/icons/edit.svg" with classes="w-3.5 h-3.5" %}
+                  Edit
+                </button>
+              </div>
+
+              <div x-show="trackOpen"
+                   @keydown.escape.window="trackOpen = false"
+                   class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                <div class="w-152 max-h-[90vh] px-4 md:px-0 relative z-60"
+                     @click.outside="trackOpen = false">
+                  <div id="{% component_id 'track' media notes_modal_id %}"></div>
+                </div>
+              </div>
+            </div>
+          {% endwith %}
         {% endif %}
       </div>
 
@@ -310,11 +333,9 @@
                 <p class="text-lg font-bold text-white text-center leading-none">
                   {{ play_stats.total_hours }}h
                 </p>
-                {% if play_stats.total_minutes_remainder > 0 %}
-                  <p class="text-xs text-gray-400 mt-0.5 text-center">
-                    {{ play_stats.total_minutes_remainder }}min
-                  </p>
-                {% endif %}
+                <p class="text-xs text-gray-400 mt-0.5 text-center">
+                  {{ play_stats.total_minutes_remainder|default:0 }}min
+                </p>
               {% else %}
                 <p class="text-lg font-bold text-white text-center leading-none">
                   {{ play_stats.total_minutes|default:0 }}min
@@ -418,10 +439,9 @@
                       {% if not public_view|default:False %}
                       <div x-data="{ trackOpen: false }">
                         <button class="p-1 text-gray-400 hover:text-white transition-colors cursor-pointer"
-                                hx-get="{% media_view_url 'track_modal' media %}"
-                                hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}", "instance_id": "{{ user_media.id }}"}'
+                                hx-get="{% media_view_url 'track_modal' media %}?instance_id={{ user_media.id }}&return_url={{ request.get_full_path|urlencode }}"
                                 hx-target="#{% component_id 'track' media user_media.id %}"
-                                hx-trigger="click once"
+                                hx-trigger="click"
                                 @click="trackOpen = true">
                           {% include "app/icons/edit-flat.svg" with classes="w-4 h-4" %}
                         </button>
