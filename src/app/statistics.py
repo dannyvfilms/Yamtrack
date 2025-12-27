@@ -1622,6 +1622,31 @@ def get_movie_consumption_stats(user_media, start_date, end_date, minutes_per_ty
     }
 
 
+def _game_entry_in_range(game, start_date, end_date):
+    """Return True if a game entry overlaps the requested date range."""
+    if not (start_date and end_date):
+        return True
+
+    filter_start = start_date.date() if hasattr(start_date, "date") else start_date
+    filter_end = end_date.date() if hasattr(end_date, "date") else end_date
+
+    game_start = game.start_date.date() if game.start_date else None
+    game_end = game.end_date.date() if game.end_date else None
+
+    if game_start and game_end:
+        return not (game_end < filter_start or game_start > filter_end)
+    if game_end:
+        return filter_start <= game_end <= filter_end
+    if game_start:
+        return filter_start <= game_start <= filter_end
+
+    activity_datetime = _get_activity_datetime(game)
+    if activity_datetime is None:
+        return False
+    activity_date = _localize_datetime(activity_datetime).date()
+    return filter_start <= activity_date <= filter_end
+
+
 def _collect_game_data(game_queryset, start_date, end_date):
     """Collect game data with hours, dates, and daily averages.
     
@@ -1632,74 +1657,85 @@ def _collect_game_data(game_queryset, start_date, end_date):
     
     if game_queryset is None:
         return game_data
-    
-    for game in game_queryset:
-        # Get total hours from progress (stored in minutes)
-        total_minutes = game.progress or 0
+
+    games_by_item = defaultdict(list)
+    for game in list(game_queryset):
+        if not getattr(game, "item", None):
+            continue
+        if not _game_entry_in_range(game, start_date, end_date):
+            continue
+        games_by_item[game.item.id].append(game)
+
+    for entries in games_by_item.values():
+        total_minutes = sum((entry.progress or 0) for entry in entries)
         total_hours = total_minutes / 60 if total_minutes else 0
-        
         if total_hours <= 0:
             continue
-        
-        # Get activity datetime (for range calculation)
-        activity_datetime = _get_activity_datetime(game)
+
+        activity_datetime = None
+        for entry in entries:
+            entry_activity = _get_activity_datetime(entry)
+            if entry_activity and (activity_datetime is None or entry_activity > activity_datetime):
+                activity_datetime = entry_activity
         if activity_datetime is None:
             continue
-        
-        # Check if game is within date range
-        if start_date and end_date:
-            # Convert filter dates to date objects
-            filter_start = start_date.date() if hasattr(start_date, 'date') else start_date
-            filter_end = end_date.date() if hasattr(end_date, 'date') else end_date
-            
-            # For games, check if the date range overlaps with filter range
-            game_start = game.start_date.date() if game.start_date else None
-            game_end = game.end_date.date() if game.end_date else None
-            
-            # If game has both dates, check overlap
-            if game_start and game_end:
-                # Game ends before filter starts or starts after filter ends
-                if game_end < filter_start or game_start > filter_end:
-                    continue
-            # If only end_date, check if end_date is in range
-            elif game_end:
-                if not (filter_start <= game_end <= filter_end):
-                    continue
-            # If only start_date, check if start_date is in range
-            elif game_start:
-                if not (filter_start <= game_start <= filter_end):
-                    continue
-            # If no dates, check activity_datetime
-            else:
-                activity_date = _localize_datetime(activity_datetime).date()
-                if not (filter_start <= activity_date <= filter_end):
-                    continue
-        
-        # Calculate daily average
-        game_start_date = game.start_date.date() if game.start_date else None
-        game_end_date = game.end_date.date() if game.end_date else None
-        
-        if game_start_date and game_end_date:
-            # Calculate days between start and end (inclusive)
-            # If start_date == end_date, days = 1 (same day)
-            days = (game_end_date - game_start_date).days + 1
-            if days <= 0:
-                days = 1
-            # Calculate daily average: total hours divided by number of days
-            # Note: If days = 1 (same start/end date), daily_average = total_hours
-            # This is correct but may not be meaningful for single-day games
-            daily_average_hours = total_hours / days
+
+        start_dates = []
+        end_dates = []
+        segments = []
+        total_days = 0
+        total_minutes_for_avg = 0
+
+        for entry in entries:
+            entry_minutes = entry.progress or 0
+            entry_start = entry.start_date
+            entry_end = entry.end_date
+
+            if entry_start:
+                start_dates.append(timezone.localtime(entry_start).date())
+            if entry_end:
+                end_dates.append(timezone.localtime(entry_end).date())
+
+            if entry_start and entry_end:
+                start_local = timezone.localtime(entry_start).date()
+                end_local = timezone.localtime(entry_end).date()
+                days = (end_local - start_local).days + 1
+                if days <= 0:
+                    days = 1
+                total_days += days
+                total_minutes_for_avg += entry_minutes
+
+                if entry_minutes > 0:
+                    segments.append({
+                        "start_date": start_local,
+                        "end_date": end_local,
+                        "hours": entry_minutes / 60,
+                        "activity_datetime": _get_activity_datetime(entry),
+                    })
+            elif entry_minutes > 0:
+                segments.append({
+                    "start_date": None,
+                    "end_date": None,
+                    "hours": entry_minutes / 60,
+                    "activity_datetime": _get_activity_datetime(entry),
+                })
+
+        if total_days:
+            daily_average_hours = (total_minutes_for_avg / total_days) / 60
         else:
-            # If no date range, can't calculate daily average
             daily_average_hours = 0
-        
+
         game_data.append({
-            "game": game,
+            "game": max(
+                entries,
+                key=lambda entry: _get_activity_datetime(entry) or entry.created_at,
+            ),
             "hours": total_hours,
-            "start_date": game_start_date,
-            "end_date": game_end_date,
+            "start_date": min(start_dates) if start_dates else None,
+            "end_date": max(end_dates) if end_dates else None,
             "daily_average": daily_average_hours,
             "activity_datetime": activity_datetime,
+            "segments": segments,
         })
     
     return game_data
@@ -1723,27 +1759,8 @@ def _collect_game_play_data(game_queryset, start_date, end_date):
             continue
         
         # Check if game is within date range (similar logic to _collect_game_data)
-        if start_date and end_date:
-            # Convert filter dates to date objects
-            filter_start = start_date.date() if hasattr(start_date, 'date') else start_date
-            filter_end = end_date.date() if hasattr(end_date, 'date') else end_date
-            
-            game_start = game.start_date.date() if game.start_date else None
-            game_end = game.end_date.date() if game.end_date else None
-            
-            if game_start and game_end:
-                if game_end < filter_start or game_start > filter_end:
-                    continue
-            elif game_end:
-                if not (filter_start <= game_end <= filter_end):
-                    continue
-            elif game_start:
-                if not (filter_start <= game_start <= filter_end):
-                    continue
-            else:
-                activity_date_only = _localize_datetime(activity_date).date()
-                if not (filter_start <= activity_date_only <= filter_end):
-                    continue
+        if not _game_entry_in_range(game, start_date, end_date):
+            continue
         
         # Get runtime in minutes (from progress field)
         runtime_minutes = game.progress or 0
@@ -1794,6 +1811,51 @@ def _build_game_hours_charts(game_data, start_date, end_date, color, dataset_lab
         total_hours = data["hours"]
         game_start = data["start_date"]
         game_end = data["end_date"]
+        segments = data.get("segments")
+
+        if segments:
+            for segment in segments:
+                segment_hours = segment.get("hours", 0) or 0
+                if segment_hours <= 0:
+                    continue
+
+                segment_start = segment.get("start_date")
+                segment_end = segment.get("end_date")
+
+                if not segment_start or not segment_end:
+                    activity_dt = segment.get("activity_datetime") or data.get("activity_datetime")
+                    if not activity_dt:
+                        continue
+
+                    activity_date = _localize_datetime(activity_dt).date()
+                    if filter_start_date and filter_end_date:
+                        if not (filter_start_date <= activity_date <= filter_end_date):
+                            continue
+                    year_hours[activity_date.year] += segment_hours
+                    month_hours[activity_date.month] += segment_hours
+                    continue
+
+                segment_total_days = (segment_end - segment_start).days + 1
+                if segment_total_days <= 0:
+                    segment_total_days = 1
+
+                hours_per_day = segment_hours / segment_total_days
+
+                range_start = segment_start
+                range_end = segment_end
+                if filter_start_date and filter_end_date:
+                    range_start = max(range_start, filter_start_date)
+                    range_end = min(range_end, filter_end_date)
+                    if range_start > range_end:
+                        continue
+
+                current_date = range_start
+                while current_date <= range_end:
+                    if not filter_start_date or filter_start_date <= current_date <= filter_end_date:
+                        year_hours[current_date.year] += hours_per_day
+                        month_hours[current_date.month] += hours_per_day
+                    current_date += datetime.timedelta(days=1)
+            continue
         
         if not game_start or not game_end:
             # If no date range, assign all hours to activity date
