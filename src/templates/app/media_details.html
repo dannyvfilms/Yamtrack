@@ -343,6 +343,16 @@
               {% endif %}
             {% endif %}
           </div>
+
+          {% if media_type == MediaTypes.GAME.value %}
+            <div class="bg-[#2a2f35] p-3 rounded-lg w-[120px]">
+              <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">AVG TIME</h3>
+              <p class="text-lg font-bold text-white text-center leading-none">
+                {{ play_stats.avg_time_per_day|default:"0min" }}
+              </p>
+              <p class="text-xs text-gray-400 mt-0.5 text-center">Per Day</p>
+            </div>
+          {% endif %}
         {% endif %}
       </div>
     </div>

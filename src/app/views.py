@@ -1001,8 +1001,6 @@ def media_details(
                 
                 # Create a wrapper object that aggregates history from all podcast entries
                 if all_podcasts:
-                    from django.utils import timezone
-                    
                     # Aggregate all history records from all podcast entries
                     # Only include history records with end_date (completed plays)
                     all_history = []
@@ -1243,6 +1241,23 @@ def media_details(
                     "total_minutes_remainder": total_minutes % 60,
                 }
             )
+            total_days = 0
+            total_minutes_for_avg = 0
+            for entry in user_medias:
+                if not entry.start_date or not entry.end_date:
+                    continue
+                start_date = timezone.localtime(entry.start_date).date()
+                end_date = timezone.localtime(entry.end_date).date()
+                days = (end_date - start_date).days + 1
+                if days <= 0:
+                    days = 1
+                total_days += days
+                total_minutes_for_avg += entry.progress or 0
+            if total_days:
+                avg_minutes = int(round(total_minutes_for_avg / total_days))
+            else:
+                avg_minutes = 0
+            play_stats["avg_time_per_day"] = helpers.minutes_to_hhmm(avg_minutes)
         else:
             play_stats["total_plays"] = int(aggregated_progress or 0)
 
