@@ -91,6 +91,7 @@ def build_statistics_data(user, start_date, end_date):
         user_media,
         start_date,
         end_date,
+        user=user,
     )
     hours_per_media_type = stats.get_hours_per_media_type(
         user_media,
@@ -403,7 +404,7 @@ def schedule_all_ranges_refresh(user_id: int, debounce_seconds: int = 30, countd
     
     This is useful when media changes and we want to refresh all ranges.
     Optimizes by calculating "All Time" first to pre-populate runtime data,
-    then schedules remaining ranges in parallel.
+    then prioritizes the user's preferred range before scheduling the rest in parallel.
     
     Args:
         user_id: User ID
@@ -420,6 +421,16 @@ def schedule_all_ranges_refresh(user_id: int, debounce_seconds: int = 30, countd
     # This ensures history and "All Time" run together, then other ranges follow
     # This prevents history from getting mixed in with the other predefined ranges
     all_time_range = "All Time"
+    user_model = get_user_model()
+    preferred_range = (
+        user_model.objects.filter(id=user_id)
+        .values_list("statistics_default_range", flat=True)
+        .first()
+    )
+    if preferred_range not in PREDEFINED_RANGES:
+        preferred_range = "Last 12 Months"
+    if preferred_range == all_time_range:
+        preferred_range = None
     all_time_lock_key = _refresh_lock_key(user_id, all_time_range)
     # Use a longer TTL (5 minutes) to ensure lock exists for entire task duration
     lock_ttl = 300  # 5 minutes should be more than enough for any statistics task
@@ -441,11 +452,36 @@ def schedule_all_ranges_refresh(user_id: int, debounce_seconds: int = 30, countd
         )
         refresh_statistics_cache(user_id, all_time_range)
 
+    if preferred_range:
+        preferred_lock_key = _refresh_lock_key(user_id, preferred_range)
+        if cache.add(preferred_lock_key, True, debounce_seconds):
+            cache.set(preferred_lock_key, True, lock_ttl)
+
+        try:
+            from app.tasks import refresh_statistics_cache_task
+            logger.debug(
+                "Scheduling preferred statistics range %s for user %s",
+                preferred_range,
+                user_id,
+            )
+            refresh_statistics_cache_task.apply_async(
+                args=[user_id, preferred_range],
+                countdown=countdown + 1,
+            )
+        except Exception as exc:  # pragma: no cover - Celery not available
+            logger.debug(
+                "Falling back to inline statistics cache rebuild for user %s, range %s: %s",
+                user_id,
+                preferred_range,
+                exc,
+            )
+            refresh_statistics_cache(user_id, preferred_range)
+    
     # Schedule remaining ranges in parallel with longer countdown
     # They'll run after history and "All Time" complete (which run together)
     # This prevents history from getting mixed in with the other predefined ranges
     for range_name in PREDEFINED_RANGES:
-        if range_name == all_time_range:
+        if range_name in (all_time_range, preferred_range):
             # Already scheduled, skip
             continue
 
@@ -468,4 +504,3 @@ def schedule_all_ranges_refresh(user_id: int, debounce_seconds: int = 30, countd
                 exc,
             )
             refresh_statistics_cache(user_id, range_name)
-

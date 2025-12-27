@@ -374,6 +374,12 @@ class SeasonForm(MediaForm):
 class EpisodeForm(forms.ModelForm):
     """Form for episodes."""
 
+    instance_id = forms.CharField(widget=forms.HiddenInput(), required=False)
+    media_type = forms.CharField(widget=forms.HiddenInput(), required=False)
+    source = forms.CharField(widget=forms.HiddenInput(), required=False)
+    media_id = forms.CharField(widget=forms.HiddenInput(), required=False)
+    season_number = forms.IntegerField(widget=forms.HiddenInput(), required=False)
+
     class Meta:
         """Bind form to model."""
 

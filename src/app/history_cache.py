@@ -121,7 +121,7 @@ def _format_boardgame_plays(plays: int) -> str:
     return f"{plays} play{'s' if plays != 1 else ''}"
 
 
-def _build_episode_entry(episode, episode_title_map=None):
+def _build_episode_entry(episode, episode_title_map=None, episode_history_map=None):
     played_at_local = _localize_datetime(episode.end_date or episode.created_at)
     if not played_at_local:
         return None
@@ -129,6 +129,9 @@ def _build_episode_entry(episode, episode_title_map=None):
     episode_item = getattr(episode, "item", None)
     season_item = getattr(episode.related_season, "item", None)
     tv_item = getattr(getattr(episode.related_season, "related_tv", None), "item", None)
+    entry_item = episode_item or season_item or tv_item
+    if not entry_item:
+        return None
     runtime_minutes = _resolve_runtime_minutes(
         episode.item,
         season_item,
@@ -136,33 +139,53 @@ def _build_episode_entry(episode, episode_title_map=None):
     )
 
     display_title = _get_episode_display_title(episode, episode_title_map)
+    title = ""
+    if episode_item and episode_item.title:
+        title = episode_item.title
+    elif season_item and season_item.title:
+        title = season_item.title
+    elif tv_item and tv_item.title:
+        title = tv_item.title
+
+    episode_label = None
+    episode_code = None
+    if episode_item and episode_item.season_number is not None and episode_item.episode_number is not None:
+        episode_label = f"{episode_item.season_number}x{episode_item.episode_number:02d}"
+        episode_code = f"S{episode_item.season_number:02d}E{episode_item.episode_number:02d}"
+
+    episode_history = []
+    if episode_history_map and episode_item and episode_item.episode_number is not None:
+        history_key = (episode.related_season_id, episode_item.episode_number)
+        episode_history = episode_history_map.get(history_key, [])
+
+    episode_image = episode_item.image if episode_item and episode_item.image else _get_episode_poster(episode)
+    episode_modal = {
+        "title": title,
+        "image": episode_image or settings.IMG_NONE,
+        "episode_number": episode_item.episode_number if episode_item else None,
+        "air_date": None,
+        "history": episode_history,
+    }
 
     return {
         "media_type": MediaTypes.EPISODE.value,
-        "item": season_item or episode.item,
+        "item": entry_item,
         "poster": _get_episode_poster(episode),
-        "title": episode_item.title if episode_item else (season_item.title if season_item else episode.item.title),
+        "title": title,
         "display_title": display_title,
-        "episode_label": (
-            f"{episode.item.season_number}x{episode.item.episode_number:02d}"
-            if episode.item.season_number is not None
-            and episode.item.episode_number is not None
-            else None
-        ),
-        "episode_code": (
-            f"S{episode.item.season_number:02d}E{episode.item.episode_number:02d}"
-            if episode.item.season_number is not None
-            and episode.item.episode_number is not None
-            else None
-        ),
+        "episode_label": episode_label,
+        "episode_code": episode_code,
         "played_at_local": played_at_local,
         "runtime_minutes": runtime_minutes,
         "runtime_display": helpers.minutes_to_hhmm(runtime_minutes) if runtime_minutes else None,
+        "instance_id": episode.id,
+        "entry_key": episode.id,
+        "episode_modal": episode_modal,
     }
 
 
 def _build_movie_entry(movie):
-    played_at_local = _localize_datetime(movie.end_date or movie.created_at)
+    played_at_local = _localize_datetime(movie.end_date or movie.start_date or movie.created_at)
     if not played_at_local:
         return None
 
@@ -174,12 +197,15 @@ def _build_movie_entry(movie):
         "poster": movie.item.image or settings.IMG_NONE,
         "title": movie.item.title,
         "display_title": movie.item.title,
+        "status": movie.status,
         "play_count": 1,
         "episode_label": None,
         "episode_code": None,
         "played_at_local": played_at_local,
         "runtime_minutes": runtime_minutes,
         "runtime_display": helpers.minutes_to_hhmm(runtime_minutes) if runtime_minutes else None,
+        "instance_id": movie.id,
+        "entry_key": movie.id,
     }
 
 
@@ -238,7 +264,9 @@ def _build_music_album_entries(music_entries_for_album, album, day_date, user, t
     play_times = []
     total_runtime_minutes = 0
     play_count = 0
-
+    latest_play_time = None
+    primary_music = None
+    
     for music in music_entries_for_album:
         runtime_for_track = _get_music_runtime_minutes(music, track_duration_cache)
 
@@ -257,7 +285,10 @@ def _build_music_album_entries(music_entries_for_album, album, day_date, user, t
                     play_times.append(play_time)
                     play_count += 1
                     total_runtime_minutes += runtime_for_track
-
+                    if latest_play_time is None or play_time > latest_play_time:
+                        latest_play_time = play_time
+                        primary_music = music
+    
     if not play_times:
         return None
 
@@ -279,10 +310,14 @@ def _build_music_album_entries(music_entries_for_album, album, day_date, user, t
     # Album name
     album_name = album.title if album else "Unknown Album"
     artist_name = album.artist.name if album and album.artist else "Unknown Artist"
+    
+    entry_item = primary_music.item if primary_music and primary_music.item else album
+    instance_id = primary_music.id if primary_music else None
+    entry_key = f"{album.id if album else 'album'}-{day_date.strftime('%Y%m%d')}"
 
     return {
         "media_type": MediaTypes.MUSIC.value,
-        "item": album,  # Link to album for navigation
+        "item": entry_item,
         "album": album,
         "poster": poster,
         "title": album_name,
@@ -295,10 +330,12 @@ def _build_music_album_entries(music_entries_for_album, album, day_date, user, t
         "played_at_local": latest_time,  # Use latest play for sorting
         "runtime_minutes": total_runtime_minutes,
         "runtime_display": helpers.minutes_to_hhmm(total_runtime_minutes) if total_runtime_minutes else None,
+        "instance_id": instance_id,
+        "entry_key": entry_key,
     }
 
 
-def build_history_days(user, filters=None, date_filters=None):
+def build_history_days(user, filters=None, date_filters=None, logging_style_override=None):
     """Build the list of grouped history entries for a user.
     
     Args:
@@ -308,9 +345,14 @@ def build_history_days(user, filters=None, date_filters=None):
             - artist: Filter music entries by album__artist_id
             - tv: Filter episodes by related_season__related_tv_id
             - season: Filter episodes by related_season_id
+            - media_id: Filter entries by item media_id
+            - source: Filter entries by item source
+            - season_number: Filter episodes by season number (requires media_id/source)
+            - podcast_show: Filter podcast plays by show id
             - genre: Filter by genre name (string)
             - media_type: Filter by media type (string: 'movie', 'tv', 'music', etc.)
         date_filters: Optional dict with 'start_date' and 'end_date' (date strings)
+        logging_style_override: Optional override for game logging style ("sessions" or "repeats")
     """
     filters = filters or {}
     date_filters = date_filters or {}
@@ -330,7 +372,19 @@ def build_history_days(user, filters=None, date_filters=None):
         parsed = parse_date(date_filters["end_date"])
         if parsed:
             end_date = tz.make_aware(datetime.combine(parsed, datetime.max.time()))
-    game_logging_style = getattr(user, "game_logging_style", "repeats")
+    if logging_style_override not in ("sessions", "repeats"):
+        logging_style_override = None
+    game_logging_style = logging_style_override or getattr(user, "game_logging_style", "repeats")
+
+    media_type_filter = filters.get('media_type')
+    target_media_id = filters.get('media_id')
+    target_source = filters.get('source')
+    season_number_filter = filters.get('season_number')
+    podcast_show_filter = filters.get('podcast_show')
+    if target_media_id is not None:
+        target_media_id = str(target_media_id)
+    if target_source is not None:
+        target_source = str(target_source)
 
     episodes = (
         Episode.objects.filter(
@@ -352,21 +406,54 @@ def build_history_days(user, filters=None, date_filters=None):
         episodes = episodes.filter(end_date__lte=end_date)
 
     # Apply episode filters
-    if filters.get("tv"):
-        episodes = episodes.filter(related_season__related_tv_id=filters["tv"])
-    if filters.get("season"):
-        episodes = episodes.filter(related_season_id=filters["season"])
+    if filters.get('tv'):
+        episodes = episodes.filter(related_season__related_tv_id=filters['tv'])
+    if filters.get('season'):
+        episodes = episodes.filter(related_season_id=filters['season'])
+    if target_media_id and target_source and (
+        media_type_filter == MediaTypes.TV.value
+        or filters.get('tv')
+        or filters.get('season')
+        or season_number_filter is not None
+    ):
+        episodes = episodes.filter(
+            related_season__related_tv__item__media_id=target_media_id,
+            related_season__related_tv__item__source=target_source,
+        )
+        if season_number_filter is not None:
+            episodes = episodes.filter(related_season__item__season_number=season_number_filter)
+
+    episodes = list(episodes)
+    episode_history_map = defaultdict(list)
+    for ep in episodes:
+        ep_item = getattr(ep, "item", None)
+        if not ep_item or ep_item.episode_number is None:
+            continue
+        history_key = (ep.related_season_id, ep_item.episode_number)
+        episode_history_map[history_key].append(ep)
 
     movies_qs = Movie.objects.filter(
         user=user,
-        end_date__isnull=False,
+    ).filter(
+        models.Q(end_date__isnull=False) | models.Q(start_date__isnull=False),
     ).select_related("item")
 
     # Apply date range filter to movies
     if start_date:
-        movies_qs = movies_qs.filter(end_date__gte=start_date)
+        movies_qs = movies_qs.filter(
+            models.Q(end_date__gte=start_date)
+            | (models.Q(end_date__isnull=True) & models.Q(start_date__gte=start_date))
+        )
     if end_date:
-        movies_qs = movies_qs.filter(end_date__lte=end_date)
+        movies_qs = movies_qs.filter(
+            models.Q(end_date__lte=end_date)
+            | (models.Q(end_date__isnull=True) & models.Q(start_date__lte=end_date))
+        )
+    if target_media_id and target_source and media_type_filter == MediaTypes.MOVIE.value:
+        movies_qs = movies_qs.filter(
+            item__media_id=target_media_id,
+            item__source=target_source,
+        )
 
     movies = movies_qs.order_by("-end_date")
     movie_play_counts = (
@@ -388,7 +475,12 @@ def build_history_days(user, filters=None, date_filters=None):
         .select_related("item")
         .order_by("-end_date", "-created_at")
     )
-
+    if target_media_id and target_source:
+        if media_type_filter == MediaTypes.GAME.value:
+            games = games.filter(item__media_id=target_media_id, item__source=target_source)
+        if media_type_filter == MediaTypes.BOARDGAME.value:
+            boardgames = boardgames.filter(item__media_id=target_media_id, item__source=target_source)
+    
     # Music - query all music entries with end_date
     music_entries = (
         Music.objects.filter(
@@ -404,11 +496,16 @@ def build_history_days(user, filters=None, date_filters=None):
     # For now, we'll filter after processing since music uses history records for grouping
 
     # Apply music filters
-    if filters.get("album"):
-        music_entries = music_entries.filter(album_id=filters["album"])
-    if filters.get("artist"):
-        music_entries = music_entries.filter(album__artist_id=filters["artist"])
-
+    if filters.get('album'):
+        music_entries = music_entries.filter(album_id=filters['album'])
+    if filters.get('artist'):
+        music_entries = music_entries.filter(album__artist_id=filters['artist'])
+    if target_media_id and target_source and media_type_filter == MediaTypes.MUSIC.value:
+        music_entries = music_entries.filter(
+            item__media_id=target_media_id,
+            item__source=target_source,
+        )
+    
     # Podcasts - query history records directly to ensure deleted records don't show up
     # Query HistoricalPodcast directly, filtering by user and end_date at database level
     from django.apps import apps
@@ -429,7 +526,9 @@ def build_history_days(user, filters=None, date_filters=None):
         podcast_history_records = podcast_history_records.filter(end_date__gte=start_date)
     if end_date:
         podcast_history_records = podcast_history_records.filter(end_date__lte=end_date)
-
+    if podcast_show_filter:
+        podcast_history_records = podcast_history_records.filter(show_id=podcast_show_filter)
+    
     # Get unique podcast IDs from history records to fetch podcast metadata
     podcast_ids = list(set(podcast_history_records.values_list("id", flat=True)))
     if podcast_ids:
@@ -443,6 +542,23 @@ def build_history_days(user, filters=None, date_filters=None):
         }
     else:
         podcasts_lookup = {}
+    
+    if (
+        target_media_id
+        and target_source
+        and media_type_filter == MediaTypes.PODCAST.value
+        and not podcast_show_filter
+    ):
+        podcast_history_records = [
+            record
+            for record in podcast_history_records
+            if (
+                (podcast := podcasts_lookup.get(record.id))
+                and podcast.item
+                and str(podcast.item.media_id) == target_media_id
+                and str(podcast.item.source) == target_source
+            )
+        ]
 
     entries = []
 
@@ -451,11 +567,11 @@ def build_history_days(user, filters=None, date_filters=None):
     # If filtering by TV (tv/season), only process episodes
     # If filtering by media_type, only process that type
     # Otherwise, process all media types
-    has_music_filter = bool(filters.get("album") or filters.get("artist"))
-    has_tv_filter = bool(filters.get("tv") or filters.get("season"))
-    media_type_filter = filters.get("media_type")
-    process_all = not (has_music_filter or has_tv_filter or media_type_filter)
-
+    has_music_filter = bool(filters.get('album') or filters.get('artist'))
+    has_tv_filter = bool(filters.get('tv') or filters.get('season') or season_number_filter is not None)
+    has_podcast_filter = bool(podcast_show_filter)
+    process_all = not (has_music_filter or has_tv_filter or has_podcast_filter or media_type_filter)
+    
     # Helper function to check if entry matches genre filter by checking metadata.
     # Uses a cache to avoid repeated metadata lookups for the same media item.
     genre_filter = filters.get("genre")
@@ -576,7 +692,7 @@ def build_history_days(user, filters=None, date_filters=None):
             # Apply genre filter if specified
             if genre_filter and not matches_genre(episode, MediaTypes.EPISODE.value):
                 continue
-            entry = _build_episode_entry(episode, episode_title_map)
+            entry = _build_episode_entry(episode, episode_title_map, episode_history_map)
             if entry:
                 entries.append(entry)
 
@@ -679,9 +795,9 @@ def build_history_days(user, filters=None, date_filters=None):
             if entry:
                 entries.append(entry)
 
-    # Podcasts - only process if not filtering by specific media type
+    # Podcasts - process when showing all media or filtering to podcasts
     # Query history records directly to ensure deleted records don't show up
-    if process_all:
+    if process_all or has_podcast_filter or media_type_filter == MediaTypes.PODCAST.value:
         # Count podcast plays by (media_id, source) similar to movies
         # Group history records by podcast item to count total plays per episode
         podcast_play_counts = {}
@@ -758,119 +874,35 @@ def build_history_days(user, filters=None, date_filters=None):
                         "runtime_minutes": runtime_minutes,
                         "runtime_display": helpers.minutes_to_hhmm(runtime_minutes) if runtime_minutes else None,
                         "play_count": play_count,
+                        "instance_id": podcast.id,
+                        "entry_key": history_record.history_id,
                     },
                 )
             except Exception as e:
                 logger.error("Error processing podcast history record %s: %s", history_record.history_id, e, exc_info=True)
                 continue
 
-    # Games - only process if not filtering by specific media type
-    if process_all:
+    # Games - process when showing all media or filtering to games/board games
+    process_games = process_all or media_type_filter == MediaTypes.GAME.value
+    process_boardgames = process_all or media_type_filter == MediaTypes.BOARDGAME.value
+    if process_games or process_boardgames:
         if game_logging_style == "sessions":
-            for game in games:
-                if not (game.start_date or game.end_date):
-                    continue
+            if process_games:
+                for game in games:
+                    if not (game.start_date or game.end_date):
+                        continue
 
-                activity_dt = game.end_date or game.start_date or game.created_at
-                played_at_local = _localize_datetime(activity_dt)
-                if not played_at_local:
-                    continue
-                runtime_minutes = game.progress or 0
-                start_local = _localize_datetime(game.start_date).date() if game.start_date else None
-                end_local = _localize_datetime(game.end_date).date() if game.end_date else played_at_local.date()
-                if not start_local:
-                    start_local = end_local
-                date_range_display = f"{formats.date_format(start_local, 'M j')} - {formats.date_format(end_local, 'M j')}"
+                    activity_dt = game.end_date or game.start_date or game.created_at
+                    played_at_local = _localize_datetime(activity_dt)
+                    if not played_at_local:
+                        continue
+                    runtime_minutes = game.progress or 0
+                    start_local = _localize_datetime(game.start_date).date() if game.start_date else None
+                    end_local = _localize_datetime(game.end_date).date() if game.end_date else played_at_local.date()
+                    if not start_local:
+                        start_local = end_local
+                    date_range_display = f"{formats.date_format(start_local, 'M j')} - {formats.date_format(end_local, 'M j')}"
 
-                entries.append(
-                    {
-                        "media_type": MediaTypes.GAME.value,
-                        "item": game.item,
-                        "poster": game.item.image or settings.IMG_NONE,
-                        "title": game.item.title,
-                        "display_title": game.item.title,
-                        "progress_display": _format_game_hours(runtime_minutes),
-                        "date_range_display": date_range_display,
-                        "episode_label": None,
-                        "episode_code": None,
-                        "played_at_local": played_at_local,
-                        "runtime_minutes": runtime_minutes,
-                        "runtime_display": helpers.minutes_to_hhmm(runtime_minutes) if runtime_minutes else None,
-                    },
-                )
-            for boardgame in boardgames:
-                if not (boardgame.start_date or boardgame.end_date):
-                    continue
-
-                activity_dt = boardgame.end_date or boardgame.start_date or boardgame.created_at
-                played_at_local = _localize_datetime(activity_dt)
-                if not played_at_local:
-                    continue
-                plays = boardgame.progress or 0
-                start_local = _localize_datetime(boardgame.start_date).date() if boardgame.start_date else None
-                end_local = (
-                    _localize_datetime(boardgame.end_date).date()
-                    if boardgame.end_date
-                    else played_at_local.date()
-                )
-                if not start_local:
-                    start_local = end_local
-                date_range_display = f"{formats.date_format(start_local, 'M j')} - {formats.date_format(end_local, 'M j')}"
-
-                progress_display = _format_boardgame_plays(plays)
-
-                entries.append(
-                    {
-                        "media_type": MediaTypes.BOARDGAME.value,
-                        "item": boardgame.item,
-                        "poster": boardgame.item.image or settings.IMG_NONE,
-                        "title": boardgame.item.title,
-                        "display_title": boardgame.item.title,
-                        "progress_display": progress_display,
-                        "date_range_display": date_range_display,
-                        "episode_label": None,
-                        "episode_code": None,
-                        "played_at_local": played_at_local,
-                        "runtime_minutes": 0,
-                        "runtime_display": progress_display,
-                    },
-                )
-        else:
-            # repeats style: spread playtime evenly across date range
-            for game in games:
-                if not (game.start_date or game.end_date):
-                    continue
-
-                total_minutes = game.progress or 0
-                if total_minutes <= 0:
-                    continue
-
-                start_dt = game.start_date or game.end_date or game.created_at
-                end_dt = game.end_date or game.start_date or game.created_at
-                if not start_dt or not end_dt:
-                    continue
-
-                start_local = _localize_datetime(start_dt).date()
-                end_local = _localize_datetime(end_dt).date()
-                if start_local > end_local:
-                    start_local, end_local = end_local, start_local
-
-                day_count = (end_local - start_local).days + 1
-                if day_count <= 0:
-                    day_count = 1
-
-                base = total_minutes // day_count
-                remainder = total_minutes % day_count
-                date_range_display = f"{formats.date_format(start_local, 'M j')} - {formats.date_format(end_local, 'M j')}"
-                total_progress_display = _format_game_hours(total_minutes)
-
-                for offset in range(day_count):
-                    day = start_local + timedelta(days=offset)
-                    minutes_for_day = base + (1 if offset < remainder else 0)
-                    day_dt = timezone.make_aware(
-                        datetime.combine(day, datetime.min.time()),
-                        timezone.get_current_timezone(),
-                    )
                     entries.append(
                         {
                             "media_type": MediaTypes.GAME.value,
@@ -878,49 +910,39 @@ def build_history_days(user, filters=None, date_filters=None):
                             "poster": game.item.image or settings.IMG_NONE,
                             "title": game.item.title,
                             "display_title": game.item.title,
-                            "progress_display": total_progress_display,
+                            "progress_display": _format_game_hours(runtime_minutes),
                             "date_range_display": date_range_display,
                             "episode_label": None,
                             "episode_code": None,
-                            "played_at_local": day_dt,
-                            "runtime_minutes": minutes_for_day,
-                            "runtime_display": helpers.minutes_to_hhmm(minutes_for_day) if minutes_for_day else None,
+                            "played_at_local": played_at_local,
+                            "runtime_minutes": runtime_minutes,
+                            "runtime_display": helpers.minutes_to_hhmm(runtime_minutes) if runtime_minutes else None,
+                            "instance_id": game.id,
+                            "entry_key": game.id,
                         },
                     )
-            for boardgame in boardgames:
-                if not (boardgame.start_date or boardgame.end_date):
-                    continue
+            if process_boardgames:
+                for boardgame in boardgames:
+                    if not (boardgame.start_date or boardgame.end_date):
+                        continue
 
-                total_plays = boardgame.progress or 0
-                if total_plays <= 0:
-                    continue
-
-                start_dt = boardgame.start_date or boardgame.end_date or boardgame.created_at
-                end_dt = boardgame.end_date or boardgame.start_date or boardgame.created_at
-                if not start_dt or not end_dt:
-                    continue
-
-                start_local = _localize_datetime(start_dt).date()
-                end_local = _localize_datetime(end_dt).date()
-                if start_local > end_local:
-                    start_local, end_local = end_local, start_local
-
-                day_count = (end_local - start_local).days + 1
-                if day_count <= 0:
-                    day_count = 1
-
-                base = total_plays // day_count
-                remainder = total_plays % day_count
-                date_range_display = f"{formats.date_format(start_local, 'M j')} - {formats.date_format(end_local, 'M j')}"
-                total_progress_display = _format_boardgame_plays(total_plays)
-
-                for offset in range(day_count):
-                    day = start_local + timedelta(days=offset)
-                    plays_for_day = base + (1 if offset < remainder else 0)
-                    day_dt = timezone.make_aware(
-                        datetime.combine(day, datetime.min.time()),
-                        timezone.get_current_timezone(),
+                    activity_dt = boardgame.end_date or boardgame.start_date or boardgame.created_at
+                    played_at_local = _localize_datetime(activity_dt)
+                    if not played_at_local:
+                        continue
+                    plays = boardgame.progress or 0
+                    start_local = _localize_datetime(boardgame.start_date).date() if boardgame.start_date else None
+                    end_local = (
+                        _localize_datetime(boardgame.end_date).date()
+                        if boardgame.end_date
+                        else played_at_local.date()
                     )
+                    if not start_local:
+                        start_local = end_local
+                    date_range_display = f"{formats.date_format(start_local, 'M j')} - {formats.date_format(end_local, 'M j')}"
+
+                    progress_display = _format_boardgame_plays(plays)
+
                     entries.append(
                         {
                             "media_type": MediaTypes.BOARDGAME.value,
@@ -928,15 +950,125 @@ def build_history_days(user, filters=None, date_filters=None):
                             "poster": boardgame.item.image or settings.IMG_NONE,
                             "title": boardgame.item.title,
                             "display_title": boardgame.item.title,
-                            "progress_display": total_progress_display,
+                            "progress_display": progress_display,
                             "date_range_display": date_range_display,
                             "episode_label": None,
                             "episode_code": None,
-                            "played_at_local": day_dt,
+                            "played_at_local": played_at_local,
                             "runtime_minutes": 0,
-                            "runtime_display": _format_boardgame_plays(plays_for_day) if plays_for_day else None,
+                            "runtime_display": progress_display,
+                            "instance_id": boardgame.id,
+                            "entry_key": boardgame.id,
                         },
                     )
+        else:
+            # repeats style: spread playtime evenly across date range
+            if process_games:
+                for game in games:
+                    if not (game.start_date or game.end_date):
+                        continue
+
+                    total_minutes = game.progress or 0
+                    if total_minutes <= 0:
+                        continue
+
+                    start_dt = game.start_date or game.end_date or game.created_at
+                    end_dt = game.end_date or game.start_date or game.created_at
+                    if not start_dt or not end_dt:
+                        continue
+
+                    start_local = _localize_datetime(start_dt).date()
+                    end_local = _localize_datetime(end_dt).date()
+                    if start_local > end_local:
+                        start_local, end_local = end_local, start_local
+
+                    day_count = (end_local - start_local).days + 1
+                    if day_count <= 0:
+                        day_count = 1
+
+                    base = total_minutes // day_count
+                    remainder = total_minutes % day_count
+                    date_range_display = f"{formats.date_format(start_local, 'M j')} - {formats.date_format(end_local, 'M j')}"
+                    total_progress_display = _format_game_hours(total_minutes)
+
+                    for offset in range(day_count):
+                        day = start_local + timedelta(days=offset)
+                        minutes_for_day = base + (1 if offset < remainder else 0)
+                        day_dt = timezone.make_aware(
+                            datetime.combine(day, datetime.min.time()),
+                            timezone.get_current_timezone(),
+                        )
+                        entries.append(
+                            {
+                                "media_type": MediaTypes.GAME.value,
+                                "item": game.item,
+                                "poster": game.item.image or settings.IMG_NONE,
+                                "title": game.item.title,
+                                "display_title": game.item.title,
+                                "progress_display": total_progress_display,
+                                "date_range_display": date_range_display,
+                                "episode_label": None,
+                                "episode_code": None,
+                                "played_at_local": day_dt,
+                                "runtime_minutes": minutes_for_day,
+                                "runtime_display": helpers.minutes_to_hhmm(minutes_for_day) if minutes_for_day else None,
+                                "instance_id": game.id,
+                                "entry_key": f"{game.id}-{day.strftime('%Y%m%d')}",
+                            },
+                        )
+            if process_boardgames:
+                for boardgame in boardgames:
+                    if not (boardgame.start_date or boardgame.end_date):
+                        continue
+
+                    total_plays = boardgame.progress or 0
+                    if total_plays <= 0:
+                        continue
+
+                    start_dt = boardgame.start_date or boardgame.end_date or boardgame.created_at
+                    end_dt = boardgame.end_date or boardgame.start_date or boardgame.created_at
+                    if not start_dt or not end_dt:
+                        continue
+
+                    start_local = _localize_datetime(start_dt).date()
+                    end_local = _localize_datetime(end_dt).date()
+                    if start_local > end_local:
+                        start_local, end_local = end_local, start_local
+
+                    day_count = (end_local - start_local).days + 1
+                    if day_count <= 0:
+                        day_count = 1
+
+                    base = total_plays // day_count
+                    remainder = total_plays % day_count
+                    date_range_display = f"{formats.date_format(start_local, 'M j')} - {formats.date_format(end_local, 'M j')}"
+                    total_progress_display = _format_boardgame_plays(total_plays)
+
+                    for offset in range(day_count):
+                        day = start_local + timedelta(days=offset)
+                        plays_for_day = base + (1 if offset < remainder else 0)
+                        day_dt = timezone.make_aware(
+                            datetime.combine(day, datetime.min.time()),
+                            timezone.get_current_timezone(),
+                        )
+                        entries.append(
+                            {
+                                "media_type": MediaTypes.BOARDGAME.value,
+                                "item": boardgame.item,
+                                "poster": boardgame.item.image or settings.IMG_NONE,
+                                "title": boardgame.item.title,
+                                "display_title": boardgame.item.title,
+                                "progress_display": total_progress_display,
+                                "date_range_display": date_range_display,
+                                "episode_label": None,
+                                "episode_code": None,
+                                "played_at_local": day_dt,
+                                "runtime_minutes": 0,
+                                "runtime_display": _format_boardgame_plays(plays_for_day) if plays_for_day else None,
+                                "instance_id": boardgame.id,
+                                "entry_key": f"{boardgame.id}-{day.strftime('%Y%m%d')}",
+                            },
+                        )
 
     entries.sort(key=lambda entry: entry["played_at_local"], reverse=True)
 
@@ -982,7 +1114,7 @@ def cache_history_days(user_id: int, logging_style: str, history_days):
     )
 
 
-def get_history_days(user, filters=None, date_filters=None):
+def get_history_days(user, filters=None, date_filters=None, logging_style_override=None):
     """Return cached history, rebuilding if needed.
     
     Always returns cached data if available (even if stale) to avoid timeouts.
@@ -993,11 +1125,17 @@ def get_history_days(user, filters=None, date_filters=None):
         filters: Optional dict of filter parameters (album, artist, tv, season, genre, media_type, etc.)
                  When filters are provided, cache is bypassed and results are filtered.
         date_filters: Optional dict with 'start_date' and 'end_date' (date strings)
+        logging_style_override: Optional override for game logging style ("sessions" or "repeats")
     """
-    # If filters or date_filters are provided, bypass cache and build filtered results directly
-    if filters or date_filters:
-        return build_history_days(user, filters=filters, date_filters=date_filters)
-
+    # If filters, date_filters, or logging override are provided, bypass cache and build filtered results directly
+    if filters or date_filters or logging_style_override:
+        return build_history_days(
+            user,
+            filters=filters,
+            date_filters=date_filters,
+            logging_style_override=logging_style_override,
+        )
+    
     logging_style = getattr(user, "game_logging_style", "repeats")
     cache_entry = cache.get(_cache_key(user.id, logging_style))
     refresh_lock = cache.get(_refresh_lock_key(user.id, logging_style))

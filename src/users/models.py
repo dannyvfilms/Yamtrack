@@ -121,6 +121,22 @@ class ActivityHistoryViewChoices(models.TextChoices):
     STACKED = "stacked", "Stacked Bar Chart"
 
 
+class StatisticsRangeChoices(models.TextChoices):
+    """Choices for predefined statistics date ranges."""
+
+    TODAY = "Today", "Today"
+    YESTERDAY = "Yesterday", "Yesterday"
+    THIS_WEEK = "This Week", "This Week"
+    LAST_7_DAYS = "Last 7 Days", "Last 7 Days"
+    THIS_MONTH = "This Month", "This Month"
+    LAST_30_DAYS = "Last 30 Days", "Last 30 Days"
+    LAST_90_DAYS = "Last 90 Days", "Last 90 Days"
+    THIS_YEAR = "This Year", "This Year"
+    LAST_6_MONTHS = "Last 6 Months", "Last 6 Months"
+    LAST_12_MONTHS = "Last 12 Months", "Last 12 Months"
+    ALL_TIME = "All Time", "All Time"
+
+
 class GameLoggingStyleChoices(models.TextChoices):
     """Choices for how game history entries are displayed."""
 
@@ -521,6 +537,13 @@ class User(AbstractUser):
         help_text="How game entries are displayed on the History page",
     )
 
+    statistics_default_range = models.CharField(
+        max_length=20,
+        default=StatisticsRangeChoices.LAST_12_MONTHS,
+        choices=StatisticsRangeChoices.choices,
+        help_text="Default predefined range for the Statistics page",
+    )
+
     activity_history_view = models.CharField(
         max_length=20,
         default=ActivityHistoryViewChoices.HEATMAP,
@@ -681,6 +704,10 @@ class User(AbstractUser):
             models.CheckConstraint(
                 name="activity_history_view_valid",
                 condition=models.Q(activity_history_view__in=ActivityHistoryViewChoices.values),
+            ),
+            models.CheckConstraint(
+                name="statistics_default_range_valid",
+                condition=models.Q(statistics_default_range__in=StatisticsRangeChoices.values),
             ),
             models.CheckConstraint(
                 name="list_detail_sort_valid",

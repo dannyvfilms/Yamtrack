@@ -442,9 +442,6 @@
   .-mt-\[3px\] {
     margin-top: calc(3px * -1);
   }
-  .-mt-px {
-    margin-top: -1px;
-  }
   .mt-0 {
     margin-top: calc(var(--spacing) * 0);
   }
@@ -1290,20 +1287,8 @@
       border-color: color-mix(in oklab, var(--color-white) 30%, transparent);
     }
   }
-  .border-t-\[\#1a1d21\] {
-    border-top-color: #1a1d21;
-  }
-  .border-t-gray-700 {
-    border-top-color: var(--color-gray-700);
-  }
-  .border-t-gray-900 {
-    border-top-color: var(--color-gray-900);
-  }
   .bg-\[\#1a1d20\] {
     background-color: #1a1d20;
-  }
-  .bg-\[\#1a1d21\] {
-    background-color: #1a1d21;
   }
   .bg-\[\#2a2e33\] {
     background-color: #2a2e33;
@@ -1427,9 +1412,6 @@
   }
   .bg-gray-700 {
     background-color: var(--color-gray-700);
-  }
-  .bg-gray-900 {
-    background-color: var(--color-gray-900);
   }
   .bg-gray-900\/90 {
     background-color: color-mix(in srgb, oklch(21% 0.034 264.665) 90%, transparent);
@@ -1742,6 +1724,10 @@
     font-size: var(--text-xs);
     line-height: var(--tw-leading, var(--text-xs--line-height));
   }
+  .leading-none {
+    --tw-leading: 1;
+    line-height: 1;
+  }
   .leading-relaxed {
     --tw-leading: var(--leading-relaxed);
     line-height: var(--leading-relaxed);
@@ -1865,9 +1851,6 @@
   .text-slate-200 {
     color: var(--color-slate-200);
   }
-  .text-slate-400 {
-    color: var(--color-slate-400);
-  }
   .text-white {
     color: var(--color-white);
   }
@@ -1929,10 +1912,6 @@
   }
   .shadow-sm {
     --tw-shadow: 0 1px 3px 0 var(--tw-shadow-color, rgb(0 0 0 / 0.1)), 0 1px 2px -1px var(--tw-shadow-color, rgb(0 0 0 / 0.1));
-    box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
-  }
-  .shadow-xl {
-    --tw-shadow: 0 20px 25px -5px var(--tw-shadow-color, rgb(0 0 0 / 0.1)), 0 8px 10px -6px var(--tw-shadow-color, rgb(0 0 0 / 0.1));
     box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
   }
   .ring-2 {

@@ -18,6 +18,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.utils.timezone import datetime
+from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from app import (
@@ -1010,8 +1011,6 @@ def media_details(
 
                 # Create a wrapper object that aggregates history from all podcast entries
                 if all_podcasts:
-                    from django.utils import timezone
-
                     # Aggregate all history records from all podcast entries
                     # Only include history records with end_date (completed plays)
                     all_history = []
@@ -1187,12 +1186,21 @@ def media_details(
         user_medias = []
         current_instance = None
     else:
-        user_medias = BasicMedia.objects.filter_media_prefetch(
-            request.user,
-            media_id,
-            media_type,
-            source,
+        user_medias = list(
+            BasicMedia.objects.filter_media_prefetch(
+                request.user,
+                media_id,
+                media_type,
+                source,
+            )
         )
+        if user_medias:
+            def _activity_key(entry):
+                dates = [d for d in (entry.end_date, entry.start_date) if d]
+                primary_date = max(dates) if dates else entry.created_at
+                return (primary_date, entry.start_date or entry.created_at, entry.created_at)
+
+            user_medias.sort(key=_activity_key, reverse=True)
         current_instance = user_medias[0] if user_medias else None
 
     # Apply the same rating aggregation logic as in the media list
@@ -1216,6 +1224,69 @@ def media_details(
         if latest_rating is not None:
             current_instance.score = latest_rating
 
+    if (
+        not public_view
+        and current_instance
+        and media_type == MediaTypes.GAME.value
+        and isinstance(media_metadata, dict)
+    ):
+        metadata_genres = stats._coerce_genre_list(media_metadata.get("genres"))
+        item = current_instance.item
+        if item:
+            if metadata_genres and metadata_genres != item.genres:
+                item.genres = metadata_genres
+                item.save(update_fields=["genres"])
+            elif item.genres:
+                media_metadata["genres"] = item.genres
+
+    play_stats = None
+    if (
+        not public_view
+        and current_instance
+        and user_medias
+        and media_type in [MediaTypes.GAME.value, MediaTypes.BOARDGAME.value]
+    ):
+        BasicMedia.objects._aggregate_item_data(current_instance, user_medias)
+        aggregated_progress = getattr(current_instance, "aggregated_progress", None)
+        if aggregated_progress is None:
+            aggregated_progress = current_instance.progress or 0
+
+        play_stats = {
+            "first_played": getattr(current_instance, "aggregated_start_date", None)
+            or current_instance.start_date,
+            "last_played": getattr(current_instance, "aggregated_end_date", None)
+            or current_instance.end_date,
+        }
+
+        if media_type == MediaTypes.GAME.value:
+            total_minutes = int(aggregated_progress or 0)
+            play_stats.update(
+                {
+                    "total_minutes": total_minutes,
+                    "total_hours": total_minutes // 60,
+                    "total_minutes_remainder": total_minutes % 60,
+                }
+            )
+            total_days = 0
+            total_minutes_for_avg = 0
+            for entry in user_medias:
+                if not entry.start_date or not entry.end_date:
+                    continue
+                start_date = timezone.localtime(entry.start_date).date()
+                end_date = timezone.localtime(entry.end_date).date()
+                days = (end_date - start_date).days + 1
+                if days <= 0:
+                    days = 1
+                total_days += days
+                total_minutes_for_avg += entry.progress or 0
+            if total_days:
+                avg_minutes = int(round(total_minutes_for_avg / total_days))
+            else:
+                avg_minutes = 0
+            play_stats["avg_time_per_day"] = helpers.minutes_to_hhmm(avg_minutes)
+        else:
+            play_stats["total_plays"] = int(aggregated_progress or 0)
+
     # Enrich related items with user tracking data
     # For public views, use list owner's data if available
     if media_metadata.get("related"):
@@ -1236,6 +1307,16 @@ def media_details(
         music_artist = getattr(current_instance, "artist", None)
         music_album = getattr(current_instance, "album", None)
 
+    notes_entry = None
+    if not public_view and user_medias:
+        if current_instance and current_instance.notes and current_instance.notes.strip():
+            notes_entry = current_instance
+        else:
+            for entry in user_medias:
+                if entry.notes and entry.notes.strip():
+                    notes_entry = entry
+                    break
+
     context = {
         "user": request.user,
         "media": media_metadata,
@@ -1245,6 +1326,8 @@ def media_details(
         "music_artist": music_artist,
         "music_album": music_album,
         "public_view": public_view,
+        "play_stats": play_stats,
+        "notes_entry": notes_entry,
     }
     return render(request, "app/media_details.html", context)
 
@@ -1502,6 +1585,7 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
     return helpers.redirect_back(request)
 
 
+@never_cache
 @require_GET
 def track_modal(
     request,
@@ -1794,6 +1878,10 @@ def media_save(request):
             from app.statistics import parse_runtime_to_minutes
             runtime_minutes = parse_runtime_to_minutes(metadata["details"]["runtime"])
 
+        metadata_genres = []
+        if media_type == MediaTypes.GAME.value:
+            metadata_genres = stats._coerce_genre_list(metadata.get("genres"))
+
         item, created = Item.objects.get_or_create(
             media_id=media_id,
             source=source,
@@ -1803,6 +1891,7 @@ def media_save(request):
                 "title": metadata["title"],
                 "image": metadata["image"],
                 "runtime_minutes": runtime_minutes,
+                "genres": metadata_genres,
             },
         )
 
@@ -1813,6 +1902,9 @@ def media_save(request):
             needs_save = True
         if not item.runtime_minutes and runtime_minutes:
             item.runtime_minutes = runtime_minutes
+            needs_save = True
+        if metadata_genres and metadata_genres != item.genres:
+            item.genres = metadata_genres
             needs_save = True
         if needs_save:
             item.save()
@@ -2344,19 +2436,24 @@ def history(request):
     try:
         # Extract filter parameters from query string
         filters = {}
-        filter_params = ["album", "artist", "tv", "season", "genre", "media_type"]
-        for param in filter_params:
+        int_params = ['album', 'artist', 'tv', 'season', 'season_number', 'podcast_show']
+        str_params = ['genre', 'media_type', 'media_id', 'source']
+        for param in int_params:
             value = request.GET.get(param)
             if value:
-                if param in ["album", "artist", "tv", "season"]:
-                    try:
-                        filters[param] = int(value)
-                    except (TypeError, ValueError):
-                        pass  # Skip invalid filter values
-                else:
-                    # genre and media_type are strings
-                    filters[param] = value
+                try:
+                    filters[param] = int(value)
+                except (TypeError, ValueError):
+                    pass  # Skip invalid filter values
+        for param in str_params:
+            value = request.GET.get(param)
+            if value:
+                filters[param] = value
 
+        logging_style = request.GET.get("logging_style")
+        if logging_style not in ("sessions", "repeats"):
+            logging_style = None
+        
         # Extract date range filters
         date_filters = {}
         start_date_str = request.GET.get("start-date")
@@ -2367,7 +2464,12 @@ def history(request):
             date_filters["end_date"] = end_date_str
 
         # Get history days with filters applied
-        history_days_all = history_cache.get_history_days(request.user, filters=filters, date_filters=date_filters)
+        history_days_all = history_cache.get_history_days(
+            request.user,
+            filters=filters,
+            date_filters=date_filters,
+            logging_style_override=logging_style,
+        )
 
         paginator = Paginator(history_days_all, history_cache.HISTORY_DAYS_PER_PAGE)
 
@@ -2391,11 +2493,13 @@ def history(request):
 
         # Combine all filters for pagination (including date filters as query params)
         active_filters = filters.copy()
-        if date_filters.get("start_date"):
-            active_filters["start-date"] = date_filters["start_date"]
-        if date_filters.get("end_date"):
-            active_filters["end-date"] = date_filters["end_date"]
-
+        if date_filters.get('start_date'):
+            active_filters['start-date'] = date_filters['start_date']
+        if date_filters.get('end_date'):
+            active_filters['end-date'] = date_filters['end_date']
+        if logging_style:
+            active_filters['logging_style'] = logging_style
+        
         context = {
             "user": request.user,
             "history_days": history_days,
@@ -4201,8 +4305,27 @@ def statistics(request):
         one_year_ago = today.replace(year=today.year - 1)
 
         # Get date parameters with defaults
-        start_date_str = request.GET.get("start-date") or one_year_ago.strftime(timeformat)
-        end_date_str = request.GET.get("end-date") or today.strftime(timeformat)
+        start_date_param = request.GET.get("start-date")
+        end_date_param = request.GET.get("end-date")
+
+        if not start_date_param and not end_date_param:
+            preferred_range = getattr(request.user, "statistics_default_range", None)
+            if preferred_range not in statistics_cache.PREDEFINED_RANGES:
+                preferred_range = "Last 12 Months"
+            preferred_start, preferred_end = _get_predefined_range_date_strings(
+                preferred_range,
+                today,
+                timeformat,
+            )
+            if preferred_start and preferred_end:
+                start_date_str = preferred_start
+                end_date_str = preferred_end
+            else:
+                start_date_str = one_year_ago.strftime(timeformat)
+                end_date_str = today.strftime(timeformat)
+        else:
+            start_date_str = start_date_param or one_year_ago.strftime(timeformat)
+            end_date_str = end_date_param or today.strftime(timeformat)
 
         if start_date_str == "all" and end_date_str == "all":
             start_date = None
@@ -4227,6 +4350,9 @@ def statistics(request):
         # Identify predefined range for caching
         selected_range_name = _identify_predefined_range(start_date, end_date)
 
+        if selected_range_name in statistics_cache.PREDEFINED_RANGES:
+            request.user.update_preference("statistics_default_range", selected_range_name)
+        
         # Get statistics data (cached for predefined ranges, computed inline for custom ranges)
         statistics_data = statistics_cache.get_statistics_data(
             request.user,
@@ -4839,6 +4965,41 @@ def _identify_predefined_range(start_date, end_date):
         return "Last 12 Months"
 
     return None
+
+
+def _get_predefined_range_date_strings(range_name, today, timeformat):
+    if range_name == "All Time":
+        return "all", "all"
+
+    start_date = None
+    end_date = today
+
+    if range_name == "Today":
+        start_date = today
+    elif range_name == "Yesterday":
+        start_date = today - timedelta(days=1)
+        end_date = start_date
+    elif range_name == "This Week":
+        start_date = today - timedelta(days=today.weekday())
+    elif range_name == "Last 7 Days":
+        start_date = today - timedelta(days=6)
+    elif range_name == "This Month":
+        start_date = today.replace(day=1)
+    elif range_name == "Last 30 Days":
+        start_date = today - timedelta(days=29)
+    elif range_name == "Last 90 Days":
+        start_date = today - timedelta(days=89)
+    elif range_name == "This Year":
+        start_date = today.replace(month=1, day=1)
+    elif range_name == "Last 6 Months":
+        start_date = _adjust_month_delta(today, months=6)
+    elif range_name == "Last 12 Months":
+        start_date = _adjust_month_delta(today, months=12)
+
+    if start_date is None:
+        return None, None
+
+    return start_date.strftime(timeformat), end_date.strftime(timeformat)
 
 
 def _adjust_month_delta(reference_date, months):

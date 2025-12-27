@@ -30,6 +30,28 @@ from app.templatetags import app_tags
 logger = logging.getLogger(__name__)
 
 
+def _infer_user_from_user_media(user_media):
+    """Best-effort helper to derive user from user_media querysets."""
+    if not user_media:
+        return None
+
+    for media_list in user_media.values():
+        if media_list is None:
+            continue
+        try:
+            first_media = media_list.first()
+        except (AttributeError, TypeError):
+            try:
+                first_media = next(iter(media_list), None)
+            except TypeError:
+                first_media = None
+
+        if first_media is not None and hasattr(first_media, "user"):
+            return first_media.user
+
+    return None
+
+
 def get_user_media(user, start_date, end_date):
     """Get all media items and their counts for a user within date range."""
     media_models = [
@@ -258,11 +280,35 @@ def get_score_distribution(user_media):
         score_counts = dict.fromkeys(score_range, 0)
         scored_media = media_list.exclude(score__isnull=True).select_related("item")
 
+        deduped_scored = {}
+        for media in scored_media:
+            item = getattr(media, "item", None)
+            key = item.id if item else media.id
+            dates = [d for d in (media.end_date, media.start_date) if d]
+            activity_date = max(dates) if dates else media.created_at
+
+            existing = deduped_scored.get(key)
+            if not existing:
+                deduped_scored[key] = {
+                    "media": media,
+                    "activity_date": activity_date,
+                }
+                continue
+
+            existing_activity = existing["activity_date"]
+            if activity_date and (not existing_activity or activity_date > existing_activity):
+                deduped_scored[key] = {
+                    "media": media,
+                    "activity_date": activity_date,
+                }
+
+        deduped_media = [entry["media"] for entry in deduped_scored.values()]
+
         # Initialize per-type heap for this media type
         type_top_rated = []
         type_counter = itertools.count()
 
-        for media in scored_media:
+        for media in deduped_media:
             # Add to global top rated (for backward compatibility)
             if len(top_rated) < top_rated_count:
                 heapq.heappush(
@@ -784,12 +830,30 @@ def _get_activity_datetime(media):
     return None
 
 
-def calculate_minutes_per_media_type(user_media, start_date, end_date):
+def calculate_minutes_per_media_type(user_media, start_date, end_date, user=None):
     """Return total minutes watched per media type within the date range."""
     minutes_per_type = {}
 
     for media_type, media_list in user_media.items():
         total_minutes = 0
+
+        if media_type == MediaTypes.PODCAST.value:
+            # Podcast: sum runtime from completed plays in history records
+            podcast_user = user or _infer_user_from_user_media(user_media)
+            podcast_history_records, podcasts_lookup = _get_podcast_history_data(
+                podcast_user,
+                start_date,
+                end_date,
+            )
+            _, play_details = _collect_podcast_play_data(
+                podcast_history_records,
+                podcasts_lookup,
+                start_date,
+                end_date,
+            )
+            total_minutes += sum(runtime for _, _, runtime in play_details)
+            minutes_per_type[media_type] = total_minutes
+            continue
 
         for media_data in media_list:
             media = getattr(media_data, "media", media_data)
@@ -847,17 +911,6 @@ def calculate_minutes_per_media_type(user_media, start_date, end_date):
                 # Music: sum up runtime for each play (history record) within date range
                 music_minutes = _calculate_music_time(media, start_date, end_date, logger)
                 total_minutes += music_minutes
-                continue
-
-            if media_type == MediaTypes.PODCAST.value:
-                # Podcast: use runtime_minutes from item if available, otherwise use progress
-                if hasattr(media, "item") and media.item.runtime_minutes:
-                    # Use runtime_minutes from item (total episode duration)
-                    podcast_minutes = media.item.runtime_minutes
-                else:
-                    # Fallback: use progress (already in minutes, but represents listened time)
-                    podcast_minutes = max(0, media.progress)
-                total_minutes += podcast_minutes
                 continue
 
             if not _is_media_in_date_range(media, start_date, end_date):
@@ -1509,7 +1562,12 @@ def get_tv_consumption_stats(user_media, start_date, end_date, minutes_per_type=
     _, play_details = _collect_tv_play_data(tv_queryset, start_date, end_date)
 
     if minutes_per_type is None:
-        minutes_per_type = calculate_minutes_per_media_type(user_media or {}, start_date, end_date)
+        minutes_per_type = calculate_minutes_per_media_type(
+            user_media or {},
+            start_date,
+            end_date,
+            user=user,
+        )
 
     total_minutes = minutes_per_type.get(MediaTypes.TV.value, 0)
     total_hours = total_minutes / 60 if total_minutes else 0
@@ -1588,6 +1646,31 @@ def get_movie_consumption_stats(user_media, start_date, end_date, minutes_per_ty
     }
 
 
+def _game_entry_in_range(game, start_date, end_date):
+    """Return True if a game entry overlaps the requested date range."""
+    if not (start_date and end_date):
+        return True
+
+    filter_start = start_date.date() if hasattr(start_date, "date") else start_date
+    filter_end = end_date.date() if hasattr(end_date, "date") else end_date
+
+    game_start = game.start_date.date() if game.start_date else None
+    game_end = game.end_date.date() if game.end_date else None
+
+    if game_start and game_end:
+        return not (game_end < filter_start or game_start > filter_end)
+    if game_end:
+        return filter_start <= game_end <= filter_end
+    if game_start:
+        return filter_start <= game_start <= filter_end
+
+    activity_datetime = _get_activity_datetime(game)
+    if activity_datetime is None:
+        return False
+    activity_date = _localize_datetime(activity_datetime).date()
+    return filter_start <= activity_date <= filter_end
+
+
 def _collect_game_data(game_queryset, start_date, end_date):
     """Collect game data with hours, dates, and daily averages.
     
@@ -1599,73 +1682,84 @@ def _collect_game_data(game_queryset, start_date, end_date):
     if game_queryset is None:
         return game_data
 
-    for game in game_queryset:
-        # Get total hours from progress (stored in minutes)
-        total_minutes = game.progress or 0
-        total_hours = total_minutes / 60 if total_minutes else 0
+    games_by_item = defaultdict(list)
+    for game in list(game_queryset):
+        if not getattr(game, "item", None):
+            continue
+        if not _game_entry_in_range(game, start_date, end_date):
+            continue
+        games_by_item[game.item.id].append(game)
 
+    for entries in games_by_item.values():
+        total_minutes = sum((entry.progress or 0) for entry in entries)
+        total_hours = total_minutes / 60 if total_minutes else 0
         if total_hours <= 0:
             continue
 
-        # Get activity datetime (for range calculation)
-        activity_datetime = _get_activity_datetime(game)
+        activity_datetime = None
+        for entry in entries:
+            entry_activity = _get_activity_datetime(entry)
+            if entry_activity and (activity_datetime is None or entry_activity > activity_datetime):
+                activity_datetime = entry_activity
         if activity_datetime is None:
             continue
 
-        # Check if game is within date range
-        if start_date and end_date:
-            # Convert filter dates to date objects
-            filter_start = start_date.date() if hasattr(start_date, "date") else start_date
-            filter_end = end_date.date() if hasattr(end_date, "date") else end_date
+        start_dates = []
+        end_dates = []
+        segments = []
+        total_days = 0
+        total_minutes_for_avg = 0
 
-            # For games, check if the date range overlaps with filter range
-            game_start = game.start_date.date() if game.start_date else None
-            game_end = game.end_date.date() if game.end_date else None
+        for entry in entries:
+            entry_minutes = entry.progress or 0
+            entry_start = entry.start_date
+            entry_end = entry.end_date
 
-            # If game has both dates, check overlap
-            if game_start and game_end:
-                # Game ends before filter starts or starts after filter ends
-                if game_end < filter_start or game_start > filter_end:
-                    continue
-            # If only end_date, check if end_date is in range
-            elif game_end:
-                if not (filter_start <= game_end <= filter_end):
-                    continue
-            # If only start_date, check if start_date is in range
-            elif game_start:
-                if not (filter_start <= game_start <= filter_end):
-                    continue
-            # If no dates, check activity_datetime
-            else:
-                activity_date = _localize_datetime(activity_datetime).date()
-                if not (filter_start <= activity_date <= filter_end):
-                    continue
+            if entry_start:
+                start_dates.append(timezone.localtime(entry_start).date())
+            if entry_end:
+                end_dates.append(timezone.localtime(entry_end).date())
 
-        # Calculate daily average
-        game_start_date = game.start_date.date() if game.start_date else None
-        game_end_date = game.end_date.date() if game.end_date else None
+            if entry_start and entry_end:
+                start_local = timezone.localtime(entry_start).date()
+                end_local = timezone.localtime(entry_end).date()
+                days = (end_local - start_local).days + 1
+                if days <= 0:
+                    days = 1
+                total_days += days
+                total_minutes_for_avg += entry_minutes
 
-        if game_start_date and game_end_date:
-            # Calculate days between start and end (inclusive)
-            # If start_date == end_date, days = 1 (same day)
-            days = (game_end_date - game_start_date).days + 1
-            if days <= 0:
-                days = 1
-            # Calculate daily average: total hours divided by number of days
-            # Note: If days = 1 (same start/end date), daily_average = total_hours
-            # This is correct but may not be meaningful for single-day games
-            daily_average_hours = total_hours / days
+                if entry_minutes > 0:
+                    segments.append({
+                        "start_date": start_local,
+                        "end_date": end_local,
+                        "hours": entry_minutes / 60,
+                        "activity_datetime": _get_activity_datetime(entry),
+                    })
+            elif entry_minutes > 0:
+                segments.append({
+                    "start_date": None,
+                    "end_date": None,
+                    "hours": entry_minutes / 60,
+                    "activity_datetime": _get_activity_datetime(entry),
+                })
+
+        if total_days:
+            daily_average_hours = (total_minutes_for_avg / total_days) / 60
         else:
-            # If no date range, can't calculate daily average
             daily_average_hours = 0
 
         game_data.append({
-            "game": game,
+            "game": max(
+                entries,
+                key=lambda entry: _get_activity_datetime(entry) or entry.created_at,
+            ),
             "hours": total_hours,
-            "start_date": game_start_date,
-            "end_date": game_end_date,
+            "start_date": min(start_dates) if start_dates else None,
+            "end_date": max(end_dates) if end_dates else None,
             "daily_average": daily_average_hours,
             "activity_datetime": activity_datetime,
+            "segments": segments,
         })
 
     return game_data
@@ -1689,28 +1783,9 @@ def _collect_game_play_data(game_queryset, start_date, end_date):
             continue
 
         # Check if game is within date range (similar logic to _collect_game_data)
-        if start_date and end_date:
-            # Convert filter dates to date objects
-            filter_start = start_date.date() if hasattr(start_date, "date") else start_date
-            filter_end = end_date.date() if hasattr(end_date, "date") else end_date
-
-            game_start = game.start_date.date() if game.start_date else None
-            game_end = game.end_date.date() if game.end_date else None
-
-            if game_start and game_end:
-                if game_end < filter_start or game_start > filter_end:
-                    continue
-            elif game_end:
-                if not (filter_start <= game_end <= filter_end):
-                    continue
-            elif game_start:
-                if not (filter_start <= game_start <= filter_end):
-                    continue
-            else:
-                activity_date_only = _localize_datetime(activity_date).date()
-                if not (filter_start <= activity_date_only <= filter_end):
-                    continue
-
+        if not _game_entry_in_range(game, start_date, end_date):
+            continue
+        
         # Get runtime in minutes (from progress field)
         runtime_minutes = game.progress or 0
         if runtime_minutes <= 0:
@@ -1760,7 +1835,52 @@ def _build_game_hours_charts(game_data, start_date, end_date, color, dataset_lab
         total_hours = data["hours"]
         game_start = data["start_date"]
         game_end = data["end_date"]
+        segments = data.get("segments")
 
+        if segments:
+            for segment in segments:
+                segment_hours = segment.get("hours", 0) or 0
+                if segment_hours <= 0:
+                    continue
+
+                segment_start = segment.get("start_date")
+                segment_end = segment.get("end_date")
+
+                if not segment_start or not segment_end:
+                    activity_dt = segment.get("activity_datetime") or data.get("activity_datetime")
+                    if not activity_dt:
+                        continue
+
+                    activity_date = _localize_datetime(activity_dt).date()
+                    if filter_start_date and filter_end_date:
+                        if not (filter_start_date <= activity_date <= filter_end_date):
+                            continue
+                    year_hours[activity_date.year] += segment_hours
+                    month_hours[activity_date.month] += segment_hours
+                    continue
+
+                segment_total_days = (segment_end - segment_start).days + 1
+                if segment_total_days <= 0:
+                    segment_total_days = 1
+
+                hours_per_day = segment_hours / segment_total_days
+
+                range_start = segment_start
+                range_end = segment_end
+                if filter_start_date and filter_end_date:
+                    range_start = max(range_start, filter_start_date)
+                    range_end = min(range_end, filter_end_date)
+                    if range_start > range_end:
+                        continue
+
+                current_date = range_start
+                while current_date <= range_end:
+                    if not filter_start_date or filter_start_date <= current_date <= filter_end_date:
+                        year_hours[current_date.year] += hours_per_day
+                        month_hours[current_date.month] += hours_per_day
+                    current_date += datetime.timedelta(days=1)
+            continue
+        
         if not game_start or not game_end:
             # If no date range, assign all hours to activity date
             activity_date = _localize_datetime(data["activity_datetime"]).date()
@@ -1867,61 +1987,80 @@ def _build_daily_average_distribution_chart(game_data, color, dataset_label):
 
 
 def _compute_game_top_genres(play_details, limit=20):
-    """Compute top genres from game play details using cached metadata only.
-    
+    """Compute top genres from game play details using stored genres and cache.
+
     Args:
         play_details: List of (game_entry, datetime, runtime_minutes) tuples
         limit: Number of genres to return
-        
+
     Returns:
-        list of genre dicts with name, minutes, plays, formatted_duration
+        list of genre dicts with name, minutes, games, formatted_duration
     """
     from django.core.cache import cache
 
     from app.helpers import minutes_to_hhmm
     from app.models import Sources
 
-    genre_stats = defaultdict(lambda: {"minutes": 0, "plays": 0, "name": ""})
+    genre_stats = defaultdict(
+        lambda: {"minutes": 0, "game_ids": set(), "name": ""}
+    )
 
     for game, dt, runtime in play_details:
         minutes = runtime or 0
 
-        # Get genres from cached metadata only (don't trigger API calls)
+        # Get genres from stored item or cached metadata only (don't trigger API calls)
         genres = []
         if hasattr(game, "item") and game.item:
-            # Try to get genres from cache directly
-            cache_key = f"{Sources.IGDB.value}_{MediaTypes.GAME.value}_{game.item.media_id}"
-            cached_metadata = cache.get(cache_key)
+            genres = _coerce_genre_list(getattr(game.item, "genres", None))
 
-            if cached_metadata:
-                # Extract genres from cached metadata
-                genres_raw = cached_metadata.get("genres", [])
-                if genres_raw:
-                    genres = _coerce_genre_list(genres_raw)
-                # Also check details.genres if top-level is empty
-                if not genres:
-                    details = cached_metadata.get("details", {})
-                    if isinstance(details, dict):
-                        genres_raw = details.get("genres", [])
-                        if genres_raw:
-                            genres = _coerce_genre_list(genres_raw)
+            if not genres:
+                # Try to get genres from cache directly
+                cache_key = f"{Sources.IGDB.value}_{MediaTypes.GAME.value}_{game.item.media_id}"
+                cached_metadata = cache.get(cache_key)
+                
+                if cached_metadata:
+                    # Extract genres from cached metadata
+                    genres_raw = cached_metadata.get("genres", [])
+                    if genres_raw:
+                        genres = _coerce_genre_list(genres_raw)
+                    # Also check details.genres if top-level is empty
+                    if not genres:
+                        details = cached_metadata.get("details", {})
+                        if isinstance(details, dict):
+                            genres_raw = details.get("genres", [])
+                            if genres_raw:
+                                genres = _coerce_genre_list(genres_raw)
+                
+                if genres and genres != game.item.genres:
+                    game.item.genres = genres
+                    game.item.save(update_fields=["genres"])
+        
+        game_id = None
+        if hasattr(game, "item") and game.item:
+            game_id = game.item_id
+        elif hasattr(game, "id"):
+            game_id = game.id
 
         for genre in genres:
             key = str(genre).title()
             genre_stats[key]["minutes"] += minutes
-            genre_stats[key]["plays"] += 1
             genre_stats[key]["name"] = key
+            if game_id is not None:
+                genre_stats[key]["game_ids"].add(game_id)
 
-    # Sort by minutes (descending), then by plays (descending)
+    # Sort by minutes (descending), then by games (descending)
     items = sorted(
         genre_stats.values(),
-        key=lambda x: (x["minutes"], x["plays"]),
+        key=lambda x: (x["minutes"], len(x["game_ids"])),
         reverse=True,
     )[:limit]
 
     # Format durations
     for item in items:
         item["formatted_duration"] = minutes_to_hhmm(item["minutes"])
+        item["games"] = len(item["game_ids"])
+        item["plays"] = item["games"]
+        item.pop("game_ids", None)
 
     return items
 
@@ -2013,8 +2152,8 @@ def get_game_consumption_stats(user_media, start_date, end_date, minutes_per_typ
         "by_month": hours_charts["by_month"],
         "by_daily_average": daily_avg_chart,
     }
-
-    # Compute top genres (using cached metadata only, no API calls)
+    
+    # Compute top genres using stored genres, fall back to cached metadata only
     top_genres = _compute_game_top_genres(play_details, limit=20)
 
     # Compute top daily average games
@@ -2682,7 +2821,7 @@ def get_music_consumption_stats(user_media, start_date, end_date, minutes_per_ty
     }
 
 
-def _get_podcast_runtime_minutes(podcast_entry):
+def _get_podcast_runtime_minutes(podcast_entry, history_record=None):
     """Get runtime in minutes from a Podcast entry, checking episode and item."""
     # First try the linked PodcastEpisode's duration (in seconds)
     if podcast_entry.episode and podcast_entry.episode.duration:
@@ -2694,57 +2833,108 @@ def _get_podcast_runtime_minutes(podcast_entry):
 
     # Fall back to progress (already in minutes, but represents listened time, not total)
     # This is less ideal but better than nothing
+    if history_record and history_record.progress and history_record.progress > 0:
+        return history_record.progress
     if podcast_entry.progress and podcast_entry.progress > 0:
         return podcast_entry.progress
 
     return 0
 
 
-def _collect_podcast_play_data(podcast_queryset, start_date, end_date):
-    """Collect podcast play datetimes and per-play runtime from Podcast objects.
-    
-    Unlike music, each Podcast object with an end_date represents one completed play.
-    We iterate over the Podcast objects directly, not their history records.
-    
+def _get_podcast_history_data(user, start_date, end_date):
+    """Return podcast history records and a lookup for metadata."""
+    if not user:
+        return [], {}
+
+    from app.models import Podcast
+    HistoricalPodcast = apps.get_model("app", "HistoricalPodcast")
+
+    podcast_history_records = HistoricalPodcast.objects.filter(
+        Q(history_user=user) | Q(history_user__isnull=True),
+        end_date__isnull=False,
+    )
+
+    if start_date:
+        podcast_history_records = podcast_history_records.filter(end_date__gte=start_date)
+    if end_date:
+        podcast_history_records = podcast_history_records.filter(end_date__lte=end_date)
+
+    podcast_history_records = list(podcast_history_records.order_by("history_date"))
+    podcast_ids = {record.id for record in podcast_history_records if record.id}
+    if not podcast_ids:
+        return podcast_history_records, {}
+
+    podcasts_lookup = {
+        podcast.id: podcast
+        for podcast in Podcast.objects.filter(
+            id__in=podcast_ids,
+            user=user,
+        ).select_related("item", "show", "episode", "episode__show")
+    }
+
+    return podcast_history_records, podcasts_lookup
+
+
+def _collect_podcast_play_data(podcast_history_records, podcasts_lookup, start_date, end_date):
+    """Collect podcast play datetimes and per-play runtime from history records.
+
+    We deduplicate by end_date per podcast entry to avoid counting metadata updates.
+
     Returns:
         tuple: (list of datetimes, list of (podcast_entry, datetime, runtime_minutes) tuples)
     """
     datetimes = []
     play_details = []  # (podcast_entry, datetime, runtime_minutes)
 
-    if podcast_queryset is None:
-        logger.debug("Podcast queryset is None in _collect_podcast_play_data")
+    if not podcast_history_records:
+        logger.debug("Podcast history records empty in _collect_podcast_play_data")
         return datetimes, play_details
 
-    # Convert to list to avoid queryset evaluation issues
-    podcasts_list = list(podcast_queryset)
-    logger.debug("Found %d podcasts in queryset for date range %s to %s", len(podcasts_list), start_date, end_date)
+    logger.debug(
+        "Found %d podcast history records for date range %s to %s",
+        len(podcast_history_records),
+        start_date,
+        end_date,
+    )
 
-    for podcast in podcasts_list:
-        # Only count podcasts with end_date (completed plays)
-        if not podcast.end_date:
-            logger.debug("Skipping podcast %d (id=%d) - no end_date", podcast.id if hasattr(podcast, "id") else "unknown", getattr(podcast, "id", None))
+    # Group history records by podcast id and end_date to deduplicate plays
+    plays_by_podcast = defaultdict(dict)  # podcast_id -> end_date -> (history_record, history_date)
+
+    for history_record in podcast_history_records:
+        podcast_id = getattr(history_record, "id", None)
+        history_end_date = getattr(history_record, "end_date", None)
+        history_date = getattr(history_record, "history_date", None)
+
+        if not podcast_id or not history_end_date or not history_date:
             continue
 
-        # Check if within date range
-        if start_date and end_date:
-            if not (start_date <= podcast.end_date <= end_date):
-                logger.debug("Skipping podcast %d - end_date %s not in range %s to %s",
-                           getattr(podcast, "id", "unknown"), podcast.end_date, start_date, end_date)
+        if start_date and end_date and not (start_date <= history_end_date <= end_date):
+            continue
+
+        plays_for_podcast = plays_by_podcast[podcast_id]
+        if history_end_date not in plays_for_podcast:
+            plays_for_podcast[history_end_date] = (history_record, history_date)
+        else:
+            existing_history_date = plays_for_podcast[history_end_date][1]
+            time_diff_existing = abs((existing_history_date - history_end_date).total_seconds())
+            time_diff_current = abs((history_date - history_end_date).total_seconds())
+
+            if time_diff_current < time_diff_existing and time_diff_current < 86400:
+                plays_for_podcast[history_end_date] = (history_record, history_date)
+
+    for podcast_id, plays_for_podcast in plays_by_podcast.items():
+        podcast = podcasts_lookup.get(podcast_id)
+        if not podcast:
+            continue
+
+        for play_end_date, (history_record, _) in plays_for_podcast.items():
+            runtime_minutes = _get_podcast_runtime_minutes(podcast, history_record)
+            if runtime_minutes <= 0:
                 continue
 
-        runtime_minutes = _get_podcast_runtime_minutes(podcast)
-        if runtime_minutes <= 0:
-            logger.debug("Skipping podcast %d - runtime_minutes is %d (must be > 0)",
-                       getattr(podcast, "id", "unknown"), runtime_minutes)
-            continue
-
-        logger.debug("Including podcast %d - end_date=%s, runtime=%d minutes",
-                   getattr(podcast, "id", "unknown"), podcast.end_date, runtime_minutes)
-
-        localized_date = _localize_datetime(podcast.end_date)
-        datetimes.append(localized_date)
-        play_details.append((podcast, localized_date, runtime_minutes))
+            localized_date = _localize_datetime(play_end_date)
+            datetimes.append(localized_date)
+            play_details.append((podcast, localized_date, runtime_minutes))
 
     logger.debug("Collected %d podcast plays", len(datetimes))
     return datetimes, play_details
@@ -2903,9 +3093,9 @@ def _compute_podcast_top_lists(play_details, limit=20):
 
 def get_podcast_consumption_stats(user_media, start_date, end_date, minutes_per_type=None, user=None):
     """Return aggregate metrics and chart data for podcast activity.
-    
+
     This is similar to music consumption stats but for podcasts.
-    
+
     Args:
         user_media: Dictionary of media querysets by type
         start_date: Start date for filtering
@@ -2913,46 +3103,38 @@ def get_podcast_consumption_stats(user_media, start_date, end_date, minutes_per_
         minutes_per_type: Pre-calculated minutes per media type (optional)
         user: User object (required to query all podcasts)
     """
-    from app.models import Podcast
-
-    # For podcasts, we need to query ALL podcasts for the user (not filtered by date)
-    # because get_user_media may have filtered them out, but we need to check end_date
-    # in _collect_podcast_play_data to properly count plays within the date range.
-    # This is similar to how music works - we get all music entries and filter by history records.
     if user is None:
-        # Try to get user from user_media as fallback
-        podcast_queryset_from_media = (user_media or {}).get(MediaTypes.PODCAST.value)
-        if podcast_queryset_from_media is not None:
-            try:
-                first_podcast = podcast_queryset_from_media.first()
-                if first_podcast:
-                    user = first_podcast.user
-            except (AttributeError, TypeError):
-                pass
+        user = _infer_user_from_user_media(user_media)
 
-    # Query ALL podcasts for the user (we'll filter by end_date in _collect_podcast_play_data)
-    if user:
-        podcast_queryset = Podcast.objects.filter(user=user).select_related("item", "show", "episode")
-        logger.debug("get_podcast_consumption_stats: Querying all podcasts for user %s (will filter by end_date)", user)
-    else:
-        # Fallback: use queryset from user_media if available
-        podcast_queryset = (user_media or {}).get(MediaTypes.PODCAST.value)
-        logger.debug("get_podcast_consumption_stats: Could not determine user, using queryset from user_media")
-        if podcast_queryset is None:
-            logger.warning("get_podcast_consumption_stats: No user and no podcast queryset, returning empty stats")
-            return {
-                "minutes": _compute_metric_breakdown(0, [], start_date, end_date),
-                "plays": _compute_metric_breakdown(0, [], start_date, end_date),
-                "charts": _build_media_charts([], config.get_stats_color(MediaTypes.PODCAST.value), "Podcast Plays"),
-                "has_data": False,
-                "most_played": [],
-                "most_listened": [],
-                "longest_episodes": [],
-            }
+    if not user:
+        logger.warning("get_podcast_consumption_stats: No user available, returning empty stats")
+        return {
+            "minutes": _compute_metric_breakdown(0, [], start_date, end_date),
+            "plays": _compute_metric_breakdown(0, [], start_date, end_date),
+            "charts": _build_media_charts([], config.get_stats_color(MediaTypes.PODCAST.value), "Podcast Plays"),
+            "has_data": False,
+            "most_played": [],
+            "most_listened": [],
+            "longest_episodes": [],
+        }
 
-    podcast_datetimes, play_details = _collect_podcast_play_data(podcast_queryset, start_date, end_date)
-    logger.debug("get_podcast_consumption_stats: Collected %d datetimes, %d play_details", len(podcast_datetimes), len(play_details))
-
+    podcast_history_records, podcasts_lookup = _get_podcast_history_data(
+        user,
+        start_date,
+        end_date,
+    )
+    podcast_datetimes, play_details = _collect_podcast_play_data(
+        podcast_history_records,
+        podcasts_lookup,
+        start_date,
+        end_date,
+    )
+    logger.debug(
+        "get_podcast_consumption_stats: Collected %d datetimes, %d play_details",
+        len(podcast_datetimes),
+        len(play_details),
+    )
+    
     if minutes_per_type is None:
         minutes_per_type = calculate_minutes_per_media_type(user_media or {}, start_date, end_date)
 
@@ -3142,26 +3324,27 @@ def get_daily_hours_by_media_type(user_media, start_date, end_date):
                     if media_type in per_type_minutes and label in per_type_minutes[media_type]:
                         per_type_minutes[media_type][label] += runtime_minutes
 
-        # Podcasts: use end_date from Podcast model (similar to TV episodes)
-        # Each Podcast entry represents one episode completion
+        # Podcasts: use history records so deleted plays don't appear
         elif media_type == MediaTypes.PODCAST.value:
-            for media in media_list:
-                # Use end_date from the Podcast model (when episode was completed)
-                if not media.end_date:
+            podcast_user = _infer_user_from_user_media(user_media)
+            podcast_history_records, podcasts_lookup = _get_podcast_history_data(
+                podcast_user,
+                start_date,
+                end_date,
+            )
+            _, play_details = _collect_podcast_play_data(
+                podcast_history_records,
+                podcasts_lookup,
+                start_date,
+                end_date,
+            )
+
+            for _, play_dt, runtime_minutes in play_details:
+                if not play_dt or runtime_minutes <= 0:
                     continue
 
-                completion_date = _localize_datetime(media.end_date).date()
+                completion_date = play_dt.date()
                 if completion_date < start_date_dt or completion_date > end_date_dt:
-                    continue
-
-                # Get runtime from item or use progress (stored in minutes)
-                runtime_minutes = 0
-                if hasattr(media, "item") and media.item.runtime_minutes:
-                    runtime_minutes = media.item.runtime_minutes
-                elif media.progress > 0:
-                    runtime_minutes = media.progress
-
-                if runtime_minutes <= 0:
                     continue
 
                 label = completion_date.isoformat()

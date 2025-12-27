@@ -171,7 +171,7 @@
           </button>
         </div>
 
-        {% if not public_view|default:False and current_instance.notes %}
+        {% if not public_view|default:False and notes_entry %}
           <div class="my-3 border-t border-gray-700"></div>
 
           <div class="flex items-start mt-2">
@@ -179,17 +179,40 @@
             <div class="font-medium text-gray-400 mb-1">YOUR NOTES</div>
           </div>
 
-          <div x-data="{ isExpanded: false, isClamped: false, checkClamp() { const element = this.$refs.notesText; this.isClamped = element.scrollHeight > element.clientHeight; } }"
-               x-init="$nextTick(() => checkClamp())">
-            <p x-ref="notesText"
-               :class="isExpanded ? '' : 'line-clamp-2'"
-               class="text-gray-300 italic">"{{ current_instance.notes|linebreaksbr }}"</p>
-            <button x-show="isClamped"
-                    @click="isExpanded = !isExpanded"
-                    class="text-indigo-400 hover:text-indigo-300 text-xs mt-1 focus:outline-none transition-colors cursor-pointer">
-              <span x-text="isExpanded ? 'Show less' : 'Read more'"></span>
-            </button>
-          </div>
+          {% with notes_modal_id=notes_entry.id|stringformat:"s"|add:"-notes" %}
+            <div x-data="{ isExpanded: false, isClamped: false, trackOpen: false, checkClamp() { const element = this.$refs.notesText; this.isClamped = element.scrollHeight > element.clientHeight; } }"
+                 x-init="$nextTick(() => checkClamp())">
+              <p x-ref="notesText"
+                 :class="isExpanded ? '' : 'line-clamp-2'"
+                 class="text-gray-300 italic">"{{ notes_entry.notes|linebreaksbr }}"</p>
+              <div class="flex items-center gap-2 mt-1">
+                <button x-show="isClamped"
+                        @click="isExpanded = !isExpanded"
+                        class="text-indigo-400 hover:text-indigo-300 text-xs focus:outline-none transition-colors cursor-pointer inline-flex items-center gap-1">
+                  {% include "app/icons/book-open.svg" with classes="w-3.5 h-3.5" %}
+                  <span x-text="isExpanded ? 'Show less' : 'Show more'"></span>
+                </button>
+
+                <button class="text-indigo-400 hover:text-indigo-300 text-xs focus:outline-none transition-colors cursor-pointer inline-flex items-center gap-1"
+                        hx-get="{% media_view_url 'track_modal' media %}?instance_id={{ notes_entry.id }}&return_url={{ request.get_full_path|urlencode }}"
+                        hx-target="#{% component_id 'track' media notes_modal_id %}"
+                        hx-trigger="click"
+                        @click="trackOpen = true">
+                  {% include "app/icons/edit.svg" with classes="w-3.5 h-3.5" %}
+                  Edit
+                </button>
+              </div>
+
+              <div x-show="trackOpen"
+                   @keydown.escape.window="trackOpen = false"
+                   class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                <div class="w-152 max-h-[90vh] px-4 md:px-0 relative z-60"
+                     @click.outside="trackOpen = false">
+                  <div id="{% component_id 'track' media notes_modal_id %}"></div>
+                </div>
+              </div>
+            </div>
+          {% endwith %}
         {% endif %}
       </div>
 
@@ -262,6 +285,74 @@
               </div>
             </div>
           </div>
+        {% endif %}
+
+        {# Game/Boardgame play stats #}
+        {% if play_stats %}
+          <div class="bg-[#2a2f35] p-3 rounded-lg w-[120px]">
+            <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">FIRST PLAYED</h3>
+            {% if play_stats.first_played %}
+              <p class="text-lg font-bold text-white text-center leading-none">
+                {{ play_stats.first_played|date:"Y" }}
+              </p>
+              <p class="text-xs text-gray-400 mt-0.5 text-center">
+                {{ play_stats.first_played|date:"M j" }}
+              </p>
+            {% else %}
+              <p class="text-lg font-bold text-gray-400 text-center">-</p>
+            {% endif %}
+          </div>
+
+          <div class="bg-[#2a2f35] p-3 rounded-lg w-[120px]">
+            <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">LAST PLAYED</h3>
+            {% if play_stats.last_played %}
+              <p class="text-lg font-bold text-white text-center leading-none">
+                {{ play_stats.last_played|date:"Y" }}
+              </p>
+              <p class="text-xs text-gray-400 mt-0.5 text-center">
+                {{ play_stats.last_played|date:"M j" }}
+              </p>
+            {% else %}
+              <p class="text-lg font-bold text-gray-400 text-center">-</p>
+            {% endif %}
+          </div>
+
+          <div class="bg-[#2a2f35] p-3 rounded-lg w-[120px]">
+            <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">
+              {% if media_type == MediaTypes.BOARDGAME.value %}TOTAL PLAYS{% else %}TOTAL HOURS{% endif %}
+            </h3>
+            {% if media_type == MediaTypes.BOARDGAME.value %}
+              <p class="text-lg font-bold text-white text-center leading-none">
+                {{ play_stats.total_plays|default:0 }}
+              </p>
+              <p class="text-xs text-gray-400 mt-0.5 text-center">
+                play{{ play_stats.total_plays|default:0|pluralize }}
+              </p>
+            {% else %}
+              {% if play_stats.total_hours > 0 %}
+                <p class="text-lg font-bold text-white text-center leading-none">
+                  {{ play_stats.total_hours }}h
+                </p>
+                <p class="text-xs text-gray-400 mt-0.5 text-center">
+                  {{ play_stats.total_minutes_remainder|default:0 }}min
+                </p>
+              {% else %}
+                <p class="text-lg font-bold text-white text-center leading-none">
+                  {{ play_stats.total_minutes|default:0 }}min
+                </p>
+              {% endif %}
+            {% endif %}
+          </div>
+
+          {% if media_type == MediaTypes.GAME.value %}
+            <div class="bg-[#2a2f35] p-3 rounded-lg w-[120px]">
+              <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">AVG TIME</h3>
+              <p class="text-lg font-bold text-white text-center leading-none">
+                {{ play_stats.avg_time_per_day|default:"0min" }}
+              </p>
+              <p class="text-xs text-gray-400 mt-0.5 text-center">Per Day</p>
+            </div>
+          {% endif %}
         {% endif %}
       </div>
     </div>
@@ -358,10 +449,9 @@
                       {% if not public_view|default:False %}
                       <div x-data="{ trackOpen: false }">
                         <button class="p-1 text-gray-400 hover:text-white transition-colors cursor-pointer"
-                                hx-get="{% media_view_url 'track_modal' media %}"
-                                hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}", "instance_id": "{{ user_media.id }}"}'
+                                hx-get="{% media_view_url 'track_modal' media %}?instance_id={{ user_media.id }}&return_url={{ request.get_full_path|urlencode }}"
                                 hx-target="#{% component_id 'track' media user_media.id %}"
-                                hx-trigger="click once"
+                                hx-trigger="click"
                                 @click="trackOpen = true">
                           {% include "app/icons/edit-flat.svg" with classes="w-4 h-4" %}
                         </button>
@@ -490,24 +580,11 @@
         </div>
 
         {# Activity History #}
-        <div x-data="{ historyOpen: false }">
-          <button class="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 transition duration-300 cursor-pointer"
-                  title="View your activity history"
-                  hx-get="{% media_view_url 'history_modal' media %}"
-                  hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
-                  hx-target="#{% component_id 'history' media %}"
-                  hx-trigger="click once"
-                  @click="historyOpen = true">{% include "app/icons/history.svg" with classes="w-4 h-4" %}</button>
-
-          <div x-show="historyOpen"
-               @keydown.escape.window="historyOpen = false"
-               class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
-                 @click.outside="historyOpen = false">
-              <div id="{% component_id 'history' media %}"></div>
-            </div>
-          </div>
-        </div>
+        <a class="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 transition duration-300 cursor-pointer"
+           title="View your activity history"
+           href="{% url 'history' %}?{% if media_type == MediaTypes.SEASON.value %}media_type={{ MediaTypes.TV.value }}&media_id={{ media.media_id|urlencode }}&source={{ media.source|urlencode }}&season_number={{ media.season_number }}{% elif media_type == MediaTypes.TV.value %}media_type={{ MediaTypes.TV.value }}&media_id={{ media.media_id|urlencode }}&source={{ media.source|urlencode }}{% elif media_type == MediaTypes.PODCAST.value and podcast_show %}media_type={{ MediaTypes.PODCAST.value }}&podcast_show={{ podcast_show.id }}{% else %}media_type={{ media_type }}&media_id={{ media.media_id|urlencode }}&source={{ media.source|urlencode }}{% endif %}{% if media_type == MediaTypes.GAME.value or media_type == MediaTypes.BOARDGAME.value %}&logging_style=sessions{% endif %}">
+          {% include "app/icons/history.svg" with classes="w-4 h-4" %}
+        </a>
 
         {# Sync metadata #}
         <button type="button"
