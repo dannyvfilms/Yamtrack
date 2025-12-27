@@ -111,7 +111,7 @@ def _format_boardgame_plays(plays: int) -> str:
     return f"{plays} play{'s' if plays != 1 else ''}"
 
 
-def _build_episode_entry(episode, episode_title_map=None):
+def _build_episode_entry(episode, episode_title_map=None, episode_history_map=None):
     played_at_local = _localize_datetime(episode.end_date or episode.created_at)
     if not played_at_local:
         return None
@@ -119,6 +119,9 @@ def _build_episode_entry(episode, episode_title_map=None):
     episode_item = getattr(episode, "item", None)
     season_item = getattr(episode.related_season, "item", None)
     tv_item = getattr(getattr(episode.related_season, "related_tv", None), "item", None)
+    entry_item = episode_item or season_item or tv_item
+    if not entry_item:
+        return None
     runtime_minutes = _resolve_runtime_minutes(
         episode.item,
         season_item,
@@ -126,28 +129,48 @@ def _build_episode_entry(episode, episode_title_map=None):
     )
 
     display_title = _get_episode_display_title(episode, episode_title_map)
+    title = ""
+    if episode_item and episode_item.title:
+        title = episode_item.title
+    elif season_item and season_item.title:
+        title = season_item.title
+    elif tv_item and tv_item.title:
+        title = tv_item.title
+
+    episode_label = None
+    episode_code = None
+    if episode_item and episode_item.season_number is not None and episode_item.episode_number is not None:
+        episode_label = f"{episode_item.season_number}x{episode_item.episode_number:02d}"
+        episode_code = f"S{episode_item.season_number:02d}E{episode_item.episode_number:02d}"
+
+    episode_history = []
+    if episode_history_map and episode_item and episode_item.episode_number is not None:
+        history_key = (episode.related_season_id, episode_item.episode_number)
+        episode_history = episode_history_map.get(history_key, [])
+
+    episode_image = episode_item.image if episode_item and episode_item.image else _get_episode_poster(episode)
+    episode_modal = {
+        "title": title,
+        "image": episode_image or settings.IMG_NONE,
+        "episode_number": episode_item.episode_number if episode_item else None,
+        "air_date": None,
+        "history": episode_history,
+    }
 
     return {
         "media_type": MediaTypes.EPISODE.value,
-        "item": season_item or episode.item,
+        "item": entry_item,
         "poster": _get_episode_poster(episode),
-        "title": episode_item.title if episode_item else (season_item.title if season_item else episode.item.title),
+        "title": title,
         "display_title": display_title,
-        "episode_label": (
-            f"{episode.item.season_number}x{episode.item.episode_number:02d}"
-            if episode.item.season_number is not None
-            and episode.item.episode_number is not None
-            else None
-        ),
-        "episode_code": (
-            f"S{episode.item.season_number:02d}E{episode.item.episode_number:02d}"
-            if episode.item.season_number is not None
-            and episode.item.episode_number is not None
-            else None
-        ),
+        "episode_label": episode_label,
+        "episode_code": episode_code,
         "played_at_local": played_at_local,
         "runtime_minutes": runtime_minutes,
         "runtime_display": helpers.minutes_to_hhmm(runtime_minutes) if runtime_minutes else None,
+        "instance_id": episode.id,
+        "entry_key": episode.id,
+        "episode_modal": episode_modal,
     }
 
 
@@ -171,6 +194,8 @@ def _build_movie_entry(movie):
         "played_at_local": played_at_local,
         "runtime_minutes": runtime_minutes,
         "runtime_display": helpers.minutes_to_hhmm(runtime_minutes) if runtime_minutes else None,
+        "instance_id": movie.id,
+        "entry_key": movie.id,
     }
 
 
@@ -229,6 +254,8 @@ def _build_music_album_entries(music_entries_for_album, album, day_date, user, t
     play_times = []
     total_runtime_minutes = 0
     play_count = 0
+    latest_play_time = None
+    primary_music = None
     
     for music in music_entries_for_album:
         runtime_for_track = _get_music_runtime_minutes(music, track_duration_cache)
@@ -248,6 +275,9 @@ def _build_music_album_entries(music_entries_for_album, album, day_date, user, t
                     play_times.append(play_time)
                     play_count += 1
                     total_runtime_minutes += runtime_for_track
+                    if latest_play_time is None or play_time > latest_play_time:
+                        latest_play_time = play_time
+                        primary_music = music
     
     if not play_times:
         return None
@@ -271,9 +301,13 @@ def _build_music_album_entries(music_entries_for_album, album, day_date, user, t
     album_name = album.title if album else "Unknown Album"
     artist_name = album.artist.name if album and album.artist else "Unknown Artist"
     
+    entry_item = primary_music.item if primary_music and primary_music.item else album
+    instance_id = primary_music.id if primary_music else None
+    entry_key = f"{album.id if album else 'album'}-{day_date.strftime('%Y%m%d')}"
+
     return {
         "media_type": MediaTypes.MUSIC.value,
-        "item": album,  # Link to album for navigation
+        "item": entry_item,
         "album": album,
         "poster": poster,
         "title": album_name,
@@ -286,6 +320,8 @@ def _build_music_album_entries(music_entries_for_album, album, day_date, user, t
         "played_at_local": latest_time,  # Use latest play for sorting
         "runtime_minutes": total_runtime_minutes,
         "runtime_display": helpers.minutes_to_hhmm(total_runtime_minutes) if total_runtime_minutes else None,
+        "instance_id": instance_id,
+        "entry_key": entry_key,
     }
 
 
@@ -376,6 +412,15 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
         )
         if season_number_filter is not None:
             episodes = episodes.filter(related_season__item__season_number=season_number_filter)
+
+    episodes = list(episodes)
+    episode_history_map = defaultdict(list)
+    for ep in episodes:
+        ep_item = getattr(ep, "item", None)
+        if not ep_item or ep_item.episode_number is None:
+            continue
+        history_key = (ep.related_season_id, ep_item.episode_number)
+        episode_history_map[history_key].append(ep)
 
     movies_qs = Movie.objects.filter(
         user=user,
@@ -487,6 +532,23 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
         }
     else:
         podcasts_lookup = {}
+    
+    if (
+        target_media_id
+        and target_source
+        and media_type_filter == MediaTypes.PODCAST.value
+        and not podcast_show_filter
+    ):
+        podcast_history_records = [
+            record
+            for record in podcast_history_records
+            if (
+                (podcast := podcasts_lookup.get(record.id))
+                and podcast.item
+                and str(podcast.item.media_id) == target_media_id
+                and str(podcast.item.source) == target_source
+            )
+        ]
 
     entries = []
 
@@ -617,7 +679,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
             # Apply genre filter if specified
             if genre_filter and not matches_genre(episode, MediaTypes.EPISODE.value):
                 continue
-            entry = _build_episode_entry(episode, episode_title_map)
+            entry = _build_episode_entry(episode, episode_title_map, episode_history_map)
             if entry:
                 entries.append(entry)
 
@@ -799,6 +861,8 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                         "runtime_minutes": runtime_minutes,
                         "runtime_display": helpers.minutes_to_hhmm(runtime_minutes) if runtime_minutes else None,
                         "play_count": play_count,
+                        "instance_id": podcast.id,
+                        "entry_key": history_record.history_id,
                     },
                 )
             except Exception as e:
@@ -840,6 +904,8 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                             "played_at_local": played_at_local,
                             "runtime_minutes": runtime_minutes,
                             "runtime_display": helpers.minutes_to_hhmm(runtime_minutes) if runtime_minutes else None,
+                            "instance_id": game.id,
+                            "entry_key": game.id,
                         },
                     )
             if process_boardgames:
@@ -878,6 +944,8 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                             "played_at_local": played_at_local,
                             "runtime_minutes": 0,
                             "runtime_display": progress_display,
+                            "instance_id": boardgame.id,
+                            "entry_key": boardgame.id,
                         },
                     )
         else:
@@ -931,6 +999,8 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                                 "played_at_local": day_dt,
                                 "runtime_minutes": minutes_for_day,
                                 "runtime_display": helpers.minutes_to_hhmm(minutes_for_day) if minutes_for_day else None,
+                                "instance_id": game.id,
+                                "entry_key": f"{game.id}-{day.strftime('%Y%m%d')}",
                             },
                         )
             if process_boardgames:
@@ -982,6 +1052,8 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                                 "played_at_local": day_dt,
                                 "runtime_minutes": 0,
                                 "runtime_display": _format_boardgame_plays(plays_for_day) if plays_for_day else None,
+                                "instance_id": boardgame.id,
+                                "entry_key": f"{boardgame.id}-{day.strftime('%Y%m%d')}",
                             },
                         )
 

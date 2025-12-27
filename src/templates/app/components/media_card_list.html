@@ -1,7 +1,7 @@
 {% load app_tags %}
 
 <div class="bg-[#2a2f35] rounded-lg overflow-hidden hover:bg-[#39404b] transition-colors duration-200"
-     x-data="{ trackOpen: false, listsOpen: false, historyOpen: false }">
+     x-data="{ trackOpen: false, listsOpen: false }">
   <div class="flex items-center p-4 gap-4">
     <div class="shrink-0 relative">
       <a href="{{ item|media_url }}">
@@ -57,15 +57,11 @@
           </button>
 
           {# History Button #}
-          <button class="p-2.5 bg-amber-600 text-white rounded-full hover:bg-amber-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(245,158,11,0.5)] transition-all duration-200 cursor-pointer"
-                  title="View your activity history"
-                  hx-get="{% media_view_url 'history_modal' item %}"
-                  hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
-                  hx-target="#{% component_id 'history' item %}"
-                  hx-trigger="click once"
-                  @click="historyOpen = true">
+          <a class="p-2.5 bg-amber-600 text-white rounded-full hover:bg-amber-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(245,158,11,0.5)] transition-all duration-200 cursor-pointer"
+             title="View your activity history"
+             href="{% url 'history' %}?{% if item.media_type == MediaTypes.SEASON.value or item.media_type == MediaTypes.EPISODE.value %}media_type={{ MediaTypes.TV.value }}&media_id={{ item.media_id|urlencode }}&source={{ item.source|urlencode }}{% if item.season_number %}&season_number={{ item.season_number }}{% endif %}{% elif item.media_type == MediaTypes.TV.value %}media_type={{ MediaTypes.TV.value }}&media_id={{ item.media_id|urlencode }}&source={{ item.source|urlencode }}{% elif item.media_type == MediaTypes.PODCAST.value and media.show %}media_type={{ MediaTypes.PODCAST.value }}&podcast_show={{ media.show.id }}{% elif item.media_type == MediaTypes.PODCAST.value and media.tracker.show %}media_type={{ MediaTypes.PODCAST.value }}&podcast_show={{ media.tracker.show.id }}{% else %}media_type={{ item.media_type }}&media_id={{ item.media_id|urlencode }}&source={{ item.source|urlencode }}{% endif %}{% if item.media_type == MediaTypes.GAME.value or item.media_type == MediaTypes.BOARDGAME.value %}&logging_style=sessions{% endif %}">
             {% include "app/icons/history.svg" with classes="w-4 h-4" %}
-          </button>
+          </a>
         </div>
       </div>
     </div>
@@ -95,13 +91,4 @@
     </div>
   </div>
 
-  {# History Modal #}
-  <div x-show="historyOpen"
-       @keydown.escape.window="historyOpen = false"
-       class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-    <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
-         @click.outside="historyOpen = false">
-      <div id="{% component_id 'history' item %}"></div>
-    </div>
-  </div>
 </div>

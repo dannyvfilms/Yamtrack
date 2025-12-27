@@ -1176,11 +1176,13 @@ def media_details(
         user_medias = []
         current_instance = None
     else:
-        user_medias = BasicMedia.objects.filter_media_prefetch(
-            request.user,
-            media_id,
-            media_type,
-            source,
+        user_medias = list(
+            BasicMedia.objects.filter_media_prefetch(
+                request.user,
+                media_id,
+                media_type,
+                source,
+            )
         )
         current_instance = user_medias[0] if user_medias else None
 
@@ -1204,6 +1206,37 @@ def media_details(
 
         if latest_rating is not None:
             current_instance.score = latest_rating
+
+    play_stats = None
+    if (
+        not public_view
+        and current_instance
+        and user_medias
+        and media_type in [MediaTypes.GAME.value, MediaTypes.BOARDGAME.value]
+    ):
+        BasicMedia.objects._aggregate_item_data(current_instance, user_medias)
+        aggregated_progress = getattr(current_instance, "aggregated_progress", None)
+        if aggregated_progress is None:
+            aggregated_progress = current_instance.progress or 0
+
+        play_stats = {
+            "first_played": getattr(current_instance, "aggregated_start_date", None)
+            or current_instance.start_date,
+            "last_played": getattr(current_instance, "aggregated_end_date", None)
+            or current_instance.end_date,
+        }
+
+        if media_type == MediaTypes.GAME.value:
+            total_minutes = int(aggregated_progress or 0)
+            play_stats.update(
+                {
+                    "total_minutes": total_minutes,
+                    "total_hours": total_minutes // 60,
+                    "total_minutes_remainder": total_minutes % 60,
+                }
+            )
+        else:
+            play_stats["total_plays"] = int(aggregated_progress or 0)
 
     # Enrich related items with user tracking data
     # For public views, use list owner's data if available
@@ -1234,6 +1267,7 @@ def media_details(
         "music_artist": music_artist,
         "music_album": music_album,
         "public_view": public_view,
+        "play_stats": play_stats,
     }
     return render(request, "app/media_details.html", context)
 
