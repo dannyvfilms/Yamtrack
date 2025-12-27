@@ -1213,6 +1213,21 @@ def media_details(
         if latest_rating is not None:
             current_instance.score = latest_rating
 
+    if (
+        not public_view
+        and current_instance
+        and media_type == MediaTypes.GAME.value
+        and isinstance(media_metadata, dict)
+    ):
+        metadata_genres = stats._coerce_genre_list(media_metadata.get("genres"))
+        item = current_instance.item
+        if item:
+            if metadata_genres and metadata_genres != item.genres:
+                item.genres = metadata_genres
+                item.save(update_fields=["genres"])
+            elif item.genres:
+                media_metadata["genres"] = item.genres
+
     play_stats = None
     if (
         not public_view
@@ -1847,7 +1862,11 @@ def media_save(request):
         if metadata.get("details", {}).get("runtime"):
             from app.statistics import parse_runtime_to_minutes
             runtime_minutes = parse_runtime_to_minutes(metadata["details"]["runtime"])
-        
+
+        metadata_genres = []
+        if media_type == MediaTypes.GAME.value:
+            metadata_genres = stats._coerce_genre_list(metadata.get("genres"))
+
         item, created = Item.objects.get_or_create(
             media_id=media_id,
             source=source,
@@ -1857,9 +1876,10 @@ def media_save(request):
                 "title": metadata["title"],
                 "image": metadata["image"],
                 "runtime_minutes": runtime_minutes,
+                "genres": metadata_genres,
             },
         )
-        
+
         # Update image and runtime if they're not set and we have them now
         needs_save = False
         if item.image == settings.IMG_NONE and metadata.get("image"):
@@ -1867,6 +1887,9 @@ def media_save(request):
             needs_save = True
         if not item.runtime_minutes and runtime_minutes:
             item.runtime_minutes = runtime_minutes
+            needs_save = True
+        if metadata_genres and metadata_genres != item.genres:
+            item.genres = metadata_genres
             needs_save = True
         if needs_save:
             item.save()

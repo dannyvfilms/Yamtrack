@@ -644,8 +644,8 @@ class PocketCastsImporter:
         for music in music_items:
             # Get duration from track or item runtime
             duration_seconds = None
-            if music.track and music.track.duration:
-                duration_seconds = music.track.duration
+            if music.track and music.track.duration_ms:
+                duration_seconds = music.track.duration_ms // 1000
             elif music.item and music.item.runtime_minutes:
                 duration_seconds = music.item.runtime_minutes * 60
             

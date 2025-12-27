@@ -1987,61 +1987,80 @@ def _build_daily_average_distribution_chart(game_data, color, dataset_label):
 
 
 def _compute_game_top_genres(play_details, limit=20):
-    """Compute top genres from game play details using cached metadata only.
-    
+    """Compute top genres from game play details using stored genres and cache.
+
     Args:
         play_details: List of (game_entry, datetime, runtime_minutes) tuples
         limit: Number of genres to return
-        
+
     Returns:
-        list of genre dicts with name, minutes, plays, formatted_duration
+        list of genre dicts with name, minutes, games, formatted_duration
     """
     from app.helpers import minutes_to_hhmm
     from django.core.cache import cache
     from app.models import Sources
-    
-    genre_stats = defaultdict(lambda: {"minutes": 0, "plays": 0, "name": ""})
-    
+
+    genre_stats = defaultdict(
+        lambda: {"minutes": 0, "game_ids": set(), "name": ""}
+    )
+
     for game, dt, runtime in play_details:
         minutes = runtime or 0
-        
-        # Get genres from cached metadata only (don't trigger API calls)
+
+        # Get genres from stored item or cached metadata only (don't trigger API calls)
         genres = []
-        if hasattr(game, 'item') and game.item:
-            # Try to get genres from cache directly
-            cache_key = f"{Sources.IGDB.value}_{MediaTypes.GAME.value}_{game.item.media_id}"
-            cached_metadata = cache.get(cache_key)
-            
-            if cached_metadata:
-                # Extract genres from cached metadata
-                genres_raw = cached_metadata.get("genres", [])
-                if genres_raw:
-                    genres = _coerce_genre_list(genres_raw)
-                # Also check details.genres if top-level is empty
-                if not genres:
-                    details = cached_metadata.get("details", {})
-                    if isinstance(details, dict):
-                        genres_raw = details.get("genres", [])
-                        if genres_raw:
-                            genres = _coerce_genre_list(genres_raw)
+        if hasattr(game, "item") and game.item:
+            genres = _coerce_genre_list(getattr(game.item, "genres", None))
+
+            if not genres:
+                # Try to get genres from cache directly
+                cache_key = f"{Sources.IGDB.value}_{MediaTypes.GAME.value}_{game.item.media_id}"
+                cached_metadata = cache.get(cache_key)
+                
+                if cached_metadata:
+                    # Extract genres from cached metadata
+                    genres_raw = cached_metadata.get("genres", [])
+                    if genres_raw:
+                        genres = _coerce_genre_list(genres_raw)
+                    # Also check details.genres if top-level is empty
+                    if not genres:
+                        details = cached_metadata.get("details", {})
+                        if isinstance(details, dict):
+                            genres_raw = details.get("genres", [])
+                            if genres_raw:
+                                genres = _coerce_genre_list(genres_raw)
+                
+                if genres and genres != game.item.genres:
+                    game.item.genres = genres
+                    game.item.save(update_fields=["genres"])
         
+        game_id = None
+        if hasattr(game, "item") and game.item:
+            game_id = game.item_id
+        elif hasattr(game, "id"):
+            game_id = game.id
+
         for genre in genres:
             key = str(genre).title()
             genre_stats[key]["minutes"] += minutes
-            genre_stats[key]["plays"] += 1
             genre_stats[key]["name"] = key
-    
-    # Sort by minutes (descending), then by plays (descending)
+            if game_id is not None:
+                genre_stats[key]["game_ids"].add(game_id)
+
+    # Sort by minutes (descending), then by games (descending)
     items = sorted(
         genre_stats.values(),
-        key=lambda x: (x["minutes"], x["plays"]),
+        key=lambda x: (x["minutes"], len(x["game_ids"])),
         reverse=True,
     )[:limit]
-    
+
     # Format durations
     for item in items:
         item["formatted_duration"] = minutes_to_hhmm(item["minutes"])
-    
+        item["games"] = len(item["game_ids"])
+        item["plays"] = item["games"]
+        item.pop("game_ids", None)
+
     return items
 
 
@@ -2133,7 +2152,7 @@ def get_game_consumption_stats(user_media, start_date, end_date, minutes_per_typ
         "by_daily_average": daily_avg_chart,
     }
     
-    # Compute top genres (using cached metadata only, no API calls)
+    # Compute top genres using stored genres, fall back to cached metadata only
     top_genres = _compute_game_top_genres(play_details, limit=20)
     
     # Compute top daily average games
