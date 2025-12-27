@@ -270,11 +270,35 @@ def get_score_distribution(user_media):
         score_counts = dict.fromkeys(score_range, 0)
         scored_media = media_list.exclude(score__isnull=True).select_related("item")
 
+        deduped_scored = {}
+        for media in scored_media:
+            item = getattr(media, "item", None)
+            key = item.id if item else media.id
+            dates = [d for d in (media.end_date, media.start_date) if d]
+            activity_date = max(dates) if dates else media.created_at
+
+            existing = deduped_scored.get(key)
+            if not existing:
+                deduped_scored[key] = {
+                    "media": media,
+                    "activity_date": activity_date,
+                }
+                continue
+
+            existing_activity = existing["activity_date"]
+            if activity_date and (not existing_activity or activity_date > existing_activity):
+                deduped_scored[key] = {
+                    "media": media,
+                    "activity_date": activity_date,
+                }
+
+        deduped_media = [entry["media"] for entry in deduped_scored.values()]
+
         # Initialize per-type heap for this media type
         type_top_rated = []
         type_counter = itertools.count()
 
-        for media in scored_media:
+        for media in deduped_media:
             # Add to global top rated (for backward compatibility)
             if len(top_rated) < top_rated_count:
                 heapq.heappush(
