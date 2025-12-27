@@ -4277,8 +4277,27 @@ def statistics(request):
         one_year_ago = today.replace(year=today.year - 1)
 
         # Get date parameters with defaults
-        start_date_str = request.GET.get("start-date") or one_year_ago.strftime(timeformat)
-        end_date_str = request.GET.get("end-date") or today.strftime(timeformat)
+        start_date_param = request.GET.get("start-date")
+        end_date_param = request.GET.get("end-date")
+
+        if not start_date_param and not end_date_param:
+            preferred_range = getattr(request.user, "statistics_default_range", None)
+            if preferred_range not in statistics_cache.PREDEFINED_RANGES:
+                preferred_range = "Last 12 Months"
+            preferred_start, preferred_end = _get_predefined_range_date_strings(
+                preferred_range,
+                today,
+                timeformat,
+            )
+            if preferred_start and preferred_end:
+                start_date_str = preferred_start
+                end_date_str = preferred_end
+            else:
+                start_date_str = one_year_ago.strftime(timeformat)
+                end_date_str = today.strftime(timeformat)
+        else:
+            start_date_str = start_date_param or one_year_ago.strftime(timeformat)
+            end_date_str = end_date_param or today.strftime(timeformat)
 
         if start_date_str == "all" and end_date_str == "all":
             start_date = None
@@ -4302,6 +4321,9 @@ def statistics(request):
 
         # Identify predefined range for caching
         selected_range_name = _identify_predefined_range(start_date, end_date)
+
+        if selected_range_name in statistics_cache.PREDEFINED_RANGES:
+            request.user.update_preference("statistics_default_range", selected_range_name)
         
         # Get statistics data (cached for predefined ranges, computed inline for custom ranges)
         statistics_data = statistics_cache.get_statistics_data(
@@ -4920,6 +4942,41 @@ def _identify_predefined_range(start_date, end_date):
         return "Last 12 Months"
 
     return None
+
+
+def _get_predefined_range_date_strings(range_name, today, timeformat):
+    if range_name == "All Time":
+        return "all", "all"
+
+    start_date = None
+    end_date = today
+
+    if range_name == "Today":
+        start_date = today
+    elif range_name == "Yesterday":
+        start_date = today - timedelta(days=1)
+        end_date = start_date
+    elif range_name == "This Week":
+        start_date = today - timedelta(days=today.weekday())
+    elif range_name == "Last 7 Days":
+        start_date = today - timedelta(days=6)
+    elif range_name == "This Month":
+        start_date = today.replace(day=1)
+    elif range_name == "Last 30 Days":
+        start_date = today - timedelta(days=29)
+    elif range_name == "Last 90 Days":
+        start_date = today - timedelta(days=89)
+    elif range_name == "This Year":
+        start_date = today.replace(month=1, day=1)
+    elif range_name == "Last 6 Months":
+        start_date = _adjust_month_delta(today, months=6)
+    elif range_name == "Last 12 Months":
+        start_date = _adjust_month_delta(today, months=12)
+
+    if start_date is None:
+        return None, None
+
+    return start_date.strftime(timeformat), end_date.strftime(timeformat)
 
 
 def _adjust_month_delta(reference_date, months):

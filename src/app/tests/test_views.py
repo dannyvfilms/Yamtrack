@@ -950,6 +950,28 @@ class StatisticsViewTests(TestCase):
         self.assertIn("status_pie_chart_data", response.context)
         self.assertNotIn("timeline", response.context)
 
+    def test_statistics_view_uses_saved_predefined_range(self):
+        """Saved predefined range is used when no date params are provided."""
+        self.user.statistics_default_range = "Yesterday"
+        self.user.save(update_fields=["statistics_default_range"])
+
+        response = self.client.get(reverse("statistics"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["selected_range_name"], "Yesterday")
+
+    def test_statistics_view_updates_preferred_range(self):
+        """Selecting a predefined range updates the user's preference."""
+        today_str = timezone.localdate().strftime("%Y-%m-%d")
+
+        response = self.client.get(
+            reverse("statistics") + f"?start-date={today_str}&end-date={today_str}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.statistics_default_range, "Today")
+
     def test_statistics_view_custom_date_range(self):
         """Test the statistics view with custom date range."""
         # Custom date range

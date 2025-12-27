@@ -1,12 +1,20 @@
-function dateRangePicker() {
+function dateRangePicker(options = {}) {
+  const { initialRangeName = "", initialStartDate = "", initialEndDate = "" } =
+    options;
+  const defaultStartDate = new Date(
+    new Date().setFullYear(new Date().getFullYear() - 1)
+  )
+    .toISOString()
+    .split("T")[0];
+  const defaultEndDate = new Date().toISOString().split("T")[0];
+  const hasInitialDates = Boolean(initialStartDate && initialEndDate);
+
   return {
     isOpen: false,
     activeTab: "predefined",
-    selectedRange: "Last 12 Months",
-    startDate: new Date(new Date().setFullYear(new Date().getFullYear() - 1))
-      .toISOString()
-      .split("T")[0],
-    endDate: new Date().toISOString().split("T")[0],
+    selectedRange: initialRangeName || "Last 12 Months",
+    startDate: hasInitialDates ? initialStartDate : defaultStartDate,
+    endDate: hasInitialDates ? initialEndDate : defaultEndDate,
     customRangeLabel: "",
 
     predefinedRanges: [
@@ -35,6 +43,19 @@ function dateRangePicker() {
 
         // Try to determine which predefined range matches these dates
         this.detectRangeFromDates();
+        return;
+      }
+
+      if (hasInitialDates) {
+        this.startDate = initialStartDate;
+        this.endDate = initialEndDate;
+        this.detectRangeFromDates();
+        return;
+      }
+
+      if (initialRangeName) {
+        this.selectedRange = initialRangeName;
+        this.updateDatesFromRange(initialRangeName);
       }
     },
 
