@@ -20,6 +20,28 @@ from app.templatetags import app_tags
 logger = logging.getLogger(__name__)
 
 
+def _infer_user_from_user_media(user_media):
+    """Best-effort helper to derive user from user_media querysets."""
+    if not user_media:
+        return None
+
+    for media_list in user_media.values():
+        if media_list is None:
+            continue
+        try:
+            first_media = media_list.first()
+        except (AttributeError, TypeError):
+            try:
+                first_media = next(iter(media_list), None)
+            except TypeError:
+                first_media = None
+
+        if first_media is not None and hasattr(first_media, "user"):
+            return first_media.user
+
+    return None
+
+
 def get_user_media(user, start_date, end_date):
     """Get all media items and their counts for a user within date range."""
     media_models = [
@@ -778,12 +800,30 @@ def _get_activity_datetime(media):
     return None
 
 
-def calculate_minutes_per_media_type(user_media, start_date, end_date):
+def calculate_minutes_per_media_type(user_media, start_date, end_date, user=None):
     """Return total minutes watched per media type within the date range."""
     minutes_per_type = {}
 
     for media_type, media_list in user_media.items():
         total_minutes = 0
+
+        if media_type == MediaTypes.PODCAST.value:
+            # Podcast: sum runtime from completed plays in history records
+            podcast_user = user or _infer_user_from_user_media(user_media)
+            podcast_history_records, podcasts_lookup = _get_podcast_history_data(
+                podcast_user,
+                start_date,
+                end_date,
+            )
+            _, play_details = _collect_podcast_play_data(
+                podcast_history_records,
+                podcasts_lookup,
+                start_date,
+                end_date,
+            )
+            total_minutes += sum(runtime for _, _, runtime in play_details)
+            minutes_per_type[media_type] = total_minutes
+            continue
 
         for media_data in media_list:
             media = getattr(media_data, "media", media_data)
@@ -847,17 +887,6 @@ def calculate_minutes_per_media_type(user_media, start_date, end_date):
                 # Music: sum up runtime for each play (history record) within date range
                 music_minutes = _calculate_music_time(media, start_date, end_date, logger)
                 total_minutes += music_minutes
-                continue
-
-            if media_type == MediaTypes.PODCAST.value:
-                # Podcast: use runtime_minutes from item if available, otherwise use progress
-                if hasattr(media, "item") and media.item.runtime_minutes:
-                    # Use runtime_minutes from item (total episode duration)
-                    podcast_minutes = media.item.runtime_minutes
-                else:
-                    # Fallback: use progress (already in minutes, but represents listened time)
-                    podcast_minutes = media.progress if media.progress > 0 else 0
-                total_minutes += podcast_minutes
                 continue
 
             if not _is_media_in_date_range(media, start_date, end_date):
@@ -1509,7 +1538,12 @@ def get_tv_consumption_stats(user_media, start_date, end_date, minutes_per_type=
     _, play_details = _collect_tv_play_data(tv_queryset, start_date, end_date)
 
     if minutes_per_type is None:
-        minutes_per_type = calculate_minutes_per_media_type(user_media or {}, start_date, end_date)
+        minutes_per_type = calculate_minutes_per_media_type(
+            user_media or {},
+            start_date,
+            end_date,
+            user=user,
+        )
 
     total_minutes = minutes_per_type.get(MediaTypes.TV.value, 0)
     total_hours = total_minutes / 60 if total_minutes else 0
@@ -2681,7 +2715,7 @@ def get_music_consumption_stats(user_media, start_date, end_date, minutes_per_ty
     }
 
 
-def _get_podcast_runtime_minutes(podcast_entry):
+def _get_podcast_runtime_minutes(podcast_entry, history_record=None):
     """Get runtime in minutes from a Podcast entry, checking episode and item."""
     # First try the linked PodcastEpisode's duration (in seconds)
     if podcast_entry.episode and podcast_entry.episode.duration:
@@ -2693,58 +2727,109 @@ def _get_podcast_runtime_minutes(podcast_entry):
     
     # Fall back to progress (already in minutes, but represents listened time, not total)
     # This is less ideal but better than nothing
+    if history_record and history_record.progress and history_record.progress > 0:
+        return history_record.progress
     if podcast_entry.progress and podcast_entry.progress > 0:
         return podcast_entry.progress
     
     return 0
 
 
-def _collect_podcast_play_data(podcast_queryset, start_date, end_date):
-    """Collect podcast play datetimes and per-play runtime from Podcast objects.
-    
-    Unlike music, each Podcast object with an end_date represents one completed play.
-    We iterate over the Podcast objects directly, not their history records.
-    
+def _get_podcast_history_data(user, start_date, end_date):
+    """Return podcast history records and a lookup for metadata."""
+    if not user:
+        return [], {}
+
+    from app.models import Podcast
+    HistoricalPodcast = apps.get_model("app", "HistoricalPodcast")
+
+    podcast_history_records = HistoricalPodcast.objects.filter(
+        Q(history_user=user) | Q(history_user__isnull=True),
+        end_date__isnull=False,
+    )
+
+    if start_date:
+        podcast_history_records = podcast_history_records.filter(end_date__gte=start_date)
+    if end_date:
+        podcast_history_records = podcast_history_records.filter(end_date__lte=end_date)
+
+    podcast_history_records = list(podcast_history_records.order_by("history_date"))
+    podcast_ids = {record.id for record in podcast_history_records if record.id}
+    if not podcast_ids:
+        return podcast_history_records, {}
+
+    podcasts_lookup = {
+        podcast.id: podcast
+        for podcast in Podcast.objects.filter(
+            id__in=podcast_ids,
+            user=user,
+        ).select_related("item", "show", "episode", "episode__show")
+    }
+
+    return podcast_history_records, podcasts_lookup
+
+
+def _collect_podcast_play_data(podcast_history_records, podcasts_lookup, start_date, end_date):
+    """Collect podcast play datetimes and per-play runtime from history records.
+
+    We deduplicate by end_date per podcast entry to avoid counting metadata updates.
+
     Returns:
         tuple: (list of datetimes, list of (podcast_entry, datetime, runtime_minutes) tuples)
     """
     datetimes = []
     play_details = []  # (podcast_entry, datetime, runtime_minutes)
-    
-    if podcast_queryset is None:
-        logger.debug("Podcast queryset is None in _collect_podcast_play_data")
+
+    if not podcast_history_records:
+        logger.debug("Podcast history records empty in _collect_podcast_play_data")
         return datetimes, play_details
-    
-    # Convert to list to avoid queryset evaluation issues
-    podcasts_list = list(podcast_queryset)
-    logger.debug("Found %d podcasts in queryset for date range %s to %s", len(podcasts_list), start_date, end_date)
-    
-    for podcast in podcasts_list:
-        # Only count podcasts with end_date (completed plays)
-        if not podcast.end_date:
-            logger.debug("Skipping podcast %d (id=%d) - no end_date", podcast.id if hasattr(podcast, 'id') else 'unknown', getattr(podcast, 'id', None))
+
+    logger.debug(
+        "Found %d podcast history records for date range %s to %s",
+        len(podcast_history_records),
+        start_date,
+        end_date,
+    )
+
+    # Group history records by podcast id and end_date to deduplicate plays
+    plays_by_podcast = defaultdict(dict)  # podcast_id -> end_date -> (history_record, history_date)
+
+    for history_record in podcast_history_records:
+        podcast_id = getattr(history_record, "id", None)
+        history_end_date = getattr(history_record, "end_date", None)
+        history_date = getattr(history_record, "history_date", None)
+
+        if not podcast_id or not history_end_date or not history_date:
             continue
-        
-        # Check if within date range
-        if start_date and end_date:
-            if not (start_date <= podcast.end_date <= end_date):
-                logger.debug("Skipping podcast %d - end_date %s not in range %s to %s", 
-                           getattr(podcast, 'id', 'unknown'), podcast.end_date, start_date, end_date)
+
+        if start_date and end_date and not (start_date <= history_end_date <= end_date):
+            continue
+
+        plays_for_podcast = plays_by_podcast[podcast_id]
+        if history_end_date not in plays_for_podcast:
+            plays_for_podcast[history_end_date] = (history_record, history_date)
+        else:
+            existing_history_date = plays_for_podcast[history_end_date][1]
+            time_diff_existing = abs((existing_history_date - history_end_date).total_seconds())
+            time_diff_current = abs((history_date - history_end_date).total_seconds())
+
+            if time_diff_current < time_diff_existing and time_diff_current < 86400:
+                plays_for_podcast[history_end_date] = (history_record, history_date)
+
+    for podcast_id, plays_for_podcast in plays_by_podcast.items():
+        podcast = podcasts_lookup.get(podcast_id)
+        if not podcast:
+            continue
+
+        for play_end_date, (history_record, _) in plays_for_podcast.items():
+            runtime_minutes = _get_podcast_runtime_minutes(podcast, history_record)
+            if runtime_minutes <= 0:
                 continue
-        
-        runtime_minutes = _get_podcast_runtime_minutes(podcast)
-        if runtime_minutes <= 0:
-            logger.debug("Skipping podcast %d - runtime_minutes is %d (must be > 0)", 
-                       getattr(podcast, 'id', 'unknown'), runtime_minutes)
-            continue
-        
-        logger.debug("Including podcast %d - end_date=%s, runtime=%d minutes", 
-                   getattr(podcast, 'id', 'unknown'), podcast.end_date, runtime_minutes)
-        
-        localized_date = _localize_datetime(podcast.end_date)
-        datetimes.append(localized_date)
-        play_details.append((podcast, localized_date, runtime_minutes))
-    
+
+            localized_date = _localize_datetime(play_end_date)
+            datetimes.append(localized_date)
+            play_details.append((podcast, localized_date, runtime_minutes))
+
     logger.debug("Collected %d podcast plays", len(datetimes))
     return datetimes, play_details
 
@@ -2902,9 +2987,9 @@ def _compute_podcast_top_lists(play_details, limit=20):
 
 def get_podcast_consumption_stats(user_media, start_date, end_date, minutes_per_type=None, user=None):
     """Return aggregate metrics and chart data for podcast activity.
-    
+
     This is similar to music consumption stats but for podcasts.
-    
+
     Args:
         user_media: Dictionary of media querysets by type
         start_date: Start date for filtering
@@ -2912,45 +2997,37 @@ def get_podcast_consumption_stats(user_media, start_date, end_date, minutes_per_
         minutes_per_type: Pre-calculated minutes per media type (optional)
         user: User object (required to query all podcasts)
     """
-    from app.models import Podcast
-    
-    # For podcasts, we need to query ALL podcasts for the user (not filtered by date)
-    # because get_user_media may have filtered them out, but we need to check end_date
-    # in _collect_podcast_play_data to properly count plays within the date range.
-    # This is similar to how music works - we get all music entries and filter by history records.
     if user is None:
-        # Try to get user from user_media as fallback
-        podcast_queryset_from_media = (user_media or {}).get(MediaTypes.PODCAST.value)
-        if podcast_queryset_from_media is not None:
-            try:
-                first_podcast = podcast_queryset_from_media.first()
-                if first_podcast:
-                    user = first_podcast.user
-            except (AttributeError, TypeError):
-                pass
-    
-    # Query ALL podcasts for the user (we'll filter by end_date in _collect_podcast_play_data)
-    if user:
-        podcast_queryset = Podcast.objects.filter(user=user).select_related("item", "show", "episode")
-        logger.debug("get_podcast_consumption_stats: Querying all podcasts for user %s (will filter by end_date)", user)
-    else:
-        # Fallback: use queryset from user_media if available
-        podcast_queryset = (user_media or {}).get(MediaTypes.PODCAST.value)
-        logger.debug("get_podcast_consumption_stats: Could not determine user, using queryset from user_media")
-        if podcast_queryset is None:
-            logger.warning("get_podcast_consumption_stats: No user and no podcast queryset, returning empty stats")
-            return {
-                "minutes": _compute_metric_breakdown(0, [], start_date, end_date),
-                "plays": _compute_metric_breakdown(0, [], start_date, end_date),
-                "charts": _build_media_charts([], config.get_stats_color(MediaTypes.PODCAST.value), "Podcast Plays"),
-                "has_data": False,
-                "most_played": [],
-                "most_listened": [],
-                "longest_episodes": [],
-            }
-    
-    podcast_datetimes, play_details = _collect_podcast_play_data(podcast_queryset, start_date, end_date)
-    logger.debug("get_podcast_consumption_stats: Collected %d datetimes, %d play_details", len(podcast_datetimes), len(play_details))
+        user = _infer_user_from_user_media(user_media)
+
+    if not user:
+        logger.warning("get_podcast_consumption_stats: No user available, returning empty stats")
+        return {
+            "minutes": _compute_metric_breakdown(0, [], start_date, end_date),
+            "plays": _compute_metric_breakdown(0, [], start_date, end_date),
+            "charts": _build_media_charts([], config.get_stats_color(MediaTypes.PODCAST.value), "Podcast Plays"),
+            "has_data": False,
+            "most_played": [],
+            "most_listened": [],
+            "longest_episodes": [],
+        }
+
+    podcast_history_records, podcasts_lookup = _get_podcast_history_data(
+        user,
+        start_date,
+        end_date,
+    )
+    podcast_datetimes, play_details = _collect_podcast_play_data(
+        podcast_history_records,
+        podcasts_lookup,
+        start_date,
+        end_date,
+    )
+    logger.debug(
+        "get_podcast_consumption_stats: Collected %d datetimes, %d play_details",
+        len(podcast_datetimes),
+        len(play_details),
+    )
     
     if minutes_per_type is None:
         minutes_per_type = calculate_minutes_per_media_type(user_media or {}, start_date, end_date)
@@ -3141,28 +3218,29 @@ def get_daily_hours_by_media_type(user_media, start_date, end_date):
                     if media_type in per_type_minutes and label in per_type_minutes[media_type]:
                         per_type_minutes[media_type][label] += runtime_minutes
 
-        # Podcasts: use end_date from Podcast model (similar to TV episodes)
-        # Each Podcast entry represents one episode completion
+        # Podcasts: use history records so deleted plays don't appear
         elif media_type == MediaTypes.PODCAST.value:
-            for media in media_list:
-                # Use end_date from the Podcast model (when episode was completed)
-                if not media.end_date:
+            podcast_user = _infer_user_from_user_media(user_media)
+            podcast_history_records, podcasts_lookup = _get_podcast_history_data(
+                podcast_user,
+                start_date,
+                end_date,
+            )
+            _, play_details = _collect_podcast_play_data(
+                podcast_history_records,
+                podcasts_lookup,
+                start_date,
+                end_date,
+            )
+
+            for _, play_dt, runtime_minutes in play_details:
+                if not play_dt or runtime_minutes <= 0:
                     continue
-                
-                completion_date = _localize_datetime(media.end_date).date()
+
+                completion_date = play_dt.date()
                 if completion_date < start_date_dt or completion_date > end_date_dt:
                     continue
-                
-                # Get runtime from item or use progress (stored in minutes)
-                runtime_minutes = 0
-                if hasattr(media, "item") and media.item.runtime_minutes:
-                    runtime_minutes = media.item.runtime_minutes
-                elif media.progress > 0:
-                    runtime_minutes = media.progress
-                
-                if runtime_minutes <= 0:
-                    continue
-                
+
                 label = completion_date.isoformat()
                 if media_type in per_type_minutes and label in per_type_minutes[media_type]:
                     per_type_minutes[media_type][label] += runtime_minutes

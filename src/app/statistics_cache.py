@@ -91,6 +91,7 @@ def build_statistics_data(user, start_date, end_date):
         user_media,
         start_date,
         end_date,
+        user=user,
     )
     hours_per_media_type = stats.get_hours_per_media_type(
         user_media,
@@ -468,4 +469,3 @@ def schedule_all_ranges_refresh(user_id: int, debounce_seconds: int = 30, countd
                 exc,
             )
             refresh_statistics_cache(user_id, range_name)
-
