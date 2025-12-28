@@ -1,4 +1,5 @@
 import logging
+import time
 from datetime import UTC, timedelta
 from pathlib import Path
 
@@ -2435,6 +2436,7 @@ def delete_history_record(request, media_type, history_id):
 def history(request):
     """Show a day-by-day history of episode and movie plays."""
     try:
+        view_start = time.perf_counter()
         # Extract filter parameters from query string
         filters = {}
         int_params = ['album', 'artist', 'tv', 'season', 'season_number', 'podcast_show']
@@ -2463,6 +2465,15 @@ def history(request):
             date_filters["start_date"] = start_date_str
         if end_date_str:
             date_filters["end_date"] = end_date_str
+
+        logger.info(
+            "history_view_start user_id=%s page=%s filters=%s date_filters=%s logging_style=%s",
+            request.user.id,
+            request.GET.get("page", 1),
+            filters,
+            date_filters,
+            logging_style,
+        )
 
         # Get history days with filters applied
         history_days_all = history_cache.get_history_days(
@@ -2511,6 +2522,15 @@ def history(request):
             "days_per_page": paginator.per_page,
             "active_filters": active_filters,  # Pass filters to template for pagination
         }
+        logger.info(
+            "history_view_end user_id=%s page=%s total_days=%s page_days=%s total_pages=%s elapsed_ms=%.2f",
+            request.user.id,
+            current_page,
+            paginator.count,
+            len(history_days),
+            paginator.num_pages,
+            (time.perf_counter() - view_start) * 1000,
+        )
         return render(request, "app/history.html", context)
     except OperationalError as error:
         logger.error("Database error in history view: %s", error, exc_info=True)

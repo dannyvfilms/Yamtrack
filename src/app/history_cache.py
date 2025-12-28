@@ -1,6 +1,7 @@
 """Utilities for caching the History page."""
 
 import logging
+import time
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -39,6 +40,18 @@ def _cache_key(user_id: int, logging_style: str) -> str:
 
 def _refresh_lock_key(user_id: int, logging_style: str) -> str:
     return f"{HISTORY_REFRESH_LOCK_PREFIX}_{user_id}_{logging_style or 'repeats'}"
+
+
+def _get_rss_kb():
+    try:
+        import resource
+    except Exception:
+        return None
+
+    try:
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    except Exception:
+        return None
 
 
 def _localize_datetime(value):
@@ -356,6 +369,17 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
     """
     filters = filters or {}
     date_filters = date_filters or {}
+    build_start = time.perf_counter()
+    rss_kb_start = _get_rss_kb()
+    entry_counts = {
+        "episodes": 0,
+        "movies": 0,
+        "music": 0,
+        "podcasts": 0,
+        "games": 0,
+        "boardgames": 0,
+    }
+    music_history_records_scanned = 0
 
     # Parse date filters
     start_date = None
@@ -376,6 +400,14 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
         logging_style_override = None
     game_logging_style = logging_style_override or getattr(user, "game_logging_style", "repeats")
 
+    logger.info(
+        "history_build_start user_id=%s filters=%s date_filters=%s logging_style=%s",
+        user.id,
+        filters,
+        date_filters,
+        game_logging_style,
+    )
+
     media_type_filter = filters.get('media_type')
     target_media_id = filters.get('media_id')
     target_source = filters.get('source')
@@ -386,6 +418,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
     if target_source is not None:
         target_source = str(target_source)
 
+    episodes_start = time.perf_counter()
     episodes = (
         Episode.objects.filter(
             related_season__user=user,
@@ -431,7 +464,15 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
             continue
         history_key = (ep.related_season_id, ep_item.episode_number)
         episode_history_map[history_key].append(ep)
+    logger.info(
+        "history_build_episodes user_id=%s count=%s history_keys=%s elapsed_ms=%.2f",
+        user.id,
+        len(episodes),
+        len(episode_history_map),
+        (time.perf_counter() - episodes_start) * 1000,
+    )
 
+    movies_start = time.perf_counter()
     movies_qs = Movie.objects.filter(
         user=user,
     ).filter(
@@ -465,6 +506,18 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
         (row["item__media_id"], row["item__source"]): row["play_count"]
         for row in movie_play_counts
     }
+    try:
+        movies_count = movies_qs.count()
+    except Exception:
+        movies_count = None
+    logger.info(
+        "history_build_movies user_id=%s qs_count=%s play_map=%s elapsed_ms=%.2f",
+        user.id,
+        movies_count,
+        len(movie_play_map),
+        (time.perf_counter() - movies_start) * 1000,
+    )
+    games_start = time.perf_counter()
     games = (
         Game.objects.filter(user=user)
         .select_related("item")
@@ -480,8 +533,18 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
             games = games.filter(item__media_id=target_media_id, item__source=target_source)
         if media_type_filter == MediaTypes.BOARDGAME.value:
             boardgames = boardgames.filter(item__media_id=target_media_id, item__source=target_source)
+
+    try:
+        games_count = games.count()
+    except Exception:
+        games_count = None
+    try:
+        boardgames_count = boardgames.count()
+    except Exception:
+        boardgames_count = None
     
     # Music - query all music entries with end_date
+    music_start = time.perf_counter()
     music_entries = (
         Music.objects.filter(
             user=user,
@@ -505,8 +568,14 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
             item__media_id=target_media_id,
             item__source=target_source,
         )
+
+    try:
+        music_entries_count = music_entries.count()
+    except Exception:
+        music_entries_count = None
     
     # Podcasts - query history records directly to ensure deleted records don't show up
+    podcast_start = time.perf_counter()
     # Query HistoricalPodcast directly, filtering by user and end_date at database level
     from django.apps import apps
     HistoricalPodcast = apps.get_model("app", "HistoricalPodcast")
@@ -528,6 +597,11 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
         podcast_history_records = podcast_history_records.filter(end_date__lte=end_date)
     if podcast_show_filter:
         podcast_history_records = podcast_history_records.filter(show_id=podcast_show_filter)
+
+    try:
+        podcast_history_count = podcast_history_records.count()
+    except Exception:
+        podcast_history_count = None
     
     # Get unique podcast IDs from history records to fetch podcast metadata
     podcast_ids = list(set(podcast_history_records.values_list("id", flat=True)))
@@ -695,6 +769,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
             entry = _build_episode_entry(episode, episode_title_map, episode_history_map)
             if entry:
                 entries.append(entry)
+                entry_counts["episodes"] += 1
 
     # Process movies only if not filtering by specific media type or if filtering by movie
     if process_all or media_type_filter == MediaTypes.MOVIE.value:
@@ -711,6 +786,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
             play_count = annotated or repeat_attr or 1
             entry["play_count"] = play_count
             entries.append(entry)
+            entry_counts["movies"] += 1
 
     # Process music entries (always process if filtering by music, or if processing all)
     if process_all or has_music_filter or media_type_filter == MediaTypes.MUSIC.value:
@@ -728,6 +804,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
             # Find all days this track was played by checking history records
             days_played = set()
             for history_record in music.history.all():
+                music_history_records_scanned += 1
                 # Only include history records for this user (or null history_user for legacy records)
                 history_user = getattr(history_record, "history_user", None)
                 if history_user is not None and history_user != user:
@@ -794,6 +871,17 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
             entry = _build_music_album_entries(album_music_entries, album, day_date, user, track_duration_cache)
             if entry:
                 entries.append(entry)
+                entry_counts["music"] += 1
+
+        logger.info(
+            "history_build_music user_id=%s music_entries=%s history_records_scanned=%s album_day_groups=%s entries=%s elapsed_ms=%.2f",
+            user.id,
+            music_entries_count,
+            music_history_records_scanned,
+            len(music_by_album_day),
+            entry_counts["music"],
+            (time.perf_counter() - music_start) * 1000,
+        )
 
     # Podcasts - process when showing all media or filtering to podcasts
     # Query history records directly to ensure deleted records don't show up
@@ -878,9 +966,19 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                         "entry_key": history_record.history_id,
                     },
                 )
+                entry_counts["podcasts"] += 1
             except Exception as e:
                 logger.error("Error processing podcast history record %s: %s", history_record.history_id, e, exc_info=True)
                 continue
+
+        logger.info(
+            "history_build_podcasts user_id=%s history_records=%s podcast_ids=%s entries=%s elapsed_ms=%.2f",
+            user.id,
+            podcast_history_count,
+            len(podcast_ids),
+            entry_counts["podcasts"],
+            (time.perf_counter() - podcast_start) * 1000,
+        )
 
     # Games - process when showing all media or filtering to games/board games
     process_games = process_all or media_type_filter == MediaTypes.GAME.value
@@ -921,6 +1019,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                             "entry_key": game.id,
                         },
                     )
+                    entry_counts["games"] += 1
             if process_boardgames:
                 for boardgame in boardgames:
                     if not (boardgame.start_date or boardgame.end_date):
@@ -961,6 +1060,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                             "entry_key": boardgame.id,
                         },
                     )
+                    entry_counts["boardgames"] += 1
         else:
             # repeats style: spread playtime evenly across date range
             if process_games:
@@ -1016,6 +1116,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                                 "entry_key": f"{game.id}-{day.strftime('%Y%m%d')}",
                             },
                         )
+                        entry_counts["games"] += 1
             if process_boardgames:
                 for boardgame in boardgames:
                     if not (boardgame.start_date or boardgame.end_date):
@@ -1069,6 +1170,18 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                                 "entry_key": f"{boardgame.id}-{day.strftime('%Y%m%d')}",
                             },
                         )
+                        entry_counts["boardgames"] += 1
+
+        logger.info(
+            "history_build_games user_id=%s games=%s boardgames=%s entries_games=%s entries_boardgames=%s logging_style=%s elapsed_ms=%.2f",
+            user.id,
+            games_count,
+            boardgames_count,
+            entry_counts["games"],
+            entry_counts["boardgames"],
+            game_logging_style,
+            (time.perf_counter() - games_start) * 1000,
+        )
 
     entries.sort(key=lambda entry: entry["played_at_local"], reverse=True)
 
@@ -1099,6 +1212,23 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
             },
         )
 
+    rss_kb_end = _get_rss_kb()
+    rss_kb_delta = None
+    if rss_kb_start is not None and rss_kb_end is not None:
+        rss_kb_delta = rss_kb_end - rss_kb_start
+
+    logger.info(
+        "history_build_end user_id=%s entries=%s history_days=%s entry_counts=%s elapsed_ms=%.2f rss_kb_start=%s rss_kb_end=%s rss_kb_delta=%s",
+        user.id,
+        len(entries),
+        len(history_days),
+        entry_counts,
+        (time.perf_counter() - build_start) * 1000,
+        rss_kb_start,
+        rss_kb_end,
+        rss_kb_delta,
+    )
+
     return history_days
 
 
@@ -1127,57 +1257,125 @@ def get_history_days(user, filters=None, date_filters=None, logging_style_overri
         date_filters: Optional dict with 'start_date' and 'end_date' (date strings)
         logging_style_override: Optional override for game logging style ("sessions" or "repeats")
     """
+    start = time.perf_counter()
+    log_filters = filters or {}
+    log_date_filters = date_filters or {}
     # If filters, date_filters, or logging override are provided, bypass cache and build filtered results directly
     if filters or date_filters or logging_style_override:
-        return build_history_days(
+        logger.info(
+            "history_cache_bypass user_id=%s filters=%s date_filters=%s logging_style_override=%s",
+            user.id,
+            log_filters,
+            log_date_filters,
+            logging_style_override,
+        )
+        history_days = build_history_days(
             user,
             filters=filters,
             date_filters=date_filters,
             logging_style_override=logging_style_override,
         )
+        logger.info(
+            "history_cache_bypass_done user_id=%s days=%s elapsed_ms=%.2f",
+            user.id,
+            len(history_days),
+            (time.perf_counter() - start) * 1000,
+        )
+        return history_days
     
     logging_style = getattr(user, "game_logging_style", "repeats")
-    cache_entry = cache.get(_cache_key(user.id, logging_style))
-    refresh_lock = cache.get(_refresh_lock_key(user.id, logging_style))
+    cache_key = _cache_key(user.id, logging_style)
+    lock_key = _refresh_lock_key(user.id, logging_style)
+    cache_entry = cache.get(cache_key)
+    refresh_lock = cache.get(lock_key)
     # Clean up stale/legacy locks so refresh can proceed
     if refresh_lock:
         # Legacy True/False locks (no metadata) or expired metadata get cleared
         if not isinstance(refresh_lock, dict):
-            cache.delete(_refresh_lock_key(user.id, logging_style))
+            cache.delete(lock_key)
             refresh_lock = None
         else:
             started_at = refresh_lock.get("started_at")
             if started_at and timezone.now() - started_at > HISTORY_REFRESH_LOCK_MAX_AGE:
-                cache.delete(_refresh_lock_key(user.id, logging_style))
+                cache.delete(lock_key)
                 refresh_lock = None
+
+    lock_age_s = None
+    if isinstance(refresh_lock, dict):
+        started_at = refresh_lock.get("started_at")
+        if started_at:
+            lock_age_s = (timezone.now() - started_at).total_seconds()
+
+    logger.info(
+        "history_cache_lookup user_id=%s cache_key=%s hit=%s lock=%s lock_age_s=%s",
+        user.id,
+        cache_key,
+        cache_entry is not None,
+        refresh_lock is not None,
+        lock_age_s,
+    )
 
     if cache_entry:
         # Always return cached data if it exists (even if stale)
         # This prevents timeouts while background refresh is in progress
         built_at = cache_entry.get("built_at")
+        cache_age_s = None
+        if built_at:
+            cache_age_s = (timezone.now() - built_at).total_seconds()
         if built_at and timezone.now() - built_at > HISTORY_STALE_AFTER:
             # Check if a refresh is already in progress before scheduling a new one
             # This prevents re-scheduling a refresh immediately after one completes
-            refresh_lock = cache.get(_refresh_lock_key(user.id, logging_style))
+            refresh_lock = cache.get(lock_key)
             if refresh_lock is None:
                 # No refresh in progress, safe to schedule a new one
-                schedule_history_refresh(user.id, logging_style)
+                scheduled = schedule_history_refresh(user.id, logging_style)
+                logger.info(
+                    "history_cache_stale_refresh user_id=%s logging_style=%s scheduled=%s cache_age_s=%s",
+                    user.id,
+                    logging_style,
+                    scheduled,
+                    cache_age_s,
+                )
         # Note: Even if cache is not stale, a refresh might be in progress
         # (e.g., triggered by music addition). The frontend will check via cache-status endpoint.
-        return cache_entry.get("history_days", [])
+        history_days = cache_entry.get("history_days", [])
+        logger.info(
+            "history_cache_hit user_id=%s logging_style=%s days=%s cache_age_s=%s",
+            user.id,
+            logging_style,
+            len(history_days),
+            cache_age_s,
+        )
+        return history_days
 
     # Cache miss - check if refresh is in progress
-    refresh_lock = cache.get(_refresh_lock_key(user.id, logging_style))
+    refresh_lock = cache.get(lock_key)
     if refresh_lock is not None:
         # Refresh is in progress, return empty data
         # Frontend will poll and update when refresh completes
-        logger.debug("History cache miss but refresh in progress for user %s, returning empty", user.id)
+        logger.info(
+            "history_cache_miss_refreshing user_id=%s logging_style=%s returning_empty=true",
+            user.id,
+            logging_style,
+        )
         return []
 
     # No cache and no refresh in progress - build inline
     # This handles the case where cache was never built or expired naturally
+    logger.info(
+        "history_cache_miss_build user_id=%s logging_style=%s",
+        user.id,
+        logging_style,
+    )
     history_days = build_history_days(user)
     cache_history_days(user.id, logging_style, history_days)
+    logger.info(
+        "history_cache_miss_build_done user_id=%s logging_style=%s days=%s elapsed_ms=%.2f",
+        user.id,
+        logging_style,
+        len(history_days),
+        (time.perf_counter() - start) * 1000,
+    )
     return history_days
 
 
