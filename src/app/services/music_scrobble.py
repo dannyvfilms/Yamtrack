@@ -2,7 +2,7 @@
 
 import logging
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import date, timedelta
 from unittest.mock import Mock
 
 from django.conf import settings
@@ -68,7 +68,7 @@ class ResolvedMusicMetadata:
     track_number: int | None = None
     disc_number: int = 1
     track_genres: list = field(default_factory=list)
-    album_release_date: timezone.datetime.date | None = None
+    album_release_date: date | None = None
     album_image: str = settings.IMG_NONE
     album_release_type: str = ""
     album_genres: list = field(default_factory=list)

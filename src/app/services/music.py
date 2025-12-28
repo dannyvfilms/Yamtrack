@@ -73,7 +73,7 @@ def resolve_artist_mbid(name: str, sort_name: str | None = None):
         # Try normalization variants if the name has special chars
         if "/" in base or "-" in base:
             variants.append(base.replace("/", " ").replace("-", " "))
-            variants.append(f'"{base.replace('/', ' ').replace('-', ' ')}"')
+            variants.append(f'"{base.replace("/", " ").replace("-", " ")}"')
 
     seen = set()
     variants_tried = []
@@ -346,7 +346,7 @@ def resolve_album_mbid(album_title: str, artist_name: str | None = None):
         # Try normalization variants if the name has special chars
         if "/" in base or "-" in base:
             variants.append(base.replace("/", " ").replace("-", " "))
-            variants.append(f'"{base.replace('/', ' ').replace('-', ' ')}"')
+            variants.append(f'"{base.replace("/", " ").replace("-", " ")}"')
 
     seen = set()
     variants_tried = []
