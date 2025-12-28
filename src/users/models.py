@@ -919,7 +919,7 @@ class User(AbstractUser):
         schedules = []
         for periodic_task in periodic_tasks:
             source = task_to_source.get(periodic_task.task, "unknown")
-            
+
             # Skip if source is unknown (task not in our mapping)
             if source == "unknown":
                 continue

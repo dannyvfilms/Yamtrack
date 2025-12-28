@@ -1,13 +1,12 @@
 """Services for recording music playback/scrobbles."""
 
-from dataclasses import dataclass, field
-from typing import Dict, Optional
 import logging
-from unittest.mock import Mock
+from dataclasses import dataclass, field
 from datetime import timedelta
+from unittest.mock import Mock
 
 from django.conf import settings
-from django.db import IntegrityError, transaction, models
+from django.db import IntegrityError, models, transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.utils.text import slugify
@@ -41,14 +40,14 @@ class MusicPlaybackEvent:
 
     user: settings.AUTH_USER_MODEL
     track_title: str
-    artist_name: Optional[str] = None
-    album_title: Optional[str] = None
-    track_number: Optional[int] = None
-    duration_ms: Optional[int] = None
-    plex_rating_key: Optional[str] = None
-    external_ids: Dict[str, Optional[str]] = field(default_factory=dict)
+    artist_name: str | None = None
+    album_title: str | None = None
+    track_number: int | None = None
+    duration_ms: int | None = None
+    plex_rating_key: str | None = None
+    external_ids: dict[str, str | None] = field(default_factory=dict)
     completed: bool = False
-    played_at: Optional[timezone.datetime] = None
+    played_at: timezone.datetime | None = None
     defer_cover_prefetch: bool = False
 
 
@@ -59,17 +58,17 @@ class ResolvedMusicMetadata:
     track_title: str
     artist_name: str
     album_title: str
-    duration_ms: Optional[int]
+    duration_ms: int | None
     source: str
     media_id: str
-    musicbrainz_recording_id: Optional[str] = None
-    musicbrainz_release_id: Optional[str] = None
-    musicbrainz_release_group_id: Optional[str] = None
-    musicbrainz_artist_id: Optional[str] = None
-    track_number: Optional[int] = None
+    musicbrainz_recording_id: str | None = None
+    musicbrainz_release_id: str | None = None
+    musicbrainz_release_group_id: str | None = None
+    musicbrainz_artist_id: str | None = None
+    track_number: int | None = None
     disc_number: int = 1
     track_genres: list = field(default_factory=list)
-    album_release_date: Optional[timezone.datetime.date] = None
+    album_release_date: timezone.datetime.date | None = None
     album_image: str = settings.IMG_NONE
     album_release_type: str = ""
     album_genres: list = field(default_factory=list)
@@ -79,7 +78,7 @@ class ResolvedMusicMetadata:
     artist_image: str = ""
 
 
-def record_music_playback(event: MusicPlaybackEvent) -> Optional[Music]:
+def record_music_playback(event: MusicPlaybackEvent) -> Music | None:
     """Record a music play or scrobble.
 
     This resolves canonical metadata (MusicBrainz when possible), ensures
@@ -256,9 +255,9 @@ def _populate_from_recording(metadata: ResolvedMusicMetadata, recording_id: str)
 
 def _populate_from_release(
     metadata: ResolvedMusicMetadata,
-    release_id: Optional[str],
-    release_group_id: Optional[str],
-    track_title: Optional[str],
+    release_id: str | None,
+    release_group_id: str | None,
+    track_title: str | None,
 ) -> bool:
     """Populate metadata using a release and track title match."""
     release_lookup_id = release_id
@@ -393,7 +392,7 @@ def _populate_from_search(metadata: ResolvedMusicMetadata) -> None:
         break
 
 
-def _match_release_track(tracks, track_title: str, duration_ms: Optional[int]):
+def _match_release_track(tracks, track_title: str, duration_ms: int | None):
     """Find the best matching track from a release list."""
     if not tracks:
         return None
@@ -813,7 +812,7 @@ def _choose_primary_album(albums: list[Album], preferred: Album) -> Album:
     return best
 
 
-def _match_track_in_album(album: Album, source_track: Track, strict: bool = False) -> Optional[Track]:
+def _match_track_in_album(album: Album, source_track: Track, strict: bool = False) -> Track | None:
     """Find a track in album matching source by number or normalized title."""
     if source_track.track_number:
         match = album.tracklist.filter(track_number=source_track.track_number).first()
@@ -950,10 +949,10 @@ def _update_music_entry(
 
 
 def _select_media_id(
-    recording_id: Optional[str],
-    plex_rating_key: Optional[str],
-    artist_name: Optional[str],
-    track_title: Optional[str],
+    recording_id: str | None,
+    plex_rating_key: str | None,
+    artist_name: str | None,
+    track_title: str | None,
 ) -> str:
     """Choose the best media_id for the Item."""
     if recording_id:
@@ -971,7 +970,7 @@ def _limit_media_id(media_id: str) -> str:
     return media_id[:max_length] if max_length and len(media_id) > max_length else media_id
 
 
-def _runtime_minutes_from_ms(duration_ms: Optional[int]) -> Optional[int]:
+def _runtime_minutes_from_ms(duration_ms: int | None) -> int | None:
     """Convert ms duration to runtime minutes suitable for Item."""
     if not duration_ms:
         return None
@@ -979,7 +978,7 @@ def _runtime_minutes_from_ms(duration_ms: Optional[int]) -> Optional[int]:
     return minutes or None
 
 
-def _parse_release_date(release_date: Optional[str]):
+def _parse_release_date(release_date: str | None):
     """Parse a release date string to date."""
     if not release_date:
         return None
@@ -994,7 +993,7 @@ def _parse_release_date(release_date: Optional[str]):
         return None
 
 
-def _coerce_int(value: Optional[int]) -> Optional[int]:
+def _coerce_int(value: int | None) -> int | None:
     """Return value as int if possible."""
     try:
         return int(value) if value is not None else None
@@ -1029,7 +1028,7 @@ def _log_search_candidates(query: str, candidates: list[dict]) -> None:
                 "artist_id": cand.get("artist_id"),
                 "release_id": cand.get("release_id"),
                 "release_group_id": cand.get("release_group_id"),
-            }
+            },
         )
     logger.debug("Top MusicBrainz candidates for '%s': %s", query, summary)
 
@@ -1114,10 +1113,10 @@ def _prefetch_missing_covers(artist: Artist) -> None:
     needs_art = Album.objects.filter(
         artist=artist,
     ).filter(
-        models.Q(image="") | models.Q(image=settings.IMG_NONE)
+        models.Q(image="") | models.Q(image=settings.IMG_NONE),
     ).filter(
         models.Q(musicbrainz_release_id__isnull=False)
-        | models.Q(musicbrainz_release_group_id__isnull=False)
+        | models.Q(musicbrainz_release_group_id__isnull=False),
     )
     if not needs_art.exists():
         return

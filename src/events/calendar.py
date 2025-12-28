@@ -7,12 +7,12 @@ from django.conf import settings
 from django.core.cache import cache
 from django.db.models import Exists, OuterRef, Q, Subquery
 from django.utils import timezone
+from simple_history.utils import bulk_update_with_history
 
 from app import config
-from app.models import Item, MediaTypes, Sources, TV, Status, PodcastEpisode
+from app.models import TV, Item, MediaTypes, PodcastEpisode, Sources, Status
 from app.providers import comicvine, services, tmdb
 from events.models import Event, SentinelDatetime
-from simple_history.utils import bulk_update_with_history
 
 logger = logging.getLogger(__name__)
 
@@ -645,8 +645,8 @@ def update_tv_status_for_new_season(tv_item, season_number):
         item__media_id=tv_item.media_id,
         item__source=tv_item.source,
         item__media_type=MediaTypes.TV.value,
-    ).select_related('item')
-    
+    ).select_related("item")
+
     if not tv_instances.exists():
         logger.debug(
             "No TV instances found for %s (season %s) - skipping status updates",
@@ -654,13 +654,13 @@ def update_tv_status_for_new_season(tv_item, season_number):
             season_number,
         )
         return
-    
+
     # Only update shows that are Completed
     tv_to_update = [
-        tv for tv in tv_instances 
+        tv for tv in tv_instances
         if tv.status == Status.COMPLETED.value
     ]
-    
+
     if not tv_to_update:
         logger.debug(
             "No Completed TV shows found for %s (season %s) - skipping status updates",
@@ -668,13 +668,13 @@ def update_tv_status_for_new_season(tv_item, season_number):
             season_number,
         )
         return
-    
+
     # Update to In Progress
     for tv in tv_to_update:
         tv.status = Status.IN_PROGRESS.value
-    
+
     bulk_update_with_history(tv_to_update, TV, fields=["status"])
-    
+
     logger.info(
         "Updated %d TV show(s) from Completed to In Progress for %s (season %s)",
         len(tv_to_update),
@@ -697,12 +697,11 @@ def get_episode_datetime(episode, season_number, episode_number, tvmaze_map):
     if episode["air_date"]:
         try:
             # Handle both string and datetime air dates
-            if hasattr(episode["air_date"], 'date'):
+            if hasattr(episode["air_date"], "date"):
                 # It's already a datetime object
                 return episode["air_date"]
-            else:
-                # It's a string, parse it
-                return date_parser(episode["air_date"])
+            # It's a string, parse it
+            return date_parser(episode["air_date"])
         except ValueError:
             logger.warning(
                 "Invalid air date for S%sE%s from TMDB: %s",
@@ -914,7 +913,7 @@ def process_podcast(item, events_bulk):
             item=item,
             content_number=episode_number,
             datetime=release_datetime,
-        )
+        ),
     )
 
 

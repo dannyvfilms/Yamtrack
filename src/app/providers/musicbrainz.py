@@ -34,16 +34,16 @@ def get_wikipedia_data(title):
     """
     if not title:
         return {"extract": None, "image": None}
-    
+
     # Normalize title for cache key and URL
-    normalized_title = title.replace(' ', '_')
+    normalized_title = title.replace(" ", "_")
     cache_key = f"wikipedia_data_{normalized_title.lower()}"
     cached = cache.get(cache_key)
     if cached is not None:
         return cached
-    
+
     result = {"extract": None, "image": None}
-    
+
     try:
         # Wikipedia API uses underscores for spaces in titles
         url = f"{WIKIPEDIA_API_BASE}/{normalized_title}"
@@ -52,33 +52,33 @@ def get_wikipedia_data(title):
             headers={"User-Agent": USER_AGENT},
             timeout=10,
         )
-        
+
         if response.ok:
             data = response.json()
-            
+
             # Get the extract (bio)
             extract = data.get("extract", "")
             result["extract"] = extract if extract else None
-            
+
             # Get the image - prefer originalimage, fall back to thumbnail
             original = data.get("originalimage", {})
             thumbnail = data.get("thumbnail", {})
-            
+
             # Use original if available and reasonable size, otherwise thumbnail
             if original.get("source"):
                 result["image"] = original["source"]
             elif thumbnail.get("source"):
                 result["image"] = thumbnail["source"]
-            
+
             # Cache for 7 days
             cache.set(cache_key, result, 60 * 60 * 24 * 7)
         else:
             # Cache the miss to avoid repeated failed lookups
             cache.set(cache_key, result, 60 * 60 * 24)  # Cache miss for 1 day
-            
+
     except Exception as e:
         logger.debug("Failed to fetch Wikipedia data for %s: %s", artist_name, e)
-    
+
     return result
 
 
@@ -105,16 +105,16 @@ def _mb_request(endpoint, params=None):
     """Make a rate-limited request to the MusicBrainz API."""
     _rate_limit()
     url = f"{BASE_URL}/{endpoint}"
-    
+
     if params is None:
         params = {}
     params["fmt"] = "json"
-    
+
     headers = {
         "User-Agent": USER_AGENT,
         "Accept": "application/json",
     }
-    
+
     try:
         response = services.api_request(
             Sources.MUSICBRAINZ.value,
@@ -152,7 +152,7 @@ def _try_fetch_cover_from_url(url):
             url,
             headers=headers,
         )
-        
+
         if response and "images" in response:
             # Prioritize front cover
             for image in response["images"]:
@@ -160,9 +160,9 @@ def _try_fetch_cover_from_url(url):
                     # Try different thumbnail sizes (prefer medium quality for performance)
                     thumbnails = image.get("thumbnails", {})
                     return (
-                        thumbnails.get("500") or 
+                        thumbnails.get("500") or
                         thumbnails.get("large") or
-                        thumbnails.get("250") or 
+                        thumbnails.get("250") or
                         image.get("image")
                     )
             # No front cover, use first available image
@@ -170,9 +170,9 @@ def _try_fetch_cover_from_url(url):
                 first_image = response["images"][0]
                 thumbnails = first_image.get("thumbnails", {})
                 return (
-                    thumbnails.get("500") or 
+                    thumbnails.get("500") or
                     thumbnails.get("large") or
-                    thumbnails.get("250") or 
+                    thumbnails.get("250") or
                     first_image.get("image")
                 )
     except Exception as e:
@@ -195,28 +195,28 @@ def get_cover_art(release_id=None, release_group_id=None):
     """
     if not release_id and not release_group_id:
         return settings.IMG_NONE
-    
+
     # Build cache key from both IDs
     cache_key = f"musicbrainz_cover_{release_id or 'none'}_{release_group_id or 'none'}"
     cached = cache.get(cache_key)
     if cached:
         return cached
-    
+
     image_url = None
-    
+
     # Try release-specific cover art first (more specific)
     if release_id:
         image_url = _try_fetch_cover_from_url(f"{COVER_ART_BASE}/release/{release_id}")
-    
+
     # If no cover for release, try release group as fallback
     if not image_url and release_group_id:
         image_url = _try_fetch_cover_from_url(f"{COVER_ART_BASE}/release-group/{release_group_id}")
-    
+
     result = image_url or settings.IMG_NONE
-    
+
     # Cache the result (even if it's IMG_NONE) to avoid repeated lookups
     cache.set(cache_key, result, 60 * 60 * 24 * 7)  # Cache for 7 days
-    
+
     return result
 
 
@@ -239,27 +239,27 @@ def search(query, page=1, skip_cover_art=False):
     cached = cache.get(cache_key)
     if cached:
         return cached
-    
+
     per_page = 20
     offset = (page - 1) * per_page
-    
+
     # Search for recordings (tracks)
     params = {
         "query": query,
         "limit": per_page,
         "offset": offset,
     }
-    
+
     response = _mb_request("recording", params)
-    
+
     recordings = response.get("recordings", [])
     total_results = response.get("count", 0)
-    
+
     results = []
     for recording in recordings:
         recording_id = recording.get("id")
         title = recording.get("title", "Unknown")
-        
+
         # Get artist info
         artist_credits = recording.get("artist-credit", [])
         artist_name = ""
@@ -274,7 +274,7 @@ def search(query, page=1, skip_cover_art=False):
                     artist_parts.append(credit.get("name", credit.get("artist", {}).get("name", "")))
                     artist_parts.append(credit.get("joinphrase", ""))
             artist_name = "".join(artist_parts).strip()
-        
+
         # Get release info (album) and image
         releases = recording.get("releases", [])
         image = settings.IMG_NONE
@@ -282,7 +282,7 @@ def search(query, page=1, skip_cover_art=False):
         album_title = ""
         release_id = None
         release_group_id = None
-        
+
         if releases:
             first_release = releases[0]
             album_title = first_release.get("title", "")
@@ -294,18 +294,18 @@ def search(query, page=1, skip_cover_art=False):
             if not skip_cover_art:
                 if release_id:
                     image = _get_cover_art(release_id)
-        
+
         # Get duration in milliseconds, convert to minutes
         duration_ms = recording.get("length")
         duration_minutes = None
         if duration_ms:
             duration_minutes = round(duration_ms / 60000, 1)
-        
+
         # Build display title with artist
         display_title = title
         if artist_name:
             display_title = f"{title} - {artist_name}"
-        
+
         results.append({
             "media_id": recording_id,
             "source": Sources.MUSICBRAINZ.value,
@@ -321,14 +321,14 @@ def search(query, page=1, skip_cover_art=False):
             "duration_minutes": duration_minutes,
             "release_date": release_date,
         })
-    
+
     data = helpers.format_search_response(
         page=page,
         per_page=per_page,
         total_results=total_results,
         results=results,
     )
-    
+
     cache.set(cache_key, data, 60 * 60 * 24)  # Cache for 24 hours
     return data
 
@@ -339,17 +339,17 @@ def recording(media_id):
     cached = cache.get(cache_key)
     if cached:
         return cached
-    
+
     # Fetch recording with releases and artist-credits included
     params = {
         "inc": "artists+releases+release-groups+genres+tags",
     }
-    
+
     response = _mb_request(f"recording/{media_id}", params)
-    
+
     title = response.get("title", "Unknown")
     recording_id = response.get("id", media_id)
-    
+
     # Get artist info
     artist_credits = response.get("artist-credit", [])
     artist_name = ""
@@ -364,7 +364,7 @@ def recording(media_id):
                 artist_parts.append(credit.get("name", artist_data.get("name", "")))
                 artist_parts.append(credit.get("joinphrase", ""))
         artist_name = "".join(artist_parts).strip()
-    
+
     # Get release info
     releases = response.get("releases", [])
     release_date = None
@@ -372,7 +372,7 @@ def recording(media_id):
     album_id = None
     release_group_id = None
     image = settings.IMG_NONE
-    
+
     if releases:
         # Use the first release with a date, or just the first release
         selected_release = None
@@ -380,17 +380,17 @@ def recording(media_id):
             if release.get("date"):
                 selected_release = release
                 break
-        
+
         if not selected_release and releases:
             selected_release = releases[0]
-        
+
         if selected_release:
             album_title = selected_release.get("title", "")
             album_id = selected_release.get("id")
             release_date = selected_release.get("date")
             release_group_id = selected_release.get("release-group", {}).get("id")
             image = _get_cover_art(album_id, release_group_id)
-    
+
     # Get duration
     duration_ms = response.get("length")
     duration_minutes = None
@@ -412,12 +412,12 @@ def recording(media_id):
             name = t.get("name")
             if name:
                 genres.append(name)
-    
+
     # Build display title with artist
     display_title = title
     if artist_name:
         display_title = f"{title} - {artist_name}"
-    
+
     result = {
         "media_id": recording_id,
         "source": Sources.MUSICBRAINZ.value,
@@ -443,7 +443,7 @@ def recording(media_id):
         "_album_title": album_title,
         "_album_id": album_id,
     }
-    
+
     cache.set(cache_key, result, 60 * 60 * 24 * 7)  # Cache for 7 days
     return result
 
@@ -484,7 +484,7 @@ def search_artists(query, page=1):
                 query.replace("/", "-"),
             })
         # MusicBrainz sometimes matches better with quoted exact queries
-        variants.add(f"\"{query}\"")
+        variants.add(f'"{query}"')
         # Run fallback queries until we get a hit
         for variant in variants:
             if variant == query:
@@ -516,11 +516,11 @@ def search_artists(query, page=1):
         name = artist.get("name", "Unknown")
         sort_name = artist.get("sort-name", name)
         disambiguation = artist.get("disambiguation", "")
-        
+
         # Get life-span for display
         life_span = artist.get("life-span", {})
         begin = life_span.get("begin", "")
-        
+
         # Keep both artist_id and id for callers that expect the generic key
         data["results"].append({
             "artist_id": artist_id,
@@ -630,20 +630,20 @@ def get_artist(artist_id):
     disambiguation = response.get("disambiguation", "")
     artist_type = response.get("type", "")
     country = response.get("country", "")
-    
+
     # Life span
     life_span = response.get("life-span", {})
     begin_date = life_span.get("begin", "")
     end_date = life_span.get("end", "")
     ended = life_span.get("ended", False)
-    
+
     # Area (country/location)
     area = response.get("area") or {}
     area_name = area.get("name", "") if isinstance(area, dict) else ""
-    
+
     # Annotation from MusicBrainz (often just editor notes, not a bio)
     mb_annotation = response.get("annotation", "")
-    
+
     # Try to get the Wikipedia article title from MusicBrainz relations
     # This is more reliable than guessing (e.g., "Queen" -> "Queen_(band)")
     wikipedia_title = None
@@ -658,30 +658,30 @@ def get_artist(artist_id):
                 # Prefer English Wikipedia
                 if "en.wikipedia.org" in url:
                     break
-    
+
     # Get Wikipedia data - try multiple strategies
     wikipedia_bio = None
     wikipedia_image = None
-    
+
     if wikipedia_title:
         # Best case: MusicBrainz has the exact Wikipedia URL
         wiki_data = get_wikipedia_data(wikipedia_title)
         wikipedia_bio = wiki_data.get("extract")
         wikipedia_image = wiki_data.get("image")
-    
+
     if not wikipedia_bio:
         # Try artist name directly (works for "Kenny G", etc.)
         wiki_data = get_wikipedia_data(name)
         wikipedia_bio = wiki_data.get("extract")
         wikipedia_image = wiki_data.get("image")
-    
+
     if not wikipedia_bio and disambiguation:
         # Last resort: try name with disambiguation (e.g., "Queen_(band)")
         wiki_title_with_disambig = f"{name}_({disambiguation.replace(' ', '_')})"
         wiki_data = get_wikipedia_data(wiki_title_with_disambig)
         wikipedia_bio = wiki_data.get("extract")
         wikipedia_image = wiki_data.get("image")
-    
+
     # Genres from MusicBrainz (new genre system)
     genres = []
     genre_data = response.get("genres", [])
@@ -695,7 +695,7 @@ def get_artist(artist_id):
             })
     # Sort by count (most relevant first)
     genres.sort(key=lambda x: x.get("count", 0), reverse=True)
-    
+
     # Tags (user-submitted tags, often more available than genres)
     tags = []
     tag_data = response.get("tags", [])
@@ -709,7 +709,7 @@ def get_artist(artist_id):
             })
     # Sort by count (most relevant first)
     tags.sort(key=lambda x: x.get("count", 0), reverse=True)
-    
+
     # Rating
     rating_data = response.get("rating", {})
     rating = rating_data.get("value")  # 0-5 scale
@@ -780,12 +780,12 @@ def get_artist_discography(artist_id, skip_cover_art=False):
 
     response = _mb_request("release-group", params)
     release_groups = response.get("release-groups", [])
-    
+
     # Filter to sensible types (Album, EP, Compilation)
     # Skip Singles unless you want them
     allowed_types = {"Album", "EP", "Compilation"}
     release_groups = [
-        rg for rg in release_groups 
+        rg for rg in release_groups
         if rg.get("primary-type") in allowed_types
     ]
 
@@ -821,10 +821,10 @@ def get_artist_discography(artist_id, skip_cover_art=False):
         "status": "official",
         "limit": 100,
     }
-    
+
     release_response = _mb_request("release", release_params)
     releases = release_response.get("releases", [])
-    
+
     # Map release-group-id to best release (prefer ones with cover art)
     rg_to_release = {}
     for release in releases:
@@ -838,12 +838,12 @@ def get_artist_discography(artist_id, skip_cover_art=False):
     for album in albums:
         rg_id = album["release_group_id"]
         release_id = None
-        
+
         if rg_id in rg_to_release:
             release = rg_to_release[rg_id]
             release_id = release.get("id")
             album["release_id"] = release_id
-        
+
         if not skip_cover_art:
             # Try to get cover art - use both release_id and release_group_id
             # This ensures we try the release-group fallback even if we have a release_id
@@ -872,7 +872,7 @@ def get_release_for_group(release_group_id):
     cached = cache.get(cache_key)
     if cached:
         return cached
-    
+
     try:
         # Query releases for this release group - try official first
         params = {
@@ -880,36 +880,36 @@ def get_release_for_group(release_group_id):
             "status": "official",
             "limit": 5,
         }
-        
+
         response = _mb_request("release", params)
         releases = response.get("releases", [])
-        
+
         if releases:
             # Prefer releases with media/tracks info
             # Just pick the first official release
             release_id = releases[0].get("id")
             cache.set(cache_key, release_id, 60 * 60 * 24 * 7)
             return release_id
-        
+
         # If no official releases, try without status filter (any release type)
         logger.debug("No official releases found for release_group %s, trying any release", release_group_id)
         params = {
             "release-group": release_group_id,
             "limit": 5,
         }
-        
+
         response = _mb_request("release", params)
         releases = response.get("releases", [])
-        
+
         if releases:
             release_id = releases[0].get("id")
             logger.info("Found non-official release %s for release_group %s", release_id, release_group_id)
             cache.set(cache_key, release_id, 60 * 60 * 24 * 7)
             return release_id
-            
+
     except Exception as e:
         logger.warning("Failed to get release for group %s: %s", release_group_id, e)
-    
+
     return None
 
 

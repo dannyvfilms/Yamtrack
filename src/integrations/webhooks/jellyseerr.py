@@ -4,7 +4,7 @@ from django.db import IntegrityError
 from django.utils import timezone
 
 from app import providers
-from app.models import Item, MediaTypes, Movie, Sources, Status, TV
+from app.models import TV, Item, MediaTypes, Movie, Sources, Status
 
 logger = logging.getLogger(__name__)
 
@@ -75,11 +75,10 @@ class JellyseerrWebhookProcessor:
                     sorted(trigger_statuses),
                 )
                 return
-        else:
-            # Default behaviour: do not add at UNKNOWN unless user explicitly configures it.
-            if media_status == "UNKNOWN":
-                logger.debug("Jellyseerr webhook ignored: default behaviour skips UNKNOWN")
-                return
+        # Default behaviour: do not add at UNKNOWN unless user explicitly configures it.
+        elif media_status == "UNKNOWN":
+            logger.debug("Jellyseerr webhook ignored: default behaviour skips UNKNOWN")
+            return
 
         requester = (
             (payload.get("requestedBy_username") or "").strip()
@@ -197,14 +196,14 @@ class JellyseerrWebhookProcessor:
         model = Movie if media_type == MediaTypes.MOVIE.value else TV
 
         try:
-            media_obj, created = model.objects.get_or_create(
+            media_obj, _created = model.objects.get_or_create(
                 user=user,
                 item=item,
                 defaults=defaults,
             )
+
         except IntegrityError:
             media_obj = model.objects.filter(user=user, item=item).first()
-            created = False
 
         return media_obj
 

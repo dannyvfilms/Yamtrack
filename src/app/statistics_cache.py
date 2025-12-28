@@ -85,7 +85,7 @@ def build_statistics_data(user, start_date, end_date):
         status_distribution,
     )
     top_played = stats.get_top_played_media(user_media, start_date, end_date)
-    
+
     # Calculate hours and detailed consumption summaries
     minutes_per_media_type = stats.calculate_minutes_per_media_type(
         user_media,
@@ -235,7 +235,7 @@ def get_statistics_data(user, start_date, end_date, range_name=None):
     if range_name is None or range_name not in PREDEFINED_RANGES:
         # For custom ranges, compute inline without caching
         return build_statistics_data(user, start_date, end_date)
-    
+
     cache_entry = cache.get(_cache_key(user.id, range_name))
     if cache_entry:
         # Always return cached data if it exists (even if stale)
@@ -308,7 +308,7 @@ def refresh_statistics_cache(user_id: int, range_name: str):
     today = timezone.localdate()
     start_date = None
     end_date = None
-    
+
     if range_name == "All Time":
         start_date = None
         end_date = None
@@ -352,7 +352,7 @@ def refresh_statistics_cache(user_id: int, range_name: str):
             twelve_months_start = (twelve_months_start.replace(day=1) + relativedelta(months=1)) - timedelta(days=1)
         start_date = timezone.make_aware(datetime.combine(twelve_months_start, datetime.min.time()), timezone.get_current_timezone())
         end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()), timezone.get_current_timezone())
-    
+
     data = build_statistics_data(user, start_date, end_date)
     cache_statistics_data(user_id, range_name, data)
     cache.delete(_refresh_lock_key(user_id, range_name))
@@ -370,7 +370,7 @@ def schedule_statistics_refresh(user_id: int, range_name: str, debounce_seconds:
     """
     if range_name not in PREDEFINED_RANGES:
         return False
-    
+
     lock_key = _refresh_lock_key(user_id, range_name)
     # Use a longer TTL (5 minutes) to ensure lock exists for entire task duration
     # The lock is deleted when task completes, but we need it to last longer than
@@ -378,7 +378,7 @@ def schedule_statistics_refresh(user_id: int, range_name: str, debounce_seconds:
     lock_ttl = 300  # 5 minutes should be more than enough for any statistics task
     if debounce_seconds and not cache.add(lock_key, True, debounce_seconds):
         return False
-    
+
     # Extend the lock TTL to cover the full task duration
     # This ensures the lock exists even if the task takes longer than debounce_seconds
     cache.set(lock_key, True, lock_ttl)
@@ -416,7 +416,7 @@ def schedule_all_ranges_refresh(user_id: int, debounce_seconds: int = 30, countd
     if debounce_seconds and not cache.add(all_ranges_lock_key, True, debounce_seconds):
         # Already scheduled recently, skip
         return
-    
+
     # Schedule "All Time" with same countdown as history refresh (countdown=3)
     # This ensures history and "All Time" run together, then other ranges follow
     # This prevents history from getting mixed in with the other predefined ranges
@@ -437,7 +437,7 @@ def schedule_all_ranges_refresh(user_id: int, debounce_seconds: int = 30, countd
     if cache.add(all_time_lock_key, True, debounce_seconds):
         # Extend the lock TTL to cover the full task duration
         cache.set(all_time_lock_key, True, lock_ttl)
-    
+
     try:
         from app.tasks import refresh_statistics_cache_task
         logger.debug("Scheduling 'All Time' statistics for user %s (runs with history refresh)", user_id)
@@ -484,13 +484,13 @@ def schedule_all_ranges_refresh(user_id: int, debounce_seconds: int = 30, countd
         if range_name in (all_time_range, preferred_range):
             # Already scheduled, skip
             continue
-        
+
         lock_key = _refresh_lock_key(user_id, range_name)
         # Only add lock if not already present (allows parallel execution)
         # Use longer TTL to ensure lock exists for entire task duration
         if cache.add(lock_key, True, debounce_seconds):
             cache.set(lock_key, True, lock_ttl)
-        
+
         try:
             from app.tasks import refresh_statistics_cache_task
             # Use longer countdown (countdown + 2) so these run after history and "All Time"

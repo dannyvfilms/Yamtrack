@@ -429,7 +429,7 @@ class PreferencesViewTests(TestCase):
                 {"library": "all", "weeks": 20},
                 {"library": MediaTypes.MOVIE.value, "weeks": "6"},
                 {"library": MediaTypes.ANIME.value, "weeks": 3},  # filtered out
-            ]
+            ],
         )
 
         response = self.client.post(

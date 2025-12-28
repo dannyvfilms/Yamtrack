@@ -83,7 +83,7 @@ for model in app_models:
 
 
 # Register Artist, Album, Track, ArtistTracker, and AlbumTracker with custom admin classes
-from app.models import Artist, Album, Track, ArtistTracker, AlbumTracker  # noqa: E402
+from app.models import Album, AlbumTracker, Artist, ArtistTracker, Track  # noqa: E402
 
 
 class ArtistTrackerAdmin(admin.ModelAdmin):
@@ -129,7 +129,7 @@ class PodcastEpisodeAdmin(admin.ModelAdmin):
 
 
 # Register PodcastShow and PodcastEpisode with custom admin classes
-from app.models import PodcastShow, PodcastEpisode  # noqa: E402
+from app.models import PodcastEpisode, PodcastShow  # noqa: E402
 
 admin.site.register(PodcastShow, PodcastShowAdmin)
 admin.site.register(PodcastEpisode, PodcastEpisodeAdmin)

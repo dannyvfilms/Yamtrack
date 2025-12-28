@@ -6,6 +6,7 @@ from django.utils import timezone
 
 from app.mixins import disable_fetch_releases
 from app.models import (
+    TV,
     Book,
     Game,
     Item,
@@ -14,7 +15,6 @@ from app.models import (
     Season,
     Sources,
     Status,
-    TV,
 )
 from app.services.auto_pause import auto_pause_stale_items
 

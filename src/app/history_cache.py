@@ -11,7 +11,17 @@ from django.db import models
 from django.utils import formats, timezone
 
 from app import helpers
-from app.models import Album, BoardGame, Episode, Game, Item, MediaTypes, Movie, Music, Podcast, Track
+from app.models import (
+    BoardGame,
+    Episode,
+    Game,
+    Item,
+    MediaTypes,
+    Movie,
+    Music,
+    Podcast,
+    Track,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -211,11 +221,11 @@ def _get_music_runtime_minutes(music_entry, track_duration_cache=None):
     # First try the linked Track's duration_ms
     if music_entry.track and music_entry.track.duration_ms:
         return music_entry.track.duration_ms // 60000  # ms to minutes
-    
+
     # Fall back to item runtime_minutes
     if music_entry.item and music_entry.item.runtime_minutes:
         return music_entry.item.runtime_minutes
-    
+
     # Try to look up duration from cache (built from album tracklist)
     if track_duration_cache and music_entry.item:
         # Try matching by title (if we have album)
@@ -224,14 +234,14 @@ def _get_music_runtime_minutes(music_entry, track_duration_cache=None):
             duration_ms = track_duration_cache.get(title_key)
             if duration_ms:
                 return duration_ms // 60000
-        
+
         # Try matching by recording ID (item.media_id is the MusicBrainz recording ID)
         if music_entry.item.media_id:
             recording_key = ("recording", music_entry.item.media_id)
             duration_ms = track_duration_cache.get(recording_key)
             if duration_ms:
                 return duration_ms // 60000
-    
+
     return 0
 
 
@@ -247,7 +257,7 @@ def _build_music_album_entries(music_entries_for_album, album, day_date, user, t
     """
     if not music_entries_for_album:
         return None
-    
+
     # Collect all play times and runtimes for this album on this day
     # We need to count history records, not Music entries, since a track
     # played twice creates 2 history records on the same Music entry
@@ -259,7 +269,7 @@ def _build_music_album_entries(music_entries_for_album, album, day_date, user, t
     
     for music in music_entries_for_album:
         runtime_for_track = _get_music_runtime_minutes(music, track_duration_cache)
-        
+
         # Check history records for plays on this day
         # Each history record with an end_date on this day counts as a play
         for history_record in music.history.all():
@@ -267,7 +277,7 @@ def _build_music_album_entries(music_entries_for_album, album, day_date, user, t
             history_user = getattr(history_record, "history_user", None)
             if history_user is not None and history_user != user:
                 continue
-            
+
             history_end_date = getattr(history_record, "end_date", None)
             if history_end_date:
                 play_time = _localize_datetime(history_end_date)
@@ -281,22 +291,22 @@ def _build_music_album_entries(music_entries_for_album, album, day_date, user, t
     
     if not play_times:
         return None
-    
+
     play_times.sort()
     earliest_time = play_times[0]
     latest_time = play_times[-1]
-    
+
     # Format time range (just times, no date)
     if len(play_times) == 1:
         time_range_display = formats.time_format(earliest_time, "g:i A")
     else:
         time_range_display = f"{formats.time_format(earliest_time, 'g:i A')} - {formats.time_format(latest_time, 'g:i A')}"
-    
+
     # Get album poster
     poster = settings.IMG_NONE
     if album and album.image:
         poster = album.image
-    
+
     # Album name
     album_name = album.title if album else "Unknown Album"
     artist_name = album.artist.name if album and album.artist else "Unknown Artist"
@@ -346,20 +356,20 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
     """
     filters = filters or {}
     date_filters = date_filters or {}
-    
+
     # Parse date filters
     start_date = None
     end_date = None
-    if date_filters.get('start_date'):
-        from django.utils.dateparse import parse_date
+    if date_filters.get("start_date"):
         from django.utils import timezone as tz
-        parsed = parse_date(date_filters['start_date'])
+        from django.utils.dateparse import parse_date
+        parsed = parse_date(date_filters["start_date"])
         if parsed:
             start_date = tz.make_aware(datetime.combine(parsed, datetime.min.time()))
-    if date_filters.get('end_date'):
-        from django.utils.dateparse import parse_date
+    if date_filters.get("end_date"):
         from django.utils import timezone as tz
-        parsed = parse_date(date_filters['end_date'])
+        from django.utils.dateparse import parse_date
+        parsed = parse_date(date_filters["end_date"])
         if parsed:
             end_date = tz.make_aware(datetime.combine(parsed, datetime.max.time()))
     if logging_style_override not in ("sessions", "repeats"):
@@ -388,13 +398,13 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
         )
         .order_by("-end_date")
     )
-    
+
     # Apply date range filter to episodes
     if start_date:
         episodes = episodes.filter(end_date__gte=start_date)
     if end_date:
         episodes = episodes.filter(end_date__lte=end_date)
-    
+
     # Apply episode filters
     if filters.get('tv'):
         episodes = episodes.filter(related_season__related_tv_id=filters['tv'])
@@ -427,7 +437,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
     ).filter(
         models.Q(end_date__isnull=False) | models.Q(start_date__isnull=False),
     ).select_related("item")
-    
+
     # Apply date range filter to movies
     if start_date:
         movies_qs = movies_qs.filter(
@@ -480,11 +490,11 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
         .select_related("item", "album", "album__artist", "track")
         .order_by("-end_date")
     )
-    
+
     # Apply date range filter to music (filter by end_date in history records)
     # Note: Music entries have end_date directly, but we need to check history records
     # For now, we'll filter after processing since music uses history records for grouping
-    
+
     # Apply music filters
     if filters.get('album'):
         music_entries = music_entries.filter(album_id=filters['album'])
@@ -500,7 +510,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
     # Query HistoricalPodcast directly, filtering by user and end_date at database level
     from django.apps import apps
     HistoricalPodcast = apps.get_model("app", "HistoricalPodcast")
-    
+
     # Get all podcast history records for this user with end_date
     # Filter by history_user at database level to match template behavior
     podcast_history_records = (
@@ -510,7 +520,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
         )
         .order_by("-end_date")
     )
-    
+
     # Apply date range filter to podcasts
     if start_date:
         podcast_history_records = podcast_history_records.filter(end_date__gte=start_date)
@@ -564,46 +574,49 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
     
     # Helper function to check if entry matches genre filter by checking metadata.
     # Uses a cache to avoid repeated metadata lookups for the same media item.
-    genre_filter = filters.get('genre')
+    genre_filter = filters.get("genre")
     genre_cache = {}  # Cache: (media_type, media_id) -> bool (matches genre or None if not checked)
-    
+
     def matches_genre(media_entry, media_type):
         """Check if media entry matches genre filter by checking metadata."""
         if not genre_filter:
             return True
-        
+
         # For TV episodes, use the parent TV show for caching
         cache_key = None
-        if media_type == MediaTypes.EPISODE.value and hasattr(media_entry, 'related_season'):
-            if hasattr(media_entry.related_season, 'related_tv') and media_entry.related_season.related_tv:
+        if media_type == MediaTypes.EPISODE.value and hasattr(media_entry, "related_season"):
+            if hasattr(media_entry.related_season, "related_tv") and media_entry.related_season.related_tv:
                 tv_show = media_entry.related_season.related_tv
-                if hasattr(tv_show, 'item') and tv_show.item:
+                if hasattr(tv_show, "item") and tv_show.item:
                     cache_key = (MediaTypes.TV.value, tv_show.item.media_id, tv_show.item.source)
-        elif hasattr(media_entry, 'item') and media_entry.item:
+        elif hasattr(media_entry, "item") and media_entry.item:
             cache_key = (media_type, media_entry.item.media_id, media_entry.item.source)
-        
+
         # Check cache first
         if cache_key and cache_key in genre_cache:
             return genre_cache[cache_key] is True
-        
+
         try:
-            from app.statistics import _get_media_metadata_for_statistics, _coerce_genre_list
-            
+            from app.statistics import (
+                _coerce_genre_list,
+                _get_media_metadata_for_statistics,
+            )
+
             # For TV episodes, get genres from parent TV show
-            if media_type == MediaTypes.EPISODE.value and hasattr(media_entry, 'related_season'):
-                if hasattr(media_entry.related_season, 'related_tv') and media_entry.related_season.related_tv:
+            if media_type == MediaTypes.EPISODE.value and hasattr(media_entry, "related_season"):
+                if hasattr(media_entry.related_season, "related_tv") and media_entry.related_season.related_tv:
                     tv_show = media_entry.related_season.related_tv
                     metadata = _get_media_metadata_for_statistics(tv_show)
                 else:
                     metadata = None
             else:
                 metadata = _get_media_metadata_for_statistics(media_entry)
-            
+
             if not metadata:
                 if cache_key:
                     genre_cache[cache_key] = False
                 return False
-            
+
             # Extract genres from metadata
             genres = []
             details = metadata.get("details") if isinstance(metadata, dict) else None
@@ -616,15 +629,15 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                 genres_raw = metadata.get("genres", [])
                 if genres_raw:
                     genres = _coerce_genre_list(genres_raw)
-            
+
             # Check if any genre matches (case-insensitive)
             genre_filter_lower = genre_filter.lower()
             matches = any(str(genre).lower() == genre_filter_lower for genre in genres)
-            
+
             # Cache the result
             if cache_key:
                 genre_cache[cache_key] = matches
-            
+
             return matches
         except Exception as e:
             logger.debug(f"Error checking genre for {media_entry}: {e}")
@@ -706,12 +719,12 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
         # where any track from an album was played
         music_by_album_day = defaultdict(list)
         album_lookup = {}
-        
+
         for music in music_entries:
             album_id = music.album_id if music.album else None
             if album_id and music.album:
                 album_lookup[album_id] = music.album
-            
+
             # Find all days this track was played by checking history records
             days_played = set()
             for history_record in music.history.all():
@@ -719,7 +732,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                 history_user = getattr(history_record, "history_user", None)
                 if history_user is not None and history_user != user:
                     continue
-                
+
                 history_end_date = getattr(history_record, "end_date", None)
                 if history_end_date:
                     # Apply date range filter
@@ -727,17 +740,17 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                         continue
                     if end_date and history_end_date > end_date:
                         continue
-                    
+
                     play_time = _localize_datetime(history_end_date)
                     if play_time:
                         days_played.add(play_time.date())
-            
+
             # Add this Music entry to each day it was played
             for day_date in days_played:
                 key = (album_id, day_date)
                 if music not in music_by_album_day[key]:
                     music_by_album_day[key].append(music)
-        
+
         # Build a cache of track durations from album tracklists for fallback
         # This helps get runtime for Music entries that don't have Track linked
         # Cache has two types of keys:
@@ -758,11 +771,11 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                 if track_data["musicbrainz_recording_id"]:
                     recording_key = ("recording", track_data["musicbrainz_recording_id"])
                     track_duration_cache[recording_key] = track_data["duration_ms"]
-        
+
         # Now build one entry per album per day
         for (album_id, day_date), album_music_entries in music_by_album_day.items():
             album = album_lookup.get(album_id)
-            
+
             # Apply genre filter if specified - check album or artist genres
             if genre_filter and album:
                 from app.statistics import _coerce_genre_list
@@ -771,13 +784,13 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                 artist_genres = []
                 if album.artist and album.artist.genres:
                     artist_genres = _coerce_genre_list(album.artist.genres)
-                
+
                 all_genres = album_genres + artist_genres
                 genre_filter_lower = genre_filter.lower()
                 genre_match = any(str(g).lower() == genre_filter_lower for g in all_genres)
                 if not genre_match:
                     continue
-            
+
             entry = _build_music_album_entries(album_music_entries, album, day_date, user, track_duration_cache)
             if entry:
                 entries.append(entry)
@@ -794,55 +807,55 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                 continue
             key = (podcast.item.media_id, podcast.item.source)
             podcast_play_counts[key] = podcast_play_counts.get(key, 0) + 1
-        
+
         for history_record in podcast_history_records:
             # Get the podcast instance for metadata
             podcast = podcasts_lookup.get(history_record.id)
             if not podcast:
                 # Podcast was deleted, skip this history record
                 continue
-            
+
             # Skip if podcast doesn't have required data
             if not podcast.item:
                 logger.warning("Skipping podcast entry %s without item", podcast.id)
                 continue
-            
+
             try:
                 history_end_date = getattr(history_record, "end_date", None)
                 if not history_end_date:
                     continue
-                
+
                 played_at_local = _localize_datetime(history_end_date)
                 if not played_at_local:
                     continue
-                
+
                 # Get show - prefer episode.show (authoritative source), fallback to podcast.show
                 show = None
                 if podcast.episode:
                     show = podcast.episode.show
                 if not show:
                     show = podcast.show
-                
+
                 # Get show URL components for navigation
                 show_podcast_uuid = show.podcast_uuid if show else None
                 # Use show.slug if available, otherwise use show.title for URL slug
                 show_slug = show.slug if show and show.slug else (show.title if show else "")
-                
+
                 # Get poster - prefer show image, fallback to item image, then IMG_NONE
                 poster = settings.IMG_NONE
                 if show and show.image:
                     poster = show.image
                 elif podcast.item.image:
                     poster = podcast.item.image
-                
+
                 # Progress is stored in minutes
                 minutes_listened = podcast.progress or 0
                 runtime_minutes = podcast.item.runtime_minutes if podcast.item.runtime_minutes else minutes_listened
-                
+
                 # Get play count for this episode (only counting completed records with end_date)
                 key = (podcast.item.media_id, podcast.item.source)
                 play_count = podcast_play_counts.get(key, 1)
-                
+
                 entries.append(
                     {
                         "media_type": MediaTypes.PODCAST.value,
@@ -1137,7 +1150,7 @@ def get_history_days(user, filters=None, date_filters=None, logging_style_overri
             if started_at and timezone.now() - started_at > HISTORY_REFRESH_LOCK_MAX_AGE:
                 cache.delete(_refresh_lock_key(user.id, logging_style))
                 refresh_lock = None
-    
+
     if cache_entry:
         # Always return cached data if it exists (even if stale)
         # This prevents timeouts while background refresh is in progress
@@ -1244,7 +1257,7 @@ def schedule_history_refresh(user_id: int, logging_style: str = "repeats", debou
     lock_payload = {"started_at": timezone.now()}
     if debounce_seconds and not cache.add(lock_key, lock_payload, debounce_seconds):
         return False
-    
+
     # Extend the lock TTL to cover the full task duration
     # This ensures the lock exists even if the task takes longer than debounce_seconds
     cache.set(lock_key, lock_payload, lock_ttl)

@@ -2,17 +2,17 @@ import datetime
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.db import transaction
 from django.core.cache import cache
+from django.db import transaction
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
 from app import cache_utils
 from app.models import (
-    BasicMedia,
     TV,
     Anime,
+    BasicMedia,
     Episode,
     Item,
     MediaTypes,
@@ -24,7 +24,7 @@ from app.models import (
 from app.templatetags import app_tags
 from app.views import _sort_tv_media_by_time_left
 from events.models import Event
-from users.models import HomeSortChoices, MediaStatusChoices
+from users.models import HomeSortChoices
 
 
 class HomeViewTests(TestCase):

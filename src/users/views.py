@@ -574,13 +574,24 @@ def update_plex_usernames(request):
 
     return redirect(redirect_target)
 
+
 @login_required
 @require_POST
 def update_jellyseerr_settings(request):
+    """Update Jellyseerr integration settings for the current user."""
     user = request.user
 
-    # Handle enabled/disabled dropdown (sends '1' or '0' as string)
-    enabled = request.POST.get("jellyseerr_enabled") == "1"
+    raw_enabled = request.POST.get("jellyseerr_enabled")
+    if raw_enabled is None:
+        enabled = False
+    else:
+        enabled = str(raw_enabled).strip().lower() in {
+            "on",
+            "1",
+            "true",
+            "yes",
+            "enabled",
+        }
 
     raw_trigger = (request.POST.get("jellyseerr_trigger_statuses") or "").strip()
     raw_allowed = (request.POST.get("jellyseerr_allowed_usernames") or "").strip()
@@ -635,11 +646,12 @@ def update_jellyseerr_settings(request):
             "jellyseerr_trigger_statuses",
             "jellyseerr_allowed_usernames",
             "jellyseerr_default_added_status",
-        ]
+        ],
     )
 
     messages.success(request, "Jellyseerr settings saved.")
     return redirect(request.META.get("HTTP_REFERER", "/settings/integrations"))
+
 
 
 @require_POST

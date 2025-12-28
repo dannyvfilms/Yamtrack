@@ -1,13 +1,13 @@
 """Helpers for interacting with the Plex APIs."""
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 from urllib.parse import quote_plus
 from xml.etree import ElementTree
 
 import requests
-from requests import RequestException
 from django.conf import settings
+from requests import RequestException
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ class PlexAuthError(PlexClientError):
     """Raised when Plex authentication fails or a token is invalid."""
 
 
-def _headers(token: str | None = None) -> Dict[str, str]:
+def _headers(token: str | None = None) -> dict[str, str]:
     """Return common Plex headers."""
     headers = {
         "Accept": "application/json",
@@ -35,7 +35,7 @@ def _headers(token: str | None = None) -> Dict[str, str]:
     return headers
 
 
-def create_pin() -> Dict[str, Any]:
+def create_pin() -> dict[str, Any]:
     """Create a Plex pin for the OAuth-style auth flow."""
     response = requests.post(
         "https://plex.tv/api/v2/pins",
@@ -87,7 +87,7 @@ def poll_pin(pin_id: str) -> str:
     return token
 
 
-def fetch_account(token: str) -> Dict[str, Any]:
+def fetch_account(token: str) -> dict[str, Any]:
     """Fetch Plex account details for the given token."""
     response = requests.get(
         "https://plex.tv/api/v2/user",
@@ -112,7 +112,7 @@ def fetch_account(token: str) -> Dict[str, Any]:
     }
 
 
-def list_resources(token: str) -> List[Dict[str, Any]]:
+def list_resources(token: str) -> list[dict[str, Any]]:
     """Return Plex server resources for the account."""
     response = requests.get(
         "https://plex.tv/api/resources",
@@ -131,7 +131,7 @@ def list_resources(token: str) -> List[Dict[str, Any]]:
         return []
 
 
-def list_sections(token: str) -> List[Dict[str, Any]]:
+def list_sections(token: str) -> list[dict[str, Any]]:
     """Return all accessible library sections for the account."""
     sections: list[dict[str, Any]] = []
     seen = set()
@@ -174,9 +174,9 @@ def list_sections(token: str) -> List[Dict[str, Any]]:
 def fetch_history(
     token: str,
     uri: str,
-    section_id: Optional[str],
+    section_id: str | None,
     start: int,
-    size: Optional[int] = None,
+    size: int | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     """Fetch Plex watch/listen history for a section."""
     page_size = size or settings.PLEX_HISTORY_PAGE_SIZE
@@ -216,7 +216,7 @@ def fetch_history(
     return entries, total
 
 
-def fetch_metadata(token: str, uri: str, rating_key: str) -> Optional[Dict[str, Any]]:
+def fetch_metadata(token: str, uri: str, rating_key: str) -> dict[str, Any] | None:
     """Fetch rich metadata for a history item."""
     try:
         response = requests.get(
@@ -246,10 +246,10 @@ def fetch_metadata(token: str, uri: str, rating_key: str) -> Optional[Dict[str, 
 
 
 def _fetch_sections_from_connection(
-    connection: Dict[str, Any],
-    server: Dict[str, Any],
+    connection: dict[str, Any],
+    server: dict[str, Any],
     token: str,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Fetch library sections from a specific Plex server connection."""
     uri = connection.get("uri")
     if not uri:
@@ -293,15 +293,15 @@ def _fetch_sections_from_connection(
                 "server_name": server.get("name"),
                 "machine_identifier": server.get("machine_identifier"),
                 "uri": uri,
-            }
+            },
         )
     return sections
 
 
-def _sorted_connections(connections: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _sorted_connections(connections: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Sort connections to prefer relay/HTTPS endpoints over local ones."""
 
-    def score(conn: Dict[str, Any]):
+    def score(conn: dict[str, Any]):
         uri = conn.get("uri", "")
         protocol = (conn.get("protocol") or "").lower()
         is_https = uri.startswith("https://") or protocol == "https"
@@ -320,7 +320,7 @@ def _sorted_connections(connections: List[Dict[str, Any]]) -> List[Dict[str, Any
         return connections
 
 
-def _parse_sections_xml(xml_text: str) -> List[Dict[str, Any]]:
+def _parse_sections_xml(xml_text: str) -> list[dict[str, Any]]:
     """Parse a Plex library sections XML payload."""
     root = ElementTree.fromstring(xml_text)
     return [child.attrib for child in root.findall("Directory")]
@@ -328,8 +328,8 @@ def _parse_sections_xml(xml_text: str) -> List[Dict[str, Any]]:
 
 def _parse_resources_xml(
     xml_text: str,
-    fallback_token: Optional[str] = None,
-) -> List[Dict[str, Any]]:
+    fallback_token: str | None = None,
+) -> list[dict[str, Any]]:
     """Parse Plex resources XML payload into server connection info."""
     root = ElementTree.fromstring(xml_text)
     servers: list[dict[str, Any]] = []
@@ -351,7 +351,7 @@ def _parse_resources_xml(
                 "machine_identifier": device.attrib.get("clientIdentifier"),
                 "access_token": device.attrib.get("accessToken") or fallback_token,
                 "connections": connections,
-            }
+            },
         )
 
     return servers
@@ -372,7 +372,7 @@ def _parse_history_xml(xml_text: str) -> tuple[list[dict[str, Any]], int]:
     return entries, total_size
 
 
-def _parse_response(response: requests.Response) -> Dict[str, Any]:
+def _parse_response(response: requests.Response) -> dict[str, Any]:
     """Parse Plex API responses that may be JSON or XML."""
     content_type = response.headers.get("Content-Type", "")
 

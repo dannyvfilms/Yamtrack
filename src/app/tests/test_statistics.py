@@ -4,8 +4,8 @@ from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
-from django.utils import timezone
 from django.urls import reverse
+from django.utils import timezone
 
 from app import statistics
 from app.helpers import minutes_to_hhmm
@@ -968,23 +968,23 @@ class StatisticsTests(TestCase):
         empty_user_media = {}
         result = statistics.get_top_played_media(empty_user_media, None, None)
         self.assertEqual(result, {})
-        
+
         # Test with non-existent media types
-        user_media = {'anime': MagicMock()}
-        user_media['anime'].exists.return_value = False
+        user_media = {"anime": MagicMock()}
+        user_media["anime"].exists.return_value = False
         result = statistics.get_top_played_media(user_media, None, None)
         self.assertEqual(result, {})
 
     def test_get_top_played_media_aggregates_movie_repeats(self):
         """Ensure repeated movie plays are aggregated into a single entry."""
-        
+
         class FakeQuerySet(list):
             def exists(self):
                 return bool(self)
-        
+
         start_date = timezone.make_aware(datetime.datetime(2025, 1, 1))
         end_date = timezone.make_aware(datetime.datetime(2025, 12, 31, 23, 59, 59))
-        
+
         movie_item = SimpleNamespace(
             id=42,
             runtime_minutes=106,
@@ -994,7 +994,7 @@ class StatisticsTests(TestCase):
             media_id="557",
             source=Sources.TMDB.value,
         )
-        
+
         def make_movie_instance(day):
             end_dt = timezone.make_aware(datetime.datetime(2025, 5, day, 12, 0, 0))
             return SimpleNamespace(
@@ -1004,10 +1004,10 @@ class StatisticsTests(TestCase):
                 created_at=end_dt - datetime.timedelta(days=1),
                 status=Status.COMPLETED.value,
             )
-        
+
         first_play = make_movie_instance(6)
         second_play = make_movie_instance(7)
-        
+
         other_movie_item = SimpleNamespace(
             id=43,
             runtime_minutes=150,
@@ -1024,25 +1024,25 @@ class StatisticsTests(TestCase):
             created_at=timezone.make_aware(datetime.datetime(2025, 1, 4, 18, 0, 0)),
             status=Status.COMPLETED.value,
         )
-        
-        user_media = {'movie': FakeQuerySet([first_play, second_play, other_movie])}
-        
+
+        user_media = {"movie": FakeQuerySet([first_play, second_play, other_movie])}
+
         result = statistics.get_top_played_media(user_media, start_date, end_date)
-        
-        self.assertIn('movie', result)
-        self.assertEqual(len(result['movie']), 2)
-        
-        top_movie = result['movie'][0]
-        self.assertIs(top_movie['media'], second_play)
-        self.assertEqual(top_movie['play_count'], 2)
-        self.assertEqual(top_movie['total_time_minutes'], 212)
-        self.assertEqual(top_movie['formatted_duration'], minutes_to_hhmm(212))
-        self.assertEqual(top_movie['last_activity'], second_play.end_date)
-        
-        second_entry = result['movie'][1]
-        self.assertIs(second_entry['media'], other_movie)
-        self.assertEqual(second_entry['play_count'], 1)
-        self.assertEqual(second_entry['total_time_minutes'], 150)
+
+        self.assertIn("movie", result)
+        self.assertEqual(len(result["movie"]), 2)
+
+        top_movie = result["movie"][0]
+        self.assertIs(top_movie["media"], second_play)
+        self.assertEqual(top_movie["play_count"], 2)
+        self.assertEqual(top_movie["total_time_minutes"], 212)
+        self.assertEqual(top_movie["formatted_duration"], minutes_to_hhmm(212))
+        self.assertEqual(top_movie["last_activity"], second_play.end_date)
+
+        second_entry = result["movie"][1]
+        self.assertIs(second_entry["media"], other_movie)
+        self.assertEqual(second_entry["play_count"], 1)
+        self.assertEqual(second_entry["total_time_minutes"], 150)
 
 
 class ConsumptionStatisticsTests(TestCase):
@@ -1129,7 +1129,6 @@ class ConsumptionStatisticsTests(TestCase):
 
     def test_consumption_stats_aggregation(self):
         """TV/movie consumption helpers should return expected totals and chart data."""
-
         with patch("app.statistics._get_media_metadata_for_statistics") as metadata_mock:
             metadata_mock.return_value = {"runtime": "2h"}
             user_media, _ = statistics.get_user_media(
@@ -1180,7 +1179,6 @@ class ConsumptionStatisticsTests(TestCase):
 
     def test_statistics_view_includes_consumption_context(self):
         """Statistics view should include the consumption breakdown data."""
-
         with patch("app.statistics._get_media_metadata_for_statistics") as metadata_mock:
             metadata_mock.return_value = {"runtime": "2h"}
             response = self.client.get(reverse("statistics"))
@@ -1195,7 +1193,6 @@ class ConsumptionStatisticsTests(TestCase):
 
     def test_statistics_respects_disabled_season_sidebar_preference(self):
         """Season media should be removed when the sidebar preference hides it."""
-
         self.user.season_enabled = False
         self.user.save(update_fields=["season_enabled"])
 

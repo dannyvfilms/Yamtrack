@@ -1,13 +1,12 @@
 """Test that TV show status updates when a new season is detected."""
 
-from unittest.mock import MagicMock, patch
-from zoneinfo import ZoneInfo
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.utils import timezone
 
-from app.models import Episode, Item, MediaTypes, Season, Sources, Status, TV
+from app.models import TV, Episode, Item, MediaTypes, Season, Sources, Status
 from events.calendar import process_tv_seasons
 
 
@@ -19,7 +18,7 @@ class NewSeasonStatusUpdateTests(TestCase):
         # Use unique media_id for each test run to avoid conflicts
         import uuid
         self.test_id = str(uuid.uuid4())[:8]
-        
+
         self.credentials = {"username": f"testuser_{self.test_id}", "password": "12345"}
         self.user = get_user_model().objects.create_user(**self.credentials)
 
@@ -50,7 +49,7 @@ class NewSeasonStatusUpdateTests(TestCase):
             )
             # Save base to avoid triggering custom save logic
             TV.save_base(self.tv_instance)
-        
+
         # Now set to Completed with proper mocking
         with patch("app.models.providers.services.get_media_metadata") as mock_get_metadata:
             mock_get_metadata.side_effect = [

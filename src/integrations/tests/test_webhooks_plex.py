@@ -1,5 +1,4 @@
 import json
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -7,6 +6,7 @@ from django.test import Client, TestCase
 from django.urls import reverse
 
 from app.models import (
+    TV,
     Anime,
     Episode,
     Item,
@@ -14,7 +14,6 @@ from app.models import (
     Movie,
     Season,
     Status,
-    TV,
 )
 from integrations.webhooks.plex import PlexWebhookProcessor
 

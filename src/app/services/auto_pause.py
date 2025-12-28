@@ -1,6 +1,5 @@
 import logging
 from datetime import timedelta
-from typing import Dict, List
 
 from django.contrib.auth import get_user_model
 from django.utils import timezone
@@ -33,7 +32,7 @@ TARGET_MODEL_MAP = {
 }
 
 
-def auto_pause_stale_items(now=None) -> Dict[str, int]:
+def auto_pause_stale_items(now=None) -> dict[str, int]:
     """Pause stale in-progress media for all users with the feature enabled."""
     now = now or timezone.now()
     User = get_user_model()
@@ -69,9 +68,9 @@ def auto_pause_stale_items(now=None) -> Dict[str, int]:
 def _process_user_rules(user, now) -> int:
     """Apply auto-pause rules for a single user."""
     paused_total = 0
-    rule_cache: Dict[str, Dict] = {}
+    rule_cache: dict[str, dict] = {}
 
-    for media_type in TARGET_MODEL_MAP.keys():
+    for media_type in TARGET_MODEL_MAP:
         rule = rule_cache.get(media_type)
         if rule is None:
             rule = user.get_auto_pause_rule(media_type)
@@ -109,7 +108,7 @@ def _pause_stale_media_for_type(user, media_type: str, weeks, now) -> int:
     if media_type == MediaTypes.SEASON.value:
         queryset = queryset.prefetch_related("episodes__item")
 
-    to_pause: List = []
+    to_pause: list = []
 
     for media in queryset:
         last_activity = _get_last_activity(media)

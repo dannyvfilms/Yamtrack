@@ -16,8 +16,11 @@ from app.models import (
     Sources,
     Status,
 )
-from app.services.music_scrobble import MusicPlaybackEvent, record_music_playback
-from app.services.music_scrobble import dedupe_artist_albums
+from app.services.music_scrobble import (
+    MusicPlaybackEvent,
+    dedupe_artist_albums,
+    record_music_playback,
+)
 
 
 class MusicScrobbleServiceTests(TestCase):
@@ -103,10 +106,10 @@ class MusicScrobbleServiceTests(TestCase):
         self.assertEqual(music.track.title, "Test Track")
         self.assertEqual(music.item.runtime_minutes, 3)
         self.assertTrue(
-            ArtistTracker.objects.filter(user=self.user, artist=music.artist).exists()
+            ArtistTracker.objects.filter(user=self.user, artist=music.artist).exists(),
         )
         self.assertTrue(
-            AlbumTracker.objects.filter(user=self.user, album=music.album).exists()
+            AlbumTracker.objects.filter(user=self.user, album=music.album).exists(),
         )
 
     @patch("app.services.music_scrobble.sync_artist_discography")
@@ -220,7 +223,7 @@ class MusicScrobbleServiceTests(TestCase):
                     "release_id": "release-2",
                     "release_group_id": "rg-2",
                     "duration_minutes": 4.2,
-                }
+                },
             ],
             "total_results": 1,
             "page": 1,
@@ -477,7 +480,7 @@ class MusicScrobbleServiceTests(TestCase):
                     "artist_id": "air-supply-id",
                     "release_id": "release-noisy",
                     "release_group_id": "rg-noisy",
-                }
+                },
             ],
             "total_results": 100,
             "page": 1,
