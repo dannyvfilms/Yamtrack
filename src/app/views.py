@@ -27,6 +27,7 @@ from app import (
     helpers,
     history_cache,
     history_processor,
+    statistics as stats,
     statistics_cache,
 )
 from app.forms import EpisodeForm, ManualItemForm, get_form_class
