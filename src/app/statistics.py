@@ -830,6 +830,42 @@ def _get_activity_datetime(media):
     return None
 
 
+def _calculate_game_time_in_range(media, start_date, end_date):
+    """Return game minutes to count within the requested date range."""
+    game_total_minutes = getattr(media, "progress", 0) or 0
+    if game_total_minutes <= 0:
+        return 0
+
+    game_start_date = media.start_date.date() if media.start_date else None
+    game_end_date = media.end_date.date() if media.end_date else None
+
+    if game_start_date and game_end_date:
+        game_total_days = (game_end_date - game_start_date).days + 1
+        if game_total_days <= 0:
+            game_total_days = 1
+
+        if start_date and end_date:
+            filter_start = start_date.date() if hasattr(start_date, "date") else start_date
+            filter_end = end_date.date() if hasattr(end_date, "date") else end_date
+
+            intersection_start = max(game_start_date, filter_start)
+            intersection_end = min(game_end_date, filter_end)
+
+            if intersection_start <= intersection_end:
+                intersection_days = (intersection_end - intersection_start).days + 1
+                if intersection_days > 0:
+                    minutes_per_day = game_total_minutes / game_total_days
+                    return minutes_per_day * intersection_days
+            return 0
+
+        return game_total_minutes
+
+    if not start_date and not end_date:
+        return game_total_minutes
+
+    return 0
+
+
 def calculate_minutes_per_media_type(user_media, start_date, end_date, user=None):
     """Return total minutes watched per media type within the date range."""
     minutes_per_type = {}
@@ -3478,6 +3514,51 @@ def get_top_played_media(user_media, start_date, end_date):
                 entry["formatted_duration"] = minutes_to_hhmm(entry["total_time_minutes"])
                 entry.pop("_media_activity", None)
                 media_with_progress.append(entry)
+        elif normalized_type == "game":
+            aggregated_games = {}
+
+            for media in media_list:
+                total_time_minutes = _calculate_game_time_in_range(media, start_date, end_date)
+                if total_time_minutes <= 0:
+                    continue
+
+                item = getattr(media, "item", None)
+                if not item:
+                    continue
+
+                # Use item id when available, fallback to (media_id, source) tuple
+                item_key = getattr(item, "id", None)
+                if item_key is None:
+                    item_key = (getattr(item, "media_id", None), getattr(item, "source", None))
+
+                activity = media.end_date or media.start_date or media.created_at
+                if item_key not in aggregated_games:
+                    aggregated_games[item_key] = {
+                        'media': media,
+                        'total_time_minutes': total_time_minutes,
+                        'formatted_duration': None,  # populated after aggregation
+                        'episode_count': 0,
+                        'last_activity': activity,
+                        'play_count': 1,
+                        '_media_activity': activity,
+                    }
+                else:
+                    entry = aggregated_games[item_key]
+                    entry['total_time_minutes'] += total_time_minutes
+                    entry['play_count'] += 1
+
+                    if activity and (entry['last_activity'] is None or activity > entry['last_activity']):
+                        entry['last_activity'] = activity
+
+                    current_media_activity = entry.get('_media_activity')
+                    if activity and (current_media_activity is None or activity > current_media_activity):
+                        entry['media'] = media
+                        entry['_media_activity'] = activity
+
+            for entry in aggregated_games.values():
+                entry['formatted_duration'] = minutes_to_hhmm(entry['total_time_minutes'])
+                entry.pop('_media_activity', None)
+                media_with_progress.append(entry)
         else:
             for media in media_list:
                 total_time_minutes = 0
@@ -3487,47 +3568,6 @@ def get_top_played_media(user_media, start_date, end_date):
                     total_time_minutes, episode_count = _calculate_tv_time(media, start_date, end_date, logger)
                 elif normalized_type == "anime":
                     total_time_minutes, episode_count = _calculate_anime_time(media, start_date, end_date, logger)
-                elif normalized_type == "game":
-                    # For games, distribute progress evenly across the game's date range
-                    # and only count the portion within the filtered date range
-                    game_start_date = media.start_date.date() if media.start_date else None
-                    game_end_date = media.end_date.date() if media.end_date else None
-
-                    if game_start_date and game_end_date:
-                        # Calculate daily average based on full game duration
-                        game_total_days = (game_end_date - game_start_date).days + 1
-                        if game_total_days <= 0:
-                            game_total_days = 1
-
-                        game_total_minutes = media.progress or 0
-                        game_total_hours = game_total_minutes / 60 if game_total_minutes else 0
-
-                        if game_total_hours > 0:
-                            # Calculate hours per day
-                            hours_per_day = game_total_hours / game_total_days
-
-                            # Find intersection of game range with filter range
-                            if start_date and end_date:
-                                filter_start = start_date.date() if hasattr(start_date, "date") else start_date
-                                filter_end = end_date.date() if hasattr(end_date, "date") else end_date
-
-                                # Intersect game range with filter range
-                                intersection_start = max(game_start_date, filter_start)
-                                intersection_end = min(game_end_date, filter_end)
-
-                                if intersection_start <= intersection_end:
-                                    # Calculate days in intersection
-                                    intersection_days = (intersection_end - intersection_start).days + 1
-                                    if intersection_days > 0:
-                                        # Calculate hours in filtered range
-                                        filtered_hours = hours_per_day * intersection_days
-                                        total_time_minutes += filtered_hours * 60
-                            else:
-                                # No filter (All Time) - use total hours
-                                total_time_minutes += game_total_minutes
-                    elif not start_date and not end_date:
-                        # All time and no date range - use total progress
-                        total_time_minutes += media.progress or 0
                 elif normalized_type == "boardgame":
                     if (
                         media.end_date

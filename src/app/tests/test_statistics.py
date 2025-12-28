@@ -1044,6 +1044,70 @@ class StatisticsTests(TestCase):
         self.assertEqual(second_entry["play_count"], 1)
         self.assertEqual(second_entry["total_time_minutes"], 150)
 
+    def test_get_top_played_media_aggregates_game_sessions(self):
+        """Ensure game sessions for the same title are aggregated into a single entry."""
+
+        class FakeQuerySet(list):
+            def exists(self):
+                return bool(self)
+
+        start_date = timezone.make_aware(datetime.datetime(2025, 10, 1))
+        end_date = timezone.make_aware(datetime.datetime(2025, 12, 31, 23, 59, 59))
+
+        game_item = SimpleNamespace(
+            id=101,
+            title="Ghost of Yotei",
+            media_type=MediaTypes.GAME.value,
+            image="https://example.com/ghost.jpg",
+            media_id="999",
+            source=Sources.IGDB.value,
+        )
+
+        def make_game_session(day, minutes):
+            start_dt = timezone.make_aware(datetime.datetime(2025, 10, day, 12, 0, 0))
+            end_dt = start_dt
+            return SimpleNamespace(
+                item=game_item,
+                start_date=start_dt,
+                end_date=end_dt,
+                created_at=start_dt - datetime.timedelta(days=1),
+                progress=minutes,
+                status=Status.IN_PROGRESS.value,
+            )
+
+        first_session = make_game_session(15, 120)
+        second_session = make_game_session(16, 60)
+
+        other_game_item = SimpleNamespace(
+            id=102,
+            title="Other Game",
+            media_type=MediaTypes.GAME.value,
+            image="https://example.com/other.jpg",
+            media_id="998",
+            source=Sources.IGDB.value,
+        )
+        other_game = SimpleNamespace(
+            item=other_game_item,
+            start_date=timezone.make_aware(datetime.datetime(2025, 11, 1, 12, 0, 0)),
+            end_date=timezone.make_aware(datetime.datetime(2025, 11, 1, 12, 0, 0)),
+            created_at=timezone.make_aware(datetime.datetime(2025, 10, 30, 12, 0, 0)),
+            progress=90,
+            status=Status.IN_PROGRESS.value,
+        )
+
+        user_media = {'game': FakeQuerySet([first_session, second_session, other_game])}
+
+        result = statistics.get_top_played_media(user_media, start_date, end_date)
+
+        self.assertIn('game', result)
+        self.assertEqual(len(result['game']), 2)
+
+        top_game = result['game'][0]
+        self.assertIs(top_game['media'], second_session)
+        self.assertEqual(top_game['play_count'], 2)
+        self.assertEqual(top_game['total_time_minutes'], 180)
+        self.assertEqual(top_game['formatted_duration'], minutes_to_hhmm(180))
+
 
 class ConsumptionStatisticsTests(TestCase):
     """Validate TV and movie consumption aggregations."""
