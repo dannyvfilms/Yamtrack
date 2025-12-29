@@ -1,4 +1,5 @@
 import logging
+from datetime import timedelta
 from collections import defaultdict
 
 from django.apps import apps
@@ -738,6 +739,87 @@ class MediaManager(models.Manager):
                     }
 
         return list_by_type
+
+    def get_recently_unrated(self, user, days=7):
+        """Return recently played media items without a user score."""
+        cutoff = timezone.now() - timedelta(days=days)
+        recent_items = []
+        media_types = self._get_media_types_to_process(user, None)
+
+        def resolve_last_played(media):
+            if media.item.media_type == MediaTypes.SEASON.value:
+                return (
+                    getattr(media, "last_watched", None)
+                    or media.progressed_at
+                    or media.created_at
+                )
+            return media.end_date or media.progressed_at or media.created_at
+
+        for media_type in media_types:
+            model = apps.get_model(app_label="app", model_name=media_type)
+
+            rated_item_ids = model.objects.filter(
+                user=user.id,
+                score__isnull=False,
+            ).values("item_id")
+
+            queryset = (
+                model.objects.filter(user=user.id, score__isnull=True)
+                .exclude(item_id__in=rated_item_ids)
+                .exclude(status=Status.PLANNING.value)
+            )
+
+            if media_type == MediaTypes.SEASON.value:
+                queryset = queryset.filter(
+                    episodes__end_date__gte=cutoff,
+                ).annotate(
+                    last_watched=Max("episodes__end_date"),
+                )
+                order_by_fields = [
+                    F("last_watched").desc(nulls_last=True),
+                    F("created_at").desc(),
+                ]
+            else:
+                queryset = queryset.filter(
+                    Q(end_date__gte=cutoff) | Q(progressed_at__gte=cutoff),
+                )
+                order_by_fields = [
+                    F("progressed_at").desc(nulls_last=True),
+                    F("end_date").desc(nulls_last=True),
+                    F("created_at").desc(),
+                ]
+
+            select_related_fields = ["item"]
+            if media_type == MediaTypes.PODCAST.value:
+                select_related_fields.append("show")
+
+            queryset = queryset.annotate(
+                repeats=Window(
+                    expression=Count("id"),
+                    partition_by=[F("item")],
+                ),
+                row_number=Window(
+                    expression=RowNumber(),
+                    partition_by=[F("item")],
+                    order_by=order_by_fields,
+                ),
+            ).filter(row_number=1).select_related(*select_related_fields)
+
+            queryset = self._apply_prefetch_related(queryset, media_type)
+            items = list(queryset)
+            for media in items:
+                media.last_played_at = resolve_last_played(media)
+                media.use_podcast_show = (
+                    media.item.media_type == MediaTypes.PODCAST.value
+                    and getattr(media, "show", None)
+                )
+            recent_items.extend(items)
+
+        return sorted(
+            recent_items,
+            key=lambda media: media.last_played_at or media.created_at,
+            reverse=True,
+        )
 
     def _get_media_types_to_process(self, user, specific_media_type):
         """Determine which media types to process based on user settings."""

@@ -42,7 +42,9 @@
   <div class="space-y-4 sm:space-y-8">
     {% for section_key, media_list in list_by_type.items %}
       <div>
-        {% if media_list.section_label %}
+        {% if media_list.section_title %}
+          <h2 class="text-xl font-semibold mb-2 sm:mb-4">{{ media_list.section_title }}</h2>
+        {% elif media_list.section_label %}
           {# Separated mode: use explicit section label with media type #}
           <h2 class="text-xl font-semibold mb-2 sm:mb-4">{{ media_list.section_label }} - {{ media_list.media_type|media_type_readable_plural }}</h2>
         {% else %}

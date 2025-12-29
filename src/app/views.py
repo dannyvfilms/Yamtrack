@@ -53,6 +53,15 @@ from users.models import HomeSortChoices, MediaSortChoices, MediaStatusChoices
 
 logger = logging.getLogger(__name__)
 
+MEDIA_RATING_CHOICES = (
+    ("all", "All"),
+    ("rated", "Rated"),
+    ("not_rated", "Not Rated"),
+)
+RECENTLY_NOT_RATED_KEY = "recently_not_rated"
+RECENTLY_NOT_RATED_LABEL = "Recently Played - Not Rated"
+RECENTLY_NOT_RATED_DAYS = 7
+
 
 @require_GET
 def home(request):
@@ -61,6 +70,23 @@ def home(request):
         sort_by = request.user.update_preference("home_sort", request.GET.get("sort"))
         media_type_to_load = request.GET.get("load_media_type")
         items_limit = 14
+
+        if request.headers.get("HX-Request") and media_type_to_load == RECENTLY_NOT_RATED_KEY:
+            recent_items = BasicMedia.objects.get_recently_unrated(
+                request.user,
+                days=RECENTLY_NOT_RATED_DAYS,
+            )
+            context = {
+                "media_list": {
+                    "items": recent_items[items_limit:],
+                    "total": len(recent_items),
+                    "show_played_chip": True,
+                },
+            }
+            return render(request, "app/components/home_grid.html", context)
+
+        if media_type_to_load == RECENTLY_NOT_RATED_KEY:
+            media_type_to_load = None
 
         list_by_type = BasicMedia.objects.get_in_progress(
             request.user,
@@ -75,6 +101,18 @@ def home(request):
                 "media_list": list_by_type.get(media_type_to_load, []),
             }
             return render(request, "app/components/home_grid.html", context)
+
+        recent_items = BasicMedia.objects.get_recently_unrated(
+            request.user,
+            days=RECENTLY_NOT_RATED_DAYS,
+        )
+        if recent_items:
+            list_by_type[RECENTLY_NOT_RATED_KEY] = {
+                "items": recent_items[:items_limit],
+                "total": len(recent_items),
+                "section_title": RECENTLY_NOT_RATED_LABEL,
+                "show_played_chip": True,
+            }
 
         context = {
             "user": request.user,
@@ -167,6 +205,9 @@ def media_list(request, media_type):
         f"{media_type}_status",
         request.GET.get("status"),
     )
+    rating_filter = request.GET.get("rating", "all")
+    if rating_filter not in {choice[0] for choice in MEDIA_RATING_CHOICES}:
+        rating_filter = "all"
     search_query = request.GET.get("search", "")
     try:
         page = int(request.GET.get("page", 1))
@@ -177,6 +218,18 @@ def media_list(request, media_type):
     if not status_filter:
         status_filter = MediaStatusChoices.ALL
 
+    def is_rated(media):
+        aggregated_score = getattr(media, "aggregated_score", None)
+        if aggregated_score is not None:
+            return True
+        return media.score is not None
+
+    def apply_rating_filter(media_items, filter_value):
+        if filter_value == "all":
+            return media_items
+        should_be_rated = filter_value == "rated"
+        return [media for media in media_items if is_rated(media) == should_be_rated]
+
     # Get media list with filters applied
     media_queryset = BasicMedia.objects.get_media_list(
         user=request.user,
@@ -186,6 +239,7 @@ def media_list(request, media_type):
         search=search_query,
         direction=direction,
     )
+    media_queryset = apply_rating_filter(media_queryset, rating_filter)
 
     # Handle time_left sorting for TV shows
     if sort_filter == "time_left" and media_type == MediaTypes.TV.value:
@@ -202,6 +256,7 @@ def media_list(request, media_type):
             status_filter,
             search_query,
             direction,
+            rating_filter,
         )
         cached_results = cache.get(cache_key)
 
@@ -266,8 +321,10 @@ def media_list(request, media_type):
         "current_sort": sort_filter,
         "current_direction": direction,
         "current_status": status_filter,
+        "current_rating": rating_filter,
         "sort_choices": MediaSortChoices.choices,
         "status_choices": MediaStatusChoices.choices,
+        "rating_choices": MEDIA_RATING_CHOICES,
     }
 
     # For music, show tracked artists instead of individual tracks
@@ -292,6 +349,12 @@ def media_list(request, media_type):
         # Apply search filter to shows
         if search_query:
             show_trackers = show_trackers.filter(show__title__icontains=search_query)
+
+        # Apply rating filter to shows
+        if rating_filter == "rated":
+            show_trackers = show_trackers.filter(score__isnull=False)
+        elif rating_filter == "not_rated":
+            show_trackers = show_trackers.filter(score__isnull=True)
 
         # Apply sorting
         if sort_filter == "title":
@@ -353,10 +416,16 @@ def media_list(request, media_type):
             "user": request.user,
             "media_list": media_page,
             "media_type": media_type,
+            "media_type_plural": app_tags.media_type_readable_plural(media_type).lower(),
             "current_layout": layout,
+            "layout_class": ".media-grid" if layout == "grid" else ".media-table",
             "current_sort": sort_filter,
             "current_direction": direction,
             "current_status": status_filter,
+            "current_rating": rating_filter,
+            "sort_choices": MediaSortChoices.choices,
+            "status_choices": MediaStatusChoices.choices,
+            "rating_choices": MEDIA_RATING_CHOICES,
             "search_query": search_query,
         }
 
@@ -400,6 +469,12 @@ def media_list(request, media_type):
         # Apply search filter to artists
         if search_query:
             artist_trackers = artist_trackers.filter(artist__name__icontains=search_query)
+
+        # Apply rating filter to artists
+        if rating_filter == "rated":
+            artist_trackers = artist_trackers.filter(score__isnull=False)
+        elif rating_filter == "not_rated":
+            artist_trackers = artist_trackers.filter(score__isnull=True)
 
         # Apply sorting (limited to what makes sense for artists)
         if sort_filter == "title":

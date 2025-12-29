@@ -1207,7 +1207,7 @@ class PocketCastsImporter:
             if published_raw:
                 published_ts = self._parse_history_timestamp(published_raw)
                 if published_ts is not None:
-                    published = datetime.fromtimestamp(published_ts, tz=dt_timezone.utc)
+                    published = datetime.fromtimestamp(published_ts, tz=UTC)
                 else:
                     logger.debug("Failed to parse published date: %s", published_raw)
 
@@ -1923,7 +1923,7 @@ class PocketCastsImporter:
             try:
                 parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
                 if timezone.is_naive(parsed):
-                    parsed = parsed.replace(tzinfo=dt_timezone.utc)
+                    parsed = parsed.replace(tzinfo=UTC)
                 return parsed.timestamp()
             except ValueError:
                 return None

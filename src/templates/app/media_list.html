@@ -9,8 +9,14 @@
 {% block content %}
   <h1 class="text-3xl font-bold mb-6">{{ media_type|media_type_readable_plural }}</h1>
 
-  <div x-data="{ sort: '{{ current_sort }}', direction: '{{ current_direction }}', status: '{{ current_status }}', layout: '{{ current_layout }}', search: '{{ request.GET.search|default:'' }}', statusLabels: {
+  <div x-data="{ sort: '{{ current_sort }}', direction: '{{ current_direction }}', status: '{{ current_status }}', rating: '{{ current_rating }}', layout: '{{ current_layout }}', search: '{{ request.GET.search|default:'' }}', statusLabels: {
     {% for value, label in status_choices %}
+      '{{ value }}': '{{ label }}'
+      {% if not forloop.last %},{% endif %}
+
+    {% endfor %}
+    }, ratingLabels: {
+    {% for value, label in rating_choices %}
       '{{ value }}': '{{ label }}'
       {% if not forloop.last %},{% endif %}
 
@@ -28,6 +34,7 @@
       <input type="hidden" name="sort" x-model="sort">
       <input type="hidden" name="direction" x-model="direction">
       <input type="hidden" name="status" x-model="status">
+      <input type="hidden" name="rating" x-model="rating">
       <input type="hidden" name="search" x-model="search">
       <input type="hidden" name="layout" x-model="layout">
     </form>
@@ -80,6 +87,39 @@
                       class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
                       :class="status === '{{ value }}' ? 'bg-indigo-600 text-white font-medium' : 'text-gray-300 hover:bg-[#454d5a] hover:text-white'"
                       @click="status = '{{ value }}'; open = false"
+                      type="button">{{ label }}</button>
+            {% endfor %}
+          </div>
+        </div>
+
+        <!-- Filter by Rating -->
+        <div class="relative filter-control" x-data="{ open: false }">
+          <button class="flex items-center px-4 py-2 bg-[#39404b] rounded-md hover:bg-[#454d5a] transition-colors cursor-pointer"
+                  @click="open = !open"
+                  type="button">
+            {% include "app/icons/star.svg" with classes="w-4 h-4 mr-2 text-yellow-400" %}
+            <span x-text="ratingLabels[rating] || rating"></span>
+            {% include "app/icons/chevron-down.svg" with classes="w-4 h-4 ml-2" %}
+          </button>
+
+          <div class="absolute z-10 mt-2 py-1 w-48 bg-[#39404b] rounded-md shadow-lg overflow-hidden border border-gray-700"
+               x-cloak
+               x-show="open"
+               @click.outside="open = false"
+               x-transition:enter="transition ease-out duration-100"
+               x-transition:enter-start="transform opacity-0 scale-95"
+               x-transition:enter-end="transform opacity-100 scale-100"
+               x-transition:leave="transition ease-in duration-75"
+               x-transition:leave-start="transform opacity-100 scale-100"
+               x-transition:leave-end="transform opacity-0 scale-95">
+            {% for value, label in rating_choices %}
+              <button hx-get="{% url 'medialist' media_type %}"
+                      {% if media_list %} hx-target="{{ layout_class }}" {% else %} hx-target="#empty_list" {% endif %}
+                      hx-include="#filter-form"
+                      hx-indicator="#loading-indicator"
+                      class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
+                      :class="rating === '{{ value }}' ? 'bg-indigo-600 text-white font-medium' : 'text-gray-300 hover:bg-[#454d5a] hover:text-white'"
+                      @click="rating = '{{ value }}'; open = false"
                       type="button">{{ label }}</button>
             {% endfor %}
           </div>
@@ -147,14 +187,14 @@
 
         <!-- Layout Toggle -->
         <div class="flex rounded-md overflow-hidden border border-gray-700 layout-toggle">
-          <a :href="`{% url 'medialist' media_type %}?${search ? 'search=' + search + '&' : ''}${status !== 'all' ? 'status=' + status + '&' : ''}${direction ? 'direction=' + direction + '&' : ''}${sort !== 'score' ? 'sort=' + sort + '&' : ''}layout=grid`"
+          <a :href="`{% url 'medialist' media_type %}?${search ? 'search=' + search + '&' : ''}${status !== 'all' ? 'status=' + status + '&' : ''}${rating !== 'all' ? 'rating=' + rating + '&' : ''}${direction ? 'direction=' + direction + '&' : ''}${sort !== 'score' ? 'sort=' + sort + '&' : ''}layout=grid`"
              class="p-2 cursor-pointer"
              :class="layout === 'grid' ? 'bg-indigo-600 text-white' : 'bg-[#39404b] hover:bg-[#454d5a]'"
              title="Grid View"
              @click="layout = 'grid'">
             {% include "app/icons/four-square.svg" with classes="w-5 h-5" %}
           </a>
-          <a :href="`{% url 'medialist' media_type %}?${search ? 'search=' + search + '&' : ''}${status !== 'all' ? 'status=' + status + '&' : ''}${direction ? 'direction=' + direction + '&' : ''}${sort !== 'score' ? 'sort=' + sort + '&' : ''}layout=table`"
+          <a :href="`{% url 'medialist' media_type %}?${search ? 'search=' + search + '&' : ''}${status !== 'all' ? 'status=' + status + '&' : ''}${rating !== 'all' ? 'rating=' + rating + '&' : ''}${direction ? 'direction=' + direction + '&' : ''}${sort !== 'score' ? 'sort=' + sort + '&' : ''}layout=table`"
              class="p-2 cursor-pointer"
              :class="layout === 'table' ? 'bg-indigo-600 text-white' : 'bg-[#39404b] hover:bg-[#454d5a]'"
              title="Table View"

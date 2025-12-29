@@ -104,6 +104,32 @@ class HomeViewTests(TestCase):
         self.assertEqual(len(season["items"]), 1)
         self.assertEqual(season["items"][0].progress, 5)
 
+    def test_home_view_recently_unrated_section(self):
+        """Recently played, unrated items appear on the home view."""
+        movie_item = Item.objects.create(
+            media_id="recent-movie",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Recent Movie",
+            image="http://example.com/image.jpg",
+        )
+        Movie.objects.create(
+            item=movie_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            end_date=timezone.now() - timezone.timedelta(days=1),
+            score=None,
+        )
+
+        response = self.client.get(reverse("home"))
+
+        recent_section = response.context["list_by_type"].get("recently_not_rated")
+        self.assertIsNotNone(recent_section)
+        self.assertTrue(
+            any(media.item.id == movie_item.id for media in recent_section["items"]),
+        )
+
     def test_home_view_with_sort(self):
         """Test the home view with sorting parameter."""
         response = self.client.get(reverse("home") + "?sort=completion")
@@ -269,6 +295,31 @@ class MediaListViewTests(TestCase):
         self.assertEqual(self.user.movie_sort, "score")
         self.assertEqual(self.user.movie_layout, "table")
 
+    def test_media_list_rating_filter(self):
+        """Test the media list view with rating filter."""
+        unrated_item = Item.objects.create(
+            media_id="unrated",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Unrated Movie",
+            image="http://example.com/image.jpg",
+        )
+        Movie.objects.create(
+            item=unrated_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            score=None,
+        )
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.MOVIE.value]) + "?rating=not_rated",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_rating"], "not_rated")
+        self.assertEqual(response.context["media_list"].paginator.count, 1)
+
     def test_media_list_persists_direction(self):
         """Sort direction should be remembered across requests."""
         url = reverse("medialist", args=[MediaTypes.MOVIE.value])
@@ -376,12 +427,14 @@ class MediaListViewTests(TestCase):
 
         status_filter = response.context["current_status"]
         direction = response.context["current_direction"]
+        rating_filter = response.context["current_rating"]
         cache_key = cache_utils.build_time_left_cache_key(
             self.user.id,
             MediaTypes.TV.value,
             status_filter,
             "",
             direction,
+            rating_filter,
         )
         self.assertIsNotNone(cache.get(cache_key))
 

@@ -2,13 +2,14 @@
 {% load user_tags %}
 
 {% for media in media_list.items %}
+  {% with use_podcast_show=media.use_podcast_show %}
   <div class="media-card {% if secondary_color %}bg-[#39404b]{% else %}bg-[#2a2f35]{% endif %} rounded-lg overflow-hidden shadow-lg transition-all duration-300"
        x-data="{ trackOpen: false, listsOpen: false }">
     <div class="relative">
-      <a href="{{ media.item|media_url }}">
-      <img alt="{{ media }}"
-           class="media-card-poster lazyload w-full {% if media.item.media_type == MediaTypes.PODCAST.value %}aspect-[1/1]{% else %}aspect-[2/3]{% endif %} {% if media.item.image != IMG_NONE %}object-cover{% endif %}"
-           data-src="{{ media.item.image }}"
+      <a href="{% if use_podcast_show %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=media.show.podcast_uuid title=media.show.slug|default:media.show.title|slug %}{% else %}{{ media.item|media_url }}{% endif %}">
+      <img alt="{% if use_podcast_show %}{{ media.show.title }}{% else %}{{ media }}{% endif %}"
+           class="media-card-poster lazyload w-full {% if media.item.media_type == MediaTypes.PODCAST.value %}aspect-[1/1]{% else %}aspect-[2/3]{% endif %} {% if use_podcast_show and media.show.image %}object-cover{% elif media.item.image != IMG_NONE %}object-cover{% endif %}"
+           data-src="{% if use_podcast_show and media.show.image %}{{ media.show.image }}{% else %}{{ media.item.image }}{% endif %}"
            src="{{ IMG_NONE }}">
       </a>
 
@@ -23,6 +24,15 @@
             {% endif %}
 
             • {{ media.next_event.datetime|user_date_format:user }} {{ media.next_event|user_event_time:user }}
+          </span>
+        </div>
+      {% endif %}
+
+      {% if media_list.show_played_chip and media.last_played_at %}
+        <div class="absolute top-2 left-2 flex items-center gap-1.5 bg-black/80 px-2 py-1.5 rounded-md shadow-md whitespace-nowrap max-w-[98%]">
+          {% include "app/icons/history.svg" with classes="w-3.5 h-3.5 text-indigo-400" %}
+          <span class="text-xs font-medium text-white drop-shadow-sm truncate">
+            {{ media.last_played_at|user_datetime_format:user }}
           </span>
         </div>
       {% endif %}
@@ -65,19 +75,32 @@
       {% endif %}
 
       <div class="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 hover-tap:opacity-100{% if user.clickable_media_cards %} pointer-coarse:hidden{% endif %}">
-        <a href="{{ media.item|media_url }}" class="absolute inset-0"></a>
+        <a href="{% if use_podcast_show %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=media.show.podcast_uuid title=media.show.slug|default:media.show.title|slug %}{% else %}{{ media.item|media_url }}{% endif %}"
+           class="absolute inset-0"></a>
 
         <div class="relative flex items-center justify-center space-x-2.5">
           {# Track Button #}
-          <button class="p-2.5 bg-indigo-600 text-white rounded-full hover:bg-indigo-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(99,102,241,0.5)] transition-all duration-200 cursor-pointer"
-                  title="Add to tracker"
-                  hx-get="{% media_view_url 'track_modal' media.item %}"
-                  hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}", "instance_id": "{{ media.id }}"}'
-                  hx-target="#{% component_id 'track' media.item media.id %}"
-                  hx-trigger="click once"
-                  @click="trackOpen = true">
-            {% include "app/icons/edit.svg" with classes="w-4 h-4" %}
-          </button>
+          {% if use_podcast_show %}
+            <button class="p-2.5 bg-indigo-600 text-white rounded-full hover:bg-indigo-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(99,102,241,0.5)] transition-all duration-200 cursor-pointer"
+                    title="Edit tracking"
+                    hx-get="{% url 'podcast_show_track_modal' media.show.id %}"
+                    hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
+                    hx-target="#podcast-show-track-modal-{{ media.show.id }}"
+                    hx-trigger="click once"
+                    @click="trackOpen = true">
+              {% include "app/icons/edit.svg" with classes="w-4 h-4" %}
+            </button>
+          {% else %}
+            <button class="p-2.5 bg-indigo-600 text-white rounded-full hover:bg-indigo-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(99,102,241,0.5)] transition-all duration-200 cursor-pointer"
+                    title="Add to tracker"
+                    hx-get="{% media_view_url 'track_modal' media.item %}"
+                    hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}", "instance_id": "{{ media.id }}"}'
+                    hx-target="#{% component_id 'track' media.item media.id %}"
+                    hx-trigger="click once"
+                    @click="trackOpen = true">
+              {% include "app/icons/edit.svg" with classes="w-4 h-4" %}
+            </button>
+          {% endif %}
 
           {# Lists Button #}
           <button class="p-2.5 bg-emerald-600 text-white rounded-full hover:bg-emerald-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(16,185,129,0.5)] transition-all duration-200 cursor-pointer"
@@ -101,9 +124,9 @@
     </div>
 
     <div class="media-card-body p-3 space-y-3">
-      <a href="{{ media.item|media_url }}"
+      <a href="{% if use_podcast_show %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=media.show.podcast_uuid title=media.show.slug|default:media.show.title|slug %}{% else %}{{ media.item|media_url }}{% endif %}"
          class="media-card-title text-sm font-semibold text-white hover:text-indigo-400 transition duration-300 line-clamp-1 text-center"
-         title="{{ media }}">{{ media }}</a>
+         title="{% if use_podcast_show %}{{ media.show.title }}{% else %}{{ media }}{% endif %}">{% if use_podcast_show %}{{ media.show.title }}{% else %}{{ media }}{% endif %}</a>
       <div id="progress-{{ media.item.media_type }}-{{ media.id }}" class="media-card-progress" data-progress-mode="conditional" data-mobile-show="{% if current_sort_value == 'progress' %}true{% else %}false{% endif %}">
         {% include "app/components/progress_changer.html" with media=media csrf_token=csrf_token MediaTypes=MediaTypes only %}
       </div>
@@ -115,7 +138,11 @@
          class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
       <div class="w-152 max-h-[90vh] px-4 md:px-0 relative z-60"
            @click.outside="trackOpen = false">
-        <div id="{% component_id 'track' media.item media.id %}"></div>
+        {% if use_podcast_show %}
+          <div id="podcast-show-track-modal-{{ media.show.id }}"></div>
+        {% else %}
+          <div id="{% component_id 'track' media.item media.id %}"></div>
+        {% endif %}
       </div>
     </div>
 
@@ -130,4 +157,5 @@
     </div>
 
   </div>
+  {% endwith %}
 {% endfor %}
