@@ -246,7 +246,7 @@
           <div class="media-grid">
             {% for entry in day.entries %}
               <div class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg transition-all duration-200 hover:-translate-y-1 hover:shadow-xl"
-                   x-data="{ trackOpen: false, listsOpen: false }">
+                   x-data="{ historyOpen: false, listsOpen: false }">
                 <div class="relative">
                   <a href="{% if entry.media_type == MediaTypes.MUSIC.value and entry.album %}{% url 'album_detail' entry.album.id %}{% elif entry.media_type == MediaTypes.PODCAST.value and entry.show and entry.show.podcast_uuid %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=entry.show.podcast_uuid title=entry.show.slug|default:entry.show.title|slug %}{% else %}{{ entry.item|media_url }}{% endif %}"
                      class="relative block">
@@ -289,14 +289,14 @@
                          class="absolute inset-0"></a>
 
                       <div class="relative flex items-center justify-center space-x-2.5">
-                        {# Track Button #}
+                        {# History Edit Button #}
                         <button class="p-2.5 bg-indigo-600 text-white rounded-full hover:bg-indigo-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(99,102,241,0.5)] transition-all duration-200 cursor-pointer"
-                                title="Add to tracker"
-                                hx-get="{% if entry.media_type == MediaTypes.EPISODE.value %}{% if entry.item.season_number %}{% url 'track_modal' entry.item.source entry.media_type entry.item.media_id entry.item.season_number %}{% else %}{% url 'track_modal' entry.item.source entry.media_type entry.item.media_id %}{% endif %}{% else %}{% media_view_url 'track_modal' entry.item %}{% endif %}"
-                                hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"{% if entry.instance_id %}, "instance_id": "{{ entry.instance_id }}"{% endif %}}'
-                                hx-target="#{% component_id 'track' entry.item entry.entry_key %}"
+                                title="Edit history"
+                                hx-get="{% media_view_url 'history_modal' entry.item %}"
+                                hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
+                                hx-target="#{% component_id 'history' entry.item entry.entry_key %}"
                                 hx-trigger="click once"
-                                @click="trackOpen = true">
+                                @click="historyOpen = true">
                           {% include "app/icons/edit.svg" with classes="w-4 h-4" %}
                         </button>
 
@@ -360,13 +360,13 @@
                 </div>
 
                 {% if entry.item and entry.item.media_type %}
-                  {# Track Modal #}
-                  <div x-show="trackOpen"
-                       @keydown.escape.window="trackOpen = false"
+                  {# History Modal #}
+                  <div x-show="historyOpen"
+                       @keydown.escape.window="historyOpen = false"
                        class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
                     <div class="w-152 max-h-[90vh] px-4 md:px-0 relative z-60"
-                         @click.outside="trackOpen = false">
-                      <div id="{% component_id 'track' entry.item entry.entry_key %}"></div>
+                         @click.outside="historyOpen = false">
+                      <div id="{% component_id 'history' entry.item entry.entry_key %}"></div>
                     </div>
                   </div>
 
