@@ -9,6 +9,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_not_required
 from django.core.cache import cache
+from django.core.exceptions import ObjectDoesNotExist
 from django.core.paginator import EmptyPage, Paginator
 from django.db import IntegrityError
 from django.db.models import prefetch_related_objects
@@ -2293,21 +2294,47 @@ def history_modal(
     episode_number=None,
 ):
     """Return the history page for a media item."""
-    user_medias = BasicMedia.objects.filter_media(
-        request.user,
-        media_id,
-        media_type,
-        source,
-        season_number=season_number,
-        episode_number=episode_number,
-    )
+    instance_id = request.GET.get("instance_id")
+    if instance_id:
+        try:
+            media = BasicMedia.objects.get_media(
+                request.user,
+                media_type,
+                instance_id,
+            )
+            user_medias = [media]
+        except (ObjectDoesNotExist, ValueError, TypeError):
+            user_medias = BasicMedia.objects.filter_media(
+                request.user,
+                media_id,
+                media_type,
+                source,
+                season_number=season_number,
+                episode_number=episode_number,
+            )
+    else:
+        user_medias = BasicMedia.objects.filter_media(
+            request.user,
+            media_id,
+            media_type,
+            source,
+            season_number=season_number,
+            episode_number=episode_number,
+        )
 
-    total_medias = user_medias.count()
+    try:
+        total_medias = user_medias.count()
+    except TypeError:
+        total_medias = len(user_medias)
     timeline_entries = []
     for index, media in enumerate(user_medias, start=1):
         # Filter history to only include records with end_date (completed plays)
         # This prevents showing invalid history records from in-progress episodes
-        history = media.history.filter(end_date__isnull=False) if hasattr(media.history, "filter") else [h for h in media.history.all() if h.end_date]
+        history = (
+            media.history.filter(end_date__isnull=False)
+            if hasattr(media.history, "filter")
+            else [h for h in media.history.all() if h.end_date]
+        )
         if history:
             media_entry_number = total_medias - index + 1
             timeline_entries.extend(
@@ -2353,27 +2380,13 @@ def delete_history_record(request, media_type, history_id):
                 history_id=history_id,
                 history_user__isnull=True,
             )
-
-            # For music and podcasts, verify the instance belongs to the user
-            if media_type.lower() == "music":
-                from app.models import Music
-                try:
-                    music = Music.objects.get(id=history_record.id, user=request.user)
-                except Music.DoesNotExist:
-                    raise historical_model.DoesNotExist(
-                        f"History record {history_id} does not belong to user {request.user}",
-                    )
-            elif media_type.lower() == "podcast":
-                from app.models import Podcast
-                try:
-                    podcast = Podcast.objects.get(id=history_record.id, user=request.user)
-                except Podcast.DoesNotExist:
-                    raise historical_model.DoesNotExist(
-                        f"History record {history_id} does not belong to user {request.user}",
-                    )
-            else:
-                # For other media types, we can't easily verify ownership without history_user
-                # So we'll only allow deletion if history_user matches
+            try:
+                BasicMedia.objects.get_media(
+                    request.user,
+                    media_type.lower(),
+                    history_record.id,
+                )
+            except ObjectDoesNotExist:
                 raise historical_model.DoesNotExist(
                     f"History record {history_id} not found for user {request.user}",
                 )

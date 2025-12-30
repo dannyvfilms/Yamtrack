@@ -293,7 +293,7 @@
                         <button class="p-2.5 bg-indigo-600 text-white rounded-full hover:bg-indigo-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(99,102,241,0.5)] transition-all duration-200 cursor-pointer"
                                 title="Edit history"
                                 hx-get="{% media_view_url 'history_modal' entry.item %}"
-                                hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
+                                hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"{% if entry.instance_id %}, "instance_id": "{{ entry.instance_id }}"{% endif %}}'
                                 hx-target="#{% component_id 'history' entry.item entry.entry_key %}"
                                 hx-trigger="click once"
                                 @click="historyOpen = true">
