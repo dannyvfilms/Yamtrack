@@ -54,7 +54,7 @@
     {% endif %}
   </div>
 
-  <div x-data="{ sort: '{{ current_sort }}', type: '{{ request.GET.type|default:'all' }}', query: '{{ request.GET.q|default:'' }}', mediaTypeLabels: {
+  <div x-data="{ sort: '{{ current_sort }}', type: '{{ request.GET.type|default:'all' }}', query: '{{ request.GET.q|default:''|escapejs }}', mediaTypeLabels: {
     {% for media_type in media_types %}'{{ media_type }}': '{{ media_type|media_type_readable_plural }}',{% endfor %}
     'all': 'All Types' }, getMediaTypeLabel() { return this.mediaTypeLabels[this.type] || this.type; } }">
 

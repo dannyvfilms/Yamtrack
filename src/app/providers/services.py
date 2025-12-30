@@ -75,7 +75,7 @@ session.mount(
 )
 session.mount(
     "https://api.hardcover.app/v1/graphql",
-    LimiterAdapter(per_minute=55),
+    LimiterAdapter(per_minute=50),
 )
 
 
@@ -156,7 +156,7 @@ def api_request(provider, method, url, params=None, data=None, headers=None):
 
         # handle rate limiting
         if status_code == requests.codes.too_many_requests:
-            seconds_to_wait = int(error_resp.headers["Retry-After"])
+            seconds_to_wait = int(error_resp.headers.get("Retry-After", 5))
             logger.warning("Rate limited, waiting %s seconds", seconds_to_wait)
             time.sleep(seconds_to_wait + 3)
             logger.info("Retrying request")

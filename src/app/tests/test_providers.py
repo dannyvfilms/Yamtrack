@@ -758,35 +758,6 @@ class Metadata(TestCase):
         result = hardcover.get_edition_details(no_publisher)
         self.assertEqual(result["publisher"], None)
 
-    def test_hardcover_get_recommendations(self):
-        """Test the get_recommendations function from Hardcover provider."""
-        recs_data = [
-            {
-                "item_book": {
-                    "id": 123,
-                    "title": "Book 1",
-                    "cached_image": "https://example.com/book1.jpg",
-                },
-            },
-            {
-                "item_book": {
-                    "id": 456,
-                    "title": "Book 2",
-                    "cached_image": None,
-                },
-            },
-        ]
-
-        result = hardcover.get_recommendations(recs_data)
-        self.assertEqual(len(result), 2)
-        self.assertEqual(result[0]["media_id"], 123)
-        self.assertEqual(result[0]["title"], "Book 1")
-        self.assertEqual(result[0]["image"], "https://example.com/book1.jpg")
-        self.assertEqual(result[1]["image"], settings.IMG_NONE)
-
-        # Test with None
-        self.assertEqual(hardcover.get_recommendations(None), [])
-
     def test_handle_error_hardcover_unauthorized(self):
         """Test the handle_error function with Hardcover unauthorized error."""
         # Setup mock response for unauthorized error

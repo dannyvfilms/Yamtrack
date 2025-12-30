@@ -119,7 +119,9 @@ def comic(media_id):
         # Check if response is empty (no results found)
         if not response:
             services.raise_not_found_error(
-                Sources.COMICVINE.value, media_id, "comic",
+                Sources.COMICVINE.value,
+                media_id,
+                "comic",
             )
 
         publisher_id = response.get("publisher", {}).get("id")
@@ -134,6 +136,9 @@ def comic(media_id):
             "media_type": MediaTypes.COMIC.value,
             "title": response["name"],
             "max_progress": None,
+            "max_issue_number": get_issue_number(
+                response["last_issue"]["issue_number"],
+            ),
             "image": get_image(response),
             "synopsis": get_synopsis(response),
             "genres": get_genres(response),
@@ -208,6 +213,26 @@ def get_last_issue_name(response):
     if last_issue and isinstance(last_issue, dict):
         return last_issue.get("name")
     return None
+
+
+def get_issue_number(issue_number):
+    """Return the last issue number as an integer if possible.
+
+    For compound issue numbers (like "463-464"), returns the highest number.
+    Returns None if no valid issue number can be extracted.
+    """
+    try:
+        return int(issue_number)
+
+    except ValueError:
+        # Handle compound issue numbers like "463-464"
+        try:
+            # Split by hyphen and get the highest number
+            parts = [int(part.strip()) for part in issue_number.split("-")]
+            return max(parts)
+
+        except (ValueError, AttributeError):
+            return None
 
 
 def get_last_issue_number(response):

@@ -807,7 +807,7 @@ def process_comic(item, events_bulk):
     # get latest event
     latest_event = Event.objects.filter(item=item).order_by("-datetime").first()
     last_issue_event_number = latest_event.content_number if latest_event else 0
-    last_published_issue_number = metadata["max_progress"]
+    last_published_issue_number = metadata["max_issue_number"]
     if last_issue_event_number == last_published_issue_number:
         return
 

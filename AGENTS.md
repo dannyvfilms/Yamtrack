@@ -1,6 +1,33 @@
 # Project Overview
 Yamtrack is a Django 5.2 app for self-hosted media tracking with Celery workers and Redis. Tailwind CSS output is currently committed under `src/static/css/`. Templates currently load `src/static/css/main.css` (see `src/templates/base.html`).
 
+## Branch Policy (Fork)
+- `dev` must be an exact mirror of upstream `FuzzyGrim/Yamtrack:dev` with no fork-only commits or edits.
+- Any local `dev` divergence should be reset/fast-forwarded back to upstream before merging.
+
+## Merge Workflow (Upstream Dev -> Release)
+This workspace is the fork `dannyvfilms/Yamtrack`, branch `release`. When syncing upstream `dev` into `release`, treat the merge as a conflict-resolution task where upstream `dev` brings maintenance changes and `release` preserves fork features.
+
+High-level rules:
+- Use upstream `dev` as the source of truth for dependency versions, security/bugfix patches, small refactors, settings/config changes, CSS cleanups, and tests.
+- Use `release` as the source of truth for fork-specific features and behavior changes.
+- When logic overlaps, merge intent from both sides rather than choosing one side wholesale.
+
+Important fork features to preserve while merging:
+- Statistics/runtime/time-left features: statistics pages, runtime population/caching, episode runtimes, time_left sorting, dropped-show fixes, charts (daily buckets, 30-day played-hours, All Time).
+- UI/layout improvements: mobile layouts, filter controls, media card/timeline styling, statistics layout refinements, responsive template updates.
+- Preferences/sorting: preferences tab, sort-direction toggles/indicators, ratings-list sort fixes, aggregate-duplicates behavior.
+- Plex/import/webhook resilience: Plex-only GUID handling, TMDB episode edge cases, SQLite lock handling during import, auto-pause for stale in-progress items.
+- Deployment/infra tweaks: Docker build improvements, Redis-unavailability guard in AppConfig.ready(), README/install updates.
+
+Conflict-resolution steps:
+1. Scan for conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`) and resolve every file.
+2. For each conflict, understand both sides; keep upstream maintenance changes and layer them into fork features.
+3. For views/templates/runtime/statistics/preferences/import/webhook logic, start from `release` behavior and integrate upstream improvements.
+4. For lists/configs (.gitignore, CSS classes, INSTALLED_APPS, URLs, etc.), keep the union and deduplicate.
+5. Remove all conflict markers; run linters/tests and fix underlying issues, not just tests.
+6. If a choice is unavoidable, prioritize fork-visible features while honoring upstream data contracts/integrations.
+
 ## Repo Map
 - `src/` Django project code (apps: `app`, `users`, `lists`, `integrations`, `events`; config in `config/`).
 - `src/templates/` and `src/static/` for UI templates and CSS assets.

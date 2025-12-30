@@ -25,7 +25,7 @@
     </div>
 
     <div class="flex flex-col md:flex-row gap-4 mb-6"
-         x-data="{ sort: '{{ current_sort }}', mediaType: '{{ current_media_type }}', query: '{{ request.GET.q|default:'' }}', mediaTypeLabels: {
+         x-data="{ sort: '{{ current_sort }}', mediaType: '{{ current_media_type }}', query: '{{ request.GET.q|default:''|escapejs }}', mediaTypeLabels: {
            {% for media_type in media_types %}'{{ media_type }}': '{{ media_type|media_type_readable_plural }}',{% endfor %}
            'all': 'All Types'
          } }">

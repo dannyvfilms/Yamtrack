@@ -174,8 +174,6 @@ def book(media_id):
             )
 
         edition_details = get_edition_details(book_data.get("default_cover_edition"))
-        # Recommendations field no longer exists in the API schema
-        recommendations = []
 
         data = {
             "media_id": book_data["id"],
@@ -196,9 +194,6 @@ def book(media_id):
                 "author": book_data.get("cached_contributors"),
                 "publisher": edition_details.get("publisher"),
                 "isbn": edition_details.get("isbn"),
-            },
-            "related": {
-                "recommendations": get_recommendations(recommendations),
             },
         }
 
@@ -241,24 +236,6 @@ def get_edition_details(edition_data):
         "publisher": publisher_name,
         "isbn": isbns if isbns else None,
     }
-
-
-def get_recommendations(recommendations_data):
-    """Get processed recommendations from API data."""
-    if not recommendations_data:
-        return []
-
-    return [
-        {
-            "media_id": rec["item_book"]["id"],
-            "source": Sources.HARDCOVER.value,
-            "title": rec["item_book"]["title"],
-            "media_type": MediaTypes.BOOK.value,
-            "image": rec["item_book"].get("cached_image") or settings.IMG_NONE,
-        }
-        for rec in recommendations_data
-        if rec.get("item_book")
-    ]
 
 
 def get_image_url(response):
