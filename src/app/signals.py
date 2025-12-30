@@ -9,7 +9,7 @@ from django.dispatch import receiver
 from django_celery_results.models import TaskResult
 
 from app import statistics_cache
-from app.history_cache import schedule_history_refresh
+from app import history_cache
 from app.models import (
     TV,
     Anime,
@@ -74,7 +74,15 @@ def refresh_history_cache_on_episode_change(sender, instance, **kwargs):  # noqa
     """Schedule history cache refresh when episode activity changes."""
     user_id = getattr(getattr(instance, "related_season", None), "user_id", None)
     if user_id:
-        schedule_history_refresh(user_id)
+        day_key = history_cache.history_day_key(getattr(instance, "end_date", None))
+        if day_key:
+            history_cache.invalidate_history_cache(
+                user_id,
+                day_keys=[day_key],
+                logging_styles=("sessions", "repeats"),
+            )
+        for style in ("sessions", "repeats"):
+            history_cache.schedule_history_refresh(user_id, style)
         # Schedule statistics cache refresh but don't delete cache immediately
         # This allows users to see old data with notification while refresh happens
         statistics_cache.schedule_all_ranges_refresh(user_id)
@@ -85,7 +93,16 @@ def refresh_history_cache_on_movie_change(sender, instance, **kwargs):  # noqa: 
     """Schedule history cache refresh when movie activity changes."""
     user_id = getattr(instance, "user_id", None)
     if user_id:
-        schedule_history_refresh(user_id)
+        activity_dt = getattr(instance, "end_date", None) or getattr(instance, "start_date", None)
+        day_key = history_cache.history_day_key(activity_dt)
+        if day_key:
+            history_cache.invalidate_history_cache(
+                user_id,
+                day_keys=[day_key],
+                logging_styles=("sessions", "repeats"),
+            )
+        for style in ("sessions", "repeats"):
+            history_cache.schedule_history_refresh(user_id, style)
         # Schedule statistics cache refresh but don't delete cache immediately
         # This allows users to see old data with notification while refresh happens
         statistics_cache.schedule_all_ranges_refresh(user_id)
@@ -100,8 +117,15 @@ def refresh_history_cache_on_music_change(sender, instance, **kwargs):  # noqa: 
     """
     user_id = getattr(instance, "user_id", None)
     if user_id:
-        # Schedule refresh but don't delete cache - old data will show with notification
-        schedule_history_refresh(user_id)
+        day_key = history_cache.history_day_key(getattr(instance, "end_date", None))
+        if day_key:
+            history_cache.invalidate_history_cache(
+                user_id,
+                day_keys=[day_key],
+                logging_styles=("sessions", "repeats"),
+            )
+        for style in ("sessions", "repeats"):
+            history_cache.schedule_history_refresh(user_id, style)
         # Schedule statistics cache refresh but don't delete cache immediately
         # This allows users to see old data with notification while refresh happens
         statistics_cache.schedule_all_ranges_refresh(user_id)
@@ -116,8 +140,15 @@ def refresh_history_cache_on_podcast_change(sender, instance, **kwargs):  # noqa
     """
     user_id = getattr(instance, "user_id", None)
     if user_id:
-        # Schedule refresh but don't delete cache - old data will show with notification
-        schedule_history_refresh(user_id)
+        day_key = history_cache.history_day_key(getattr(instance, "end_date", None))
+        if day_key:
+            history_cache.invalidate_history_cache(
+                user_id,
+                day_keys=[day_key],
+                logging_styles=("sessions", "repeats"),
+            )
+        for style in ("sessions", "repeats"):
+            history_cache.schedule_history_refresh(user_id, style)
         # Schedule statistics cache refresh but don't delete cache immediately
         # This allows users to see old data with notification while refresh happens
         statistics_cache.schedule_all_ranges_refresh(user_id)
@@ -210,6 +241,24 @@ def refresh_statistics_cache_on_game_change(sender, instance, **kwargs):  # noqa
     """
     user_id = getattr(instance, "user_id", None)
     if user_id:
+        start_dt = getattr(instance, "start_date", None) or getattr(instance, "end_date", None)
+        end_dt = getattr(instance, "end_date", None) or getattr(instance, "start_date", None)
+        range_keys = history_cache.history_day_keys_for_range(start_dt, end_dt)
+        session_key = history_cache.history_day_key(end_dt or start_dt)
+        if range_keys:
+            history_cache.invalidate_history_cache(
+                user_id,
+                day_keys=range_keys,
+                logging_styles=("repeats",),
+            )
+        if session_key:
+            history_cache.invalidate_history_cache(
+                user_id,
+                day_keys=[session_key],
+                logging_styles=("sessions",),
+            )
+        for style in ("sessions", "repeats"):
+            history_cache.schedule_history_refresh(user_id, style)
         # Schedule refresh but don't delete cache - old data will show with notification
         statistics_cache.schedule_all_ranges_refresh(user_id)
 
@@ -223,5 +272,23 @@ def refresh_statistics_cache_on_boardgame_change(sender, instance, **kwargs):  #
     """
     user_id = getattr(instance, "user_id", None)
     if user_id:
+        start_dt = getattr(instance, "start_date", None) or getattr(instance, "end_date", None)
+        end_dt = getattr(instance, "end_date", None) or getattr(instance, "start_date", None)
+        range_keys = history_cache.history_day_keys_for_range(start_dt, end_dt)
+        session_key = history_cache.history_day_key(end_dt or start_dt)
+        if range_keys:
+            history_cache.invalidate_history_cache(
+                user_id,
+                day_keys=range_keys,
+                logging_styles=("repeats",),
+            )
+        if session_key:
+            history_cache.invalidate_history_cache(
+                user_id,
+                day_keys=[session_key],
+                logging_styles=("sessions",),
+            )
+        for style in ("sessions", "repeats"):
+            history_cache.schedule_history_refresh(user_id, style)
         # Schedule refresh but don't delete cache - old data will show with notification
         statistics_cache.schedule_all_ranges_refresh(user_id)

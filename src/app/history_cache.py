@@ -4,15 +4,18 @@ import logging
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta
+from typing import Iterable
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.db import models
+from django.db.models.functions import TruncDate
 from django.utils import formats, timezone
 
 from app import helpers
 from app.models import (
+    Album,
     BoardGame,
     Episode,
     Game,
@@ -26,11 +29,15 @@ from app.models import (
 
 logger = logging.getLogger(__name__)
 
-HISTORY_CACHE_PREFIX = "history_page_v13"
+HISTORY_CACHE_VERSION = 14
+HISTORY_INDEX_PREFIX = f"history_index_v{HISTORY_CACHE_VERSION}"
+HISTORY_DAY_PREFIX = f"history_day_v{HISTORY_CACHE_VERSION}"
+HISTORY_CACHE_PREFIX = HISTORY_INDEX_PREFIX
 HISTORY_CACHE_TIMEOUT = 60 * 60 * 6  # 6 hours
 HISTORY_STALE_AFTER = timedelta(minutes=15)
 HISTORY_DAYS_PER_PAGE = 30
-HISTORY_REFRESH_LOCK_PREFIX = f"{HISTORY_CACHE_PREFIX}_refresh_lock"
+HISTORY_WARM_DAYS = getattr(settings, "HISTORY_CACHE_WARM_DAYS", 0)
+HISTORY_REFRESH_LOCK_PREFIX = f"history_refresh_lock_v{HISTORY_CACHE_VERSION}"
 HISTORY_REFRESH_LOCK_MAX_AGE = timedelta(minutes=5)  # safety to clear stuck locks
 
 
@@ -40,6 +47,26 @@ def _cache_key(user_id: int, logging_style: str) -> str:
 
 def _refresh_lock_key(user_id: int, logging_style: str) -> str:
     return f"{HISTORY_REFRESH_LOCK_PREFIX}_{user_id}_{logging_style or 'repeats'}"
+
+
+def _day_cache_key(user_id: int, logging_style: str, day_key: str) -> str:
+    return f"{HISTORY_DAY_PREFIX}_{user_id}_{logging_style or 'repeats'}_{day_key}"
+
+
+def _day_key_for_date(day_value):
+    return day_value.strftime("%Y%m%d")
+
+
+def _date_from_day_key(day_key: str):
+    return datetime.strptime(day_key, "%Y%m%d").date()
+
+
+def _normalize_logging_style(logging_style, user=None):
+    if logging_style in ("sessions", "repeats"):
+        return logging_style
+    if user is not None:
+        return getattr(user, "game_logging_style", "repeats")
+    return "repeats"
 
 
 def _get_rss_kb():
@@ -63,6 +90,61 @@ def _localize_datetime(value):
         value = timezone.make_aware(value, timezone.get_current_timezone())
 
     return timezone.localtime(value)
+
+
+def _serialize_item(item):
+    if not item:
+        return None
+    if isinstance(item, dict):
+        data = dict(item)
+        if data.get("season_number") is None:
+            data.pop("season_number", None)
+        if data.get("episode_number") is None:
+            data.pop("episode_number", None)
+        return data
+    if not hasattr(item, "media_type"):
+        return None
+    data = {
+        "id": getattr(item, "id", None),
+        "media_type": item.media_type,
+        "media_id": str(getattr(item, "media_id", "")) if getattr(item, "media_id", None) is not None else None,
+        "source": getattr(item, "source", None),
+        "title": getattr(item, "title", "") or "",
+    }
+    season_number = getattr(item, "season_number", None)
+    if season_number is not None:
+        data["season_number"] = season_number
+    episode_number = getattr(item, "episode_number", None)
+    if episode_number is not None:
+        data["episode_number"] = episode_number
+    return data
+
+
+def _serialize_album(album):
+    if not album:
+        return None
+    if isinstance(album, dict):
+        return album
+    return {
+        "id": getattr(album, "id", None),
+        "title": getattr(album, "title", "") or "",
+        "image": getattr(album, "image", "") or "",
+        "artist_name": getattr(getattr(album, "artist", None), "name", "") or "",
+    }
+
+
+def _serialize_show(show):
+    if not show:
+        return None
+    if isinstance(show, dict):
+        return show
+    return {
+        "id": getattr(show, "id", None),
+        "title": getattr(show, "title", "") or "",
+        "slug": getattr(show, "slug", "") or "",
+        "podcast_uuid": getattr(show, "podcast_uuid", None),
+        "image": getattr(show, "image", "") or "",
+    }
 
 
 def _resolve_runtime_minutes(*items):
@@ -134,7 +216,7 @@ def _format_boardgame_plays(plays: int) -> str:
     return f"{plays} play{'s' if plays != 1 else ''}"
 
 
-def _build_episode_entry(episode, episode_title_map=None, episode_history_map=None):
+def _build_episode_entry(episode, episode_title_map=None):
     played_at_local = _localize_datetime(episode.end_date or episode.created_at)
     if not played_at_local:
         return None
@@ -166,23 +248,9 @@ def _build_episode_entry(episode, episode_title_map=None, episode_history_map=No
         episode_label = f"{episode_item.season_number}x{episode_item.episode_number:02d}"
         episode_code = f"S{episode_item.season_number:02d}E{episode_item.episode_number:02d}"
 
-    episode_history = []
-    if episode_history_map and episode_item and episode_item.episode_number is not None:
-        history_key = (episode.related_season_id, episode_item.episode_number)
-        episode_history = episode_history_map.get(history_key, [])
-
-    episode_image = episode_item.image if episode_item and episode_item.image else _get_episode_poster(episode)
-    episode_modal = {
-        "title": title,
-        "image": episode_image or settings.IMG_NONE,
-        "episode_number": episode_item.episode_number if episode_item else None,
-        "air_date": None,
-        "history": episode_history,
-    }
-
     return {
         "media_type": MediaTypes.EPISODE.value,
-        "item": entry_item,
+        "item": _serialize_item(entry_item),
         "poster": _get_episode_poster(episode),
         "title": title,
         "display_title": display_title,
@@ -193,7 +261,6 @@ def _build_episode_entry(episode, episode_title_map=None, episode_history_map=No
         "runtime_display": helpers.minutes_to_hhmm(runtime_minutes) if runtime_minutes else None,
         "instance_id": episode.id,
         "entry_key": episode.id,
-        "episode_modal": episode_modal,
     }
 
 
@@ -206,7 +273,7 @@ def _build_movie_entry(movie):
 
     return {
         "media_type": MediaTypes.MOVIE.value,
-        "item": movie.item,
+        "item": _serialize_item(movie.item),
         "poster": movie.item.image or settings.IMG_NONE,
         "title": movie.item.title,
         "display_title": movie.item.title,
@@ -324,14 +391,14 @@ def _build_music_album_entries(music_entries_for_album, album, day_date, user, t
     album_name = album.title if album else "Unknown Album"
     artist_name = album.artist.name if album and album.artist else "Unknown Artist"
     
-    entry_item = primary_music.item if primary_music and primary_music.item else album
+    entry_item = primary_music.item if primary_music and primary_music.item else None
     instance_id = primary_music.id if primary_music else None
     entry_key = f"{album.id if album else 'album'}-{day_date.strftime('%Y%m%d')}"
 
     return {
         "media_type": MediaTypes.MUSIC.value,
-        "item": entry_item,
-        "album": album,
+        "item": _serialize_item(entry_item),
+        "album": _serialize_album(album),
         "poster": poster,
         "title": album_name,
         "display_title": album_name,
@@ -457,18 +524,10 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
             episodes = episodes.filter(related_season__item__season_number=season_number_filter)
 
     episodes = list(episodes)
-    episode_history_map = defaultdict(list)
-    for ep in episodes:
-        ep_item = getattr(ep, "item", None)
-        if not ep_item or ep_item.episode_number is None:
-            continue
-        history_key = (ep.related_season_id, ep_item.episode_number)
-        episode_history_map[history_key].append(ep)
     logger.info(
-        "history_build_episodes user_id=%s count=%s history_keys=%s elapsed_ms=%.2f",
+        "history_build_episodes user_id=%s count=%s elapsed_ms=%.2f",
         user.id,
         len(episodes),
-        len(episode_history_map),
         (time.perf_counter() - episodes_start) * 1000,
     )
 
@@ -766,7 +825,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
             # Apply genre filter if specified
             if genre_filter and not matches_genre(episode, MediaTypes.EPISODE.value):
                 continue
-            entry = _build_episode_entry(episode, episode_title_map, episode_history_map)
+            entry = _build_episode_entry(episode, episode_title_map)
             if entry:
                 entries.append(entry)
                 entry_counts["episodes"] += 1
@@ -947,8 +1006,8 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                 entries.append(
                     {
                         "media_type": MediaTypes.PODCAST.value,
-                        "item": podcast.item,
-                        "show": show,
+                        "item": _serialize_item(podcast.item),
+                        "show": _serialize_show(show),
                         "show_podcast_uuid": show_podcast_uuid,
                         "show_slug": show_slug,
                         "poster": poster,
@@ -1004,7 +1063,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                     entries.append(
                         {
                             "media_type": MediaTypes.GAME.value,
-                            "item": game.item,
+                            "item": _serialize_item(game.item),
                             "poster": game.item.image or settings.IMG_NONE,
                             "title": game.item.title,
                             "display_title": game.item.title,
@@ -1045,7 +1104,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                     entries.append(
                         {
                             "media_type": MediaTypes.BOARDGAME.value,
-                            "item": boardgame.item,
+                            "item": _serialize_item(boardgame.item),
                             "poster": boardgame.item.image or settings.IMG_NONE,
                             "title": boardgame.item.title,
                             "display_title": boardgame.item.title,
@@ -1101,7 +1160,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                         entries.append(
                             {
                                 "media_type": MediaTypes.GAME.value,
-                                "item": game.item,
+                                "item": _serialize_item(game.item),
                                 "poster": game.item.image or settings.IMG_NONE,
                                 "title": game.item.title,
                                 "display_title": game.item.title,
@@ -1155,7 +1214,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                         entries.append(
                             {
                                 "media_type": MediaTypes.BOARDGAME.value,
-                                "item": boardgame.item,
+                                "item": _serialize_item(boardgame.item),
                                 "poster": boardgame.item.image or settings.IMG_NONE,
                                 "title": boardgame.item.title,
                                 "display_title": boardgame.item.title,
@@ -1232,82 +1291,895 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
     return history_days
 
 
+def _serialize_history_entry(entry):
+    data = dict(entry)
+    data["item"] = _serialize_item(data.get("item"))
+    data["album"] = _serialize_album(data.get("album"))
+    data["show"] = _serialize_show(data.get("show"))
+    data.pop("episode_modal", None)
+    played_at = data.get("played_at_local")
+    if isinstance(played_at, datetime):
+        data["played_at_local"] = played_at.isoformat()
+    return data
+
+
+def _deserialize_history_entry(entry):
+    data = dict(entry)
+    played_at = data.get("played_at_local")
+    if isinstance(played_at, str):
+        try:
+            parsed = datetime.fromisoformat(played_at)
+            if timezone.is_naive(parsed):
+                parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+            data["played_at_local"] = parsed
+        except ValueError:
+            data["played_at_local"] = None
+    return data
+
+
+def _serialize_history_day(day):
+    date_value = day.get("date")
+    if hasattr(date_value, "isoformat"):
+        date_value = date_value.isoformat()
+    return {
+        "date": date_value,
+        "weekday": day.get("weekday", ""),
+        "date_display": day.get("date_display", ""),
+        "entries": [_serialize_history_entry(entry) for entry in day.get("entries", [])],
+        "total_minutes": day.get("total_minutes", 0),
+        "total_runtime_display": day.get("total_runtime_display", "0min"),
+    }
+
+
+def _deserialize_history_day(day):
+    date_value = day.get("date")
+    if isinstance(date_value, str):
+        try:
+            date_value = datetime.strptime(date_value, "%Y-%m-%d").date()
+        except ValueError:
+            date_value = None
+    return {
+        "date": date_value,
+        "weekday": day.get("weekday", ""),
+        "date_display": day.get("date_display", ""),
+        "entries": [_deserialize_history_entry(entry) for entry in day.get("entries", [])],
+        "total_minutes": day.get("total_minutes", 0),
+        "total_runtime_display": day.get("total_runtime_display", "0min"),
+    }
+
+
 def cache_history_days(user_id: int, logging_style: str, history_days):
     """Persist the grouped history in cache."""
+    cache_history_payloads(user_id, logging_style, history_days)
+
+
+def cache_history_payloads(user_id: int, logging_style: str, history_days):
+    """Persist index + per-day history payloads in cache."""
+    logging_style = _normalize_logging_style(logging_style)
+    index_days = []
+    day_payloads = {}
+    total_entries = 0
+    for day in history_days:
+        day_date = day.get("date")
+        if not day_date:
+            continue
+        if isinstance(day_date, str):
+            try:
+                day_date = datetime.strptime(day_date, "%Y-%m-%d").date()
+            except ValueError:
+                continue
+        day_key = _day_key_for_date(day_date)
+        index_days.append(day_key)
+        total_entries += len(day.get("entries", []))
+        day_payloads[_day_cache_key(user_id, logging_style, day_key)] = _serialize_history_day(day)
+
     cache.set(
         _cache_key(user_id, logging_style),
         {
-            "history_days": history_days,
+            "days": index_days,
             "built_at": timezone.now(),
         },
         timeout=HISTORY_CACHE_TIMEOUT,
     )
+    if day_payloads:
+        cache.set_many(day_payloads, timeout=HISTORY_CACHE_TIMEOUT)
+    logger.info(
+        "history_cache_store user_id=%s logging_style=%s days=%s entries=%s",
+        user_id,
+        logging_style,
+        len(index_days),
+        total_entries,
+    )
+
+
+def cache_history_index(user_id: int, logging_style: str, day_keys, built_at=None):
+    logging_style = _normalize_logging_style(logging_style)
+    if built_at is None:
+        built_at = timezone.now()
+    cache.set(
+        _cache_key(user_id, logging_style),
+        {
+            "days": day_keys,
+            "built_at": built_at,
+        },
+        timeout=HISTORY_CACHE_TIMEOUT,
+    )
+    return built_at
+
+
+def _add_days(days_set, days_iterable):
+    added = 0
+    for day in days_iterable:
+        if day and day not in days_set:
+            days_set.add(day)
+            added += 1
+    return added
+
+
+def build_history_index(user, logging_style_override=None):
+    """Build an ordered list of active history days for a user."""
+    build_start = time.perf_counter()
+    logging_style = _normalize_logging_style(logging_style_override, user)
+    days = set()
+
+    episode_days = Episode.objects.filter(
+        related_season__user=user,
+        end_date__isnull=False,
+    ).annotate(
+        day=TruncDate("end_date"),
+    ).values_list("day", flat=True).distinct()
+    episode_count = _add_days(days, episode_days)
+
+    movie_qs = Movie.objects.filter(user=user).filter(
+        models.Q(end_date__isnull=False) | models.Q(start_date__isnull=False),
+    )
+    movie_end_days = movie_qs.filter(
+        end_date__isnull=False,
+    ).annotate(
+        day=TruncDate("end_date"),
+    ).values_list("day", flat=True).distinct()
+    movie_start_days = movie_qs.filter(
+        end_date__isnull=True,
+        start_date__isnull=False,
+    ).annotate(
+        day=TruncDate("start_date"),
+    ).values_list("day", flat=True).distinct()
+    movie_count = _add_days(days, movie_end_days)
+    movie_count += _add_days(days, movie_start_days)
+
+    from django.apps import apps
+
+    HistoricalMusic = apps.get_model("app", "HistoricalMusic")
+    music_days = HistoricalMusic.objects.filter(
+        models.Q(history_user=user) | models.Q(history_user__isnull=True),
+        end_date__isnull=False,
+    ).annotate(
+        day=TruncDate("end_date"),
+    ).values_list("day", flat=True).distinct()
+    music_count = _add_days(days, music_days)
+
+    HistoricalPodcast = apps.get_model("app", "HistoricalPodcast")
+    podcast_days = HistoricalPodcast.objects.filter(
+        models.Q(history_user=user) | models.Q(history_user__isnull=True),
+        end_date__isnull=False,
+    ).annotate(
+        day=TruncDate("end_date"),
+    ).values_list("day", flat=True).distinct()
+    podcast_count = _add_days(days, podcast_days)
+
+    game_count = 0
+    boardgame_count = 0
+    if logging_style == "sessions":
+        games = Game.objects.filter(user=user)
+        game_end_days = games.filter(
+            end_date__isnull=False,
+        ).annotate(
+            day=TruncDate("end_date"),
+        ).values_list("day", flat=True).distinct()
+        game_start_days = games.filter(
+            end_date__isnull=True,
+            start_date__isnull=False,
+        ).annotate(
+            day=TruncDate("start_date"),
+        ).values_list("day", flat=True).distinct()
+        game_created_days = games.filter(
+            end_date__isnull=True,
+            start_date__isnull=True,
+        ).annotate(
+            day=TruncDate("created_at"),
+        ).values_list("day", flat=True).distinct()
+        game_count += _add_days(days, game_end_days)
+        game_count += _add_days(days, game_start_days)
+        game_count += _add_days(days, game_created_days)
+
+        boardgames = BoardGame.objects.filter(user=user)
+        boardgame_end_days = boardgames.filter(
+            end_date__isnull=False,
+        ).annotate(
+            day=TruncDate("end_date"),
+        ).values_list("day", flat=True).distinct()
+        boardgame_start_days = boardgames.filter(
+            end_date__isnull=True,
+            start_date__isnull=False,
+        ).annotate(
+            day=TruncDate("start_date"),
+        ).values_list("day", flat=True).distinct()
+        boardgame_created_days = boardgames.filter(
+            end_date__isnull=True,
+            start_date__isnull=True,
+        ).annotate(
+            day=TruncDate("created_at"),
+        ).values_list("day", flat=True).distinct()
+        boardgame_count += _add_days(days, boardgame_end_days)
+        boardgame_count += _add_days(days, boardgame_start_days)
+        boardgame_count += _add_days(days, boardgame_created_days)
+    else:
+        games = Game.objects.filter(user=user).only(
+            "start_date",
+            "end_date",
+            "created_at",
+            "progress",
+        )
+        for game in games.iterator():
+            total_minutes = game.progress or 0
+            if total_minutes <= 0:
+                continue
+            start_dt = game.start_date or game.end_date or game.created_at
+            end_dt = game.end_date or game.start_date or game.created_at
+            if not start_dt or not end_dt:
+                continue
+            start_local = _localize_datetime(start_dt)
+            end_local = _localize_datetime(end_dt)
+            if not start_local or not end_local:
+                continue
+            start_date = start_local.date()
+            end_date = end_local.date()
+            if start_date > end_date:
+                start_date, end_date = end_date, start_date
+            day_count = (end_date - start_date).days + 1
+            for offset in range(day_count):
+                day_value = start_date + timedelta(days=offset)
+                if day_value not in days:
+                    days.add(day_value)
+                    game_count += 1
+
+        boardgames = BoardGame.objects.filter(user=user).only(
+            "start_date",
+            "end_date",
+            "created_at",
+            "progress",
+        )
+        for boardgame in boardgames.iterator():
+            total_plays = boardgame.progress or 0
+            if total_plays <= 0:
+                continue
+            start_dt = boardgame.start_date or boardgame.end_date or boardgame.created_at
+            end_dt = boardgame.end_date or boardgame.start_date or boardgame.created_at
+            if not start_dt or not end_dt:
+                continue
+            start_local = _localize_datetime(start_dt)
+            end_local = _localize_datetime(end_dt)
+            if not start_local or not end_local:
+                continue
+            start_date = start_local.date()
+            end_date = end_local.date()
+            if start_date > end_date:
+                start_date, end_date = end_date, start_date
+            day_count = (end_date - start_date).days + 1
+            for offset in range(day_count):
+                day_value = start_date + timedelta(days=offset)
+                if day_value not in days:
+                    days.add(day_value)
+                    boardgame_count += 1
+
+    day_list = sorted(days, reverse=True)
+    day_keys = [_day_key_for_date(day) for day in day_list]
+    logger.info(
+        "history_index_build user_id=%s logging_style=%s days=%s episode_days=%s movie_days=%s music_days=%s podcast_days=%s game_days=%s boardgame_days=%s elapsed_ms=%.2f",
+        user.id,
+        logging_style,
+        len(day_keys),
+        episode_count,
+        movie_count,
+        music_count,
+        podcast_count,
+        game_count,
+        boardgame_count,
+        (time.perf_counter() - build_start) * 1000,
+    )
+    return day_keys
+
+
+def build_history_day(user, day_key, logging_style_override=None):
+    """Build a single history day payload for a user."""
+    if not day_key:
+        return None
+    logging_style = _normalize_logging_style(logging_style_override, user)
+    if isinstance(day_key, str):
+        day_date = _date_from_day_key(day_key)
+    else:
+        day_date = day_key
+        day_key = _day_key_for_date(day_date)
+    if not day_date:
+        return None
+
+    day_start = timezone.make_aware(
+        datetime.combine(day_date, datetime.min.time()),
+        timezone.get_current_timezone(),
+    )
+    day_end = day_start + timedelta(days=1)
+
+    entries = []
+
+    # Episodes
+    episodes = (
+        Episode.objects.filter(
+            related_season__user=user,
+            end_date__gte=day_start,
+            end_date__lt=day_end,
+        )
+        .select_related(
+            "item",
+            "related_season__item",
+            "related_season__related_tv__item",
+        )
+        .order_by("-end_date")
+    )
+    episodes = list(episodes)
+    episode_title_map = {}
+    if episodes:
+        episode_keys = []
+        for ep in episodes:
+            ep_item = getattr(ep, "item", None)
+            if not ep_item:
+                continue
+            if (
+                ep_item.media_id
+                and ep_item.source
+                and ep_item.season_number is not None
+                and ep_item.episode_number is not None
+            ):
+                episode_keys.append(
+                    (
+                        ep_item.media_id,
+                        ep_item.source,
+                        ep_item.season_number,
+                        ep_item.episode_number,
+                    ),
+                )
+        if episode_keys:
+            media_ids = {k[0] for k in episode_keys}
+            sources = {k[1] for k in episode_keys}
+            season_numbers = {k[2] for k in episode_keys}
+            episode_numbers = {k[3] for k in episode_keys}
+            titles_qs = Item.objects.filter(
+                media_type=MediaTypes.EPISODE.value,
+                media_id__in=media_ids,
+                source__in=sources,
+                season_number__in=season_numbers,
+                episode_number__in=episode_numbers,
+            ).exclude(title__isnull=True).exclude(title="")
+            for item in titles_qs:
+                key = (
+                    item.media_id,
+                    item.source,
+                    item.season_number,
+                    item.episode_number,
+                )
+                if key not in episode_title_map:
+                    episode_title_map[key] = item.title
+
+    for episode in episodes:
+        entry = _build_episode_entry(episode, episode_title_map)
+        if entry:
+            entries.append(entry)
+
+    # Movies
+    movies_qs = Movie.objects.filter(user=user).filter(
+        models.Q(end_date__isnull=False) | models.Q(start_date__isnull=False),
+    ).select_related("item")
+
+    movie_play_counts = (
+        movies_qs.values("item__media_id", "item__source")
+        .annotate(play_count=models.Count("id"))
+        .order_by()
+    )
+    movie_play_map = {
+        (row["item__media_id"], row["item__source"]): row["play_count"]
+        for row in movie_play_counts
+    }
+
+    movies = movies_qs.filter(
+        models.Q(end_date__gte=day_start, end_date__lt=day_end)
+        | (models.Q(end_date__isnull=True) & models.Q(start_date__gte=day_start, start_date__lt=day_end)),
+    ).order_by("-end_date")
+
+    for movie in movies:
+        entry = _build_movie_entry(movie)
+        if not entry:
+            continue
+        key = (movie.item.media_id, movie.item.source)
+        annotated = movie_play_map.get(key)
+        repeat_attr = getattr(movie, "repeats", None)
+        entry["play_count"] = annotated or repeat_attr or 1
+        entries.append(entry)
+
+    # Music (HistoricalMusic for the day)
+    from django.apps import apps
+
+    HistoricalMusic = apps.get_model("app", "HistoricalMusic")
+    music_history = list(
+        HistoricalMusic.objects.filter(
+            models.Q(history_user=user) | models.Q(history_user__isnull=True),
+            end_date__gte=day_start,
+            end_date__lt=day_end,
+        ).values("id", "end_date", "album_id", "track_id", "item_id")
+    )
+    if music_history:
+        album_ids = {record["album_id"] for record in music_history if record["album_id"]}
+        track_ids = {record["track_id"] for record in music_history if record["track_id"]}
+        item_ids = {record["item_id"] for record in music_history if record["item_id"]}
+
+        album_map = {
+            album.id: album
+            for album in Album.objects.filter(id__in=album_ids).select_related("artist")
+        } if album_ids else {}
+        track_map = {
+            track.id: track
+            for track in Track.objects.filter(id__in=track_ids)
+        } if track_ids else {}
+        item_map = {
+            item.id: item
+            for item in Item.objects.filter(id__in=item_ids)
+        } if item_ids else {}
+
+        track_duration_cache = {}
+        if album_ids:
+            tracks_qs = Track.objects.filter(
+                album_id__in=album_ids,
+                duration_ms__isnull=False,
+            ).values("album_id", "title", "duration_ms", "musicbrainz_recording_id")
+            for track_data in tracks_qs:
+                title_key = (track_data["album_id"], track_data["title"])
+                track_duration_cache[title_key] = track_data["duration_ms"]
+                if track_data["musicbrainz_recording_id"]:
+                    recording_key = ("recording", track_data["musicbrainz_recording_id"])
+                    track_duration_cache[recording_key] = track_data["duration_ms"]
+
+        album_groups = {}
+        for record in music_history:
+            played_at_local = _localize_datetime(record["end_date"])
+            if not played_at_local:
+                continue
+            album_id = record["album_id"]
+            track_id = record["track_id"]
+            item_id = record["item_id"]
+            runtime_minutes = 0
+
+            track = track_map.get(track_id)
+            if track and track.duration_ms:
+                runtime_minutes = track.duration_ms // 60000
+            else:
+                item = item_map.get(item_id)
+                if item and item.runtime_minutes and item.runtime_minutes < 999999:
+                    runtime_minutes = item.runtime_minutes
+                elif album_id and item:
+                    title_key = (album_id, item.title)
+                    duration_ms = track_duration_cache.get(title_key)
+                    if not duration_ms and item.media_id:
+                        duration_ms = track_duration_cache.get(("recording", item.media_id))
+                    if duration_ms:
+                        runtime_minutes = duration_ms // 60000
+
+            group = album_groups.setdefault(
+                album_id,
+                {
+                    "play_times": [],
+                    "play_count": 0,
+                    "total_runtime_minutes": 0,
+                    "latest_play_time": None,
+                    "primary_item_id": None,
+                    "primary_music_id": None,
+                },
+            )
+            group["play_times"].append(played_at_local)
+            group["play_count"] += 1
+            group["total_runtime_minutes"] += runtime_minutes
+            latest_play_time = group["latest_play_time"]
+            if latest_play_time is None or played_at_local > latest_play_time:
+                group["latest_play_time"] = played_at_local
+                group["primary_item_id"] = item_id
+                group["primary_music_id"] = record["id"]
+
+        for album_id, group in album_groups.items():
+            play_times = group["play_times"]
+            if not play_times:
+                continue
+            play_times.sort()
+            earliest_time = play_times[0]
+            latest_time = play_times[-1]
+            if len(play_times) == 1:
+                time_range_display = formats.time_format(earliest_time, "g:i A")
+            else:
+                time_range_display = f"{formats.time_format(earliest_time, 'g:i A')} - {formats.time_format(latest_time, 'g:i A')}"
+
+            album = album_map.get(album_id)
+            album_name = album.title if album else "Unknown Album"
+            artist_name = album.artist.name if album and album.artist else "Unknown Artist"
+            poster = album.image if album and album.image else settings.IMG_NONE
+            entry_item = item_map.get(group["primary_item_id"])
+            entry_key = f"{album_id or 'album'}-{day_key}"
+
+            entries.append(
+                {
+                    "media_type": MediaTypes.MUSIC.value,
+                    "item": _serialize_item(entry_item),
+                    "album": _serialize_album(album),
+                    "poster": poster,
+                    "title": album_name,
+                    "display_title": album_name,
+                    "artist_name": artist_name,
+                    "play_count": group["play_count"],
+                    "time_range_display": time_range_display,
+                    "episode_label": None,
+                    "episode_code": None,
+                    "played_at_local": latest_time,
+                    "runtime_minutes": group["total_runtime_minutes"],
+                    "runtime_display": helpers.minutes_to_hhmm(group["total_runtime_minutes"])
+                    if group["total_runtime_minutes"]
+                    else None,
+                    "instance_id": group["primary_music_id"],
+                    "entry_key": entry_key,
+                },
+            )
+
+    # Podcasts (HistoricalPodcast for the day)
+    HistoricalPodcast = apps.get_model("app", "HistoricalPodcast")
+    podcast_history_records = list(
+        HistoricalPodcast.objects.filter(
+            models.Q(history_user=user) | models.Q(history_user__isnull=True),
+            end_date__gte=day_start,
+            end_date__lt=day_end,
+        )
+    )
+    if podcast_history_records:
+        podcast_ids = list({record.id for record in podcast_history_records})
+        podcasts_lookup = {
+            p.id: p
+            for p in Podcast.objects.filter(
+                id__in=podcast_ids,
+                user=user,
+            ).select_related("item", "episode", "episode__show", "show")
+        }
+
+        podcast_play_counts = {}
+        if podcast_ids:
+            counts_by_id = {
+                row["id"]: row["play_count"]
+                for row in HistoricalPodcast.objects.filter(
+                    id__in=podcast_ids,
+                    end_date__isnull=False,
+                )
+                .filter(models.Q(history_user=user) | models.Q(history_user__isnull=True))
+                .values("id")
+                .annotate(play_count=models.Count("id"))
+            }
+            for podcast_id, play_count in counts_by_id.items():
+                podcast = podcasts_lookup.get(podcast_id)
+                if not podcast or not podcast.item:
+                    continue
+                key = (podcast.item.media_id, podcast.item.source)
+                podcast_play_counts[key] = podcast_play_counts.get(key, 0) + play_count
+
+        for history_record in podcast_history_records:
+            podcast = podcasts_lookup.get(history_record.id)
+            if not podcast or not podcast.item:
+                continue
+
+            played_at_local = _localize_datetime(getattr(history_record, "end_date", None))
+            if not played_at_local:
+                continue
+
+            show = podcast.episode.show if podcast.episode and podcast.episode.show else podcast.show
+            show_podcast_uuid = show.podcast_uuid if show else None
+            show_slug = show.slug if show and show.slug else (show.title if show else "")
+            poster = settings.IMG_NONE
+            if show and show.image:
+                poster = show.image
+            elif podcast.item.image:
+                poster = podcast.item.image
+
+            minutes_listened = podcast.progress or 0
+            runtime_minutes = podcast.item.runtime_minutes if podcast.item.runtime_minutes else minutes_listened
+            key = (podcast.item.media_id, podcast.item.source)
+            play_count = podcast_play_counts.get(key, 1)
+
+            entries.append(
+                {
+                    "media_type": MediaTypes.PODCAST.value,
+                    "item": _serialize_item(podcast.item),
+                    "show": _serialize_show(show),
+                    "show_podcast_uuid": show_podcast_uuid,
+                    "show_slug": show_slug,
+                    "poster": poster,
+                    "title": podcast.item.title,
+                    "display_title": podcast.item.title,
+                    "progress_display": f"{minutes_listened}m",
+                    "date_range_display": None,
+                    "episode_label": None,
+                    "episode_code": None,
+                    "played_at_local": played_at_local,
+                    "runtime_minutes": runtime_minutes,
+                    "runtime_display": helpers.minutes_to_hhmm(runtime_minutes) if runtime_minutes else None,
+                    "play_count": play_count,
+                    "instance_id": podcast.id,
+                    "entry_key": history_record.history_id,
+                },
+            )
+
+    # Games / Boardgames
+    if logging_style == "sessions":
+        games = Game.objects.filter(user=user).filter(
+            models.Q(end_date__gte=day_start, end_date__lt=day_end)
+            | (
+                models.Q(end_date__isnull=True)
+                & models.Q(start_date__gte=day_start, start_date__lt=day_end)
+            )
+            | (
+                models.Q(end_date__isnull=True)
+                & models.Q(start_date__isnull=True)
+                & models.Q(created_at__gte=day_start, created_at__lt=day_end)
+            )
+        ).select_related("item")
+        for game in games:
+            activity_dt = game.end_date or game.start_date or game.created_at
+            played_at_local = _localize_datetime(activity_dt)
+            if not played_at_local:
+                continue
+            runtime_minutes = game.progress or 0
+            start_local = _localize_datetime(game.start_date).date() if game.start_date else None
+            end_local = _localize_datetime(game.end_date).date() if game.end_date else played_at_local.date()
+            if not start_local:
+                start_local = end_local
+            date_range_display = f"{formats.date_format(start_local, 'M j')} - {formats.date_format(end_local, 'M j')}"
+            entries.append(
+                {
+                    "media_type": MediaTypes.GAME.value,
+                    "item": _serialize_item(game.item),
+                    "poster": game.item.image or settings.IMG_NONE,
+                    "title": game.item.title,
+                    "display_title": game.item.title,
+                    "progress_display": _format_game_hours(runtime_minutes),
+                    "date_range_display": date_range_display,
+                    "episode_label": None,
+                    "episode_code": None,
+                    "played_at_local": played_at_local,
+                    "runtime_minutes": runtime_minutes,
+                    "runtime_display": helpers.minutes_to_hhmm(runtime_minutes) if runtime_minutes else None,
+                    "instance_id": game.id,
+                    "entry_key": game.id,
+                },
+            )
+
+        boardgames = BoardGame.objects.filter(user=user).filter(
+            models.Q(end_date__gte=day_start, end_date__lt=day_end)
+            | (
+                models.Q(end_date__isnull=True)
+                & models.Q(start_date__gte=day_start, start_date__lt=day_end)
+            )
+            | (
+                models.Q(end_date__isnull=True)
+                & models.Q(start_date__isnull=True)
+                & models.Q(created_at__gte=day_start, created_at__lt=day_end)
+            )
+        ).select_related("item")
+        for boardgame in boardgames:
+            activity_dt = boardgame.end_date or boardgame.start_date or boardgame.created_at
+            played_at_local = _localize_datetime(activity_dt)
+            if not played_at_local:
+                continue
+            plays = boardgame.progress or 0
+            start_local = _localize_datetime(boardgame.start_date).date() if boardgame.start_date else None
+            end_local = (
+                _localize_datetime(boardgame.end_date).date()
+                if boardgame.end_date
+                else played_at_local.date()
+            )
+            if not start_local:
+                start_local = end_local
+            date_range_display = f"{formats.date_format(start_local, 'M j')} - {formats.date_format(end_local, 'M j')}"
+            progress_display = _format_boardgame_plays(plays)
+            entries.append(
+                {
+                    "media_type": MediaTypes.BOARDGAME.value,
+                    "item": _serialize_item(boardgame.item),
+                    "poster": boardgame.item.image or settings.IMG_NONE,
+                    "title": boardgame.item.title,
+                    "display_title": boardgame.item.title,
+                    "progress_display": progress_display,
+                    "date_range_display": date_range_display,
+                    "episode_label": None,
+                    "episode_code": None,
+                    "played_at_local": played_at_local,
+                    "runtime_minutes": 0,
+                    "runtime_display": progress_display,
+                    "instance_id": boardgame.id,
+                    "entry_key": boardgame.id,
+                },
+            )
+    else:
+        games = Game.objects.filter(user=user).select_related("item")
+        for game in games:
+            total_minutes = game.progress or 0
+            if total_minutes <= 0:
+                continue
+            start_dt = game.start_date or game.end_date or game.created_at
+            end_dt = game.end_date or game.start_date or game.created_at
+            if not start_dt or not end_dt:
+                continue
+            start_local = _localize_datetime(start_dt)
+            end_local = _localize_datetime(end_dt)
+            if not start_local or not end_local:
+                continue
+            start_date = start_local.date()
+            end_date = end_local.date()
+            if start_date > end_date:
+                start_date, end_date = end_date, start_date
+            if day_date < start_date or day_date > end_date:
+                continue
+            day_count = (end_date - start_date).days + 1
+            base = total_minutes // day_count
+            remainder = total_minutes % day_count
+            offset = (day_date - start_date).days
+            minutes_for_day = base + (1 if offset < remainder else 0)
+            date_range_display = f"{formats.date_format(start_date, 'M j')} - {formats.date_format(end_date, 'M j')}"
+            total_progress_display = _format_game_hours(total_minutes)
+            day_dt = timezone.make_aware(
+                datetime.combine(day_date, datetime.min.time()),
+                timezone.get_current_timezone(),
+            )
+            entries.append(
+                {
+                    "media_type": MediaTypes.GAME.value,
+                    "item": _serialize_item(game.item),
+                    "poster": game.item.image or settings.IMG_NONE,
+                    "title": game.item.title,
+                    "display_title": game.item.title,
+                    "progress_display": total_progress_display,
+                    "date_range_display": date_range_display,
+                    "episode_label": None,
+                    "episode_code": None,
+                    "played_at_local": day_dt,
+                    "runtime_minutes": minutes_for_day,
+                    "runtime_display": helpers.minutes_to_hhmm(minutes_for_day) if minutes_for_day else None,
+                    "instance_id": game.id,
+                    "entry_key": f"{game.id}-{day_key}",
+                },
+            )
+
+        boardgames = BoardGame.objects.filter(user=user).select_related("item")
+        for boardgame in boardgames:
+            total_plays = boardgame.progress or 0
+            if total_plays <= 0:
+                continue
+            start_dt = boardgame.start_date or boardgame.end_date or boardgame.created_at
+            end_dt = boardgame.end_date or boardgame.start_date or boardgame.created_at
+            if not start_dt or not end_dt:
+                continue
+            start_local = _localize_datetime(start_dt)
+            end_local = _localize_datetime(end_dt)
+            if not start_local or not end_local:
+                continue
+            start_date = start_local.date()
+            end_date = end_local.date()
+            if start_date > end_date:
+                start_date, end_date = end_date, start_date
+            if day_date < start_date or day_date > end_date:
+                continue
+            day_count = (end_date - start_date).days + 1
+            base = total_plays // day_count
+            remainder = total_plays % day_count
+            offset = (day_date - start_date).days
+            plays_for_day = base + (1 if offset < remainder else 0)
+            date_range_display = f"{formats.date_format(start_date, 'M j')} - {formats.date_format(end_date, 'M j')}"
+            total_progress_display = _format_boardgame_plays(total_plays)
+            day_dt = timezone.make_aware(
+                datetime.combine(day_date, datetime.min.time()),
+                timezone.get_current_timezone(),
+            )
+            entries.append(
+                {
+                    "media_type": MediaTypes.BOARDGAME.value,
+                    "item": _serialize_item(boardgame.item),
+                    "poster": boardgame.item.image or settings.IMG_NONE,
+                    "title": boardgame.item.title,
+                    "display_title": boardgame.item.title,
+                    "progress_display": total_progress_display,
+                    "date_range_display": date_range_display,
+                    "episode_label": None,
+                    "episode_code": None,
+                    "played_at_local": day_dt,
+                    "runtime_minutes": 0,
+                    "runtime_display": _format_boardgame_plays(plays_for_day) if plays_for_day else None,
+                    "instance_id": boardgame.id,
+                    "entry_key": f"{boardgame.id}-{day_key}",
+                },
+            )
+
+    if not entries:
+        return None
+
+    entries.sort(key=lambda entry: entry["played_at_local"], reverse=True)
+    total_minutes = sum(entry["runtime_minutes"] or 0 for entry in entries)
+    first_entry_time = entries[0]["played_at_local"]
+
+    return {
+        "date": day_date,
+        "weekday": formats.date_format(first_entry_time, "l"),
+        "date_display": formats.date_format(first_entry_time, "F j, Y"),
+        "entries": entries,
+        "total_minutes": total_minutes,
+        "total_runtime_display": helpers.minutes_to_hhmm(total_minutes)
+        if total_minutes
+        else "0min",
+    }
 
 
 def get_history_days(user, filters=None, date_filters=None, logging_style_override=None):
-    """Return cached history, rebuilding if needed.
-    
-    Always returns cached data if available (even if stale) to avoid timeouts.
-    Schedules background refresh if cache is stale.
-    
-    Args:
-        user: User instance
-        filters: Optional dict of filter parameters (album, artist, tv, season, genre, media_type, etc.)
-                 When filters are provided, cache is bypassed and results are filtered.
-        date_filters: Optional dict with 'start_date' and 'end_date' (date strings)
-        logging_style_override: Optional override for game logging style ("sessions" or "repeats")
-    """
+    """Build history days directly (used for filtered requests)."""
     start = time.perf_counter()
-    log_filters = filters or {}
-    log_date_filters = date_filters or {}
-    # If filters, date_filters, or logging override are provided, bypass cache and build filtered results directly
-    if filters or date_filters or logging_style_override:
-        logger.info(
-            "history_cache_bypass user_id=%s filters=%s date_filters=%s logging_style_override=%s",
-            user.id,
-            log_filters,
-            log_date_filters,
-            logging_style_override,
-        )
-        history_days = build_history_days(
-            user,
-            filters=filters,
-            date_filters=date_filters,
-            logging_style_override=logging_style_override,
-        )
-        logger.info(
-            "history_cache_bypass_done user_id=%s days=%s elapsed_ms=%.2f",
-            user.id,
-            len(history_days),
-            (time.perf_counter() - start) * 1000,
-        )
-        return history_days
-    
-    logging_style = getattr(user, "game_logging_style", "repeats")
-    cache_key = _cache_key(user.id, logging_style)
-    lock_key = _refresh_lock_key(user.id, logging_style)
-    cache_entry = cache.get(cache_key)
+    logger.info(
+        "history_cache_bypass user_id=%s filters=%s date_filters=%s logging_style_override=%s",
+        user.id,
+        filters or {},
+        date_filters or {},
+        logging_style_override,
+    )
+    history_days = build_history_days(
+        user,
+        filters=filters,
+        date_filters=date_filters,
+        logging_style_override=logging_style_override,
+    )
+    logger.info(
+        "history_cache_bypass_done user_id=%s days=%s elapsed_ms=%.2f",
+        user.id,
+        len(history_days),
+        (time.perf_counter() - start) * 1000,
+    )
+    return history_days
+
+
+def _clean_refresh_lock(lock_key: str):
     refresh_lock = cache.get(lock_key)
-    # Clean up stale/legacy locks so refresh can proceed
     if refresh_lock:
-        # Legacy True/False locks (no metadata) or expired metadata get cleared
         if not isinstance(refresh_lock, dict):
             cache.delete(lock_key)
-            refresh_lock = None
-        else:
-            started_at = refresh_lock.get("started_at")
-            if started_at and timezone.now() - started_at > HISTORY_REFRESH_LOCK_MAX_AGE:
-                cache.delete(lock_key)
-                refresh_lock = None
+            return None
+        started_at = refresh_lock.get("started_at")
+        if started_at and timezone.now() - started_at > HISTORY_REFRESH_LOCK_MAX_AGE:
+            cache.delete(lock_key)
+            return None
+    return refresh_lock
 
+
+def get_cached_history_page(user, page_number: int = 1, logging_style_override=None):
+    """Return a single page of cached history days and total day count."""
+    start = time.perf_counter()
+    logging_style = _normalize_logging_style(logging_style_override, user)
+    cache_key = _cache_key(user.id, logging_style)
+    lock_key = _refresh_lock_key(user.id, logging_style)
+
+    refresh_lock = _clean_refresh_lock(lock_key)
     lock_age_s = None
     if isinstance(refresh_lock, dict):
         started_at = refresh_lock.get("started_at")
         if started_at:
             lock_age_s = (timezone.now() - started_at).total_seconds()
 
+    cache_entry = cache.get(cache_key)
     logger.info(
-        "history_cache_lookup user_id=%s cache_key=%s hit=%s lock=%s lock_age_s=%s",
+        "history_index_lookup user_id=%s cache_key=%s hit=%s lock=%s lock_age_s=%s",
         user.id,
         cache_key,
         cache_entry is not None,
@@ -1315,110 +2187,266 @@ def get_history_days(user, filters=None, date_filters=None, logging_style_overri
         lock_age_s,
     )
 
-    if cache_entry:
-        # Always return cached data if it exists (even if stale)
-        # This prevents timeouts while background refresh is in progress
-        built_at = cache_entry.get("built_at")
-        cache_age_s = None
-        if built_at:
-            cache_age_s = (timezone.now() - built_at).total_seconds()
-        if built_at and timezone.now() - built_at > HISTORY_STALE_AFTER:
-            # Check if a refresh is already in progress before scheduling a new one
-            # This prevents re-scheduling a refresh immediately after one completes
-            refresh_lock = cache.get(lock_key)
-            if refresh_lock is None:
-                # No refresh in progress, safe to schedule a new one
-                scheduled = schedule_history_refresh(user.id, logging_style)
-                logger.info(
-                    "history_cache_stale_refresh user_id=%s logging_style=%s scheduled=%s cache_age_s=%s",
-                    user.id,
-                    logging_style,
-                    scheduled,
-                    cache_age_s,
-                )
-        # Note: Even if cache is not stale, a refresh might be in progress
-        # (e.g., triggered by music addition). The frontend will check via cache-status endpoint.
-        history_days = cache_entry.get("history_days", [])
+    if not cache_entry:
+        if refresh_lock is not None:
+            logger.info(
+                "history_index_miss_refreshing user_id=%s logging_style=%s returning_empty=true",
+                user.id,
+                logging_style,
+            )
+            return [], 0
         logger.info(
-            "history_cache_hit user_id=%s logging_style=%s days=%s cache_age_s=%s",
+            "history_index_miss user_id=%s logging_style=%s building_index_inline=true",
             user.id,
             logging_style,
-            len(history_days),
+        )
+        index_days = build_history_index(user, logging_style_override=logging_style)
+        built_at = cache_history_index(user.id, logging_style, index_days)
+        cache_entry = {"days": index_days, "built_at": built_at}
+
+    index_days = cache_entry.get("days", [])
+    built_at = cache_entry.get("built_at")
+    cache_age_s = None
+    if built_at:
+        cache_age_s = (timezone.now() - built_at).total_seconds()
+    if built_at and timezone.now() - built_at > HISTORY_STALE_AFTER:
+        refresh_lock = _clean_refresh_lock(lock_key)
+        if refresh_lock is None:
+            scheduled = schedule_history_refresh(user.id, logging_style)
+            logger.info(
+                "history_index_stale_refresh user_id=%s logging_style=%s scheduled=%s cache_age_s=%s",
+                user.id,
+                logging_style,
+                scheduled,
+                cache_age_s,
+            )
+
+    total_days = len(index_days)
+    if total_days == 0:
+        logger.info(
+            "history_index_hit user_id=%s logging_style=%s days=0 cache_age_s=%s",
+            user.id,
+            logging_style,
             cache_age_s,
         )
-        return history_days
+        return [], 0
 
-    # Cache miss - check if refresh is in progress
-    refresh_lock = cache.get(lock_key)
-    if refresh_lock is not None:
-        # Refresh is in progress, return empty data
-        # Frontend will poll and update when refresh completes
-        logger.info(
-            "history_cache_miss_refreshing user_id=%s logging_style=%s returning_empty=true",
-            user.id,
-            logging_style,
-        )
-        return []
+    try:
+        page_number = int(page_number)
+    except (TypeError, ValueError):
+        page_number = 1
+    if page_number < 1:
+        page_number = 1
 
-    # No cache and no refresh in progress - build inline
-    # This handles the case where cache was never built or expired naturally
+    start_index = (page_number - 1) * HISTORY_DAYS_PER_PAGE
+    end_index = start_index + HISTORY_DAYS_PER_PAGE
+    page_day_keys = index_days[start_index:end_index]
+
+    day_cache_keys = [
+        _day_cache_key(user.id, logging_style, day_key)
+        for day_key in page_day_keys
+    ]
+    day_payloads = cache.get_many(day_cache_keys)
+    history_days = []
+    missing_days = []
+    for day_key in page_day_keys:
+        payload_key = _day_cache_key(user.id, logging_style, day_key)
+        payload = day_payloads.get(payload_key)
+        if payload is None:
+            missing_days.append(day_key)
+            continue
+        history_days.append(_deserialize_history_day(payload))
+
+    built_days = {}
+    if missing_days:
+        build_start = time.perf_counter()
+        for day_key in missing_days:
+            day_payload = build_history_day(user, day_key, logging_style_override=logging_style)
+            if not day_payload:
+                continue
+            built_days[day_key] = day_payload
+            cache.set(
+                _day_cache_key(user.id, logging_style, day_key),
+                _serialize_history_day(day_payload),
+                timeout=HISTORY_CACHE_TIMEOUT,
+            )
+
+        if built_days:
+            history_days = []
+            for day_key in page_day_keys:
+                payload_key = _day_cache_key(user.id, logging_style, day_key)
+                payload = day_payloads.get(payload_key)
+                if payload:
+                    history_days.append(_deserialize_history_day(payload))
+                    continue
+                day_payload = built_days.get(day_key)
+                if day_payload:
+                    history_days.append(day_payload)
+
+        if len(built_days) != len(missing_days):
+            refresh_lock = _clean_refresh_lock(lock_key)
+            if refresh_lock is None:
+                scheduled = schedule_history_refresh(user.id, logging_style)
+                logger.info(
+                    "history_day_cache_miss user_id=%s logging_style=%s missing=%s built=%s scheduled=%s",
+                    user.id,
+                    logging_style,
+                    len(missing_days),
+                    len(built_days),
+                    scheduled,
+                )
+            else:
+                logger.info(
+                    "history_day_cache_miss_refreshing user_id=%s logging_style=%s missing=%s built=%s",
+                    user.id,
+                    logging_style,
+                    len(missing_days),
+                    len(built_days),
+                )
+        else:
+            logger.info(
+                "history_day_cache_inline_build user_id=%s logging_style=%s built=%s elapsed_ms=%.2f",
+                user.id,
+                logging_style,
+                len(built_days),
+                (time.perf_counter() - build_start) * 1000,
+            )
+
     logger.info(
-        "history_cache_miss_build user_id=%s logging_style=%s",
+        "history_index_hit user_id=%s logging_style=%s days=%s page_days=%s cache_age_s=%s elapsed_ms=%.2f",
         user.id,
         logging_style,
-    )
-    history_days = build_history_days(user)
-    cache_history_days(user.id, logging_style, history_days)
-    logger.info(
-        "history_cache_miss_build_done user_id=%s logging_style=%s days=%s elapsed_ms=%.2f",
-        user.id,
-        logging_style,
+        total_days,
         len(history_days),
+        cache_age_s,
         (time.perf_counter() - start) * 1000,
     )
-    return history_days
+    return history_days, total_days
 
 
-def invalidate_history_cache(user_id: int, force: bool = False):
-    """Remove cached history for a user.
+def _day_key_from_value(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        if value.isdigit() and len(value) == 8:
+            return value
+        try:
+            return _day_key_for_date(datetime.strptime(value, "%Y-%m-%d").date())
+        except ValueError:
+            return None
+    if isinstance(value, datetime):
+        localized = _localize_datetime(value)
+        if localized:
+            return _day_key_for_date(localized.date())
+        return None
+    if hasattr(value, "strftime"):
+        return _day_key_for_date(value)
+    return None
+
+
+def history_day_key(value):
+    return _day_key_from_value(value)
+
+
+def history_day_keys_for_range(start_dt, end_dt):
+    if not start_dt or not end_dt:
+        return []
+    start_local = _localize_datetime(start_dt)
+    end_local = _localize_datetime(end_dt)
+    if not start_local or not end_local:
+        return []
+    start_date = start_local.date()
+    end_date = end_local.date()
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
+    day_count = (end_date - start_date).days + 1
+    return [
+        _day_key_for_date(start_date + timedelta(days=offset))
+        for offset in range(day_count)
+    ]
+
+
+def _delete_history_cache_entries(user_id: int, logging_style: str, day_keys=None):
+    if day_keys is None:
+        index_entry = cache.get(_cache_key(user_id, logging_style))
+        day_keys = index_entry.get("days", []) if index_entry else []
+
+    normalized_keys = []
+    for value in day_keys:
+        day_key = _day_key_from_value(value)
+        if day_key:
+            normalized_keys.append(day_key)
+
+    if normalized_keys:
+        cache.delete_many(
+            [_day_cache_key(user_id, logging_style, day_key) for day_key in normalized_keys],
+        )
+    cache.delete(_cache_key(user_id, logging_style))
+
+
+def invalidate_history_cache(
+    user_id: int,
+    force: bool = False,
+    day_keys: Iterable | None = None,
+    logging_styles: Iterable | None = None,
+):
+    """Remove cached history for a user, optionally scoped to specific days.
     
     If a refresh is in progress, keep the old cache so users can see it
-    while the refresh completes. Otherwise, delete the cache.
-    
-    Args:
-        user_id: User ID
-        force: If True, always delete cache even if refresh is in progress.
-               Use this when data has been deleted to ensure deleted records don't persist.
-               Note: This will cause the page to show empty until refresh completes,
-               but the refresh will rebuild with correct data (excluding deleted records).
+    while the refresh completes. Otherwise, delete the cache/index.
     """
-    for style in ("sessions", "repeats", None):
-        logging_style = style or "repeats"
-        # Check if refresh is in progress
-        refresh_lock = cache.get(_refresh_lock_key(user_id, logging_style))
+    logging_styles = logging_styles or ("sessions", "repeats")
+    for style in logging_styles:
+        logging_style = _normalize_logging_style(style)
+        refresh_lock = _clean_refresh_lock(_refresh_lock_key(user_id, logging_style))
         if refresh_lock is None or force:
-            # No refresh in progress, or force deletion requested
-            # When force=True, we delete even during refresh to ensure deleted records don't persist
-            # The refresh will rebuild with correct data
-            cache.delete(_cache_key(user_id, logging_style))
-        # If refresh is in progress and not forcing, keep the old cache - it will be replaced when refresh completes
+            _delete_history_cache_entries(user_id, logging_style, day_keys)
 
 
-def refresh_history_cache(user_id: int):
-    """Rebuild and store history for a user."""
+def refresh_history_cache(
+    user_id: int,
+    logging_style: str | None = None,
+    warm_days: int | None = None,
+):
+    """Rebuild and store history index for a user."""
     user_model = get_user_model()
-    logging_style = "repeats"
     try:
         user = user_model.objects.get(id=user_id)
-        logging_style = getattr(user, "game_logging_style", "repeats")
+        logging_style = _normalize_logging_style(logging_style, user)
     except user_model.DoesNotExist:
         # Clear lock if user doesn't exist
-        cache.delete(_refresh_lock_key(user_id, logging_style))
+        cache.delete(_refresh_lock_key(user_id, logging_style or "repeats"))
         return None
 
     try:
-        history_days = build_history_days(user)
-        cache_history_days(user_id, logging_style, history_days)
+        if warm_days is None:
+            warm_days = HISTORY_WARM_DAYS
+        logger.info(
+            "history_cache_refresh_start user_id=%s logging_style=%s",
+            user_id,
+            logging_style,
+        )
+        day_keys = build_history_index(user, logging_style_override=logging_style)
+        cache_history_index(user_id, logging_style, day_keys)
+        warmed = 0
+        if warm_days:
+            for day_key in day_keys[:warm_days]:
+                day_payload = build_history_day(user, day_key, logging_style_override=logging_style)
+                if not day_payload:
+                    continue
+                cache.set(
+                    _day_cache_key(user_id, logging_style, day_key),
+                    _serialize_history_day(day_payload),
+                    timeout=HISTORY_CACHE_TIMEOUT,
+                )
+                warmed += 1
+        logger.info(
+            "history_cache_refresh_done user_id=%s logging_style=%s days=%s warmed=%s",
+            user_id,
+            logging_style,
+            len(day_keys),
+            warmed,
+        )
         # Delete the refresh lock AFTER cache is saved to ensure frontend sees
         # the new cache when it detects refresh completion
         lock_key = _refresh_lock_key(user_id, logging_style)
@@ -1431,7 +2459,7 @@ def refresh_history_cache(user_id: int):
             lock_key,
             verify_lock is not None,
         )
-        return history_days
+        return day_keys
     except Exception as e:
         # Always clear the lock, even on error, to prevent it from being stuck
         logger.error("Error refreshing history cache for user %s: %s", user_id, e, exc_info=True)
@@ -1439,7 +2467,12 @@ def refresh_history_cache(user_id: int):
         raise
 
 
-def schedule_history_refresh(user_id: int, logging_style: str = "repeats", debounce_seconds: int = 30, countdown: int = 3):
+def schedule_history_refresh(
+    user_id: int,
+    logging_style: str = "repeats",
+    debounce_seconds: int = 30,
+    countdown: int = 3,
+):
     """Queue a background refresh for a user's history cache.
     
     Args:
@@ -1448,6 +2481,7 @@ def schedule_history_refresh(user_id: int, logging_style: str = "repeats", debou
         debounce_seconds: Seconds to debounce refresh requests
         countdown: Seconds to delay task execution (default 3)
     """
+    logging_style = _normalize_logging_style(logging_style)
     lock_key = _refresh_lock_key(user_id, logging_style)
     # Keep TTL close to the frontend polling timeout so locks don't appear "stuck"
     # while still covering normal task execution time.
@@ -1463,7 +2497,7 @@ def schedule_history_refresh(user_id: int, logging_style: str = "repeats", debou
     try:
         from app.tasks import refresh_history_cache_task
 
-        refresh_history_cache_task.apply_async(args=[user_id], countdown=countdown)
+        refresh_history_cache_task.apply_async(args=[user_id, logging_style], countdown=countdown)
         return True
     except Exception as exc:  # pragma: no cover - Celery not available
         logger.debug(
@@ -1471,5 +2505,5 @@ def schedule_history_refresh(user_id: int, logging_style: str = "repeats", debou
             user_id,
             exc,
         )
-        refresh_history_cache(user_id)
+        refresh_history_cache(user_id, logging_style=logging_style)
         return False

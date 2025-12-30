@@ -163,9 +163,37 @@ def populate_runtime_data_batch(batch_size=10, delay_seconds=1.0):
 
 
 @shared_task
-def refresh_history_cache_task(user_id: int):
+def refresh_history_cache_task(
+    user_id: int,
+    logging_style: str = "repeats",
+    warm_days: int | None = None,
+    *args,
+    **kwargs,
+):
     """Rebuild the cached History page for a user."""
-    history_cache.refresh_history_cache(user_id)
+    if logging_style not in ("sessions", "repeats"):
+        for candidate in (logging_style, *args, kwargs.get("logging_style")):
+            if candidate in ("sessions", "repeats"):
+                logging_style = candidate
+                break
+        else:
+            logging_style = "repeats"
+    if warm_days is None:
+        for candidate in (*args, kwargs.get("warm_days")):
+            if candidate is None:
+                continue
+            try:
+                warm_days = int(candidate)
+                break
+            except (TypeError, ValueError):
+                continue
+    if warm_days is not None and warm_days < 0:
+        warm_days = None
+    history_cache.refresh_history_cache(
+        user_id,
+        logging_style=logging_style,
+        warm_days=warm_days,
+    )
 
 
 @shared_task

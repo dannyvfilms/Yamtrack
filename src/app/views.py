@@ -2392,14 +2392,31 @@ def delete_history_record(request, media_type, history_id):
         # Invalidate caches since history changed
         # This is needed because deleting a historical record doesn't trigger
         # the model's post_delete signal (we're deleting Historical*, not the actual model)
-        # Schedule refresh first to set the lock, then invalidate (which will preserve cache if lock exists)
-        # This ensures the old cache is preserved during refresh so users see something
-        # The refresh will rebuild with correct data (querying HistoricalPodcast directly
-        # ensures deleted records won't be included)
+        media_type_lower = media_type.lower()
+        logging_styles = ("sessions", "repeats")
+        if media_type_lower in ("game", "boardgame"):
+            start_dt = getattr(history_record, "start_date", None) or getattr(history_record, "end_date", None)
+            end_dt = getattr(history_record, "end_date", None) or getattr(history_record, "start_date", None)
+            history_day_keys = history_cache.history_day_keys_for_range(start_dt, end_dt)
+        else:
+            activity_dt = (
+                getattr(history_record, "end_date", None)
+                or getattr(history_record, "start_date", None)
+                or getattr(history_record, "created_at", None)
+            )
+            history_day_key = history_cache.history_day_key(activity_dt)
+            history_day_keys = [history_day_key] if history_day_key else []
+
         # For deletes, invalidate immediately (force) so the stale entry disappears,
-        # then schedule the refresh to rebuild. This shows the banner and reloads.
-        history_cache.invalidate_history_cache(request.user.id, force=True)
-        history_cache.schedule_history_refresh(request.user.id)
+        # then schedule refresh to rebuild. This shows the banner and reloads.
+        history_cache.invalidate_history_cache(
+            request.user.id,
+            force=True,
+            day_keys=history_day_keys,
+            logging_styles=logging_styles,
+        )
+        for style in logging_styles:
+            history_cache.schedule_history_refresh(request.user.id, style)
         statistics_cache.invalidate_statistics_cache(request.user.id)
         statistics_cache.schedule_all_ranges_refresh(request.user.id)
 
@@ -2547,33 +2564,60 @@ def history(request):
             logging_style,
         )
 
-        # Get history days with filters applied
-        history_days_all = history_cache.get_history_days(
-            request.user,
-            filters=filters,
-            date_filters=date_filters,
-            logging_style_override=logging_style,
-        )
+        try:
+            page_number = int(request.GET.get("page", 1))
+        except (TypeError, ValueError):
+            page_number = 1
 
-        paginator = Paginator(history_days_all, history_cache.HISTORY_DAYS_PER_PAGE)
-
-        if paginator.count == 0:
-            page_obj = None
-            history_days = []
-            current_page = 1
+        use_cache = not filters and not date_filters
+        if use_cache:
+            history_days, total_days = history_cache.get_cached_history_page(
+                request.user,
+                page_number=page_number,
+                logging_style_override=logging_style,
+            )
+            if total_days == 0:
+                paginator = Paginator([], history_cache.HISTORY_DAYS_PER_PAGE)
+                page_obj = None
+                history_days = []
+                current_page = 1
+            else:
+                paginator = Paginator(range(total_days), history_cache.HISTORY_DAYS_PER_PAGE)
+                try:
+                    page_obj = paginator.page(page_number)
+                except EmptyPage:
+                    page_obj = paginator.page(paginator.num_pages)
+                    current_page = page_obj.number
+                    if current_page != page_number:
+                        history_days, _ = history_cache.get_cached_history_page(
+                            request.user,
+                            page_number=current_page,
+                            logging_style_override=logging_style,
+                        )
+                else:
+                    current_page = page_obj.number
         else:
-            try:
-                page_number = int(request.GET.get("page", 1))
-            except (TypeError, ValueError):
-                page_number = 1
+            history_days_all = history_cache.get_history_days(
+                request.user,
+                filters=filters,
+                date_filters=date_filters,
+                logging_style_override=logging_style,
+            )
 
-            try:
-                page_obj = paginator.page(page_number)
-            except EmptyPage:
-                page_obj = paginator.page(paginator.num_pages)
+            paginator = Paginator(history_days_all, history_cache.HISTORY_DAYS_PER_PAGE)
 
-            history_days = page_obj.object_list
-            current_page = page_obj.number
+            if paginator.count == 0:
+                page_obj = None
+                history_days = []
+                current_page = 1
+            else:
+                try:
+                    page_obj = paginator.page(page_number)
+                except EmptyPage:
+                    page_obj = paginator.page(paginator.num_pages)
+
+                history_days = page_obj.object_list
+                current_page = page_obj.number
 
         # Combine all filters for pagination (including date filters as query params)
         active_filters = filters.copy()
@@ -4584,7 +4628,9 @@ def cache_status(request):
         return JsonResponse({"error": "Invalid cache_type. Must be 'history' or 'statistics'"}, status=400)
 
     if cache_type == "history":
-        logging_style = request.GET.get("logging_style", "repeats")
+        logging_style = request.GET.get("logging_style")
+        if logging_style not in ("sessions", "repeats"):
+            logging_style = "repeats"
         cache_entry = cache.get(history_cache._cache_key(request.user.id, logging_style))
         refresh_lock_key = history_cache._refresh_lock_key(request.user.id, logging_style)
         refresh_lock = cache.get(refresh_lock_key)

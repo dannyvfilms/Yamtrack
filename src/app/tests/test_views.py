@@ -8,7 +8,7 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from app import cache_utils
+from app import cache_utils, history_cache
 from app.models import (
     TV,
     Anime,
@@ -844,6 +844,84 @@ class TrackModalViewTests(TestCase):
             response.context["form"].initial["media_type"],
             MediaTypes.MOVIE.value,
         )
+
+
+class HistoryViewCacheTests(TestCase):
+    """Test history view cache usage."""
+
+    def setUp(self):
+        """Create a user and log in."""
+        self.credentials = {"username": "test", "password": "12345"}
+        self.user = get_user_model().objects.create_user(**self.credentials)
+        self.client.login(**self.credentials)
+        cache.clear()
+
+    def _seed_history_cache(self, day_count):
+        history_days = []
+        for offset in range(day_count):
+            day_date = timezone.localdate() - datetime.timedelta(days=offset)
+            played_at = timezone.make_aware(
+                datetime.datetime.combine(day_date, datetime.time(12, 0)),
+            )
+            entry = {
+                "media_type": MediaTypes.MOVIE.value,
+                "item": {
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": f"movie-{offset}",
+                    "source": Sources.TMDB.value,
+                    "title": f"Movie {offset}",
+                },
+                "poster": "http://example.com/poster.jpg",
+                "title": f"Movie {offset}",
+                "display_title": f"Movie {offset}",
+                "status": Status.COMPLETED.value,
+                "play_count": 1,
+                "episode_label": None,
+                "episode_code": None,
+                "played_at_local": played_at,
+                "runtime_minutes": 0,
+                "runtime_display": None,
+                "instance_id": offset + 1,
+                "entry_key": f"movie-{offset}",
+            }
+            history_days.append(
+                {
+                    "date": day_date,
+                    "weekday": day_date.strftime("%A"),
+                    "date_display": day_date.strftime("%B %d, %Y"),
+                    "entries": [entry],
+                    "total_minutes": 0,
+                    "total_runtime_display": "0min",
+                },
+            )
+
+        history_cache.cache_history_payloads(self.user.id, "repeats", history_days)
+
+    def test_history_view_uses_index_cache(self):
+        """Unfiltered history view uses cached index/day payloads."""
+        self._seed_history_cache(day_count=35)
+
+        with patch("app.history_cache.get_history_days") as get_history_days:
+            response = self.client.get(reverse("history"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["total_days"], 35)
+        self.assertEqual(response.context["total_pages"], 2)
+        self.assertEqual(
+            len(response.context["history_days"]),
+            history_cache.HISTORY_DAYS_PER_PAGE,
+        )
+        get_history_days.assert_not_called()
+
+    def test_history_view_page_two(self):
+        """Second page only returns remaining cached days."""
+        self._seed_history_cache(day_count=35)
+
+        response = self.client.get(reverse("history") + "?page=2")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_page"], 2)
+        self.assertEqual(len(response.context["history_days"]), 5)
 
 
 class HistoryModalViewTests(TestCase):

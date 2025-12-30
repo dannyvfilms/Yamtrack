@@ -10,7 +10,14 @@
 <div x-data="{
   cacheRefreshing: false,
   cacheUpdater: null,
+  loggingStyle: '{{ user.game_logging_style|default:"repeats" }}',
   init() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlLoggingStyle = urlParams.get('logging_style');
+    if (urlLoggingStyle === 'sessions' || urlLoggingStyle === 'repeats') {
+      this.loggingStyle = urlLoggingStyle;
+    }
+
     // Listen for HTMX-triggered refresh requests (e.g., deletes)
     window.addEventListener('history-refresh-start', () => {
       this.cacheRefreshing = true;
@@ -23,7 +30,7 @@
     // Initialize cache updater immediately
     if (window.CacheUpdater) {
       this.cacheUpdater = CacheUpdater.init('history', {
-        loggingStyle: '{{ user.game_logging_style|default:"repeats" }}',
+        loggingStyle: this.loggingStyle,
         onRefreshComplete: (success, reason) => {
           console.log('History page: Refresh complete callback', success, reason);
           this.cacheRefreshing = false;
@@ -54,8 +61,7 @@
                        urlParams.has('tv') || urlParams.has('season') ||
                        urlParams.has('media_id') || urlParams.has('source') ||
                        urlParams.has('season_number') || urlParams.has('podcast_show') ||
-                       urlParams.has('start-date') || urlParams.has('end-date') ||
-                       urlParams.has('logging_style');
+                       urlParams.has('start-date') || urlParams.has('end-date');
     
     if (hasFilters) {
       console.log('History page: Filters detected, skipping cache status check');
@@ -65,7 +71,7 @@
     try {
       const params = new URLSearchParams({
         cache_type: 'history',
-        logging_style: '{{ user.game_logging_style|default:"repeats" }}'
+        logging_style: this.loggingStyle
       });
       const response = await fetch(`/api/cache-status/?${params.toString()}`);
       if (response.ok) {
