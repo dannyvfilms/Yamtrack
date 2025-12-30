@@ -2409,14 +2409,13 @@ def delete_history_record(request, media_type, history_id):
 
         # For deletes, invalidate immediately (force) so the stale entry disappears,
         # then schedule refresh to rebuild. This shows the banner and reloads.
-        history_cache.invalidate_history_cache(
+        history_cache.invalidate_history_days(
             request.user.id,
-            force=True,
             day_keys=history_day_keys,
             logging_styles=logging_styles,
+            force=True,
+            reason="history_delete",
         )
-        for style in logging_styles:
-            history_cache.schedule_history_refresh(request.user.id, style)
         statistics_cache.invalidate_statistics_cache(request.user.id)
         statistics_cache.schedule_all_ranges_refresh(request.user.id)
 

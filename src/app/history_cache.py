@@ -29,12 +29,27 @@ from app.models import (
 
 logger = logging.getLogger(__name__)
 
+
+def _coerce_timedelta(value, default):
+    if value is None:
+        return default
+    if isinstance(value, timedelta):
+        return value
+    try:
+        return timedelta(seconds=int(value))
+    except (TypeError, ValueError):
+        return default
+
+
 HISTORY_CACHE_VERSION = 14
 HISTORY_INDEX_PREFIX = f"history_index_v{HISTORY_CACHE_VERSION}"
 HISTORY_DAY_PREFIX = f"history_day_v{HISTORY_CACHE_VERSION}"
 HISTORY_CACHE_PREFIX = HISTORY_INDEX_PREFIX
 HISTORY_CACHE_TIMEOUT = 60 * 60 * 6  # 6 hours
-HISTORY_STALE_AFTER = timedelta(minutes=15)
+HISTORY_STALE_AFTER = _coerce_timedelta(
+    getattr(settings, "HISTORY_CACHE_STALE_AFTER", None),
+    timedelta(hours=1),
+)
 HISTORY_DAYS_PER_PAGE = 30
 HISTORY_WARM_DAYS = getattr(settings, "HISTORY_CACHE_WARM_DAYS", 0)
 HISTORY_REFRESH_LOCK_PREFIX = f"history_refresh_lock_v{HISTORY_CACHE_VERSION}"
@@ -1713,12 +1728,12 @@ def build_history_day(user, day_key, logging_style_override=None):
             models.Q(history_user=user) | models.Q(history_user__isnull=True),
             end_date__gte=day_start,
             end_date__lt=day_end,
-        ).values("id", "end_date", "album_id", "track_id", "item_id")
+        ).values("id", "end_date", "album_id", "track_id")
     )
     if music_history:
         album_ids = {record["album_id"] for record in music_history if record["album_id"]}
         track_ids = {record["track_id"] for record in music_history if record["track_id"]}
-        item_ids = {record["item_id"] for record in music_history if record["item_id"]}
+        music_ids = {record["id"] for record in music_history if record["id"]}
 
         album_map = {
             album.id: album
@@ -1728,10 +1743,10 @@ def build_history_day(user, day_key, logging_style_override=None):
             track.id: track
             for track in Track.objects.filter(id__in=track_ids)
         } if track_ids else {}
-        item_map = {
-            item.id: item
-            for item in Item.objects.filter(id__in=item_ids)
-        } if item_ids else {}
+        music_map = {
+            music.id: music
+            for music in Music.objects.filter(id__in=music_ids).select_related("item", "album", "track")
+        } if music_ids else {}
 
         track_duration_cache = {}
         if album_ids:
@@ -1753,23 +1768,15 @@ def build_history_day(user, day_key, logging_style_override=None):
                 continue
             album_id = record["album_id"]
             track_id = record["track_id"]
-            item_id = record["item_id"]
             runtime_minutes = 0
 
-            track = track_map.get(track_id)
-            if track and track.duration_ms:
-                runtime_minutes = track.duration_ms // 60000
-            else:
-                item = item_map.get(item_id)
-                if item and item.runtime_minutes and item.runtime_minutes < 999999:
-                    runtime_minutes = item.runtime_minutes
-                elif album_id and item:
-                    title_key = (album_id, item.title)
-                    duration_ms = track_duration_cache.get(title_key)
-                    if not duration_ms and item.media_id:
-                        duration_ms = track_duration_cache.get(("recording", item.media_id))
-                    if duration_ms:
-                        runtime_minutes = duration_ms // 60000
+            music_entry = music_map.get(record["id"])
+            if music_entry:
+                runtime_minutes = _get_music_runtime_minutes(music_entry, track_duration_cache)
+            if not runtime_minutes:
+                track = track_map.get(track_id)
+                if track and track.duration_ms:
+                    runtime_minutes = track.duration_ms // 60000
 
             group = album_groups.setdefault(
                 album_id,
@@ -1778,7 +1785,6 @@ def build_history_day(user, day_key, logging_style_override=None):
                     "play_count": 0,
                     "total_runtime_minutes": 0,
                     "latest_play_time": None,
-                    "primary_item_id": None,
                     "primary_music_id": None,
                 },
             )
@@ -1788,7 +1794,6 @@ def build_history_day(user, day_key, logging_style_override=None):
             latest_play_time = group["latest_play_time"]
             if latest_play_time is None or played_at_local > latest_play_time:
                 group["latest_play_time"] = played_at_local
-                group["primary_item_id"] = item_id
                 group["primary_music_id"] = record["id"]
 
         for album_id, group in album_groups.items():
@@ -1807,7 +1812,8 @@ def build_history_day(user, day_key, logging_style_override=None):
             album_name = album.title if album else "Unknown Album"
             artist_name = album.artist.name if album and album.artist else "Unknown Artist"
             poster = album.image if album and album.image else settings.IMG_NONE
-            entry_item = item_map.get(group["primary_item_id"])
+            entry_music = music_map.get(group["primary_music_id"])
+            entry_item = entry_music.item if entry_music else None
             entry_key = f"{album_id or 'album'}-{day_key}"
 
             entries.append(
@@ -2212,7 +2218,7 @@ def get_cached_history_page(user, page_number: int = 1, logging_style_override=N
     if built_at and timezone.now() - built_at > HISTORY_STALE_AFTER:
         refresh_lock = _clean_refresh_lock(lock_key)
         if refresh_lock is None:
-            scheduled = schedule_history_refresh(user.id, logging_style)
+            scheduled = schedule_history_refresh(user.id, logging_style, warm_days=0)
             logger.info(
                 "history_index_stale_refresh user_id=%s logging_style=%s scheduled=%s cache_age_s=%s",
                 user.id,
@@ -2241,12 +2247,28 @@ def get_cached_history_page(user, page_number: int = 1, logging_style_override=N
     start_index = (page_number - 1) * HISTORY_DAYS_PER_PAGE
     end_index = start_index + HISTORY_DAYS_PER_PAGE
     page_day_keys = index_days[start_index:end_index]
+    logger.info(
+        "history_page_days user_id=%s logging_style=%s page=%s days_per_page=%s needed=%s",
+        user.id,
+        logging_style,
+        page_number,
+        HISTORY_DAYS_PER_PAGE,
+        len(page_day_keys),
+    )
 
     day_cache_keys = [
         _day_cache_key(user.id, logging_style, day_key)
         for day_key in page_day_keys
     ]
     day_payloads = cache.get_many(day_cache_keys)
+    logger.info(
+        "history_day_cache_get_many user_id=%s logging_style=%s requested=%s hit=%s miss=%s",
+        user.id,
+        logging_style,
+        len(page_day_keys),
+        len(day_payloads),
+        max(len(page_day_keys) - len(day_payloads), 0),
+    )
     history_days = []
     missing_days = []
     for day_key in page_day_keys:
@@ -2286,7 +2308,7 @@ def get_cached_history_page(user, page_number: int = 1, logging_style_override=N
         if len(built_days) != len(missing_days):
             refresh_lock = _clean_refresh_lock(lock_key)
             if refresh_lock is None:
-                scheduled = schedule_history_refresh(user.id, logging_style)
+                scheduled = schedule_history_refresh(user.id, logging_style, warm_days=0)
                 logger.info(
                     "history_day_cache_miss user_id=%s logging_style=%s missing=%s built=%s scheduled=%s",
                     user.id,
@@ -2384,6 +2406,60 @@ def _delete_history_cache_entries(user_id: int, logging_style: str, day_keys=Non
     cache.delete(_cache_key(user_id, logging_style))
 
 
+def invalidate_history_days(
+    user_id: int,
+    day_keys: Iterable | None,
+    logging_styles: Iterable | None = None,
+    reason: str | None = None,
+    force: bool = False,
+    refresh_index: bool = True,
+):
+    """Invalidate per-day history cache entries for a user.
+
+    This deletes only the day payload keys for the provided days, keeps the
+    existing index to avoid blank pages, and schedules an index-only refresh
+    by default.
+    """
+    logging_styles = logging_styles or ("sessions", "repeats")
+    normalized_keys = []
+    for value in day_keys or []:
+        day_key = _day_key_from_value(value)
+        if day_key:
+            normalized_keys.append(day_key)
+
+    for style in logging_styles:
+        logging_style = _normalize_logging_style(style)
+        refresh_lock = _clean_refresh_lock(_refresh_lock_key(user_id, logging_style))
+        if refresh_lock is None or force:
+            if normalized_keys:
+                cache.delete_many(
+                    [_day_cache_key(user_id, logging_style, day_key) for day_key in normalized_keys],
+                )
+        logger.info(
+            "history_day_invalidate user_id=%s logging_style=%s dates=%s reason=%s",
+            user_id,
+            logging_style,
+            len(normalized_keys),
+            reason or "unspecified",
+        )
+
+    if refresh_index:
+        for style in logging_styles:
+            logging_style = _normalize_logging_style(style)
+            scheduled = schedule_history_refresh(
+                user_id,
+                logging_style,
+                warm_days=0,
+            )
+            logger.info(
+                "history_index_refresh_scheduled user_id=%s logging_style=%s warm_days=0 scheduled=%s reason=%s",
+                user_id,
+                logging_style,
+                scheduled,
+                reason or "unspecified",
+            )
+
+
 def invalidate_history_cache(
     user_id: int,
     force: bool = False,
@@ -2395,12 +2471,28 @@ def invalidate_history_cache(
     If a refresh is in progress, keep the old cache so users can see it
     while the refresh completes. Otherwise, delete the cache/index.
     """
+    if day_keys is not None:
+        invalidate_history_days(
+            user_id,
+            day_keys=day_keys,
+            logging_styles=logging_styles,
+            force=force,
+            refresh_index=True,
+        )
+        return
+
     logging_styles = logging_styles or ("sessions", "repeats")
     for style in logging_styles:
         logging_style = _normalize_logging_style(style)
         refresh_lock = _clean_refresh_lock(_refresh_lock_key(user_id, logging_style))
         if refresh_lock is None or force:
-            _delete_history_cache_entries(user_id, logging_style, day_keys)
+            _delete_history_cache_entries(user_id, logging_style, None)
+            logger.info(
+                "history_cache_invalidate_all user_id=%s logging_style=%s reason=%s",
+                user_id,
+                logging_style,
+                "full_clear",
+            )
 
 
 def refresh_history_cache(
@@ -2472,6 +2564,7 @@ def schedule_history_refresh(
     logging_style: str = "repeats",
     debounce_seconds: int = 30,
     countdown: int = 3,
+    warm_days: int | None = None,
 ):
     """Queue a background refresh for a user's history cache.
     
@@ -2480,6 +2573,7 @@ def schedule_history_refresh(
         logging_style: Logging style for history
         debounce_seconds: Seconds to debounce refresh requests
         countdown: Seconds to delay task execution (default 3)
+        warm_days: Optional warm window for day payloads
     """
     logging_style = _normalize_logging_style(logging_style)
     lock_key = _refresh_lock_key(user_id, logging_style)
@@ -2497,7 +2591,10 @@ def schedule_history_refresh(
     try:
         from app.tasks import refresh_history_cache_task
 
-        refresh_history_cache_task.apply_async(args=[user_id, logging_style], countdown=countdown)
+        task_args = [user_id, logging_style]
+        if warm_days is not None:
+            task_args.append(warm_days)
+        refresh_history_cache_task.apply_async(args=task_args, countdown=countdown)
         return True
     except Exception as exc:  # pragma: no cover - Celery not available
         logger.debug(
@@ -2505,5 +2602,5 @@ def schedule_history_refresh(
             user_id,
             exc,
         )
-        refresh_history_cache(user_id, logging_style=logging_style)
+        refresh_history_cache(user_id, logging_style=logging_style, warm_days=warm_days)
         return False
