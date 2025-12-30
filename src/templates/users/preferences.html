@@ -180,12 +180,12 @@
             <label class="text-gray-200 text-sm font-medium">Activity History View</label>
             <span class="text-gray-400 text-xs">Choose which visualization to show on the Statistics page.</span>
           </div>
-          <div class="relative" x-data="{ open: false, selectedValue: '{{ user.activity_history_view }}', selectedLabel: '{{ user.activity_history_view|default:'heatmap' }}' }">
+          <div class="relative" x-data="{ open: false, selectedValue: '{{ user.activity_history_view }}', selectedLabel: '{{ user.get_activity_history_view_display|default:'Activity Heatmap' }}' }">
             <button type="button"
                     @click="open = !open"
                     @click.outside="open = false"
                     class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
-              <span x-text="selectedLabel == 'heatmap' ? 'Activity Heatmap' : 'Stacked Bar Chart'"></span>
+              <span x-text="selectedLabel"></span>
               <svg xmlns="http://www.w3.org/2000/svg"
                    width="24"
                    height="24"
