@@ -40,6 +40,7 @@ class AppConfig(AppConfig):
         if (
             not settings.TESTING
             and not getattr(settings, "RUNTIME_POPULATION_DISABLED", False)
+            and getattr(settings, "RUNTIME_POPULATION_ON_STARTUP", False)
             and not is_celery_worker
             and cache_available
         ):

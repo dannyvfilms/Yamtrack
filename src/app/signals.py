@@ -18,7 +18,9 @@ from app.models import (
     Comic,
     Episode,
     Game,
+    Item,
     Manga,
+    MediaTypes,
     Movie,
     Music,
     Podcast,
@@ -26,6 +28,8 @@ from app.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+RUNTIME_BACKFILL_SOURCES = ("tmdb", "mal", "simkl")
 
 
 @receiver(connection_created)
@@ -288,3 +292,37 @@ def refresh_statistics_cache_on_boardgame_change(sender, instance, **kwargs):  #
             )
         # Schedule refresh but don't delete cache - old data will show with notification
         statistics_cache.schedule_all_ranges_refresh(user_id)
+
+
+@receiver(post_save, sender=Item)
+def schedule_runtime_backfill_on_item_save(
+    sender,
+    instance,
+    created,
+    update_fields=None,
+    **kwargs,
+):  # noqa: ARG001
+    """Queue runtime backfill for newly created or missing-runtime items."""
+    if instance.runtime_minutes or instance.runtime_minutes == 999999:
+        return
+    if not created and update_fields is not None and "runtime_minutes" not in update_fields:
+        return
+    if instance.source not in RUNTIME_BACKFILL_SOURCES:
+        return
+
+    if instance.media_type in (
+        MediaTypes.MOVIE.value,
+        MediaTypes.TV.value,
+        MediaTypes.ANIME.value,
+    ):
+        from app.tasks import enqueue_runtime_backfill_items
+
+        enqueue_runtime_backfill_items([instance.id])
+        return
+
+    if instance.media_type == MediaTypes.EPISODE.value and instance.season_number is not None:
+        from app.tasks import enqueue_episode_runtime_backfill
+
+        enqueue_episode_runtime_backfill(
+            [(instance.media_id, instance.source, instance.season_number)],
+        )

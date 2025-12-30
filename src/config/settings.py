@@ -434,6 +434,7 @@ TRACK_TIME = config("TRACK_TIME", default=True, cast=bool)
 
 # Runtime population settings
 RUNTIME_POPULATION_DISABLED = config("RUNTIME_POPULATION_DISABLED", default=False, cast=bool)
+RUNTIME_POPULATION_ON_STARTUP = config("RUNTIME_POPULATION_ON_STARTUP", default=False, cast=bool)
 
 TZ = zoneinfo.ZoneInfo(TIME_ZONE)
 
