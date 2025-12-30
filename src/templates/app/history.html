@@ -485,6 +485,7 @@
       </div>
     {% endif %}
   {% else %}
+    {% if not history_refreshing %}
     <div class="bg-[#2a2f35] rounded-lg p-8 text-center text-gray-400">
       <div class="w-12 h-12 rounded-full bg-[#39404b] mx-auto mb-4 flex items-center justify-center">
         <svg xmlns="http://www.w3.org/2000/svg"
@@ -504,6 +505,7 @@
       <p class="text-lg font-semibold mb-1 text-white">No watch history yet</p>
       <p class="text-sm text-gray-400">Start tracking movies and episodes to see them here.</p>
     </div>
+    {% endif %}
   {% endif %}
   </div>
 </div>

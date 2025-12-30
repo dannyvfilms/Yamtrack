@@ -2582,12 +2582,14 @@ def history(request):
             page_number = 1
 
         use_cache = not filters and not date_filters
+        history_refreshing = False
         if use_cache:
-            history_days, total_days = history_cache.get_cached_history_page(
+            history_days, total_days, cache_meta = history_cache.get_cached_history_page(
                 request.user,
                 page_number=page_number,
                 logging_style_override=logging_style,
             )
+            history_refreshing = cache_meta.get("refreshing", False)
             if total_days == 0:
                 paginator = Paginator([], history_cache.HISTORY_DAYS_PER_PAGE)
                 page_obj = None
@@ -2601,11 +2603,12 @@ def history(request):
                     page_obj = paginator.page(paginator.num_pages)
                     current_page = page_obj.number
                     if current_page != page_number:
-                        history_days, _ = history_cache.get_cached_history_page(
+                        history_days, _, cache_meta = history_cache.get_cached_history_page(
                             request.user,
                             page_number=current_page,
                             logging_style_override=logging_style,
                         )
+                        history_refreshing = cache_meta.get("refreshing", False)
                 else:
                     current_page = page_obj.number
         else:
@@ -2649,17 +2652,50 @@ def history(request):
             "total_days": paginator.count,
             "days_per_page": paginator.per_page,
             "active_filters": active_filters,  # Pass filters to template for pagination
+            "history_refreshing": history_refreshing,
         }
+        day_entry_counts = []
+        total_entries = 0
+        for day in history_days:
+            entries = day.get("entries", []) if isinstance(day, dict) else getattr(day, "entries", [])
+            count = len(entries)
+            total_entries += count
+            day_entry_counts.append((day.get("date_display") or day.get("date"), count))
+        top_days = sorted(day_entry_counts, key=lambda item: item[1], reverse=True)[:3]
         logger.info(
-            "history_view_end user_id=%s page=%s total_days=%s page_days=%s total_pages=%s elapsed_ms=%.2f",
+            "history_page_entry_counts user_id=%s page=%s total_entries=%s top_days=%s",
+            request.user.id,
+            current_page,
+            total_entries,
+            top_days,
+        )
+        render_start = time.perf_counter()
+        logger.info(
+            "history_render_start user_id=%s page=%s",
+            request.user.id,
+            current_page,
+        )
+        response = render(request, "app/history.html", context)
+        render_ms = (time.perf_counter() - render_start) * 1000
+        response_bytes = len(response.content)
+        logger.info(
+            "history_render_end user_id=%s page=%s render_ms=%.2f response_bytes=%s",
+            request.user.id,
+            current_page,
+            render_ms,
+            response_bytes,
+        )
+        logger.info(
+            "history_view_end user_id=%s page=%s total_days=%s page_days=%s total_pages=%s elapsed_ms=%.2f response_bytes=%s",
             request.user.id,
             current_page,
             paginator.count,
             len(history_days),
             paginator.num_pages,
             (time.perf_counter() - view_start) * 1000,
+            response_bytes,
         )
-        return render(request, "app/history.html", context)
+        return response
     except OperationalError as error:
         logger.error("Database error in history view: %s", error, exc_info=True)
         # Return empty state on database error
@@ -2673,6 +2709,7 @@ def history(request):
             "days_per_page": history_cache.HISTORY_DAYS_PER_PAGE,
             "active_filters": {},
             "database_error": True,
+            "history_refreshing": False,
         }
         return render(request, "app/history.html", context)
 

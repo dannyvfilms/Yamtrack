@@ -52,6 +52,11 @@ HISTORY_STALE_AFTER = _coerce_timedelta(
 )
 HISTORY_DAYS_PER_PAGE = 30
 HISTORY_WARM_DAYS = getattr(settings, "HISTORY_CACHE_WARM_DAYS", 0)
+HISTORY_COLD_MISS_WARM_DAYS = getattr(
+    settings,
+    "HISTORY_CACHE_COLD_MISS_WARM_DAYS",
+    HISTORY_DAYS_PER_PAGE,
+)
 HISTORY_REFRESH_LOCK_PREFIX = f"history_refresh_lock_v{HISTORY_CACHE_VERSION}"
 HISTORY_REFRESH_LOCK_MAX_AGE = timedelta(minutes=5)  # safety to clear stuck locks
 
@@ -2170,11 +2175,12 @@ def _clean_refresh_lock(lock_key: str):
 
 
 def get_cached_history_page(user, page_number: int = 1, logging_style_override=None):
-    """Return a single page of cached history days and total day count."""
+    """Return a cached history page, total day count, and refresh metadata."""
     start = time.perf_counter()
     logging_style = _normalize_logging_style(logging_style_override, user)
     cache_key = _cache_key(user.id, logging_style)
     lock_key = _refresh_lock_key(user.id, logging_style)
+    meta = {"refreshing": False, "refresh_reason": None}
 
     refresh_lock = _clean_refresh_lock(lock_key)
     lock_age_s = None
@@ -2200,15 +2206,22 @@ def get_cached_history_page(user, page_number: int = 1, logging_style_override=N
                 user.id,
                 logging_style,
             )
-            return [], 0
-        logger.info(
-            "history_index_miss user_id=%s logging_style=%s building_index_inline=true",
+            meta.update({"refreshing": True, "refresh_reason": "index_refreshing"})
+            return [], 0, meta
+        scheduled = schedule_history_refresh(
             user.id,
             logging_style,
+            warm_days=HISTORY_COLD_MISS_WARM_DAYS,
+            allow_inline=False,
         )
-        index_days = build_history_index(user, logging_style_override=logging_style)
-        built_at = cache_history_index(user.id, logging_style, index_days)
-        cache_entry = {"days": index_days, "built_at": built_at}
+        logger.info(
+            "history_index_miss user_id=%s logging_style=%s scheduled=%s returning_empty=true",
+            user.id,
+            logging_style,
+            scheduled,
+        )
+        meta.update({"refreshing": True, "refresh_reason": "index_miss"})
+        return [], 0, meta
 
     index_days = cache_entry.get("days", [])
     built_at = cache_entry.get("built_at")
@@ -2235,7 +2248,7 @@ def get_cached_history_page(user, page_number: int = 1, logging_style_override=N
             logging_style,
             cache_age_s,
         )
-        return [], 0
+        return [], 0, meta
 
     try:
         page_number = int(page_number)
@@ -2278,6 +2291,32 @@ def get_cached_history_page(user, page_number: int = 1, logging_style_override=N
             missing_days.append(day_key)
             continue
         history_days.append(_deserialize_history_day(payload))
+
+    if missing_days and len(day_payloads) == 0:
+        refresh_lock = _clean_refresh_lock(lock_key)
+        if refresh_lock is None:
+            scheduled = schedule_history_refresh(
+                user.id,
+                logging_style,
+                warm_days=HISTORY_COLD_MISS_WARM_DAYS,
+                allow_inline=False,
+            )
+            logger.info(
+                "history_day_cache_cold_miss user_id=%s logging_style=%s missing=%s scheduled=%s returning_empty=true",
+                user.id,
+                logging_style,
+                len(missing_days),
+                scheduled,
+            )
+        else:
+            logger.info(
+                "history_day_cache_cold_miss_refreshing user_id=%s logging_style=%s missing=%s",
+                user.id,
+                logging_style,
+                len(missing_days),
+            )
+        meta.update({"refreshing": True, "refresh_reason": "day_cache_cold_miss"})
+        return [], total_days, meta
 
     built_days = {}
     if missing_days:
@@ -2343,7 +2382,7 @@ def get_cached_history_page(user, page_number: int = 1, logging_style_override=N
         cache_age_s,
         (time.perf_counter() - start) * 1000,
     )
-    return history_days, total_days
+    return history_days, total_days, meta
 
 
 def _day_key_from_value(value):
@@ -2565,6 +2604,7 @@ def schedule_history_refresh(
     debounce_seconds: int = 30,
     countdown: int = 3,
     warm_days: int | None = None,
+    allow_inline: bool = True,
 ):
     """Queue a background refresh for a user's history cache.
     
@@ -2597,6 +2637,13 @@ def schedule_history_refresh(
         refresh_history_cache_task.apply_async(args=task_args, countdown=countdown)
         return True
     except Exception as exc:  # pragma: no cover - Celery not available
+        if not allow_inline:
+            logger.warning(
+                "Failed to schedule history cache refresh for user %s: %s",
+                user_id,
+                exc,
+            )
+            return False
         logger.debug(
             "Falling back to inline history cache rebuild for user %s: %s",
             user_id,
