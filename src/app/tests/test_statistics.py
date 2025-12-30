@@ -1109,6 +1109,63 @@ class StatisticsTests(TestCase):
         self.assertEqual(top_game['formatted_duration'], minutes_to_hhmm(180))
 
 
+class GameDailyAverageTests(TestCase):
+    def test_daily_average_uses_unique_days(self):
+        game_item = SimpleNamespace(
+            id=201,
+            title="Dispatch",
+            media_type=MediaTypes.GAME.value,
+            image="https://example.com/dispatch.jpg",
+            media_id="disp",
+            source=Sources.IGDB.value,
+        )
+
+        session_dt = timezone.make_aware(datetime.datetime(2025, 12, 29, 12, 0, 0))
+        first_session = SimpleNamespace(
+            item=game_item,
+            start_date=session_dt,
+            end_date=session_dt,
+            created_at=session_dt,
+            progress=105,
+        )
+        second_session = SimpleNamespace(
+            item=game_item,
+            start_date=session_dt,
+            end_date=session_dt,
+            created_at=session_dt,
+            progress=60,
+        )
+
+        result = statistics._collect_game_data([first_session, second_session], None, None)
+
+        self.assertEqual(len(result), 1)
+        self.assertAlmostEqual(result[0]["daily_average"], 165 / 60)
+
+    def test_daily_average_handles_missing_start_date(self):
+        game_item = SimpleNamespace(
+            id=202,
+            title="Dispatch",
+            media_type=MediaTypes.GAME.value,
+            image="https://example.com/dispatch.jpg",
+            media_id="disp2",
+            source=Sources.IGDB.value,
+        )
+
+        session_dt = timezone.make_aware(datetime.datetime(2025, 12, 29, 18, 0, 0))
+        session = SimpleNamespace(
+            item=game_item,
+            start_date=None,
+            end_date=session_dt,
+            created_at=session_dt,
+            progress=90,
+        )
+
+        result = statistics._collect_game_data([session], None, None)
+
+        self.assertEqual(len(result), 1)
+        self.assertAlmostEqual(result[0]["daily_average"], 90 / 60)
+
+
 class ConsumptionStatisticsTests(TestCase):
     """Validate TV and movie consumption aggregations."""
 

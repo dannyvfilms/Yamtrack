@@ -1344,18 +1344,15 @@ def media_details(
                     "total_minutes_remainder": total_minutes % 60,
                 }
             )
-            total_days = 0
+            days_played = set()
             total_minutes_for_avg = 0
             for entry in user_medias:
-                if not entry.start_date or not entry.end_date:
+                entry_minutes = entry.progress or 0
+                if entry_minutes <= 0:
                     continue
-                start_date = timezone.localtime(entry.start_date).date()
-                end_date = timezone.localtime(entry.end_date).date()
-                days = (end_date - start_date).days + 1
-                if days <= 0:
-                    days = 1
-                total_days += days
-                total_minutes_for_avg += entry.progress or 0
+                total_minutes_for_avg += entry_minutes
+                days_played.update(stats._get_entry_play_dates(entry))
+            total_days = len(days_played)
             if total_days:
                 avg_minutes = int(round(total_minutes_for_avg / total_days))
             else:

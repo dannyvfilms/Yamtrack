@@ -830,6 +830,39 @@ def _get_activity_datetime(media):
     return None
 
 
+def _get_entry_play_dates(entry):
+    """Return set of local dates covered by a play entry."""
+    dates = set()
+    entry_start = getattr(entry, "start_date", None)
+    entry_end = getattr(entry, "end_date", None)
+
+    if entry_start or entry_end:
+        start_local = _localize_datetime(entry_start) if entry_start else None
+        end_local = _localize_datetime(entry_end) if entry_end else None
+
+        if start_local and end_local:
+            start_date = start_local.date()
+            end_date = end_local.date()
+            if end_date < start_date:
+                end_date = start_date
+            current = start_date
+            while current <= end_date:
+                dates.add(current)
+                current += datetime.timedelta(days=1)
+        else:
+            single = start_local or end_local
+            if single:
+                dates.add(single.date())
+        return dates
+
+    activity_dt = _get_activity_datetime(entry)
+    if activity_dt:
+        activity_local = _localize_datetime(activity_dt)
+        if activity_local:
+            dates.add(activity_local.date())
+    return dates
+
+
 def _calculate_game_time_in_range(media, start_date, end_date):
     """Return game minutes to count within the requested date range."""
     game_total_minutes = getattr(media, "progress", 0) or 0
@@ -1743,7 +1776,7 @@ def _collect_game_data(game_queryset, start_date, end_date):
         start_dates = []
         end_dates = []
         segments = []
-        total_days = 0
+        days_played = set()
         total_minutes_for_avg = 0
 
         for entry in entries:
@@ -1756,14 +1789,13 @@ def _collect_game_data(game_queryset, start_date, end_date):
             if entry_end:
                 end_dates.append(timezone.localtime(entry_end).date())
 
+            if entry_minutes > 0:
+                total_minutes_for_avg += entry_minutes
+                days_played.update(_get_entry_play_dates(entry))
+
             if entry_start and entry_end:
                 start_local = timezone.localtime(entry_start).date()
                 end_local = timezone.localtime(entry_end).date()
-                days = (end_local - start_local).days + 1
-                if days <= 0:
-                    days = 1
-                total_days += days
-                total_minutes_for_avg += entry_minutes
 
                 if entry_minutes > 0:
                     segments.append({
@@ -1780,6 +1812,7 @@ def _collect_game_data(game_queryset, start_date, end_date):
                     "activity_datetime": _get_activity_datetime(entry),
                 })
 
+        total_days = len(days_played)
         if total_days:
             daily_average_hours = (total_minutes_for_avg / total_days) / 60
         else:
