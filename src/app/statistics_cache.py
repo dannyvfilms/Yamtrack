@@ -34,10 +34,14 @@ STATISTICS_DAY_PREFIX = "stats:day"
 STATISTICS_DAY_DIRTY_PREFIX = "stats:dirty"
 STATISTICS_HISTORY_VERSION_PREFIX = "stats:history_version"
 STATISTICS_SCHEDULE_DEDUPE_PREFIX = "stats:refresh:scheduled"
+STATISTICS_METADATA_REFRESH_PREFIX = "stats:metadata_refresh"
+STATISTICS_METADATA_REFRESH_BUILT_PREFIX = "stats:metadata_refresh_built"
 STATISTICS_DAY_CACHE_TIMEOUT = getattr(settings, "STATISTICS_DAY_CACHE_TIMEOUT", 60 * 60 * 24 * 30)
 STATISTICS_WARM_DAYS = getattr(settings, "STATISTICS_CACHE_WARM_DAYS", 2)
 STATISTICS_SCHEDULE_DEDUPE_TTL = getattr(settings, "STATISTICS_SCHEDULE_DEDUPE_TTL", 60 * 10)
 STATISTICS_REFRESH_LOCK_MAX_AGE = getattr(settings, "STATISTICS_REFRESH_LOCK_MAX_AGE", timedelta(minutes=5))
+STATISTICS_METADATA_REFRESH_TTL = getattr(settings, "STATISTICS_METADATA_REFRESH_TTL", 60 * 10)
+STATISTICS_METADATA_REFRESH_RECENT_SECONDS = getattr(settings, "STATISTICS_METADATA_REFRESH_RECENT_SECONDS", 60)
 
 # Predefined ranges that can be cached
 PREDEFINED_RANGES = [
@@ -115,6 +119,78 @@ def _dirty_days_key(user_id: int) -> str:
 
 def _history_version_key(user_id: int) -> str:
     return f"{STATISTICS_HISTORY_VERSION_PREFIX}:{user_id}"
+
+
+def _metadata_refresh_lock_key(user_id: int) -> str:
+    return f"{STATISTICS_METADATA_REFRESH_PREFIX}:{user_id}"
+
+
+def _metadata_refresh_built_key(user_id: int) -> str:
+    return f"{STATISTICS_METADATA_REFRESH_BUILT_PREFIX}:{user_id}"
+
+
+def _any_range_refreshing(user_id: int) -> bool:
+    for check_range in PREDEFINED_RANGES:
+        check_lock_key = _refresh_lock_key(user_id, check_range)
+        check_lock = cache.get(check_lock_key)
+        if check_lock and _lock_is_stale(check_lock):
+            cache.delete(check_lock_key)
+            check_lock = None
+        if check_lock is not None:
+            return True
+    return False
+
+
+def _parse_cached_datetime(value):
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
+
+
+def mark_metadata_refreshing(user_id: int, reason: str | None = None) -> None:
+    payload = {"started_at": timezone.now().isoformat(), "reason": reason or ""}
+    cache.set(_metadata_refresh_lock_key(user_id), payload, timeout=STATISTICS_METADATA_REFRESH_TTL)
+
+
+def clear_metadata_refreshing(user_id: int) -> None:
+    cache.delete(_metadata_refresh_lock_key(user_id))
+    cache.set(
+        _metadata_refresh_built_key(user_id),
+        timezone.now().isoformat(),
+        timeout=STATISTICS_DAY_CACHE_TIMEOUT,
+    )
+
+
+def _metadata_refresh_status(user_id: int):
+    lock = cache.get(_metadata_refresh_lock_key(user_id))
+    if lock and _lock_is_stale(lock):
+        cache.delete(_metadata_refresh_lock_key(user_id))
+        lock = None
+    built_at = _parse_cached_datetime(cache.get(_metadata_refresh_built_key(user_id)))
+    if built_at and timezone.is_naive(built_at):
+        built_at = timezone.make_aware(built_at, timezone.get_current_timezone())
+    recently_built = False
+    if built_at:
+        recently_built = timezone.now() - built_at < timedelta(seconds=STATISTICS_METADATA_REFRESH_RECENT_SECONDS)
+    return lock, built_at, recently_built
+
+
+def _maybe_clear_metadata_refresh(user_id: int) -> None:
+    lock = cache.get(_metadata_refresh_lock_key(user_id))
+    if not lock:
+        return
+    if _lock_is_stale(lock):
+        cache.delete(_metadata_refresh_lock_key(user_id))
+        return
+    if not _any_range_refreshing(user_id):
+        clear_metadata_refreshing(user_id)
 
 
 def _normalize_day_value(value):
@@ -453,7 +529,11 @@ def build_stats_for_day(user_id: int, day_value):
     }
     game_rollups: dict[int, dict] = {}
     missing_runtime = 0
+    missing_genres = 0
     play_count = 0
+    missing_runtime_item_ids = set()
+    missing_genre_item_ids = set()
+    missing_episode_runtime_keys = set()
 
     def _update_item_meta(media_type: str, item_id: int, media_id: int | None, status, score, activity_dt):
         if not item_id:
@@ -506,12 +586,15 @@ def build_stats_for_day(user_id: int, day_value):
 
     def _add_genres(genre_map, genres, minutes):
         if not genres or not minutes:
-            return
+            return False
+        added = False
         for genre in stats._coerce_genre_list(genres):
             key = str(genre).title()
             genre_map[key]["minutes"] += minutes
             genre_map[key]["plays"] += 1
             genre_map[key]["name"] = key
+            added = True
+        return added
 
     if MediaTypes.TV.value in active_media_types or MediaTypes.SEASON.value in active_media_types:
         Episode = apps.get_model("app", "Episode")
@@ -524,6 +607,9 @@ def build_stats_for_day(user_id: int, day_value):
             .values(
                 "end_date",
                 "item__runtime_minutes",
+                "item__media_id",
+                "item__source",
+                "item__season_number",
                 "related_season_id",
                 "related_season__item_id",
                 "related_season__status",
@@ -547,6 +633,11 @@ def build_stats_for_day(user_id: int, day_value):
             runtime_minutes = _safe_runtime_minutes(row.get("item__runtime_minutes"))
             if runtime_minutes <= 0:
                 missing_runtime += 1
+                media_id = row.get("item__media_id")
+                source = row.get("item__source")
+                season_number = row.get("item__season_number")
+                if media_id and source and season_number is not None:
+                    missing_episode_runtime_keys.add((media_id, source, season_number))
             else:
                 minutes_by_type[MediaTypes.TV.value] += runtime_minutes
                 daily_minutes_by_type[MediaTypes.TV.value] += runtime_minutes
@@ -572,7 +663,14 @@ def build_stats_for_day(user_id: int, day_value):
                     episode_count=1,
                     activity_dt=play_dt or tv_activity,
                 )
-                _add_genres(tv_genres, row.get("related_season__related_tv__item__genres"), runtime_minutes)
+                if runtime_minutes > 0 and not _add_genres(
+                    tv_genres,
+                    row.get("related_season__related_tv__item__genres"),
+                    runtime_minutes,
+                ):
+                    missing_genres += 1
+                    if tv_item_id:
+                        missing_genre_item_ids.add(tv_item_id)
 
             season_item_id = row.get("related_season__item_id")
             if season_item_id:
@@ -626,13 +724,20 @@ def build_stats_for_day(user_id: int, day_value):
 
                 if runtime_minutes <= 0:
                     missing_runtime += 1
+                    item_id = row.get("item_id")
+                    if item_id:
+                        missing_runtime_item_ids.add(item_id)
 
             play_end = row.get("end_date")
             if play_end and day_start <= play_end < day_end:
                 runtime_minutes = _safe_runtime_minutes(row.get("item__runtime_minutes"))
                 if runtime_minutes > 0:
                     minutes_by_type[MediaTypes.MOVIE.value] += runtime_minutes
-                    _add_genres(movie_genres, row.get("item__genres"), runtime_minutes)
+                    if not _add_genres(movie_genres, row.get("item__genres"), runtime_minutes):
+                        missing_genres += 1
+                        item_id = row.get("item_id")
+                        if item_id:
+                            missing_genre_item_ids.add(item_id)
                     _update_top_played(
                         MediaTypes.MOVIE.value,
                         row.get("item_id"),
@@ -658,6 +763,7 @@ def build_stats_for_day(user_id: int, day_value):
                 "score",
                 "progress",
                 "item__runtime_minutes",
+                "item__genres",
             )
             .iterator(chunk_size=500)
         )
@@ -677,6 +783,9 @@ def build_stats_for_day(user_id: int, day_value):
             total_minutes = runtime_minutes * progress if runtime_minutes and progress else 0
             if runtime_minutes <= 0 and progress:
                 missing_runtime += 1
+                item_id = row.get("item_id")
+                if item_id:
+                    missing_runtime_item_ids.add(item_id)
 
             end_date = row.get("end_date")
             if end_date and day_start <= end_date < day_end:
@@ -703,8 +812,14 @@ def build_stats_for_day(user_id: int, day_value):
                         daily_minutes_by_type[MediaTypes.ANIME.value] += per_day
                 else:
                     activity_local = stats._localize_datetime(activity_dt)
-                    if activity_local and activity_local.date() == day:
-                        daily_minutes_by_type[MediaTypes.ANIME.value] += total_minutes
+                if activity_local and activity_local.date() == day:
+                    daily_minutes_by_type[MediaTypes.ANIME.value] += total_minutes
+
+            if total_minutes > 0 and not stats._coerce_genre_list(row.get("item__genres")):
+                missing_genres += 1
+                item_id = row.get("item_id")
+                if item_id:
+                    missing_genre_item_ids.add(item_id)
 
     if MediaTypes.GAME.value in active_media_types:
         Game = apps.get_model("app", "Game")
@@ -766,7 +881,11 @@ def build_stats_for_day(user_id: int, day_value):
                         rollup["minutes_total"] += total_minutes
                         rollup["activity_dt"] = activity_dt
                         rollup["media_id"] = row.get("id")
-                        _add_genres(game_genres, row.get("item__genres"), total_minutes)
+                        if not _add_genres(game_genres, row.get("item__genres"), total_minutes):
+                            missing_genres += 1
+                            item_id = row.get("item_id")
+                            if item_id:
+                                missing_genre_item_ids.add(item_id)
                         game_id = row.get("item_id")
                         if game_id:
                             for genre in stats._coerce_genre_list(row.get("item__genres")):
@@ -791,7 +910,11 @@ def build_stats_for_day(user_id: int, day_value):
                 rollup["minutes_total"] += total_minutes
                 rollup["activity_dt"] = activity_dt
                 rollup["media_id"] = row.get("id")
-                _add_genres(game_genres, row.get("item__genres"), total_minutes)
+                if not _add_genres(game_genres, row.get("item__genres"), total_minutes):
+                    missing_genres += 1
+                    item_id = row.get("item_id")
+                    if item_id:
+                        missing_genre_item_ids.add(item_id)
                 game_id = row.get("item_id")
                 if game_id:
                     for genre in stats._coerce_genre_list(row.get("item__genres")):
@@ -967,6 +1090,9 @@ def build_stats_for_day(user_id: int, day_value):
                 genres = stats._coerce_genre_list(artist.genres)
             elif getattr(music, "track", None) and music.track.genres:
                 genres = stats._coerce_genre_list(music.track.genres)
+
+            if runtime_minutes > 0 and not genres:
+                missing_genres += 1
 
             for genre in genres:
                 key = str(genre).title()
@@ -1226,22 +1352,46 @@ def build_stats_for_day(user_id: int, day_value):
         }
     day_stats["game"]["by_game"] = game_payload
 
+    if missing_runtime_item_ids or missing_genre_item_ids or missing_episode_runtime_keys:
+        try:
+            from app.tasks import (
+                enqueue_episode_runtime_backfill,
+                enqueue_genre_backfill_items,
+                enqueue_runtime_backfill_items,
+            )
+
+            if missing_runtime_item_ids:
+                enqueue_runtime_backfill_items(sorted(missing_runtime_item_ids))
+            if missing_genre_item_ids:
+                enqueue_genre_backfill_items(sorted(missing_genre_item_ids))
+            if missing_episode_runtime_keys:
+                enqueue_episode_runtime_backfill(sorted(missing_episode_runtime_keys))
+        except Exception as exc:  # pragma: no cover - best-effort scheduling
+            logger.debug(
+                "stats_backfill_schedule_failed user_id=%s day=%s error=%s",
+                user_id,
+                day.isoformat(),
+                exc,
+            )
+
     cache.set(_day_cache_key(user_id, day), day_stats, timeout=STATISTICS_DAY_CACHE_TIMEOUT)
     if play_count or missing_runtime:
         logger.info(
-            "stats_day_summary user_id=%s day=%s plays=%s missing_runtime=%s",
+            "stats_day_summary user_id=%s day=%s plays=%s missing_runtime=%s missing_genres=%s",
             user_id,
             day.isoformat(),
             play_count,
             missing_runtime,
+            missing_genres,
         )
     else:
         logger.debug(
-            "stats_day_summary user_id=%s day=%s plays=%s missing_runtime=%s",
+            "stats_day_summary user_id=%s day=%s plays=%s missing_runtime=%s missing_genres=%s",
             user_id,
             day.isoformat(),
             play_count,
             missing_runtime,
+            missing_genres,
         )
     return day_stats
 
@@ -2428,6 +2578,7 @@ def refresh_statistics_cache(user_id: int, range_name: str):
         return None
     finally:
         cache.delete(lock_key)
+        _maybe_clear_metadata_refresh(user_id)
 
 
 def schedule_statistics_refresh(

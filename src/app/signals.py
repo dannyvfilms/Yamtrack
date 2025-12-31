@@ -21,6 +21,8 @@ from app.models import (
     Item,
     Manga,
     MediaTypes,
+    MetadataBackfillField,
+    MetadataBackfillState,
     Movie,
     Music,
     Podcast,
@@ -30,6 +32,7 @@ from app.models import (
 logger = logging.getLogger(__name__)
 
 RUNTIME_BACKFILL_SOURCES = ("tmdb", "mal", "simkl")
+GENRE_BACKFILL_SOURCES = ("tmdb", "mal", "simkl", "igdb", "bgg")
 
 
 @receiver(connection_created)
@@ -340,27 +343,53 @@ def schedule_runtime_backfill_on_item_save(
     update_fields=None,
     **kwargs,
 ):  # noqa: ARG001
-    """Queue runtime backfill for newly created or missing-runtime items."""
-    if instance.runtime_minutes or instance.runtime_minutes == 999999:
-        return
-    if not created and update_fields is not None and "runtime_minutes" not in update_fields:
-        return
-    if instance.source not in RUNTIME_BACKFILL_SOURCES:
-        return
+    """Queue runtime/genre backfills for newly created or missing metadata items."""
+    if instance.runtime_minutes is not None and instance.runtime_minutes != 999999:
+        MetadataBackfillState.objects.filter(
+            item=instance,
+            field=MetadataBackfillField.RUNTIME,
+        ).delete()
+    if instance.genres:
+        MetadataBackfillState.objects.filter(
+            item=instance,
+            field=MetadataBackfillField.GENRES,
+        ).delete()
 
-    if instance.media_type in (
-        MediaTypes.MOVIE.value,
-        MediaTypes.TV.value,
-        MediaTypes.ANIME.value,
-    ):
-        from app.tasks import enqueue_runtime_backfill_items
-
-        enqueue_runtime_backfill_items([instance.id])
+    relevant_fields = {"runtime_minutes", "genres", "media_id", "source", "media_type"}
+    if not created and update_fields is not None and not relevant_fields.intersection(update_fields):
         return
 
-    if instance.media_type == MediaTypes.EPISODE.value and instance.season_number is not None:
-        from app.tasks import enqueue_episode_runtime_backfill
+    runtime_missing = instance.runtime_minutes in (None, 0) and instance.runtime_minutes != 999999
+    genres_missing = not instance.genres
 
-        enqueue_episode_runtime_backfill(
-            [(instance.media_id, instance.source, instance.season_number)],
+    if runtime_missing and instance.source in RUNTIME_BACKFILL_SOURCES:
+        if instance.media_type in (
+            MediaTypes.MOVIE.value,
+            MediaTypes.TV.value,
+            MediaTypes.ANIME.value,
+        ):
+            from app.tasks import enqueue_runtime_backfill_items
+
+            enqueue_runtime_backfill_items([instance.id])
+        elif instance.media_type == MediaTypes.EPISODE.value and instance.season_number is not None:
+            from app.tasks import enqueue_episode_runtime_backfill
+
+            enqueue_episode_runtime_backfill(
+                [(instance.media_id, instance.source, instance.season_number)],
+            )
+
+    if (
+        genres_missing
+        and instance.source in GENRE_BACKFILL_SOURCES
+        and instance.media_type
+        in (
+            MediaTypes.MOVIE.value,
+            MediaTypes.TV.value,
+            MediaTypes.ANIME.value,
+            MediaTypes.GAME.value,
+            MediaTypes.BOARDGAME.value,
         )
+    ):
+        from app.tasks import enqueue_genre_backfill_items
+
+        enqueue_genre_backfill_items([instance.id])

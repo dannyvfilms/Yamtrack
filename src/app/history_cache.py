@@ -113,6 +113,56 @@ def _localize_datetime(value):
     return timezone.localtime(value)
 
 
+def _coerce_genre_list(value):
+    """Normalize a genre field (string, dict, or list) into a list of strings."""
+    def _coerce_one(v):
+        if not v:
+            return None
+        if isinstance(v, str):
+            return v
+        if isinstance(v, dict):
+            return v.get("name") or v.get("tag") or v.get("label")
+        return str(v)
+
+    if not value:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        coerced = _coerce_one(value)
+        return [coerced] if coerced else []
+    if isinstance(value, (list, tuple)):
+        out = []
+        for v in value:
+            coerced = _coerce_one(v)
+            if coerced:
+                out.append(coerced)
+        return out
+    coerced = _coerce_one(value)
+    return [coerced] if coerced else []
+
+
+def _resolve_genres(*items):
+    """Pick the first usable genres value from the provided items."""
+    for item in items:
+        if not item:
+            continue
+        genres = getattr(item, "genres", None)
+        if genres:
+            return _coerce_genre_list(genres)
+    return []
+
+
+def _resolve_music_genres(album=None, artist=None, track=None):
+    if album and album.genres:
+        return _coerce_genre_list(album.genres)
+    if artist and artist.genres:
+        return _coerce_genre_list(artist.genres)
+    if track and track.genres:
+        return _coerce_genre_list(track.genres)
+    return []
+
+
 def _serialize_item(item):
     if not item:
         return None
@@ -138,6 +188,9 @@ def _serialize_item(item):
     episode_number = getattr(item, "episode_number", None)
     if episode_number is not None:
         data["episode_number"] = episode_number
+    genres = _coerce_genre_list(getattr(item, "genres", None))
+    if genres:
+        data["genres"] = genres
     return data
 
 
@@ -253,6 +306,7 @@ def _build_episode_entry(episode, episode_title_map=None):
         season_item,
         tv_item,
     )
+    genres = _resolve_genres(episode_item, season_item, tv_item)
 
     display_title = _get_episode_display_title(episode, episode_title_map)
     title = ""
@@ -269,7 +323,7 @@ def _build_episode_entry(episode, episode_title_map=None):
         episode_label = f"{episode_item.season_number}x{episode_item.episode_number:02d}"
         episode_code = f"S{episode_item.season_number:02d}E{episode_item.episode_number:02d}"
 
-    return {
+    entry = {
         "media_type": MediaTypes.EPISODE.value,
         "item": _serialize_item(entry_item),
         "poster": _get_episode_poster(episode),
@@ -283,6 +337,9 @@ def _build_episode_entry(episode, episode_title_map=None):
         "instance_id": episode.id,
         "entry_key": episode.id,
     }
+    if genres:
+        entry["genres"] = genres
+    return entry
 
 
 def _build_movie_entry(movie):
@@ -291,8 +348,9 @@ def _build_movie_entry(movie):
         return None
 
     runtime_minutes = _resolve_runtime_minutes(movie.item)
+    genres = _resolve_genres(movie.item)
 
-    return {
+    entry = {
         "media_type": MediaTypes.MOVIE.value,
         "item": _serialize_item(movie.item),
         "poster": movie.item.image or settings.IMG_NONE,
@@ -308,6 +366,9 @@ def _build_movie_entry(movie):
         "instance_id": movie.id,
         "entry_key": movie.id,
     }
+    if genres:
+        entry["genres"] = genres
+    return entry
 
 
 def _get_music_runtime_minutes(music_entry, track_duration_cache=None):
@@ -414,9 +475,11 @@ def _build_music_album_entries(music_entries_for_album, album, day_date, user, t
     
     entry_item = primary_music.item if primary_music and primary_music.item else None
     instance_id = primary_music.id if primary_music else None
+    track = getattr(primary_music, "track", None) if primary_music else None
+    genres = _resolve_music_genres(album=album, artist=album.artist if album else None, track=track)
     entry_key = f"{album.id if album else 'album'}-{day_date.strftime('%Y%m%d')}"
 
-    return {
+    entry = {
         "media_type": MediaTypes.MUSIC.value,
         "item": _serialize_item(entry_item),
         "album": _serialize_album(album),
@@ -434,6 +497,9 @@ def _build_music_album_entries(music_entries_for_album, album, day_date, user, t
         "instance_id": instance_id,
         "entry_key": entry_key,
     }
+    if genres:
+        entry["genres"] = genres
+    return entry
 
 
 def build_history_days(user, filters=None, date_filters=None, logging_style_override=None):
@@ -1081,24 +1147,26 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                         start_local = end_local
                     date_range_display = f"{formats.date_format(start_local, 'M j')} - {formats.date_format(end_local, 'M j')}"
 
-                    entries.append(
-                        {
-                            "media_type": MediaTypes.GAME.value,
-                            "item": _serialize_item(game.item),
-                            "poster": game.item.image or settings.IMG_NONE,
-                            "title": game.item.title,
-                            "display_title": game.item.title,
-                            "progress_display": _format_game_hours(runtime_minutes),
-                            "date_range_display": date_range_display,
-                            "episode_label": None,
-                            "episode_code": None,
-                            "played_at_local": played_at_local,
-                            "runtime_minutes": runtime_minutes,
-                            "runtime_display": helpers.minutes_to_hhmm(runtime_minutes) if runtime_minutes else None,
-                            "instance_id": game.id,
-                            "entry_key": game.id,
-                        },
-                    )
+                    genres = _resolve_genres(game.item)
+                    entry = {
+                        "media_type": MediaTypes.GAME.value,
+                        "item": _serialize_item(game.item),
+                        "poster": game.item.image or settings.IMG_NONE,
+                        "title": game.item.title,
+                        "display_title": game.item.title,
+                        "progress_display": _format_game_hours(runtime_minutes),
+                        "date_range_display": date_range_display,
+                        "episode_label": None,
+                        "episode_code": None,
+                        "played_at_local": played_at_local,
+                        "runtime_minutes": runtime_minutes,
+                        "runtime_display": helpers.minutes_to_hhmm(runtime_minutes) if runtime_minutes else None,
+                        "instance_id": game.id,
+                        "entry_key": game.id,
+                    }
+                    if genres:
+                        entry["genres"] = genres
+                    entries.append(entry)
                     entry_counts["games"] += 1
             if process_boardgames:
                 for boardgame in boardgames:
@@ -1122,24 +1190,26 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
 
                     progress_display = _format_boardgame_plays(plays)
 
-                    entries.append(
-                        {
-                            "media_type": MediaTypes.BOARDGAME.value,
-                            "item": _serialize_item(boardgame.item),
-                            "poster": boardgame.item.image or settings.IMG_NONE,
-                            "title": boardgame.item.title,
-                            "display_title": boardgame.item.title,
-                            "progress_display": progress_display,
-                            "date_range_display": date_range_display,
-                            "episode_label": None,
-                            "episode_code": None,
-                            "played_at_local": played_at_local,
-                            "runtime_minutes": 0,
-                            "runtime_display": progress_display,
-                            "instance_id": boardgame.id,
-                            "entry_key": boardgame.id,
-                        },
-                    )
+                    genres = _resolve_genres(boardgame.item)
+                    entry = {
+                        "media_type": MediaTypes.BOARDGAME.value,
+                        "item": _serialize_item(boardgame.item),
+                        "poster": boardgame.item.image or settings.IMG_NONE,
+                        "title": boardgame.item.title,
+                        "display_title": boardgame.item.title,
+                        "progress_display": progress_display,
+                        "date_range_display": date_range_display,
+                        "episode_label": None,
+                        "episode_code": None,
+                        "played_at_local": played_at_local,
+                        "runtime_minutes": 0,
+                        "runtime_display": progress_display,
+                        "instance_id": boardgame.id,
+                        "entry_key": boardgame.id,
+                    }
+                    if genres:
+                        entry["genres"] = genres
+                    entries.append(entry)
                     entry_counts["boardgames"] += 1
         else:
             # repeats style: spread playtime evenly across date range
@@ -1170,6 +1240,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                     remainder = total_minutes % day_count
                     date_range_display = f"{formats.date_format(start_local, 'M j')} - {formats.date_format(end_local, 'M j')}"
                     total_progress_display = _format_game_hours(total_minutes)
+                    genres = _resolve_genres(game.item)
 
                     for offset in range(day_count):
                         day = start_local + timedelta(days=offset)
@@ -1178,24 +1249,25 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                             datetime.combine(day, datetime.min.time()),
                             timezone.get_current_timezone(),
                         )
-                        entries.append(
-                            {
-                                "media_type": MediaTypes.GAME.value,
-                                "item": _serialize_item(game.item),
-                                "poster": game.item.image or settings.IMG_NONE,
-                                "title": game.item.title,
-                                "display_title": game.item.title,
-                                "progress_display": total_progress_display,
-                                "date_range_display": date_range_display,
-                                "episode_label": None,
-                                "episode_code": None,
-                                "played_at_local": day_dt,
-                                "runtime_minutes": minutes_for_day,
-                                "runtime_display": helpers.minutes_to_hhmm(minutes_for_day) if minutes_for_day else None,
-                                "instance_id": game.id,
-                                "entry_key": f"{game.id}-{day.strftime('%Y%m%d')}",
-                            },
-                        )
+                        entry = {
+                            "media_type": MediaTypes.GAME.value,
+                            "item": _serialize_item(game.item),
+                            "poster": game.item.image or settings.IMG_NONE,
+                            "title": game.item.title,
+                            "display_title": game.item.title,
+                            "progress_display": total_progress_display,
+                            "date_range_display": date_range_display,
+                            "episode_label": None,
+                            "episode_code": None,
+                            "played_at_local": day_dt,
+                            "runtime_minutes": minutes_for_day,
+                            "runtime_display": helpers.minutes_to_hhmm(minutes_for_day) if minutes_for_day else None,
+                            "instance_id": game.id,
+                            "entry_key": f"{game.id}-{day.strftime('%Y%m%d')}",
+                        }
+                        if genres:
+                            entry["genres"] = genres
+                        entries.append(entry)
                         entry_counts["games"] += 1
             if process_boardgames:
                 for boardgame in boardgames:
@@ -1224,6 +1296,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                     remainder = total_plays % day_count
                     date_range_display = f"{formats.date_format(start_local, 'M j')} - {formats.date_format(end_local, 'M j')}"
                     total_progress_display = _format_boardgame_plays(total_plays)
+                    genres = _resolve_genres(boardgame.item)
 
                     for offset in range(day_count):
                         day = start_local + timedelta(days=offset)
@@ -1232,24 +1305,25 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                             datetime.combine(day, datetime.min.time()),
                             timezone.get_current_timezone(),
                         )
-                        entries.append(
-                            {
-                                "media_type": MediaTypes.BOARDGAME.value,
-                                "item": _serialize_item(boardgame.item),
-                                "poster": boardgame.item.image or settings.IMG_NONE,
-                                "title": boardgame.item.title,
-                                "display_title": boardgame.item.title,
-                                "progress_display": total_progress_display,
-                                "date_range_display": date_range_display,
-                                "episode_label": None,
-                                "episode_code": None,
-                                "played_at_local": day_dt,
-                                "runtime_minutes": 0,
-                                "runtime_display": _format_boardgame_plays(plays_for_day) if plays_for_day else None,
-                                "instance_id": boardgame.id,
-                                "entry_key": f"{boardgame.id}-{day.strftime('%Y%m%d')}",
-                            },
-                        )
+                        entry = {
+                            "media_type": MediaTypes.BOARDGAME.value,
+                            "item": _serialize_item(boardgame.item),
+                            "poster": boardgame.item.image or settings.IMG_NONE,
+                            "title": boardgame.item.title,
+                            "display_title": boardgame.item.title,
+                            "progress_display": total_progress_display,
+                            "date_range_display": date_range_display,
+                            "episode_label": None,
+                            "episode_code": None,
+                            "played_at_local": day_dt,
+                            "runtime_minutes": 0,
+                            "runtime_display": _format_boardgame_plays(plays_for_day) if plays_for_day else None,
+                            "instance_id": boardgame.id,
+                            "entry_key": f"{boardgame.id}-{day.strftime('%Y%m%d')}",
+                        }
+                        if genres:
+                            entry["genres"] = genres
+                        entries.append(entry)
                         entry_counts["boardgames"] += 1
 
         logger.info(
@@ -1820,30 +1894,33 @@ def build_history_day(user, day_key, logging_style_override=None):
             poster = album.image if album and album.image else settings.IMG_NONE
             entry_music = music_map.get(group["primary_music_id"])
             entry_item = entry_music.item if entry_music else None
+            track = entry_music.track if entry_music else None
+            genres = _resolve_music_genres(album=album, artist=album.artist if album else None, track=track)
             entry_key = f"{album_id or 'album'}-{day_key}"
 
-            entries.append(
-                {
-                    "media_type": MediaTypes.MUSIC.value,
-                    "item": _serialize_item(entry_item),
-                    "album": _serialize_album(album),
-                    "poster": poster,
-                    "title": album_name,
-                    "display_title": album_name,
-                    "artist_name": artist_name,
-                    "play_count": group["play_count"],
-                    "time_range_display": time_range_display,
-                    "episode_label": None,
-                    "episode_code": None,
-                    "played_at_local": latest_time,
-                    "runtime_minutes": group["total_runtime_minutes"],
-                    "runtime_display": helpers.minutes_to_hhmm(group["total_runtime_minutes"])
-                    if group["total_runtime_minutes"]
-                    else None,
-                    "instance_id": group["primary_music_id"],
-                    "entry_key": entry_key,
-                },
-            )
+            entry = {
+                "media_type": MediaTypes.MUSIC.value,
+                "item": _serialize_item(entry_item),
+                "album": _serialize_album(album),
+                "poster": poster,
+                "title": album_name,
+                "display_title": album_name,
+                "artist_name": artist_name,
+                "play_count": group["play_count"],
+                "time_range_display": time_range_display,
+                "episode_label": None,
+                "episode_code": None,
+                "played_at_local": latest_time,
+                "runtime_minutes": group["total_runtime_minutes"],
+                "runtime_display": helpers.minutes_to_hhmm(group["total_runtime_minutes"])
+                if group["total_runtime_minutes"]
+                else None,
+                "instance_id": group["primary_music_id"],
+                "entry_key": entry_key,
+            }
+            if genres:
+                entry["genres"] = genres
+            entries.append(entry)
 
     # Podcasts (HistoricalPodcast for the day)
     HistoricalPodcast = apps.get_model("app", "HistoricalPodcast")
@@ -1954,24 +2031,26 @@ def build_history_day(user, day_key, logging_style_override=None):
             if not start_local:
                 start_local = end_local
             date_range_display = f"{formats.date_format(start_local, 'M j')} - {formats.date_format(end_local, 'M j')}"
-            entries.append(
-                {
-                    "media_type": MediaTypes.GAME.value,
-                    "item": _serialize_item(game.item),
-                    "poster": game.item.image or settings.IMG_NONE,
-                    "title": game.item.title,
-                    "display_title": game.item.title,
-                    "progress_display": _format_game_hours(runtime_minutes),
-                    "date_range_display": date_range_display,
-                    "episode_label": None,
-                    "episode_code": None,
-                    "played_at_local": played_at_local,
-                    "runtime_minutes": runtime_minutes,
-                    "runtime_display": helpers.minutes_to_hhmm(runtime_minutes) if runtime_minutes else None,
-                    "instance_id": game.id,
-                    "entry_key": game.id,
-                },
-            )
+            genres = _resolve_genres(game.item)
+            entry = {
+                "media_type": MediaTypes.GAME.value,
+                "item": _serialize_item(game.item),
+                "poster": game.item.image or settings.IMG_NONE,
+                "title": game.item.title,
+                "display_title": game.item.title,
+                "progress_display": _format_game_hours(runtime_minutes),
+                "date_range_display": date_range_display,
+                "episode_label": None,
+                "episode_code": None,
+                "played_at_local": played_at_local,
+                "runtime_minutes": runtime_minutes,
+                "runtime_display": helpers.minutes_to_hhmm(runtime_minutes) if runtime_minutes else None,
+                "instance_id": game.id,
+                "entry_key": game.id,
+            }
+            if genres:
+                entry["genres"] = genres
+            entries.append(entry)
 
         boardgames = BoardGame.objects.filter(user=user).filter(
             models.Q(end_date__gte=day_start, end_date__lt=day_end)
@@ -2001,24 +2080,26 @@ def build_history_day(user, day_key, logging_style_override=None):
                 start_local = end_local
             date_range_display = f"{formats.date_format(start_local, 'M j')} - {formats.date_format(end_local, 'M j')}"
             progress_display = _format_boardgame_plays(plays)
-            entries.append(
-                {
-                    "media_type": MediaTypes.BOARDGAME.value,
-                    "item": _serialize_item(boardgame.item),
-                    "poster": boardgame.item.image or settings.IMG_NONE,
-                    "title": boardgame.item.title,
-                    "display_title": boardgame.item.title,
-                    "progress_display": progress_display,
-                    "date_range_display": date_range_display,
-                    "episode_label": None,
-                    "episode_code": None,
-                    "played_at_local": played_at_local,
-                    "runtime_minutes": 0,
-                    "runtime_display": progress_display,
-                    "instance_id": boardgame.id,
-                    "entry_key": boardgame.id,
-                },
-            )
+            genres = _resolve_genres(boardgame.item)
+            entry = {
+                "media_type": MediaTypes.BOARDGAME.value,
+                "item": _serialize_item(boardgame.item),
+                "poster": boardgame.item.image or settings.IMG_NONE,
+                "title": boardgame.item.title,
+                "display_title": boardgame.item.title,
+                "progress_display": progress_display,
+                "date_range_display": date_range_display,
+                "episode_label": None,
+                "episode_code": None,
+                "played_at_local": played_at_local,
+                "runtime_minutes": 0,
+                "runtime_display": progress_display,
+                "instance_id": boardgame.id,
+                "entry_key": boardgame.id,
+            }
+            if genres:
+                entry["genres"] = genres
+            entries.append(entry)
     else:
         games = Game.objects.filter(user=user).select_related("item")
         for game in games:
@@ -2046,28 +2127,30 @@ def build_history_day(user, day_key, logging_style_override=None):
             minutes_for_day = base + (1 if offset < remainder else 0)
             date_range_display = f"{formats.date_format(start_date, 'M j')} - {formats.date_format(end_date, 'M j')}"
             total_progress_display = _format_game_hours(total_minutes)
+            genres = _resolve_genres(game.item)
             day_dt = timezone.make_aware(
                 datetime.combine(day_date, datetime.min.time()),
                 timezone.get_current_timezone(),
             )
-            entries.append(
-                {
-                    "media_type": MediaTypes.GAME.value,
-                    "item": _serialize_item(game.item),
-                    "poster": game.item.image or settings.IMG_NONE,
-                    "title": game.item.title,
-                    "display_title": game.item.title,
-                    "progress_display": total_progress_display,
-                    "date_range_display": date_range_display,
-                    "episode_label": None,
-                    "episode_code": None,
-                    "played_at_local": day_dt,
-                    "runtime_minutes": minutes_for_day,
-                    "runtime_display": helpers.minutes_to_hhmm(minutes_for_day) if minutes_for_day else None,
-                    "instance_id": game.id,
-                    "entry_key": f"{game.id}-{day_key}",
-                },
-            )
+            entry = {
+                "media_type": MediaTypes.GAME.value,
+                "item": _serialize_item(game.item),
+                "poster": game.item.image or settings.IMG_NONE,
+                "title": game.item.title,
+                "display_title": game.item.title,
+                "progress_display": total_progress_display,
+                "date_range_display": date_range_display,
+                "episode_label": None,
+                "episode_code": None,
+                "played_at_local": day_dt,
+                "runtime_minutes": minutes_for_day,
+                "runtime_display": helpers.minutes_to_hhmm(minutes_for_day) if minutes_for_day else None,
+                "instance_id": game.id,
+                "entry_key": f"{game.id}-{day_key}",
+            }
+            if genres:
+                entry["genres"] = genres
+            entries.append(entry)
 
         boardgames = BoardGame.objects.filter(user=user).select_related("item")
         for boardgame in boardgames:
@@ -2095,28 +2178,30 @@ def build_history_day(user, day_key, logging_style_override=None):
             plays_for_day = base + (1 if offset < remainder else 0)
             date_range_display = f"{formats.date_format(start_date, 'M j')} - {formats.date_format(end_date, 'M j')}"
             total_progress_display = _format_boardgame_plays(total_plays)
+            genres = _resolve_genres(boardgame.item)
             day_dt = timezone.make_aware(
                 datetime.combine(day_date, datetime.min.time()),
                 timezone.get_current_timezone(),
             )
-            entries.append(
-                {
-                    "media_type": MediaTypes.BOARDGAME.value,
-                    "item": _serialize_item(boardgame.item),
-                    "poster": boardgame.item.image or settings.IMG_NONE,
-                    "title": boardgame.item.title,
-                    "display_title": boardgame.item.title,
-                    "progress_display": total_progress_display,
-                    "date_range_display": date_range_display,
-                    "episode_label": None,
-                    "episode_code": None,
-                    "played_at_local": day_dt,
-                    "runtime_minutes": 0,
-                    "runtime_display": _format_boardgame_plays(plays_for_day) if plays_for_day else None,
-                    "instance_id": boardgame.id,
-                    "entry_key": f"{boardgame.id}-{day_key}",
-                },
-            )
+            entry = {
+                "media_type": MediaTypes.BOARDGAME.value,
+                "item": _serialize_item(boardgame.item),
+                "poster": boardgame.item.image or settings.IMG_NONE,
+                "title": boardgame.item.title,
+                "display_title": boardgame.item.title,
+                "progress_display": total_progress_display,
+                "date_range_display": date_range_display,
+                "episode_label": None,
+                "episode_code": None,
+                "played_at_local": day_dt,
+                "runtime_minutes": 0,
+                "runtime_display": _format_boardgame_plays(plays_for_day) if plays_for_day else None,
+                "instance_id": boardgame.id,
+                "entry_key": f"{boardgame.id}-{day_key}",
+            }
+            if genres:
+                entry["genres"] = genres
+            entries.append(entry)
 
     if not entries:
         return None

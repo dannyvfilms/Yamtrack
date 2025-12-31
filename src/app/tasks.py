@@ -1,6 +1,8 @@
 """Celery tasks for the app."""
 
 import logging
+from collections import defaultdict
+from datetime import timedelta
 
 from celery import shared_task
 from django.conf import settings
@@ -8,9 +10,15 @@ from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.db import IntegrityError, transaction
 from django.db.models import Q
+from django.utils import timezone
 
 from app import history_cache
-from app.models import Item, MediaTypes
+from app.models import (
+    Item,
+    MediaTypes,
+    MetadataBackfillField,
+    MetadataBackfillState,
+)
 from app.providers import services
 
 logger = logging.getLogger(__name__)
@@ -21,10 +29,207 @@ RUNTIME_BACKFILL_ITEMS_QUEUE_KEY = "runtime_backfill_items_queue"
 RUNTIME_BACKFILL_ITEMS_SCHEDULED_KEY = "runtime_backfill_items_scheduled"
 RUNTIME_BACKFILL_EPISODES_QUEUE_KEY = "runtime_backfill_episode_queue"
 RUNTIME_BACKFILL_EPISODES_SCHEDULED_KEY = "runtime_backfill_episode_scheduled"
+GENRE_BACKFILL_SOURCES = ("tmdb", "mal", "simkl", "igdb", "bgg")
+GENRE_BACKFILL_QUEUE_TTL = 60 * 60  # 1 hour
+GENRE_BACKFILL_ITEMS_QUEUE_KEY = "genre_backfill_items_queue"
+GENRE_BACKFILL_ITEMS_SCHEDULED_KEY = "genre_backfill_items_scheduled"
+METADATA_BACKFILL_BASE_DELAY_SECONDS = 60 * 60  # 1 hour
+METADATA_BACKFILL_MAX_DELAY_SECONDS = 60 * 60 * 24  # 1 day
+METADATA_BACKFILL_MAX_ATTEMPTS = 6
+
+
+def _apply_backfill_state_filters(queryset, field: str):
+    now = timezone.now()
+    blocked = MetadataBackfillState.objects.filter(field=field).filter(
+        Q(give_up=True) | Q(next_retry_at__gt=now),
+    ).values("item_id")
+    return queryset.exclude(id__in=blocked)
+
+
+def _backfill_delay_seconds(fail_count: int) -> int:
+    if fail_count <= 0:
+        return METADATA_BACKFILL_BASE_DELAY_SECONDS
+    delay = METADATA_BACKFILL_BASE_DELAY_SECONDS * (2 ** (fail_count - 1))
+    return min(delay, METADATA_BACKFILL_MAX_DELAY_SECONDS)
+
+
+def _record_backfill_failure(item: Item, field: str, error_message: str | None = None) -> bool:
+    now = timezone.now()
+    state, _ = MetadataBackfillState.objects.get_or_create(item=item, field=field)
+    state.fail_count = min(state.fail_count + 1, 9999)
+    state.last_attempt_at = now
+    if error_message:
+        state.last_error = str(error_message)[:500]
+    if state.fail_count >= METADATA_BACKFILL_MAX_ATTEMPTS:
+        state.give_up = True
+        state.next_retry_at = None
+    else:
+        state.give_up = False
+        state.next_retry_at = now + timedelta(seconds=_backfill_delay_seconds(state.fail_count))
+    state.save(update_fields=[
+        "fail_count",
+        "last_attempt_at",
+        "next_retry_at",
+        "last_error",
+        "give_up",
+    ])
+    reason = error_message or state.last_error or "unknown"
+    if state.give_up:
+        logger.warning(
+            "metadata_backfill_give_up item_id=%s media_type=%s field=%s fail_count=%s reason=%s",
+            item.id,
+            item.media_type,
+            field,
+            state.fail_count,
+            reason,
+        )
+    else:
+        logger.info(
+            "metadata_backfill_retry_later item_id=%s media_type=%s field=%s fail_count=%s next_retry_at=%s reason=%s",
+            item.id,
+            item.media_type,
+            field,
+            state.fail_count,
+            state.next_retry_at.isoformat() if state.next_retry_at else None,
+            reason,
+        )
+    return state.give_up
+
+
+def _record_backfill_success(item: Item, field: str) -> None:
+    now = timezone.now()
+    MetadataBackfillState.objects.filter(item=item, field=field).update(
+        fail_count=0,
+        last_attempt_at=now,
+        next_retry_at=None,
+        last_success_at=now,
+        last_error="",
+        give_up=False,
+    )
+
+
+def _filter_backfill_item_ids(item_ids, field: str):
+    if not item_ids:
+        return []
+    now = timezone.now()
+    blocked = set(
+        MetadataBackfillState.objects.filter(field=field, item_id__in=item_ids)
+        .filter(Q(give_up=True) | Q(next_retry_at__gt=now))
+        .values_list("item_id", flat=True)
+    )
+    return [item_id for item_id in item_ids if item_id not in blocked]
+
+
+def _add_user_day_key(user_day_keys, user_id, day_key):
+    if not user_id or not day_key:
+        return
+    user_day_keys[user_id].add(day_key)
+
+
+def _collect_backfill_day_keys(items, field: str):
+    from app.models import Anime, Episode, Game, Movie
+
+    user_day_keys = defaultdict(set)
+    if not items:
+        return user_day_keys
+
+    for item in items:
+        if item.media_type == MediaTypes.MOVIE.value:
+            rows = Movie.objects.filter(item_id=item.id).values(
+                "user_id",
+                "start_date",
+                "end_date",
+                "created_at",
+            )
+            for row in rows:
+                activity_dt = row.get("end_date") or row.get("start_date") or row.get("created_at")
+                _add_user_day_key(user_day_keys, row.get("user_id"), history_cache.history_day_key(activity_dt))
+            continue
+
+        if item.media_type == MediaTypes.ANIME.value:
+            if field == MetadataBackfillField.GENRES:
+                continue
+            rows = Anime.objects.filter(item_id=item.id).values(
+                "user_id",
+                "start_date",
+                "end_date",
+                "created_at",
+            )
+            for row in rows:
+                if field == MetadataBackfillField.RUNTIME and row.get("start_date") and row.get("end_date"):
+                    day_keys = history_cache.history_day_keys_for_range(
+                        row.get("start_date"),
+                        row.get("end_date"),
+                    )
+                    if day_keys:
+                        user_day_keys[row.get("user_id")].update(day_keys)
+                    continue
+                activity_dt = row.get("end_date") or row.get("start_date") or row.get("created_at")
+                _add_user_day_key(user_day_keys, row.get("user_id"), history_cache.history_day_key(activity_dt))
+            continue
+
+        if item.media_type == MediaTypes.GAME.value:
+            rows = Game.objects.filter(item_id=item.id).values(
+                "user_id",
+                "start_date",
+                "end_date",
+                "created_at",
+            )
+            for row in rows:
+                activity_dt = row.get("end_date") or row.get("start_date") or row.get("created_at")
+                _add_user_day_key(user_day_keys, row.get("user_id"), history_cache.history_day_key(activity_dt))
+            continue
+
+        if item.media_type == MediaTypes.TV.value and field == MetadataBackfillField.GENRES:
+            rows = Episode.objects.filter(
+                related_season__related_tv__item_id=item.id,
+            ).values("related_season__user_id", "end_date")
+            for row in rows:
+                _add_user_day_key(
+                    user_day_keys,
+                    row.get("related_season__user_id"),
+                    history_cache.history_day_key(row.get("end_date")),
+                )
+            continue
+
+        if item.media_type == MediaTypes.EPISODE.value and field == MetadataBackfillField.RUNTIME:
+            rows = Episode.objects.filter(item_id=item.id).values(
+                "related_season__user_id",
+                "end_date",
+            )
+            for row in rows:
+                _add_user_day_key(
+                    user_day_keys,
+                    row.get("related_season__user_id"),
+                    history_cache.history_day_key(row.get("end_date")),
+                )
+
+    return user_day_keys
+
+
+def _schedule_metadata_statistics_refresh(items, field: str, reason: str):
+    if not items:
+        return
+    from app import statistics_cache
+
+    user_day_keys = _collect_backfill_day_keys(items, field)
+    for user_id, day_keys in user_day_keys.items():
+        if not day_keys:
+            continue
+        statistics_cache.mark_metadata_refreshing(user_id, reason=reason)
+        statistics_cache.invalidate_statistics_days(user_id, day_keys, reason=reason)
+        statistics_cache.schedule_all_ranges_refresh(user_id, debounce_seconds=10, countdown=3)
+        logger.info(
+            "metadata_refresh_scheduled user_id=%s field=%s days=%s reason=%s",
+            user_id,
+            field,
+            len(day_keys),
+            reason,
+        )
 
 
 def _runtime_items_queryset():
-    return Item.objects.filter(
+    queryset = Item.objects.filter(
         runtime_minutes__isnull=True,
         media_type__in=[
             MediaTypes.MOVIE.value,
@@ -35,6 +240,22 @@ def _runtime_items_queryset():
     ).exclude(
         runtime_minutes=999999,
     )
+    return _apply_backfill_state_filters(queryset, MetadataBackfillField.RUNTIME)
+
+
+def _genre_items_queryset():
+    queryset = Item.objects.filter(
+        Q(genres__isnull=True) | Q(genres=[]),
+        media_type__in=[
+            MediaTypes.MOVIE.value,
+            MediaTypes.TV.value,
+            MediaTypes.ANIME.value,
+            MediaTypes.GAME.value,
+            MediaTypes.BOARDGAME.value,
+        ],
+        source__in=GENRE_BACKFILL_SOURCES,
+    )
+    return _apply_backfill_state_filters(queryset, MetadataBackfillField.GENRES)
 
 
 def _normalize_item_ids(item_ids):
@@ -81,6 +302,7 @@ def _normalize_season_keys(season_keys):
 
 def enqueue_runtime_backfill_items(item_ids, countdown=10):
     normalized = _normalize_item_ids(item_ids)
+    normalized = _filter_backfill_item_ids(normalized, MetadataBackfillField.RUNTIME)
     if not normalized:
         return 0
     try:
@@ -112,11 +334,42 @@ def enqueue_episode_runtime_backfill(season_keys, countdown=10):
     return len(tokens)
 
 
-def _populate_runtime_for_items(items, delay_seconds):
-    from app.statistics import parse_runtime_to_minutes
+def enqueue_genre_backfill_items(item_ids, countdown=10):
+    normalized = _normalize_item_ids(item_ids)
+    normalized = _filter_backfill_item_ids(normalized, MetadataBackfillField.GENRES)
+    if not normalized:
+        return 0
+    try:
+        queue = cache.get(GENRE_BACKFILL_ITEMS_QUEUE_KEY) or []
+        queue = list(set(queue).union(normalized))
+        cache.set(GENRE_BACKFILL_ITEMS_QUEUE_KEY, queue, timeout=GENRE_BACKFILL_QUEUE_TTL)
+        if cache.add(GENRE_BACKFILL_ITEMS_SCHEDULED_KEY, True, timeout=30):
+            populate_genre_backfill_queue.apply_async(countdown=countdown)
+    except Exception as exc:  # pragma: no cover - cache unavailable
+        logger.debug("Genre backfill queue unavailable: %s", exc)
+        populate_genre_data_for_items.apply_async(args=[normalized], countdown=countdown)
+    return len(normalized)
 
+
+def _extract_genres_from_metadata(metadata):
+    from app.statistics import _coerce_genre_list
+
+    if not isinstance(metadata, dict):
+        return []
+    details = metadata.get("details")
+    genres_raw = []
+    if isinstance(details, dict):
+        genres_raw = details.get("genres") or details.get("genre") or []
+    if not genres_raw:
+        genres_raw = metadata.get("genres") or metadata.get("genre") or []
+    genres = _coerce_genre_list(genres_raw)
+    return list(dict.fromkeys([genre for genre in genres if genre]))
+
+
+def _populate_genres_for_items(items, delay_seconds):
     updated_count = 0
     error_count = 0
+    updated_items = []
     for item in items:
         try:
             metadata = services.get_media_metadata(
@@ -128,16 +381,90 @@ def _populate_runtime_for_items(items, delay_seconds):
             if not metadata:
                 logger.warning("No metadata returned for %s (%s, %s)", item.title, item.media_type, item.source)
                 error_count += 1
+                _record_backfill_failure(item, MetadataBackfillField.GENRES, "no metadata")
+                continue
+
+            genres = _extract_genres_from_metadata(metadata)
+            if not genres:
+                logger.warning("No genre data available for %s", item.title)
+                error_count += 1
+                _record_backfill_failure(item, MetadataBackfillField.GENRES, "no genres")
+                continue
+
+            with transaction.atomic():
+                item.genres = genres
+                item.save(update_fields=["genres"])
+
+            _record_backfill_success(item, MetadataBackfillField.GENRES)
+            updated_count += 1
+            updated_items.append(item)
+            logger.info("Updated genres for %s: %s", item.title, genres)
+
+            if delay_seconds > 0:
+                import time
+
+                time.sleep(delay_seconds)
+        except Exception as exc:
+            error_count += 1
+            logger.error("Error updating genres for %s: %s", item.title, exc)
+            _record_backfill_failure(item, MetadataBackfillField.GENRES, f"exception: {exc}")
+
+    logger.info("Genre population batch completed: %s updated, %s errors", updated_count, error_count)
+    if updated_items:
+        _schedule_metadata_statistics_refresh(
+            updated_items,
+            MetadataBackfillField.GENRES,
+            "genres_backfill",
+        )
+    return updated_count, error_count
+
+
+def _populate_runtime_for_items(items, delay_seconds):
+    from app.statistics import parse_runtime_to_minutes
+
+    updated_count = 0
+    error_count = 0
+    updated_items = []
+    def _mark_runtime_failure(item, reason):
+        give_up = _record_backfill_failure(item, MetadataBackfillField.RUNTIME, reason)
+        if give_up:
+            try:
+                with transaction.atomic():
+                    item.runtime_minutes = 999999
+                    item.save(update_fields=["runtime_minutes"])
+                logger.warning(
+                    "Marked %s as failed (runtime_minutes=999999) after %s",
+                    item.title,
+                    reason,
+                )
+            except Exception as save_error:
+                logger.error("Failed to mark %s as failed: %s", item.title, save_error)
+        return give_up
+
+    for item in items:
+        try:
+            metadata = services.get_media_metadata(
+                item.media_type.lower(),
+                item.media_id,
+                item.source,
+            )
+
+            if not metadata:
+                logger.warning("No metadata returned for %s (%s, %s)", item.title, item.media_type, item.source)
+                error_count += 1
+                _mark_runtime_failure(item, "no metadata")
                 continue
 
             if not isinstance(metadata, dict):
                 logger.warning("Invalid metadata format for %s: %s", item.title, type(metadata))
                 error_count += 1
+                _mark_runtime_failure(item, "invalid metadata")
                 continue
 
             if not metadata.get("details"):
                 logger.warning("No details in metadata for %s", item.title)
                 error_count += 1
+                _mark_runtime_failure(item, "missing details")
                 continue
 
             details = metadata["details"]
@@ -146,16 +473,7 @@ def _populate_runtime_for_items(items, delay_seconds):
             if not runtime_str:
                 logger.warning("No runtime data available for %s", item.title)
                 error_count += 1
-                try:
-                    with transaction.atomic():
-                        item.runtime_minutes = 999999
-                        item.save(update_fields=["runtime_minutes"])
-                    logger.warning(
-                        "Marked %s as failed (runtime_minutes=999999) - no runtime data available",
-                        item.title,
-                    )
-                except Exception as save_error:
-                    logger.error("Failed to mark %s as failed: %s", item.title, save_error)
+                _mark_runtime_failure(item, "no runtime")
                 continue
 
             runtime_minutes = parse_runtime_to_minutes(runtime_str)
@@ -163,23 +481,16 @@ def _populate_runtime_for_items(items, delay_seconds):
             if runtime_minutes is None:
                 logger.warning("Failed to parse runtime '%s' for %s", runtime_str, item.title)
                 error_count += 1
-                try:
-                    with transaction.atomic():
-                        item.runtime_minutes = 999999
-                        item.save(update_fields=["runtime_minutes"])
-                    logger.warning(
-                        "Marked %s as failed (runtime_minutes=999999) - failed to parse runtime",
-                        item.title,
-                    )
-                except Exception as save_error:
-                    logger.error("Failed to mark %s as failed: %s", item.title, save_error)
+                _mark_runtime_failure(item, "parse failure")
                 continue
 
             with transaction.atomic():
                 item.runtime_minutes = runtime_minutes
                 item.save(update_fields=["runtime_minutes"])
 
+            _record_backfill_success(item, MetadataBackfillField.RUNTIME)
             updated_count += 1
+            updated_items.append(item)
             logger.info("Updated runtime for %s: %s minutes", item.title, runtime_minutes)
 
             if delay_seconds > 0:
@@ -189,18 +500,15 @@ def _populate_runtime_for_items(items, delay_seconds):
         except Exception as exc:
             error_count += 1
             logger.error("Error updating runtime for %s: %s", item.title, exc)
-            try:
-                with transaction.atomic():
-                    item.runtime_minutes = 999999
-                    item.save(update_fields=["runtime_minutes"])
-                logger.warning(
-                    "Marked %s as failed (runtime_minutes=999999) to avoid endless retries",
-                    item.title,
-                )
-            except Exception as save_error:
-                logger.error("Failed to mark %s as failed: %s", item.title, save_error)
+            _mark_runtime_failure(item, f"exception: {exc}")
 
     logger.info("Runtime population batch completed: %s updated, %s errors", updated_count, error_count)
+    if updated_items:
+        _schedule_metadata_statistics_refresh(
+            updated_items,
+            MetadataBackfillField.RUNTIME,
+            "runtime_backfill",
+        )
     return updated_count, error_count
 
 
@@ -267,6 +575,26 @@ def populate_runtime_data_for_items(item_ids: list[int], delay_seconds: float = 
 
 
 @shared_task
+def populate_genre_data_for_items(item_ids: list[int], delay_seconds: float = 0.0):
+    """Populate genre data for a targeted list of item IDs."""
+    normalized = _normalize_item_ids(item_ids)
+    if not normalized:
+        return {"updated": 0, "errors": 0, "message": "No item IDs provided"}
+
+    items_to_update = list(_genre_items_queryset().filter(id__in=normalized))
+    if not items_to_update:
+        logger.info("No targeted items need genre data")
+        return {"updated": 0, "errors": 0, "message": "No targeted items need genre data"}
+
+    updated_count, error_count = _populate_genres_for_items(items_to_update, delay_seconds)
+    return {
+        "updated": updated_count,
+        "errors": error_count,
+        "message": f"Processed {len(items_to_update)} targeted items",
+    }
+
+
+@shared_task
 def populate_runtime_backfill_queue(batch_size: int = 50, delay_seconds: float = 0.0):
     """Drain the runtime backfill queue and process items in small batches."""
     queue = cache.get(RUNTIME_BACKFILL_ITEMS_QUEUE_KEY) or []
@@ -285,6 +613,27 @@ def populate_runtime_backfill_queue(batch_size: int = 50, delay_seconds: float =
         cache.delete(RUNTIME_BACKFILL_ITEMS_QUEUE_KEY)
 
     return populate_runtime_data_for_items(batch, delay_seconds=delay_seconds)
+
+
+@shared_task
+def populate_genre_backfill_queue(batch_size: int = 50, delay_seconds: float = 0.0):
+    """Drain the genre backfill queue and process items in small batches."""
+    queue = cache.get(GENRE_BACKFILL_ITEMS_QUEUE_KEY) or []
+    if not queue:
+        cache.delete(GENRE_BACKFILL_ITEMS_SCHEDULED_KEY)
+        return {"processed": 0, "message": "No queued genre items"}
+
+    cache.delete(GENRE_BACKFILL_ITEMS_SCHEDULED_KEY)
+    batch = queue[:batch_size]
+    remaining = queue[batch_size:]
+    if remaining:
+        cache.set(GENRE_BACKFILL_ITEMS_QUEUE_KEY, remaining, timeout=GENRE_BACKFILL_QUEUE_TTL)
+        if cache.add(GENRE_BACKFILL_ITEMS_SCHEDULED_KEY, True, timeout=30):
+            populate_genre_backfill_queue.apply_async(countdown=10)
+    else:
+        cache.delete(GENRE_BACKFILL_ITEMS_QUEUE_KEY)
+
+    return populate_genre_data_for_items(batch, delay_seconds=delay_seconds)
 
 
 @shared_task
@@ -1482,6 +1831,7 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
     updated_count = 0
     error_count = 0
     processed_seasons = set()
+    updated_items = []
 
     seasons_to_process = set(normalized_seasons)
     if not seasons_to_process:
@@ -1548,8 +1898,9 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
                     },
                 )
 
-                if not created and episode_item.runtime_minutes:
+                if episode_item.runtime_minutes:
                     updated_count += 1
+                    updated_items.append(episode_item)
                     logger.info(
                         "Updated runtime for %s S%sE%s: %s minutes",
                         episode_item.title,
@@ -1566,6 +1917,13 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
             continue
 
     logger.info(f"Episode runtime population completed: {updated_count} episodes updated, {error_count} errors")
+
+    if updated_items:
+        _schedule_metadata_statistics_refresh(
+            updated_items,
+            MetadataBackfillField.RUNTIME,
+            "episode_runtime_backfill",
+        )
 
     if not normalized_seasons:
         cache.set("runtime_population_completed", True, timeout=3600)

@@ -4772,18 +4772,11 @@ def cache_status(request):
             cache.delete(refresh_lock_key)
             refresh_lock = None
 
-        # Check if ANY statistics range is still refreshing
-        # This helps determine when all ranges are done
-        any_range_refreshing = False
-        for check_range in statistics_cache.PREDEFINED_RANGES:
-            check_lock_key = statistics_cache._refresh_lock_key(request.user.id, check_range)
-            check_lock = cache.get(check_lock_key)
-            if check_lock and statistics_cache._lock_is_stale(check_lock):
-                cache.delete(check_lock_key)
-                check_lock = None
-            if check_lock is not None:
-                any_range_refreshing = True
-                break
+        any_range_refreshing = statistics_cache._any_range_refreshing(request.user.id)
+        metadata_lock, metadata_built_at, metadata_recently_built = (
+            statistics_cache._metadata_refresh_status(request.user.id)
+        )
+        metadata_refreshing = metadata_lock is not None
 
         refresh_scheduled = False
         if cache_entry:
@@ -4814,23 +4807,31 @@ def cache_status(request):
                 )
                 refresh_lock = cache.get(refresh_lock_key) if refresh_scheduled else refresh_lock
 
+            is_refreshing = refresh_lock is not None or refresh_scheduled or metadata_refreshing
             return JsonResponse({
                 "exists": True,
                 "built_at": built_at.isoformat() if built_at else None,
                 "is_stale": is_stale,
-                "is_refreshing": refresh_lock is not None or refresh_scheduled,
+                "is_refreshing": is_refreshing,
                 "recently_built": recently_built,
                 "any_range_refreshing": any_range_refreshing,
                 "refresh_scheduled": refresh_scheduled,
+                "metadata_refreshing": metadata_refreshing,
+                "metadata_built_at": metadata_built_at.isoformat() if metadata_built_at else None,
+                "metadata_recently_built": metadata_recently_built,
             })
+        is_refreshing = refresh_lock is not None or metadata_refreshing
         return JsonResponse({
             "exists": False,
             "built_at": None,
             "is_stale": False,
-            "is_refreshing": refresh_lock is not None,
+            "is_refreshing": is_refreshing,
             "recently_built": False,
             "any_range_refreshing": any_range_refreshing,
             "refresh_scheduled": False,
+            "metadata_refreshing": metadata_refreshing,
+            "metadata_built_at": metadata_built_at.isoformat() if metadata_built_at else None,
+            "metadata_recently_built": metadata_recently_built,
         })
 
 

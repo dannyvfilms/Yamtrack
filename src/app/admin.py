@@ -72,7 +72,19 @@ class TrackAdmin(admin.ModelAdmin):
 # Auto-register remaining models
 app_models = apps.get_app_config("app").get_models()
 # Models that don't use MediaAdmin (either registered separately or excluded)
-SpecialModels = ["Item", "Episode", "BasicMedia", "Artist", "Album", "Track", "ArtistTracker", "AlbumTracker", "PodcastShow", "PodcastEpisode"]
+SpecialModels = [
+    "Item",
+    "Episode",
+    "BasicMedia",
+    "Artist",
+    "Album",
+    "Track",
+    "ArtistTracker",
+    "AlbumTracker",
+    "PodcastShow",
+    "PodcastEpisode",
+    "MetadataBackfillState",
+]
 for model in app_models:
     if (
         not model.__name__.startswith("Historical")
@@ -83,7 +95,14 @@ for model in app_models:
 
 
 # Register Artist, Album, Track, ArtistTracker, and AlbumTracker with custom admin classes
-from app.models import Album, AlbumTracker, Artist, ArtistTracker, Track  # noqa: E402
+from app.models import (  # noqa: E402
+    Album,
+    AlbumTracker,
+    Artist,
+    ArtistTracker,
+    MetadataBackfillState,
+    Track,
+)
 
 
 class ArtistTrackerAdmin(admin.ModelAdmin):
@@ -109,6 +128,26 @@ admin.site.register(Album, AlbumAdmin)
 admin.site.register(Track, TrackAdmin)
 admin.site.register(ArtistTracker, ArtistTrackerAdmin)
 admin.site.register(AlbumTracker, AlbumTrackerAdmin)
+
+
+class MetadataBackfillStateAdmin(admin.ModelAdmin):
+    """Admin for metadata backfill tracking."""
+
+    list_display = [
+        "item",
+        "field",
+        "fail_count",
+        "give_up",
+        "next_retry_at",
+        "last_attempt_at",
+        "last_success_at",
+    ]
+    list_filter = ["field", "give_up"]
+    search_fields = ["item__title", "item__media_id", "last_error"]
+    raw_id_fields = ["item"]
+
+
+admin.site.register(MetadataBackfillState, MetadataBackfillStateAdmin)
 
 
 class PodcastShowAdmin(admin.ModelAdmin):

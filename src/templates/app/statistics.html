@@ -33,6 +33,7 @@
   
   <div x-data="{
     cacheRefreshing: false,
+    metadataRefreshing: false,
     cacheUpdater: null,
     selectedRangeName: '{{ selected_range_name|default:"" }}',
     init() {
@@ -43,6 +44,7 @@
           onRefreshComplete: (success, reason) => {
             console.log('Statistics page: Refresh complete callback', success, reason);
             this.cacheRefreshing = false;
+            this.metadataRefreshing = false;
           },
           onUpdate: () => {
             console.log('Statistics page: Update callback called, reloading page');
@@ -77,12 +79,14 @@
           console.log('Statistics page: Initial cache status', data);
           // Show notification and start polling only when a refresh is actually running
           // (or has just been scheduled), to avoid stale-but-idle loops.
-          if (data.is_refreshing || data.any_range_refreshing || data.refresh_scheduled) {
+          this.metadataRefreshing = data.metadata_refreshing || false;
+          if (data.is_refreshing || data.any_range_refreshing || data.refresh_scheduled || this.metadataRefreshing) {
             console.log('Statistics page: Showing notification and starting polling', {
               is_stale: data.is_stale,
               is_refreshing: data.is_refreshing,
               recently_built: data.recently_built,
-              refresh_scheduled: data.refresh_scheduled
+              refresh_scheduled: data.refresh_scheduled,
+              metadata_refreshing: data.metadata_refreshing
             });
             this.cacheRefreshing = true;
             if (this.cacheUpdater) {
@@ -92,6 +96,7 @@
               this.cacheUpdater.start();
             }
           } else {
+            this.metadataRefreshing = false;
             console.log('Statistics page: Cache is fresh, no notification needed', {
               is_stale: data.is_stale,
               is_refreshing: data.is_refreshing,
@@ -106,17 +111,29 @@
   }">
   
   {# Cache refresh notification banner #}
-  <div x-show="cacheRefreshing"
-       x-cloak
-       x-transition
-       class="fixed top-24 right-0 left-0 {% block messages_sidebar_offset %}lg:left-64{% endblock messages_sidebar_offset %} z-50 flex justify-center pointer-events-none mb-4">
+  <div class="fixed top-24 right-0 left-0 {% block messages_sidebar_offset %}lg:left-64{% endblock messages_sidebar_offset %} z-50 flex justify-center pointer-events-none mb-4">
     <div class="w-full max-w-xl px-4 pointer-events-auto">
-      <div class="flex items-center gap-2 rounded-md border px-3 py-2 shadow-lg text-white toast-info opacity-0"
+      <div x-show="cacheRefreshing && !metadataRefreshing"
+           x-cloak
+           x-transition
+           class="flex items-center gap-2 rounded-md border px-3 py-2 shadow-lg text-white toast-info opacity-0"
            x-init="setTimeout(() => $el.classList.add('opacity-100', 'transform-none'), 10); $el.classList.add('transition-all', 'duration-300', 'ease-out', 'transform', 'translate-y-[-1rem]')">
         {% include "app/icons/info.svg" with classes="w-4 h-4 text-indigo-300 shrink-0 animate-pulse" %}
         <p class="text-sm font-medium flex-1">Refreshing statistics in background...</p>
         <button class="text-current opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
                 @click="cacheRefreshing = false; cacheUpdater?.stop();">
+          {% include "app/icons/x.svg" with classes="w-4 h-4" %}
+        </button>
+      </div>
+      <div x-show="metadataRefreshing"
+           x-cloak
+           x-transition
+           class="flex items-center gap-2 rounded-md border px-3 py-2 shadow-lg text-white toast-info opacity-0"
+           x-init="setTimeout(() => $el.classList.add('opacity-100', 'transform-none'), 10); $el.classList.add('transition-all', 'duration-300', 'ease-out', 'transform', 'translate-y-[-1rem]')">
+        {% include "app/icons/info.svg" with classes="w-4 h-4 text-indigo-300 shrink-0 animate-pulse" %}
+        <p class="text-sm font-medium flex-1">Updating metadata in background...</p>
+        <button class="text-current opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
+                @click="metadataRefreshing = false; cacheUpdater?.stop();">
           {% include "app/icons/x.svg" with classes="w-4 h-4" %}
         </button>
       </div>

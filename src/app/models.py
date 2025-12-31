@@ -176,6 +176,47 @@ class Item(CalendarTriggerMixin, models.Model):
                 name += f"E{self.episode_number}"
         return name
 
+
+class MetadataBackfillField(models.TextChoices):
+    """Fields that can be backfilled from external metadata."""
+
+    RUNTIME = "runtime", "Runtime"
+    GENRES = "genres", "Genres"
+
+
+class MetadataBackfillState(models.Model):
+    """Track metadata backfill attempts to avoid endless retries."""
+
+    item = models.ForeignKey(
+        Item,
+        on_delete=models.CASCADE,
+        related_name="metadata_backfill_states",
+    )
+    field = models.CharField(
+        max_length=20,
+        choices=MetadataBackfillField.choices,
+    )
+    fail_count = models.PositiveIntegerField(default=0)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
+    next_retry_at = models.DateTimeField(null=True, blank=True)
+    last_success_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default="")
+    give_up = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            UniqueConstraint(
+                fields=["item", "field"],
+                name="unique_metadata_backfill_state",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["field", "next_retry_at"]),
+            models.Index(fields=["field", "give_up"]),
+        ]
+
     @classmethod
     def generate_manual_id(cls, media_type):
         """Generate a new ID for manual items."""
