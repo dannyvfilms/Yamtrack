@@ -1,5 +1,6 @@
 """Utilities for caching the History page."""
 
+import hashlib
 import logging
 import time
 from collections import defaultdict
@@ -2294,11 +2295,12 @@ def get_cached_history_page(user, page_number: int = 1, logging_style_override=N
 
     if missing_days and len(day_payloads) == 0:
         refresh_lock = _clean_refresh_lock(lock_key)
+        scheduled = False
         if refresh_lock is None:
             scheduled = schedule_history_refresh(
                 user.id,
                 logging_style,
-                warm_days=HISTORY_COLD_MISS_WARM_DAYS,
+                day_keys=missing_days,
                 allow_inline=False,
             )
             logger.info(
@@ -2315,7 +2317,8 @@ def get_cached_history_page(user, page_number: int = 1, logging_style_override=N
                 logging_style,
                 len(missing_days),
             )
-        meta.update({"refreshing": True, "refresh_reason": "day_cache_cold_miss"})
+        refreshing = refresh_lock is not None or scheduled
+        meta.update({"refreshing": refreshing, "refresh_reason": "day_cache_cold_miss"})
         return [], total_days, meta
 
     built_days = {}
@@ -2388,7 +2391,13 @@ def get_cached_history_page(user, page_number: int = 1, logging_style_override=N
 def _day_key_from_value(value):
     if value is None:
         return None
+    if isinstance(value, (int, bytes)):
+        try:
+            value = value.decode() if isinstance(value, bytes) else str(value)
+        except Exception:
+            return None
     if isinstance(value, str):
+        value = value.strip().strip("'").strip('"')
         if value.isdigit() and len(value) == 8:
             return value
         try:
@@ -2538,6 +2547,7 @@ def refresh_history_cache(
     user_id: int,
     logging_style: str | None = None,
     warm_days: int | None = None,
+    day_keys: Iterable | None = None,
 ):
     """Rebuild and store history index for a user."""
     user_model = get_user_model()
@@ -2550,27 +2560,53 @@ def refresh_history_cache(
         return None
 
     try:
+        normalized_day_keys = []
+        for value in day_keys or []:
+            day_key = _day_key_from_value(value)
+            if day_key:
+                normalized_day_keys.append(day_key)
+        use_specific_days = bool(normalized_day_keys)
+        if use_specific_days:
+            seen = set()
+            day_keys = []
+            for key in normalized_day_keys:
+                if key in seen:
+                    continue
+                seen.add(key)
+                day_keys.append(key)
+        else:
+            day_keys = None
+
         if warm_days is None:
             warm_days = HISTORY_WARM_DAYS
         logger.info(
-            "history_cache_refresh_start user_id=%s logging_style=%s",
+            "history_cache_refresh_start user_id=%s logging_style=%s day_keys=%s mode=%s",
             user_id,
             logging_style,
+            len(day_keys or []),
+            "page_days" if use_specific_days else "index",
         )
-        day_keys = build_history_index(user, logging_style_override=logging_style)
-        cache_history_index(user_id, logging_style, day_keys)
+        if day_keys is None:
+            day_keys = build_history_index(user, logging_style_override=logging_style)
+            cache_history_index(user_id, logging_style, day_keys)
+            use_specific_days = False
         warmed = 0
-        if warm_days:
-            for day_key in day_keys[:warm_days]:
-                day_payload = build_history_day(user, day_key, logging_style_override=logging_style)
-                if not day_payload:
-                    continue
-                cache.set(
-                    _day_cache_key(user_id, logging_style, day_key),
-                    _serialize_history_day(day_payload),
-                    timeout=HISTORY_CACHE_TIMEOUT,
-                )
-                warmed += 1
+        warm_targets = []
+        if day_keys:
+            if use_specific_days:
+                warm_targets = day_keys
+            elif warm_days:
+                warm_targets = day_keys[:warm_days]
+        for day_key in warm_targets:
+            day_payload = build_history_day(user, day_key, logging_style_override=logging_style)
+            if not day_payload:
+                continue
+            cache.set(
+                _day_cache_key(user_id, logging_style, day_key),
+                _serialize_history_day(day_payload),
+                timeout=HISTORY_CACHE_TIMEOUT,
+            )
+            warmed += 1
         logger.info(
             "history_cache_refresh_done user_id=%s logging_style=%s days=%s warmed=%s",
             user_id,
@@ -2604,6 +2640,7 @@ def schedule_history_refresh(
     debounce_seconds: int = 30,
     countdown: int = 3,
     warm_days: int | None = None,
+    day_keys: Iterable | None = None,
     allow_inline: bool = True,
 ):
     """Queue a background refresh for a user's history cache.
@@ -2614,27 +2651,50 @@ def schedule_history_refresh(
         debounce_seconds: Seconds to debounce refresh requests
         countdown: Seconds to delay task execution (default 3)
         warm_days: Optional warm window for day payloads
+        day_keys: Optional list of day keys to warm
     """
     logging_style = _normalize_logging_style(logging_style)
     lock_key = _refresh_lock_key(user_id, logging_style)
+    normalized_day_keys = []
+    for value in day_keys or []:
+        day_key = _day_key_from_value(value)
+        if day_key:
+            normalized_day_keys.append(day_key)
+    if normalized_day_keys:
+        dedupe_seed = ",".join(normalized_day_keys)
+        dedupe_hash = hashlib.sha1(dedupe_seed.encode("utf-8")).hexdigest()[:10]
+        dedupe_key = f"{lock_key}_days_{dedupe_hash}"
+    else:
+        dedupe_key = lock_key
     # Keep TTL close to the frontend polling timeout so locks don't appear "stuck"
     # while still covering normal task execution time.
     lock_ttl = 120  # Matches CacheUpdater timeout window
     lock_payload = {"started_at": timezone.now()}
-    if debounce_seconds and not cache.add(lock_key, lock_payload, debounce_seconds):
+    if normalized_day_keys:
+        lock_payload["day_keys"] = normalized_day_keys
+    if debounce_seconds and not cache.add(dedupe_key, lock_payload, debounce_seconds):
         return False
 
     # Extend the lock TTL to cover the full task duration
     # This ensures the lock exists even if the task takes longer than debounce_seconds
-    cache.set(lock_key, lock_payload, lock_ttl)
+    cache.set(dedupe_key, lock_payload, lock_ttl)
+    if dedupe_key != lock_key:
+        cache.set(lock_key, lock_payload, lock_ttl)
 
     try:
         from app.tasks import refresh_history_cache_task
 
         task_args = [user_id, logging_style]
+        task_kwargs = {}
         if warm_days is not None:
-            task_args.append(warm_days)
-        refresh_history_cache_task.apply_async(args=task_args, countdown=countdown)
+            task_kwargs["warm_days"] = warm_days
+        if normalized_day_keys:
+            task_kwargs["day_keys"] = normalized_day_keys
+        refresh_history_cache_task.apply_async(
+            args=task_args,
+            kwargs=task_kwargs,
+            countdown=countdown,
+        )
         return True
     except Exception as exc:  # pragma: no cover - Celery not available
         if not allow_inline:

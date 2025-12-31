@@ -313,6 +313,7 @@ def refresh_history_cache_task(
     user_id: int,
     logging_style: str = "repeats",
     warm_days: int | None = None,
+    day_keys=None,
     *args,
     **kwargs,
 ):
@@ -335,10 +336,20 @@ def refresh_history_cache_task(
                 continue
     if warm_days is not None and warm_days < 0:
         warm_days = None
+    if day_keys is None:
+        candidate = kwargs.get("day_keys")
+        if candidate:
+            day_keys = candidate
+    if day_keys is None:
+        for candidate in args:
+            if isinstance(candidate, (list, tuple)):
+                day_keys = candidate
+                break
     history_cache.refresh_history_cache(
         user_id,
         logging_style=logging_style,
         warm_days=warm_days,
+        day_keys=day_keys,
     )
 
 

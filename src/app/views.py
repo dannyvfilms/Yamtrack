@@ -4690,6 +4690,7 @@ def cache_status(request):
         if refresh_lock and statistics_cache._lock_is_stale(refresh_lock):
             cache.delete(refresh_lock_key)
             refresh_lock = None
+        lock_has_day_keys = isinstance(refresh_lock, dict) and bool(refresh_lock.get("day_keys"))
 
         # If lock is too old, clear it to avoid a stuck "refreshing" state
         if refresh_lock:
@@ -4724,11 +4725,12 @@ def cache_status(request):
                 recently_built = age < timedelta(seconds=60)
                 # If the cache was just rebuilt but the lock is still set, clear it
                 # to avoid a stuck "refreshing" state on the frontend.
-                if refresh_lock and recently_built:
+                if refresh_lock and recently_built and not lock_has_day_keys:
                     cache.delete(refresh_lock_key)
                     refresh_lock = None
-                # If cache is fresh (not stale), ignore any lingering lock so UI doesn't loop
-                if not is_stale and refresh_lock:
+                # If cache is fresh (not stale), ignore lingering locks for index rebuilds.
+                # Page-day refresh locks should remain until the task completes.
+                if not is_stale and refresh_lock and not lock_has_day_keys:
                     cache.delete(refresh_lock_key)
                     refresh_lock = None
 

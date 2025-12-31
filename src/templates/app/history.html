@@ -8,7 +8,7 @@
 
 {% block content %}
 <div x-data="{
-  cacheRefreshing: false,
+  cacheRefreshing: {{ history_refreshing|yesno:"true,false" }},
   cacheUpdater: null,
   loggingStyle: '{{ user.game_logging_style|default:"repeats" }}',
   init() {
@@ -45,6 +45,11 @@
       });
     }
     
+    if (this.cacheRefreshing && this.cacheUpdater) {
+      this.cacheUpdater.wasRefreshing = true;
+      this.cacheUpdater.start();
+    }
+
     // Check initial cache status after a short delay to ensure Alpine.js is ready
     // Use requestAnimationFrame to ensure DOM is ready
     requestAnimationFrame(() => {
