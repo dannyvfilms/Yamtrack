@@ -75,18 +75,14 @@
         if (response.ok) {
           const data = await response.json();
           console.log('Statistics page: Initial cache status', data);
-          // Show notification and start polling if:
-          // - Cache is stale (needs refresh)
-          // - Refresh is in progress (lock exists) - THIS IS THE KEY CASE
-          // 
-          // Do NOT start polling if recently_built is true but is_refreshing is false,
-          // as that means the refresh already completed and we're seeing fresh data.
-          // Starting polling in that case would cause an infinite reload loop.
-          if (data.is_stale || data.is_refreshing) {
+          // Show notification and start polling only when a refresh is actually running
+          // (or has just been scheduled), to avoid stale-but-idle loops.
+          if (data.is_refreshing || data.any_range_refreshing || data.refresh_scheduled) {
             console.log('Statistics page: Showing notification and starting polling', {
               is_stale: data.is_stale,
               is_refreshing: data.is_refreshing,
-              recently_built: data.recently_built
+              recently_built: data.recently_built,
+              refresh_scheduled: data.refresh_scheduled
             });
             this.cacheRefreshing = true;
             if (this.cacheUpdater) {

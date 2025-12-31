@@ -2429,7 +2429,11 @@ def delete_history_record(request, media_type, history_id):
             force=True,
             reason="history_delete",
         )
-        statistics_cache.invalidate_statistics_cache(request.user.id)
+        statistics_cache.invalidate_statistics_days(
+            request.user.id,
+            day_values=history_day_keys,
+            reason="history_delete",
+        )
         statistics_cache.schedule_all_ranges_refresh(request.user.id)
 
         # If music_id or podcast_id is provided, return updated count for out-of-band swap
@@ -4683,6 +4687,9 @@ def cache_status(request):
         cache_entry = cache.get(history_cache._cache_key(request.user.id, logging_style))
         refresh_lock_key = history_cache._refresh_lock_key(request.user.id, logging_style)
         refresh_lock = cache.get(refresh_lock_key)
+        if refresh_lock and statistics_cache._lock_is_stale(refresh_lock):
+            cache.delete(refresh_lock_key)
+            refresh_lock = None
 
         # If lock is too old, clear it to avoid a stuck "refreshing" state
         if refresh_lock:
@@ -4755,36 +4762,64 @@ def cache_status(request):
                 "any_range_refreshing": False,
             })
 
-        cache_entry = cache.get(statistics_cache._cache_key(request.user.id, range_name))
-        refresh_lock = cache.get(statistics_cache._refresh_lock_key(request.user.id, range_name))
+        cache_key = statistics_cache._cache_key(request.user.id, range_name)
+        refresh_lock_key = statistics_cache._refresh_lock_key(request.user.id, range_name)
+        cache_entry = cache.get(cache_key)
+        refresh_lock = cache.get(refresh_lock_key)
+        if refresh_lock and statistics_cache._lock_is_stale(refresh_lock):
+            cache.delete(refresh_lock_key)
+            refresh_lock = None
 
         # Check if ANY statistics range is still refreshing
         # This helps determine when all ranges are done
         any_range_refreshing = False
         for check_range in statistics_cache.PREDEFINED_RANGES:
-            check_lock = cache.get(statistics_cache._refresh_lock_key(request.user.id, check_range))
+            check_lock_key = statistics_cache._refresh_lock_key(request.user.id, check_range)
+            check_lock = cache.get(check_lock_key)
+            if check_lock and statistics_cache._lock_is_stale(check_lock):
+                cache.delete(check_lock_key)
+                check_lock = None
             if check_lock is not None:
                 any_range_refreshing = True
                 break
 
+        refresh_scheduled = False
         if cache_entry:
             built_at = cache_entry.get("built_at")
+            history_version = cache_entry.get("history_version")
+            current_version = statistics_cache._get_history_version(request.user.id)
             is_stale = False
             recently_built = False
+            age = None
             if built_at:
                 age = timezone.now() - built_at
-                is_stale = age > statistics_cache.STATISTICS_STALE_AFTER
                 # Consider cache "recently built" if it was built in the last 60 seconds
                 # This helps catch refreshes that completed just before or during page load
                 recently_built = age < timedelta(seconds=60)
+            if history_version:
+                is_stale = history_version != current_version
+            elif age:
+                is_stale = age > statistics_cache.STATISTICS_STALE_AFTER
+
+            if not is_stale and refresh_lock:
+                cache.delete(refresh_lock_key)
+                refresh_lock = None
+            elif is_stale and refresh_lock is None:
+                refresh_scheduled = statistics_cache.schedule_statistics_refresh(
+                    request.user.id,
+                    range_name,
+                    allow_inline=False,
+                )
+                refresh_lock = cache.get(refresh_lock_key) if refresh_scheduled else refresh_lock
 
             return JsonResponse({
                 "exists": True,
                 "built_at": built_at.isoformat() if built_at else None,
                 "is_stale": is_stale,
-                "is_refreshing": refresh_lock is not None,
+                "is_refreshing": refresh_lock is not None or refresh_scheduled,
                 "recently_built": recently_built,
                 "any_range_refreshing": any_range_refreshing,
+                "refresh_scheduled": refresh_scheduled,
             })
         return JsonResponse({
             "exists": False,
@@ -4793,6 +4828,7 @@ def cache_status(request):
             "is_refreshing": refresh_lock is not None,
             "recently_built": False,
             "any_range_refreshing": any_range_refreshing,
+            "refresh_scheduled": False,
         })
 
 

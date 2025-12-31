@@ -183,9 +183,17 @@ class CacheUpdater {
                     }
                 }
             } else if (data.exists && data.is_stale) {
-                // Cache exists but is stale - continue polling in case refresh starts
-                console.log('CacheUpdater: Cache is stale, continuing to poll');
-                this.pollTimer = setTimeout(() => this.poll(), this.pollInterval);
+                // Cache exists but is stale - only poll if a refresh is actually running
+                if (this.cacheType === 'statistics' && !data.is_refreshing && !data.any_range_refreshing) {
+                    console.log('CacheUpdater: Cache is stale but not refreshing, stopping');
+                    this.stop();
+                    if (this.onRefreshCompleteCallback) {
+                        this.onRefreshCompleteCallback(false, 'stale_no_refresh');
+                    }
+                } else {
+                    console.log('CacheUpdater: Cache is stale, continuing to poll');
+                    this.pollTimer = setTimeout(() => this.poll(), this.pollInterval);
+                }
             } else if (!data.exists) {
                 // Cache doesn't exist and no refresh in progress, stop polling
                 console.log('CacheUpdater: Cache does not exist, stopping');

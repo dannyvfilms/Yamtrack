@@ -86,6 +86,11 @@ def refresh_history_cache_on_episode_change(sender, instance, **kwargs):  # noqa
                 logging_styles=("sessions", "repeats"),
                 reason="episode_change",
             )
+            statistics_cache.invalidate_statistics_days(
+                user_id,
+                day_values=[day_key],
+                reason="episode_change",
+            )
         # Schedule statistics cache refresh but don't delete cache immediately
         # This allows users to see old data with notification while refresh happens
         statistics_cache.schedule_all_ranges_refresh(user_id)
@@ -103,6 +108,11 @@ def refresh_history_cache_on_movie_change(sender, instance, **kwargs):  # noqa: 
                 user_id,
                 day_keys=[day_key],
                 logging_styles=("sessions", "repeats"),
+                reason="movie_change",
+            )
+            statistics_cache.invalidate_statistics_days(
+                user_id,
+                day_values=[day_key],
                 reason="movie_change",
             )
         # Schedule statistics cache refresh but don't delete cache immediately
@@ -127,6 +137,11 @@ def refresh_history_cache_on_music_change(sender, instance, **kwargs):  # noqa: 
                 logging_styles=("sessions", "repeats"),
                 reason="music_change",
             )
+            statistics_cache.invalidate_statistics_days(
+                user_id,
+                day_values=[day_key],
+                reason="music_change",
+            )
         # Schedule statistics cache refresh but don't delete cache immediately
         # This allows users to see old data with notification while refresh happens
         statistics_cache.schedule_all_ranges_refresh(user_id)
@@ -147,6 +162,11 @@ def refresh_history_cache_on_podcast_change(sender, instance, **kwargs):  # noqa
                 user_id,
                 day_keys=[day_key],
                 logging_styles=("sessions", "repeats"),
+                reason="podcast_change",
+            )
+            statistics_cache.invalidate_statistics_days(
+                user_id,
+                day_values=[day_key],
                 reason="podcast_change",
             )
         # Schedule statistics cache refresh but don't delete cache immediately
@@ -245,6 +265,9 @@ def refresh_statistics_cache_on_game_change(sender, instance, **kwargs):  # noqa
         end_dt = getattr(instance, "end_date", None) or getattr(instance, "start_date", None)
         range_keys = history_cache.history_day_keys_for_range(start_dt, end_dt)
         session_key = history_cache.history_day_key(end_dt or start_dt)
+        stats_day_keys = set(range_keys or [])
+        if session_key:
+            stats_day_keys.add(session_key)
         if range_keys:
             history_cache.invalidate_history_days(
                 user_id,
@@ -258,6 +281,12 @@ def refresh_statistics_cache_on_game_change(sender, instance, **kwargs):  # noqa
                 day_keys=[session_key],
                 logging_styles=("sessions",),
                 reason="game_change_sessions",
+            )
+        if stats_day_keys:
+            statistics_cache.invalidate_statistics_days(
+                user_id,
+                day_values=stats_day_keys,
+                reason="game_change",
             )
         # Schedule refresh but don't delete cache - old data will show with notification
         statistics_cache.schedule_all_ranges_refresh(user_id)
@@ -276,6 +305,9 @@ def refresh_statistics_cache_on_boardgame_change(sender, instance, **kwargs):  #
         end_dt = getattr(instance, "end_date", None) or getattr(instance, "start_date", None)
         range_keys = history_cache.history_day_keys_for_range(start_dt, end_dt)
         session_key = history_cache.history_day_key(end_dt or start_dt)
+        stats_day_keys = set(range_keys or [])
+        if session_key:
+            stats_day_keys.add(session_key)
         if range_keys:
             history_cache.invalidate_history_days(
                 user_id,
@@ -289,6 +321,12 @@ def refresh_statistics_cache_on_boardgame_change(sender, instance, **kwargs):  #
                 day_keys=[session_key],
                 logging_styles=("sessions",),
                 reason="boardgame_change_sessions",
+            )
+        if stats_day_keys:
+            statistics_cache.invalidate_statistics_days(
+                user_id,
+                day_values=stats_day_keys,
+                reason="boardgame_change",
             )
         # Schedule refresh but don't delete cache - old data will show with notification
         statistics_cache.schedule_all_ranges_refresh(user_id)

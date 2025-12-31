@@ -813,6 +813,10 @@ def _is_media_in_date_range(media, start_date, end_date):
 def _format_hours_minutes(total_minutes):
     """Format total minutes into hours and minutes string."""
     if total_minutes > 0:
+        try:
+            total_minutes = int(total_minutes)
+        except (TypeError, ValueError):
+            return "0h 0min"
         hours = total_minutes // 60
         remaining_minutes = total_minutes % 60
 
@@ -1151,7 +1155,7 @@ def _get_anime_runtime_from_cache(media, episode_count, logger, context=""):
         logger.warning(f"Runtime data missing for anime '{media.item.title}' {context}, skipping")
         return 0  # Skip this anime instead of failing
 
-    logger.info(f"Anime '{media.item.title}' {context}: using cached runtime {media.item.runtime_minutes} minutes per episode")
+    logger.debug(f"Anime '{media.item.title}' {context}: using cached runtime {media.item.runtime_minutes} minutes per episode")
     return episode_count * media.item.runtime_minutes
 
 
@@ -1163,7 +1167,7 @@ def _get_media_runtime_from_cache(media, logger, context=""):
 
     runtime_minutes = getattr(media.item, "runtime_minutes", None)
     if runtime_minutes and runtime_minutes < 999999:
-        logger.info(
+        logger.debug(
             f"Media '{media.item.title}' {context}: using cached runtime {runtime_minutes} minutes",
         )
         return runtime_minutes
@@ -1173,7 +1177,7 @@ def _get_media_runtime_from_cache(media, logger, context=""):
     from app.models import Item
     db_runtime = Item.objects.filter(id=media.item.id).values_list("runtime_minutes", flat=True).first()
     if db_runtime and db_runtime < 999999:
-        logger.info(
+        logger.debug(
             f"Media '{media.item.title}' {context}: using database runtime {db_runtime} minutes (saved by another task)",
         )
         # Update in-memory object to reflect database state
@@ -1210,7 +1214,7 @@ def _get_media_runtime_from_cache(media, logger, context=""):
                     break
 
     if metadata_runtime and metadata_runtime < 999999:
-        logger.info(
+        logger.debug(
             f"Media '{media.item.title}' {context}: fetched runtime {metadata_runtime} minutes",
         )
         if hasattr(media.item, "runtime_minutes"):

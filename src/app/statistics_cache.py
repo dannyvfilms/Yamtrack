@@ -1,22 +1,43 @@
 """Utilities for caching the Statistics page."""
 
+import calendar
+import heapq
+import itertools
 import logging
-from datetime import datetime, timedelta
+import re
+import time
+from collections import Counter, defaultdict
+from datetime import date, datetime, timedelta
 
 from dateutil.relativedelta import relativedelta
+from django.apps import apps
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.db.models import Max, Min, Q
+from django.db.models.functions import TruncDate
 from django.utils import timezone
 
+from app import config, helpers
 from app import statistics as stats
-from app.models import MediaTypes
+from app.models import MediaTypes, Status
+from app.templatetags import app_tags
 
 logger = logging.getLogger(__name__)
 
-STATISTICS_CACHE_PREFIX = "statistics_page_v1"
+STATISTICS_CACHE_VERSION = 2
+STATISTICS_CACHE_PREFIX = f"statistics_page_v{STATISTICS_CACHE_VERSION}"
 STATISTICS_CACHE_TIMEOUT = 60 * 60 * 6  # 6 hours
 STATISTICS_STALE_AFTER = timedelta(minutes=15)
 STATISTICS_REFRESH_LOCK_PREFIX = f"{STATISTICS_CACHE_PREFIX}_refresh_lock"
+STATISTICS_DAY_PREFIX = "stats:day"
+STATISTICS_DAY_DIRTY_PREFIX = "stats:dirty"
+STATISTICS_HISTORY_VERSION_PREFIX = "stats:history_version"
+STATISTICS_SCHEDULE_DEDUPE_PREFIX = "stats:refresh:scheduled"
+STATISTICS_DAY_CACHE_TIMEOUT = getattr(settings, "STATISTICS_DAY_CACHE_TIMEOUT", 60 * 60 * 24 * 30)
+STATISTICS_WARM_DAYS = getattr(settings, "STATISTICS_CACHE_WARM_DAYS", 2)
+STATISTICS_SCHEDULE_DEDUPE_TTL = getattr(settings, "STATISTICS_SCHEDULE_DEDUPE_TTL", 60 * 10)
+STATISTICS_REFRESH_LOCK_MAX_AGE = getattr(settings, "STATISTICS_REFRESH_LOCK_MAX_AGE", timedelta(minutes=5))
 
 # Predefined ranges that can be cached
 PREDEFINED_RANGES = [
@@ -32,6 +53,8 @@ PREDEFINED_RANGES = [
     "Last 12 Months",
     "All Time",
 ]
+
+_HOURS_DISPLAY_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)h\s+(\d+(?:\.\d+)?)min\s*$")
 
 
 def _normalize_range_name(range_name: str) -> str:
@@ -52,6 +75,146 @@ def _refresh_lock_key(user_id: int, range_name: str) -> str:
     """Generate lock key for debouncing refresh operations."""
     normalized = _normalize_range_name(range_name)
     return f"{STATISTICS_REFRESH_LOCK_PREFIX}_{user_id}_{normalized}"
+
+
+def _lock_is_stale(value) -> bool:
+    if not value:
+        return False
+    if isinstance(value, dict):
+        started_at = value.get("started_at")
+        if not started_at:
+            return True
+        if isinstance(started_at, str):
+            try:
+                started_at = datetime.fromisoformat(started_at)
+            except ValueError:
+                return True
+        if not isinstance(started_at, datetime):
+            return True
+        if timezone.is_naive(started_at):
+            started_at = timezone.make_aware(started_at, timezone.get_current_timezone())
+        return timezone.now() - started_at > STATISTICS_REFRESH_LOCK_MAX_AGE
+    return True
+
+
+def _schedule_dedupe_key(user_id: int, range_name: str, history_version: str) -> str:
+    normalized = _normalize_range_name(range_name)
+    return f"{STATISTICS_SCHEDULE_DEDUPE_PREFIX}:{user_id}:{history_version}:{normalized}"
+
+
+def _day_cache_key(user_id: int, day_value: date | datetime | str) -> str:
+    day = _normalize_day_value(day_value)
+    if not day:
+        return ""
+    return f"{STATISTICS_DAY_PREFIX}:{user_id}:{day.isoformat()}"
+
+
+def _dirty_days_key(user_id: int) -> str:
+    return f"{STATISTICS_DAY_DIRTY_PREFIX}:{user_id}"
+
+
+def _history_version_key(user_id: int) -> str:
+    return f"{STATISTICS_HISTORY_VERSION_PREFIX}:{user_id}"
+
+
+def _normalize_day_value(value):
+    if value is None:
+        return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, datetime):
+        localized = timezone.localtime(value) if timezone.is_aware(value) else value
+        return localized.date()
+    if isinstance(value, str):
+        try:
+            if value.isdigit() and len(value) == 8:
+                return datetime.strptime(value, "%Y%m%d").date()
+            return datetime.strptime(value, "%Y-%m-%d").date()
+        except ValueError:
+            return None
+    return None
+
+
+def _normalize_hours_display(value):
+    if not isinstance(value, str):
+        return value
+    if "play" in value:
+        return value
+    match = _HOURS_DISPLAY_RE.match(value)
+    if not match:
+        return value
+    try:
+        hours = float(match.group(1))
+        minutes = float(match.group(2))
+    except ValueError:
+        return value
+    total_minutes = (hours * 60) + minutes
+    return stats._format_hours_minutes(total_minutes)
+
+
+def _normalize_hours_per_media_type(hours_per_media_type):
+    if not isinstance(hours_per_media_type, dict):
+        return hours_per_media_type
+    for media_type, value in hours_per_media_type.items():
+        hours_per_media_type[media_type] = _normalize_hours_display(value)
+    return hours_per_media_type
+
+
+def _get_history_version(user_id: int) -> str:
+    version = cache.get(_history_version_key(user_id))
+    if version:
+        return version
+    version = timezone.now().isoformat()
+    cache.set(_history_version_key(user_id), version, timeout=STATISTICS_DAY_CACHE_TIMEOUT)
+    return version
+
+
+def _set_history_version(user_id: int, value: str | None = None) -> str:
+    version = value or timezone.now().isoformat()
+    cache.set(_history_version_key(user_id), version, timeout=STATISTICS_DAY_CACHE_TIMEOUT)
+    return version
+
+
+def _load_dirty_days(user_id: int) -> set[str]:
+    raw = cache.get(_dirty_days_key(user_id)) or []
+    if isinstance(raw, set):
+        return set(raw)
+    if isinstance(raw, (list, tuple)):
+        return {str(item) for item in raw if item}
+    return set()
+
+
+def _store_dirty_days(user_id: int, days: set[str]) -> None:
+    cache.set(_dirty_days_key(user_id), sorted(days), timeout=STATISTICS_DAY_CACHE_TIMEOUT)
+
+
+def invalidate_statistics_days(user_id: int, day_values, reason: str | None = None) -> None:
+    day_keys = []
+    normalized_days = set()
+    for value in day_values or []:
+        day = _normalize_day_value(value)
+        if not day:
+            continue
+        day_str = day.isoformat()
+        normalized_days.add(day_str)
+        day_keys.append(_day_cache_key(user_id, day))
+
+    if day_keys:
+        cache.delete_many(day_keys)
+
+    if normalized_days:
+        dirty_days = _load_dirty_days(user_id)
+        dirty_days.update(normalized_days)
+        _store_dirty_days(user_id, dirty_days)
+        _set_history_version(user_id)
+
+    if normalized_days:
+        logger.info(
+            "stats_day_invalidate user_id=%s days=%s reason=%s",
+            user_id,
+            len(normalized_days),
+            reason or "unspecified",
+        )
 
 
 def build_statistics_data(user, start_date, end_date):
@@ -201,18 +364,1655 @@ def _get_empty_statistics_data():
     }
 
 
-def cache_statistics_data(user_id: int, range_name: str, data: dict):
+def _day_bounds(day_value):
+    day = _normalize_day_value(day_value)
+    if not day:
+        return None, None
+    tz = timezone.get_current_timezone()
+    day_start = timezone.make_aware(datetime.combine(day, datetime.min.time()), tz)
+    day_end = day_start + timedelta(days=1)
+    return day_start, day_end
+
+
+def _iter_day_range(start_date, end_date):
+    if not start_date or not end_date:
+        return []
+    start_day = start_date.date() if hasattr(start_date, "date") else start_date
+    end_day = end_date.date() if hasattr(end_date, "date") else end_date
+    if start_day > end_day:
+        start_day, end_day = end_day, start_day
+    day_count = (end_day - start_day).days + 1
+    return [start_day + timedelta(days=offset) for offset in range(day_count)]
+
+
+def _overlap_day_filter(day_start, day_end):
+    return (
+        Q(start_date__isnull=False, end_date__isnull=False)
+        & ~(Q(end_date__lt=day_start) | Q(start_date__gt=day_end))
+    ) | (
+        Q(start_date__isnull=False, end_date__isnull=True)
+        & Q(start_date__gte=day_start, start_date__lt=day_end)
+    ) | (
+        Q(start_date__isnull=True, end_date__isnull=False)
+        & Q(end_date__gte=day_start, end_date__lt=day_end)
+    )
+
+
+def _safe_runtime_minutes(value):
+    if not value:
+        return 0
+    try:
+        minutes = int(value)
+    except (TypeError, ValueError):
+        return 0
+    if minutes >= 999999:
+        return 0
+    return minutes
+
+
+def build_stats_for_day(user_id: int, day_value):
+    """Build a per-day statistics payload for a single user."""
+    user_model = get_user_model()
+    try:
+        user = user_model.objects.get(id=user_id)
+    except user_model.DoesNotExist:
+        return None
+
+    day = _normalize_day_value(day_value)
+    if not day:
+        return None
+
+    day_start, day_end = _day_bounds(day)
+    if not day_start or not day_end:
+        return None
+
+    active_media_types = set(getattr(user, "get_active_media_types", lambda: [])())
+    if not active_media_types:
+        active_media_types = set(MediaTypes.values)
+
+    items_by_type: dict[str, dict[int, dict]] = defaultdict(dict)
+    top_played_by_type: dict[str, dict[int, dict]] = defaultdict(dict)
+    minutes_by_type: dict[str, float] = defaultdict(float)
+    plays_by_type: dict[str, int] = defaultdict(int)
+    hour_counts: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+    daily_minutes_by_type: dict[str, float] = defaultdict(float)
+    movie_genres = defaultdict(lambda: {"minutes": 0, "plays": 0})
+    tv_genres = defaultdict(lambda: {"minutes": 0, "plays": 0})
+    game_genres = defaultdict(lambda: {"minutes": 0, "plays": 0, "name": "", "game_ids": set()})
+    music_rollups = {
+        "artists": defaultdict(lambda: {"minutes": 0, "plays": 0, "name": "", "image": "", "id": None}),
+        "albums": defaultdict(lambda: {"minutes": 0, "plays": 0, "title": "", "artist": "", "image": "", "id": None}),
+        "tracks": defaultdict(lambda: {"minutes": 0, "plays": 0, "title": "", "artist": "", "album": "", "album_image": "", "album_id": None, "id": None}),
+        "genres": defaultdict(lambda: {"minutes": 0, "plays": 0, "name": ""}),
+        "decades": defaultdict(lambda: {"minutes": 0, "plays": 0, "label": ""}),
+        "countries": defaultdict(lambda: {"minutes": 0, "plays": 0, "code": "", "name": ""}),
+    }
+    podcast_rollups = {
+        "shows": defaultdict(lambda: {"minutes": 0, "plays": 0, "title": "", "show": "", "show_id": None, "podcast_uuid": None, "slug": "", "image": ""}),
+        "episodes": defaultdict(lambda: {"title": "", "show": "", "show_id": None, "episode_id": None, "podcast_uuid": None, "slug": "", "image": "", "duration_seconds": 0}),
+    }
+    game_rollups: dict[int, dict] = {}
+    missing_runtime = 0
+    play_count = 0
+
+    def _update_item_meta(media_type: str, item_id: int, media_id: int | None, status, score, activity_dt):
+        if not item_id:
+            return
+        activity_dt = stats._localize_datetime(activity_dt) if activity_dt else None
+        existing = items_by_type[media_type].get(item_id)
+        if existing and existing.get("activity_dt"):
+            existing_dt = existing["activity_dt"]
+            if activity_dt and existing_dt and activity_dt <= existing_dt:
+                return
+        items_by_type[media_type][item_id] = {
+            "item_id": item_id,
+            "media_id": media_id,
+            "media_type": media_type,
+            "status": status,
+            "score": float(score) if score is not None else None,
+            "activity_dt": activity_dt,
+        }
+
+    def _update_top_played(media_type: str, item_id: int, media_id: int | None, minutes=0, plays=0, episode_count=0, activity_dt=None):
+        if not item_id:
+            return
+        entry = top_played_by_type[media_type].get(item_id)
+        if not entry:
+            entry = {
+                "item_id": item_id,
+                "media_id": media_id,
+                "minutes": 0.0,
+                "plays": 0,
+                "episode_count": 0,
+                "activity_dt": None,
+            }
+            top_played_by_type[media_type][item_id] = entry
+        entry["minutes"] += minutes or 0
+        entry["plays"] += plays or 0
+        entry["episode_count"] += episode_count or 0
+        activity_dt = stats._localize_datetime(activity_dt) if activity_dt else None
+        if activity_dt and (entry["activity_dt"] is None or activity_dt > entry["activity_dt"]):
+            entry["activity_dt"] = activity_dt
+            if media_id:
+                entry["media_id"] = media_id
+
+    def _add_hour(media_type: str, activity_dt):
+        if not activity_dt:
+            return
+        localized = stats._localize_datetime(activity_dt)
+        if not localized:
+            return
+        hour_counts[media_type][localized.hour] += 1
+
+    def _add_genres(genre_map, genres, minutes):
+        if not genres or not minutes:
+            return
+        for genre in stats._coerce_genre_list(genres):
+            key = str(genre).title()
+            genre_map[key]["minutes"] += minutes
+            genre_map[key]["plays"] += 1
+            genre_map[key]["name"] = key
+
+    if MediaTypes.TV.value in active_media_types or MediaTypes.SEASON.value in active_media_types:
+        Episode = apps.get_model("app", "Episode")
+        episodes = (
+            Episode.objects.filter(
+                related_season__user=user,
+                end_date__gte=day_start,
+                end_date__lt=day_end,
+            )
+            .values(
+                "end_date",
+                "item__runtime_minutes",
+                "related_season_id",
+                "related_season__item_id",
+                "related_season__status",
+                "related_season__score",
+                "related_season__created_at",
+                "related_season__related_tv_id",
+                "related_season__related_tv__item_id",
+                "related_season__related_tv__status",
+                "related_season__related_tv__score",
+                "related_season__related_tv__created_at",
+                "related_season__related_tv__item__genres",
+            )
+            .iterator(chunk_size=1000)
+        )
+        for row in episodes:
+            play_dt = row.get("end_date")
+            plays_by_type[MediaTypes.TV.value] += 1
+            play_count += 1
+            _add_hour(MediaTypes.TV.value, play_dt)
+
+            runtime_minutes = _safe_runtime_minutes(row.get("item__runtime_minutes"))
+            if runtime_minutes <= 0:
+                missing_runtime += 1
+            else:
+                minutes_by_type[MediaTypes.TV.value] += runtime_minutes
+                daily_minutes_by_type[MediaTypes.TV.value] += runtime_minutes
+
+            tv_item_id = row.get("related_season__related_tv__item_id")
+            tv_media_id = row.get("related_season__related_tv_id")
+            tv_activity = play_dt or row.get("related_season__related_tv__created_at")
+            if tv_item_id:
+                _update_item_meta(
+                    MediaTypes.TV.value,
+                    tv_item_id,
+                    tv_media_id,
+                    row.get("related_season__related_tv__status"),
+                    row.get("related_season__related_tv__score"),
+                    tv_activity,
+                )
+                _update_top_played(
+                    MediaTypes.TV.value,
+                    tv_item_id,
+                    tv_media_id,
+                    minutes=runtime_minutes,
+                    plays=1,
+                    episode_count=1,
+                    activity_dt=play_dt or tv_activity,
+                )
+                _add_genres(tv_genres, row.get("related_season__related_tv__item__genres"), runtime_minutes)
+
+            season_item_id = row.get("related_season__item_id")
+            if season_item_id:
+                season_activity = play_dt or row.get("related_season__created_at")
+                _update_item_meta(
+                    MediaTypes.SEASON.value,
+                    season_item_id,
+                    row.get("related_season_id"),
+                    row.get("related_season__status"),
+                    row.get("related_season__score"),
+                    season_activity,
+                )
+
+    if MediaTypes.MOVIE.value in active_media_types:
+        Movie = apps.get_model("app", "Movie")
+        movie_rows = (
+            Movie.objects.filter(user=user)
+            .filter(_overlap_day_filter(day_start, day_end))
+            .values(
+                "id",
+                "end_date",
+                "start_date",
+                "created_at",
+                "status",
+                "score",
+                "item_id",
+                "item__runtime_minutes",
+                "item__genres",
+            )
+            .iterator(chunk_size=1000)
+        )
+        for row in movie_rows:
+            activity_dt = row.get("end_date") or row.get("start_date") or row.get("created_at")
+            _update_item_meta(
+                MediaTypes.MOVIE.value,
+                row.get("item_id"),
+                row.get("id"),
+                row.get("status"),
+                row.get("score"),
+                activity_dt,
+            )
+
+            activity_dt = row.get("end_date") or row.get("start_date") or row.get("created_at")
+            if activity_dt and day_start <= activity_dt < day_end:
+                plays_by_type[MediaTypes.MOVIE.value] += 1
+                play_count += 1
+                runtime_minutes = _safe_runtime_minutes(row.get("item__runtime_minutes"))
+                _add_hour(MediaTypes.MOVIE.value, activity_dt)
+                if runtime_minutes > 0:
+                    daily_minutes_by_type[MediaTypes.MOVIE.value] += runtime_minutes
+
+                if runtime_minutes <= 0:
+                    missing_runtime += 1
+
+            play_end = row.get("end_date")
+            if play_end and day_start <= play_end < day_end:
+                runtime_minutes = _safe_runtime_minutes(row.get("item__runtime_minutes"))
+                if runtime_minutes > 0:
+                    minutes_by_type[MediaTypes.MOVIE.value] += runtime_minutes
+                    _add_genres(movie_genres, row.get("item__genres"), runtime_minutes)
+                    _update_top_played(
+                        MediaTypes.MOVIE.value,
+                        row.get("item_id"),
+                        row.get("id"),
+                        minutes=runtime_minutes,
+                        plays=1,
+                        episode_count=0,
+                        activity_dt=play_end,
+                    )
+
+    if MediaTypes.ANIME.value in active_media_types:
+        Anime = apps.get_model("app", "Anime")
+        anime_rows = (
+            Anime.objects.filter(user=user)
+            .filter(_overlap_day_filter(day_start, day_end))
+            .values(
+                "id",
+                "item_id",
+                "end_date",
+                "start_date",
+                "created_at",
+                "status",
+                "score",
+                "progress",
+                "item__runtime_minutes",
+            )
+            .iterator(chunk_size=500)
+        )
+        for row in anime_rows:
+            activity_dt = row.get("end_date") or row.get("start_date") or row.get("created_at")
+            _update_item_meta(
+                MediaTypes.ANIME.value,
+                row.get("item_id"),
+                row.get("id"),
+                row.get("status"),
+                row.get("score"),
+                activity_dt,
+            )
+
+            runtime_minutes = _safe_runtime_minutes(row.get("item__runtime_minutes"))
+            progress = row.get("progress") or 0
+            total_minutes = runtime_minutes * progress if runtime_minutes and progress else 0
+            if runtime_minutes <= 0 and progress:
+                missing_runtime += 1
+
+            end_date = row.get("end_date")
+            if end_date and day_start <= end_date < day_end:
+                minutes_by_type[MediaTypes.ANIME.value] += total_minutes
+                _update_top_played(
+                    MediaTypes.ANIME.value,
+                    row.get("item_id"),
+                    row.get("id"),
+                    minutes=total_minutes,
+                    plays=1,
+                    episode_count=progress,
+                    activity_dt=end_date,
+                )
+
+            if total_minutes > 0:
+                start_dt = row.get("start_date")
+                end_dt = row.get("end_date")
+                if start_dt and end_dt:
+                    start_local = stats._localize_datetime(start_dt).date()
+                    end_local = stats._localize_datetime(end_dt).date()
+                    if start_local <= day <= end_local:
+                        days = (end_local - start_local).days + 1
+                        per_day = total_minutes / days if days else total_minutes
+                        daily_minutes_by_type[MediaTypes.ANIME.value] += per_day
+                else:
+                    activity_local = stats._localize_datetime(activity_dt)
+                    if activity_local and activity_local.date() == day:
+                        daily_minutes_by_type[MediaTypes.ANIME.value] += total_minutes
+
+    if MediaTypes.GAME.value in active_media_types:
+        Game = apps.get_model("app", "Game")
+        game_rows = (
+            Game.objects.filter(user=user)
+            .filter(_overlap_day_filter(day_start, day_end))
+            .values(
+                "id",
+                "item_id",
+                "end_date",
+                "start_date",
+                "created_at",
+                "status",
+                "score",
+                "progress",
+                "item__genres",
+            )
+            .iterator(chunk_size=500)
+        )
+        for row in game_rows:
+            activity_dt = row.get("end_date") or row.get("start_date") or row.get("created_at")
+            _update_item_meta(
+                MediaTypes.GAME.value,
+                row.get("item_id"),
+                row.get("id"),
+                row.get("status"),
+                row.get("score"),
+                activity_dt,
+            )
+
+            total_minutes = row.get("progress") or 0
+            if total_minutes <= 0:
+                continue
+
+            end_dt = row.get("end_date")
+            if end_dt and day_start <= end_dt < day_end:
+                minutes_by_type[MediaTypes.GAME.value] += total_minutes
+
+            start_dt = row.get("start_date")
+            start_local = stats._localize_datetime(start_dt).date() if start_dt else None
+            end_local = stats._localize_datetime(end_dt).date() if end_dt else None
+            if start_local and end_local:
+                if start_local <= day <= end_local:
+                    total_days = (end_local - start_local).days + 1
+                    per_day = total_minutes / total_days if total_days else total_minutes
+                    daily_minutes_by_type[MediaTypes.GAME.value] += per_day
+                    _update_top_played(
+                        MediaTypes.GAME.value,
+                        row.get("item_id"),
+                        row.get("id"),
+                        minutes=per_day,
+                        plays=1 if activity_dt and stats._localize_datetime(activity_dt).date() == day else 0,
+                        episode_count=0,
+                        activity_dt=activity_dt,
+                    )
+                    rollup = game_rollups.setdefault(row.get("item_id"), {"minutes_total": 0, "days": 0, "activity_dt": None, "media_id": row.get("id")})
+                    rollup["days"] += 1
+                    if activity_dt and stats._localize_datetime(activity_dt).date() == day:
+                        rollup["minutes_total"] += total_minutes
+                        rollup["activity_dt"] = activity_dt
+                        rollup["media_id"] = row.get("id")
+                        _add_genres(game_genres, row.get("item__genres"), total_minutes)
+                        game_id = row.get("item_id")
+                        if game_id:
+                            for genre in stats._coerce_genre_list(row.get("item__genres")):
+                                key = str(genre).title()
+                                game_genres[key]["game_ids"].add(game_id)
+                continue
+
+            activity_local = stats._localize_datetime(activity_dt)
+            if activity_local and activity_local.date() == day:
+                daily_minutes_by_type[MediaTypes.GAME.value] += total_minutes
+                _update_top_played(
+                    MediaTypes.GAME.value,
+                    row.get("item_id"),
+                    row.get("id"),
+                    minutes=total_minutes,
+                    plays=1,
+                    episode_count=0,
+                    activity_dt=activity_dt,
+                )
+                rollup = game_rollups.setdefault(row.get("item_id"), {"minutes_total": 0, "days": 0, "activity_dt": None, "media_id": row.get("id")})
+                rollup["days"] += 1
+                rollup["minutes_total"] += total_minutes
+                rollup["activity_dt"] = activity_dt
+                rollup["media_id"] = row.get("id")
+                _add_genres(game_genres, row.get("item__genres"), total_minutes)
+                game_id = row.get("item_id")
+                if game_id:
+                    for genre in stats._coerce_genre_list(row.get("item__genres")):
+                        key = str(genre).title()
+                        game_genres[key]["game_ids"].add(game_id)
+
+    if MediaTypes.BOARDGAME.value in active_media_types:
+        BoardGame = apps.get_model("app", "BoardGame")
+        boardgame_rows = (
+            BoardGame.objects.filter(user=user)
+            .filter(_overlap_day_filter(day_start, day_end))
+            .values(
+                "id",
+                "item_id",
+                "end_date",
+                "start_date",
+                "created_at",
+                "status",
+                "score",
+                "progress",
+            )
+            .iterator(chunk_size=500)
+        )
+        for row in boardgame_rows:
+            activity_dt = row.get("end_date") or row.get("start_date") or row.get("created_at")
+            _update_item_meta(
+                MediaTypes.BOARDGAME.value,
+                row.get("item_id"),
+                row.get("id"),
+                row.get("status"),
+                row.get("score"),
+                activity_dt,
+            )
+
+            total_minutes = row.get("progress") or 0
+            if total_minutes <= 0:
+                continue
+
+            play_dt = row.get("end_date") or row.get("start_date")
+            if play_dt and day_start <= play_dt < day_end:
+                minutes_by_type[MediaTypes.BOARDGAME.value] += total_minutes
+                _update_top_played(
+                    MediaTypes.BOARDGAME.value,
+                    row.get("item_id"),
+                    row.get("id"),
+                    minutes=total_minutes,
+                    plays=1,
+                    episode_count=0,
+                    activity_dt=play_dt,
+                )
+
+            start_dt = row.get("start_date")
+            end_dt = row.get("end_date")
+            start_local = stats._localize_datetime(start_dt).date() if start_dt else None
+            end_local = stats._localize_datetime(end_dt).date() if end_dt else None
+            if start_local and end_local and start_local <= day <= end_local:
+                total_days = (end_local - start_local).days + 1
+                per_day = total_minutes / total_days if total_days else total_minutes
+                daily_minutes_by_type[MediaTypes.BOARDGAME.value] += per_day
+            else:
+                activity_local = stats._localize_datetime(activity_dt)
+                if activity_local and activity_local.date() == day:
+                    daily_minutes_by_type[MediaTypes.BOARDGAME.value] += total_minutes
+
+    if MediaTypes.MUSIC.value in active_media_types:
+        HistoricalMusic = apps.get_model("app", "HistoricalMusic")
+        music_history = (
+            HistoricalMusic.objects.filter(
+                Q(history_user=user) | Q(history_user__isnull=True),
+                end_date__gte=day_start,
+                end_date__lt=day_end,
+            )
+            .values("id", "end_date", "history_date")
+            .iterator(chunk_size=1000)
+        )
+        plays_by_key = {}
+        for record in music_history:
+            music_id = record.get("id")
+            play_end = record.get("end_date")
+            hist_date = record.get("history_date")
+            if not music_id or not play_end or not hist_date:
+                continue
+            key = (music_id, play_end)
+            existing = plays_by_key.get(key)
+            if not existing:
+                plays_by_key[key] = hist_date
+                continue
+            existing_diff = abs((existing - play_end).total_seconds())
+            current_diff = abs((hist_date - play_end).total_seconds())
+            if current_diff < existing_diff and current_diff < 86400:
+                plays_by_key[key] = hist_date
+
+        music_ids = {key[0] for key in plays_by_key}
+        if music_ids:
+            Music = apps.get_model("app", "Music")
+            music_map = {
+                entry.id: entry
+                for entry in Music.objects.filter(id__in=music_ids)
+                .select_related("item", "artist", "album", "track")
+            }
+        else:
+            music_map = {}
+
+        for (music_id, play_end), _ in plays_by_key.items():
+            music = music_map.get(music_id)
+            if not music:
+                continue
+            runtime_minutes = stats._get_music_runtime_minutes(music)
+            if runtime_minutes <= 0:
+                missing_runtime += 1
+                runtime_minutes = 0
+            localized = stats._localize_datetime(play_end)
+            plays_by_type[MediaTypes.MUSIC.value] += 1
+            play_count += 1
+            _add_hour(MediaTypes.MUSIC.value, localized)
+            if runtime_minutes:
+                minutes_by_type[MediaTypes.MUSIC.value] += runtime_minutes
+                daily_minutes_by_type[MediaTypes.MUSIC.value] += runtime_minutes
+
+            _update_item_meta(
+                MediaTypes.MUSIC.value,
+                music.item_id if getattr(music, "item_id", None) else music.id,
+                music.id,
+                getattr(music, "status", None),
+                getattr(music, "score", None),
+                play_end,
+            )
+            if runtime_minutes:
+                _update_top_played(
+                    MediaTypes.MUSIC.value,
+                    music.item_id if getattr(music, "item_id", None) else music.id,
+                    music.id,
+                    minutes=runtime_minutes,
+                    plays=1,
+                    episode_count=0,
+                    activity_dt=play_end,
+                )
+
+            track_key = music.id
+            track_stats = music_rollups["tracks"][track_key]
+            track_stats["minutes"] += runtime_minutes
+            track_stats["plays"] += 1
+            track_stats["title"] = music.item.title if music.item else "Unknown"
+            track_stats["id"] = music.id
+
+            artist = getattr(music, "artist", None)
+            album = getattr(music, "album", None)
+            if artist:
+                track_stats["artist"] = artist.name
+                artist_stats = music_rollups["artists"][artist.id]
+                artist_stats["minutes"] += runtime_minutes
+                artist_stats["plays"] += 1
+                artist_stats["name"] = artist.name
+                artist_stats["image"] = artist.image or ""
+                artist_stats["id"] = artist.id
+
+            if album:
+                track_stats["album"] = album.title
+                track_stats["album_image"] = album.image or track_stats.get("album_image") or ""
+                track_stats["album_id"] = album.id
+                album_stats = music_rollups["albums"][album.id]
+                album_stats["minutes"] += runtime_minutes
+                album_stats["plays"] += 1
+                album_stats["title"] = album.title
+                album_stats["artist"] = artist.name if artist else "Unknown"
+                album_stats["image"] = album.image or ""
+                album_stats["id"] = album.id
+
+            genres = []
+            if album and album.genres:
+                genres = stats._coerce_genre_list(album.genres)
+            elif artist and artist.genres:
+                genres = stats._coerce_genre_list(artist.genres)
+            elif getattr(music, "track", None) and music.track.genres:
+                genres = stats._coerce_genre_list(music.track.genres)
+
+            for genre in genres:
+                key = str(genre).title()
+                genre_stats = music_rollups["genres"][key]
+                genre_stats["minutes"] += runtime_minutes
+                genre_stats["plays"] += 1
+                genre_stats["name"] = key
+
+            release_date = getattr(album, "release_date", None) if album else None
+            if release_date and release_date.year:
+                decade_label = f"{(release_date.year // 10) * 10}s"
+                decade_stats = music_rollups["decades"][decade_label]
+                decade_stats["minutes"] += runtime_minutes
+                decade_stats["plays"] += 1
+                decade_stats["label"] = decade_label
+
+            country_code = getattr(artist, "country", None) if artist else None
+            if country_code:
+                code_upper = str(country_code).upper()
+                country_stats = music_rollups["countries"][code_upper]
+                country_stats["minutes"] += runtime_minutes
+                country_stats["plays"] += 1
+                country_stats["code"] = code_upper
+                country_stats["name"] = stats._country_name_from_code(code_upper)
+
+    if MediaTypes.PODCAST.value in active_media_types:
+        HistoricalPodcast = apps.get_model("app", "HistoricalPodcast")
+        podcast_history = (
+            HistoricalPodcast.objects.filter(
+                Q(history_user=user) | Q(history_user__isnull=True),
+                end_date__gte=day_start,
+                end_date__lt=day_end,
+            )
+            .values("id", "end_date", "history_date", "progress")
+            .iterator(chunk_size=1000)
+        )
+        podcast_plays = defaultdict(dict)
+        for record in podcast_history:
+            podcast_id = record.get("id")
+            play_end = record.get("end_date")
+            hist_date = record.get("history_date")
+            progress = record.get("progress")
+            if not podcast_id or not play_end or not hist_date:
+                continue
+            plays_for_podcast = podcast_plays[podcast_id]
+            existing = plays_for_podcast.get(play_end)
+            if not existing:
+                plays_for_podcast[play_end] = (hist_date, progress)
+            else:
+                existing_diff = abs((existing[0] - play_end).total_seconds())
+                current_diff = abs((hist_date - play_end).total_seconds())
+                if current_diff < existing_diff and current_diff < 86400:
+                    plays_for_podcast[play_end] = (hist_date, progress)
+
+        podcast_ids = set(podcast_plays.keys())
+        if podcast_ids:
+            Podcast = apps.get_model("app", "Podcast")
+            podcast_map = {
+                podcast.id: podcast
+                for podcast in Podcast.objects.filter(id__in=podcast_ids, user=user)
+                .select_related("item", "show", "episode", "episode__show")
+            }
+        else:
+            podcast_map = {}
+
+        for podcast_id, plays_for_podcast in podcast_plays.items():
+            podcast = podcast_map.get(podcast_id)
+            if not podcast:
+                continue
+            for play_end, (_, history_progress) in plays_for_podcast.items():
+                runtime_minutes = stats._get_podcast_runtime_minutes(podcast)
+                if runtime_minutes <= 0 and history_progress and history_progress > 0:
+                    runtime_minutes = history_progress
+                if runtime_minutes <= 0:
+                    missing_runtime += 1
+                    continue
+                localized = stats._localize_datetime(play_end)
+                plays_by_type[MediaTypes.PODCAST.value] += 1
+                play_count += 1
+                _add_hour(MediaTypes.PODCAST.value, localized)
+                minutes_by_type[MediaTypes.PODCAST.value] += runtime_minutes
+                daily_minutes_by_type[MediaTypes.PODCAST.value] += runtime_minutes
+
+                _update_item_meta(
+                    MediaTypes.PODCAST.value,
+                    podcast.item_id if getattr(podcast, "item_id", None) else podcast.id,
+                    podcast.id,
+                    getattr(podcast, "status", None),
+                    getattr(podcast, "score", None),
+                    play_end,
+                )
+
+                show = getattr(podcast, "show", None)
+                if show:
+                    show_stats = podcast_rollups["shows"][show.id]
+                    show_stats["minutes"] += runtime_minutes
+                    show_stats["plays"] += 1
+                    show_stats["title"] = show.title
+                    show_stats["show"] = show.title
+                    show_stats["show_id"] = show.id
+                    show_stats["podcast_uuid"] = show.podcast_uuid or show_stats.get("podcast_uuid")
+                    show_stats["slug"] = show.slug or ""
+                    show_stats["image"] = show.image or ""
+                else:
+                    show_stats = podcast_rollups["shows"][podcast.id]
+                    show_stats["minutes"] += runtime_minutes
+                    show_stats["plays"] += 1
+                    show_stats["title"] = podcast.item.title if podcast.item else "Unknown Show"
+                    show_stats["show"] = show_stats["title"]
+                    show_stats["image"] = podcast.item.image if podcast.item else ""
+
+                episode = getattr(podcast, "episode", None)
+                episode_key = episode.id if episode else podcast.id
+                episode_stats = podcast_rollups["episodes"][episode_key]
+                if episode:
+                    episode_stats["title"] = episode.title
+                    episode_stats["episode_id"] = episode.id
+                    episode_stats["duration_seconds"] = episode.duration or episode_stats.get("duration_seconds") or 0
+                    episode_stats["show"] = episode.show.title if getattr(episode, "show", None) else episode_stats.get("show")
+                    episode_stats["show_id"] = episode.show.id if getattr(episode, "show", None) else episode_stats.get("show_id")
+                else:
+                    episode_stats["title"] = podcast.item.title if podcast.item else "Unknown Episode"
+                    episode_stats["episode_id"] = episode_key
+                    if podcast.item and podcast.item.runtime_minutes:
+                        episode_stats["duration_seconds"] = podcast.item.runtime_minutes * 60
+                if show:
+                    episode_stats["podcast_uuid"] = show.podcast_uuid or episode_stats.get("podcast_uuid")
+                    episode_stats["slug"] = show.slug or ""
+                    episode_stats["image"] = show.image or ""
+                elif podcast.item:
+                    episode_stats["image"] = podcast.item.image or ""
+
+    for media_type in (MediaTypes.MANGA.value, MediaTypes.BOOK.value, MediaTypes.COMIC.value):
+        if media_type not in active_media_types:
+            continue
+        model = apps.get_model("app", media_type)
+        rows = (
+            model.objects.filter(user=user)
+            .filter(_overlap_day_filter(day_start, day_end))
+            .values(
+                "id",
+                "item_id",
+                "end_date",
+                "start_date",
+                "created_at",
+                "status",
+                "score",
+                "progress",
+            )
+            .iterator(chunk_size=500)
+        )
+        for row in rows:
+            activity_dt = row.get("end_date") or row.get("start_date") or row.get("created_at")
+            _update_item_meta(
+                media_type,
+                row.get("item_id"),
+                row.get("id"),
+                row.get("status"),
+                row.get("score"),
+                activity_dt,
+            )
+
+            play_dt = row.get("end_date") or row.get("start_date")
+            if play_dt and day_start <= play_dt < day_end:
+                minutes_by_type[media_type] += 60
+
+            total_minutes = row.get("progress") or 0
+            if total_minutes <= 0:
+                continue
+            start_dt = row.get("start_date")
+            end_dt = row.get("end_date")
+            start_local = stats._localize_datetime(start_dt).date() if start_dt else None
+            end_local = stats._localize_datetime(end_dt).date() if end_dt else None
+            if start_local and end_local and start_local <= day <= end_local:
+                total_days = (end_local - start_local).days + 1
+                per_day = total_minutes / total_days if total_days else total_minutes
+                daily_minutes_by_type[media_type] += per_day
+            else:
+                activity_local = stats._localize_datetime(activity_dt)
+                if activity_local and activity_local.date() == day:
+                    daily_minutes_by_type[media_type] += total_minutes
+
+    activity_count = 0
+    HistoricalModels = apps.get_model("app", "BasicMedia").objects.get_historical_models()
+    for model_name in HistoricalModels:
+        model = apps.get_model("app", model_name)
+        activity_count += model.objects.filter(
+            history_user_id=user,
+            history_date__gte=day_start,
+            history_date__lt=day_end,
+        ).count()
+
+    history_version = _get_history_version(user_id)
+    day_stats = {
+        "computed_at": timezone.now().isoformat(),
+        "history_version": history_version,
+        "day": day.isoformat(),
+        "items": {},
+        "top_played": {},
+        "totals": {
+            "minutes_by_type": dict(minutes_by_type),
+            "plays_by_type": dict(plays_by_type),
+        },
+        "hour_counts": {},
+        "genres": {
+            "movie": dict(movie_genres),
+            "tv": dict(tv_genres),
+            "game": {},
+        },
+        "music": {},
+        "podcast": {},
+        "game": {},
+        "daily_minutes_by_type": dict(daily_minutes_by_type),
+        "activity": {"count": activity_count},
+    }
+
+    for media_type, items in items_by_type.items():
+        day_stats["items"][media_type] = {}
+        for item_id, meta in items.items():
+            day_stats["items"][media_type][str(item_id)] = {
+                **meta,
+                "activity_dt": meta["activity_dt"].isoformat() if meta.get("activity_dt") else None,
+            }
+
+    for media_type, items in top_played_by_type.items():
+        day_stats["top_played"][media_type] = {}
+        for item_id, entry in items.items():
+            day_stats["top_played"][media_type][str(item_id)] = {
+                **entry,
+                "activity_dt": entry["activity_dt"].isoformat() if entry.get("activity_dt") else None,
+            }
+
+    for media_type, hours in hour_counts.items():
+        day_stats["hour_counts"][media_type] = {str(hour): count for hour, count in hours.items()}
+
+    game_genre_payload = {}
+    for genre, payload in game_genres.items():
+        game_genre_payload[genre] = {
+            "minutes": payload["minutes"],
+            "plays": payload["plays"],
+            "game_ids": sorted({str(game_id) for game_id in payload["game_ids"]}),
+            "name": genre,
+        }
+    day_stats["genres"]["game"] = game_genre_payload
+
+    for key, value in music_rollups.items():
+        day_stats["music"][key] = {str(item_id): payload for item_id, payload in value.items()}
+
+    for key, value in podcast_rollups.items():
+        day_stats["podcast"][key] = {str(item_id): payload for item_id, payload in value.items()}
+
+    game_payload = {}
+    for item_id, payload in game_rollups.items():
+        game_payload[str(item_id)] = {
+            **payload,
+            "activity_dt": payload["activity_dt"].isoformat() if payload.get("activity_dt") else None,
+        }
+    day_stats["game"]["by_game"] = game_payload
+
+    cache.set(_day_cache_key(user_id, day), day_stats, timeout=STATISTICS_DAY_CACHE_TIMEOUT)
+    if play_count or missing_runtime:
+        logger.info(
+            "stats_day_summary user_id=%s day=%s plays=%s missing_runtime=%s",
+            user_id,
+            day.isoformat(),
+            play_count,
+            missing_runtime,
+        )
+    else:
+        logger.debug(
+            "stats_day_summary user_id=%s day=%s plays=%s missing_runtime=%s",
+            user_id,
+            day.isoformat(),
+            play_count,
+            missing_runtime,
+        )
+    return day_stats
+
+
+def _parse_activity_dt(value):
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return stats._localize_datetime(value)
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        if timezone.is_naive(parsed):
+            parsed = timezone.make_aware(parsed, timezone.get_current_timezone())
+        return stats._localize_datetime(parsed)
+    return None
+
+
+def _compute_metric_breakdown_for_range(total_value, start_date, end_date):
+    breakdown = {"total": total_value, "per_year": 0, "per_month": 0, "per_day": 0}
+    if not total_value or not start_date or not end_date:
+        return breakdown
+    start_dt = stats._localize_datetime(start_date)
+    end_dt = stats._localize_datetime(end_date)
+    if start_dt > end_dt:
+        start_dt, end_dt = end_dt, start_dt
+    total_days = (end_dt.date() - start_dt.date()).days + 1
+    if total_days <= 0:
+        total_days = 1
+    total_years = max(total_days / 365.25, 1)
+    total_months = max(total_days / 30.4375, 1)
+    breakdown["per_year"] = total_value / total_years if total_years else total_value
+    breakdown["per_month"] = total_value / total_months if total_months else total_value
+    breakdown["per_day"] = total_value / total_days if total_days else total_value
+    return breakdown
+
+
+def _build_media_charts_from_counts(day_counts, hour_counts, color, dataset_label):
+    empty_chart = {"labels": [], "datasets": []}
+    if not day_counts:
+        return {
+            "by_year": empty_chart,
+            "by_month": empty_chart,
+            "by_weekday": empty_chart,
+            "by_time_of_day": empty_chart,
+        }
+
+    year_counts = Counter()
+    month_counts = Counter()
+    weekday_counts = Counter()
+    for day_str, count in day_counts.items():
+        try:
+            day = datetime.strptime(day_str, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        year_counts[day.year] += count
+        month_counts[day.month] += count
+        weekday_counts[day.weekday()] += count
+
+    sorted_years = sorted(year_counts)
+    year_labels = [str(year) for year in sorted_years]
+    year_values = [year_counts[year] for year in sorted_years]
+
+    month_labels = [calendar.month_abbr[i] for i in range(1, 13)]
+    month_values = [month_counts.get(i, 0) for i in range(1, 13)]
+
+    weekday_map = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri", 5: "Sat", 6: "Sun"}
+    weekday_order = [6, 0, 1, 2, 3, 4, 5]
+    weekday_labels = [weekday_map[index] for index in weekday_order]
+    weekday_values = [weekday_counts.get(index, 0) for index in weekday_order]
+
+    hour_labels = [stats._format_hour_label(hour) for hour in range(24)]
+    hour_values = [hour_counts.get(str(hour), 0) for hour in range(24)]
+
+    return {
+        "by_year": stats._build_single_series_chart(year_labels, year_values, color, dataset_label),
+        "by_month": stats._build_single_series_chart(month_labels, month_values, color, dataset_label),
+        "by_weekday": stats._build_single_series_chart(weekday_labels, weekday_values, color, dataset_label),
+        "by_time_of_day": stats._build_single_series_chart(hour_labels, hour_values, color, dataset_label),
+    }
+
+
+def _build_daily_hours_chart(day_minutes_by_type, day_list):
+    labels = [day.isoformat() for day in day_list]
+    datasets = []
+    for media_type, minutes_map in day_minutes_by_type.items():
+        totals = [minutes_map.get(label, 0) for label in labels]
+        if not totals or sum(totals) == 0:
+            continue
+        datasets.append({
+            "label": app_tags.media_type_readable(media_type),
+            "data": [round(minutes / 60, 2) for minutes in totals],
+            "background_color": config.get_stats_color(media_type),
+        })
+    return {"labels": labels, "datasets": datasets}
+
+
+def _build_activity_data(date_counts, start_date, end_date):
+    if end_date is None:
+        end_date = timezone.localtime()
+
+    if start_date is None and date_counts:
+        min_date = min(date_counts)
+        start_date = datetime.combine(min_date, datetime.min.time())
+
+    start_date_aligned = stats.get_aligned_monday(start_date)
+    if start_date_aligned is None:
+        return {"calendar_weeks": [], "months": [], "stats": {"most_active_day": None, "most_active_day_percentage": 0, "current_streak": 0, "longest_streak": 0}}
+
+    date_range = [
+        start_date_aligned.date() + timedelta(days=offset)
+        for offset in range((end_date.date() - start_date_aligned.date()).days + 1)
+    ]
+
+    most_active_day, day_percentage = stats.calculate_day_of_week_stats(
+        date_counts,
+        start_date.date(),
+    )
+    current_streak, longest_streak = stats.calculate_streaks(
+        date_counts,
+        end_date.date(),
+    )
+
+    activity_data = [
+        {
+            "date": current_date.strftime("%Y-%m-%d"),
+            "count": date_counts.get(current_date, 0),
+            "level": stats.get_level(date_counts.get(current_date, 0)),
+        }
+        for current_date in date_range
+    ]
+
+    calendar_weeks = [activity_data[i : i + 7] for i in range(0, len(activity_data), 7)]
+
+    months = []
+    mondays_per_month = []
+    current_month = date_range[0].strftime("%b") if date_range else None
+    monday_count = 0
+
+    for current_date in date_range:
+        if current_date.weekday() == 0:
+            month = current_date.strftime("%b")
+            if current_month != month:
+                if current_month is not None:
+                    months.append(current_month if monday_count > 1 else "")
+                    mondays_per_month.append(monday_count)
+                current_month = month
+                monday_count = 0
+            monday_count += 1
+
+    if monday_count > 1:
+        months.append(current_month)
+        mondays_per_month.append(monday_count)
+
+    return {
+        "calendar_weeks": calendar_weeks,
+        "months": list(zip(months, mondays_per_month, strict=False)),
+        "stats": {
+            "most_active_day": most_active_day,
+            "most_active_day_percentage": day_percentage,
+            "current_streak": current_streak,
+            "longest_streak": longest_streak,
+        },
+    }
+
+
+def _fetch_media_objects(media_refs):
+    media_objects = {}
+    by_type = defaultdict(list)
+    for media_type, media_id in media_refs:
+        if media_type and media_id:
+            by_type[media_type].append(media_id)
+
+    for media_type, media_ids in by_type.items():
+        model = apps.get_model("app", media_type)
+        for media in model.objects.filter(id__in=media_ids):
+            media_objects[(media_type, media.id)] = media
+
+    return media_objects
+
+
+def _aggregate_statistics_from_days(user, day_list, start_date, end_date, build_missing=False):
+    items_by_type = defaultdict(dict)
+    top_played_by_type = defaultdict(dict)
+    minutes_by_type = defaultdict(float)
+    plays_by_type = defaultdict(int)
+    hour_counts = defaultdict(lambda: defaultdict(int))
+    day_play_counts = defaultdict(dict)
+    day_minutes_by_type = defaultdict(dict)
+    movie_genres = defaultdict(lambda: {"minutes": 0, "plays": 0, "name": ""})
+    tv_genres = defaultdict(lambda: {"minutes": 0, "plays": 0, "name": ""})
+    game_genres = defaultdict(lambda: {"minutes": 0, "plays": 0, "name": "", "game_ids": set()})
+    music_rollups = {
+        "artists": defaultdict(lambda: {"minutes": 0, "plays": 0, "name": "", "image": "", "id": None}),
+        "albums": defaultdict(lambda: {"minutes": 0, "plays": 0, "title": "", "artist": "", "image": "", "id": None}),
+        "tracks": defaultdict(lambda: {"minutes": 0, "plays": 0, "title": "", "artist": "", "album": "", "album_image": "", "album_id": None, "id": None}),
+        "genres": defaultdict(lambda: {"minutes": 0, "plays": 0, "name": ""}),
+        "decades": defaultdict(lambda: {"minutes": 0, "plays": 0, "label": ""}),
+        "countries": defaultdict(lambda: {"minutes": 0, "plays": 0, "code": "", "name": ""}),
+    }
+    podcast_rollups = {
+        "shows": defaultdict(lambda: {"minutes": 0, "plays": 0, "title": "", "show": "", "show_id": None, "podcast_uuid": None, "slug": "", "image": ""}),
+        "episodes": defaultdict(lambda: {"title": "", "show": "", "show_id": None, "episode_id": None, "podcast_uuid": None, "slug": "", "image": "", "duration_seconds": 0}),
+    }
+    game_rollups = {}
+    activity_counts = {}
+
+    chunk_size = 50
+    for offset in range(0, len(day_list), chunk_size):
+        chunk = day_list[offset : offset + chunk_size]
+        key_map = {day: _day_cache_key(user.id, day) for day in chunk}
+        cached = cache.get_many(key_map.values())
+        for day in chunk:
+            cache_key = key_map[day]
+            day_stats = cached.get(cache_key)
+            if not day_stats and build_missing:
+                day_stats = build_stats_for_day(user.id, day)
+            if not day_stats:
+                continue
+
+            for media_type, items in day_stats.get("items", {}).items():
+                for item_id_str, meta in items.items():
+                    try:
+                        item_id = int(item_id_str)
+                    except (TypeError, ValueError):
+                        continue
+                    activity_dt = _parse_activity_dt(meta.get("activity_dt"))
+                    existing = items_by_type[media_type].get(item_id)
+                    if existing and existing.get("activity_dt"):
+                        if activity_dt and activity_dt <= existing["activity_dt"]:
+                            continue
+                    items_by_type[media_type][item_id] = {
+                        "item_id": item_id,
+                        "media_id": meta.get("media_id"),
+                        "media_type": meta.get("media_type"),
+                        "status": meta.get("status"),
+                        "score": meta.get("score"),
+                        "activity_dt": activity_dt,
+                    }
+
+            for media_type, items in day_stats.get("top_played", {}).items():
+                for item_id_str, entry in items.items():
+                    try:
+                        item_id = int(item_id_str)
+                    except (TypeError, ValueError):
+                        continue
+                    aggregate = top_played_by_type[media_type].get(item_id)
+                    if not aggregate:
+                        aggregate = {
+                            "item_id": item_id,
+                            "media_id": entry.get("media_id"),
+                            "minutes": 0.0,
+                            "plays": 0,
+                            "episode_count": 0,
+                            "activity_dt": None,
+                        }
+                        top_played_by_type[media_type][item_id] = aggregate
+                    aggregate["minutes"] += entry.get("minutes") or 0
+                    aggregate["plays"] += entry.get("plays") or 0
+                    aggregate["episode_count"] += entry.get("episode_count") or 0
+                    activity_dt = _parse_activity_dt(entry.get("activity_dt"))
+                    if activity_dt and (aggregate["activity_dt"] is None or activity_dt > aggregate["activity_dt"]):
+                        aggregate["activity_dt"] = activity_dt
+                        if entry.get("media_id"):
+                            aggregate["media_id"] = entry.get("media_id")
+
+            for media_type, minutes in day_stats.get("totals", {}).get("minutes_by_type", {}).items():
+                minutes_by_type[media_type] += minutes or 0
+            for media_type, plays in day_stats.get("totals", {}).get("plays_by_type", {}).items():
+                plays_by_type[media_type] += plays or 0
+                day_play_counts[media_type][day.isoformat()] = plays
+
+            for media_type, hours in day_stats.get("hour_counts", {}).items():
+                for hour, count in hours.items():
+                    hour_counts[media_type][hour] += count
+
+            for media_type, minutes in day_stats.get("daily_minutes_by_type", {}).items():
+                day_minutes_by_type[media_type][day.isoformat()] = minutes
+
+            for genre, payload in day_stats.get("genres", {}).get("movie", {}).items():
+                movie_genres[genre]["minutes"] += payload.get("minutes", 0)
+                movie_genres[genre]["plays"] += payload.get("plays", 0)
+                movie_genres[genre]["name"] = payload.get("name") or genre
+
+            for genre, payload in day_stats.get("genres", {}).get("tv", {}).items():
+                tv_genres[genre]["minutes"] += payload.get("minutes", 0)
+                tv_genres[genre]["plays"] += payload.get("plays", 0)
+                tv_genres[genre]["name"] = payload.get("name") or genre
+
+            for genre, payload in day_stats.get("genres", {}).get("game", {}).items():
+                game_genres[genre]["minutes"] += payload.get("minutes", 0)
+                game_genres[genre]["plays"] += payload.get("plays", 0)
+                game_genres[genre]["name"] = payload.get("name") or genre
+                for game_id in payload.get("game_ids", []):
+                    game_genres[genre]["game_ids"].add(str(game_id))
+
+            for key, value in day_stats.get("music", {}).items():
+                for item_id_str, payload in value.items():
+                    existing = music_rollups[key][item_id_str]
+                    existing["minutes"] += payload.get("minutes", 0)
+                    existing["plays"] += payload.get("plays", 0)
+                    for field in ("name", "image", "id", "title", "artist", "album", "album_image", "album_id", "label", "code"):
+                        if payload.get(field) and not existing.get(field):
+                            existing[field] = payload.get(field)
+
+            for key, value in day_stats.get("podcast", {}).items():
+                for item_id_str, payload in value.items():
+                    existing = podcast_rollups[key][item_id_str]
+                    if key == "shows":
+                        existing["minutes"] += payload.get("minutes", 0)
+                        existing["plays"] += payload.get("plays", 0)
+                        for field in ("title", "show", "show_id", "podcast_uuid", "slug", "image"):
+                            if payload.get(field) and not existing.get(field):
+                                existing[field] = payload.get(field)
+                    else:
+                        duration = payload.get("duration_seconds", 0) or 0
+                        if duration > existing.get("duration_seconds", 0):
+                            existing["duration_seconds"] = duration
+                        for field in ("title", "show", "show_id", "episode_id", "podcast_uuid", "slug", "image"):
+                            if payload.get(field) and not existing.get(field):
+                                existing[field] = payload.get(field)
+
+            for item_id_str, payload in day_stats.get("game", {}).get("by_game", {}).items():
+                existing = game_rollups.get(item_id_str)
+                if not existing:
+                    existing = {"minutes_total": 0, "days": 0, "activity_dt": None, "media_id": payload.get("media_id")}
+                    game_rollups[item_id_str] = existing
+                existing["minutes_total"] += payload.get("minutes_total", 0)
+                existing["days"] += payload.get("days", 0)
+                activity_dt = _parse_activity_dt(payload.get("activity_dt"))
+                if activity_dt and (existing["activity_dt"] is None or activity_dt > existing["activity_dt"]):
+                    existing["activity_dt"] = activity_dt
+                    if payload.get("media_id"):
+                        existing["media_id"] = payload.get("media_id")
+
+            activity_counts[day] = day_stats.get("activity", {}).get("count", 0)
+
+    active_types = list(getattr(user, "get_active_media_types", lambda: [])())
+    if not active_types:
+        active_types = list(MediaTypes.values)
+
+    if not user.season_enabled and MediaTypes.SEASON.value in active_types:
+        active_types = [mt for mt in active_types if mt != MediaTypes.SEASON.value]
+        items_by_type.pop(MediaTypes.SEASON.value, None)
+        top_played_by_type.pop(MediaTypes.SEASON.value, None)
+
+    if start_date is None and end_date is None:
+        undated_models = [MediaTypes.MOVIE.value, MediaTypes.ANIME.value, MediaTypes.GAME.value, MediaTypes.BOARDGAME.value, MediaTypes.MUSIC.value, MediaTypes.PODCAST.value, MediaTypes.MANGA.value, MediaTypes.BOOK.value, MediaTypes.COMIC.value]
+        for media_type in undated_models:
+            if media_type not in active_types:
+                continue
+            model = apps.get_model("app", media_type)
+            qs = model.objects.filter(
+                user=user,
+                start_date__isnull=True,
+                end_date__isnull=True,
+                status__in=[
+                    Status.IN_PROGRESS.value,
+                    Status.COMPLETED.value,
+                    Status.DROPPED.value,
+                    Status.PAUSED.value,
+                ],
+            ).values("id", "item_id", "status", "score", "created_at")
+            for row in qs.iterator(chunk_size=500):
+                activity_dt = row.get("created_at")
+                _parse = _parse_activity_dt(activity_dt)
+                items_by_type[media_type][row["item_id"]] = {
+                    "item_id": row["item_id"],
+                    "media_id": row["id"],
+                    "media_type": media_type,
+                    "status": row.get("status"),
+                    "score": float(row["score"]) if row.get("score") is not None else None,
+                    "activity_dt": _parse,
+                }
+
+    media_count = {"total": 0}
+    for media_type in active_types:
+        count = len(items_by_type.get(media_type, {}))
+        if count:
+            media_count[media_type] = count
+            media_count["total"] += count
+
+    status_order = list(Status.values)
+    status_distribution = {}
+    total_completed = 0
+    for media_type in active_types:
+        items = items_by_type.get(media_type, {})
+        if not items:
+            continue
+        status_counts = dict.fromkeys(status_order, 0)
+        for meta in items.values():
+            status_value = meta.get("status")
+            if not status_value:
+                continue
+            status_counts[status_value] = status_counts.get(status_value, 0) + 1
+            if status_value == Status.COMPLETED.value:
+                total_completed += 1
+        status_distribution[media_type] = status_counts
+
+    status_distribution_payload = {
+        "labels": [app_tags.media_type_readable(x) for x in status_distribution],
+        "datasets": [
+            {
+                "label": status,
+                "data": [status_distribution[media_type][status] for media_type in status_distribution],
+                "background_color": stats.get_status_color(status),
+                "total": sum(status_distribution[media_type][status] for media_type in status_distribution),
+            }
+            for status in status_order
+        ],
+        "total_completed": total_completed,
+    }
+
+    score_distribution = {}
+    total_scored = 0
+    total_score_sum = 0
+    top_rated_heap = []
+    top_rated_by_type = {}
+    global_counter = itertools.count()
+    score_range = range(11)
+
+    for media_type in active_types:
+        items = items_by_type.get(media_type, {})
+        if not items:
+            continue
+        score_counts = dict.fromkeys(score_range, 0)
+        type_heap = []
+        type_counter = itertools.count()
+        for meta in items.values():
+            score = meta.get("score")
+            if score is None:
+                continue
+            binned = int(score)
+            score_counts[binned] += 1
+            total_scored += 1
+            total_score_sum += score
+            media_id = meta.get("media_id")
+            if media_id is None:
+                continue
+            if len(top_rated_heap) < 14:
+                heapq.heappush(top_rated_heap, (float(score), next(global_counter), meta))
+            else:
+                heapq.heappushpop(top_rated_heap, (float(score), next(global_counter), meta))
+            if len(type_heap) < 20:
+                heapq.heappush(type_heap, (float(score), next(type_counter), meta))
+            else:
+                heapq.heappushpop(type_heap, (float(score), next(type_counter), meta))
+        score_distribution[media_type] = score_counts
+        top_rated_by_type[media_type] = [
+            meta for _, _, meta in sorted(type_heap, key=lambda x: (-x[0], x[1]))
+        ]
+
+    average_score = round(total_score_sum / total_scored, 2) if total_scored > 0 else None
+    top_rated_meta = [meta for _, _, meta in sorted(top_rated_heap, key=lambda x: (-x[0], x[1]))]
+
+    media_refs = []
+    for meta in top_rated_meta:
+        media_refs.append((meta.get("media_type"), meta.get("media_id")))
+    for metas in top_rated_by_type.values():
+        for meta in metas:
+            media_refs.append((meta.get("media_type"), meta.get("media_id")))
+
+    media_map = _fetch_media_objects(set(media_refs))
+    top_rated_media = [media_map.get((meta.get("media_type"), meta.get("media_id"))) for meta in top_rated_meta]
+    top_rated_media = [media for media in top_rated_media if media]
+    top_rated_media = stats._annotate_top_rated_media(top_rated_media)
+
+    top_rated_by_type_media = {}
+    for media_type, metas in top_rated_by_type.items():
+        media_list = [
+            media_map.get((meta.get("media_type"), meta.get("media_id")))
+            for meta in metas
+        ]
+        media_list = [media for media in media_list if media]
+        top_rated_by_type_media[media_type] = stats._annotate_top_rated_media(media_list)
+
+    score_distribution_payload = {
+        "labels": [str(score) for score in score_range],
+        "datasets": [
+            {
+                "label": app_tags.media_type_readable(media_type),
+                "data": [score_distribution[media_type][score] for score in score_range],
+                "background_color": config.get_stats_color(media_type),
+            }
+            for media_type in score_distribution
+        ],
+        "average_score": average_score,
+        "total_scored": total_scored,
+    }
+
+    top_played = {}
+    target_media_types = ["movie", "tv", "game", "boardgame", "anime", "music"]
+    media_refs = []
+    for media_type in target_media_types:
+        entries = list(top_played_by_type.get(media_type, {}).values())
+        entries = [entry for entry in entries if entry.get("minutes", 0) > 0]
+        baseline_dt = datetime(1970, 1, 1, tzinfo=timezone.get_current_timezone())
+        entries.sort(
+            key=lambda entry: (entry.get("minutes", 0), entry.get("activity_dt") or baseline_dt),
+            reverse=True,
+        )
+        limit = 20 if media_type == "game" else 10
+        entries = entries[:limit]
+        top_played[media_type] = entries
+        for entry in entries:
+            media_refs.append((media_type, entry.get("media_id")))
+
+    media_map = _fetch_media_objects(set(media_refs))
+    for media_type, entries in top_played.items():
+        enriched = []
+        for entry in entries:
+            media = media_map.get((media_type, entry.get("media_id")))
+            if not media:
+                continue
+            total_minutes = entry.get("minutes", 0)
+            formatted_duration = helpers.minutes_to_hhmm(total_minutes)
+            if media_type == "boardgame":
+                formatted_duration = f"{int(total_minutes)} play{'s' if int(total_minutes) != 1 else ''}"
+            enriched.append({
+                "media": media,
+                "total_time_minutes": total_minutes,
+                "formatted_duration": formatted_duration,
+                "episode_count": entry.get("episode_count", 0),
+                "last_activity": entry.get("activity_dt"),
+                "play_count": entry.get("plays", 0),
+            })
+        top_played[media_type] = enriched
+
+    hours_per_media_type = {}
+    for media_type, total_minutes in minutes_by_type.items():
+        if media_type == MediaTypes.BOARDGAME.value:
+            hours_per_media_type[media_type] = f"{int(total_minutes)} play{'s' if int(total_minutes) != 1 else ''}"
+        else:
+            hours_per_media_type[media_type] = stats._format_hours_minutes(total_minutes)
+
+    if start_date is None and end_date is None and day_list:
+        start_date = datetime.combine(day_list[0], datetime.min.time())
+        end_date = datetime.combine(day_list[-1], datetime.max.time())
+
+    activity_counts_by_date = {day: activity_counts.get(day, 0) for day in day_list}
+    activity_data = _build_activity_data(activity_counts_by_date, start_date, end_date)
+
+    media_type_distribution = stats.get_media_type_distribution(media_count)
+    status_pie_chart_data = stats.get_status_pie_chart_data(status_distribution_payload)
+
+    daily_hours_by_media_type = _build_daily_hours_chart(day_minutes_by_type, day_list)
+
+    movie_chart = _build_media_charts_from_counts(
+        day_play_counts.get(MediaTypes.MOVIE.value, {}),
+        hour_counts.get(MediaTypes.MOVIE.value, {}),
+        config.get_stats_color(MediaTypes.MOVIE.value),
+        "Movie Plays",
+    )
+    tv_chart = _build_media_charts_from_counts(
+        day_play_counts.get(MediaTypes.TV.value, {}),
+        hour_counts.get(MediaTypes.TV.value, {}),
+        config.get_stats_color(MediaTypes.TV.value),
+        "Episode Plays",
+    )
+    music_chart = _build_media_charts_from_counts(
+        day_play_counts.get(MediaTypes.MUSIC.value, {}),
+        hour_counts.get(MediaTypes.MUSIC.value, {}),
+        config.get_stats_color(MediaTypes.MUSIC.value),
+        "Music Plays",
+    )
+    podcast_chart = _build_media_charts_from_counts(
+        day_play_counts.get(MediaTypes.PODCAST.value, {}),
+        hour_counts.get(MediaTypes.PODCAST.value, {}),
+        config.get_stats_color(MediaTypes.PODCAST.value),
+        "Podcast Plays",
+    )
+
+    tv_total_minutes = minutes_by_type.get(MediaTypes.TV.value, 0)
+    movie_total_minutes = minutes_by_type.get(MediaTypes.MOVIE.value, 0)
+    music_total_minutes = minutes_by_type.get(MediaTypes.MUSIC.value, 0)
+    podcast_total_minutes = minutes_by_type.get(MediaTypes.PODCAST.value, 0)
+    game_total_minutes = minutes_by_type.get(MediaTypes.GAME.value, 0)
+
+    tv_total_hours = tv_total_minutes / 60 if tv_total_minutes else 0
+    movie_total_hours = movie_total_minutes / 60 if movie_total_minutes else 0
+    game_total_hours = game_total_minutes / 60 if game_total_minutes else 0
+
+    tv_consumption = {
+        "hours": _compute_metric_breakdown_for_range(tv_total_hours, start_date, end_date),
+        "plays": _compute_metric_breakdown_for_range(plays_by_type.get(MediaTypes.TV.value, 0), start_date, end_date),
+        "charts": tv_chart,
+        "has_data": plays_by_type.get(MediaTypes.TV.value, 0) > 0,
+        "top_genres": [
+            {**item, "formatted_duration": helpers.minutes_to_hhmm(item["minutes"])}
+            for item in sorted(tv_genres.values(), key=lambda x: (x["minutes"], x["plays"]), reverse=True)[:20]
+        ],
+    }
+
+    movie_consumption = {
+        "hours": _compute_metric_breakdown_for_range(movie_total_hours, start_date, end_date),
+        "plays": _compute_metric_breakdown_for_range(plays_by_type.get(MediaTypes.MOVIE.value, 0), start_date, end_date),
+        "charts": movie_chart,
+        "has_data": plays_by_type.get(MediaTypes.MOVIE.value, 0) > 0,
+        "top_genres": [
+            {**item, "formatted_duration": helpers.minutes_to_hhmm(item["minutes"])}
+            for item in sorted(movie_genres.values(), key=lambda x: (x["minutes"], x["plays"]), reverse=True)[:20]
+        ],
+    }
+
+    def _top_items(values, key_fields=("minutes", "plays"), limit=20):
+        items = sorted(values, key=lambda x: tuple(x.get(field, 0) for field in key_fields), reverse=True)[:limit]
+        for item in items:
+            if "minutes" in item:
+                item["formatted_duration"] = helpers.minutes_to_hhmm(item["minutes"])
+        return items
+
+    music_consumption = {
+        "minutes": _compute_metric_breakdown_for_range(music_total_minutes, start_date, end_date),
+        "plays": _compute_metric_breakdown_for_range(plays_by_type.get(MediaTypes.MUSIC.value, 0), start_date, end_date),
+        "charts": music_chart,
+        "has_data": plays_by_type.get(MediaTypes.MUSIC.value, 0) > 0,
+        "top_artists": _top_items(list(music_rollups["artists"].values()), ("minutes", "plays")),
+        "top_albums": _top_items(list(music_rollups["albums"].values()), ("minutes", "plays")),
+        "top_tracks": _top_items(list(music_rollups["tracks"].values()), ("minutes", "plays")),
+        "top_genres": _top_items(list(music_rollups["genres"].values()), ("minutes", "plays")),
+        "top_decades": _top_items(list(music_rollups["decades"].values()), ("minutes", "plays")),
+        "top_countries": _top_items(list(music_rollups["countries"].values()), ("minutes", "plays")),
+    }
+
+    podcast_consumption = {
+        "minutes": _compute_metric_breakdown_for_range(podcast_total_minutes, start_date, end_date),
+        "plays": _compute_metric_breakdown_for_range(plays_by_type.get(MediaTypes.PODCAST.value, 0), start_date, end_date),
+        "charts": podcast_chart,
+        "has_data": plays_by_type.get(MediaTypes.PODCAST.value, 0) > 0,
+    }
+
+    most_played = sorted(
+        podcast_rollups["shows"].values(),
+        key=lambda x: (x["plays"], x["minutes"]),
+        reverse=True,
+    )[:20]
+    most_listened = sorted(
+        podcast_rollups["shows"].values(),
+        key=lambda x: (x["minutes"], x["plays"]),
+        reverse=True,
+    )[:20]
+    longest_episodes = sorted(
+        [ep for ep in podcast_rollups["episodes"].values() if ep.get("duration_seconds", 0) > 0],
+        key=lambda x: x["duration_seconds"],
+        reverse=True,
+    )[:20]
+    for item in most_played + most_listened:
+        item["formatted_duration"] = helpers.minutes_to_hhmm(item["minutes"])
+    for item in longest_episodes:
+        hours = item["duration_seconds"] // 3600
+        minutes = (item["duration_seconds"] % 3600) // 60
+        item["formatted_duration"] = f"{hours}h {minutes}m" if hours else f"{minutes}m"
+    podcast_consumption.update({
+        "most_played": most_played,
+        "most_listened": most_listened,
+        "longest_episodes": longest_episodes,
+    })
+
+    game_hours_by_year = defaultdict(float)
+    game_hours_by_month = defaultdict(float)
+    game_day_minutes = day_minutes_by_type.get(MediaTypes.GAME.value, {})
+    for day_str, minutes in game_day_minutes.items():
+        try:
+            day = datetime.strptime(day_str, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        game_hours_by_year[day.year] += minutes / 60
+        game_hours_by_month[day.month] += minutes / 60
+
+    year_labels = [str(year) for year in sorted(game_hours_by_year)]
+    year_values = [game_hours_by_year[year] for year in sorted(game_hours_by_year)]
+    month_labels = [calendar.month_abbr[i] for i in range(1, 13)]
+    month_values = [game_hours_by_month.get(i, 0) for i in range(1, 13)]
+    game_hours_charts = {
+        "by_year": stats._build_single_series_chart(year_labels, year_values, config.get_stats_color(MediaTypes.GAME.value), "Game Hours"),
+        "by_month": stats._build_single_series_chart(month_labels, month_values, config.get_stats_color(MediaTypes.GAME.value), "Game Hours"),
+    }
+
+    game_data = []
+    for item_id_str, payload in game_rollups.items():
+        days = payload.get("days") or 0
+        minutes_total = payload.get("minutes_total") or 0
+        if days <= 0 or minutes_total <= 0:
+            continue
+        daily_avg_hours = (minutes_total / days) / 60
+        game_data.append({
+            "item_id": item_id_str,
+            "media_id": payload.get("media_id"),
+            "daily_average": daily_avg_hours,
+            "hours": minutes_total / 60,
+            "activity_dt": payload.get("activity_dt"),
+        })
+
+    daily_avg_chart = stats._build_daily_average_distribution_chart(
+        [{"daily_average": item["daily_average"]} for item in game_data],
+        config.get_stats_color(MediaTypes.GAME.value),
+        "Games",
+    )
+
+    game_genre_items = []
+    for genre, payload in game_genres.items():
+        game_genre_items.append({
+            "minutes": payload["minutes"],
+            "games": len(payload["game_ids"]),
+            "plays": len(payload["game_ids"]),
+            "name": genre,
+            "formatted_duration": helpers.minutes_to_hhmm(payload["minutes"]),
+        })
+    game_genre_items = sorted(game_genre_items, key=lambda x: (x["minutes"], x["games"]), reverse=True)[:20]
+
+    top_daily_avg_games = sorted(game_data, key=lambda x: x["daily_average"], reverse=True)[:20]
+    game_media_map = _fetch_media_objects({(MediaTypes.GAME.value, item["media_id"]) for item in top_daily_avg_games})
+    top_daily_avg_payload = []
+    for item in top_daily_avg_games:
+        media = game_media_map.get((MediaTypes.GAME.value, item["media_id"]))
+        if not media:
+            continue
+        daily_avg_minutes = item["daily_average"] * 60
+        top_daily_avg_payload.append({
+            "game": media,
+            "daily_average_hours": item["daily_average"],
+            "daily_average_minutes": daily_avg_minutes,
+            "formatted_daily_average": helpers.minutes_to_hhmm(daily_avg_minutes) + "/day",
+            "total_hours": item["hours"],
+            "formatted_total": helpers.minutes_to_hhmm(item["hours"] * 60),
+        })
+
+    game_consumption = {
+        "hours": _compute_metric_breakdown_for_range(game_total_hours, start_date, end_date),
+        "charts": {
+            "by_year": game_hours_charts["by_year"],
+            "by_month": game_hours_charts["by_month"],
+            "by_daily_average": daily_avg_chart,
+        },
+        "has_data": bool(game_data) or game_total_hours > 0,
+        "top_genres": game_genre_items,
+        "top_daily_average_games": top_daily_avg_payload,
+    }
+
+    return {
+        "media_count": media_count,
+        "activity_data": activity_data,
+        "media_type_distribution": media_type_distribution,
+        "score_distribution": score_distribution_payload,
+        "top_rated": top_rated_media,
+        "top_rated_by_type": top_rated_by_type_media,
+        "top_played": top_played,
+        "status_distribution": status_distribution_payload,
+        "status_pie_chart_data": status_pie_chart_data,
+        "hours_per_media_type": hours_per_media_type,
+        "tv_consumption": tv_consumption,
+        "movie_consumption": movie_consumption,
+        "music_consumption": music_consumption,
+        "podcast_consumption": podcast_consumption,
+        "game_consumption": game_consumption,
+        "daily_hours_by_media_type": daily_hours_by_media_type,
+    }
+
+
+def cache_statistics_data(user_id: int, range_name: str, data: dict, history_version: str | None = None):
     """Persist the statistics data in cache."""
     cache_key = _cache_key(user_id, range_name)
+    _normalize_hours_per_media_type(data.get("hours_per_media_type"))
     cache_entry = {
         "data": data,
         "built_at": timezone.now(),
+        "history_version": history_version or _get_history_version(user_id),
     }
-    cache.set(
-        cache_key,
-        cache_entry,
-        timeout=STATISTICS_CACHE_TIMEOUT,
-    )
+    cache.set(cache_key, cache_entry, timeout=STATISTICS_CACHE_TIMEOUT)
     logger.debug("Cached statistics data for user %s, range %s", user_id, range_name)
 
 
@@ -233,18 +2033,35 @@ def get_statistics_data(user, start_date, end_date, range_name=None):
     """
     # Only cache predefined ranges
     if range_name is None or range_name not in PREDEFINED_RANGES:
-        # For custom ranges, compute inline without caching
-        return build_statistics_data(user, start_date, end_date)
+        # For custom ranges, aggregate per-day caches to avoid range scans
+        day_list = _resolve_day_list(user, start_date, end_date)
+        if not day_list:
+            return _get_empty_statistics_data()
+        data = _aggregate_statistics_from_days(
+            user,
+            day_list,
+            start_date,
+            end_date,
+            build_missing=True,
+        )
+        _normalize_hours_per_media_type(data.get("hours_per_media_type"))
+        return data
 
     cache_entry = cache.get(_cache_key(user.id, range_name))
     if cache_entry:
         # Always return cached data if it exists (even if stale)
         # This prevents timeouts while background refresh is in progress
         built_at = cache_entry.get("built_at")
-        if built_at and timezone.now() - built_at > STATISTICS_STALE_AFTER:
-            # Cache is stale, schedule background refresh but don't wait for it
-            schedule_statistics_refresh(user.id, range_name)
-        return cache_entry.get("data", {})
+        history_version = cache_entry.get("history_version")
+        current_version = _get_history_version(user.id)
+        if history_version and history_version != current_version:
+            schedule_statistics_refresh(user.id, range_name, allow_inline=False)
+        elif not history_version:
+            if not built_at or timezone.now() - built_at > STATISTICS_STALE_AFTER:
+                schedule_statistics_refresh(user.id, range_name, allow_inline=False)
+        data = cache_entry.get("data", {})
+        _normalize_hours_per_media_type(data.get("hours_per_media_type"))
+        return data
 
     # Cache miss - check if refresh is in progress
     refresh_lock = cache.get(_refresh_lock_key(user.id, range_name))
@@ -255,11 +2072,17 @@ def get_statistics_data(user, start_date, end_date, range_name=None):
         logger.debug("Statistics cache miss but refresh in progress for user %s, range %s, returning empty structure", user.id, range_name)
         return _get_empty_statistics_data()
 
-    # No cache and no refresh in progress - build inline
-    # This handles the case where cache was never built or expired naturally
-    data = build_statistics_data(user, start_date, end_date)
-    cache_statistics_data(user.id, range_name, data)
-    return data
+    # No cache and no refresh in progress.
+    # In eager mode (tests), build inline. Otherwise schedule and return empty.
+    if getattr(settings, "CELERY_TASK_ALWAYS_EAGER", False):
+        data = refresh_statistics_cache(user.id, range_name)
+        if data:
+            _normalize_hours_per_media_type(data.get("hours_per_media_type"))
+            return data
+        return _get_empty_statistics_data()
+
+    schedule_statistics_refresh(user.id, range_name, allow_inline=False)
+    return _get_empty_statistics_data()
 
 
 def invalidate_statistics_cache(user_id: int, range_name: str = None):
@@ -281,6 +2104,7 @@ def invalidate_statistics_cache(user_id: int, range_name: str = None):
                 cache.delete(_cache_key(user_id, range_name))
                 logger.debug("Invalidated statistics cache for user %s, range %s", user_id, range_name)
             # If refresh is in progress, keep the old cache - it will be replaced when refresh completes
+            _set_history_version(user_id)
     else:
         # Invalidate all predefined ranges
         for range_name_item in PREDEFINED_RANGES:
@@ -290,76 +2114,329 @@ def invalidate_statistics_cache(user_id: int, range_name: str = None):
                 # No refresh in progress, safe to delete cache
                 cache.delete(_cache_key(user_id, range_name_item))
         logger.debug("Invalidated all statistics caches for user %s", user_id)
+        _set_history_version(user_id)
+
+
+def _get_predefined_range_dates(range_name: str):
+    today = timezone.localdate()
+    tz = timezone.get_current_timezone()
+    if range_name == "All Time":
+        return None, None
+    if range_name == "Today":
+        start = timezone.make_aware(datetime.combine(today, datetime.min.time()), tz)
+        end = timezone.make_aware(datetime.combine(today, datetime.max.time()), tz)
+        return start, end
+    if range_name == "Yesterday":
+        yesterday = today - timedelta(days=1)
+        start = timezone.make_aware(datetime.combine(yesterday, datetime.min.time()), tz)
+        end = timezone.make_aware(datetime.combine(yesterday, datetime.max.time()), tz)
+        return start, end
+    if range_name == "This Week":
+        monday = today - timedelta(days=today.weekday())
+        start = timezone.make_aware(datetime.combine(monday, datetime.min.time()), tz)
+        end = timezone.make_aware(datetime.combine(today, datetime.max.time()), tz)
+        return start, end
+    if range_name == "Last 7 Days":
+        start = timezone.make_aware(datetime.combine(today - timedelta(days=6), datetime.min.time()), tz)
+        end = timezone.make_aware(datetime.combine(today, datetime.max.time()), tz)
+        return start, end
+    if range_name == "This Month":
+        month_start = today.replace(day=1)
+        start = timezone.make_aware(datetime.combine(month_start, datetime.min.time()), tz)
+        end = timezone.make_aware(datetime.combine(today, datetime.max.time()), tz)
+        return start, end
+    if range_name == "Last 30 Days":
+        start = timezone.make_aware(datetime.combine(today - timedelta(days=29), datetime.min.time()), tz)
+        end = timezone.make_aware(datetime.combine(today, datetime.max.time()), tz)
+        return start, end
+    if range_name == "Last 90 Days":
+        start = timezone.make_aware(datetime.combine(today - timedelta(days=89), datetime.min.time()), tz)
+        end = timezone.make_aware(datetime.combine(today, datetime.max.time()), tz)
+        return start, end
+    if range_name == "This Year":
+        year_start = today.replace(month=1, day=1)
+        start = timezone.make_aware(datetime.combine(year_start, datetime.min.time()), tz)
+        end = timezone.make_aware(datetime.combine(today, datetime.max.time()), tz)
+        return start, end
+    if range_name == "Last 6 Months":
+        six_months_start = today - relativedelta(months=6)
+        if six_months_start.day != today.day:
+            six_months_start = (six_months_start.replace(day=1) + relativedelta(months=1)) - timedelta(days=1)
+        start = timezone.make_aware(datetime.combine(six_months_start, datetime.min.time()), tz)
+        end = timezone.make_aware(datetime.combine(today, datetime.max.time()), tz)
+        return start, end
+    if range_name == "Last 12 Months":
+        twelve_months_start = today - relativedelta(months=12)
+        if twelve_months_start.day != today.day:
+            twelve_months_start = (twelve_months_start.replace(day=1) + relativedelta(months=1)) - timedelta(days=1)
+        start = timezone.make_aware(datetime.combine(twelve_months_start, datetime.min.time()), tz)
+        end = timezone.make_aware(datetime.combine(today, datetime.max.time()), tz)
+        return start, end
+    return None, None
+
+
+def _get_activity_bounds(user):
+    bounds = []
+
+    def _add_bounds(min_value, max_value):
+        if min_value:
+            bounds.append(stats._localize_datetime(min_value).date())
+        if max_value:
+            bounds.append(stats._localize_datetime(max_value).date())
+
+    Episode = apps.get_model("app", "Episode")
+    episode_bounds = Episode.objects.filter(
+        related_season__user=user,
+        end_date__isnull=False,
+    ).aggregate(min_date=Min("end_date"), max_date=Max("end_date"))
+    _add_bounds(episode_bounds.get("min_date"), episode_bounds.get("max_date"))
+
+    Movie = apps.get_model("app", "Movie")
+    movie_bounds = Movie.objects.filter(user=user).aggregate(
+        min_end=Min("end_date"),
+        max_end=Max("end_date"),
+        min_start=Min("start_date"),
+        max_start=Max("start_date"),
+    )
+    _add_bounds(movie_bounds.get("min_end"), movie_bounds.get("max_end"))
+    _add_bounds(movie_bounds.get("min_start"), movie_bounds.get("max_start"))
+
+    HistoricalMusic = apps.get_model("app", "HistoricalMusic")
+    music_bounds = HistoricalMusic.objects.filter(
+        Q(history_user=user) | Q(history_user__isnull=True),
+        end_date__isnull=False,
+    ).aggregate(min_date=Min("end_date"), max_date=Max("end_date"))
+    _add_bounds(music_bounds.get("min_date"), music_bounds.get("max_date"))
+
+    HistoricalPodcast = apps.get_model("app", "HistoricalPodcast")
+    podcast_bounds = HistoricalPodcast.objects.filter(
+        Q(history_user=user) | Q(history_user__isnull=True),
+        end_date__isnull=False,
+    ).aggregate(min_date=Min("end_date"), max_date=Max("end_date"))
+    _add_bounds(podcast_bounds.get("min_date"), podcast_bounds.get("max_date"))
+
+    for media_type in (MediaTypes.ANIME.value, MediaTypes.GAME.value, MediaTypes.BOARDGAME.value, MediaTypes.MANGA.value, MediaTypes.BOOK.value, MediaTypes.COMIC.value):
+        model = apps.get_model("app", media_type)
+        media_bounds = model.objects.filter(user=user).aggregate(
+            min_end=Min("end_date"),
+            max_end=Max("end_date"),
+            min_start=Min("start_date"),
+            max_start=Max("start_date"),
+        )
+        _add_bounds(media_bounds.get("min_end"), media_bounds.get("max_end"))
+        _add_bounds(media_bounds.get("min_start"), media_bounds.get("max_start"))
+
+    if not bounds:
+        return None, None
+    return min(bounds), max(bounds)
+
+
+def _get_sparse_activity_days(user):
+    active_media_types = set(getattr(user, "get_active_media_types", lambda: [])())
+    if not active_media_types:
+        active_media_types = set(MediaTypes.values)
+
+    days = set()
+    tz = timezone.get_current_timezone()
+
+    def _add_day(value):
+        if not value:
+            return
+        localized = stats._localize_datetime(value)
+        if localized:
+            days.add(localized.date())
+
+    def _add_range(start_dt, end_dt):
+        if not start_dt or not end_dt:
+            return
+        start_local = stats._localize_datetime(start_dt)
+        end_local = stats._localize_datetime(end_dt)
+        if not start_local or not end_local:
+            return
+        start_day = start_local.date()
+        end_day = end_local.date()
+        if start_day > end_day:
+            start_day, end_day = end_day, start_day
+        for offset in range((end_day - start_day).days + 1):
+            days.add(start_day + timedelta(days=offset))
+
+    if MediaTypes.TV.value in active_media_types or MediaTypes.SEASON.value in active_media_types:
+        Episode = apps.get_model("app", "Episode")
+        episode_days = Episode.objects.filter(
+            related_season__user=user,
+            end_date__isnull=False,
+        ).annotate(
+            day=TruncDate("end_date", tzinfo=tz),
+        ).values_list("day", flat=True).distinct()
+        days.update(day for day in episode_days if day)
+
+    if MediaTypes.MOVIE.value in active_media_types:
+        Movie = apps.get_model("app", "Movie")
+        movie_qs = Movie.objects.filter(user=user)
+        movie_end_days = movie_qs.filter(
+            end_date__isnull=False,
+        ).annotate(
+            day=TruncDate("end_date", tzinfo=tz),
+        ).values_list("day", flat=True).distinct()
+        movie_start_days = movie_qs.filter(
+            end_date__isnull=True,
+            start_date__isnull=False,
+        ).annotate(
+            day=TruncDate("start_date", tzinfo=tz),
+        ).values_list("day", flat=True).distinct()
+        movie_created_days = movie_qs.filter(
+            end_date__isnull=True,
+            start_date__isnull=True,
+        ).annotate(
+            day=TruncDate("created_at", tzinfo=tz),
+        ).values_list("day", flat=True).distinct()
+        days.update(day for day in movie_end_days if day)
+        days.update(day for day in movie_start_days if day)
+        days.update(day for day in movie_created_days if day)
+
+    if MediaTypes.MUSIC.value in active_media_types:
+        HistoricalMusic = apps.get_model("app", "HistoricalMusic")
+        music_days = HistoricalMusic.objects.filter(
+            Q(history_user=user) | Q(history_user__isnull=True),
+            end_date__isnull=False,
+        ).annotate(
+            day=TruncDate("end_date", tzinfo=tz),
+        ).values_list("day", flat=True).distinct()
+        days.update(day for day in music_days if day)
+
+    if MediaTypes.PODCAST.value in active_media_types:
+        HistoricalPodcast = apps.get_model("app", "HistoricalPodcast")
+        podcast_days = HistoricalPodcast.objects.filter(
+            Q(history_user=user) | Q(history_user__isnull=True),
+            end_date__isnull=False,
+        ).annotate(
+            day=TruncDate("end_date", tzinfo=tz),
+        ).values_list("day", flat=True).distinct()
+        days.update(day for day in podcast_days if day)
+
+    for media_type in (
+        MediaTypes.ANIME.value,
+        MediaTypes.GAME.value,
+        MediaTypes.BOARDGAME.value,
+        MediaTypes.MANGA.value,
+        MediaTypes.BOOK.value,
+        MediaTypes.COMIC.value,
+    ):
+        if media_type not in active_media_types:
+            continue
+        model = apps.get_model("app", media_type)
+        rows = model.objects.filter(user=user).values(
+            "start_date",
+            "end_date",
+            "created_at",
+            "progress",
+        ).iterator(chunk_size=500)
+        for row in rows:
+            start_dt = row.get("start_date")
+            end_dt = row.get("end_date")
+            progress = row.get("progress") or 0
+            if start_dt and end_dt and progress > 0:
+                _add_range(start_dt, end_dt)
+                continue
+            activity_dt = end_dt or start_dt or row.get("created_at")
+            _add_day(activity_dt)
+
+    return sorted(days)
+
+
+def _resolve_day_list(user, start_date, end_date):
+    if start_date and end_date:
+        return _iter_day_range(start_date, end_date)
+    return _get_sparse_activity_days(user)
 
 
 def refresh_statistics_cache(user_id: int, range_name: str):
     """Rebuild and store statistics for a user and range."""
+    lock_key = _refresh_lock_key(user_id, range_name)
     user_model = get_user_model()
     try:
         user = user_model.objects.get(id=user_id)
+        if range_name not in PREDEFINED_RANGES:
+            logger.warning("Attempted to refresh cache for non-predefined range: %s", range_name)
+            return None
+
+        start_date, end_date = _get_predefined_range_dates(range_name)
+        day_list = _resolve_day_list(user, start_date, end_date)
+
+        dirty_days = _load_dirty_days(user_id)
+        dirty_set = {day for day in dirty_days if day}
+        dirty_dates = { _normalize_day_value(day) for day in dirty_set }
+
+        warm_days = []
+        if STATISTICS_WARM_DAYS and day_list:
+            today = timezone.localdate()
+            for offset in range(STATISTICS_WARM_DAYS):
+                warm_day = today - timedelta(days=offset)
+                if warm_day in day_list:
+                    warm_days.append(warm_day)
+
+        missing_days = set()
+        chunk_size = 50
+        for offset in range(0, len(day_list), chunk_size):
+            chunk = day_list[offset : offset + chunk_size]
+            keys = [_day_cache_key(user_id, day) for day in chunk]
+            cached = cache.get_many(keys)
+            for day, key in zip(chunk, keys, strict=False):
+                if key not in cached:
+                    missing_days.add(day)
+
+        days_to_refresh = set(warm_days)
+        days_to_refresh.update(missing_days)
+        days_to_refresh.update(day for day in dirty_dates if day in day_list)
+
+        refreshed_days = 0
+        nonempty_days = 0
+        build_started = time.perf_counter()
+        for day in sorted(days_to_refresh):
+            if not day:
+                continue
+            day_stats = build_stats_for_day(user_id, day)
+            refreshed_days += 1
+            if day_stats:
+                plays_total = sum(day_stats.get("totals", {}).get("plays_by_type", {}).values())
+                minutes_total = sum(day_stats.get("totals", {}).get("minutes_by_type", {}).values())
+                daily_minutes_total = sum(day_stats.get("daily_minutes_by_type", {}).values())
+                if plays_total or minutes_total or daily_minutes_total:
+                    nonempty_days += 1
+
+        stats_data = _aggregate_statistics_from_days(user, day_list, start_date, end_date, build_missing=True)
+        history_version = _get_history_version(user_id)
+        cache_statistics_data(user_id, range_name, stats_data, history_version=history_version)
+
+        processed = {day.isoformat() for day in days_to_refresh if day}
+        if processed:
+            dirty_set.difference_update(processed)
+            _store_dirty_days(user_id, dirty_set)
+
+        logger.info(
+            "stats_range_summary user_id=%s range=%s days=%s refreshed=%s nonempty=%s elapsed_ms=%.2f totals=%s",
+            user_id,
+            range_name,
+            len(day_list),
+            refreshed_days,
+            nonempty_days,
+            (time.perf_counter() - build_started) * 1000,
+            stats_data.get("hours_per_media_type", {}),
+        )
+        return stats_data
     except user_model.DoesNotExist:
         return None
-
-    if range_name not in PREDEFINED_RANGES:
-        logger.warning("Attempted to refresh cache for non-predefined range: %s", range_name)
-        return None
-
-    # Calculate date range from range name
-    today = timezone.localdate()
-    start_date = None
-    end_date = None
-
-    if range_name == "All Time":
-        start_date = None
-        end_date = None
-    elif range_name == "Today":
-        start_date = timezone.make_aware(datetime.combine(today, datetime.min.time()), timezone.get_current_timezone())
-        end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()), timezone.get_current_timezone())
-    elif range_name == "Yesterday":
-        yesterday = today - timedelta(days=1)
-        start_date = timezone.make_aware(datetime.combine(yesterday, datetime.min.time()), timezone.get_current_timezone())
-        end_date = timezone.make_aware(datetime.combine(yesterday, datetime.max.time()), timezone.get_current_timezone())
-    elif range_name == "This Week":
-        monday = today - timedelta(days=today.weekday())
-        start_date = timezone.make_aware(datetime.combine(monday, datetime.min.time()), timezone.get_current_timezone())
-        end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()), timezone.get_current_timezone())
-    elif range_name == "Last 7 Days":
-        start_date = timezone.make_aware(datetime.combine(today - timedelta(days=6), datetime.min.time()), timezone.get_current_timezone())
-        end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()), timezone.get_current_timezone())
-    elif range_name == "This Month":
-        month_start = today.replace(day=1)
-        start_date = timezone.make_aware(datetime.combine(month_start, datetime.min.time()), timezone.get_current_timezone())
-        end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()), timezone.get_current_timezone())
-    elif range_name == "Last 30 Days":
-        start_date = timezone.make_aware(datetime.combine(today - timedelta(days=29), datetime.min.time()), timezone.get_current_timezone())
-        end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()), timezone.get_current_timezone())
-    elif range_name == "Last 90 Days":
-        start_date = timezone.make_aware(datetime.combine(today - timedelta(days=89), datetime.min.time()), timezone.get_current_timezone())
-        end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()), timezone.get_current_timezone())
-    elif range_name == "This Year":
-        year_start = today.replace(month=1, day=1)
-        start_date = timezone.make_aware(datetime.combine(year_start, datetime.min.time()), timezone.get_current_timezone())
-        end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()), timezone.get_current_timezone())
-    elif range_name == "Last 6 Months":
-        six_months_start = today - relativedelta(months=6)
-        if six_months_start.day != today.day:
-            six_months_start = (six_months_start.replace(day=1) + relativedelta(months=1)) - timedelta(days=1)
-        start_date = timezone.make_aware(datetime.combine(six_months_start, datetime.min.time()), timezone.get_current_timezone())
-        end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()), timezone.get_current_timezone())
-    elif range_name == "Last 12 Months":
-        twelve_months_start = today - relativedelta(months=12)
-        if twelve_months_start.day != today.day:
-            twelve_months_start = (twelve_months_start.replace(day=1) + relativedelta(months=1)) - timedelta(days=1)
-        start_date = timezone.make_aware(datetime.combine(twelve_months_start, datetime.min.time()), timezone.get_current_timezone())
-        end_date = timezone.make_aware(datetime.combine(today, datetime.max.time()), timezone.get_current_timezone())
-
-    data = build_statistics_data(user, start_date, end_date)
-    cache_statistics_data(user_id, range_name, data)
-    cache.delete(_refresh_lock_key(user_id, range_name))
-    return data
+    finally:
+        cache.delete(lock_key)
 
 
-def schedule_statistics_refresh(user_id: int, range_name: str, debounce_seconds: int = 30, countdown: int = 3):
+def schedule_statistics_refresh(
+    user_id: int,
+    range_name: str,
+    debounce_seconds: int = 30,
+    countdown: int = 3,
+    allow_inline: bool = True,
+):
     """Queue a background refresh for a user's statistics cache.
     
     Args:
@@ -367,21 +2444,41 @@ def schedule_statistics_refresh(user_id: int, range_name: str, debounce_seconds:
         range_name: Predefined range name
         debounce_seconds: Seconds to debounce refresh requests
         countdown: Seconds to delay task execution (default 3)
+        allow_inline: Whether to run inline if Celery is unavailable
     """
     if range_name not in PREDEFINED_RANGES:
         return False
 
+    history_version = _get_history_version(user_id)
+    cache_entry = cache.get(_cache_key(user_id, range_name))
+    if cache_entry and cache_entry.get("history_version") == history_version:
+        return False
+
     lock_key = _refresh_lock_key(user_id, range_name)
+    lock_value = {"started_at": timezone.now().isoformat()}
     # Use a longer TTL (5 minutes) to ensure lock exists for entire task duration
     # The lock is deleted when task completes, but we need it to last longer than
     # the longest possible task execution time
     lock_ttl = 300  # 5 minutes should be more than enough for any statistics task
-    if debounce_seconds and not cache.add(lock_key, True, debounce_seconds):
-        return False
+    if debounce_seconds and not cache.add(lock_key, lock_value, debounce_seconds):
+        existing_lock = cache.get(lock_key)
+        if _lock_is_stale(existing_lock):
+            cache.delete(lock_key)
+            if not cache.add(lock_key, lock_value, debounce_seconds):
+                return False
+        else:
+            return False
 
     # Extend the lock TTL to cover the full task duration
     # This ensures the lock exists even if the task takes longer than debounce_seconds
-    cache.set(lock_key, True, lock_ttl)
+    cache.set(lock_key, lock_value, lock_ttl)
+
+    dedupe_key = None
+    if cache_entry and STATISTICS_SCHEDULE_DEDUPE_TTL:
+        dedupe_key = _schedule_dedupe_key(user_id, range_name, history_version)
+        if not cache.add(dedupe_key, True, STATISTICS_SCHEDULE_DEDUPE_TTL):
+            cache.delete(lock_key)
+            return False
 
     try:
         from app.tasks import refresh_statistics_cache_task
@@ -389,13 +2486,24 @@ def schedule_statistics_refresh(user_id: int, range_name: str, debounce_seconds:
         refresh_statistics_cache_task.apply_async(args=[user_id, range_name], countdown=countdown)
         return True
     except Exception as exc:  # pragma: no cover - Celery not available
+        if allow_inline:
+            logger.debug(
+                "Falling back to inline statistics cache rebuild for user %s, range %s: %s",
+                user_id,
+                range_name,
+                exc,
+            )
+            refresh_statistics_cache(user_id, range_name)
+            return False
         logger.debug(
-            "Falling back to inline statistics cache rebuild for user %s, range %s: %s",
+            "Failed to schedule statistics refresh for user %s, range %s: %s",
             user_id,
             range_name,
             exc,
         )
-        refresh_statistics_cache(user_id, range_name)
+        cache.delete(lock_key)
+        if dedupe_key:
+            cache.delete(dedupe_key)
         return False
 
 
@@ -419,7 +2527,6 @@ def schedule_all_ranges_refresh(user_id: int, debounce_seconds: int = 30, countd
 
     # Schedule "All Time" with same countdown as history refresh (countdown=3)
     # This ensures history and "All Time" run together, then other ranges follow
-    # This prevents history from getting mixed in with the other predefined ranges
     all_time_range = "All Time"
     user_model = get_user_model()
     preferred_range = (
@@ -431,76 +2538,19 @@ def schedule_all_ranges_refresh(user_id: int, debounce_seconds: int = 30, countd
         preferred_range = "Last 12 Months"
     if preferred_range == all_time_range:
         preferred_range = None
-    all_time_lock_key = _refresh_lock_key(user_id, all_time_range)
-    # Use a longer TTL (5 minutes) to ensure lock exists for entire task duration
-    lock_ttl = 300  # 5 minutes should be more than enough for any statistics task
-    if cache.add(all_time_lock_key, True, debounce_seconds):
-        # Extend the lock TTL to cover the full task duration
-        cache.set(all_time_lock_key, True, lock_ttl)
 
-    try:
-        from app.tasks import refresh_statistics_cache_task
-        logger.debug("Scheduling 'All Time' statistics for user %s (runs with history refresh)", user_id)
-        # Schedule "All Time" with same countdown as history (countdown=3) so they run together
-        refresh_statistics_cache_task.apply_async(args=[user_id, all_time_range], countdown=countdown)
-    except Exception as exc:  # pragma: no cover - Celery not available
-        logger.debug(
-            "Falling back to inline statistics cache rebuild for user %s, range %s: %s",
-            user_id,
-            all_time_range,
-            exc,
-        )
-        refresh_statistics_cache(user_id, all_time_range)
-
+    logger.debug(
+        "Scheduling statistics refreshes for user %s (all_time=%s preferred=%s)",
+        user_id,
+        all_time_range,
+        preferred_range,
+    )
+    schedule_statistics_refresh(user_id, all_time_range, debounce_seconds=debounce_seconds, countdown=countdown)
     if preferred_range:
-        preferred_lock_key = _refresh_lock_key(user_id, preferred_range)
-        if cache.add(preferred_lock_key, True, debounce_seconds):
-            cache.set(preferred_lock_key, True, lock_ttl)
+        schedule_statistics_refresh(user_id, preferred_range, debounce_seconds=debounce_seconds, countdown=countdown + 1)
 
-        try:
-            from app.tasks import refresh_statistics_cache_task
-            logger.debug(
-                "Scheduling preferred statistics range %s for user %s",
-                preferred_range,
-                user_id,
-            )
-            refresh_statistics_cache_task.apply_async(
-                args=[user_id, preferred_range],
-                countdown=countdown + 1,
-            )
-        except Exception as exc:  # pragma: no cover - Celery not available
-            logger.debug(
-                "Falling back to inline statistics cache rebuild for user %s, range %s: %s",
-                user_id,
-                preferred_range,
-                exc,
-            )
-            refresh_statistics_cache(user_id, preferred_range)
-    
     # Schedule remaining ranges in parallel with longer countdown
-    # They'll run after history and "All Time" complete (which run together)
-    # This prevents history from getting mixed in with the other predefined ranges
     for range_name in PREDEFINED_RANGES:
         if range_name in (all_time_range, preferred_range):
-            # Already scheduled, skip
             continue
-
-        lock_key = _refresh_lock_key(user_id, range_name)
-        # Only add lock if not already present (allows parallel execution)
-        # Use longer TTL to ensure lock exists for entire task duration
-        if cache.add(lock_key, True, debounce_seconds):
-            cache.set(lock_key, True, lock_ttl)
-
-        try:
-            from app.tasks import refresh_statistics_cache_task
-            # Use longer countdown (countdown + 2) so these run after history and "All Time"
-            # This ensures history and "All Time" complete before other ranges start
-            refresh_statistics_cache_task.apply_async(args=[user_id, range_name], countdown=countdown + 2)
-        except Exception as exc:  # pragma: no cover - Celery not available
-            logger.debug(
-                "Falling back to inline statistics cache rebuild for user %s, range %s: %s",
-                user_id,
-                range_name,
-                exc,
-            )
-            refresh_statistics_cache(user_id, range_name)
+        schedule_statistics_refresh(user_id, range_name, debounce_seconds=debounce_seconds, countdown=countdown + 2)
