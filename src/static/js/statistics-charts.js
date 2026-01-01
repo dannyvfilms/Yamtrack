@@ -527,12 +527,14 @@ document.addEventListener("DOMContentLoaded", function () {
         }
 
         function getMonthIso(d) {
-          const date = new Date(d);
-          return date.toISOString().slice(0, 7); // YYYY-MM
+          const date = parseIsoDateLocal(d);
+          const year = date.getFullYear();
+          const month = String(date.getMonth() + 1).padStart(2, "0");
+          return `${year}-${month}`; // YYYY-MM
         }
 
         function getYearIso(d) {
-          const date = new Date(d);
+          const date = parseIsoDateLocal(d);
           return String(date.getFullYear());
         }
 

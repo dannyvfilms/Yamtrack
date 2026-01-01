@@ -176,47 +176,6 @@ class Item(CalendarTriggerMixin, models.Model):
                 name += f"E{self.episode_number}"
         return name
 
-
-class MetadataBackfillField(models.TextChoices):
-    """Fields that can be backfilled from external metadata."""
-
-    RUNTIME = "runtime", "Runtime"
-    GENRES = "genres", "Genres"
-
-
-class MetadataBackfillState(models.Model):
-    """Track metadata backfill attempts to avoid endless retries."""
-
-    item = models.ForeignKey(
-        Item,
-        on_delete=models.CASCADE,
-        related_name="metadata_backfill_states",
-    )
-    field = models.CharField(
-        max_length=20,
-        choices=MetadataBackfillField.choices,
-    )
-    fail_count = models.PositiveIntegerField(default=0)
-    last_attempt_at = models.DateTimeField(null=True, blank=True)
-    next_retry_at = models.DateTimeField(null=True, blank=True)
-    last_success_at = models.DateTimeField(null=True, blank=True)
-    last_error = models.TextField(blank=True, default="")
-    give_up = models.BooleanField(default=False)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        constraints = [
-            UniqueConstraint(
-                fields=["item", "field"],
-                name="unique_metadata_backfill_state",
-            ),
-        ]
-        indexes = [
-            models.Index(fields=["field", "next_retry_at"]),
-            models.Index(fields=["field", "give_up"]),
-        ]
-
     @classmethod
     def generate_manual_id(cls, media_type):
         """Generate a new ID for manual items."""
@@ -258,6 +217,7 @@ class MetadataBackfillState(models.Model):
                 runtime_minutes = None
                 if tv_metadata.get("details", {}).get("runtime"):
                     from app.statistics import parse_runtime_to_minutes
+
                     runtime_minutes = parse_runtime_to_minutes(tv_metadata["details"]["runtime"])
 
                 tv_item = Item.objects.create(
@@ -279,6 +239,48 @@ class MetadataBackfillState(models.Model):
             events.tasks.reload_calendar.apply_async(kwargs={"items_to_process": items_to_process}, countdown=3)
         else:
             events.tasks.reload_calendar(items_to_process=items_to_process)
+
+
+class MetadataBackfillField(models.TextChoices):
+    """Fields that can be backfilled from external metadata."""
+
+    RUNTIME = "runtime", "Runtime"
+    GENRES = "genres", "Genres"
+
+
+class MetadataBackfillState(models.Model):
+    """Track metadata backfill attempts to avoid endless retries."""
+
+    item = models.ForeignKey(
+        Item,
+        on_delete=models.CASCADE,
+        related_name="metadata_backfill_states",
+    )
+    field = models.CharField(
+        max_length=20,
+        choices=MetadataBackfillField.choices,
+    )
+    fail_count = models.PositiveIntegerField(default=0)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
+    next_retry_at = models.DateTimeField(null=True, blank=True)
+    last_success_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True, default="")
+    give_up = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            UniqueConstraint(
+                fields=["item", "field"],
+                name="unique_metadata_backfill_state",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["field", "next_retry_at"]),
+            models.Index(fields=["field", "give_up"]),
+        ]
+
 
 
 class MediaManager(models.Manager):
@@ -1273,14 +1275,42 @@ class Media(models.Model):
 
         super().save(*args, **kwargs)
 
+    def _get_local_max_progress(self):
+        """Return locally-derived runtime minutes for music/podcast without provider calls."""
+        if self.item.media_type == MediaTypes.PODCAST.value:
+            return self.item.runtime_minutes
+
+        if self.item.media_type != MediaTypes.MUSIC.value:
+            return None
+
+        track = getattr(self, "track", None)
+        if track and track.duration_ms:
+            return track.duration_ms // 60000
+
+        if self.item.runtime_minutes:
+            return self.item.runtime_minutes
+
+        album_id = getattr(self, "album_id", None)
+        if album_id and self.item.media_id:
+            Track = apps.get_model("app", "Track")
+            match = Track.objects.filter(
+                album_id=album_id,
+                musicbrainz_recording_id=self.item.media_id,
+                duration_ms__isnull=False,
+            ).first()
+            if match and match.duration_ms:
+                return match.duration_ms // 60000
+
+        return None
+
     def process_progress(self):
         """Update fields depending on the progress of the media."""
         if self.progress < 0:
             self.progress = 0
         else:
             # For podcasts, use runtime_minutes from Item instead of external metadata
-            if self.item.media_type == MediaTypes.PODCAST.value:
-                max_progress = self.item.runtime_minutes
+            if self.item.media_type in (MediaTypes.PODCAST.value, MediaTypes.MUSIC.value):
+                max_progress = self._get_local_max_progress()
             else:
                 max_progress = providers.services.get_media_metadata(
                     self.item.media_type,
@@ -1304,8 +1334,8 @@ class Media(models.Model):
         """Update fields depending on the status of the media."""
         if self.status == Status.COMPLETED.value:
             # For podcasts, use runtime_minutes from Item instead of external metadata
-            if self.item.media_type == MediaTypes.PODCAST.value:
-                max_progress = self.item.runtime_minutes
+            if self.item.media_type in (MediaTypes.PODCAST.value, MediaTypes.MUSIC.value):
+                max_progress = self._get_local_max_progress()
             else:
                 max_progress = providers.services.get_media_metadata(
                     self.item.media_type,
@@ -1316,7 +1346,8 @@ class Media(models.Model):
             if max_progress:
                 self.progress = max_progress
 
-        self.item.fetch_releases(delay=True)
+        if self.item.media_type not in (MediaTypes.MUSIC.value, MediaTypes.PODCAST.value):
+            self.item.fetch_releases(delay=True)
 
     @property
     def formatted_score(self):

@@ -1,0 +1,14 @@
+<div id="discography-container"
+     {% if poll_for_covers %}
+       hx-get="{% url 'prefetch_artist_covers' artist.id %}"
+       hx-trigger="load delay:500ms, every 5s"
+       hx-target="#discography-container"
+       hx-swap="outerHTML"
+     {% endif %}>
+  {% include "app/components/artist_discography_groups.html" with discography_groups=discography_groups %}
+  {% if poll_for_covers %}
+    <div class="mt-4 text-xs text-gray-500">
+      Refreshing cover art{% if missing_cover_count %} ({{ missing_cover_count }} remaining){% endif %}...
+    </div>
+  {% endif %}
+</div>

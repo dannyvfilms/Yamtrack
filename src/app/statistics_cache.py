@@ -1018,11 +1018,31 @@ def build_stats_for_day(user_id: int, day_value):
         else:
             music_map = {}
 
+        track_duration_cache = {}
+        if music_map:
+            album_ids = {music.album_id for music in music_map.values() if music and music.album_id}
+            if album_ids:
+                Track = apps.get_model("app", "Track")
+                track_rows = Track.objects.filter(
+                    album_id__in=album_ids,
+                    duration_ms__isnull=False,
+                ).values("album_id", "title", "duration_ms", "musicbrainz_recording_id")
+                for track_data in track_rows:
+                    title_key = (track_data["album_id"], track_data["title"])
+                    track_duration_cache[title_key] = track_data["duration_ms"]
+                    recording_id = track_data.get("musicbrainz_recording_id")
+                    if recording_id:
+                        recording_key = ("recording", recording_id)
+                        track_duration_cache[recording_key] = track_data["duration_ms"]
+
         for (music_id, play_end), _ in plays_by_key.items():
             music = music_map.get(music_id)
             if not music:
                 continue
-            runtime_minutes = stats._get_music_runtime_minutes(music)
+            runtime_minutes = stats._get_music_runtime_minutes(
+                music,
+                track_duration_cache=track_duration_cache,
+            )
             if runtime_minutes <= 0:
                 missing_runtime += 1
                 runtime_minutes = 0

@@ -190,7 +190,7 @@ def get_artist(artist_id):
 def get_artist_discography(artist_id, skip_cover_art=False):
     """Get all albums for an artist."""
     # Fetches /release-group with artist filter
-    # Filters to Album, EP, Compilation types
+    # Filters to Album, EP, Single, Broadcast, Other (plus legacy Compilation)
     # Returns list of albums with cover art (unless skip_cover_art=True)
 
 def recording(media_id):

@@ -1,6 +1,6 @@
 {% load app_tags %}
 {# Partial template for album grid - used by artist detail and async cover prefetch #}
-<div id="album-grid" class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
+<div{% if grid_id %} id="{{ grid_id }}"{% endif %} class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
   {% for album in all_albums %}
     <a href="{% url 'album_detail' album.id %}"
        class="group bg-[#2a2f35] rounded-lg overflow-hidden hover:bg-[#343a40] transition-colors duration-200 relative">
@@ -30,7 +30,7 @@
           {% if album.release_date %}
             <span class="text-xs text-gray-400 shrink-0">{{ album.release_date|date:"Y" }}</span>
           {% endif %}
-          {% if album.release_type %}
+          {% if show_release_type|default:True and album.release_type %}
             <span class="text-xs text-gray-500 truncate">• {{ album.release_type|cut:"Album + " }}</span>
           {% endif %}
         </div>
@@ -38,4 +38,3 @@
     </a>
   {% endfor %}
 </div>
-

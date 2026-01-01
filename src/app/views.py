@@ -2824,6 +2824,7 @@ def artist_detail(request, artist_id):
     from app.models import ArtistTracker
     from app.providers import musicbrainz
     from app.services.music import (
+        build_discography_groups,
         needs_discography_sync,
         sync_artist_discography,
     )
@@ -2930,6 +2931,13 @@ def artist_detail(request, artist_id):
     for album in all_albums:
         album.play_count = album_play_counts.get(album.id, 0)
 
+    discography_groups = build_discography_groups(all_albums)
+    missing_cover_count = sum(
+        1
+        for album in all_albums
+        if not album.image or album.image == settings.IMG_NONE
+    )
+
     # Artist image is set from Wikipedia when fetching metadata below
 
     # Get user's tracker for this artist
@@ -3008,9 +3016,11 @@ def artist_detail(request, artist_id):
     context = {
         "user": request.user,
         "artist": artist,
-        "albums": all_albums,  # All albums from discography, not just "in library"
+        "discography_groups": discography_groups,  # All releases from discography
         "total_plays": total_plays,
-        "total_albums": len(all_albums),
+        "total_releases": len(all_albums),
+        "missing_cover_count": missing_cover_count,
+        "poll_for_covers": missing_cover_count > 0,
         "artist_tracker": artist_tracker,
         "history_stats": history_stats,
         "artist_metadata": artist_metadata,
@@ -3032,12 +3042,10 @@ def prefetch_artist_covers(request, artist_id):
     from django.shortcuts import get_object_or_404
 
     from app.models import Album, Artist, Music
-    from app.services.music import prefetch_album_covers
+    from app.services.music import build_discography_groups
+    from app.tasks import prefetch_album_covers_batch
 
     artist = get_object_or_404(Artist, id=artist_id)
-
-    # Prefetch covers for albums missing art
-    prefetch_album_covers(artist, limit=20)
 
     # Get updated albums
     all_albums = list(Album.objects.filter(artist=artist).order_by("-release_date", "title"))
@@ -3057,9 +3065,32 @@ def prefetch_artist_covers(request, artist_id):
     for album in all_albums:
         album.play_count = album_play_counts.get(album.id, 0)
 
-    return render(request, "app/components/album_grid.html", {
-        "all_albums": all_albums,
+    discography_groups = build_discography_groups(all_albums)
+    missing_cover_count = sum(
+        1
+        for album in all_albums
+        if not album.image or album.image == settings.IMG_NONE
+    )
+
+    poll_for_covers = missing_cover_count > 0
+    if missing_cover_count:
+        cache_key = f"music:cover-prefetch:{artist.id}"
+        try:
+            if cache.add(cache_key, True, 60 * 10):
+                try:
+                    prefetch_album_covers_batch.delay([artist.id], limit_per_artist=None)
+                except Exception as queue_exc:  # pragma: no cover - defensive
+                    cache.delete(cache_key)
+                    raise queue_exc
+            poll_for_covers = bool(cache.get(cache_key))
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Cover prefetch queue failed for artist %s: %s", artist.id, exc)
+
+    return render(request, "app/components/artist_discography_container.html", {
+        "discography_groups": discography_groups,
         "artist": artist,
+        "missing_cover_count": missing_cover_count,
+        "poll_for_covers": poll_for_covers,
     })
 
 
@@ -3274,8 +3305,9 @@ def sync_artist_discography_view(request, artist_id):
     """Manually trigger discography sync for an artist."""
     from django.shortcuts import get_object_or_404
 
-    from app.services.music import sync_artist_discography
+    from app.services.music import prefetch_album_covers, sync_artist_discography
     from app.services.music_scrobble import dedupe_artist_albums
+    from app.tasks import prefetch_album_covers_batch
 
     artist = get_object_or_404(Artist, id=artist_id)
 
@@ -3284,7 +3316,26 @@ def sync_artist_discography_view(request, artist_id):
     if count:
         dedupe_artist_albums(artist)
 
-    messages.success(request, f"Synced {count} albums for {artist.name}")
+    cover_task_id = None
+    try:
+        result = prefetch_album_covers_batch.delay([artist.id], limit_per_artist=None)
+        cover_task_id = result.id
+        cache.set(f"music:cover-prefetch:{artist.id}", True, 60 * 10)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("Cover prefetch queue failed for artist %s: %s", artist.id, exc)
+        try:
+            prefetch_album_covers(artist, limit=None)
+            cache.set(f"music:cover-prefetch:{artist.id}", True, 60 * 10)
+        except Exception as inner_exc:  # pragma: no cover - defensive
+            logger.debug("Cover prefetch failed for artist %s: %s", artist.id, inner_exc)
+
+    if cover_task_id:
+        messages.success(
+            request,
+            f"Synced {count} albums for {artist.name}. Cover art refresh queued.",
+        )
+    else:
+        messages.success(request, f"Synced {count} albums for {artist.name}")
 
     # Return HX-Refresh header to reload the page
     response = HttpResponse(status=204)
@@ -4027,6 +4078,7 @@ def album_delete(request):
 def song_save(request):
     """Handle adding a listen for a song - mirrors episode_save for episodes."""
     from django.shortcuts import get_object_or_404
+    from django.utils import timezone
     from django.utils.dateparse import parse_date, parse_datetime
 
     from app.models import Track
@@ -4040,10 +4092,12 @@ def song_save(request):
     end_date = None
     if end_date_str:
         end_date = parse_datetime(end_date_str)
-        if not end_date:
+        if end_date:
+            if timezone.is_naive(end_date):
+                end_date = timezone.make_aware(end_date)
+        else:
             parsed_date = parse_date(end_date_str)
             if parsed_date:
-                from django.utils import timezone
                 end_date = timezone.make_aware(
                     timezone.datetime.combine(parsed_date, timezone.datetime.min.time()),
                 )
@@ -4130,6 +4184,7 @@ def song_save(request):
 def podcast_save(request):
     """Handle adding a play for a podcast episode - mirrors song_save for music."""
     from django.shortcuts import get_object_or_404
+    from django.utils import timezone
     from django.utils.dateparse import parse_date, parse_datetime
 
     from app.models import Podcast, PodcastEpisode, PodcastShow
@@ -4143,10 +4198,12 @@ def podcast_save(request):
     end_date = None
     if end_date_str:
         end_date = parse_datetime(end_date_str)
-        if not end_date:
+        if end_date:
+            if timezone.is_naive(end_date):
+                end_date = timezone.make_aware(end_date)
+        else:
             parsed_date = parse_date(end_date_str)
             if parsed_date:
-                from django.utils import timezone
                 end_date = timezone.make_aware(
                     timezone.datetime.combine(parsed_date, timezone.datetime.min.time()),
                 )

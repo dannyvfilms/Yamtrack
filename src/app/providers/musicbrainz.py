@@ -17,6 +17,7 @@ BASE_URL = "https://musicbrainz.org/ws/2"
 COVER_ART_BASE = "https://coverartarchive.org"
 WIKIPEDIA_API_BASE = "https://en.wikipedia.org/api/rest_v1/page/summary"
 MIN_REQUEST_INTERVAL = 1.0  # MusicBrainz requires 1 req/sec for unauth requests
+DISCOGRAPHY_CACHE_VERSION = 2
 _last_request_time = 0
 
 # User-Agent required by MusicBrainz API
@@ -764,7 +765,7 @@ def get_artist_discography(artist_id, skip_cover_art=False):
     Returns a normalized list of albums with:
     - title, release_group_id, release_id, release_date, image, release_type
     """
-    cache_key = f"musicbrainz_artist_discography_{artist_id}"
+    cache_key = f"musicbrainz_artist_discography_v{DISCOGRAPHY_CACHE_VERSION}_{artist_id}"
     if skip_cover_art:
         cache_key += "_no_art"
     cached = cache.get(cache_key)
@@ -781,9 +782,8 @@ def get_artist_discography(artist_id, skip_cover_art=False):
     response = _mb_request("release-group", params)
     release_groups = response.get("release-groups", [])
 
-    # Filter to sensible types (Album, EP, Compilation)
-    # Skip Singles unless you want them
-    allowed_types = {"Album", "EP", "Compilation"}
+    # Include all MusicBrainz primary types so discography matches their page.
+    allowed_types = {"Album", "EP", "Single", "Broadcast", "Other", "Compilation"}
     release_groups = [
         rg for rg in release_groups
         if rg.get("primary-type") in allowed_types

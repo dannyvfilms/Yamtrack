@@ -1329,8 +1329,13 @@ def _calculate_music_time(media, start_date, end_date, logger):
     return total_minutes
 
 
-def _get_music_runtime_minutes(music_entry):
-    """Get runtime in minutes from a Music entry, checking track and item."""
+def _get_music_runtime_minutes(music_entry, track_duration_cache=None):
+    """Get runtime in minutes from a Music entry, checking track and item.
+
+    track_duration_cache (optional) should mirror history cache behavior:
+      - (album_id, track_title) -> duration_ms
+      - ("recording", recording_id) -> duration_ms
+    """
     # First try the linked Track's duration_ms
     if music_entry.track and music_entry.track.duration_ms:
         return music_entry.track.duration_ms // 60000  # ms to minutes
@@ -1339,15 +1344,39 @@ def _get_music_runtime_minutes(music_entry):
     if music_entry.item and music_entry.item.runtime_minutes:
         return music_entry.item.runtime_minutes
 
-    # Try to look up from album tracklist by recording ID
-    if music_entry.album_id and music_entry.item and music_entry.item.media_id:
-        track = Track.objects.filter(
-            album_id=music_entry.album_id,
-            musicbrainz_recording_id=music_entry.item.media_id,
-            duration_ms__isnull=False,
-        ).first()
-        if track:
-            return track.duration_ms // 60000
+    if music_entry.item:
+        # Try to look up duration from cache (built from album tracklist)
+        if track_duration_cache:
+            if music_entry.album_id:
+                title_key = (music_entry.album_id, music_entry.item.title)
+                duration_ms = track_duration_cache.get(title_key)
+                if duration_ms:
+                    return duration_ms // 60000
+            if music_entry.item.media_id:
+                recording_key = ("recording", music_entry.item.media_id)
+                duration_ms = track_duration_cache.get(recording_key)
+                if duration_ms:
+                    return duration_ms // 60000
+
+        # Try to look up from album tracklist by recording ID
+        if music_entry.album_id and music_entry.item.media_id:
+            track = Track.objects.filter(
+                album_id=music_entry.album_id,
+                musicbrainz_recording_id=music_entry.item.media_id,
+                duration_ms__isnull=False,
+            ).first()
+            if track:
+                return track.duration_ms // 60000
+
+        # Try to look up from album tracklist by title
+        if music_entry.album_id and music_entry.item.title:
+            track = Track.objects.filter(
+                album_id=music_entry.album_id,
+                title__iexact=music_entry.item.title,
+                duration_ms__isnull=False,
+            ).first()
+            if track:
+                return track.duration_ms // 60000
 
     return 0
 

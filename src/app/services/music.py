@@ -2,6 +2,7 @@
 
 import logging
 import re
+from collections import defaultdict
 
 from django.conf import settings
 from django.db import IntegrityError, models
@@ -876,6 +877,72 @@ def needs_discography_sync(artist: Artist, max_age_days: int = 7) -> bool:
     return days_since_sync >= max_age_days
 
 
+_DISCOGRAPHY_PRIMARY_ORDER = {
+    "Album": 0,
+    "EP": 1,
+    "Single": 2,
+    "Broadcast": 3,
+    "Other": 4,
+    "Unknown": 5,
+}
+_DISCOGRAPHY_SECONDARY_ORDER = {
+    "Compilation": 0,
+    "Mixtape/Street": 1,
+    "Soundtrack": 2,
+    "Remix": 3,
+    "Live": 4,
+}
+
+
+def _split_release_type(release_type: str | None) -> tuple[str, list[str], str]:
+    if not release_type:
+        return "Unknown", [], "Unknown"
+
+    parts = [part.strip() for part in release_type.split(" + ", 1)]
+    primary = parts[0] or "Unknown"
+    secondary = []
+    if len(parts) > 1:
+        secondary = [part.strip() for part in parts[1].split(",") if part.strip()]
+
+    label = release_type
+    if primary == "Compilation" and not secondary:
+        primary = "Album"
+        secondary = ["Compilation"]
+        label = "Album + Compilation"
+    elif primary == "Other" and secondary:
+        label = ", ".join(secondary)
+
+    return primary, secondary, label
+
+
+def build_discography_groups(albums: list[Album]) -> list[dict]:
+    groups: dict[str, dict] = defaultdict(lambda: {"albums": [], "primary": "Unknown", "secondary": []})
+    for album in albums:
+        primary, secondary, label = _split_release_type(album.release_type)
+        entry = groups[label]
+        entry["albums"].append(album)
+        entry["primary"] = primary
+        entry["secondary"] = secondary
+
+    def sort_key(item: tuple[str, dict]) -> tuple:
+        label, data = item
+        primary = data["primary"]
+        secondary = data["secondary"]
+        primary_order = _DISCOGRAPHY_PRIMARY_ORDER.get(primary, len(_DISCOGRAPHY_PRIMARY_ORDER))
+        secondary_order = tuple(_DISCOGRAPHY_SECONDARY_ORDER.get(sec, 100) for sec in secondary)
+        return (primary_order, 0 if not secondary else 1, secondary_order, label.lower())
+
+    grouped = []
+    for label, data in sorted(groups.items(), key=sort_key):
+        grouped.append({
+            "label": label,
+            "albums": data["albums"],
+            "count": len(data["albums"]),
+        })
+
+    return grouped
+
+
 def ensure_album_has_release_id(album: Album) -> bool:
     """Ensure an album has a release_id, fetching it from release_group if needed.
     
@@ -985,31 +1052,29 @@ def prefetch_album_covers(artist: Artist, limit: int | None = 20) -> int:
     """
     from app.providers import musicbrainz
 
-    # Find albums with missing images that have MusicBrainz IDs
+    # Find albums with missing images (iTunes fallback does not require MBIDs)
     albums_qs = Album.objects.filter(
         artist=artist,
     ).filter(
         models.Q(image="") | models.Q(image=settings.IMG_NONE),
-    ).filter(
-        models.Q(musicbrainz_release_id__isnull=False)
-        | models.Q(musicbrainz_release_group_id__isnull=False),
     )
 
-    albums_needing_art = list(albums_qs[:limit]) if limit else list(albums_qs)
+    albums_needing_art = albums_qs[:limit] if limit else albums_qs
 
     updated = 0
     for album in albums_needing_art:
         try:
-            image = musicbrainz.get_cover_art(
-                release_id=album.musicbrainz_release_id,
-                release_group_id=album.musicbrainz_release_group_id,
-            )
-            if image and image != settings.IMG_NONE:
-                album.image = image
-                album.save(update_fields=["image"])
-                updated += 1
-                logger.debug("Prefetched cover for album: %s", album.title)
-                continue  # Skip iTunes fallback if MusicBrainz succeeded
+            if album.musicbrainz_release_id or album.musicbrainz_release_group_id:
+                image = musicbrainz.get_cover_art(
+                    release_id=album.musicbrainz_release_id,
+                    release_group_id=album.musicbrainz_release_group_id,
+                )
+                if image and image != settings.IMG_NONE:
+                    album.image = image
+                    album.save(update_fields=["image"])
+                    updated += 1
+                    logger.debug("Prefetched cover for album: %s", album.title)
+                    continue  # Skip iTunes fallback if MusicBrainz succeeded
         except Exception as e:
             logger.debug("Failed to prefetch cover for %s: %s", album.title, e)
 
@@ -1018,9 +1083,10 @@ def prefetch_album_covers(artist: Artist, limit: int | None = 20) -> int:
             if album.title:
                 try:
                     from integrations import itunes_music_artwork
+                    artist_name = album.artist.name if album.artist else artist.name
                     itunes_image = itunes_music_artwork.fetch_album_artwork(
                         album_title=album.title,
-                        artist_name=artist.name,
+                        artist_name=artist_name,
                     )
                     if itunes_image:
                         album.image = itunes_image
