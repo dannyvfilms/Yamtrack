@@ -1295,15 +1295,20 @@ def build_stats_for_day(user_id: int, day_value):
                 if activity_local and activity_local.date() == day:
                     daily_minutes_by_type[media_type] += total_minutes
 
-    activity_count = 0
-    HistoricalModels = apps.get_model("app", "BasicMedia").objects.get_historical_models()
-    for model_name in HistoricalModels:
-        model = apps.get_model("app", model_name)
-        activity_count += model.objects.filter(
-            history_user_id=user,
-            history_date__gte=day_start,
-            history_date__lt=day_end,
-        ).count()
+    activity_count = play_count
+    non_play_types = {
+        MediaTypes.ANIME.value,
+        MediaTypes.GAME.value,
+        MediaTypes.BOARDGAME.value,
+        MediaTypes.MANGA.value,
+        MediaTypes.BOOK.value,
+        MediaTypes.COMIC.value,
+    }
+    for media_type, minutes in daily_minutes_by_type.items():
+        if media_type in non_play_types and minutes and minutes > 0:
+            activity_count += 1
+    if activity_count == 0 and sum(daily_minutes_by_type.values()) > 0:
+        activity_count = 1
 
     history_version = _get_history_version(user_id)
     day_stats = {
@@ -1521,7 +1526,18 @@ def _build_activity_data(date_counts, start_date, end_date):
 
     start_date_aligned = stats.get_aligned_monday(start_date)
     if start_date_aligned is None:
-        return {"calendar_weeks": [], "months": [], "stats": {"most_active_day": None, "most_active_day_percentage": 0, "current_streak": 0, "longest_streak": 0}}
+        return {
+            "calendar_weeks": [],
+            "months": [],
+            "stats": {
+                "most_active_day": None,
+                "most_active_day_percentage": 0,
+                "current_streak": 0,
+                "longest_streak": 0,
+                "longest_streak_start": None,
+                "longest_streak_end": None,
+            },
+        }
 
     date_range = [
         start_date_aligned.date() + timedelta(days=offset)
@@ -1532,9 +1548,10 @@ def _build_activity_data(date_counts, start_date, end_date):
         date_counts,
         start_date.date(),
     )
-    current_streak, longest_streak = stats.calculate_streaks(
+    end_date_value = end_date.date() if hasattr(end_date, "date") else end_date
+    streaks = stats.calculate_streak_details(
         date_counts,
-        end_date.date(),
+        end_date_value,
     )
 
     activity_data = [
@@ -1574,8 +1591,10 @@ def _build_activity_data(date_counts, start_date, end_date):
         "stats": {
             "most_active_day": most_active_day,
             "most_active_day_percentage": day_percentage,
-            "current_streak": current_streak,
-            "longest_streak": longest_streak,
+            "current_streak": streaks["current_streak"],
+            "longest_streak": streaks["longest_streak"],
+            "longest_streak_start": streaks["longest_streak_start"],
+            "longest_streak_end": streaks["longest_streak_end"],
         },
     }
 
@@ -1620,6 +1639,14 @@ def _aggregate_statistics_from_days(user, day_list, start_date, end_date, build_
     }
     game_rollups = {}
     activity_counts = {}
+    non_play_activity_types = {
+        MediaTypes.ANIME.value,
+        MediaTypes.GAME.value,
+        MediaTypes.BOARDGAME.value,
+        MediaTypes.MANGA.value,
+        MediaTypes.BOOK.value,
+        MediaTypes.COMIC.value,
+    }
 
     chunk_size = 50
     for offset in range(0, len(day_list), chunk_size):
@@ -1749,7 +1776,15 @@ def _aggregate_statistics_from_days(user, day_list, start_date, end_date, build_
                     if payload.get("media_id"):
                         existing["media_id"] = payload.get("media_id")
 
-            activity_counts[day] = day_stats.get("activity", {}).get("count", 0)
+            daily_minutes = day_stats.get("daily_minutes_by_type", {}) or {}
+            plays_total = sum(day_stats.get("totals", {}).get("plays_by_type", {}).values())
+            activity_total = plays_total
+            for media_type in non_play_activity_types:
+                if daily_minutes.get(media_type, 0):
+                    activity_total += 1
+            if activity_total == 0 and sum(daily_minutes.values()) > 0:
+                activity_total = 1
+            activity_counts[day] = activity_total
 
     active_types = list(getattr(user, "get_active_media_types", lambda: [])())
     if not active_types:

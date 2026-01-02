@@ -325,6 +325,9 @@
   .top-full {
     top: 100%;
   }
+  .top-px {
+    top: 1px;
+  }
   .right-0 {
     right: calc(var(--spacing) * 0);
   }
@@ -2373,6 +2376,13 @@
     &:hover {
       @media (hover: hover) {
         color: var(--color-gray-300);
+      }
+    }
+  }
+  .hover\:text-gray-400 {
+    &:hover {
+      @media (hover: hover) {
+        color: var(--color-gray-400);
       }
     }
   }

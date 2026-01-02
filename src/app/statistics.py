@@ -569,7 +569,7 @@ def get_activity_data(user, start_date, end_date):
         date_counts,
         start_date.date(),
     )
-    current_streak, longest_streak = calculate_streaks(
+    streaks = calculate_streak_details(
         date_counts,
         end_date.date(),
     )
@@ -620,8 +620,10 @@ def get_activity_data(user, start_date, end_date):
         "stats": {
             "most_active_day": most_active_day,
             "most_active_day_percentage": day_percentage,
-            "current_streak": current_streak,
-            "longest_streak": longest_streak,
+            "current_streak": streaks["current_streak"],
+            "longest_streak": streaks["longest_streak"],
+            "longest_streak_start": streaks["longest_streak_start"],
+            "longest_streak_end": streaks["longest_streak_end"],
         },
     }
 
@@ -703,44 +705,76 @@ def calculate_day_of_week_stats(date_counts, start_date):
     return most_active_day[0], round(percentage)
 
 
-def calculate_streaks(date_counts, end_date):
-    """Calculate current and longest activity streaks."""
-    # Get active dates and sort them in descending order (newest first)
+def calculate_streak_details(date_counts, end_date):
+    """Return current/longest streak counts plus their date ranges."""
     active_dates = sorted(
         [date for date, count in date_counts.items() if count > 0],
-        reverse=True,
     )
 
     if not active_dates:
-        return 0, 0
+        return {
+            "current_streak": 0,
+            "current_streak_start": None,
+            "current_streak_end": None,
+            "longest_streak": 0,
+            "longest_streak_start": None,
+            "longest_streak_end": None,
+        }
+
+    active_set = set(active_dates)
 
     longest_streak = 1
-    streak_count = 1
+    longest_start = active_dates[0]
+    longest_end = active_dates[0]
 
-    # Check if the most recent active date is today/end_date
-    is_current = active_dates[0] == end_date
+    streak_start = active_dates[0]
+    prev_date = active_dates[0]
 
-    current_streak = 1 if is_current else 0
+    for current_date in active_dates[1:]:
+        if (current_date - prev_date).days == 1:
+            prev_date = current_date
+            continue
 
-    for i in range(1, len(active_dates)):
-        # Check if this date is consecutive with the previous one
-        if (active_dates[i - 1] - active_dates[i]).days == 1:
-            streak_count += 1
+        streak_len = (prev_date - streak_start).days + 1
+        if streak_len > longest_streak or (streak_len == longest_streak and prev_date > longest_end):
+            longest_streak = streak_len
+            longest_start = streak_start
+            longest_end = prev_date
 
-            if is_current:
-                current_streak += 1
-        else:
-            longest_streak = max(longest_streak, streak_count)
-            streak_count = 1
+        streak_start = current_date
+        prev_date = current_date
 
-            if is_current:
-                is_current = False
+    streak_len = (prev_date - streak_start).days + 1
+    if streak_len > longest_streak or (streak_len == longest_streak and prev_date > longest_end):
+        longest_streak = streak_len
+        longest_start = streak_start
+        longest_end = prev_date
 
-    # Check final streak for longest calculation
-    # needed if the last date is today/end_date
-    longest_streak = max(longest_streak, streak_count)
+    if end_date in active_set:
+        current_end = end_date
+        current_start = current_end
+        while (current_start - datetime.timedelta(days=1)) in active_set:
+            current_start -= datetime.timedelta(days=1)
+        current_streak = (current_end - current_start).days + 1
+    else:
+        current_streak = 0
+        current_start = None
+        current_end = None
 
-    return current_streak, longest_streak
+    return {
+        "current_streak": current_streak,
+        "current_streak_start": current_start,
+        "current_streak_end": current_end,
+        "longest_streak": longest_streak,
+        "longest_streak_start": longest_start,
+        "longest_streak_end": longest_end,
+    }
+
+
+def calculate_streaks(date_counts, end_date):
+    """Calculate current and longest activity streaks."""
+    streaks = calculate_streak_details(date_counts, end_date)
+    return streaks["current_streak"], streaks["longest_streak"]
 
 
 def parse_runtime_to_minutes(runtime_str):
