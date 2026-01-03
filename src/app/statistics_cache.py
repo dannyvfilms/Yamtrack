@@ -6,6 +6,7 @@ import itertools
 import logging
 import re
 import time
+from types import SimpleNamespace
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 
@@ -823,6 +824,7 @@ def build_stats_for_day(user_id: int, day_value):
 
     if MediaTypes.GAME.value in active_media_types:
         Game = apps.get_model("app", "Game")
+        game_rollup_days_counted = set()
         game_rows = (
             Game.objects.filter(user=user)
             .filter(_overlap_day_filter(day_start, day_end))
@@ -861,6 +863,21 @@ def build_stats_for_day(user_id: int, day_value):
             start_dt = row.get("start_date")
             start_local = stats._localize_datetime(start_dt).date() if start_dt else None
             end_local = stats._localize_datetime(end_dt).date() if end_dt else None
+            entry_days = stats._get_entry_play_dates(
+                SimpleNamespace(
+                    start_date=start_dt,
+                    end_date=end_dt,
+                    created_at=row.get("created_at"),
+                )
+            )
+            if row.get("item_id") and day in entry_days:
+                if row.get("item_id") not in game_rollup_days_counted:
+                    rollup = game_rollups.setdefault(
+                        row.get("item_id"),
+                        {"minutes_total": 0, "days": 0, "activity_dt": None, "media_id": row.get("id")},
+                    )
+                    rollup["days"] += 1
+                    game_rollup_days_counted.add(row.get("item_id"))
             if start_local and end_local:
                 if start_local <= day <= end_local:
                     total_days = (end_local - start_local).days + 1
@@ -875,9 +892,11 @@ def build_stats_for_day(user_id: int, day_value):
                         episode_count=0,
                         activity_dt=activity_dt,
                     )
-                    rollup = game_rollups.setdefault(row.get("item_id"), {"minutes_total": 0, "days": 0, "activity_dt": None, "media_id": row.get("id")})
-                    rollup["days"] += 1
                     if activity_dt and stats._localize_datetime(activity_dt).date() == day:
+                        rollup = game_rollups.setdefault(
+                            row.get("item_id"),
+                            {"minutes_total": 0, "days": 0, "activity_dt": None, "media_id": row.get("id")},
+                        )
                         rollup["minutes_total"] += total_minutes
                         rollup["activity_dt"] = activity_dt
                         rollup["media_id"] = row.get("id")
@@ -905,8 +924,10 @@ def build_stats_for_day(user_id: int, day_value):
                     episode_count=0,
                     activity_dt=activity_dt,
                 )
-                rollup = game_rollups.setdefault(row.get("item_id"), {"minutes_total": 0, "days": 0, "activity_dt": None, "media_id": row.get("id")})
-                rollup["days"] += 1
+                rollup = game_rollups.setdefault(
+                    row.get("item_id"),
+                    {"minutes_total": 0, "days": 0, "activity_dt": None, "media_id": row.get("id")},
+                )
                 rollup["minutes_total"] += total_minutes
                 rollup["activity_dt"] = activity_dt
                 rollup["media_id"] = row.get("id")

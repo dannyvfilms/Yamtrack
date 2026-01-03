@@ -325,9 +325,6 @@
   .top-full {
     top: 100%;
   }
-  .top-px {
-    top: 1px;
-  }
   .right-0 {
     right: calc(var(--spacing) * 0);
   }
