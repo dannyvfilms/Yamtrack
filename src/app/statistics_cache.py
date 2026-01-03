@@ -1525,7 +1525,14 @@ def _build_media_charts_from_counts(day_counts, hour_counts, color, dataset_labe
 def _build_daily_hours_chart(day_minutes_by_type, day_list):
     labels = [day.isoformat() for day in day_list]
     datasets = []
-    for media_type, minutes_map in day_minutes_by_type.items():
+    ordered_types = list(stats.MEDIA_TYPE_HOURS_ORDER)
+    ordered_types.extend(
+        [media_type for media_type in day_minutes_by_type.keys() if media_type not in ordered_types]
+    )
+    for media_type in ordered_types:
+        minutes_map = day_minutes_by_type.get(media_type)
+        if not minutes_map:
+            continue
         totals = [minutes_map.get(label, 0) for label in labels]
         if not totals or sum(totals) == 0:
             continue

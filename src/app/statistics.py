@@ -29,6 +29,16 @@ from app.templatetags import app_tags
 
 logger = logging.getLogger(__name__)
 
+MEDIA_TYPE_HOURS_ORDER = [
+    MediaTypes.TV.value,
+    MediaTypes.MOVIE.value,
+    MediaTypes.GAME.value,
+    MediaTypes.PODCAST.value,
+    MediaTypes.BOARDGAME.value,
+    MediaTypes.ANIME.value,
+    MediaTypes.MUSIC.value,
+]
+
 
 def _infer_user_from_user_media(user_media):
     """Best-effort helper to derive user from user_media querysets."""
@@ -3526,7 +3536,14 @@ def get_daily_hours_by_media_type(user_media, start_date, end_date):
 
     # Build datasets for Chart.js: convert minutes -> hours (float)
     datasets = []
-    for media_type, date_map in per_type_minutes.items():
+    ordered_types = list(MEDIA_TYPE_HOURS_ORDER)
+    ordered_types.extend(
+        [media_type for media_type in per_type_minutes.keys() if media_type not in ordered_types]
+    )
+    for media_type in ordered_types:
+        date_map = per_type_minutes.get(media_type)
+        if not date_map:
+            continue
         # Skip media types that have zero total minutes
         total = sum(date_map.values())
         if total == 0:
