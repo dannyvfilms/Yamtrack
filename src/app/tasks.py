@@ -29,6 +29,8 @@ RUNTIME_BACKFILL_ITEMS_QUEUE_KEY = "runtime_backfill_items_queue"
 RUNTIME_BACKFILL_ITEMS_SCHEDULED_KEY = "runtime_backfill_items_scheduled"
 RUNTIME_BACKFILL_EPISODES_QUEUE_KEY = "runtime_backfill_episode_queue"
 RUNTIME_BACKFILL_EPISODES_SCHEDULED_KEY = "runtime_backfill_episode_scheduled"
+RUNTIME_BACKFILL_EPISODES_LOCK_PREFIX = "runtime_backfill_episode_lock:"
+RUNTIME_BACKFILL_EPISODES_LOCK_TTL = 60 * 5  # 5 minutes
 GENRE_BACKFILL_SOURCES = ("tmdb", "mal", "simkl", "igdb", "bgg")
 GENRE_BACKFILL_QUEUE_TTL = 60 * 60  # 1 hour
 GENRE_BACKFILL_ITEMS_QUEUE_KEY = "genre_backfill_items_queue"
@@ -243,6 +245,17 @@ def _runtime_items_queryset():
     return _apply_backfill_state_filters(queryset, MetadataBackfillField.RUNTIME)
 
 
+def _episode_runtime_items_queryset():
+    queryset = Item.objects.filter(
+        Q(runtime_minutes__isnull=True) | Q(runtime_minutes__lte=0),
+        media_type=MediaTypes.EPISODE.value,
+        source__in=RUNTIME_BACKFILL_SOURCES,
+    ).exclude(
+        runtime_minutes=999999,
+    )
+    return _apply_backfill_state_filters(queryset, MetadataBackfillField.RUNTIME)
+
+
 def _genre_items_queryset():
     queryset = Item.objects.filter(
         Q(genres__isnull=True) | Q(genres=[]),
@@ -300,6 +313,27 @@ def _normalize_season_keys(season_keys):
     return sorted(set(normalized))
 
 
+def _filter_episode_runtime_season_keys(season_keys):
+    normalized = _normalize_season_keys(season_keys)
+    if not normalized:
+        return []
+    season_filters = Q()
+    for media_id, source, season_number in normalized:
+        season_filters |= Q(
+            media_id=media_id,
+            source=source,
+            season_number=season_number,
+        )
+    if not season_filters:
+        return []
+    eligible = _episode_runtime_items_queryset().filter(season_filters).values_list(
+        "media_id",
+        "source",
+        "season_number",
+    )
+    return sorted(set(eligible))
+
+
 def enqueue_runtime_backfill_items(item_ids, countdown=10):
     normalized = _normalize_item_ids(item_ids)
     normalized = _filter_backfill_item_ids(normalized, MetadataBackfillField.RUNTIME)
@@ -318,11 +352,20 @@ def enqueue_runtime_backfill_items(item_ids, countdown=10):
 
 
 def enqueue_episode_runtime_backfill(season_keys, countdown=10):
-    normalized = _normalize_season_keys(season_keys)
+    normalized = _filter_episode_runtime_season_keys(season_keys)
     if not normalized:
         return 0
-    tokens = [ _encode_season_key(media_id, source, season_number) for media_id, source, season_number in normalized ]
+    tokens = []
     try:
+        for media_id, source, season_number in normalized:
+            token = _encode_season_key(media_id, source, season_number)
+            if not token:
+                continue
+            lock_key = f"{RUNTIME_BACKFILL_EPISODES_LOCK_PREFIX}{token}"
+            if cache.add(lock_key, True, timeout=RUNTIME_BACKFILL_EPISODES_LOCK_TTL):
+                tokens.append(token)
+        if not tokens:
+            return 0
         queue = cache.get(RUNTIME_BACKFILL_EPISODES_QUEUE_KEY) or []
         queue = list(set(queue).union(tokens))
         cache.set(RUNTIME_BACKFILL_EPISODES_QUEUE_KEY, queue, timeout=RUNTIME_BACKFILL_QUEUE_TTL)
@@ -330,7 +373,8 @@ def enqueue_episode_runtime_backfill(season_keys, countdown=10):
             populate_episode_runtime_queue.apply_async(countdown=countdown)
     except Exception as exc:  # pragma: no cover - cache unavailable
         logger.debug("Episode runtime backfill queue unavailable: %s", exc)
-        populate_episode_runtime_data.apply_async(kwargs={"season_keys": tokens}, countdown=countdown)
+        populate_episode_runtime_data.apply_async(kwargs={"season_keys": normalized}, countdown=countdown)
+        return len(normalized)
     return len(tokens)
 
 
@@ -1808,11 +1852,7 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
 
     normalized_seasons = _normalize_season_keys(season_keys)
 
-    episodes_needing_runtime = Item.objects.filter(
-        runtime_minutes__isnull=True,
-        media_type=MediaTypes.EPISODE.value,
-        source__in=RUNTIME_BACKFILL_SOURCES,
-    ).exclude(runtime_minutes=999999)
+    episodes_needing_runtime = _episode_runtime_items_queryset()
 
     if normalized_seasons:
         season_filters = Q()
@@ -1835,9 +1875,13 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
 
     seasons_to_process = set(normalized_seasons)
     if not seasons_to_process:
-        for episode in episodes_needing_runtime:
-            season_key = (episode.media_id, episode.source, episode.season_number)
-            seasons_to_process.add(season_key)
+        seasons_to_process = set(
+            episodes_needing_runtime.values_list(
+                "media_id",
+                "source",
+                "season_number",
+            ),
+        )
 
     for media_id, source, season_number in seasons_to_process:
         try:
@@ -1848,12 +1892,32 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
                 continue
             processed_seasons.add(season_key)
 
-            existing_episodes = Item.objects.filter(
-                media_id=media_id,
-                source=source,
-                media_type=MediaTypes.EPISODE.value,
-                season_number=season_number,
+            eligible_missing = list(
+                episodes_needing_runtime.filter(
+                    media_id=media_id,
+                    source=source,
+                    season_number=season_number,
+                ),
             )
+            missing_by_number = {
+                ep.episode_number: ep
+                for ep in eligible_missing
+                if ep.episode_number is not None
+            }
+
+            existing_episodes = list(
+                Item.objects.filter(
+                    media_id=media_id,
+                    source=source,
+                    media_type=MediaTypes.EPISODE.value,
+                    season_number=season_number,
+                )
+            )
+            existing_by_number = {
+                ep.episode_number: ep
+                for ep in existing_episodes
+                if ep.episode_number is not None
+            }
             episode_title_map = {
                 ep.episode_number: (ep.title, ep.image)
                 for ep in existing_episodes
@@ -1870,6 +1934,12 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
             if not season_metadata or f"season/{season_number}" not in season_metadata:
                 logger.warning("No season metadata for %s S%s", media_id, season_number)
                 error_count += 1
+                for episode_item in eligible_missing:
+                    _record_backfill_failure(
+                        episode_item,
+                        MetadataBackfillField.RUNTIME,
+                        "no season metadata",
+                    )
                 continue
 
             season_data = season_metadata[f"season/{season_number}"]
@@ -1877,36 +1947,124 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
             from app.providers import tmdb
 
             episodes_metadata = tmdb.process_episodes(season_data, [])
+            if not episodes_metadata:
+                error_count += 1
+                for episode_item in eligible_missing:
+                    _record_backfill_failure(
+                        episode_item,
+                        MetadataBackfillField.RUNTIME,
+                        "no episode metadata",
+                    )
+                continue
+
             for ep_data in episodes_metadata:
+                episode_number = ep_data.get("episode_number")
+                if episode_number is None:
+                    continue
                 runtime_value = ep_data.get("runtime")
                 if not runtime_value:
+                    missing_item = missing_by_number.pop(episode_number, None)
+                    if missing_item:
+                        _record_backfill_failure(
+                            missing_item,
+                            MetadataBackfillField.RUNTIME,
+                            "no runtime",
+                        )
                     continue
-                episode_number = ep_data.get("episode_number")
+
+                runtime_minutes = parse_runtime_to_minutes(runtime_value)
+                if runtime_minutes is None:
+                    missing_item = missing_by_number.pop(episode_number, None)
+                    if missing_item:
+                        _record_backfill_failure(
+                            missing_item,
+                            MetadataBackfillField.RUNTIME,
+                            "parse failure",
+                        )
+                    continue
+
+                existing_item = existing_by_number.get(episode_number)
                 existing_title, existing_image = episode_title_map.get(episode_number, ("", ""))
                 title = existing_title or ep_data.get("title") or f"Episode {episode_number}"
                 image = ep_data.get("image") or existing_image or settings.IMG_NONE
-                episode_item, created = Item.objects.update_or_create(
-                    media_id=media_id,
-                    source=source,
-                    media_type=MediaTypes.EPISODE.value,
-                    season_number=season_number,
-                    episode_number=episode_number,
-                    defaults={
-                        "title": title,
-                        "image": image,
-                        "runtime_minutes": parse_runtime_to_minutes(runtime_value),
-                    },
-                )
 
-                if episode_item.runtime_minutes:
-                    updated_count += 1
-                    updated_items.append(episode_item)
-                    logger.info(
-                        "Updated runtime for %s S%sE%s: %s minutes",
-                        episode_item.title,
-                        season_number,
-                        episode_number,
-                        episode_item.runtime_minutes,
+                if existing_item:
+                    update_fields = {}
+                    runtime_changed = False
+                    if existing_item.runtime_minutes != runtime_minutes:
+                        update_fields["runtime_minutes"] = runtime_minutes
+                        runtime_changed = True
+                    if not existing_item.title and title:
+                        update_fields["title"] = title
+                    if not existing_item.image and image:
+                        update_fields["image"] = image
+                    if update_fields:
+                        for field_name, value in update_fields.items():
+                            setattr(existing_item, field_name, value)
+                        existing_item.save(update_fields=list(update_fields.keys()))
+                        if runtime_changed:
+                            updated_count += 1
+                            updated_items.append(existing_item)
+                            _record_backfill_success(existing_item, MetadataBackfillField.RUNTIME)
+                            logger.info(
+                                "Updated runtime for %s S%sE%s: %s minutes",
+                                existing_item.title,
+                                season_number,
+                                episode_number,
+                                runtime_minutes,
+                            )
+                else:
+                    try:
+                        episode_item = Item.objects.create(
+                            media_id=media_id,
+                            source=source,
+                            media_type=MediaTypes.EPISODE.value,
+                            season_number=season_number,
+                            episode_number=episode_number,
+                            title=title,
+                            image=image,
+                            runtime_minutes=runtime_minutes,
+                        )
+                        updated_count += 1
+                        updated_items.append(episode_item)
+                        _record_backfill_success(episode_item, MetadataBackfillField.RUNTIME)
+                        logger.info(
+                            "Updated runtime for %s S%sE%s: %s minutes",
+                            episode_item.title,
+                            season_number,
+                            episode_number,
+                            runtime_minutes,
+                        )
+                    except IntegrityError:
+                        existing_item = Item.objects.filter(
+                            media_id=media_id,
+                            source=source,
+                            media_type=MediaTypes.EPISODE.value,
+                            season_number=season_number,
+                            episode_number=episode_number,
+                        ).first()
+                        if existing_item and existing_item.runtime_minutes != runtime_minutes:
+                            existing_item.runtime_minutes = runtime_minutes
+                            existing_item.save(update_fields=["runtime_minutes"])
+                            updated_count += 1
+                            updated_items.append(existing_item)
+                            _record_backfill_success(existing_item, MetadataBackfillField.RUNTIME)
+                            logger.info(
+                                "Updated runtime for %s S%sE%s: %s minutes",
+                                existing_item.title,
+                                season_number,
+                                episode_number,
+                                runtime_minutes,
+                            )
+
+                missing_by_number.pop(episode_number, None)
+
+            if missing_by_number:
+                for episode_item in missing_by_number.values():
+                    _record_backfill_failure(
+                        episode_item,
+                        MetadataBackfillField.RUNTIME,
+                        "missing episode metadata",
                     )
 
             time.sleep(0.1)
