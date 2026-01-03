@@ -314,10 +314,10 @@
             <div class="min-w-0">
               <h3 class="text-xs sm:text-sm font-medium text-gray-400">First Play</h3>
               {% if highlights.first_play %}
-                <p class="text-xl sm:text-2xl font-bold text-white truncate">{{ highlights.first_play.title }}</p>
+                <p class="text-base sm:text-lg lg:text-xl font-bold text-white line-clamp-1 leading-snug">{{ highlights.first_play.title }}</p>
                 <p class="text-xs sm:text-sm text-gray-500">Played {{ highlights.first_play.played_at|user_date_format:user }}</p>
               {% else %}
-                <p class="text-xl sm:text-2xl font-bold text-gray-500">--</p>
+                <p class="text-base sm:text-lg lg:text-xl font-bold text-gray-500">--</p>
               {% endif %}
             </div>
           {% if highlights.first_play %}
@@ -343,10 +343,10 @@
             <div class="min-w-0">
               <h3 class="text-xs sm:text-sm font-medium text-gray-400">Last Play</h3>
               {% if highlights.last_play %}
-                <p class="text-xl sm:text-2xl font-bold text-white truncate">{{ highlights.last_play.title }}</p>
+                <p class="text-base sm:text-lg lg:text-xl font-bold text-white line-clamp-1 leading-snug">{{ highlights.last_play.title }}</p>
                 <p class="text-xs sm:text-sm text-gray-500">Played {{ highlights.last_play.played_at|user_date_format:user }}</p>
               {% else %}
-                <p class="text-xl sm:text-2xl font-bold text-gray-500">--</p>
+                <p class="text-base sm:text-lg lg:text-xl font-bold text-gray-500">--</p>
               {% endif %}
             </div>
           {% if highlights.last_play %}
@@ -372,10 +372,10 @@
             <div class="min-w-0">
               <h3 class="text-xs sm:text-sm font-medium text-gray-400">Today in History</h3>
               {% if highlights.today_in_history %}
-                <p class="text-xl sm:text-2xl font-bold text-white truncate">{{ highlights.today_in_history.title }}</p>
+                <p class="text-base sm:text-lg lg:text-xl font-bold text-white line-clamp-1 leading-snug">{{ highlights.today_in_history.title }}</p>
                 <p class="text-xs sm:text-sm text-gray-500">Released in {{ highlights.today_in_history_year }}</p>
               {% else %}
-                <p class="text-xl sm:text-2xl font-bold text-gray-500">--</p>
+                <p class="text-base sm:text-lg lg:text-xl font-bold text-gray-500">--</p>
               {% endif %}
             </div>
           {% if highlights.today_in_history %}
@@ -401,10 +401,10 @@
             <div class="min-w-0">
               <h3 class="text-xs sm:text-sm font-medium text-gray-400">Today in Your History</h3>
               {% if highlights.today_in_user_history %}
-                <p class="text-xl sm:text-2xl font-bold text-white truncate">{{ highlights.today_in_user_history.title }}</p>
+                <p class="text-base sm:text-lg lg:text-xl font-bold text-white line-clamp-1 leading-snug">{{ highlights.today_in_user_history.title }}</p>
                 <p class="text-xs sm:text-sm text-gray-500">Played in {{ highlights.today_in_user_history_year }}</p>
               {% else %}
-                <p class="text-xl sm:text-2xl font-bold text-gray-500">--</p>
+                <p class="text-base sm:text-lg lg:text-xl font-bold text-gray-500">--</p>
               {% endif %}
             </div>
           {% if highlights.today_in_user_history %}
