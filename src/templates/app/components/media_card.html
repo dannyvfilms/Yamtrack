@@ -172,26 +172,6 @@
       <p class="text-xs text-gray-400 mt-1">{{ duration }}</p>
     {% endif %}
 
-    {# Enhanced aggregated data display for duplicates; safe to leave empty if fields aren't present #}
-    {% if media.repeats and media.repeats != 1 %}
-      <div class="mt-2 space-y-1 text-xs text-gray-400">
-        {% if media.aggregated_progress and item.media_type != MediaTypes.MOVIE.value %}
-          <div class="flex items-center justify-between">
-            <span>Total Progress:</span>
-            <span class="text-indigo-400 font-medium">
-              {{ media.formatted_aggregated_progress }}{% if media.max_progress %} / {{ media.max_progress }}{% endif %}
-            </span>
-          </div>
-        {% endif %}
-
-        {% if media.aggregated_score %}
-          <div class="flex items-center justify-between">
-            <span>Rating:</span>
-            <span class="text-yellow-400 font-medium">{{ media.aggregated_score }}</span>
-          </div>
-        {% endif %}
-      </div>
-    {% endif %}
   </div>
 
   {% if item.media_type == MediaTypes.EPISODE.value %}

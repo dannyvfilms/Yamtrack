@@ -161,6 +161,56 @@ def list_detail(request, list_id):
     if params["media_type"] != "all":
         items = items.filter(media_type=params["media_type"])
 
+    def _attach_media_with_aggregation(item_list):
+        media_by_item_id = {}
+        media_types_in_items = {item.media_type for item in item_list}
+        media_manager = MediaManager()
+
+        for media_type in media_types_in_items:
+            model = apps.get_model("app", media_type)
+            item_ids = [item.id for item in item_list if item.media_type == media_type]
+            if not item_ids:
+                continue
+
+            if media_type == MediaTypes.EPISODE.value:
+                filter_kwargs = {
+                    "item_id__in": item_ids,
+                    "related_season__user": media_user,
+                }
+            else:
+                filter_kwargs = {
+                    "item_id__in": item_ids,
+                    "user": media_user,
+                }
+
+            queryset = model.objects.filter(**filter_kwargs).select_related("item")
+            queryset = media_manager._apply_prefetch_related(queryset, media_type)
+            media_manager.annotate_max_progress(queryset, media_type)
+
+            entries_by_item = {}
+            for entry in queryset:
+                entries_by_item.setdefault(entry.item_id, []).append(entry)
+
+            for item_id, entries in entries_by_item.items():
+                entries.sort(key=lambda e: e.created_at, reverse=True)
+                display_media = entries[0]
+                if len(entries) > 1:
+                    media_manager._aggregate_item_data(display_media, entries)
+                media_by_item_id[item_id] = display_media
+
+        for item in item_list:
+            item.media = media_by_item_id.get(item.id)
+
+    def _rating_value(media):
+        if not media:
+            return -1
+        aggregated_score = getattr(media, "aggregated_score", None)
+        if aggregated_score is not None:
+            return aggregated_score
+        if media.score is not None:
+            return media.score
+        return -1
+
     # Apply sorting
     sort_mapping = {
         "date_added": ["-customlistitem__date_added"],
@@ -177,45 +227,13 @@ def list_detail(request, list_id):
     if params["sort_by"] == "rating":
         # Get all items without pagination first
         all_items = items.order_by(*sort_mapping.get(params["sort_by"], ["-customlistitem__date_added"]))
-
-        # Get all media objects for rating sort
-        media_by_item_id = {}
-        media_types_in_all_items = {item.media_type for item in all_items}
-        media_manager = MediaManager()
-
-        for media_type in media_types_in_all_items:
-            model = apps.get_model("app", media_type)
-
-            if media_type == MediaTypes.EPISODE.value:
-                filter_kwargs = {
-                    "item_id__in": [item.id for item in all_items],
-                    "related_season__user": media_user,
-                }
-            else:
-                filter_kwargs = {
-                    "item_id__in": [item.id for item in all_items],
-                    "user": media_user,
-                }
-
-            queryset = model.objects.filter(**filter_kwargs).select_related("item")
-            queryset = media_manager._apply_prefetch_related(queryset, media_type)
-            media_manager.annotate_max_progress(queryset, media_type)
-
-            # Map media objects by item_id
-            for entry in queryset:
-                media_by_item_id.setdefault(entry.item_id, entry)
-
-        # Annotate all items with media objects
-        for item in all_items:
-            item.media = media_by_item_id.get(item.id)
+        _attach_media_with_aggregation(all_items)
 
         # Sort all items by rating (score) in descending order,
         # with unrated items at the end
         all_items = sorted(
             all_items,
-            key=lambda item: (
-                item.media.score if item.media and item.media.score is not None else -1
-            ),
+            key=lambda item: _rating_value(item.media),
             reverse=True,
         )
 
@@ -232,36 +250,7 @@ def list_detail(request, list_id):
         paginator = Paginator(items, 16)
         items_page = paginator.get_page(params["page"])
 
-        media_by_item_id = {}
-        media_types_in_page = {item.media_type for item in items_page}
-
-        media_manager = MediaManager()
-
-        for media_type in media_types_in_page:
-            model = apps.get_model("app", media_type)
-
-            if media_type == MediaTypes.EPISODE.value:
-                filter_kwargs = {
-                    "item_id__in": [item.id for item in items_page],
-                    "related_season__user": media_user,
-                }
-            else:
-                filter_kwargs = {
-                    "item_id__in": [item.id for item in items_page],
-                    "user": media_user,
-                }
-
-            queryset = model.objects.filter(**filter_kwargs).select_related("item")
-            queryset = media_manager._apply_prefetch_related(queryset, media_type)
-            media_manager.annotate_max_progress(queryset, media_type)
-
-            # Map media objects by item_id
-            for entry in queryset:
-                media_by_item_id.setdefault(entry.item_id, entry)
-
-        # Annotate items with media objects
-        for item in items_page:
-            item.media = media_by_item_id.get(item.id)
+        _attach_media_with_aggregation(items_page)
 
     # Base context for both full and partial responses
     context = {
