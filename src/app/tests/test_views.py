@@ -121,6 +121,21 @@ class HomeViewTests(TestCase):
             end_date=timezone.now() - timezone.timedelta(days=1),
             score=None,
         )
+        in_progress_item = Item.objects.create(
+            media_id="in-progress-movie",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="In Progress Movie",
+            image="http://example.com/image.jpg",
+        )
+        Movie.objects.create(
+            item=in_progress_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=1,
+            end_date=timezone.now() - timezone.timedelta(days=1),
+            score=None,
+        )
 
         response = self.client.get(reverse("home"))
 
@@ -128,6 +143,9 @@ class HomeViewTests(TestCase):
         self.assertIsNotNone(recent_section)
         self.assertTrue(
             any(media.item.id == movie_item.id for media in recent_section["items"]),
+        )
+        self.assertFalse(
+            any(media.item.id == in_progress_item.id for media in recent_section["items"]),
         )
 
     def test_home_view_with_sort(self):

@@ -807,9 +807,12 @@ class MediaManager(models.Manager):
             ).values("item_id")
 
             queryset = (
-                model.objects.filter(user=user.id, score__isnull=True)
+                model.objects.filter(
+                    user=user.id,
+                    score__isnull=True,
+                    status=Status.COMPLETED.value,
+                )
                 .exclude(item_id__in=rated_item_ids)
-                .exclude(status=Status.PLANNING.value)
             )
 
             if media_type == MediaTypes.SEASON.value:
