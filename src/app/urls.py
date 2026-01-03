@@ -11,14 +11,14 @@ urlpatterns = [
     path("medialist/<media_type:media_type>", views.media_list, name="medialist"),
     path("search", views.media_search, name="search"),
     path(
-        "details/<source:source>/<media_type:media_type>/<str:media_id>/<str:title>",
-        views.media_details,
-        name="media_details",
-    ),
-    path(
         "details/<source:source>/tv/<str:media_id>/<str:title>/season/<int:season_number>",
         views.season_details,
         name="season_details",
+    ),
+    path(
+        "details/<source:source>/<media_type:media_type>/<path:media_id>/<str:title>",
+        views.media_details,
+        name="media_details",
     ),
     path(
         "update-score/<media_type:media_type>/<int:instance_id>",
@@ -26,22 +26,22 @@ urlpatterns = [
         name="update_media_score",
     ),
     path(
-        "details/sync/<source:source>/<media_type:media_type>/<str:media_id>",
+        "details/sync/<source:source>/<media_type:media_type>/<path:media_id>/<int:season_number>",
         views.sync_metadata,
         name="sync_metadata",
     ),
     path(
-        "details/sync/<source:source>/<media_type:media_type>/<str:media_id>/<int:season_number>",
+        "details/sync/<source:source>/<media_type:media_type>/<path:media_id>",
         views.sync_metadata,
         name="sync_metadata",
     ),
     path(
-        "track_modal/<source:source>/<media_type:media_type>/<str:media_id>",
+        "track_modal/<source:source>/<media_type:media_type>/<path:media_id>/<int:season_number>",
         views.track_modal,
         name="track_modal",
     ),
     path(
-        "track_modal/<source:source>/<media_type:media_type>/<str:media_id>/<int:season_number>",
+        "track_modal/<source:source>/<media_type:media_type>/<path:media_id>",
         views.track_modal,
         name="track_modal",
     ),
@@ -54,17 +54,17 @@ urlpatterns = [
     path("media_delete", views.media_delete, name="media_delete"),
     path("episode_save", views.episode_save, name="episode_save"),
     path(
-        "history_modal/<source:source>/<media_type:media_type>/<str:media_id>",
+        "history_modal/<source:source>/<media_type:media_type>/<path:media_id>/<int:season_number>/<int:episode_number>",
         views.history_modal,
         name="history_modal",
     ),
     path(
-        "history_modal/<source:source>/<media_type:media_type>/<str:media_id>/<int:season_number>",
+        "history_modal/<source:source>/<media_type:media_type>/<path:media_id>/<int:season_number>",
         views.history_modal,
         name="history_modal",
     ),
     path(
-        "history_modal/<source:source>/<media_type:media_type>/<str:media_id>/<int:season_number>/<int:episode_number>",
+        "history_modal/<source:source>/<media_type:media_type>/<path:media_id>",
         views.history_modal,
         name="history_modal",
     ),

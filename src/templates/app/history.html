@@ -244,7 +244,17 @@
               <span class="text-xl text-white">{{ day.date_display }}</span>
             </div>
             <div class="text-right">
-              <p class="text-sm text-gray-400">{{ day.total_runtime_display }}</p>
+              {% if history_mode == "release" %}
+                <p class="text-sm text-gray-400">
+                  {% if day.release_count is not None %}
+                    {{ day.release_count }} release{{ day.release_count|pluralize }}
+                  {% else %}
+                    {{ day.entries|length }} release{{ day.entries|length|pluralize }}
+                  {% endif %}
+                </p>
+              {% else %}
+                <p class="text-sm text-gray-400">{{ day.total_runtime_display }}</p>
+              {% endif %}
             </div>
           </div>
 
@@ -294,6 +304,7 @@
                          class="absolute inset-0"></a>
 
                       <div class="relative flex items-center justify-center space-x-2.5">
+                        {% if history_mode != "release" %}
                         {# History Edit Button #}
                         <button class="p-2.5 bg-indigo-600 text-white rounded-full hover:bg-indigo-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(99,102,241,0.5)] transition-all duration-200 cursor-pointer"
                                 title="Edit history"
@@ -322,6 +333,7 @@
                            href="{% url 'history' %}?{% if entry.media_type == MediaTypes.MUSIC.value and entry.album %}album={{ entry.album.id }}{% elif entry.media_type == MediaTypes.PODCAST.value and entry.show %}media_type={{ MediaTypes.PODCAST.value }}&podcast_show={{ entry.show.id }}{% elif entry.media_type == MediaTypes.EPISODE.value %}media_type={{ MediaTypes.TV.value }}&media_id={{ entry.item.media_id|urlencode }}&source={{ entry.item.source|urlencode }}{% if entry.item.season_number %}&season_number={{ entry.item.season_number }}{% endif %}{% else %}media_type={{ entry.media_type }}&media_id={{ entry.item.media_id|urlencode }}&source={{ entry.item.source|urlencode }}{% endif %}{% if entry.media_type == MediaTypes.GAME.value or entry.media_type == MediaTypes.BOARDGAME.value %}&logging_style=sessions{% endif %}">
                           {% include "app/icons/history.svg" with classes="w-4 h-4" %}
                         </a>
+                        {% endif %}
                       </div>
                     </div>
                   {% endif %}
@@ -330,41 +342,50 @@
                 <div class="p-3 space-y-1.5 truncate">
                   <div class="flex items-center gap-2 text-xs text-gray-400">
                     <div class="flex items-center gap-1">
-                      {% if entry.progress_display and entry.media_type == MediaTypes.GAME.value or entry.progress_display and entry.media_type == MediaTypes.BOARDGAME.value %}
-                        <span class="font-semibold text-indigo-400">{{ entry.progress_display }}</span>
-                      {% elif entry.media_type == MediaTypes.MOVIE.value %}
-                        <span class="font-semibold text-indigo-400">
-                          {{ entry.play_count|default:1 }} play{{ entry.play_count|default:1|pluralize }}
-                        </span>
-                      {% elif entry.media_type == MediaTypes.MUSIC.value %}
-                        <span class="font-semibold text-indigo-400">
-                          {{ entry.play_count|default:1 }} play{{ entry.play_count|default:1|pluralize }}
-                        </span>
-                      {% elif entry.media_type == MediaTypes.PODCAST.value %}
-                        <span class="font-semibold text-indigo-400">
-                          {{ entry.play_count|default:1 }} play{{ entry.play_count|default:1|pluralize }}
-                        </span>
-                      {% elif entry.episode_label %}
-                        <span class="font-semibold text-indigo-400">{{ entry.episode_label }}</span>
-                      {% elif entry.episode_code %}
-                        <span class="font-semibold text-indigo-400">{{ entry.episode_code }}</span>
+                      {% if history_mode == "release" %}
+                        <span class="font-semibold text-indigo-400">Released</span>
+                      {% else %}
+                        {% if entry.progress_display and entry.media_type == MediaTypes.GAME.value or entry.progress_display and entry.media_type == MediaTypes.BOARDGAME.value %}
+                          <span class="font-semibold text-indigo-400">{{ entry.progress_display }}</span>
+                        {% elif entry.media_type == MediaTypes.MOVIE.value %}
+                          <span class="font-semibold text-indigo-400">
+                            {{ entry.play_count|default:1 }} play{{ entry.play_count|default:1|pluralize }}
+                          </span>
+                        {% elif entry.media_type == MediaTypes.MUSIC.value %}
+                          <span class="font-semibold text-indigo-400">
+                            {{ entry.play_count|default:1 }} play{{ entry.play_count|default:1|pluralize }}
+                          </span>
+                        {% elif entry.media_type == MediaTypes.PODCAST.value %}
+                          <span class="font-semibold text-indigo-400">
+                            {{ entry.play_count|default:1 }} play{{ entry.play_count|default:1|pluralize }}
+                          </span>
+                        {% elif entry.episode_label %}
+                          <span class="font-semibold text-indigo-400">{{ entry.episode_label }}</span>
+                        {% elif entry.episode_code %}
+                          <span class="font-semibold text-indigo-400">{{ entry.episode_code }}</span>
+                        {% endif %}
                       {% endif %}
                     </div>
                     <span class="text-xs text-white truncate whitespace-nowrap block max-w-full">{{ entry.display_title|default:entry.title }}</span>
                   </div>
                   <p class="text-xs text-gray-400">
-                    {% if entry.media_type == MediaTypes.GAME.value or entry.media_type == MediaTypes.BOARDGAME.value %}
-                      {{ entry.date_range_display }}
-                    {% elif entry.media_type == MediaTypes.MUSIC.value %}
-                      {{ entry.time_range_display }}
+                    {% if history_mode == "release" %}
+                      <span class="hidden sm:inline">{{ entry.played_at_local|user_date_format:user }}</span>
+                      <span class="inline sm:hidden">{{ entry.played_at_local|user_date_format:user }}</span>
                     {% else %}
-                      <span class="hidden sm:inline">{{ entry.played_at_local|user_datetime_format:user }}</span>
-                      <span class="inline sm:hidden">{{ entry.played_at_local|user_time_format:user }}</span>
+                      {% if entry.media_type == MediaTypes.GAME.value or entry.media_type == MediaTypes.BOARDGAME.value %}
+                        {{ entry.date_range_display }}
+                      {% elif entry.media_type == MediaTypes.MUSIC.value %}
+                        {{ entry.time_range_display }}
+                      {% else %}
+                        <span class="hidden sm:inline">{{ entry.played_at_local|user_datetime_format:user }}</span>
+                        <span class="inline sm:hidden">{{ entry.played_at_local|user_time_format:user }}</span>
+                      {% endif %}
                     {% endif %}
                   </p>
                 </div>
 
-                {% if entry.item and entry.item.media_type %}
+                {% if entry.item and entry.item.media_type and history_mode != "release" %}
                   {# History Modal #}
                   <div x-show="historyOpen"
                        @keydown.escape.window="historyOpen = false"

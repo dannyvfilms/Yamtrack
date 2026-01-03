@@ -5,6 +5,7 @@ import heapq
 import itertools
 import logging
 import re
+import random
 import time
 from types import SimpleNamespace
 from collections import Counter, defaultdict
@@ -16,11 +17,13 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.db.models import Max, Min, Q
+from django.db.models.functions import ExtractDay, ExtractMonth
 from django.db.models.functions import TruncDate
 from django.utils import timezone
 
 from app import config, helpers
 from app import statistics as stats
+from app import history_cache
 from app.models import MediaTypes, Status
 from app.templatetags import app_tags
 
@@ -438,7 +441,240 @@ def _get_empty_statistics_data():
             "top_daily_average_games": [],
         },
         "daily_hours_by_media_type": {},
+        "history_highlights": {
+            "first_play": None,
+            "last_play": None,
+            "today_in_history": None,
+            "today_in_user_history": None,
+            "today_in_history_year": None,
+            "today_in_user_history_year": None,
+            "today_month": None,
+            "today_day": None,
+        },
     }
+
+
+def _history_entry_card_payload(entry):
+    if not entry:
+        return None
+    item = entry.get("item")
+    if not item:
+        return None
+    played_at = entry.get("played_at_local")
+    return {
+        "entry": entry,
+        "item": item,
+        "media_type": entry.get("media_type") or getattr(item, "media_type", None),
+        "title": entry.get("display_title") or entry.get("title") or getattr(item, "title", ""),
+        "image": entry.get("poster") or getattr(item, "image", ""),
+        "played_at": played_at,
+    }
+
+
+def _select_history_entry_for_day(day_payload, pick_earliest=False, pick_latest=False):
+    if not day_payload:
+        return None
+    entries = day_payload.get("entries") or []
+    if not entries:
+        return None
+    if pick_earliest:
+        entry = entries[-1]
+    elif pick_latest:
+        entry = entries[0]
+    else:
+        entry = random.choice(entries)
+    return _history_entry_card_payload(entry)
+
+
+def _get_today_history_entries(user):
+    today = timezone.localdate()
+    day_keys = history_cache.build_history_index(user)
+    matching_dates = []
+    for day_key in day_keys:
+        try:
+            day_date = date.fromisoformat(day_key)
+        except ValueError:
+            continue
+        if day_date.month == today.month and day_date.day == today.day:
+            matching_dates.append(day_date)
+
+    if not matching_dates:
+        return None, None
+
+    available_years = sorted({day_date.year for day_date in matching_dates})
+    selected_year = random.choice(available_years)
+    year_dates = [day_date for day_date in matching_dates if day_date.year == selected_year]
+    selected_date = random.choice(year_dates) if year_dates else None
+    if not selected_date:
+        return None, None
+
+    day_payload = history_cache.build_history_day(user, selected_date)
+    return _select_history_entry_for_day(day_payload), selected_year
+
+
+def _get_today_release_entry(user):
+    today = timezone.localdate()
+    active_types = list(getattr(user, "get_active_media_types", lambda: [])())
+    if not active_types:
+        active_types = list(MediaTypes.values)
+    include_podcasts = MediaTypes.PODCAST.value in active_types
+    active_types = [
+        media_type
+        for media_type in active_types
+        if media_type not in (MediaTypes.EPISODE.value, MediaTypes.PODCAST.value)
+    ]
+
+    items_by_year = defaultdict(list)
+    seen_item_ids = set()
+
+    for media_type in active_types:
+        model = apps.get_model("app", media_type)
+        qs = (
+            model.objects.filter(user=user, item__release_datetime__isnull=False)
+            .select_related("item")
+            .annotate(
+                release_month=ExtractMonth("item__release_datetime"),
+                release_day=ExtractDay("item__release_datetime"),
+            )
+            .filter(release_month=today.month, release_day=today.day)
+        )
+        for media in qs:
+            item = getattr(media, "item", None)
+            if not item or item.id in seen_item_ids:
+                continue
+            seen_item_ids.add(item.id)
+            release_dt = getattr(item, "release_datetime", None)
+            if not release_dt:
+                continue
+            localized = stats._localize_datetime(release_dt)
+            if not localized:
+                continue
+            release_date = localized.date()
+            items_by_year[release_date.year].append({
+                "item": item,
+                "media_type": item.media_type,
+                "title": item.title,
+                "image": item.image,
+                "release_date": release_date,
+            })
+
+    Episode = apps.get_model("app", "Episode")
+    episode_qs = (
+        Episode.objects.filter(
+            related_season__user=user,
+            item__release_datetime__isnull=False,
+        )
+        .select_related(
+            "item",
+            "related_season__item",
+            "related_season__related_tv__item",
+        )
+        .annotate(
+            release_month=ExtractMonth("item__release_datetime"),
+            release_day=ExtractDay("item__release_datetime"),
+        )
+        .filter(release_month=today.month, release_day=today.day)
+    )
+    for episode in episode_qs:
+        episode_item = getattr(episode, "item", None)
+        if not episode_item or episode_item.id in seen_item_ids:
+            continue
+        seen_item_ids.add(episode_item.id)
+        release_dt = getattr(episode_item, "release_datetime", None)
+        if not release_dt:
+            continue
+        localized = stats._localize_datetime(release_dt)
+        if not localized:
+            continue
+        release_date = localized.date()
+        display_title = history_cache._get_episode_display_title(episode)
+        items_by_year[release_date.year].append({
+            "item": episode_item,
+            "media_type": MediaTypes.EPISODE.value,
+            "title": display_title or episode_item.title,
+            "image": history_cache._get_episode_poster(episode),
+            "release_date": release_date,
+        })
+
+    if include_podcasts:
+        Podcast = apps.get_model("app", "Podcast")
+        podcast_base = Podcast.objects.filter(user=user).select_related("item", "episode", "show")
+        podcast_qs = (
+            podcast_base.filter(episode__published__isnull=False)
+            .annotate(
+                release_month=ExtractMonth("episode__published"),
+                release_day=ExtractDay("episode__published"),
+            )
+            .filter(release_month=today.month, release_day=today.day)
+        )
+        for podcast in podcast_qs:
+            item = getattr(podcast, "item", None)
+            if not item or item.id in seen_item_ids:
+                continue
+            release_dt = getattr(getattr(podcast, "episode", None), "published", None)
+            localized = stats._localize_datetime(release_dt) if release_dt else None
+            if not localized:
+                continue
+            release_date = localized.date()
+            show = None
+            if getattr(podcast, "episode", None) and podcast.episode.show:
+                show = podcast.episode.show
+            if not show:
+                show = podcast.show
+            image = (show.image if show and show.image else None) or item.image
+            title = item.title or getattr(getattr(podcast, "episode", None), "title", "")
+            seen_item_ids.add(item.id)
+            items_by_year[release_date.year].append({
+                "item": item,
+                "media_type": MediaTypes.PODCAST.value,
+                "title": title,
+                "image": image,
+                "release_date": release_date,
+            })
+
+        podcast_fallback_qs = (
+            podcast_base.filter(
+                episode__published__isnull=True,
+                item__release_datetime__isnull=False,
+            )
+            .annotate(
+                release_month=ExtractMonth("item__release_datetime"),
+                release_day=ExtractDay("item__release_datetime"),
+            )
+            .filter(release_month=today.month, release_day=today.day)
+        )
+        for podcast in podcast_fallback_qs:
+            item = getattr(podcast, "item", None)
+            if not item or item.id in seen_item_ids:
+                continue
+            release_dt = getattr(item, "release_datetime", None)
+            localized = stats._localize_datetime(release_dt) if release_dt else None
+            if not localized:
+                continue
+            release_date = localized.date()
+            show = None
+            if getattr(podcast, "episode", None) and podcast.episode.show:
+                show = podcast.episode.show
+            if not show:
+                show = podcast.show
+            image = (show.image if show and show.image else None) or item.image
+            title = item.title or getattr(getattr(podcast, "episode", None), "title", "")
+            seen_item_ids.add(item.id)
+            items_by_year[release_date.year].append({
+                "item": item,
+                "media_type": MediaTypes.PODCAST.value,
+                "title": title,
+                "image": image,
+                "release_date": release_date,
+            })
+
+    if not items_by_year:
+        return None, None
+
+    available_years = sorted(items_by_year.keys())
+    selected_year = random.choice(available_years)
+    selected_item = random.choice(items_by_year[selected_year]) if items_by_year[selected_year] else None
+    return selected_item, selected_year
 
 
 def _day_bounds(day_value):
@@ -2216,6 +2452,28 @@ def _aggregate_statistics_from_days(user, day_list, start_date, end_date, build_
         "top_daily_average_games": top_daily_avg_payload,
     }
 
+    first_play = None
+    last_play = None
+    if day_list:
+        first_day_payload = history_cache.build_history_day(user, day_list[0])
+        last_day_payload = history_cache.build_history_day(user, day_list[-1])
+        first_play = _select_history_entry_for_day(first_day_payload, pick_earliest=True)
+        last_play = _select_history_entry_for_day(last_day_payload, pick_latest=True)
+
+    today_in_user_history, today_in_user_history_year = _get_today_history_entries(user)
+    today_in_history, today_in_history_year = _get_today_release_entry(user)
+    today = timezone.localdate()
+    history_highlights = {
+        "first_play": first_play,
+        "last_play": last_play,
+        "today_in_history": today_in_history,
+        "today_in_history_year": today_in_history_year,
+        "today_in_user_history": today_in_user_history,
+        "today_in_user_history_year": today_in_user_history_year,
+        "today_month": today.month,
+        "today_day": today.day,
+    }
+
     return {
         "media_count": media_count,
         "activity_data": activity_data,
@@ -2233,6 +2491,7 @@ def _aggregate_statistics_from_days(user, day_list, start_date, end_date, build_
         "podcast_consumption": podcast_consumption,
         "game_consumption": game_consumption,
         "daily_hours_by_media_type": daily_hours_by_media_type,
+        "history_highlights": history_highlights,
     }
 
 

@@ -308,7 +308,7 @@ def media_view_url(view_name, media):
     kwargs = {
         "source": media["source"] if is_dict else media.source,
         "media_type": media["media_type"] if is_dict else media.media_type,
-        "media_id": media["media_id"] if is_dict else media.media_id,
+        "media_id": str(media["media_id"] if is_dict else media.media_id),
     }
 
     # Handle season/episode numbers if they exist

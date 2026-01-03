@@ -294,6 +294,126 @@
     </div>
 
     <div class="space-y-8">
+      {% with highlights=history_highlights %}
+      <div class="grid grid-cols-2 gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-2 sm:mb-4">
+        <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 flex items-center min-w-0">
+          {% if highlights.first_play %}
+          <a href="{{ highlights.first_play.item|media_url }}" class="flex items-center min-w-0 w-full">
+          {% endif %}
+            {% if highlights.first_play and highlights.first_play.image %}
+            <div class="bg-indigo-600/20 w-11 h-11 sm:w-16 sm:h-16 rounded-full mr-4 overflow-hidden flex items-center justify-center shrink-0">
+              <img src="{{ highlights.first_play.image }}" alt="{{ highlights.first_play.title }}" class="w-full h-full rounded-full object-cover">
+            </div>
+            {% else %}
+            <div class="bg-indigo-600/20 p-3 sm:p-4 rounded-full mr-4 overflow-hidden flex items-center justify-center shrink-0">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 sm:w-8 sm:h-8 text-indigo-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2z" />
+                </svg>
+            </div>
+            {% endif %}
+            <div class="min-w-0">
+              <h3 class="text-xs sm:text-sm font-medium text-gray-400">First Play</h3>
+              {% if highlights.first_play %}
+                <p class="text-xl sm:text-2xl font-bold text-white truncate">{{ highlights.first_play.title }}</p>
+                <p class="text-xs sm:text-sm text-gray-500">Played {{ highlights.first_play.played_at|user_date_format:user }}</p>
+              {% else %}
+                <p class="text-xl sm:text-2xl font-bold text-gray-500">--</p>
+              {% endif %}
+            </div>
+          {% if highlights.first_play %}
+          </a>
+          {% endif %}
+        </div>
+
+        <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 flex items-center min-w-0">
+          {% if highlights.last_play %}
+          <a href="{{ highlights.last_play.item|media_url }}" class="flex items-center min-w-0 w-full">
+          {% endif %}
+            {% if highlights.last_play and highlights.last_play.image %}
+            <div class="bg-emerald-600/20 w-11 h-11 sm:w-16 sm:h-16 rounded-full mr-4 overflow-hidden flex items-center justify-center shrink-0">
+              <img src="{{ highlights.last_play.image }}" alt="{{ highlights.last_play.title }}" class="w-full h-full rounded-full object-cover">
+            </div>
+            {% else %}
+            <div class="bg-emerald-600/20 p-3 sm:p-4 rounded-full mr-4 overflow-hidden flex items-center justify-center shrink-0">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 sm:w-8 sm:h-8 text-emerald-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6l4 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
+                </svg>
+            </div>
+            {% endif %}
+            <div class="min-w-0">
+              <h3 class="text-xs sm:text-sm font-medium text-gray-400">Last Play</h3>
+              {% if highlights.last_play %}
+                <p class="text-xl sm:text-2xl font-bold text-white truncate">{{ highlights.last_play.title }}</p>
+                <p class="text-xs sm:text-sm text-gray-500">Played {{ highlights.last_play.played_at|user_date_format:user }}</p>
+              {% else %}
+                <p class="text-xl sm:text-2xl font-bold text-gray-500">--</p>
+              {% endif %}
+            </div>
+          {% if highlights.last_play %}
+          </a>
+          {% endif %}
+        </div>
+
+        <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 flex items-center min-w-0">
+          {% if highlights.today_in_history %}
+          <a href="{% url 'history' %}?history_mode=release&month={{ highlights.today_month }}&day={{ highlights.today_day }}" class="flex items-center min-w-0 w-full">
+          {% endif %}
+            {% if highlights.today_in_history and highlights.today_in_history.image %}
+            <div class="bg-amber-600/20 w-11 h-11 sm:w-16 sm:h-16 rounded-full mr-4 overflow-hidden flex items-center justify-center shrink-0">
+              <img src="{{ highlights.today_in_history.image }}" alt="{{ highlights.today_in_history.title }}" class="w-full h-full rounded-full object-cover">
+            </div>
+            {% else %}
+            <div class="bg-amber-600/20 p-3 sm:p-4 rounded-full mr-4 overflow-hidden flex items-center justify-center shrink-0">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 sm:w-8 sm:h-8 text-amber-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" />
+                </svg>
+            </div>
+            {% endif %}
+            <div class="min-w-0">
+              <h3 class="text-xs sm:text-sm font-medium text-gray-400">Today in History</h3>
+              {% if highlights.today_in_history %}
+                <p class="text-xl sm:text-2xl font-bold text-white truncate">{{ highlights.today_in_history.title }}</p>
+                <p class="text-xs sm:text-sm text-gray-500">Released in {{ highlights.today_in_history_year }}</p>
+              {% else %}
+                <p class="text-xl sm:text-2xl font-bold text-gray-500">--</p>
+              {% endif %}
+            </div>
+          {% if highlights.today_in_history %}
+          </a>
+          {% endif %}
+        </div>
+
+        <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 flex items-center min-w-0">
+          {% if highlights.today_in_user_history %}
+          <a href="{% url 'history' %}?month={{ highlights.today_month }}&day={{ highlights.today_day }}" class="flex items-center min-w-0 w-full">
+          {% endif %}
+            {% if highlights.today_in_user_history and highlights.today_in_user_history.image %}
+            <div class="bg-indigo-600/20 w-11 h-11 sm:w-16 sm:h-16 rounded-full mr-4 overflow-hidden flex items-center justify-center shrink-0">
+              <img src="{{ highlights.today_in_user_history.image }}" alt="{{ highlights.today_in_user_history.title }}" class="w-full h-full rounded-full object-cover">
+            </div>
+            {% else %}
+            <div class="bg-indigo-600/20 p-3 sm:p-4 rounded-full mr-4 overflow-hidden flex items-center justify-center shrink-0">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 sm:w-8 sm:h-8 text-indigo-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h16M4 17h16" />
+                </svg>
+            </div>
+            {% endif %}
+            <div class="min-w-0">
+              <h3 class="text-xs sm:text-sm font-medium text-gray-400">Today in Your History</h3>
+              {% if highlights.today_in_user_history %}
+                <p class="text-xl sm:text-2xl font-bold text-white truncate">{{ highlights.today_in_user_history.title }}</p>
+                <p class="text-xs sm:text-sm text-gray-500">Played in {{ highlights.today_in_user_history_year }}</p>
+              {% else %}
+                <p class="text-xl sm:text-2xl font-bold text-gray-500">--</p>
+              {% endif %}
+            </div>
+          {% if highlights.today_in_user_history %}
+          </a>
+          {% endif %}
+        </div>
+      </div>
+      {% endwith %}
+
       <!-- Statistics Cards -->
       <div class="grid grid-cols-2 gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-2 sm:mb-4">
         <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 flex items-center min-w-0">
