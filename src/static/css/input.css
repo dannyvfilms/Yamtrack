@@ -91,6 +91,10 @@
     margin-top: calc(var(--spacing) * 0.25) !important;
   }
 
+  .media-card[data-media-type="game"] .media-card-duration {
+    display: none;
+  }
+
   /* Hide progress adjust buttons on mobile by default, unless user preference allows it */
   .progress-adjust-btn {
     display: none !important;

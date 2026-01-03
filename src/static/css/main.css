@@ -3704,6 +3704,10 @@
     margin-top: calc(var(--spacing) * 0.25) !important;
   }
 
+  .media-card[data-media-type="game"] .media-card-duration {
+    display: none;
+  }
+
   .progress-adjust-btn {
     display: none !important;
   }
