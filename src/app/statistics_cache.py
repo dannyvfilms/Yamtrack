@@ -776,19 +776,33 @@ def build_stats_for_day(user_id: int, day_value):
         if not item_id:
             return
         activity_dt = stats._localize_datetime(activity_dt) if activity_dt else None
+        score_dt = activity_dt if score is not None else None
         existing = items_by_type[media_type].get(item_id)
-        if existing and existing.get("activity_dt"):
-            existing_dt = existing["activity_dt"]
-            if activity_dt and existing_dt and activity_dt <= existing_dt:
-                return
-        items_by_type[media_type][item_id] = {
-            "item_id": item_id,
-            "media_id": media_id,
-            "media_type": media_type,
-            "status": status,
-            "score": float(score) if score is not None else None,
-            "activity_dt": activity_dt,
-        }
+        if not existing:
+            items_by_type[media_type][item_id] = {
+                "item_id": item_id,
+                "media_id": media_id,
+                "media_type": media_type,
+                "status": status,
+                "score": float(score) if score is not None else None,
+                "score_dt": score_dt,
+                "activity_dt": activity_dt,
+            }
+            return
+
+        existing_activity = existing.get("activity_dt")
+        if activity_dt and (not existing_activity or activity_dt > existing_activity):
+            existing["media_id"] = media_id or existing.get("media_id")
+            existing["status"] = status
+            existing["activity_dt"] = activity_dt
+
+        if score is not None:
+            existing_score_dt = existing.get("score_dt")
+            if existing_score_dt is None or (score_dt and score_dt > existing_score_dt):
+                existing["score"] = float(score)
+                existing["score_dt"] = score_dt
+
+        items_by_type[media_type][item_id] = existing
 
     def _update_top_played(media_type: str, item_id: int, media_id: int | None, minutes=0, plays=0, episode_count=0, activity_dt=None):
         if not item_id:
@@ -1597,6 +1611,7 @@ def build_stats_for_day(user_id: int, day_value):
             day_stats["items"][media_type][str(item_id)] = {
                 **meta,
                 "activity_dt": meta["activity_dt"].isoformat() if meta.get("activity_dt") else None,
+                "score_dt": meta["score_dt"].isoformat() if meta.get("score_dt") else None,
             }
 
     for media_type, items in top_played_by_type.items():
@@ -1932,18 +1947,36 @@ def _aggregate_statistics_from_days(user, day_list, start_date, end_date, build_
                     except (TypeError, ValueError):
                         continue
                     activity_dt = _parse_activity_dt(meta.get("activity_dt"))
+                    score_dt = _parse_activity_dt(meta.get("score_dt"))
+                    if score_dt is None and meta.get("score") is not None:
+                        score_dt = activity_dt
+
                     existing = items_by_type[media_type].get(item_id)
-                    if existing and existing.get("activity_dt"):
-                        if activity_dt and activity_dt <= existing["activity_dt"]:
-                            continue
-                    items_by_type[media_type][item_id] = {
-                        "item_id": item_id,
-                        "media_id": meta.get("media_id"),
-                        "media_type": meta.get("media_type"),
-                        "status": meta.get("status"),
-                        "score": meta.get("score"),
-                        "activity_dt": activity_dt,
-                    }
+                    if not existing:
+                        items_by_type[media_type][item_id] = {
+                            "item_id": item_id,
+                            "media_id": meta.get("media_id"),
+                            "media_type": meta.get("media_type"),
+                            "status": meta.get("status"),
+                            "score": meta.get("score"),
+                            "score_dt": score_dt,
+                            "activity_dt": activity_dt,
+                        }
+                        continue
+
+                    existing_activity = existing.get("activity_dt")
+                    if activity_dt and (not existing_activity or activity_dt > existing_activity):
+                        existing["media_id"] = meta.get("media_id") or existing.get("media_id")
+                        existing["status"] = meta.get("status")
+                        existing["activity_dt"] = activity_dt
+
+                    if meta.get("score") is not None:
+                        existing_score_dt = existing.get("score_dt")
+                        if existing_score_dt is None or (score_dt and score_dt > existing_score_dt):
+                            existing["score"] = meta.get("score")
+                            existing["score_dt"] = score_dt
+
+                    items_by_type[media_type][item_id] = existing
 
             for media_type, items in day_stats.get("top_played", {}).items():
                 for item_id_str, entry in items.items():
@@ -2077,16 +2110,35 @@ def _aggregate_statistics_from_days(user, day_list, start_date, end_date, build_
                 ],
             ).values("id", "item_id", "status", "score", "created_at")
             for row in qs.iterator(chunk_size=500):
-                activity_dt = row.get("created_at")
-                _parse = _parse_activity_dt(activity_dt)
-                items_by_type[media_type][row["item_id"]] = {
-                    "item_id": row["item_id"],
-                    "media_id": row["id"],
-                    "media_type": media_type,
-                    "status": row.get("status"),
-                    "score": float(row["score"]) if row.get("score") is not None else None,
-                    "activity_dt": _parse,
-                }
+                activity_dt = _parse_activity_dt(row.get("created_at"))
+                score = row.get("score")
+                score_dt = activity_dt if score is not None else None
+                existing = items_by_type[media_type].get(row["item_id"])
+                if not existing:
+                    items_by_type[media_type][row["item_id"]] = {
+                        "item_id": row["item_id"],
+                        "media_id": row["id"],
+                        "media_type": media_type,
+                        "status": row.get("status"),
+                        "score": float(score) if score is not None else None,
+                        "score_dt": score_dt,
+                        "activity_dt": activity_dt,
+                    }
+                    continue
+
+                existing_activity = existing.get("activity_dt")
+                if activity_dt and (not existing_activity or activity_dt > existing_activity):
+                    existing["media_id"] = row["id"] or existing.get("media_id")
+                    existing["status"] = row.get("status")
+                    existing["activity_dt"] = activity_dt
+
+                if score is not None:
+                    existing_score_dt = existing.get("score_dt")
+                    if existing_score_dt is None or (score_dt and score_dt > existing_score_dt):
+                        existing["score"] = float(score)
+                        existing["score_dt"] = score_dt
+
+                items_by_type[media_type][row["item_id"]] = existing
 
     media_count = {"total": 0}
     for media_type in active_types:
@@ -2188,6 +2240,31 @@ def _aggregate_statistics_from_days(user, day_list, start_date, end_date, build_
         ]
         media_list = [media for media in media_list if media]
         top_rated_by_type_media[media_type] = stats._annotate_top_rated_media(media_list)
+
+    top_rated_score_map = {}
+    for meta in top_rated_meta:
+        media_type = meta.get("media_type")
+        media_id = meta.get("media_id")
+        score = meta.get("score")
+        if media_type and media_id and score is not None:
+            top_rated_score_map[(media_type, media_id)] = score
+    for metas in top_rated_by_type.values():
+        for meta in metas:
+            media_type = meta.get("media_type")
+            media_id = meta.get("media_id")
+            score = meta.get("score")
+            if media_type and media_id and score is not None:
+                top_rated_score_map[(media_type, media_id)] = score
+
+    def _apply_top_rated_scores(media_list):
+        for media in media_list:
+            score = top_rated_score_map.get((media._meta.model_name, media.id))
+            if score is not None:
+                media.aggregated_score = score
+
+    _apply_top_rated_scores(top_rated_media)
+    for media_list in top_rated_by_type_media.values():
+        _apply_top_rated_scores(media_list)
 
     score_distribution_payload = {
         "labels": [str(score) for score in score_range],
