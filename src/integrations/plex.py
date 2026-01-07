@@ -112,6 +112,66 @@ def fetch_account(token: str) -> dict[str, Any]:
     }
 
 
+def list_users(token: str) -> list[dict[str, Any]]:
+    """Return Plex users available to the account (home + shared)."""
+    users: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def add_user(user: dict[str, Any]) -> None:
+        account_id = (
+            user.get("id")
+            or user.get("uuid")
+            or user.get("account_id")
+            or user.get("accountID")
+        )
+        if not account_id:
+            return
+        account_id = str(account_id)
+        if account_id in seen:
+            return
+        seen.add(account_id)
+        users.append(user)
+
+    # Home users (JSON)
+    try:
+        response = requests.get(
+            "https://plex.tv/api/v2/home/users",
+            headers=_headers(token),
+            timeout=10,
+        )
+        _raise_for_auth(response)
+        payload = response.json()
+        for user in _extract_users_payload(payload):
+            if isinstance(user, dict):
+                add_user(user)
+    except (RequestException, ValueError) as exc:
+        logger.debug("Could not fetch Plex home users: %s", exc)
+
+    # Shared users (XML or JSON)
+    try:
+        response = requests.get(
+            "https://plex.tv/api/users",
+            headers=_headers(token),
+            timeout=10,
+        )
+        _raise_for_auth(response)
+
+        content_type = response.headers.get("Content-Type", "")
+        if "json" in content_type:
+            payload = response.json()
+            for user in _extract_users_payload(payload):
+                if isinstance(user, dict):
+                    add_user(user)
+        else:
+            root = ElementTree.fromstring(response.text or "")
+            for node in root.findall("User"):
+                add_user(dict(node.attrib))
+    except (RequestException, ValueError, ElementTree.ParseError) as exc:
+        logger.debug("Could not fetch Plex users: %s", exc)
+
+    return users
+
+
 def list_resources(token: str) -> list[dict[str, Any]]:
     """Return Plex server resources for the account."""
     response = requests.get(
@@ -392,6 +452,23 @@ def _parse_response(response: requests.Response) -> dict[str, Any]:
     for child in root:
         data[child.tag.lower()] = child.attrib
     return data
+
+
+def _extract_users_payload(payload: Any) -> list[dict[str, Any]]:
+    """Extract user lists from Plex API payloads."""
+    if isinstance(payload, dict):
+        users = payload.get("users")
+        if isinstance(users, list):
+            return users
+
+        container = payload.get("MediaContainer") or {}
+        users = container.get("User")
+        if isinstance(users, list):
+            return users
+        if isinstance(users, dict):
+            return [users]
+
+    return []
 
 
 def _coerce_int(value: Any, default: int) -> int:

@@ -15,6 +15,7 @@ class PlexAccount(models.Model):
     )
     plex_token = models.CharField(max_length=255)
     plex_username = models.CharField(max_length=255)
+    plex_account_id = models.CharField(max_length=255, blank=True, null=True)
     server_name = models.CharField(max_length=255, blank=True, null=True)
     machine_identifier = models.CharField(max_length=255, blank=True, null=True)
     sections = models.JSONField(default=list, blank=True)

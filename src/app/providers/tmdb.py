@@ -273,14 +273,13 @@ def fetch_and_cache_seasons(media_id, season_numbers, tv_data):
         for season_number in season_subset:
             season_key = f"season/{season_number}"
             if season_key not in response:
-                msg = (
-                    f"Season {season_number} not found in {Sources.TMDB.label} "
-                    f"with ID {media_id}"
+                logger.warning(
+                    "Season %s not found in %s with ID %s; skipping season",
+                    season_number,
+                    Sources.TMDB.label,
+                    media_id,
                 )
-                not_found_response = requests.Response()
-                not_found_response.status_code = 404
-                not_found_error = type("Error", (), {"response": not_found_response})
-                raise services.ProviderAPIError(msg, error=not_found_error, details=msg)
+                continue
 
             season_data = process_season(response[season_key])
 

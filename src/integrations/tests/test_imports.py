@@ -34,10 +34,12 @@ from integrations.imports import (
     imdb,
     kitsu,
     mal,
+    plex,
     simkl,
     steam,
     yamtrack,
 )
+from integrations.models import PlexAccount
 from integrations.imports.trakt import TraktImporter, importer
 
 mock_path = Path(__file__).resolve().parent / "mock_data"
@@ -1456,3 +1458,348 @@ class ImportSteam(TestCase):
                 steam.importer("76561198000000000", self.user, "new")
 
             self.assertIn("Steam API key not configured", str(context.exception))
+
+
+class ImportPlexHistory(TestCase):
+    """Test Plex history import behavior."""
+
+    def setUp(self):
+        """Create user + Plex account for tests."""
+        self.user = get_user_model().objects.create_user(
+            username="plexuser",
+            password="12345",
+        )
+        self.account = PlexAccount.objects.create(
+            user=self.user,
+            plex_token="token",
+            plex_username="plexuser",
+            plex_account_id="111",
+            sections=[],
+        )
+
+    def _create_movie(self, tmdb_id: str):
+        item = Item.objects.create(
+            media_id=tmdb_id,
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title=f"Movie {tmdb_id}",
+            image=settings.IMG_NONE,
+        )
+        return Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+        )
+
+    def _create_tv(self, tmdb_id: str):
+        item = Item.objects.create(
+            media_id=tmdb_id,
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title=f"Show {tmdb_id}",
+            image=settings.IMG_NONE,
+        )
+        return TV.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+
+    @patch("integrations.imports.plex.services.get_media_metadata")
+    @patch("integrations.imports.plex.plex_api.fetch_history")
+    @patch("integrations.imports.plex.plex_api.list_resources")
+    def test_overwrite_scoped_cleanup(
+        self,
+        mock_list_resources,
+        mock_fetch_history,
+        mock_get_metadata,
+    ):
+        def metadata_side_effect(media_type, media_id, _source, **kwargs):
+            if media_type == MediaTypes.MOVIE.value:
+                return {
+                    "title": f"Movie {media_id}",
+                    "image": settings.IMG_NONE,
+                    "max_progress": 1,
+                }
+            if media_type in (MediaTypes.TV.value, "tv_with_seasons"):
+                return {
+                    "title": f"Show {media_id}",
+                    "image": settings.IMG_NONE,
+                    "max_progress": 1,
+                    "last_episode_season": 1,
+                    "related": {"seasons": [{"season_number": 1}]},
+                    "season/1": {
+                        "image": settings.IMG_NONE,
+                        "max_progress": 1,
+                        "episodes": [
+                            {
+                                "episode_number": 1,
+                                "still_path": "/still",
+                                "air_date": "2024-01-01",
+                            },
+                        ],
+                    },
+                }
+            return {"max_progress": 1}
+
+        mock_get_metadata.side_effect = metadata_side_effect
+        mock_list_resources.return_value = []
+
+        self._create_movie("1")
+        self._create_movie("2")
+        self._create_tv("10")
+        self._create_tv("20")
+
+        self.account.sections = [
+            {
+                "id": "1",
+                "machine_identifier": "machine",
+                "title": "Movies",
+                "type": "movie",
+                "uri": "http://plex",
+            },
+            {
+                "id": "2",
+                "machine_identifier": "machine",
+                "title": "TV",
+                "type": "show",
+                "uri": "http://plex",
+            },
+        ]
+        self.account.save(update_fields=["sections"])
+
+        movie_entry = {
+            "type": "movie",
+            "title": "Movie 1",
+            "Guid": [{"id": "tmdb://1"}],
+            "viewedAt": 1700000000,
+            "accountID": "111",
+        }
+        episode_entry = {
+            "type": "episode",
+            "grandparentTitle": "Show 10",
+            "parentIndex": 1,
+            "index": 1,
+            "Guid": [{"id": "tmdb://10"}],
+            "viewedAt": 1700000000,
+            "ratingKey": "rk1",
+            "accountID": "111",
+        }
+
+        def fetch_history_side_effect(_token, _uri, section_id, _start, size=None):  # noqa: ARG001
+            if str(section_id) == "1":
+                return [movie_entry], 1
+            if str(section_id) == "2":
+                return [episode_entry], 1
+            return [], 0
+
+        mock_fetch_history.side_effect = fetch_history_side_effect
+
+        plex.importer("all", self.user, "overwrite")
+
+        self.assertEqual(Movie.objects.filter(user=self.user, item__media_id="1").count(), 1)
+        self.assertEqual(Movie.objects.filter(user=self.user, item__media_id="2").count(), 1)
+        self.assertEqual(TV.objects.filter(user=self.user, item__media_id="10").count(), 1)
+        self.assertEqual(TV.objects.filter(user=self.user, item__media_id="20").count(), 1)
+
+    @patch("integrations.imports.plex.plex_api.fetch_history")
+    @patch("integrations.imports.plex.plex_api.list_resources")
+    def test_missing_ids_skipped(self, mock_list_resources, mock_fetch_history):
+        """Entries without external IDs should be skipped."""
+        self.account.sections = [
+            {
+                "id": "1",
+                "machine_identifier": "machine",
+                "title": "Movies",
+                "type": "movie",
+                "uri": "http://plex",
+            },
+        ]
+        self.account.save(update_fields=["sections"])
+
+        movie_entry = {
+            "type": "movie",
+            "title": "Missing IDs",
+            "viewedAt": 1700000000,
+            "accountID": "111",
+        }
+
+        mock_list_resources.return_value = []
+        mock_fetch_history.return_value = [movie_entry], 1
+
+        counts, _warnings = plex.importer("all", self.user, "new")
+
+        self.assertEqual(counts.get("skipped_missing_ids"), 1)
+        self.assertEqual(Movie.objects.filter(user=self.user).count(), 0)
+
+    @patch("integrations.imports.plex.services.get_media_metadata")
+    @patch("integrations.imports.plex.plex_api.fetch_history")
+    @patch("integrations.imports.plex.plex_api.list_resources")
+    def test_episode_dedupe_with_rating_key(
+        self,
+        mock_list_resources,
+        mock_fetch_history,
+        mock_get_metadata,
+    ):
+        """Duplicate episode entries should be deduped within a single import."""
+        self.account.sections = [
+            {
+                "id": "2",
+                "machine_identifier": "machine",
+                "title": "TV",
+                "type": "show",
+                "uri": "http://plex",
+            },
+        ]
+        self.account.save(update_fields=["sections"])
+
+        episode_entry = {
+            "type": "episode",
+            "grandparentTitle": "Show 10",
+            "parentIndex": 1,
+            "index": 1,
+            "Guid": [{"id": "tmdb://10"}],
+            "viewedAt": 1700000000,
+            "ratingKey": "rk1",
+            "accountID": "111",
+        }
+
+        mock_list_resources.return_value = []
+        mock_fetch_history.return_value = [episode_entry, episode_entry], 2
+
+        mock_get_metadata.return_value = {
+            "title": "Show 10",
+            "image": settings.IMG_NONE,
+            "last_episode_season": 1,
+            "season/1": {
+                "image": settings.IMG_NONE,
+                "max_progress": 1,
+                "episodes": [{"episode_number": 1, "still_path": "/still"}],
+            },
+        }
+
+        counts, _warnings = plex.importer("all", self.user, "new")
+
+        self.assertEqual(
+            Episode.objects.filter(related_season__user=self.user).count(),
+            1,
+        )
+        self.assertEqual(counts.get(MediaTypes.EPISODE.value), 1)
+        self.assertEqual(counts.get("skipped_existing"), 1)
+
+    @patch("integrations.imports.plex.plex_api.fetch_history")
+    @patch("integrations.imports.plex.plex_api.list_resources")
+    def test_history_user_filter_skips_other_user(
+        self,
+        mock_list_resources,
+        mock_fetch_history,
+    ):
+        """Entries for other Plex users should be skipped."""
+        self.account.sections = [
+            {
+                "id": "1",
+                "machine_identifier": "machine",
+                "title": "Movies",
+                "type": "movie",
+                "uri": "http://plex",
+            },
+        ]
+        self.account.save(update_fields=["sections"])
+
+        movie_entry = {
+            "type": "movie",
+            "title": "Other User Movie",
+            "Guid": [{"id": "tmdb://123"}],
+            "viewedAt": 1700000000,
+            "accountID": "999",
+        }
+
+        mock_list_resources.return_value = []
+        mock_fetch_history.return_value = [movie_entry], 1
+
+        counts, _warnings = plex.importer("all", self.user, "new")
+
+        self.assertEqual(Movie.objects.filter(user=self.user).count(), 0)
+        self.assertEqual(counts.get("skipped_other_user"), 1)
+
+    @patch("integrations.imports.plex.plex_api.list_users")
+    @patch("integrations.imports.plex.plex_api.fetch_history")
+    @patch("integrations.imports.plex.plex_api.list_resources")
+    def test_history_user_filter_maps_account_ids(
+        self,
+        mock_list_resources,
+        mock_fetch_history,
+        mock_list_users,
+    ):
+        """Allowed usernames should map to account IDs for history filtering."""
+        self.user.plex_usernames = "Abbyt04"
+        self.user.save(update_fields=["plex_usernames"])
+
+        self.account.sections = [
+            {
+                "id": "1",
+                "machine_identifier": "machine",
+                "title": "Movies",
+                "type": "movie",
+                "uri": "http://plex",
+            },
+        ]
+        self.account.save(update_fields=["sections"])
+
+        movie_entry = {
+            "type": "movie",
+            "title": "Mapped User Movie",
+            "Guid": [{"id": "tmdb://123"}],
+            "viewedAt": 1700000000,
+            "accountID": "28558861",
+        }
+
+        mock_list_resources.return_value = []
+        mock_fetch_history.return_value = [movie_entry], 1
+        mock_list_users.return_value = [{"id": "28558861", "title": "Abbyt04"}]
+
+        counts, _warnings = plex.importer("all", self.user, "new")
+
+        self.assertEqual(Movie.objects.filter(user=self.user).count(), 1)
+        self.assertEqual(counts.get("skipped_other_user", 0), 0)
+
+    @patch("integrations.imports.plex.plex_api.list_users")
+    @patch("integrations.imports.plex.plex_api.fetch_history")
+    @patch("integrations.imports.plex.plex_api.list_resources")
+    def test_history_user_filter_maps_account_username_ids(
+        self,
+        mock_list_resources,
+        mock_fetch_history,
+        mock_list_users,
+    ):
+        """Account username should map to any Plex user IDs for history filtering."""
+        self.account.sections = [
+            {
+                "id": "1",
+                "machine_identifier": "machine",
+                "title": "Movies",
+                "type": "movie",
+                "uri": "http://plex",
+            },
+        ]
+        self.account.save(update_fields=["sections"])
+
+        movie_entry = {
+            "type": "movie",
+            "title": "Account User Movie",
+            "Guid": [{"id": "tmdb://550"}],
+            "viewedAt": 1700000000,
+            "accountID": "1",
+        }
+
+        mock_list_resources.return_value = []
+        mock_fetch_history.return_value = [movie_entry], 1
+        mock_list_users.return_value = [{"id": "1", "title": "plexuser"}]
+
+        counts, _warnings = plex.importer("all", self.user, "new")
+
+        # list_users is not called when account username matches an allowed username
+        # because the server-local ID "1" is added directly
+        mock_list_users.assert_not_called()
+        self.assertEqual(Movie.objects.filter(user=self.user).count(), 1)
+        self.assertEqual(counts.get("skipped_other_user", 0), 0)

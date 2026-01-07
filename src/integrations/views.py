@@ -192,6 +192,7 @@ def plex_callback(request):
     defaults = {
         "plex_token": plex_token,
         "plex_username": account.get("username") or "",
+        "plex_account_id": account.get("id") or "",
         "sections": sections,
         "sections_refreshed_at": timezone.now(),
     }
@@ -896,4 +897,3 @@ def jellyseerr_webhook(request, token):
     processor = jellyseerr_webhooks.JellyseerrWebhookProcessor()
     processor.process_payload(payload, user)
     return HttpResponse(status=200)
-

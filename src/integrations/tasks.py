@@ -56,8 +56,13 @@ def format_import_message(imported_counts, warning_messages=None):
             parts.append(format_media_type_display(music_play_events, MediaTypes.MUSIC.value))
 
     # Add other media types (excluding music which we handled above)
+    media_type_values = set(MediaTypes.values)
     for media_type, count in imported_counts.items():
-        if media_type == MediaTypes.MUSIC.value or media_type == "music_unique_tracks":
+        if (
+            media_type == MediaTypes.MUSIC.value
+            or media_type == "music_unique_tracks"
+            or media_type not in media_type_values
+        ):
             continue
         formatted = format_media_type_display(count, media_type)
         if formatted:
@@ -69,6 +74,23 @@ def format_import_message(imported_counts, warning_messages=None):
         info_message = "No media was imported."
     else:
         info_message = f"Imported {helpers.join_with_commas_and(parts)}."
+
+    metric_parts = []
+    metric_mappings = [
+        ("created", "created"),
+        ("updated", "updated"),
+        ("skipped_missing_ids", "skipped (missing IDs)"),
+        ("skipped_existing", "skipped (existing)"),
+        ("skipped_unknown_type", "skipped (unknown type)"),
+        ("skipped_other_user", "skipped (other users)"),
+    ]
+    for key, label in metric_mappings:
+        value = imported_counts.get(key)
+        if value:
+            metric_parts.append(f"{value} {label}")
+
+    if metric_parts:
+        info_message = f"{info_message} {helpers.join_with_commas_and(metric_parts)}."
 
     if warning_messages:
         return f"{info_message} {ERROR_TITLE} {warning_messages}"

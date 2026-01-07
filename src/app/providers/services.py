@@ -91,7 +91,10 @@ class ProviderAPIError(Exception):
         except ValueError:
             provider = provider.title()
 
-        logger.error("%s error: %s", provider, error.response.text)
+        if self.status_code == 404:
+            logger.warning("%s error: %s", provider, error.response.text)
+        else:
+            logger.error("%s error: %s", provider, error.response.text)
 
         message = (
             f"There was an error contacting the {provider} API "

@@ -6,6 +6,7 @@ from django.utils import timezone
 
 import app
 from app.models import MediaTypes
+from app.providers import services
 from app.services import music_scrobble
 
 from .base import BaseWebhookProcessor
@@ -69,41 +70,78 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
             )
             return music_entry
 
-        ids = self._extract_external_ids(payload)
+        ids = self.resolve_external_ids(payload)
         logger.info("Extracted IDs from payload: %s", ids)
-
-        ids = self._resolve_ids_if_missing(payload, ids)
         if not any(ids.get(key) for key in ("tmdb_id", "imdb_id", "tvdb_id")):
             logger.warning("Ignoring Plex webhook call because no ID was found.")
             return None
 
         self._process_media(payload, user, ids)
 
+    def resolve_external_ids(self, payload, allow_title_search=True):
+        """Extract external IDs, optionally allowing title search fallback."""
+        ids = self._extract_external_ids(payload)
+        if allow_title_search:
+            ids = self._resolve_ids_if_missing(payload, ids)
+        return ids
+
     def _resolve_ids_if_missing(self, payload, ids):
-        """Attempt to resolve TMDB ID when only plex:// GUID is present."""
-        if any(ids.get(key) for key in ("tmdb_id", "imdb_id", "tvdb_id")):
+        """Attempt to resolve TMDB ID when it is missing from extracted IDs."""
+        if ids.get("tmdb_id"):
             return ids
 
-        plex_guid = ids.get("plex_guid")
-        if not plex_guid:
-            return ids
+        media_type = self._get_media_type(payload)
+        # Attempt TMDB 'find' if we have an external ID (TVDB or IMDB)
+        external_id = ids.get("tvdb_id") or ids.get("imdb_id")
+        if external_id and media_type in (MediaTypes.TV.value, MediaTypes.MOVIE.value):
+            source = "tvdb_id" if ids.get("tvdb_id") else "imdb_id"
+            try:
+                from app.providers import tmdb
+                find_results = tmdb.find(external_id, source=source)
+                
+                tmdb_id = None
+                if media_type == MediaTypes.TV.value:
+                    results = find_results.get("tv_results") or find_results.get("tv_episode_results") or []
+                    if results:
+                        tmdb_id = results[0].get("media_id")
+                else:
+                    results = find_results.get("movie_results") or []
+                    if results:
+                        tmdb_id = results[0].get("media_id")
+                
+                if tmdb_id:
+                    ids["tmdb_id"] = str(tmdb_id)
+                    logger.info("Resolved %s %s to TMDB ID %s using find API", source, external_id, tmdb_id)
+                    return ids
 
-        # Only handle TV for now; movies with plex:// GUID are not tracked today
-        if self._get_media_type(payload) != MediaTypes.TV.value:
+                logger.debug("TMDB find returned no results for %s %s", source, external_id)
+            except Exception as exc:
+                logger.warning("TMDB find fallback failed for %s %s: %s", source, external_id, exc)
+
+        # Fallback to title search for TV shows and Movies
+        if media_type not in (MediaTypes.TV.value, MediaTypes.MOVIE.value):
             return ids
 
         metadata = payload.get("Metadata", {})
-        series_title = metadata.get("grandparentTitle")
-        original_date = metadata.get("originallyAvailableAt")
+        # For episodes, use series title (grandparentTitle) falling back to episode title if needed
+        # For movies, use the movie title
+        search_title = (
+            metadata.get("grandparentTitle")
+            or metadata.get("title")
+            if media_type == MediaTypes.TV.value
+            else metadata.get("title")
+        )
+        original_date = metadata.get("originallyAvailableAt") or metadata.get("year")
 
-        if not series_title:
-            logger.debug("Cannot resolve plex:// GUID without series title")
+        if not search_title:
+            logger.debug("Cannot resolve plex:// GUID without title")
             return ids
 
         try:
-            search_results = app.providers.tmdb.search(
-                MediaTypes.TV.value,
-                series_title,
+            from app.providers import services
+            search_results = services.search(
+                media_type,
+                search_title,
                 page=1,
             )
         except Exception:  # pragma: no cover - defensive
@@ -116,8 +154,14 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
         if original_date:
             year = str(original_date).split("-")[0]
             for result in results:
-                first_air_date = result.get("details", {}).get("first_air_date") or ""
-                if str(first_air_date).startswith(year):
+                # Use first_air_date for TV, release_date for movies
+                date_key = (
+                    "first_air_date"
+                    if media_type == MediaTypes.TV.value
+                    else "release_date"
+                )
+                result_date = result.get("details", {}).get(date_key) or ""
+                if str(result_date).startswith(year):
                     tmdb_id = result.get("media_id")
                     break
 
@@ -125,13 +169,78 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
             tmdb_id = results[0].get("media_id")
 
         if tmdb_id:
-            ids["tmdb_id"] = tmdb_id
+            ids["tmdb_id"] = str(tmdb_id)
             logger.info(
-                "Resolved plex:// GUID to TMDB ID %s using title search",
+                "Resolved plex:// GUID to TMDB ID %s using title search for '%s'",
                 tmdb_id,
+                search_title,
             )
+        else:
+            logger.debug("Title search returned no match for '%s'", search_title)
 
         return ids
+
+    def _find_tv_media_id(self, ids, series_title=None, allow_title_fallback=False):
+        """
+        Resolve TMDB ID for a TV show using external IDs or title search.
+
+        Returns:
+            tuple: (media_id, season_number, episode_number)
+                   season/episode are None unless extracted from specific lookup context,
+                   checking primarily for show ID here.
+        """
+        # 1. Try resolving using existing IDs (TMDB, TVDB, IMDB)
+        tmdb_id = ids.get("tmdb_id")
+        if tmdb_id:
+            return str(tmdb_id), None, None
+
+        if not allow_title_fallback or not series_title:
+            return None, None, None
+
+        # 2. Try title search
+        logger.debug("TV ID missing; attempting title search for '%s'", series_title)
+        try:
+            search_results = services.search(
+                MediaTypes.TV.value,
+                series_title,
+                page=1,
+            )
+            results = search_results.get("results") or []
+            if results:
+                found_id = results[0].get("media_id")
+                logger.info(
+                    "Resolved '%s' to TMDB ID %s via title search",
+                    series_title,
+                    found_id,
+                )
+                return str(found_id), None, None
+            
+            logger.debug("Title search returned no results for '%s'", series_title)
+
+            # Try stripping year from title like "Show (YYYY)"
+            clean_title = re.sub(r'\s*\(\d{4}\)$', '', series_title)
+            if clean_title != series_title:
+                logger.debug("Retrying search with cleaned title '%s'", clean_title)
+                search_results = services.search(
+                    MediaTypes.TV.value,
+                    clean_title,
+                    page=1,
+                )
+                results = search_results.get("results") or []
+                if results:
+                    found_id = results[0].get("media_id")
+                    logger.info(
+                        "Resolved '%s' to TMDB ID %s via title search",
+                        clean_title,
+                        found_id,
+                    )
+                    return str(found_id), None, None
+
+        except Exception as exc:
+            logger.warning("Title search failed for '%s': %s", series_title, exc)
+
+        return None, None, None
+
 
     def _process_media(self, payload, user, ids):
         """Route processing based on media type, extracting season/episode for TV."""
@@ -211,28 +320,85 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
         return None
 
     def _extract_external_ids(self, payload):
-        guids = payload["Metadata"].get("Guid", [])
+        metadata = payload.get("Metadata", {})
+        guids = metadata.get("Guid", [])
         if not guids:
-            single_guid = payload["Metadata"].get("guid")
+            single_guid = metadata.get("guid")
             if single_guid:
                 guids = [{"id": single_guid}]
 
-        def get_id(prefix):
-            return next(
-                (
-                    guid["id"].replace(f"{prefix}://", "")
-                    for guid in guids
-                    if guid["id"].startswith(f"{prefix}://")
-                ),
-                None,
-            )
-
-        return {
-            "tmdb_id": get_id("tmdb"),
-            "imdb_id": get_id("imdb"),
-            "tvdb_id": get_id("tvdb"),
-            "plex_guid": get_id("plex"),
+        ids = {
+            "tmdb_id": None,
+            "imdb_id": None,
+            "tvdb_id": None,
+            "plex_guid": None,
         }
+
+        logger.debug("Extracting external IDs from %d GUIDs", len(guids))
+
+        for guid in guids:
+            guid_value = guid.get("id") if isinstance(guid, dict) else guid
+            if not guid_value:
+                continue
+
+            guid_lower = guid_value.lower()
+
+            if ids["plex_guid"] is None and guid_lower.startswith("plex://"):
+                ids["plex_guid"] = guid_value.split("plex://", 1)[1]
+                logger.debug("Found plex_guid: %s", ids["plex_guid"])
+
+            # Priority 1: Explicitly labeled IMDB or 'tt' prefix anywhere
+            if ids["imdb_id"] is None:
+                imdb_id = self._extract_imdb_id(guid_value)
+                if imdb_id:
+                    ids["imdb_id"] = imdb_id
+                    logger.debug("Found imdb_id: %s", imdb_id)
+                    if "imdb" in guid_lower:
+                        continue
+
+            # Priority 2: TMDB
+            if ids["tmdb_id"] is None and (
+                "tmdb" in guid_lower or "themoviedb" in guid_lower
+            ):
+                tmdb_id = self._extract_numeric_guid_id(guid_value)
+                if tmdb_id:
+                    # If it looks like an IMDB ID (7+ digits) and we don't have an IMDB ID yet,
+                    # AND it's a TV show, be skeptical of treating it as TMDB.
+                    if int(tmdb_id) > 3000000 and ids["imdb_id"] is None:
+                        ids["imdb_id"] = f"tt{tmdb_id}"
+                        logger.debug("Skeptically treated large TMDB ID as IMDB: %s", ids["imdb_id"])
+                    else:
+                        ids["tmdb_id"] = tmdb_id
+                        logger.debug("Found tmdb_id: %s", tmdb_id)
+
+            # Priority 3: TVDB
+            if ids["tvdb_id"] is None and ("tvdb" in guid_lower or "thetvdb" in guid_lower):
+                tvdb_id = self._extract_numeric_guid_id(guid_value)
+                if tvdb_id:
+                    ids["tvdb_id"] = tvdb_id
+                    logger.debug("Found tvdb_id: %s", tvdb_id)
+
+            if all(ids.get(key) for key in ("tmdb_id", "imdb_id", "tvdb_id", "plex_guid")):
+                break
+
+        return ids
+
+    def _extract_numeric_guid_id(self, guid_value):
+        """Extract the first numeric identifier from a Plex GUID string."""
+        cleaned = guid_value.split("?", 1)[0]
+        if "://" in cleaned:
+            cleaned = cleaned.split("://", 1)[1]
+        cleaned = cleaned.lstrip("/")
+        if "/" in cleaned:
+            cleaned = cleaned.split("/", 1)[0]
+
+        match = re.search(r"\d+", cleaned)
+        return match.group(0) if match else None
+
+    def _extract_imdb_id(self, guid_value):
+        """Extract IMDB ID from a Plex GUID string."""
+        match = re.search(r"tt\d+", guid_value)
+        return match.group(0) if match else None
 
     def _extract_music_ids(self, metadata):
         """Extract MusicBrainz IDs from a Plex track payload."""

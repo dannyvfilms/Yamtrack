@@ -175,7 +175,7 @@ Notes:
 - CI fails PRs that modify `.github/workflows/**` (see `.github/workflows/app-tests.yml`).
 
 ### Commit Message Format
-Short imperative title, then 1–3 bullet clarifications in the body. Optional issue lines: `Fixes #123` / `Refs #456`.
+Short imperative title, then as many bullet clarifications as needed for full context (no hard limit); keep bullets concise and avoid excessive length. Optional issue lines: `Fixes #123` / `Refs #456`.
 
 ## Security / Safety Notes
 - `.env` contains secrets and API keys; do not commit it.
