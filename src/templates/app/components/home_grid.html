@@ -109,9 +109,7 @@
                   hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
                   hx-target="#{% component_id 'lists' media.item %}"
                   hx-trigger="click once"
-                  @click="listsOpen = true">
-            {% include "app/icons/list-add.svg" with classes="w-4 h-4" %}
-          </button>
+                  @click="listsOpen = true">{% include "app/icons/list-add.svg" with classes="w-4 h-4" %}</button>
 
           {# History Button #}
           <a class="p-2.5 bg-amber-600 text-white rounded-full hover:bg-amber-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(245,158,11,0.5)] transition-all duration-200 cursor-pointer"
