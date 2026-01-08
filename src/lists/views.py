@@ -1,3 +1,4 @@
+import datetime
 import logging
 
 from django.apps import apps
@@ -211,6 +212,34 @@ def list_detail(request, list_id):
             return media.score
         return -1
 
+    def _progress_value(media):
+        if not media:
+            return -1
+        aggregated_progress = getattr(media, "aggregated_progress", None)
+        if aggregated_progress is not None:
+            return aggregated_progress
+        progress = getattr(media, "progress", None)
+        if progress is not None:
+            return progress
+        return -1
+
+    def _media_date_value(media, attr_name):
+        if not media:
+            return None
+        aggregated_value = getattr(media, f"aggregated_{attr_name}", None)
+        if aggregated_value is not None:
+            return aggregated_value
+        return getattr(media, attr_name, None)
+
+    def _date_sort_value(value, direction):
+        if value is None:
+            return float("inf") if direction == "asc" else float("-inf")
+        if isinstance(value, datetime.datetime):
+            return value.timestamp()
+        if isinstance(value, datetime.date):
+            return datetime.datetime.combine(value, datetime.time.min).timestamp()
+        return float("inf") if direction == "asc" else float("-inf")
+
     # Apply sorting
     sort_mapping = {
         "date_added": ["-customlistitem__date_added"],
@@ -220,28 +249,56 @@ def list_detail(request, list_id):
             F("episode_number").asc(nulls_first=True),
         ],
         "media_type": ["media_type"],
-        "rating": ["-customlistitem__date_added"],  # Will be overridden below for rating sort
+        "rating": ["-customlistitem__date_added"],  # Fallback before media-based sorting
     }
 
-    # Handle rating sort specially - need to get all items first to sort by rating
-    if params["sort_by"] == "rating":
-        # Get all items without pagination first
-        all_items = items.order_by(*sort_mapping.get(params["sort_by"], ["-customlistitem__date_added"]))
+    media_sort_config = {
+        "rating": {
+            "key": lambda item: _rating_value(item.media),
+            "reverse": True,
+        },
+        "progress": {
+            "key": lambda item: _progress_value(item.media),
+            "reverse": True,
+        },
+        "start_date": {
+            "key": lambda item: _date_sort_value(
+                _media_date_value(item.media, "start_date"),
+                "asc",
+            ),
+            "reverse": False,
+        },
+        "end_date": {
+            "key": lambda item: _date_sort_value(
+                _media_date_value(item.media, "end_date"),
+                "desc",
+            ),
+            "reverse": True,
+        },
+    }
+
+    sort_config = media_sort_config.get(params["sort_by"])
+    if sort_config:
+        all_items = list(
+            items.order_by(
+                *sort_mapping.get(
+                    params["sort_by"],
+                    ["-customlistitem__date_added"],
+                ),
+            ),
+        )
         _attach_media_with_aggregation(all_items)
 
-        # Sort all items by rating (score) in descending order,
-        # with unrated items at the end
         all_items = sorted(
             all_items,
-            key=lambda item: _rating_value(item.media),
-            reverse=True,
+            key=sort_config["key"],
+            reverse=sort_config["reverse"],
         )
 
-        # Now paginate the sorted items
         paginator = Paginator(all_items, 16)
         items_page = paginator.get_page(params["page"])
     else:
-        # For non-rating sorts, apply database ordering and paginate normally
+        # For database-backed sorts, apply ordering and paginate normally
         items = items.order_by(
             *sort_mapping.get(params["sort_by"], ["-customlistitem__date_added"]),
         )
@@ -253,6 +310,7 @@ def list_detail(request, list_id):
         _attach_media_with_aggregation(items_page)
 
     # Base context for both full and partial responses
+    chip_sort = "score" if params["sort_by"] == "rating" else params["sort_by"]
     context = {
         "user": request.user,
         "custom_list": custom_list,
@@ -262,6 +320,7 @@ def list_detail(request, list_id):
         if items_page.has_next()
         else None,
         "current_sort": params["sort_by"],
+        "chip_sort": chip_sort,
         "sort_choices": ListDetailSortChoices.choices,
         "public_view": public_view,
     }

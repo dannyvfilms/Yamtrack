@@ -422,6 +422,30 @@ class ListDetailViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["current_sort"], "rating")
 
+        # Test progress sorting
+        mock_update_preference.return_value = "progress"
+        response = self.client.get(
+            reverse("list_detail", args=[self.custom_list.id]) + "?sort=progress",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "progress")
+
+        # Test start_date sorting
+        mock_update_preference.return_value = "start_date"
+        response = self.client.get(
+            reverse("list_detail", args=[self.custom_list.id]) + "?sort=start_date",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "start_date")
+
+        # Test end_date sorting
+        mock_update_preference.return_value = "end_date"
+        response = self.client.get(
+            reverse("list_detail", args=[self.custom_list.id]) + "?sort=end_date",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "end_date")
+
     @patch.object(get_user_model(), "update_preference")
     @patch.object(CustomList, "user_can_view")
     @patch("app.providers.services.get_media_metadata")

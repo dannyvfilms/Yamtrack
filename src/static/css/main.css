@@ -3831,6 +3831,7 @@
 
   .media-score-chip[data-score-chip-mode="conditional"][data-mobile-show="true"] {
     display: flex !important;
+    top: calc(var(--spacing) * 2) !important;
   }
 
   .media-status-chip[data-mobile-hide-on-mobile="true"] {

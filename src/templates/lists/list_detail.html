@@ -56,7 +56,13 @@
 
   <div x-data="{ sort: '{{ current_sort }}', type: '{{ request.GET.type|default:'all' }}', query: '{{ request.GET.q|default:''|escapejs }}', mediaTypeLabels: {
     {% for media_type in media_types %}'{{ media_type }}': '{{ media_type|media_type_readable_plural }}',{% endfor %}
-    'all': 'All Types' }, getMediaTypeLabel() { return this.mediaTypeLabels[this.type] || this.type; } }">
+    'all': 'All Types' }, sortLabels: {
+    {% for value, label in sort_choices %}
+      '{{ value }}': '{{ label }}'
+      {% if not forloop.last %},{% endif %}
+
+    {% endfor %}
+    }, getMediaTypeLabel() { return this.mediaTypeLabels[this.type] || this.type; } }">
 
     <!-- Form to manage state -->
     <form id="filter-form" class="hidden">
@@ -135,8 +141,7 @@
                   @click="open = !open"
                   type="button">
             {% include "app/icons/arrows-up-down.svg" with classes="w-4 h-4" %}
-            <span class="text-sm"
-                  x-text="sort === 'date_added' ? 'Date Added' : (sort === 'title' ? 'Title' : (sort === 'media_type' ? 'Media Type' : (sort === 'rating' ? 'Rating' : 'Date Added')))"></span>
+            <span class="text-sm" x-text="sortLabels[sort] || sort"></span>
             {% include "app/icons/chevron-down.svg" with classes="w-4 h-4" %}
           </button>
 
@@ -214,8 +219,7 @@
                 @click="open = !open"
                 type="button">
           {% include "app/icons/arrows-up-down.svg" with classes="w-4 h-4" %}
-          <span class="text-sm"
-                x-text="sort === 'date_added' ? 'Date Added' : (sort === 'title' ? 'Title' : (sort === 'media_type' ? 'Media Type' : (sort === 'rating' ? 'Rating' : 'Date Added')))"></span>
+          <span class="text-sm" x-text="sortLabels[sort] || sort"></span>
           {% include "app/icons/chevron-down.svg" with classes="w-4 h-4" %}
         </button>
 
