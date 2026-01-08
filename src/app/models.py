@@ -1947,6 +1947,8 @@ class Season(Media):
         """Recalculate season (and TV) status using local data (no provider calls)."""
         if self.status == Status.DROPPED.value:
             return
+        if self.status == Status.PAUSED.value:
+            return
 
         # What episodes do we have logged?
         episode_numbers = set(
