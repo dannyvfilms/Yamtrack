@@ -795,6 +795,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
     # Helper function to check if entry matches genre filter by checking metadata.
     # Uses a cache to avoid repeated metadata lookups for the same media item.
     genre_filter = filters.get("genre")
+    genre_filter_lower = genre_filter.lower() if genre_filter else None
     genre_cache = {}  # Cache: (media_type, media_id) -> bool (matches genre or None if not checked)
 
     def matches_genre(media_entry, media_type):
@@ -864,6 +865,13 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
             if cache_key:
                 genre_cache[cache_key] = False
             return False  # Skip if we can't check genre
+
+    def matches_item_genre(item):
+        """Check if an item has a genre match using stored genres only."""
+        if not genre_filter_lower:
+            return True
+        genres = _resolve_genres(item)
+        return any(str(genre).lower() == genre_filter_lower for genre in genres)
 
     # Build a lookup of episode titles from stored items to avoid provider calls
     # Only if we're processing episodes
@@ -1135,6 +1143,8 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                 for game in games:
                     if not (game.start_date or game.end_date):
                         continue
+                    if genre_filter and not matches_item_genre(game.item):
+                        continue
 
                     activity_dt = game.end_date or game.start_date or game.created_at
                     played_at_local = _localize_datetime(activity_dt)
@@ -1171,6 +1181,8 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
             if process_boardgames:
                 for boardgame in boardgames:
                     if not (boardgame.start_date or boardgame.end_date):
+                        continue
+                    if genre_filter and not matches_item_genre(boardgame.item):
                         continue
 
                     activity_dt = boardgame.end_date or boardgame.start_date or boardgame.created_at
@@ -1216,6 +1228,8 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
             if process_games:
                 for game in games:
                     if not (game.start_date or game.end_date):
+                        continue
+                    if genre_filter and not matches_item_genre(game.item):
                         continue
 
                     total_minutes = game.progress or 0
@@ -1272,6 +1286,8 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
             if process_boardgames:
                 for boardgame in boardgames:
                     if not (boardgame.start_date or boardgame.end_date):
+                        continue
+                    if genre_filter and not matches_item_genre(boardgame.item):
                         continue
 
                     total_plays = boardgame.progress or 0
