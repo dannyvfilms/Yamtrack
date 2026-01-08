@@ -125,6 +125,12 @@ document.addEventListener("DOMContentLoaded", function () {
       const dataPoint = tooltipModel.dataPoints[0];
       const label = dataPoint.label;
       const value = dataPoint.raw;
+      const { valueLabel, valueSuffix, valueDecimals } = getPieValueConfig(
+        context.chart,
+        dataPoint.datasetIndex
+      );
+      const formattedValue = formatPieValue(value, valueDecimals);
+      const valueText = valueSuffix ? `${formattedValue}${valueSuffix}` : formattedValue;
 
       // Calculate percentage
       const dataset = context.chart.data.datasets[dataPoint.datasetIndex];
@@ -134,7 +140,7 @@ document.addEventListener("DOMContentLoaded", function () {
       // Create tooltip content
       let tooltipContent = `
         <div class="pie-label">${label}</div>
-        <div class="pie-value">Count: ${value}</div>
+        <div class="pie-value">${valueLabel}: ${valueText}</div>
         <div class="pie-percent">${percentage}%</div>
       `;
 
@@ -187,8 +193,15 @@ document.addEventListener("DOMContentLoaded", function () {
             const original =
               Chart.overrides.pie.plugins.legend.labels.generateLabels;
             const labels = original.call(this, chart);
+            const dataset = chart.data.datasets[0] || {};
+            const valueSuffix = dataset.value_suffix || "";
+            const valueDecimals = Number.isFinite(dataset.value_decimals)
+              ? dataset.value_decimals
+              : 0;
             labels.forEach((label, i) => {
-              label.text = `${label.text} (${chart.data.datasets[0].data[i]})`;
+              const rawValue = chart.data.datasets[0].data[i];
+              const formattedValue = formatPieValue(rawValue, valueDecimals);
+              label.text = `${label.text} (${formattedValue}${valueSuffix})`;
               label.strokeStyle = "transparent";
             });
             return labels;
@@ -209,6 +222,28 @@ document.addEventListener("DOMContentLoaded", function () {
       },
     },
   };
+
+  function formatPieValue(value, decimals) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return "0";
+    }
+    if (Number.isFinite(decimals)) {
+      return numeric.toFixed(decimals);
+    }
+    return `${numeric}`;
+  }
+
+  function getPieValueConfig(chart, datasetIndex) {
+    const dataset = chart.data.datasets[datasetIndex] || {};
+    return {
+      valueLabel: dataset.value_label || "Count",
+      valueSuffix: dataset.value_suffix || "",
+      valueDecimals: Number.isFinite(dataset.value_decimals)
+        ? dataset.value_decimals
+        : 0,
+    };
+  }
 
   // Common configuration for bar charts
   const barChartConfig = {

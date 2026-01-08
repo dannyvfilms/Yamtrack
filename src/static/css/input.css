@@ -63,6 +63,10 @@
   overflow-x: hidden;
 }
 
+.stat-scroll-safe.stat-tooltip-safe {
+  overflow: visible;
+}
+
 @media (max-width: 768px) {
   .media-card {
     background-color: transparent !important;

@@ -20,6 +20,7 @@ from app.models import (
     Sources,
     Status,
 )
+from app.templatetags import app_tags
 
 User = get_user_model()
 
@@ -557,8 +558,17 @@ class StatisticsTests(TestCase):
             MediaTypes.ANIME: 1,
             MediaTypes.BOOK: 0,  # Should be excluded
         }
+        minutes_per_type = {
+            MediaTypes.TV.value: 120,
+            MediaTypes.MOVIE.value: 60,
+            MediaTypes.ANIME.value: 30,
+            MediaTypes.BOOK.value: 0,
+        }
 
-        chart_data = statistics.get_media_type_distribution(media_count)
+        chart_data = statistics.get_media_type_distribution(
+            media_count,
+            minutes_per_type,
+        )
 
         # Check structure
         self.assertIn("labels", chart_data)
@@ -568,9 +578,23 @@ class StatisticsTests(TestCase):
         self.assertIn("backgroundColor", chart_data["datasets"][0])
 
         # Check content
-        self.assertEqual(len(chart_data["labels"]), 3)  # 3 media types with count > 0
+        self.assertEqual(len(chart_data["labels"]), 3)  # 3 media types with hours > 0
         self.assertEqual(len(chart_data["datasets"][0]["data"]), 3)
         self.assertEqual(len(chart_data["datasets"][0]["backgroundColor"]), 3)
+        self.assertEqual(chart_data["datasets"][0]["value_label"], "Hours")
+        self.assertEqual(chart_data["datasets"][0]["value_suffix"], "h")
+        self.assertEqual(chart_data["datasets"][0]["value_decimals"], 1)
+
+        # Hours should be calculated from minutes
+        expected_labels = [
+            app_tags.media_type_readable(MediaTypes.TV.value),
+            app_tags.media_type_readable(MediaTypes.MOVIE.value),
+            app_tags.media_type_readable(MediaTypes.ANIME.value),
+        ]
+        self.assertEqual(chart_data["labels"], expected_labels)
+        self.assertAlmostEqual(chart_data["datasets"][0]["data"][0], 2.0)
+        self.assertAlmostEqual(chart_data["datasets"][0]["data"][1], 1.0)
+        self.assertAlmostEqual(chart_data["datasets"][0]["data"][2], 0.5)
 
         # Book should be excluded (count = 0)
         self.assertNotIn("Book", chart_data["labels"])

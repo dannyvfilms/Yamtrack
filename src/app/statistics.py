@@ -179,7 +179,7 @@ def get_user_media(user, start_date, end_date):
     return user_media, media_count
 
 
-def get_media_type_distribution(media_count):
+def get_media_type_distribution(media_count, minutes_per_type=None):
     """Get data formatted for Chart.js pie chart."""
     # Define colors for each media type
     # Format for Chart.js
@@ -193,14 +193,41 @@ def get_media_type_distribution(media_count):
         ],
     }
 
+    dataset = chart_data["datasets"][0]
+
+    if minutes_per_type:
+        dataset["value_label"] = "Hours"
+        dataset["value_suffix"] = "h"
+        dataset["value_decimals"] = 1
+
+        ordered_types = list(MEDIA_TYPE_HOURS_ORDER)
+        ordered_types.extend(
+            [media_type for media_type in minutes_per_type if media_type not in ordered_types],
+        )
+
+        for media_type in ordered_types:
+            total_minutes = minutes_per_type.get(media_type, 0) or 0
+            if total_minutes <= 0:
+                continue
+            hours = round(total_minutes / 60, 2)
+            if hours <= 0:
+                continue
+            label = app_tags.media_type_readable(media_type)
+            chart_data["labels"].append(label)
+            dataset["data"].append(hours)
+            dataset["backgroundColor"].append(
+                config.get_stats_color(media_type),
+            )
+        return chart_data
+
     # Only include media types with counts > 0
     for media_type, count in media_count.items():
         if media_type != "total" and count > 0:
             # Format label with first letter capitalized
             label = app_tags.media_type_readable(media_type)
             chart_data["labels"].append(label)
-            chart_data["datasets"][0]["data"].append(count)
-            chart_data["datasets"][0]["backgroundColor"].append(
+            dataset["data"].append(count)
+            dataset["backgroundColor"].append(
                 config.get_stats_color(media_type),
             )
     return chart_data

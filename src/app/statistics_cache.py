@@ -318,9 +318,17 @@ def build_statistics_data(user, start_date, end_date):
             media_count["total"] = max(media_count.get("total", 0) - season_count, 0)
         user_media.pop(season_key, None)
 
+    # Calculate minutes per media type (used by multiple stats)
+    minutes_per_media_type = stats.calculate_minutes_per_media_type(
+        user_media,
+        start_date,
+        end_date,
+        user=user,
+    )
     # Calculate all statistics from the retrieved data
     media_type_distribution = stats.get_media_type_distribution(
         media_count,
+        minutes_per_media_type,
     )
     score_distribution, top_rated, top_rated_by_type = stats.get_score_distribution(user_media)
     status_distribution = stats.get_status_distribution(user_media)
@@ -330,12 +338,6 @@ def build_statistics_data(user, start_date, end_date):
     top_played = stats.get_top_played_media(user_media, start_date, end_date)
 
     # Calculate hours and detailed consumption summaries
-    minutes_per_media_type = stats.calculate_minutes_per_media_type(
-        user_media,
-        start_date,
-        end_date,
-        user=user,
-    )
     hours_per_media_type = stats.get_hours_per_media_type(
         user_media,
         start_date,
@@ -2332,7 +2334,10 @@ def _aggregate_statistics_from_days(user, day_list, start_date, end_date, build_
     activity_counts_by_date = {day: activity_counts.get(day, 0) for day in day_list}
     activity_data = _build_activity_data(activity_counts_by_date, start_date, end_date)
 
-    media_type_distribution = stats.get_media_type_distribution(media_count)
+    media_type_distribution = stats.get_media_type_distribution(
+        media_count,
+        minutes_by_type,
+    )
     status_pie_chart_data = stats.get_status_pie_chart_data(status_distribution_payload)
 
     daily_hours_by_media_type = _build_daily_hours_chart(day_minutes_by_type, day_list)
