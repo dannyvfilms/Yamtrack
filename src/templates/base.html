@@ -345,6 +345,52 @@
     {% endblock js %}
 
     <script>
+      // Media card hover - slide body up to reveal expanded title + year
+      function initMediaCardHover() {
+        document.querySelectorAll('.search-result-card').forEach(card => {
+          if (card.dataset.hoverInit) return;
+          card.dataset.hoverInit = 'true';
+
+          const title = card.querySelector('.media-card-title, .search-result-title');
+          const year = card.querySelector('.media-card-year');
+          const body = card.querySelector('.media-card-body');
+          if (!title || !body) return;
+
+          // Measure expanded state: temporarily expand title to 3 lines and show year
+          title.style.webkitLineClamp = '3';
+          let yearHeight = 0;
+          if (year) {
+            year.style.display = 'block';
+            year.style.opacity = '1';
+            yearHeight = year.offsetHeight;
+          }
+
+          // Force reflow to get accurate measurements
+          const expandedTitleHeight = title.scrollHeight;
+          const initialTitleHeight = title.offsetHeight;
+
+          // Reset
+          title.style.webkitLineClamp = '';
+          if (year) {
+            year.style.display = '';
+            year.style.opacity = '';
+          }
+
+          // Calculate extra height: additional title lines + year
+          const extraTitleHeight = Math.max(0, expandedTitleHeight - initialTitleHeight);
+          const extraHeight = extraTitleHeight + yearHeight;
+
+          card.style.setProperty('--year-height', extraHeight + 'px');
+        });
+      }
+
+      // Init on load and after HTMX swaps
+      document.addEventListener('DOMContentLoaded', initMediaCardHover);
+      document.body.addEventListener('htmx:afterSwap', initMediaCardHover);
+      document.body.addEventListener('htmx:afterSettle', initMediaCardHover);
+    </script>
+
+    <script>
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", () => {
           navigator.serviceWorker

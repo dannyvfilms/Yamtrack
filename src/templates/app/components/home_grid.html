@@ -6,7 +6,7 @@
   <div class="media-card {% if secondary_color %}bg-[#39404b]{% else %}bg-[#2a2f35]{% endif %} rounded-lg overflow-hidden shadow-lg transition-all duration-300"
        x-data="{ trackOpen: false, listsOpen: false }">
     <div class="relative">
-      <a href="{% if use_podcast_show %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=media.show.podcast_uuid title=media.show.slug|default:media.show.title|slug %}{% else %}{{ media.item|media_url }}{% endif %}">
+      <a href="{% if use_podcast_show %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=media.show.podcast_uuid title=media.show.slug|default:media.show.title|default:media.show.podcast_uuid|slug %}{% else %}{{ media.item|media_url }}{% endif %}">
       <img alt="{% if use_podcast_show %}{{ media.show.title }}{% else %}{{ media }}{% endif %}"
            class="media-card-poster lazyload w-full {% if media.item.media_type == MediaTypes.PODCAST.value %}aspect-[1/1]{% else %}aspect-[2/3]{% endif %} {% if use_podcast_show and media.show.image %}object-cover{% elif media.item.image != IMG_NONE %}object-cover{% endif %}"
            data-src="{% if use_podcast_show and media.show.image %}{{ media.show.image }}{% else %}{{ media.item.image }}{% endif %}"
@@ -75,7 +75,7 @@
       {% endif %}
 
       <div class="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 hover-tap:opacity-100{% if user.clickable_media_cards %} pointer-coarse:hidden{% endif %}">
-        <a href="{% if use_podcast_show %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=media.show.podcast_uuid title=media.show.slug|default:media.show.title|slug %}{% else %}{{ media.item|media_url }}{% endif %}"
+        <a href="{% if use_podcast_show %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=media.show.podcast_uuid title=media.show.slug|default:media.show.title|default:media.show.podcast_uuid|slug %}{% else %}{{ media.item|media_url }}{% endif %}"
            class="absolute inset-0"></a>
 
         <div class="relative flex items-center justify-center space-x-2.5">
@@ -122,7 +122,7 @@
     </div>
 
     <div class="media-card-body p-3 space-y-3">
-      <a href="{% if use_podcast_show %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=media.show.podcast_uuid title=media.show.slug|default:media.show.title|slug %}{% else %}{{ media.item|media_url }}{% endif %}"
+      <a href="{% if use_podcast_show %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=media.show.podcast_uuid title=media.show.slug|default:media.show.title|default:media.show.podcast_uuid|slug %}{% else %}{{ media.item|media_url }}{% endif %}"
          class="media-card-title text-sm font-semibold text-white hover:text-indigo-400 transition duration-300 line-clamp-1 text-center"
          title="{% if use_podcast_show %}{{ media.show.title }}{% else %}{{ media }}{% endif %}">{% if use_podcast_show %}{{ media.show.title }}{% else %}{{ media }}{% endif %}</a>
       <div id="progress-{{ media.item.media_type }}-{{ media.id }}" class="media-card-progress" data-progress-mode="conditional" data-mobile-show="{% if current_sort_value == 'progress' %}true{% else %}false{% endif %}">

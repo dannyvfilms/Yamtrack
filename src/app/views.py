@@ -701,12 +701,14 @@ def media_details(
     request, source, media_type, media_id, title,
 ):
     """Return the details page for a media item."""
-    # Check if this is a public view (from query parameter)
-    public_view = request.GET.get("public_view") == "1" and not request.user.is_authenticated
+    # Treat all anonymous views as public (no user-specific data/actions)
+    is_anonymous = not request.user.is_authenticated
+    public_view = is_anonymous
+    public_list_view = request.GET.get("public_view") == "1" and is_anonymous
 
     # For public views, find a public list containing this item to get the owner
     list_owner = None
-    if public_view:
+    if public_list_view:
         try:
             # Get or create the Item for this media
             item, _ = Item.objects.get_or_create(
@@ -1416,12 +1418,14 @@ def season_details(
     request, source, media_id, title, season_number,
 ):
     """Return the details page for a season."""
-    # Check if this is a public view (from query parameter)
-    public_view = request.GET.get("public_view") == "1" and not request.user.is_authenticated
+    # Treat all anonymous views as public (no user-specific data/actions)
+    is_anonymous = not request.user.is_authenticated
+    public_view = is_anonymous
+    public_list_view = request.GET.get("public_view") == "1" and is_anonymous
 
     # For public views, find a public list containing this item to get the owner
     list_owner = None
-    if public_view:
+    if public_list_view:
         try:
             # Get or create the Item for this season
             item, _ = Item.objects.get_or_create(

@@ -116,6 +116,7 @@ def search(query, page=1):
             thing_root = _bgg_request("thing", thing_params)
 
             thumbnails = {}
+            years = {}
             for item in thing_root.findall(".//item"):
                 game_id = item.get("id")
                 thumbnail_elem = item.find("thumbnail")
@@ -125,6 +126,9 @@ def search(query, page=1):
                     image_elem = item.find("image")
                     if image_elem is not None and image_elem.text:
                         thumbnails[game_id] = image_elem.text
+                year_elem = item.find("yearpublished")
+                if year_elem is not None and year_elem.get("value"):
+                    years[game_id] = year_elem.get("value")
 
             for game_id in page_ids:
                 results.append(
@@ -134,6 +138,7 @@ def search(query, page=1):
                         "media_type": MediaTypes.BOARDGAME.value,
                         "title": game_names.get(game_id, "Unknown"),
                         "image": thumbnails.get(game_id, settings.IMG_NONE),
+                        "year": years.get(game_id),
                     },
                 )
         except Exception as exc:

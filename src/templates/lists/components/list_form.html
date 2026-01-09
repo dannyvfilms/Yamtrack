@@ -1,10 +1,9 @@
 {% load widget_tweaks %}
 
-<div x-show="showModal"
-     x-cloak
-     class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-  <div @click.outside="showModal = false"
-       class="bg-[#2a2f35] p-6 rounded-lg w-152 max-h-[90vh] overflow-y-auto">
+{# djlint:off #}
+<div x-show="showModal" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+  <div @click.outside="showModal = false" class="bg-[#2a2f35] p-6 rounded-lg w-152 max-h-[90vh] overflow-y-auto"
+    x-data="{ isPublic: {{ form.instance.is_public|yesno:'true,false' }} }">
     <div class="flex items-center justify-between mb-6">
       <h2 class="text-2xl font-bold">
         {% if form.instance.pk %}
@@ -13,8 +12,7 @@
           Create New List
         {% endif %}
       </h2>
-      <button @click="showModal = false"
-              class="text-gray-400 hover:text-white transition-colors cursor-pointer">
+      <button @click="showModal = false" class="text-gray-400 hover:text-white transition-colors cursor-pointer">
         {% include "app/icons/x.svg" with classes="w-6 h-6" %}
       </button>
     </div>
@@ -23,52 +21,39 @@
       <input type="hidden" name="list_id" value="{{ custom_list.id }}">
       {% for field in form %}
         <div>
-          <label class="block text text-sm font-medium mb-2 text-gray-300">{{ field.label }}</label>
-          {% if field.name == 'visibility' %}
-            {# Visibility dropdown matching preferences.html pattern #}
-            <div class="relative" x-data="{ open: false, selectedValue: '{{ field.value|default:"private" }}', selectedLabel: '{{ field.value|default:"private"|title }}' }">
-              <button type="button"
-                      @click="open = !open"
-                      @click.outside="open = false"
-                      class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
-                <span x-text="selectedLabel"></span>
-                <svg xmlns="http://www.w3.org/2000/svg"
-                     width="24"
-                     height="24"
-                     viewBox="0 0 24 24"
-                     fill="none"
-                     stroke="currentColor"
-                     stroke-width="2"
-                     stroke-linecap="round"
-                     stroke-linejoin="round"
-                     class="w-4 h-4 text-gray-400">
-                  <path d="m6 9 6 6 6-6"></path>
-                </svg>
-              </button>
-              <div x-show="open"
-                   x-transition:enter="transition ease-out duration-100"
-                   x-transition:enter-start="transform opacity-0 scale-95"
-                   x-transition:enter-end="transform opacity-100 scale-100"
-                   x-transition:leave="transition ease-in duration-75"
-                   x-transition:leave-start="transform opacity-100 scale-100"
-                   x-transition:leave-end="transform opacity-0 scale-95"
-                   class="absolute left-0 right-0 mt-2 py-1 bg-[#272c31] rounded-md shadow-lg overflow-hidden z-10 border border-gray-600">
-                <button type="button" 
-                        @click="selectedValue = 'public'; selectedLabel = 'Public'; open = false"
-                        class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
-                  Public
-                </button>
-                <button type="button" 
-                        @click="selectedValue = 'private'; selectedLabel = 'Private'; open = false"
-                        class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
-                  Private
-                </button>
+          {% if field.name == 'is_public' %}
+            <div class="flex items-center justify-between p-3 bg-[#39404b] rounded-md">
+              <div class="flex-1">
+                <div class="flex items-center text-gray-200 mb-1">
+                  {% include "app/icons/globe.svg" with classes="w-5 h-5 mr-2" %}
+                  <span class="text-sm font-medium">{{ field.label }}</span>
+                </div>
+                <p class="text-xs text-gray-400 ml-7">{{ field.help_text }}</p>
               </div>
-              <input type="hidden" name="visibility" x-bind:value="selectedValue">
+              <label class="relative inline-flex items-center cursor-pointer ml-4">
+                <input class="sr-only peer" type="checkbox" name="{{ field.name }}" x-model="isPublic" {% if form.instance.is_public %}checked{% endif %}>
+                <div class="w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-px after:left-0.5 after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4.5 after:w-4.5 after:transition-all peer-checked:bg-indigo-600"></div>
+              </label>
+            </div>
+          {% elif field.name == 'allow_recommendations' %}
+            <div class="flex items-center justify-between p-3 bg-[#39404b] rounded-md" :class="{ 'opacity-50': !isPublic }">
+              <div class="flex-1">
+                <div class="flex items-center text-gray-200 mb-1">
+                  {% include "app/icons/bell.svg" with classes="w-5 h-5 mr-2" %}
+                  <span class="text-sm font-medium">{{ field.label }}</span>
+                </div>
+                <p class="text-xs text-gray-400 ml-7">{{ field.help_text }}</p>
+              </div>
+              <label class="relative inline-flex items-center ml-4" :class="isPublic ? 'cursor-pointer' : 'cursor-not-allowed'">
+                <input class="sr-only peer" type="checkbox" name="{{ field.name }}" :disabled="!isPublic" {% if form.instance.allow_recommendations %}checked{% endif %}>
+                <div class="w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-px after:left-0.5 after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4.5 after:w-4.5 after:transition-all peer-checked:bg-indigo-600"></div>
+              </label>
             </div>
           {% elif field.name != 'collaborators' %}
+            <label class="block text text-sm font-medium mb-2 text-gray-300">{{ field.label }}</label>
             {{ field|add_class:"w-full p-2 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff] appearance-none" }}
           {% else %}
+            <label class="block text text-sm font-medium mb-2 text-gray-300">{{ field.label }}</label>
             {{ field }}
           {% endif %}
         </div>
@@ -76,21 +61,22 @@
 
       {% if form.instance.pk %}
         <div class="flex flex-row-reverse justify-between mt-6">
-          <button type="submit"
-                  formaction="{% url 'list_edit' %}?next={{ request.path }}"
-                  class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 cursor-pointer">
+          <button type="submit" formaction="{% url 'list_edit' %}?next={{ request.path }}"
+            class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 cursor-pointer">
             Save
           </button>
-          <button type="submit"
-                  formaction="{% url 'list_delete' %}?next={{ request.path }}"
-                  class="px-4 py-2 rounded-md transition duration-300 {% if request.user == custom_list.owner %}bg-red-700 text-white hover:bg-red-800 cursor-pointer{% else %}bg-gray-600 text-gray-300 cursor-not-allowed{% endif %}"
-                  {% if not request.user == custom_list.owner %}disabled{% endif %}>Delete</button>
+          {% if request.user == custom_list.owner %}
+            <button type="submit" formaction="{% url 'list_delete' %}?next={{ request.path }}"
+              class="px-4 py-2 rounded-md transition duration-300 bg-red-700 text-white hover:bg-red-800 cursor-pointer">Delete</button>
+          {% else %}
+            <button type="submit" formaction="{% url 'list_delete' %}?next={{ request.path }}"
+              class="px-4 py-2 rounded-md transition duration-300 bg-gray-600 text-gray-300 cursor-not-allowed" disabled>Delete</button>
+          {% endif %}
         </div>
       {% else %}
         <div class="flex justify-end pt-4">
-          <button type="submit"
-                  formaction="{% url 'list_create' %}?next={{ request.path }}"
-                  class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors cursor-pointer">
+          <button type="submit" formaction="{% url 'list_create' %}?next={{ request.path }}"
+            class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors cursor-pointer">
             Create List
           </button>
         </div>
@@ -98,3 +84,4 @@
     </form>
   </div>
 </div>
+{# djlint:on #}

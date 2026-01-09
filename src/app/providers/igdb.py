@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from enum import IntEnum
 
 import requests
@@ -249,6 +250,7 @@ def search(query, page):
                 "media_type": MediaTypes.GAME.value,
                 "title": media["name"],
                 "image": get_image_url(media),
+                "year": get_release_year(media),
             }
             for media in search_results
         ]
@@ -385,6 +387,18 @@ def get_game_type(game_type_id):
     return game_type_mapping.get(game_type_id)
 
 
+def get_release_year(media):
+    """Return the release year from an IGDB search result."""
+    date_value = media.get("first_release_date")
+    if not date_value:
+        return None
+
+    try:
+        return datetime.utcfromtimestamp(date_value).year
+    except (TypeError, ValueError, OSError, OverflowError):
+        return None
+
+
 def get_start_date(response):
     """Return the start date of the game."""
     # when no release date, first_release_date is not present in the response
@@ -455,6 +469,7 @@ def get_related(related_medias):
                 "media_type": MediaTypes.GAME.value,
                 "title": game["name"],
                 "image": get_image_url(game),
+                "year": get_release_year(game),
             }
             for game in related_medias
         ]

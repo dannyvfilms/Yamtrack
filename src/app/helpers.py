@@ -145,3 +145,47 @@ def enrich_items_with_user_data(request, items, user=None):
         enriched_items.append(enriched_item)
 
     return enriched_items
+
+
+def extract_release_datetime(metadata):
+    """Extract release datetime from metadata dict."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    date_str = None
+    for field in ["release_date", "first_air_date", "start_date", "publish_date"]:
+        if metadata.get("details", {}).get(field):
+            date_str = metadata["details"][field]
+            break
+        if metadata.get(field):
+            date_str = metadata[field]
+            break
+
+    if not date_str:
+        year = metadata.get("details", {}).get("year") or metadata.get("year")
+        if year:
+            try:
+                return datetime(int(year), 1, 1, tzinfo=ZoneInfo("UTC"))
+            except (ValueError, TypeError):
+                return None
+        return None
+
+    if isinstance(date_str, datetime):
+        if date_str.tzinfo is None:
+            return date_str.replace(tzinfo=ZoneInfo("UTC"))
+        return date_str
+
+    date_str = str(date_str)
+    format_lengths = {
+        "%Y-%m-%d": 10,
+        "%Y-%m": 7,
+        "%Y": 4,
+    }
+    for fmt, length in format_lengths.items():
+        try:
+            dt = datetime.strptime(date_str[:length], fmt)
+            return dt.replace(tzinfo=ZoneInfo("UTC"))
+        except (ValueError, TypeError):
+            continue
+
+    return None

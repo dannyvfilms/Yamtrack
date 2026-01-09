@@ -13,11 +13,23 @@ class CollaboratorsWidget(s2forms.ModelSelect2MultipleWidget):
 class CustomListForm(forms.ModelForm):
     """Form for creating new custom lists."""
 
+    is_public = forms.BooleanField(
+        required=False,
+        label="Public (read-only access)",
+        help_text="Anyone with the link can view this list",
+    )
+
     class Meta:
         """Bind form to model."""
 
         model = CustomList
-        fields = ["name", "description", "collaborators", "visibility"]
+        fields = [
+            "name",
+            "description",
+            "collaborators",
+            "is_public",
+            "allow_recommendations",
+        ]
         widgets = {
             "collaborators": CollaboratorsWidget(
                 attrs={
@@ -29,10 +41,19 @@ class CustomListForm(forms.ModelForm):
         }
 
     def __init__(self, *args, **kwargs):
-        """Initialize form and conditionally include visibility field."""
+        """Initialize form and map visibility to a public toggle."""
         super().__init__(*args, **kwargs)
-        # Only show visibility field when editing (instance has pk)
-        if not self.instance.pk:
-            # Remove visibility from fields for creation
-            if "visibility" in self.fields:
-                del self.fields["visibility"]
+        if self.instance and self.instance.pk:
+            self.initial["is_public"] = self.instance.visibility == "public"
+
+    def save(self, commit=True):
+        """Save the list with visibility mapped from the public toggle."""
+        instance = super().save(commit=False)
+        is_public = bool(self.cleaned_data.get("is_public"))
+        instance.visibility = "public" if is_public else "private"
+        if not is_public:
+            instance.allow_recommendations = False
+        if commit:
+            instance.save()
+            self.save_m2m()
+        return instance

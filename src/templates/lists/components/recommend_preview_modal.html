@@ -1,0 +1,218 @@
+{% load app_tags %}
+{% load humanize %}
+{% load user_tags %}
+
+{# djlint:off #}
+<div x-data="{ open: true }" x-show="open" x-cloak class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" @keydown.escape.window="open = false; document.getElementById('recommend-modal-container').innerHTML = ''">
+  <div @click.outside="open = false; document.getElementById('recommend-modal-container').innerHTML = ''" 
+       class="bg-[#2a2f35] rounded-lg max-w-md max-h-[90vh] overflow-y-auto"
+       x-transition:enter="transition ease-out duration-200"
+       x-transition:enter-start="opacity-0 scale-95"
+       x-transition:enter-end="opacity-100 scale-100"
+       x-transition:leave="transition ease-in duration-100"
+       x-transition:leave-start="opacity-100 scale-100"
+       x-transition:leave-end="opacity-0 scale-95">
+    
+    {# Header with close button #}
+    <div class="flex items-center justify-between p-4 border-b border-gray-700">
+      <h2 class="text-lg font-bold">{{ media_type|media_type_readable }} Details</h2>
+      <button @click="open = false; document.getElementById('recommend-modal-container').innerHTML = ''" 
+              class="p-1 text-gray-400 hover:text-white hover:bg-[#39404b] rounded transition-colors cursor-pointer">
+        {% include "app/icons/x.svg" with classes="w-5 h-5" %}
+      </button>
+    </div>
+
+    {# Media Info #}
+    <div class="p-4">
+      <div class="flex gap-3">
+        {# Poster #}
+        <div class="w-20 flex-shrink-0">
+          <img src="{{ media.image }}" alt="{{ media.title }}" class="w-full aspect-[2/3] object-cover rounded-lg bg-[#3e454d]">
+        </div>
+        
+        {# Details #}
+        <div class="flex-1 min-w-0">
+          <h3 class="text-lg font-bold text-white mb-1 leading-tight">{{ media.title }}</h3>
+          <p class="text-gray-400 text-xs mb-1">{{ media_type|media_type_readable }}</p>
+          
+          {# Date info #}
+          {% if media.details.first_air_date %}
+            <p class="text-gray-500 text-xs">{% if user.is_authenticated %}{{ media.details.first_air_date|user_date_format:user }}{% else %}{{ media.details.first_air_date }}{% endif %}</p>
+          {% elif media.details.release_date %}
+            <p class="text-gray-500 text-xs">{% if user.is_authenticated %}{{ media.details.release_date|user_date_format:user }}{% else %}{{ media.details.release_date }}{% endif %}</p>
+          {% elif media.first_air_date %}
+            <p class="text-gray-500 text-xs">{% if user.is_authenticated %}{{ media.first_air_date|user_date_format:user }}{% else %}{{ media.first_air_date }}{% endif %}</p>
+          {% elif media.release_date %}
+            <p class="text-gray-500 text-xs">{% if user.is_authenticated %}{{ media.release_date|user_date_format:user }}{% else %}{{ media.release_date }}{% endif %}</p>
+          {% elif media.year %}
+            <p class="text-gray-500 text-xs">{{ media.year }}</p>
+          {% endif %}
+          
+          {# Source score #}
+          {% if media.score_count is not None %}
+            <div class="flex items-center mt-1.5">
+              {% include "app/icons/star.svg" with classes="w-3.5 h-3.5 mr-1 text-yellow-400 fill-yellow-400" %}
+              {% if media.score is not None %}
+                <span class="text-sm font-bold text-white">{{ media.score }}</span><span class="text-gray-400 ml-0.5 text-xs">/10</span>
+                <span class="text-xs text-gray-500 ml-1.5">({{ media.score_count|intcomma }})</span>
+              {% else %}
+                <span class="text-sm text-gray-400">-</span>
+              {% endif %}
+            </div>
+          {% endif %}
+        </div>
+      </div>
+
+      {# Genres #}
+      {% if media.genres %}
+        <div class="flex flex-wrap gap-1 mt-3">
+          {% for genre in media.genres %}
+            <span class="px-2 py-0.5 bg-violet-600 text-white rounded-full text-xs">{{ genre }}</span>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      {# Synopsis #}
+      {% if media.synopsis %}
+        <div class="mt-3">
+          <h4 class="text-xs font-semibold text-gray-400 mb-1 uppercase">Synopsis</h4>
+          <div x-data="{ isExpanded: false, isClamped: false, checkClamp() { const element = this.$refs.synopsisText; this.isClamped = element.scrollHeight > element.clientHeight; } }"
+               x-init="$nextTick(() => checkClamp())">
+            <p x-ref="synopsisText"
+               :class="isExpanded ? '' : 'line-clamp-3'"
+               class="text-gray-300 text-sm text-pretty leading-relaxed">{{ media.synopsis|linebreaksbr|safe }}</p>
+            <button x-show="isClamped"
+                    @click="isExpanded = !isExpanded"
+                    class="text-indigo-400 hover:text-indigo-300 text-xs mt-1 focus:outline-none transition-colors cursor-pointer">
+              <span x-text="isExpanded ? 'Show less' : 'Read more'"></span>
+            </button>
+          </div>
+        </div>
+      {% endif %}
+
+      {# Additional Details #}
+      {% if media.details %}
+        <div class="mt-3 pt-3 border-t border-gray-700/50">
+          <h4 class="text-xs font-semibold text-gray-400 mb-2 uppercase">Details</h4>
+          <div class="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
+            {% if media.details.status %}
+              <div>
+                <span class="text-gray-500">Status:</span>
+                <span class="text-gray-300 ml-1">{{ media.details.status }}</span>
+              </div>
+            {% endif %}
+            {% if media.details.format %}
+              <div>
+                <span class="text-gray-500">Format:</span>
+                <span class="text-gray-300 ml-1">{{ media.details.format }}</span>
+              </div>
+            {% endif %}
+            {% if media.details.episodes %}
+              <div>
+                <span class="text-gray-500">Episodes:</span>
+                <span class="text-gray-300 ml-1">{{ media.details.episodes }}</span>
+              </div>
+            {% endif %}
+            {% if media.details.seasons %}
+              <div>
+                <span class="text-gray-500">Seasons:</span>
+                <span class="text-gray-300 ml-1">{{ media.details.seasons }}</span>
+              </div>
+            {% endif %}
+            {% if media.details.runtime %}
+              <div>
+                <span class="text-gray-500">Runtime:</span>
+                <span class="text-gray-300 ml-1">{{ media.details.runtime }}</span>
+              </div>
+            {% endif %}
+            {% if media.details.chapters %}
+              <div>
+                <span class="text-gray-500">Chapters:</span>
+                <span class="text-gray-300 ml-1">{{ media.details.chapters }}</span>
+              </div>
+            {% endif %}
+            {% if media.details.volumes %}
+              <div>
+                <span class="text-gray-500">Volumes:</span>
+                <span class="text-gray-300 ml-1">{{ media.details.volumes }}</span>
+              </div>
+            {% endif %}
+            {% if media.details.pages %}
+              <div>
+                <span class="text-gray-500">Pages:</span>
+                <span class="text-gray-300 ml-1">{{ media.details.pages }}</span>
+              </div>
+            {% endif %}
+          </div>
+          {% if media.details.studios %}
+            <div class="mt-1.5 text-xs">
+              <span class="text-gray-500">Studio:</span>
+              <span class="text-gray-300 ml-1">
+                {% for studio in media.details.studios %}{{ studio }}{% if not forloop.last %}, {% endif %}{% endfor %}
+              </span>
+            </div>
+          {% endif %}
+        </div>
+      {% endif %}
+
+      {# Status messages #}
+      {% if already_in_list %}
+        <div class="mt-4 px-3 py-2.5 bg-gray-600/30 text-gray-400 rounded-lg text-center">
+          <p class="font-medium text-sm">Already in this list</p>
+        </div>
+      {% elif already_recommended %}
+        <div class="mt-4 px-3 py-2.5 bg-amber-600/20 text-amber-400 rounded-lg text-center">
+          <p class="font-medium text-sm">Already recommended</p>
+          <p class="text-xs mt-0.5">Waiting for approval</p>
+        </div>
+      {% endif %}
+
+      {% if not already_in_list and not already_recommended %}
+        {# Recommendation Form #}
+        <form method="post" action="{% url 'submit_recommendation' custom_list.id %}" class="mt-4 pt-4 border-t border-gray-700">
+          {% csrf_token %}
+          <input type="hidden" name="media_id" value="{{ media_id }}">
+          <input type="hidden" name="media_type" value="{{ media_type }}">
+          <input type="hidden" name="source" value="{{ source }}">
+          
+          {% if not is_authenticated %}
+            <div class="mb-3">
+              <label class="block text-xs font-medium text-gray-300 mb-1.5">Your name (optional)</label>
+              <input type="text" name="recommender_name" placeholder="Anonymous" 
+                     class="w-full p-2.5 bg-[#39404b] rounded-lg text-white text-sm border border-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 placeholder-gray-500">
+              <p class="text-xs text-gray-500 mt-1">Leave blank to recommend anonymously</p>
+            </div>
+          {% endif %}
+
+          <div class="mb-3">
+            <label class="block text-xs font-medium text-gray-300 mb-1.5">Note (optional)</label>
+            <textarea name="note" rows="2" placeholder="Why do you recommend this?" 
+                      class="w-full p-2.5 bg-[#39404b] rounded-lg text-white text-sm border border-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 placeholder-gray-500 resize-none"></textarea>
+          </div>
+
+          <div class="flex gap-2">
+            <button type="button" 
+                    @click="open = false; document.getElementById('recommend-modal-container').innerHTML = ''"
+                    class="flex-1 px-3 py-2.5 bg-[#39404b] hover:bg-[#454d5a] text-white rounded-lg transition-colors cursor-pointer text-sm">
+              Cancel
+            </button>
+            <button type="submit" 
+                    class="flex-1 px-3 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1.5 text-sm shadow-md shadow-black/30">
+              {% include "app/icons/plus.svg" with classes="w-4 h-4 text-white" %}
+              <span class="tracking-wide">Recommend</span>
+            </button>
+          </div>
+        </form>
+      {% else %}
+        <div class="mt-4 pt-4 border-t border-gray-700">
+          <button type="button" 
+                  @click="open = false; document.getElementById('recommend-modal-container').innerHTML = ''"
+                  class="w-full px-3 py-2.5 bg-[#39404b] hover:bg-[#454d5a] text-white rounded-lg transition-colors cursor-pointer text-sm">
+            Close
+          </button>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{# djlint:on #}

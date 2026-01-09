@@ -1,0 +1,157 @@
+{% load static %}
+{% load app_tags %}
+
+{# djlint:off #}
+<!DOCTYPE html>
+<html lang="en" class="scheme-dark bg-[#212529]">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="keywords" content="Yamtrack, Media Tracker">
+    <meta name="description" content="Search and track media on Yamtrack.">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="mobile-web-app-title" content="Yamtrack">
+
+    <title>
+      {% block title %}
+        Yamtrack
+      {% endblock title %}
+    </title>
+
+    {% block extra_head %}
+    {% endblock extra_head %}
+
+    <link rel="stylesheet" type="text/css" href="{% static 'css/main.css' %}{% get_static_file_mtime 'css/main.css' %}">
+
+    <script src="{% static 'js/libraries/htmx-2.0.4.min.js' %}"></script>
+    <script defer src="{% static 'js/libraries/alpinejs-3.14.9.min.js' %}"></script>
+    <script src="{% static 'js/libraries/lazysizes-5.3.2.min.js' %}" async></script>
+
+    <link rel="apple-touch-icon" sizes="180x180" href="{% static 'favicon/apple-touch-icon.png' %}">
+    <link rel="icon" type="image/png" sizes="32x32" href="{% static 'favicon/favicon-32x32.png' %}">
+    <link rel="icon" type="image/png" sizes="16x16" href="{% static 'favicon/favicon-16x16.png' %}">
+    <link rel="manifest" href="{% static 'favicon/site.webmanifest' %}">
+    <link rel="mask-icon" href="{% static 'favicon/safari-pinned-tab.svg' %}" color="#181a1b">
+    <link rel="shortcut icon" href="{% static 'favicon/favicon.ico' %}">
+    <meta name="msapplication-TileColor" content="#181a1b">
+    <meta name="msapplication-config" content="{% static 'favicon/browserconfig.xml' %}">
+    <meta name="theme-color" content="#181a1b">
+  </head>
+
+  <body>
+    {% block body %}
+      <div class="min-h-screen bg-[#212529] text-gray-100">
+        {# Simple header for public pages #}
+        <header class="bg-[#1a1d20] border-b border-[#2c3136] shadow-md">
+          <div class="container mx-auto px-4">
+            <div class="h-16 flex items-center justify-between">
+              <h1 class="text-2xl font-semibold text-gray-100">Yamtrack</h1>
+              {% if REGISTRATION %}
+                <a href="{% url 'account_login' %}"
+                   class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md transition-colors text-sm">
+                  Sign In
+                </a>
+              {% endif %}
+            </div>
+          </div>
+        </header>
+
+        {# Main content #}
+        <main class="container mx-auto px-4 py-6">
+          {% block content %}
+          {% endblock content %}
+        </main>
+      </div>
+    {% endblock body %}
+
+    {% if messages %}
+      <div class="fixed top-24 right-0 left-0 z-50 flex justify-center pointer-events-none">
+        <div class="w-full max-w-xl px-4 space-y-2 pointer-events-auto">
+          {% for message in messages %}
+            <div class="flex items-center gap-2 rounded-md border px-3 py-2 shadow-lg text-white toast-{{ message.tags }} opacity-0"
+              x-data="{
+                  init() {
+                    // Start entrance animation after a tiny delay
+                    setTimeout(() => this.$el.classList.add('opacity-100', 'transform-none'), 10);
+                    this.$el.classList.add('transition-all', 'duration-300', 'ease-out', 'transform', 'translate-y-[-1rem]');
+
+                    {% if message.tags not in 'warning,error' %}
+                      // Auto-dismiss non-critical messages
+                      setTimeout(() => this.$el.remove(), 5000);
+                    {% endif %}
+                  }
+              }">
+
+              {% if message.tags == 'success' %}
+                {% include "app/icons/states/completed.svg" with classes="w-4 h-4 text-emerald-300 shrink-0" %}
+              {% elif message.tags == 'warning' %}
+                {% include "app/icons/warning.svg" with classes="w-4 h-4 text-amber-300 shrink-0" %}
+              {% elif message.tags == 'error' %}
+                {% include "app/icons/warning.svg" with classes="w-4 h-4 text-red-300 shrink-0" %}
+              {% elif message.tags == "info" %}
+                {% include "app/icons/info.svg" with classes="w-4 h-4 text-indigo-300 shrink-0" %}
+              {% endif %}
+
+              <p class="text-sm font-medium flex-1">{{ message }}</p>
+              <button class="text-current opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
+                      @click="$el.parentElement.remove()">
+                {% include "app/icons/x.svg" with classes="w-4 h-4" %}
+              </button>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
+
+    <script>
+      // Media card hover - slide body up to reveal expanded title + year
+      function initMediaCardHover() {
+        document.querySelectorAll('.search-result-card').forEach(card => {
+          if (card.dataset.hoverInit) return;
+          card.dataset.hoverInit = 'true';
+
+          const title = card.querySelector('.media-card-title, .search-result-title');
+          const year = card.querySelector('.media-card-year');
+          const body = card.querySelector('.media-card-body');
+          if (!title || !body) return;
+
+          // Measure expanded state: temporarily expand title to 3 lines and show year
+          title.style.webkitLineClamp = '3';
+          let yearHeight = 0;
+          if (year) {
+            year.style.display = 'block';
+            year.style.opacity = '1';
+            yearHeight = year.offsetHeight;
+          }
+
+          // Force reflow to get accurate measurements
+          const expandedTitleHeight = title.scrollHeight;
+          const initialTitleHeight = title.offsetHeight;
+
+          // Reset
+          title.style.webkitLineClamp = '';
+          if (year) {
+            year.style.display = '';
+            year.style.opacity = '';
+          }
+
+          // Calculate extra height: additional title lines + year
+          const extraTitleHeight = Math.max(0, expandedTitleHeight - initialTitleHeight);
+          const extraHeight = extraTitleHeight + yearHeight;
+
+          card.style.setProperty('--year-height', extraHeight + 'px');
+        });
+      }
+
+      // Init on load and after HTMX swaps
+      document.addEventListener('DOMContentLoaded', initMediaCardHover);
+      document.body.addEventListener('htmx:afterSwap', initMediaCardHover);
+      document.body.addEventListener('htmx:afterSettle', initMediaCardHover);
+    </script>
+
+    {% block extra_scripts %}
+    {% endblock extra_scripts %}
+  </body>
+</html>
+{# djlint:on #}

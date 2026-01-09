@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% load static %}
+{% load app_tags %}
+{% load user_tags %}
+
+{% block title %}
+    Activity - {{ custom_list.name }} - Yamtrack
+{% endblock title %}
+
+{% block content %}
+    <div class="max-w-8xl mx-auto">
+        <div class="mb-6">
+            <a href="{% url 'list_detail' custom_list.id %}"
+               class="inline-flex items-center text-gray-400 hover:text-white transition-colors mb-4">
+                {% include "app/icons/chevron-left.svg" with classes="w-4 h-4 mr-1" %}
+                Back to {{ custom_list.name }}
+            </a>
+            <h1 class="text-3xl font-bold mb-2">Activity History</h1>
+            <p class="text-gray-400">View recent activity for "{{ custom_list.name }}"</p>
+        </div>
+
+        {% if activities %}
+            <div class="bg-[#2a2f35] rounded-lg overflow-hidden">
+                <div class="divide-y divide-gray-700">
+                    {% for activity in activities %}
+                        <div class="p-4 flex items-start gap-4">
+                            {# Activity icon #}
+                            <div class="flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center {% if activity.activity_type == 'item_added' or activity.activity_type == 'recommendation_approved' %} bg-green-600/20 text-green-400 {% elif activity.activity_type == 'item_removed' or activity.activity_type == 'recommendation_denied' %} bg-red-600/20 text-red-400 {% elif activity.activity_type == 'list_edited' %} bg-blue-600/20 text-blue-400 {% else %} bg-gray-600/20 text-gray-400 {% endif %}">
+                                {% if activity.activity_type == 'item_added' or activity.activity_type == 'recommendation_approved' %}
+                                    {% include "app/icons/plus.svg" with classes="w-5 h-5" %}
+                                {% elif activity.activity_type == 'item_removed' or activity.activity_type == 'recommendation_denied' %}
+                                    {% include "app/icons/x.svg" with classes="w-5 h-5" %}
+                                {% elif activity.activity_type == 'list_edited' %}
+                                    {% include "app/icons/edit.svg" with classes="w-5 h-5" %}
+                                {% elif activity.activity_type == 'collaborator_added' or activity.activity_type == 'collaborator_removed' %}
+                                    {% include "app/icons/user.svg" with classes="w-5 h-5" %}
+                                {% else %}
+                                    {% include "app/icons/bell.svg" with classes="w-5 h-5" %}
+                                {% endif %}
+                            </div>
+
+                            {# Activity content #}
+                            <div class="flex-1 min-w-0">
+                                <p class="text-white">{{ activity.description }}</p>
+                                <p class="text-sm text-gray-500 mt-1">
+                                    {{ activity.timestamp|user_datetime_format:user }}
+                                    <span class="text-gray-600 mx-1">•</span>
+                                    {{ activity.timestamp|timesince }} ago
+                                </p>
+                            </div>
+
+                            {# Item image (if applicable) #}
+                            {% if activity.item %}
+                                <a href="{{ activity.item|media_url }}" class="flex-shrink-0">
+                                    <img src="{{ activity.item.image }}"
+                                         alt="{{ activity.item.title }}"
+                                         class="w-12 h-16 object-cover rounded bg-[#3e454d]">
+                                </a>
+                            {% endif %}
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+        {% else %}
+            <div class="bg-[#2a2f35] rounded-lg py-16 text-center">
+                <div class="bg-[#39404b] rounded-full p-4 w-16 h-16 mx-auto mb-4 flex items-center justify-center">
+                    {% include "app/icons/bell.svg" with classes="w-8 h-8 text-gray-400" %}
+                </div>
+                <h3 class="text-xl font-semibold mb-2">No activity yet</h3>
+                <p class="text-gray-400">Activity history will appear here as items are added or removed from the list.</p>
+            </div>
+        {% endif %}
+    </div>
+{% endblock content %}

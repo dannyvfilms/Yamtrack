@@ -49,7 +49,7 @@ def search(media_type, query, page):
         url = f"{base_url}/{media_type}"
         params = {
             "q": query,
-            "fields": "media_type",
+            "fields": "media_type,start_date",
             "limit": settings.PER_PAGE,
         }
         if settings.MAL_NSFW:
@@ -74,6 +74,7 @@ def search(media_type, query, page):
                 "media_type": media_type,
                 "title": media["node"]["title"],
                 "image": get_image_url(media["node"]),
+                "year": get_start_year(media["node"]),
             }
             for media in response
         ]
@@ -237,6 +238,22 @@ def get_image_url(response):
         return settings.IMG_NONE
 
 
+def get_start_year(response):
+    """Return the start year for a MAL search node if present."""
+    start_date = response.get("start_date")
+    if start_date:
+        try:
+            return int(str(start_date).split("-")[0])
+        except (TypeError, ValueError):
+            return None
+
+    start_season = response.get("start_season")
+    if start_season and isinstance(start_season, dict):
+        return start_season.get("year")
+
+    return None
+
+
 def get_readable_status(response):
     """Return the status in human-readable format."""
     # Map status to human-readable values
@@ -391,6 +408,7 @@ def get_related(related_medias, media_type):
                 "title": media["node"]["title"],
                 "media_type": media_type,
                 "image": get_image_url(media["node"]),
+                "year": get_start_year(media["node"]),
             }
             for media in related_medias
         ]

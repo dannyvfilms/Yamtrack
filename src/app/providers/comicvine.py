@@ -48,7 +48,7 @@ def search(query, page):
             "format": "json",
             "query": query,
             "resources": "volume",
-            "field_list": "id,name,image",
+            "field_list": "id,name,image,start_year",
             "limit": settings.PER_PAGE,
             "page": page,
         }
@@ -71,6 +71,7 @@ def search(query, page):
                 "media_type": MediaTypes.COMIC.value,
                 "title": item["name"],
                 "image": get_image(item),
+                "year": item.get("start_year"),
             }
             for item in response["results"]
         ]
@@ -282,6 +283,7 @@ def get_similar_comics(publisher_id, current_id, limit=10):
                 "media_type": MediaTypes.COMIC.value,
                 "title": item["name"],
                 "image": get_image(item),
+                "year": item.get("start_year"),
             }
             for item in response["results"]
             if str(item["id"]) != current_id

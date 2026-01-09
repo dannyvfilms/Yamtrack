@@ -89,6 +89,7 @@ def search(query, page):
                 "media_type": MediaTypes.BOOK.value,
                 "title": hit["document"]["title"],
                 "image": get_image_url(hit["document"]),
+                "year": get_year(hit["document"].get("release_date")),
             }
             for hit in hits
         ]
@@ -236,6 +237,17 @@ def get_edition_details(edition_data):
         "publisher": publisher_name,
         "isbn": isbns if isbns else None,
     }
+
+
+def get_year(date_value):
+    """Extract a publication year from a date string."""
+    if not date_value:
+        return None
+
+    try:
+        return int(str(date_value).split("-")[0])
+    except (TypeError, ValueError):
+        return None
 
 
 def get_image_url(response):

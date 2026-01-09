@@ -148,6 +148,43 @@ def long_unit(media_type):
 
 
 @register.filter
+def safe_attr(obj, attr):
+    """Safely get an attribute from an object, returning None if it doesn't exist."""
+    if obj is None:
+        return None
+    return getattr(obj, attr, None)
+
+
+@register.filter
+def release_year(item, media=None):
+    """Return a best-effort release year from dicts or model instances."""
+    if media and hasattr(media, "item"):
+        release_dt = getattr(media.item, "release_datetime", None)
+        if release_dt:
+            return timezone.localtime(release_dt).year
+
+    if not item:
+        return None
+
+    if isinstance(item, dict):
+        year_value = item.get("year") or item.get("start_year")
+        if not year_value:
+            date_value = item.get("release_date") or item.get("first_air_date")
+            if date_value:
+                year_value = str(date_value).split("-")[0]
+        try:
+            return int(str(year_value)) if year_value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    release_dt = getattr(item, "release_datetime", None)
+    if release_dt:
+        return timezone.localtime(release_dt).year
+
+    return None
+
+
+@register.filter
 def sources(media_type):
     """Template filter to get source options for a media type."""
     return config.get_sources(media_type)
@@ -273,6 +310,10 @@ def media_url(media):
     source = media["source"] if is_dict else media.source
     media_id = media["media_id"] if is_dict else media.media_id
     title = media["title"] if is_dict else media.title
+    slug_title = slug(title)
+    if not slug_title:
+        fallback = str(media_id) if media_id is not None else "item"
+        slug_title = slug(fallback) or "item"
 
     if media_type in [MediaTypes.SEASON.value, MediaTypes.EPISODE.value]:
         season_number = media["season_number"] if is_dict else media.season_number
@@ -281,7 +322,7 @@ def media_url(media):
             kwargs={
                 "source": source,
                 "media_id": media_id,
-                "title": slug(title),
+                "title": slug_title,
                 "season_number": season_number,
             },
         )
@@ -292,7 +333,7 @@ def media_url(media):
             "source": source,
             "media_type": media_type,
             "media_id": media_id,
-            "title": slug(title),
+            "title": slug_title,
         },
     )
 

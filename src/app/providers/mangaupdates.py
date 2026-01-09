@@ -84,6 +84,7 @@ def search(query, page):
                 "media_type": MediaTypes.MANGA.value,
                 "title": media["record"]["title"],
                 "image": get_image_url(media["record"]),
+                "year": media["record"].get("year"),
             }
             for media in response["results"]
         ]
@@ -245,5 +246,6 @@ async def fetch_series_data(session, url, item):
                 "media_type": MediaTypes.MANGA.value,
                 "title": item.get("related_series_name") or item.get("series_name"),
                 "image": image,
+                "year": data.get("year"),
             }
     return None

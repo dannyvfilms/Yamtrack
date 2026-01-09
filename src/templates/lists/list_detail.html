@@ -1,35 +1,29 @@
-{% extends "base.html" %}
+{% extends base_template %}
 {% load static %}
 {% load app_tags %}
 
 {% block extra_head %}
-  {{ form.media.css }}
+  {% if form %}{{ form.media.css }}{% endif %}
 {% endblock extra_head %}
 
 {% block title %}
   {{ custom_list }} - Yamtrack
 {% endblock title %}
 
+{# djlint:off #}
 {% block content %}
-  <div class="flex items-center justify-between mb-6"
-       x-data="{ showModal: false }">
+  <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4" x-data="{ showModal: false }">
     <div>
       <div class="flex items-center gap-3 mb-2">
         <h1 class="text-3xl font-bold">{{ custom_list.name }}</h1>
-        {% if custom_list.visibility == "public" %}
-          <span class="px-2 py-1 text-xs font-medium bg-green-600/20 text-green-400 rounded-md border border-green-600/30">Public</span>
-        {% else %}
-          <span class="px-2 py-1 text-xs font-medium bg-gray-600/20 text-gray-400 rounded-md border border-gray-600/30">Private</span>
-        {% endif %}
       </div>
+      {% if custom_list.description %}<p class="text-gray-400 mb-2">{{ custom_list.description }}</p>{% endif %}
       <div class="flex items-center gap-4">
         <div class="flex items-center">
           <div class="flex -space-x-2 mr-2">
-            <div class="w-6 h-6 rounded-full bg-[#4f46e5] flex items-center justify-center border-2 border-[#2a2f35] text-xs font-medium"
-                 title="{{ custom_list.owner.username }}">{{ custom_list.owner.username.0|upper }}</div>
+            <div class="w-6 h-6 rounded-full bg-[#4f46e5] flex items-center justify-center border-2 border-[#2a2f35] text-xs font-medium" title="{{ custom_list.owner.username }}">{{ custom_list.owner.username.0|upper }}</div>
             {% for collaborator in custom_list.collaborators.all %}
-              <div class="w-6 h-6 rounded-full bg-[#4b5563] flex items-center justify-center border-2 border-[#2a2f35] text-xs font-medium"
-                   title="{{ collaborator.username }}">{{ collaborator.username.0|upper }}</div>
+              <div class="w-6 h-6 rounded-full bg-[#4b5563] flex items-center justify-center border-2 border-[#2a2f35] text-xs font-medium" title="{{ collaborator.username }}">{{ collaborator.username.0|upper }}</div>
             {% endfor %}
           </div>
           <span class="text-sm text-gray-400">
@@ -37,32 +31,58 @@
             <span class="mx-2">•</span>
             {{ items_count }} item{{ items_count|pluralize }}
           </span>
+          {% if custom_list.visibility == "public" %}
+            <span class="text-sm text-gray-400 mx-2">•</span>
+            <span class="text-sm bg-green-600/20 text-green-400 rounded-md flex items-center gap-1">
+              {% include "app/icons/globe.svg" with classes="w-3 h-3" %}
+              Public
+            </span>
+          {% endif %}
         </div>
       </div>
     </div>
-    {% if not public_view %}
-      {% if user.is_authenticated %}
-        {% if custom_list.user_can_edit %}
-          <button @click="showModal = true"
-                  class="px-4 py-2 bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex items-center gap-2 text-sm group cursor-pointer">
-            {% include "app/icons/horizontal-sliders.svg" with classes="w-4 h-4 text-gray-400 group-hover:text-white transition-colors" %}
-            <span>Edit List</span>
-          </button>
-          {% include "lists/components/list_form.html" %}
-        {% endif %}
+    <div class="flex items-center gap-2">
+      {% if custom_list.can_recommend %}
+        <a href="{% url 'recommend_item' custom_list.id %}"
+           class="px-4 py-2 bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex items-center gap-2 text-sm group cursor-pointer shadow-sm">
+          {% include "app/icons/plus.svg" with classes="w-4 h-4 text-gray-400 group-hover:text-white transition-colors" %}
+          <span class="text-gray-100">Recommend Item</span>
+        </a>
       {% endif %}
-    {% endif %}
+      {% if can_edit %}
+        {% if recommendation_count > 0 %}
+          <a href="{% url 'list_recommendations' custom_list.id %}"
+             class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors flex items-center gap-2 text-sm cursor-pointer">
+            {% include "app/icons/bell.svg" with classes="w-4 h-4" %}
+            <span>{{ recommendation_count }} Recommendation{{ recommendation_count|pluralize }}</span>
+          </a>
+        {% endif %}
+        <a href="{% url 'list_activity' custom_list.id %}"
+           class="px-4 py-2 bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex items-center gap-2 text-sm group cursor-pointer"
+           title="View activity history">
+          {% include "app/icons/history.svg" with classes="w-4 h-4 text-gray-400 group-hover:text-white transition-colors" %}
+          <span class="hidden sm:inline">Activity</span>
+        </a>
+        <button @click="showModal = true"
+                class="px-4 py-2 bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex items-center gap-2 text-sm group cursor-pointer">
+          {% include "app/icons/horizontal-sliders.svg" with classes="w-4 h-4 text-gray-400 group-hover:text-white transition-colors" %}
+          <span>Edit List</span>
+        </button>
+        {% include "lists/components/list_form.html" %}
+      {% endif %}
+    </div>
   </div>
 
-  <div x-data="{ sort: '{{ current_sort }}', type: '{{ request.GET.type|default:'all' }}', query: '{{ request.GET.q|default:''|escapejs }}', mediaTypeLabels: {
-    {% for media_type in media_types %}'{{ media_type }}': '{{ media_type|media_type_readable_plural }}',{% endfor %}
-    'all': 'All Types' }, sortLabels: {
-    {% for value, label in sort_choices %}
-      '{{ value }}': '{{ label }}'
-      {% if not forloop.last %},{% endif %}
+  {% if is_public_view %}
+    <div class="bg-blue-900/20 border border-blue-700/50 rounded-lg p-4 mb-6">
+      <div class="flex items-center gap-2 text-blue-400">
+        {% include "app/icons/info.svg" with classes="w-5 h-5" %}
+        <span class="text-sm">You're viewing a public list. <a href="{% url 'account_login' %}" class="underline hover:text-blue-300">Log in</a> to track your own media.</span>
+      </div>
+    </div>
+  {% endif %}
 
-    {% endfor %}
-    }, getMediaTypeLabel() { return this.mediaTypeLabels[this.type] || this.type; } }">
+  <div x-data="{ sort: '{{ current_sort }}', type: '{{ request.GET.type|default:'all' }}', query: '{{ request.GET.q|default:''|escapejs }}', mediaTypeLabels: { {% for media_type in media_types %}'{{ media_type }}': '{{ media_type|media_type_readable_plural }}',{% endfor %} 'all': 'All Types' }, sortLabels: { {% for value, label in sort_choices %}'{{ value }}': '{{ label }}'{% if not forloop.last %},{% endif %}{% endfor %} }, getMediaTypeLabel() { return this.mediaTypeLabels[this.type] || this.type; } }">
 
     <!-- Form to manage state -->
     <form id="filter-form" class="hidden">
@@ -256,11 +276,19 @@
             {% include "app/icons/list-add.svg" with classes="w-8 h-8 text-gray-400" %}
           </div>
           <h3 class="text-xl font-semibold mb-2">No items in this list yet</h3>
-          <p class="text-gray-400 mb-6">Start adding your favorite media to build your collection</p>
-          <div class="pt-4">
-            <a href="{{ 'tv'|sample_search }}"
-               class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors">Browse Media</a>
-          </div>
+          {% if can_edit %}
+            <p class="text-gray-400 mb-6">Start adding your favorite media to build your collection</p>
+            <div class="pt-4">
+              <a href="{{ 'tv'|sample_search }}" class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors">Browse Media</a>
+            </div>
+          {% elif custom_list.can_recommend %}
+            <p class="text-gray-400 mb-6">Be the first to recommend something!</p>
+            <div class="pt-4">
+              <a href="{% url 'recommend_item' custom_list.id %}" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md transition-colors">Recommend Item</a>
+            </div>
+          {% else %}
+            <p class="text-gray-400">This list is empty</p>
+          {% endif %}
         </div>
       </div>
     {% endif %}
@@ -272,14 +300,88 @@
     </div>
   </div>
 {% endblock content %}
+{# djlint:on #}
 
 {% block js %}
-  {{ form.media.js }}
+  {% if form %}{{ form.media.js }}{% endif %}
 
   <script>
     const mediaTypeLabels = {
       {% for media_type in media_types %}'{{ media_type }}': '{{ media_type|media_type_readable_plural }}',{% endfor %}
       'all': 'All Types'
     };
+  </script>
+
+  <script>
+    const FETCH_URL = '{% url "fetch_release_year" %}';
+    const pendingFetches = new Set();
+    let fetchQueue = [];
+    let isProcessing = false;
+
+    function processQueue() {
+      if (isProcessing || fetchQueue.length === 0) return;
+      isProcessing = true;
+
+      const itemId = fetchQueue.shift();
+      if (!itemId || pendingFetches.has(itemId)) {
+        isProcessing = false;
+        if (fetchQueue.length > 0) {
+          setTimeout(processQueue, 50);
+        }
+        return;
+      }
+
+      pendingFetches.add(itemId);
+
+      fetch(`${FETCH_URL}?item_id=${itemId}`)
+        .then(response => response.json())
+        .then(data => {
+          if (data.year) {
+            document.querySelectorAll(`.release-year-placeholder[data-item-id="${itemId}"]`).forEach(el => {
+              el.textContent = data.year;
+              el.classList.remove('release-year-placeholder');
+            });
+          } else {
+            document.querySelectorAll(`.release-year-placeholder[data-item-id="${itemId}"]`).forEach(el => {
+              el.remove();
+            });
+          }
+        })
+        .catch(err => {
+          console.warn('Failed to fetch release year for item', itemId, err);
+        })
+        .finally(() => {
+          isProcessing = false;
+          if (fetchQueue.length > 0) {
+            setTimeout(processQueue, 100);
+          }
+        });
+    }
+
+    function queueReleaseYearFetch(itemId) {
+      if (!pendingFetches.has(itemId) && !fetchQueue.includes(itemId)) {
+        fetchQueue.push(itemId);
+        processQueue();
+      }
+    }
+
+    function loadVisibleReleaseYears() {
+      document.querySelectorAll('.release-year-placeholder[data-item-id]').forEach(el => {
+        const itemId = el.dataset.itemId;
+        if (itemId) {
+          queueReleaseYearFetch(itemId);
+        }
+      });
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', loadVisibleReleaseYears);
+    } else {
+      loadVisibleReleaseYears();
+    }
+
+    document.body.addEventListener('htmx:afterSwap', function() {
+      setTimeout(loadVisibleReleaseYears, 50);
+    });
   </script>
 {% endblock js %}

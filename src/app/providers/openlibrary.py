@@ -37,7 +37,7 @@ def search(query, page):
     if data is None:
         params = {
             "q": query,
-            "fields": "title,key,editions,editions.key,editions.cover_i,editions.title",
+            "fields": "title,key,editions,editions.key,editions.cover_i,editions.title,first_publish_year",
             "limit": settings.PER_PAGE,
             "page": page,
         }
@@ -74,6 +74,7 @@ def search(query, page):
                     "media_type": MediaTypes.BOOK.value,
                     "title": result_title,
                     "image": get_image_url(top_edition),
+                    "year": doc.get("first_publish_year"),
                 },
             )
 
@@ -258,6 +259,18 @@ def get_publish_date(response):
     return None
 
 
+def get_publish_year(response):
+    """Get the publication year from an edition response."""
+    publish_date = response.get("publish_date", "")
+    if publish_date:
+        import re
+
+        year_match = re.search(r"\\b(1[89]\\d{2}|20\\d{2})\\b", str(publish_date))
+        if year_match:
+            return int(year_match.group(1))
+    return None
+
+
 async def get_authors(response):
     """Get list of author names asynchronously."""
     authors = []
@@ -334,6 +347,7 @@ async def get_editions(response_book, response_work):
                     "media_type": MediaTypes.BOOK.value,
                     "title": edition.get("title"),
                     "image": get_cover_image_url(edition),
+                    "year": get_publish_year(edition),
                 }
                 for edition in data["entries"]
                 if extract_openlibrary_id(edition["key"]) != book_id

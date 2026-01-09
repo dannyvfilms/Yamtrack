@@ -24,4 +24,45 @@ urlpatterns = [
     path("list/edit", views.edit, name="list_edit"),
     path("list/delete", views.delete, name="list_delete"),
     path("list_item_toggle", views.list_item_toggle, name="list_item_toggle"),
+    # Recommendation URLs
+    path(
+        "list/<int:list_id>/recommend",
+        views.recommend_item_page,
+        name="recommend_item",
+    ),
+    path(
+        "list/<int:list_id>/recommend/search",
+        views.recommend_search,
+        name="recommend_search",
+    ),
+    path(
+        "list/<int:list_id>/recommend/submit",
+        views.submit_recommendation,
+        name="submit_recommendation",
+    ),
+    path(
+        "list/<int:list_id>/recommendations",
+        views.list_recommendations,
+        name="list_recommendations",
+    ),
+    path(
+        "list/<int:list_id>/activity",
+        views.list_activity,
+        name="list_activity",
+    ),
+    path(
+        "list/<int:list_id>/recommendations/<int:recommendation_id>/approve",
+        views.approve_recommendation,
+        name="approve_recommendation",
+    ),
+    path(
+        "list/<int:list_id>/recommendations/<int:recommendation_id>/deny",
+        views.deny_recommendation,
+        name="deny_recommendation",
+    ),
+    path(
+        "api/fetch_release_year",
+        views.fetch_release_year,
+        name="fetch_release_year",
+    ),
 ]
