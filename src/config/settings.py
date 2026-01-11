@@ -437,6 +437,51 @@ COMMIT_SHA_SHORT = COMMIT_SHA[:7] if COMMIT_SHA else None
 
 VERSION = VERSION_RAW or COMMIT_SHA_SHORT or "dev"
 
+
+def _parse_repo_owner(value):
+    if not value:
+        return None
+    value = value.strip()
+    if value.startswith("git@") and ":" in value:
+        value = value.split(":", 1)[1]
+    parsed = urlparse(value)
+    repo_path = parsed.path if parsed.netloc else value
+    repo_path = repo_path.strip("/")
+    if repo_path.endswith(".git"):
+        repo_path = repo_path[:-4]
+    if not repo_path:
+        return None
+    return repo_path.split("/", 1)[0]
+
+
+def _get_fork_owner():
+    owner = config("FORK_OWNER_NAME", default=None) or config("GITHUB_REPOSITORY_OWNER", default=None)
+    if owner:
+        return owner.strip()
+
+    owner = _parse_repo_owner(config("GITHUB_REPOSITORY", default=None))
+    if owner:
+        return owner
+
+    try:
+        git_remote = subprocess.run(
+            ["git", "config", "--get", "remote.origin.url"],
+            cwd=BASE_DIR,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ).stdout.strip()
+        return _parse_repo_owner(git_remote)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+FORK_OWNER_NAME = _get_fork_owner()
+FORK_OWNER_URL = config("FORK_OWNER_URL", default=None)
+if FORK_OWNER_NAME and not FORK_OWNER_URL:
+    FORK_OWNER_URL = f"https://github.com/{FORK_OWNER_NAME}"
+
 ADMIN_ENABLED = config("ADMIN_ENABLED", default=False, cast=bool)
 
 TRACK_TIME = config("TRACK_TIME", default=True, cast=bool)

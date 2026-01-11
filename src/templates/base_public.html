@@ -41,7 +41,7 @@
 
   <body>
     {% block body %}
-      <div class="min-h-screen bg-[#212529] text-gray-100">
+      <div class="min-h-screen bg-[#212529] text-gray-100 flex flex-col">
         {# Simple header for public pages #}
         <header class="bg-[#1a1d20] border-b border-[#2c3136] shadow-md">
           <div class="container mx-auto px-4">
@@ -58,10 +58,28 @@
         </header>
 
         {# Main content #}
-        <main class="container mx-auto px-4 py-6">
+        <main class="container mx-auto px-4 py-6 flex-1">
           {% block content %}
           {% endblock content %}
         </main>
+
+        <footer class="border-t border-[#2c3136] bg-[#1a1d20]">
+          <div class="container mx-auto px-4 py-6 space-y-2">
+            <p class="text-sm text-gray-400">
+              Yamtrack is a self-hosted media tracker for books, games, movies, music, podcasts, tv shows, and more.
+            </p>
+            <p class="text-sm text-gray-400">
+              This fork is maintained by
+              {% if FORK_OWNER_URL %}
+                <a class="text-indigo-400 hover:text-indigo-300 underline" href="{{ FORK_OWNER_URL }}" rel="noopener" target="_blank">
+                  {{ FORK_OWNER_NAME|default:"the fork owner" }}
+                </a>
+              {% else %}
+                <span>{{ FORK_OWNER_NAME|default:"the fork owner" }}</span>
+              {% endif %}
+            </p>
+          </div>
+        </footer>
       </div>
     {% endblock body %}
 
