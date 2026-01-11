@@ -21,9 +21,9 @@ def reload_calendar(user=None, items_to_process=None):
         items_to_process=items_to_process,
     )
 
-    if user is None:
+    if user is None and items_to_process is None:
         auto_pause.auto_pause_stale_items()
-        # Also refresh podcast episodes from RSS feeds
+        # Only refresh podcast feeds during full calendar runs.
         try:
             refresh_podcast_episodes()
         except Exception as e:

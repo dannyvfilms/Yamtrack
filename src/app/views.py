@@ -5306,28 +5306,6 @@ def _sort_tv_media_by_time_left(media_list, direction="asc"):
             return max(annotated, total_from_db)
         return annotated
 
-    # Cache provider metadata lookups per (source, type, id)
-    RELEASE_SYNC_TTL_SECONDS = 3600
-
-    def _release_sync_cache_key(media):
-        return f"timeleft:release-sync:{media.item.source}:{media.item.media_id}"
-
-    def _refresh_release_metadata(media):
-        if media.item.source == Sources.MANUAL.value:
-            return
-
-        cache_key = _release_sync_cache_key(media)
-        if not cache.add(cache_key, True, RELEASE_SYNC_TTL_SECONDS):
-            return
-
-        try:
-            media.item.fetch_releases(delay=False)
-        except Exception:
-            logger.exception("Failed to refresh release metadata for %s", media.item)
-            return
-
-        BasicMedia.objects.annotate_max_progress([media], MediaTypes.TV.value)
-
     # Explicit bucketing for deterministic grouping
     active_statuses = {Status.IN_PROGRESS.value, Status.PLANNING.value, Status.PAUSED.value}
     group_active = []           # episodes_left > 0 and status in active_statuses
@@ -5345,26 +5323,9 @@ def _sort_tv_media_by_time_left(media_list, direction="asc"):
         annotated_max = getattr(media, "max_progress", None)
         status = getattr(media, "status", Status.IN_PROGRESS.value)
 
-        should_refresh_release_data = (
-            (annotated_max is None and status in active_statuses)
-            or (annotated_max is not None and annotated_max < media.progress)
-            or (
-                status in active_statuses
-                and annotated_max is not None
-                and annotated_max == media.progress
-            )
-        )
-
-        if should_refresh_release_data:
-            _refresh_release_metadata(media)
-            annotated_max = getattr(media, "max_progress", None)
-
+        # Keep sorting fast by relying on scheduled calendar refreshes.
         fallback_max = _effective_max_progress(media) or 0
-
-        if annotated_max is None:
-            effective_max = max(fallback_max, media.progress)
-        else:
-            effective_max = max(annotated_max, fallback_max)
+        effective_max = max(annotated_max or 0, fallback_max, media.progress)
 
         media.max_progress = effective_max
         episodes_left = effective_max - media.progress
