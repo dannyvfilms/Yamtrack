@@ -20,58 +20,53 @@
         </div>
 
         {% if recommendations %}
-            <div class="space-y-4">
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 lg:gap-3 xl:grid-cols-3">
                 {% for rec in recommendations %}
-                    <div class="bg-[#2a2f35] rounded-lg p-4 flex flex-col sm:flex-row gap-4">
-                        <div class="w-20 h-28 flex-shrink-0">
-                            <img src="{{ rec.item.image }}"
-                                 alt="{{ rec.item.title }}"
-                                 class="w-full h-full object-cover rounded-md bg-[#3e454d]">
-                        </div>
-                        <div class="flex-1 min-w-0">
-                            <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
-                                <div>
-                                    <h3 class="font-semibold text-lg text-white">{{ rec.item.title }}</h3>
-                                    <p class="text-sm text-gray-400">{{ rec.item.media_type|media_type_readable }}</p>
-                                </div>
-                                <div class="text-sm text-gray-500">
-                                    <p>
-                                        Recommended by <span class="text-gray-300">{{ rec.recommender_display_name }}</span>
-                                    </p>
-                                    <p>{{ rec.date_recommended|timesince }} ago</p>
-                                </div>
+                    <div class="bg-[#2a2f35] rounded-lg p-4 space-y-4 lg:max-h-[380px] lg:overflow-hidden lg:p-3 lg:space-y-3">
+                        <div class="flex items-center justify-between text-xs text-gray-400">
+                            <div class="flex items-center gap-1">
+                                <span>From</span>
+                                <span class="text-gray-200">{{ rec.recommender_display_name }}</span>
                             </div>
-                            {% if rec.note %}
-                                <div class="mt-3 p-3 bg-[#39404b] rounded-lg">
-                                    <p class="text-sm text-gray-300 italic">"{{ rec.note }}"</p>
-                                </div>
-                            {% endif %}
-                            <div class="flex gap-2 mt-4">
+                            <span class="text-gray-500">{{ rec.date_recommended|timesince }} ago</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3 items-stretch">
+                            <div class="min-w-0">
+                                {% include "app/components/media_card.html" with item=rec.item title=rec.item.title media=None from_grid=True user=user current_sort=None media_type=rec.item.media_type score_chip_mode='conditional' progress_chip_mode='conditional' time_left_chip_mode='conditional' show_progress_chip=False %}
+                            </div>
+                            <div class="grid grid-rows-3 gap-2 h-full self-stretch">
                                 <form method="post"
+                                      class="h-full"
                                       action="{% url 'approve_recommendation' custom_list.id rec.id %}?next={% url 'list_recommendations' custom_list.id %}">
                                     {% csrf_token %}
                                     <button type="submit"
-                                            class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md transition-colors cursor-pointer text-sm flex items-center gap-2">
+                                            class="w-full h-full bg-indigo-600 hover:bg-indigo-700 text-white rounded-md transition-colors cursor-pointer text-sm flex items-center justify-center gap-2 px-3">
                                         {% include "app/icons/checkmark.svg" with classes="w-4 h-4" %}
-                                        Approve & Add
+                                        Approve and add
                                     </button>
                                 </form>
                                 <form method="post"
+                                      class="h-full"
                                       action="{% url 'deny_recommendation' custom_list.id rec.id %}?next={% url 'list_recommendations' custom_list.id %}">
                                     {% csrf_token %}
                                     <button type="submit"
-                                            class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors cursor-pointer text-sm flex items-center gap-2">
+                                            class="w-full h-full bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors cursor-pointer text-sm flex items-center justify-center gap-2 px-3">
                                         {% include "app/icons/x.svg" with classes="w-4 h-4" %}
                                         Deny
                                     </button>
                                 </form>
                                 <a href="{{ rec.item|media_url }}"
-                                   class="px-4 py-2 bg-[#39404b] hover:bg-[#454d5a] text-white rounded-md transition-colors text-sm flex items-center gap-2">
+                                   class="w-full h-full bg-[#39404b] hover:bg-[#454d5a] text-white rounded-md transition-colors text-sm flex items-center justify-center gap-2 px-3">
                                     {% include "app/icons/external-link.svg" with classes="w-4 h-4" %}
-                                    View Details
+                                    View details
                                 </a>
                             </div>
                         </div>
+                        {% if rec.note %}
+                            <div class="p-3 bg-[#39404b] rounded-lg">
+                                <p class="text-sm text-gray-300 italic lg:line-clamp-2">"{{ rec.note }}"</p>
+                            </div>
+                        {% endif %}
                     </div>
                 {% endfor %}
             </div>
