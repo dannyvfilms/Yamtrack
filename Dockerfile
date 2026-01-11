@@ -1,3 +1,44 @@
+FROM python:3.12-alpine3.21 AS repo_meta
+
+WORKDIR /repo
+COPY . .
+RUN python - <<'PY'
+from pathlib import Path
+from urllib.parse import urlparse
+
+config_path = Path(".git/config")
+owner = ""
+
+if config_path.exists():
+    origin_url = None
+    in_origin = False
+    for raw_line in config_path.read_text().splitlines():
+        line = raw_line.strip()
+        if line.startswith('[remote "origin"]'):
+            in_origin = True
+            continue
+        if line.startswith("[") and in_origin:
+            in_origin = False
+        if in_origin and line.startswith("url"):
+            _, value = line.split("=", 1)
+            origin_url = value.strip()
+            break
+
+    if origin_url:
+        value = origin_url.strip()
+        if value.startswith("git@") and ":" in value:
+            value = value.split(":", 1)[1]
+        parsed = urlparse(value)
+        repo_path = parsed.path if parsed.netloc else value
+        repo_path = repo_path.strip("/")
+        if repo_path.endswith(".git"):
+            repo_path = repo_path[:-4]
+        if repo_path:
+            owner = repo_path.split("/", 1)[0]
+
+Path("/repo_owner").write_text(owner)
+PY
+
 FROM python:3.12-alpine3.21
 
 # https://stackoverflow.com/questions/58701233/docker-logs-erroneously-appears-empty-until-container-stops
@@ -28,6 +69,8 @@ RUN apk add --no-cache nginx shadow \
     # Create required nginx directories and set permissions
     && mkdir -p /var/log/nginx \
     && mkdir -p /var/lib/nginx/body
+
+COPY --from=repo_meta /repo_owner /etc/yamtrack/fork_owner
 
 # Django app
 COPY src ./

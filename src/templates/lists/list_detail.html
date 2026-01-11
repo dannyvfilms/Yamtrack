@@ -75,7 +75,6 @@
       {% include "lists/components/list_form.html" %}
     {% endif %}
 
-    {% if not public_view %}
     <div class="flex flex-col md:flex-row gap-4 mb-8">
       {# Search #}
       <div class="relative grow min-w-0">
@@ -98,106 +97,106 @@
       </div>
 
       <div class="flex items-center gap-2 flex-wrap filter-toolbar">
-        {# Filter by Type #}
-        <div class="relative filter-control" x-data="{ open: false }">
-          <button class="h-10 flex items-center gap-2 px-4 bg-[#39404b] rounded-md hover:bg-[#454d5a] transition-colors cursor-pointer"
-                  @click="open = !open"
-                  type="button">
-            {% include "app/icons/funnel.svg" with classes="w-4 h-4" %}
-            <span class="text-sm" x-text="getMediaTypeLabel(type)"></span>
-            {% include "app/icons/chevron-down.svg" with classes="w-4 h-4" %}
-          </button>
+          {# Filter by Type #}
+          <div class="relative filter-control" x-data="{ open: false }">
+            <button class="h-10 flex items-center gap-2 px-4 bg-[#39404b] rounded-md hover:bg-[#454d5a] transition-colors cursor-pointer"
+                    @click="open = !open"
+                    type="button">
+              {% include "app/icons/funnel.svg" with classes="w-4 h-4" %}
+              <span class="text-sm" x-text="getMediaTypeLabel(type)"></span>
+              {% include "app/icons/chevron-down.svg" with classes="w-4 h-4" %}
+            </button>
 
-          <div class="absolute right-0 mt-2 py-1 w-48 bg-[#39404b] rounded-md shadow-lg overflow-hidden z-10 border border-gray-700"
-               x-cloak
-               x-show="open"
-               @click.outside="open = false"
-               x-transition:enter="transition ease-out duration-100"
-               x-transition:enter-start="transform opacity-0 scale-95"
-               x-transition:enter-end="transform opacity-100 scale-100"
-               x-transition:leave="transition ease-in duration-75"
-               x-transition:leave-start="transform opacity-100 scale-100"
-               x-transition:leave-end="transform opacity-0 scale-95">
-            <button hx-get="{% url 'list_detail' custom_list.id %}"
-                    {% if items %}hx-target="#items-grid"{% else %}hx-target="this" hx-swap="none"{% endif %}
-                    hx-include="#filter-form"
-                    hx-indicator="#loading-indicator"
-                    class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
-                    :class="type === 'all' ? 'bg-indigo-600 text-white font-medium' : 'text-gray-300 hover:bg-[#454d5a] hover:text-white'"
-                    @click="type = 'all'; open = false"
-                    type="button">All</button>
-            {% for media_type in media_types %}
+            <div class="absolute right-0 mt-2 py-1 w-48 bg-[#39404b] rounded-md shadow-lg overflow-hidden z-10 border border-gray-700"
+                 x-cloak
+                 x-show="open"
+                 @click.outside="open = false"
+                 x-transition:enter="transition ease-out duration-100"
+                 x-transition:enter-start="transform opacity-0 scale-95"
+                 x-transition:enter-end="transform opacity-100 scale-100"
+                 x-transition:leave="transition ease-in duration-75"
+                 x-transition:leave-start="transform opacity-100 scale-100"
+                 x-transition:leave-end="transform opacity-0 scale-95">
               <button hx-get="{% url 'list_detail' custom_list.id %}"
                       {% if items %}hx-target="#items-grid"{% else %}hx-target="this" hx-swap="none"{% endif %}
                       hx-include="#filter-form"
                       hx-indicator="#loading-indicator"
                       class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
-                      :class="type === '{{ media_type }}' ? 'bg-indigo-600 text-white font-medium' : 'text-gray-300 hover:bg-[#454d5a] hover:text-white'"
-                      @click="type = '{{ media_type }}'; open = false"
-                      type="button">{{ media_type|media_type_readable_plural }}</button>
-            {% endfor %}
-          </div>
-        </div>
-
-        {# Sort by #}
-        <div class="relative filter-control" x-data="{ open: false }">
-          <button class="h-10 flex items-center gap-2 px-4 bg-[#39404b] rounded-md hover:bg-[#454d5a] transition-colors cursor-pointer"
-                  @click="open = !open"
-                  type="button">
-            {% include "app/icons/arrows-up-down.svg" with classes="w-4 h-4" %}
-            <span class="text-sm" x-text="sortLabels[sort] || sort"></span>
-            {% include "app/icons/chevron-down.svg" with classes="w-4 h-4" %}
-          </button>
-
-          <div class="absolute right-0 mt-2 py-1 w-48 bg-[#39404b] rounded-md shadow-lg overflow-hidden z-10 border border-gray-700"
-               x-cloak
-               x-show="open"
-               @click.outside="open = false"
-               x-transition:enter="transition ease-out duration-100"
-               x-transition:enter-start="transform opacity-0 scale-95"
-               x-transition:enter-end="transform opacity-100 scale-100"
-               x-transition:leave="transition ease-in duration-75"
-               x-transition:leave-start="transform opacity-100 scale-100"
-               x-transition:leave-end="transform opacity-0 scale-95">
-            {% for value, label in sort_choices %}
-              <button hx-get="{% url 'list_detail' custom_list.id %}"
-                      {% if items %}hx-target="#items-grid"{% else %}hx-target="this" hx-swap="none"{% endif %}
-                      hx-include="#filter-form"
-                      hx-indicator="#loading-indicator"
-                      class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
-                      :class="sort === '{{ value }}' ? 'bg-indigo-600 text-white font-medium' : 'text-gray-300 hover:bg-[#454d5a] hover:text-white'"
-                      @click="sort = '{{ value }}'; open = false"
-                      type="button">{{ label }}</button>
-            {% endfor %}
-          </div>
-        </div>
-        {% if can_edit %}
-          <div class="layout-toggle ml-auto flex items-center gap-2">
-            <div class="relative" x-data="{ tooltipOpen: false }">
-              <a href="{% url 'list_activity' custom_list.id %}"
-                 @mouseenter="tooltipOpen = true" @mouseleave="tooltipOpen = false"
-                 @click="tooltipOpen = false"
-                 class="h-10 w-10 bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex items-center justify-center cursor-pointer"
-                 aria-label="Activity history">
-                {% include "app/icons/history.svg" with classes="w-4 h-4 text-gray-200" %}
-              </a>
-              <div x-show="tooltipOpen"
-                   x-transition:enter="transition ease-out duration-200"
-                   x-transition:enter-start="opacity-0 scale-95"
-                   x-transition:enter-end="opacity-100 scale-100"
-                   x-transition:leave="transition ease-in duration-150"
-                   x-transition:leave-start="opacity-100 scale-100"
-                   x-transition:leave-end="opacity-0 scale-95"
-                   class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-40 p-2 text-white text-xs rounded-lg z-20 text-center"
-                   style="display: none; background: rgba(0, 0, 0, 0.85); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);">
-                Activity history
-                <div class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent" style="border-top-color: rgba(0, 0, 0, 0.85);"></div>
-              </div>
+                      :class="type === 'all' ? 'bg-indigo-600 text-white font-medium' : 'text-gray-300 hover:bg-[#454d5a] hover:text-white'"
+                      @click="type = 'all'; open = false"
+                      type="button">All</button>
+              {% for media_type in media_types %}
+                <button hx-get="{% url 'list_detail' custom_list.id %}"
+                        {% if items %}hx-target="#items-grid"{% else %}hx-target="this" hx-swap="none"{% endif %}
+                        hx-include="#filter-form"
+                        hx-indicator="#loading-indicator"
+                        class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
+                        :class="type === '{{ media_type }}' ? 'bg-indigo-600 text-white font-medium' : 'text-gray-300 hover:bg-[#454d5a] hover:text-white'"
+                        @click="type = '{{ media_type }}'; open = false"
+                        type="button">{{ media_type|media_type_readable_plural }}</button>
+              {% endfor %}
             </div>
-            <div class="relative" x-data="{ tooltipOpen: false }">
-              <button @click="showModal = true"
-                      @mouseenter="tooltipOpen = true" @mouseleave="tooltipOpen = false"
-                      class="h-10 w-10 bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex items-center justify-center cursor-pointer"
+          </div>
+
+          {# Sort by #}
+          <div class="relative filter-control" x-data="{ open: false }">
+            <button class="h-10 flex items-center gap-2 px-4 bg-[#39404b] rounded-md hover:bg-[#454d5a] transition-colors cursor-pointer"
+                    @click="open = !open"
+                    type="button">
+              {% include "app/icons/arrows-up-down.svg" with classes="w-4 h-4" %}
+              <span class="text-sm" x-text="sortLabels[sort] || sort"></span>
+              {% include "app/icons/chevron-down.svg" with classes="w-4 h-4" %}
+            </button>
+
+            <div class="absolute right-0 mt-2 py-1 w-48 bg-[#39404b] rounded-md shadow-lg overflow-hidden z-10 border border-gray-700"
+                 x-cloak
+                 x-show="open"
+                 @click.outside="open = false"
+                 x-transition:enter="transition ease-out duration-100"
+                 x-transition:enter-start="transform opacity-0 scale-95"
+                 x-transition:enter-end="transform opacity-100 scale-100"
+                 x-transition:leave="transition ease-in duration-75"
+                 x-transition:leave-start="transform opacity-100 scale-100"
+                 x-transition:leave-end="transform opacity-0 scale-95">
+              {% for value, label in sort_choices %}
+                <button hx-get="{% url 'list_detail' custom_list.id %}"
+                        {% if items %}hx-target="#items-grid"{% else %}hx-target="this" hx-swap="none"{% endif %}
+                        hx-include="#filter-form"
+                        hx-indicator="#loading-indicator"
+                        class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
+                        :class="sort === '{{ value }}' ? 'bg-indigo-600 text-white font-medium' : 'text-gray-300 hover:bg-[#454d5a] hover:text-white'"
+                        @click="sort = '{{ value }}'; open = false"
+                        type="button">{{ label }}</button>
+              {% endfor %}
+            </div>
+          </div>
+          {% if can_edit %}
+            <div class="layout-toggle ml-auto flex items-center gap-2">
+              <div class="relative" x-data="{ tooltipOpen: false }">
+                <a href="{% url 'list_activity' custom_list.id %}"
+                   @mouseenter="tooltipOpen = true" @mouseleave="tooltipOpen = false"
+                   @click="tooltipOpen = false"
+                   class="h-10 w-10 bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex items-center justify-center cursor-pointer"
+                   aria-label="Activity history">
+                  {% include "app/icons/history.svg" with classes="w-4 h-4 text-gray-200" %}
+                </a>
+                <div x-show="tooltipOpen"
+                     x-transition:enter="transition ease-out duration-200"
+                     x-transition:enter-start="opacity-0 scale-95"
+                     x-transition:enter-end="opacity-100 scale-100"
+                     x-transition:leave="transition ease-in duration-150"
+                     x-transition:leave-start="opacity-100 scale-100"
+                     x-transition:leave-end="opacity-0 scale-95"
+                     class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-40 p-2 text-white text-xs rounded-lg z-20 text-center"
+                     style="display: none; background: rgba(0, 0, 0, 0.85); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);">
+                  Activity history
+                  <div class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent" style="border-top-color: rgba(0, 0, 0, 0.85);"></div>
+                </div>
+              </div>
+              <div class="relative" x-data="{ tooltipOpen: false }">
+                <button @click="showModal = true"
+                        @mouseenter="tooltipOpen = true" @mouseleave="tooltipOpen = false"
+                        class="h-10 w-10 bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex items-center justify-center cursor-pointer"
                       type="button"
                       aria-label="Edit list">
                 {% include "app/icons/horizontal-sliders.svg" with classes="w-4 h-4 text-gray-200" %}
@@ -219,84 +218,6 @@
         {% endif %}
       </div>
     </div>
-    {% else %}
-    {# Public view: show sort/filter controls but no search #}
-    <div class="flex items-center justify-end gap-2 mb-8">
-      {# Filter by Type #}
-      <div class="relative" x-data="{ open: false }">
-        <button class="h-10 flex items-center gap-2 px-4 bg-[#39404b] rounded-md hover:bg-[#454d5a] transition-colors cursor-pointer"
-                @click="open = !open"
-                type="button">
-          {% include "app/icons/funnel.svg" with classes="w-4 h-4" %}
-          <span class="text-sm" x-text="getMediaTypeLabel(type)"></span>
-          {% include "app/icons/chevron-down.svg" with classes="w-4 h-4" %}
-        </button>
-
-        <div class="absolute right-0 mt-2 py-1 w-48 bg-[#39404b] rounded-md shadow-lg overflow-hidden z-10 border border-gray-700"
-             x-cloak
-             x-show="open"
-             @click.outside="open = false"
-             x-transition:enter="transition ease-out duration-100"
-             x-transition:enter-start="transform opacity-0 scale-95"
-             x-transition:enter-end="transform opacity-100 scale-100"
-             x-transition:leave="transition ease-in duration-75"
-             x-transition:leave-start="transform opacity-100 scale-100"
-             x-transition:leave-end="transform opacity-0 scale-95">
-          <button hx-get="{% url 'list_detail' custom_list.id %}"
-                  {% if items %}hx-target="#items-grid"{% else %}hx-target="this" hx-swap="none"{% endif %}
-                  hx-include="#filter-form"
-                  hx-indicator="#loading-indicator"
-                  class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
-                  :class="type === 'all' ? 'bg-indigo-600 text-white font-medium' : 'text-gray-300 hover:bg-[#454d5a] hover:text-white'"
-                  @click="type = 'all'; open = false"
-                  type="button">All</button>
-          {% for media_type in media_types %}
-            <button hx-get="{% url 'list_detail' custom_list.id %}"
-                    {% if items %}hx-target="#items-grid"{% else %}hx-target="this" hx-swap="none"{% endif %}
-                    hx-include="#filter-form"
-                    hx-indicator="#loading-indicator"
-                    class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
-                    :class="type === '{{ media_type }}' ? 'bg-indigo-600 text-white font-medium' : 'text-gray-300 hover:bg-[#454d5a] hover:text-white'"
-                    @click="type = '{{ media_type }}'; open = false"
-                    type="button">{{ media_type|media_type_readable_plural }}</button>
-          {% endfor %}
-        </div>
-      </div>
-
-      {# Sort by #}
-      <div class="relative" x-data="{ open: false }">
-        <button class="h-10 flex items-center gap-2 px-4 bg-[#39404b] rounded-md hover:bg-[#454d5a] transition-colors cursor-pointer"
-                @click="open = !open"
-                type="button">
-          {% include "app/icons/arrows-up-down.svg" with classes="w-4 h-4" %}
-          <span class="text-sm" x-text="sortLabels[sort] || sort"></span>
-          {% include "app/icons/chevron-down.svg" with classes="w-4 h-4" %}
-        </button>
-
-        <div class="absolute right-0 mt-2 py-1 w-48 bg-[#39404b] rounded-md shadow-lg overflow-hidden z-10 border border-gray-700"
-             x-cloak
-             x-show="open"
-             @click.outside="open = false"
-             x-transition:enter="transition ease-out duration-100"
-             x-transition:enter-start="transform opacity-0 scale-95"
-             x-transition:enter-end="transform opacity-100 scale-100"
-             x-transition:leave="transition ease-in duration-75"
-             x-transition:leave-start="transform opacity-100 scale-100"
-             x-transition:leave-end="transform opacity-0 scale-95">
-          {% for value, label in sort_choices %}
-            <button hx-get="{% url 'list_detail' custom_list.id %}"
-                    {% if items %}hx-target="#items-grid"{% else %}hx-target="this" hx-swap="none"{% endif %}
-                    hx-include="#filter-form"
-                    hx-indicator="#loading-indicator"
-                    class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
-                    :class="sort === '{{ value }}' ? 'bg-indigo-600 text-white font-medium' : 'text-gray-300 hover:bg-[#454d5a] hover:text-white'"
-                    @click="sort = '{{ value }}'; open = false"
-                    type="button">{{ label }}</button>
-          {% endfor %}
-        </div>
-      </div>
-    </div>
-    {% endif %}
     <div id="list-results-summary">
       {% include "lists/components/list_results_summary.html" %}
     </div>

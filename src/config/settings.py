@@ -453,6 +453,23 @@ def _parse_repo_owner(value):
         return None
     return repo_path.split("/", 1)[0]
 
+def _read_fork_owner_file():
+    file_paths = []
+    configured_path = config("FORK_OWNER_FILE", default=None)
+    if configured_path:
+        file_paths.append(Path(configured_path))
+    file_paths.append(BASE_DIR / ".fork_owner")
+    file_paths.append(Path("/etc/yamtrack/fork_owner"))
+
+    for path in file_paths:
+        try:
+            value = path.read_text().strip()
+        except (FileNotFoundError, OSError, UnicodeDecodeError):
+            continue
+        if value:
+            return value
+    return None
+
 
 def _get_fork_owner():
     owner = config("FORK_OWNER_NAME", default=None) or config("GITHUB_REPOSITORY_OWNER", default=None)
@@ -462,6 +479,10 @@ def _get_fork_owner():
     owner = _parse_repo_owner(config("GITHUB_REPOSITORY", default=None))
     if owner:
         return owner
+
+    file_owner = _read_fork_owner_file()
+    if file_owner:
+        return _parse_repo_owner(file_owner) or file_owner.strip()
 
     try:
         git_remote = subprocess.run(
