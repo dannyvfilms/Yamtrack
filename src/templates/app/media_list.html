@@ -248,6 +248,84 @@
   </div>
 
   <script>
+    const RELEASE_YEAR_FETCH_URL = '{% url "fetch_release_year" %}';
+    const releaseYearPending = new Set();
+    let releaseYearQueue = [];
+    let releaseYearProcessing = false;
+
+    function processReleaseYearQueue() {
+      if (releaseYearProcessing || releaseYearQueue.length === 0) return;
+      releaseYearProcessing = true;
+
+      const itemId = releaseYearQueue.shift();
+      if (!itemId || releaseYearPending.has(itemId)) {
+        releaseYearProcessing = false;
+        if (releaseYearQueue.length > 0) {
+          setTimeout(processReleaseYearQueue, 50);
+        }
+        return;
+      }
+
+      releaseYearPending.add(itemId);
+
+      fetch(`${RELEASE_YEAR_FETCH_URL}?item_id=${itemId}`)
+        .then(response => response.json())
+        .then(data => {
+          if (data.year) {
+            document.querySelectorAll(`.release-year-placeholder[data-item-id="${itemId}"]`).forEach(el => {
+              const progressText = el.dataset.progressText;
+              const separator = " \u2022 ";
+              el.textContent = progressText ? `${data.year}${separator}${progressText}` : data.year;
+              el.classList.remove('release-year-placeholder');
+            });
+          } else {
+            document.querySelectorAll(`.release-year-placeholder[data-item-id="${itemId}"]`).forEach(el => {
+              el.remove();
+            });
+          }
+          if (typeof initMediaCardHover === 'function') {
+            initMediaCardHover();
+          }
+        })
+        .catch(err => {
+          console.warn('Failed to fetch release year for item', itemId, err);
+        })
+        .finally(() => {
+          releaseYearProcessing = false;
+          if (releaseYearQueue.length > 0) {
+            setTimeout(processReleaseYearQueue, 100);
+          }
+        });
+    }
+
+    function queueReleaseYearFetch(itemId) {
+      if (!releaseYearPending.has(itemId) && !releaseYearQueue.includes(itemId)) {
+        releaseYearQueue.push(itemId);
+        processReleaseYearQueue();
+      }
+    }
+
+    function loadVisibleReleaseYears() {
+      document.querySelectorAll('.release-year-placeholder[data-item-id]').forEach(el => {
+        const itemId = el.dataset.itemId;
+        if (itemId) {
+          queueReleaseYearFetch(itemId);
+        }
+      });
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', loadVisibleReleaseYears);
+    } else {
+      loadVisibleReleaseYears();
+    }
+
+    document.body.addEventListener('htmx:afterSwap', function() {
+      setTimeout(loadVisibleReleaseYears, 50);
+    });
+  </script>
+
+  <script>
     window.addEventListener('pageshow', (event) => {
       if (event.persisted) {
         window.location.reload();
