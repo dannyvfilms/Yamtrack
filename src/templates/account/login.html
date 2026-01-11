@@ -34,12 +34,24 @@
     {% include "socialaccount/snippets/login.html" with page_layout="entrance" %}
   {% endif %}
 
-  {% if not SOCIALACCOUNT_ONLY and REGISTRATION %}
+  {% if not SOCIALACCOUNT_ONLY %}
     <div class="mt-6 text-center">
       <p class="text-gray-400">
-        Need an account?
-        <a class="text-indigo-400 hover:text-indigo-300"
-           href="{% url 'account_signup' %}">Register now</a>
+        {% if REGISTRATION %}
+          Need an account?
+          <a class="text-indigo-400 hover:text-indigo-300"
+             href="{% url 'account_signup' %}">Register now</a>
+        {% else %}
+          Sign-ups are disabled.
+          {% if FORK_OWNER_URL %}
+            <a class="text-indigo-400 hover:text-indigo-300"
+               href="{{ FORK_OWNER_URL }}"
+               rel="noopener"
+               target="_blank">Host your own</a>
+          {% else %}
+            Host your own.
+          {% endif %}
+        {% endif %}
       </p>
     </div>
   {% endif %}
