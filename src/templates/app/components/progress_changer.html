@@ -12,13 +12,14 @@
   </button>
 
   <div class="text-xs text-indigo-400 font-medium min-w-[4ch] text-center">
-    {{ media.formatted_progress }}
-
+    <span class="progress-value">{{ media.formatted_progress }}</span>
     {% if media.item.media_type != MediaTypes.GAME.value and media.item.media_type != MediaTypes.MOVIE.value %}
       {% if media.max_progress %}
-        / {{ media.max_progress }} {{ media.item.media_type|long_unit }}{{ media.max_progress|pluralize }}
+        <span class="progress-slash">/</span>
+        <span class="progress-max">{{ media.max_progress }}</span>
+        <span class="progress-unit"> {{ media.item.media_type|long_unit }}{{ media.max_progress|pluralize }}</span>
       {% else %}
-        {{ media.item.media_type|long_unit }}{{ media.progress|pluralize }}
+        <span class="progress-unit"> {{ media.item.media_type|long_unit }}{{ media.progress|pluralize }}</span>
       {% endif %}
     {% endif %}
   </div>

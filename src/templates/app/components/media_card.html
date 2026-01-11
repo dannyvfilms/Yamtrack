@@ -11,113 +11,133 @@
         <div class="relative">
           {% if recommend_mode %}
             <div class="cursor-pointer">
-              <img alt="{{ title }}"
+              <img alt="{% if resolved_media_type == MediaTypes.SEASON.value and item.season_number %}Season {{ item.season_number }}{% else %}{{ title }}{% endif %}"
                    class="media-card-poster lazyload w-full {% if from_grid %}{% if resolved_media_type == 'podcast' %}aspect-[1/1]{% else %}aspect-[2/3] aspect-2/3{% endif %}{% else %}h-48{% endif %} bg-[#3e454d] {% if item.image != IMG_NONE %}object-cover{% endif %}"
                    src="{{ item.image }}"
                    loading="lazy">
             </div>
           {% else %}
-            <a href="{% if public_view|default:False %}{{ item|media_url }}?public_view=1{% else %}{{ item|media_url }}{% endif %}">
-              <img alt="{{ title }}"
+            <a href="{% if use_podcast_show|default:False and podcast_show %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=podcast_show.podcast_uuid title=podcast_show.slug|default:podcast_show.title|default:podcast_show.podcast_uuid|slug %}{% elif public_view|default:False %}{{ item|media_url }}?public_view=1{% else %}{{ item|media_url }}{% endif %}">
+              <img alt="{% if use_podcast_show|default:False and podcast_show %}{{ podcast_show.title }}{% elif resolved_media_type == MediaTypes.SEASON.value and item.season_number %}Season {{ item.season_number }}{% else %}{{ title }}{% endif %}"
                    class="media-card-poster lazyload w-full {% if from_grid %}{% if resolved_media_type == 'podcast' %}aspect-[1/1]{% else %}aspect-[2/3] aspect-2/3{% endif %}{% else %}h-48{% endif %} bg-[#3e454d] {% if item.image != IMG_NONE %}object-cover{% endif %}"
-                   data-src="{{ item.image }}"
+                   data-src="{% if use_podcast_show|default:False and podcast_show and podcast_show.image %}{{ podcast_show.image }}{% else %}{{ item.image }}{% endif %}"
                    src="{{ IMG_NONE }}">
             </a>
           {% endif %}
 
-          {% if media %}
-            {% with has_watched=media.end_date|default_if_none:media|safe_attr:"aggregated_end_date"|default_if_none:media.status %}
-              {% if media.status %}
-                {% if not recommend_mode or has_watched %}
-                  <div class="media-status-chip absolute top-2 left-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md"
-                       data-mobile-hide-on-mobile="{% if current_sort_value == 'score' or current_sort_value == 'time_left' or current_sort_value == 'progress' %}true{% else %}false{% endif %}">
-                    {% if media.aggregated_status %}
-                      {% with status_value=media.aggregated_status %}
-                        <div class="w-4 h-4 {{ status_value|status_color }} {% if media.aggregated_start_date or media.aggregated_end_date %}mr-1.5{% endif %}">
-                          {% if status_value == Status.COMPLETED.value %}
-                            {% include "app/icons/states/completed.svg" %}
-                          {% elif status_value == Status.IN_PROGRESS.value %}
-                            {% include "app/icons/states/in-progress.svg" %}
-                          {% elif status_value == Status.PAUSED.value %}
-                            {% include "app/icons/states/paused.svg" %}
-                          {% elif status_value == Status.PLANNING.value %}
-                            {% include "app/icons/states/planning.svg" %}
-                          {% elif status_value == Status.DROPPED.value %}
-                            {% include "app/icons/states/dropped.svg" %}
-                          {% endif %}
-                        </div>
-                      {% endwith %}
-                      {% if media.aggregated_end_date is not None %}
-                        <span class="text-sm text-white">{{ media.aggregated_end_date|user_date_format:user }}</span>
-                      {% elif media.aggregated_start_date is not None %}
-                        <span class="text-sm text-white">{{ media.aggregated_start_date|user_date_format:user }}</span>
-                      {% endif %}
-                    {% else %}
-                      {% with status_value=media.status %}
-                        <div class="w-4 h-4 {{ status_value|status_color }} {% if media.start_date or media.end_date %}mr-1.5{% endif %}">
-                          {% if status_value == Status.COMPLETED.value %}
-                            {% include "app/icons/states/completed.svg" %}
-                          {% elif status_value == Status.IN_PROGRESS.value %}
-                            {% include "app/icons/states/in-progress.svg" %}
-                          {% elif status_value == Status.PAUSED.value %}
-                            {% include "app/icons/states/paused.svg" %}
-                          {% elif status_value == Status.PLANNING.value %}
-                            {% include "app/icons/states/planning.svg" %}
-                          {% elif status_value == Status.DROPPED.value %}
-                            {% include "app/icons/states/dropped.svg" %}
-                          {% endif %}
-                        </div>
-                      {% endwith %}
-                      {% if media.end_date is not None %}
-                        <span class="text-sm text-white">{{ media.end_date|user_date_format:user }}</span>
-                      {% elif media.start_date is not None %}
-                        <span class="text-sm text-white">{{ media.start_date|user_date_format:user }}</span>
-                      {% endif %}
-                    {% endif %}
-                  </div>
-                {% endif %}
-              {% endif %}
-            {% endwith %}
+          {% if show_played_chip|default:False and media and media.last_played_at %}
+            <div class="absolute top-2 left-2 flex items-center gap-1.5 bg-black/80 px-2 py-1.5 rounded-md shadow-md whitespace-nowrap max-w-[98%]">
+              {% include "app/icons/history.svg" with classes="w-3.5 h-3.5 text-indigo-400" %}
+              <span class="text-xs font-medium text-white drop-shadow-sm truncate">
+                {{ media.last_played_at|user_datetime_format:user }}
+              </span>
+            </div>
           {% endif %}
 
           {% if media %}
-            {% with aggregated_score=media|safe_attr:"aggregated_score" %}
-              {% if aggregated_score is not None %}
-                <div class="media-score-chip absolute {% if from_grid %}sm:top-2 sm:left-2 sm:left-auto{% endif %}top-10 left-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md"
-                     data-score-chip-mode="{{ score_chip_mode|default:'always' }}"
-                     data-mobile-show="{% if current_sort_value == 'score' %}true{% else %}false{% endif %}">
-                  {% include "app/icons/star.svg" with classes="w-4 h-4 text-yellow-400 mr-1 fill-current" %}
-                  <span class="text-sm text-white">{{ aggregated_score }}</span>
-                </div>
-              {% elif media.score is not None %}
-                <div class="media-score-chip absolute {% if from_grid %}sm:top-2 sm:left-2 sm:left-auto{% endif %}top-10 left-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md"
-                     data-score-chip-mode="{{ score_chip_mode|default:'always' }}"
-                     data-mobile-show="{% if current_sort_value == 'score' %}true{% else %}false{% endif %}">
-                  {% include "app/icons/star.svg" with classes="w-4 h-4 text-yellow-400 mr-1 fill-current" %}
-                  <span class="text-sm text-white">{{ media.formatted_score }}</span>
-                </div>
-              {% endif %}
-            {% endwith %}
+            {% if show_status_chip|default_if_none:True %}
+              {% with has_watched=media.end_date|default_if_none:media|safe_attr:"aggregated_end_date"|default_if_none:media.status %}
+                {% if media.status %}
+                  {% if not recommend_mode or has_watched %}
+                    <div class="media-status-chip absolute top-2 left-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center gap-1.5 shadow-md max-w-[calc(100%-1rem)] overflow-hidden"
+                         data-mobile-hide-on-mobile="{% if current_sort_value == 'score' or current_sort_value == 'time_left' or current_sort_value == 'progress' %}true{% else %}false{% endif %}">
+                      {% if show_next_event_chip|default:False and media.next_event and not media.next_event.is_max_datetime %}
+                        {% include "app/icons/clock.svg" with classes="w-3.5 h-3.5 text-indigo-400" %}
+                        <span class="text-xs font-medium text-white drop-shadow-sm truncate min-w-0">
+                          {% if media.next_event.content_number %}
+                            {{ media.item.media_type|short_unit }}{{ media.next_event.content_number }}
+                          {% else %}
+                            Release
+                          {% endif %}
+                        </span>
+                      {% elif media.aggregated_status %}
+                        {% with status_value=media.aggregated_status %}
+                          <div class="w-4 h-4 {{ status_value|status_color }}">
+                            {% if status_value == Status.COMPLETED.value %}
+                              {% include "app/icons/states/completed.svg" %}
+                            {% elif status_value == Status.IN_PROGRESS.value %}
+                              {% include "app/icons/states/in-progress.svg" %}
+                            {% elif status_value == Status.PAUSED.value %}
+                              {% include "app/icons/states/paused.svg" %}
+                            {% elif status_value == Status.PLANNING.value %}
+                              {% include "app/icons/states/planning.svg" %}
+                            {% elif status_value == Status.DROPPED.value %}
+                              {% include "app/icons/states/dropped.svg" %}
+                            {% endif %}
+                          </div>
+                        {% endwith %}
+                      {% else %}
+                        {% with status_value=media.status %}
+                          <div class="w-4 h-4 {{ status_value|status_color }}">
+                            {% if status_value == Status.COMPLETED.value %}
+                              {% include "app/icons/states/completed.svg" %}
+                            {% elif status_value == Status.IN_PROGRESS.value %}
+                              {% include "app/icons/states/in-progress.svg" %}
+                            {% elif status_value == Status.PAUSED.value %}
+                              {% include "app/icons/states/paused.svg" %}
+                            {% elif status_value == Status.PLANNING.value %}
+                              {% include "app/icons/states/planning.svg" %}
+                            {% elif status_value == Status.DROPPED.value %}
+                              {% include "app/icons/states/dropped.svg" %}
+                            {% endif %}
+                          </div>
+                        {% endwith %}
+                      {% endif %}
+                    </div>
+                  {% elif show_next_event_chip|default:False and media.next_event and not media.next_event.is_max_datetime %}
+                    <div class="media-status-chip absolute top-2 left-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center gap-1.5 shadow-md max-w-[calc(100%-1rem)] overflow-hidden"
+                         data-mobile-hide-on-mobile="{% if current_sort_value == 'score' or current_sort_value == 'time_left' or current_sort_value == 'progress' %}true{% else %}false{% endif %}">
+                      {% include "app/icons/clock.svg" with classes="w-3.5 h-3.5 text-indigo-400" %}
+                      <span class="text-xs font-medium text-white drop-shadow-sm truncate min-w-0">
+                        {% if media.next_event.content_number %}
+                          {{ media.item.media_type|short_unit }}{{ media.next_event.content_number }}
+                        {% else %}
+                          Release
+                        {% endif %}
+                      </span>
+                    </div>
+                  {% endif %}
+                {% elif show_next_event_chip|default:False and media.next_event and not media.next_event.is_max_datetime %}
+                  <div class="media-status-chip absolute top-2 left-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center gap-1.5 shadow-md max-w-[calc(100%-1rem)] overflow-hidden"
+                       data-mobile-hide-on-mobile="{% if current_sort_value == 'score' or current_sort_value == 'time_left' or current_sort_value == 'progress' %}true{% else %}false{% endif %}">
+                    {% include "app/icons/clock.svg" with classes="w-3.5 h-3.5 text-indigo-400" %}
+                    <span class="text-xs font-medium text-white drop-shadow-sm truncate min-w-0">
+                      {% if media.next_event.content_number %}
+                        {{ media.item.media_type|short_unit }}{{ media.next_event.content_number }}
+                      {% else %}
+                        Release
+                      {% endif %}
+                    </span>
+                  </div>
+                {% endif %}
+              {% endwith %}
+            {% endif %}
+          {% endif %}
 
-            {% with aggregated_progress=media|safe_attr:"aggregated_progress" %}
-              {% if aggregated_progress and resolved_media_type != MediaTypes.MOVIE.value %}
-                <div class="absolute top-2 right-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md">
-                  <span class="text-sm text-white">
-                    {{ media.formatted_aggregated_progress }}
-                    {% if media.max_progress %}/ {{ media.max_progress }}{% endif %}
-                  </span>
-                </div>
-              {% elif media.progress and resolved_media_type != MediaTypes.MOVIE.value %}
-                <div class="media-progress-chip absolute top-2 right-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md"
-                     data-progress-chip-mode="{{ progress_chip_mode|default:'always' }}"
-                     data-mobile-show="{% if current_sort_value == 'progress' %}true{% else %}false{% endif %}">
-                  <span class="text-sm text-white">
-                    {{ media.formatted_progress }}
-                    {% if media.max_progress %}/ {{ media.max_progress }}{% endif %}
-                  </span>
-                </div>
-              {% endif %}
-            {% endwith %}
+          {% if media %}
+            {% if show_progress_chip|default_if_none:True %}
+              {% with aggregated_progress=media|safe_attr:"aggregated_progress" %}
+                {% if aggregated_progress and resolved_media_type != MediaTypes.MOVIE.value and resolved_media_type != MediaTypes.GAME.value %}
+                  <div class="absolute top-2 right-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md">
+                    <span class="text-sm text-white">
+                      {{ media.formatted_aggregated_progress }}
+                      {% if media.max_progress %}/ {{ media.max_progress }}{% endif %}
+                    </span>
+                  </div>
+                {% elif media.progress and resolved_media_type != MediaTypes.MOVIE.value %}
+                  {% if resolved_media_type != MediaTypes.GAME.value or not aggregated_progress %}
+                    <div class="media-progress-chip absolute top-2 right-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md"
+                         data-progress-chip-mode="{{ progress_chip_mode|default:'always' }}"
+                         data-mobile-show="{% if current_sort_value == 'progress' %}true{% else %}false{% endif %}">
+                      <span class="text-sm text-white">
+                        {{ media.formatted_progress }}
+                        {% if media.max_progress %}/ {{ media.max_progress }}{% endif %}
+                      </span>
+                    </div>
+                  {% endif %}
+                {% endif %}
+              {% endwith %}
+            {% endif %}
 
             {# Time Left display for time_left sort #}
             {% if resolved_media_type == MediaTypes.TV.value and media.episodes_left > 0 %}
@@ -128,19 +148,12 @@
               </div>
             {% endif %}
 
-            {% if media.repeats > 1 %}
-              {% if item.media_type != MediaTypes.GAME.value and item.media_type != MediaTypes.BOARDGAME.value or user.game_logging_style != 'sessions' %}
-                <div class="media-repeat-chip absolute sm:top-2 sm:right-2 sm:left-auto top-10 right-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md">
-                  {% include "app/icons/repeat.svg" with classes="w-4 h-4 text-slate-200 mr-1" %}
-                  <span class="text-sm text-white">{{ media.repeats }}</span>
-                </div>
-              {% endif %}
-            {% endif %}
+            {# Repeat chip removed from poster grid cards to reduce crowding. #}
           {% endif %}
 
           {% if not recommend_mode and not public_view|default:False %}
             <div class="media-card-overlay absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 hover-tap:opacity-100 transition-opacity duration-200 ease-in-out{% if user.clickable_media_cards %} pointer-coarse:hidden{% endif %}">
-              <a href="{{ item|media_url }}" class="absolute inset-0"></a>
+              <a href="{% if use_podcast_show|default:False and podcast_show %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=podcast_show.podcast_uuid title=podcast_show.slug|default:podcast_show.title|default:podcast_show.podcast_uuid|slug %}{% else %}{{ item|media_url }}{% endif %}" class="absolute inset-0"></a>
 
               <div class="relative flex items-center justify-center space-x-2.5">
                 {% if item.media_type == MediaTypes.EPISODE.value %}
@@ -154,15 +167,27 @@
                   </button>
                 {% else %}
                   {# Track Button #}
-                  <button class="p-2.5 bg-indigo-600 text-white rounded-full hover:bg-indigo-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(99,102,241,0.5)] transition-all duration-200 cursor-pointer"
-                          title="Add to tracker"
-                          hx-get="{% media_view_url 'track_modal' item %}"
-                          hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}", "instance_id": "{{ media.id }}"}'
-                          hx-target="#{% component_id 'track' item media.id %}"
-                          hx-trigger="click once"
-                          @click="trackOpen = true">
-                    {% include "app/icons/edit.svg" with classes="w-4 h-4" %}
-                  </button>
+                  {% if use_podcast_show|default:False and podcast_show %}
+                    <button class="p-2.5 bg-indigo-600 text-white rounded-full hover:bg-indigo-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(99,102,241,0.5)] transition-all duration-200 cursor-pointer"
+                            title="Edit tracking"
+                            hx-get="{% url 'podcast_show_track_modal' podcast_show.id %}"
+                            hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
+                            hx-target="#podcast-show-track-modal-{{ podcast_show.id }}"
+                            hx-trigger="click once"
+                            @click="trackOpen = true">
+                      {% include "app/icons/edit.svg" with classes="w-4 h-4" %}
+                    </button>
+                  {% else %}
+                    <button class="p-2.5 bg-indigo-600 text-white rounded-full hover:bg-indigo-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(99,102,241,0.5)] transition-all duration-200 cursor-pointer"
+                            title="Add to tracker"
+                            hx-get="{% media_view_url 'track_modal' item %}"
+                            hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}", "instance_id": "{{ media.id }}"}'
+                            hx-target="#{% component_id 'track' item media.id %}"
+                            hx-trigger="click once"
+                            @click="trackOpen = true">
+                      {% include "app/icons/edit.svg" with classes="w-4 h-4" %}
+                    </button>
+                  {% endif %}
                 {% endif %}
 
                 {# Lists Button #}
@@ -188,51 +213,113 @@
         </div>
 
         <div class="media-card-body p-3 bg-card-body">
-          {% if recommend_mode %}
-            <h3 class="media-card-title font-medium text-white line-clamp-1 text-sm leading-tight"
-                title="{{ title }}">{{ title }}</h3>
-          {% else %}
-            <a href="{% if public_view|default:False %}{{ item|media_url }}?public_view=1{% else %}{{ item|media_url }}{% endif %}"
-               class="media-card-title text-sm font-semibold text-white {% if not public_view|default:False %}hover:text-indigo-400{% endif %} transition duration-300 line-clamp-1"
-               title="{{ title }}">{{ title }}</a>
-          {% endif %}
+          {% with aggregated_score=media|safe_attr:"aggregated_score" %}
+            {% with formatted_score=media|safe_attr:"formatted_score" %}
+              {% with rating_value=aggregated_score|default_if_none:formatted_score %}
+            <div class="flex items-center gap-2 min-w-0">
+              {% if recommend_mode %}
+                <h3 class="media-card-title font-medium text-white line-clamp-1 text-sm leading-tight min-w-0"
+                    title="{% if resolved_media_type == MediaTypes.SEASON.value and item.season_number %}Season {{ item.season_number }}{% else %}{{ title }}{% endif %}">{% if resolved_media_type == MediaTypes.SEASON.value and item.season_number %}Season {{ item.season_number }}{% else %}{{ title }}{% endif %}</h3>
+              {% else %}
+                <a href="{% if use_podcast_show|default:False and podcast_show %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=podcast_show.podcast_uuid title=podcast_show.slug|default:podcast_show.title|default:podcast_show.podcast_uuid|slug %}{% elif public_view|default:False %}{{ item|media_url }}?public_view=1{% else %}{{ item|media_url }}{% endif %}"
+                   class="media-card-title text-sm font-semibold text-white {% if not public_view|default:False %}hover:text-indigo-400{% endif %} transition duration-300 line-clamp-1 min-w-0"
+                   title="{% if use_podcast_show|default:False and podcast_show %}{{ podcast_show.title }}{% elif resolved_media_type == MediaTypes.SEASON.value and item.season_number %}Season {{ item.season_number }}{% else %}{{ title }}{% endif %}">{% if use_podcast_show|default:False and podcast_show %}{{ podcast_show.title }}{% elif resolved_media_type == MediaTypes.SEASON.value and item.season_number %}Season {{ item.season_number }}{% else %}{{ title }}{% endif %}</a>
+              {% endif %}
+              {% if rating_value is not None %}
+                <span class="flex items-center gap-1 text-xs text-yellow-300 shrink-0">
+                  {% include "app/icons/star.svg" with classes="w-3 h-3 text-yellow-400 fill-current" %}
+                  <span class="font-medium">{{ rating_value }}</span>
+                </span>
+              {% endif %}
+            </div>
+              {% endwith %}
+            {% endwith %}
+          {% endwith %}
           {% with release_year=item|release_year:media %}
             {% if from_grid %}
-              {% if release_year %}
-                <p class="media-card-year text-xs text-gray-400 mt-1">{{ release_year }}</p>
+              {% if show_next_event_subtitle|default:False and media and media.next_event and not media.next_event.is_max_datetime %}
+                <p class="media-card-year text-xs text-gray-400 mt-1">
+                  {% if media.next_event.content_number %}
+                    {{ media.item.media_type|short_unit }}{{ media.next_event.content_number }}
+                  {% else %}
+                    Release
+                  {% endif %}
+                  {% with event_time=media.next_event|user_event_time:user %}
+                    {% if media.next_event|event_within_days:7 %}
+                      • {{ media.next_event.datetime|date:"D" }}{% if event_time %} {{ event_time }}{% endif %}
+                    {% else %}
+                      • {{ media.next_event.datetime|user_date_format:user }}{% if event_time %} {{ event_time }}{% endif %}
+                    {% endif %}
+                  {% endwith %}
+                </p>
+              {% elif release_year %}
+                {% with aggregated_progress=media|safe_attr:"aggregated_progress" %}
+                  <p class="media-card-year text-xs text-gray-400 mt-1">
+                    {{ release_year }}
+                    {% if resolved_media_type == MediaTypes.GAME.value %}
+                      {% if aggregated_progress %}
+                        <span class="ml-1 text-gray-400">• {{ media.formatted_aggregated_progress }}</span>
+                      {% elif media.progress %}
+                        <span class="ml-1 text-gray-400">• {{ media.formatted_progress }}</span>
+                      {% endif %}
+                    {% elif media.max_progress and resolved_media_type != MediaTypes.MOVIE.value %}
+                      {% with progress_value=aggregated_progress|default_if_none:media.progress %}
+                        {% if progress_value or resolved_media_type == MediaTypes.SEASON.value %}
+                          <span class="ml-1 text-gray-400">
+                            • {{ progress_value|default_if_none:0 }} / {{ media.max_progress }}
+                            {% if resolved_media_type == MediaTypes.TV.value or resolved_media_type == MediaTypes.SEASON.value %}
+                              episode{{ media.max_progress|pluralize }}
+                            {% elif media.item.media_type|long_unit %}
+                              {{ media.item.media_type|long_unit|lower }}{{ media.max_progress|pluralize }}
+                            {% endif %}
+                          </span>
+                        {% endif %}
+                      {% endwith %}
+                    {% elif resolved_media_type == MediaTypes.MOVIE.value %}
+                      {% if media.progress %}
+                        <span class="ml-1 text-gray-400">• {{ media.progress }} play{{ media.progress|pluralize }}</span>
+                      {% elif media|safe_attr:"repeats" %}
+                        <span class="ml-1 text-gray-400">• {{ media.repeats }} play{{ media.repeats|pluralize }}</span>
+                      {% endif %}
+                    {% else %}
+                      {% if aggregated_progress %}
+                        <span class="ml-1 text-gray-400">• {{ media.formatted_aggregated_progress }}</span>
+                      {% elif media.progress %}
+                        <span class="ml-1 text-gray-400">• {{ media.formatted_progress }}</span>
+                      {% endif %}
+                    {% endif %}
+                  </p>
+                {% endwith %}
               {% elif show_release_year_placeholder and item.id %}
-                <p class="media-card-year text-xs text-gray-400 mt-1 release-year-placeholder"
-                   data-item-id="{{ item.id }}"></p>
+                {% with aggregated_progress=media|safe_attr:"aggregated_progress" %}
+                  <p class="media-card-year text-xs text-gray-400 mt-1 release-year-placeholder"
+                     data-item-id="{{ item.id }}"
+                     {% if resolved_media_type == MediaTypes.GAME.value and aggregated_progress %}
+                       data-progress-text="{{ media.formatted_aggregated_progress }}"
+                     {% elif resolved_media_type == MediaTypes.GAME.value and media.progress %}
+                       data-progress-text="{{ media.formatted_progress }}"
+                     {% elif media.max_progress and resolved_media_type != MediaTypes.MOVIE.value %}
+                       {% with progress_value=aggregated_progress|default_if_none:media.progress %}
+                         {% if progress_value or resolved_media_type == MediaTypes.SEASON.value %}
+                           data-progress-text="{{ progress_value|default_if_none:0 }} / {{ media.max_progress }}{% if resolved_media_type == MediaTypes.TV.value or resolved_media_type == MediaTypes.SEASON.value %} episode{{ media.max_progress|pluralize }}{% elif media.item.media_type|long_unit %} {{ media.item.media_type|long_unit|lower }}{{ media.max_progress|pluralize }}{% endif %}"
+                         {% endif %}
+                       {% endwith %}
+                     {% elif resolved_media_type == MediaTypes.MOVIE.value and media.progress %}
+                       data-progress-text="{{ media.progress }} play{{ media.progress|pluralize }}"
+                     {% elif resolved_media_type == MediaTypes.MOVIE.value and media|safe_attr:"repeats" %}
+                       data-progress-text="{{ media.repeats }} play{{ media.repeats|pluralize }}"
+                     {% elif aggregated_progress %}
+                       data-progress-text="{{ media.formatted_aggregated_progress }}"
+                     {% elif media.progress %}
+                       data-progress-text="{{ media.formatted_progress }}"
+                     {% endif %}></p>
+                {% endwith %}
               {% endif %}
             {% endif %}
           {% endwith %}
           {% if duration %}<p class="text-xs text-gray-400 mt-1">{{ duration }}</p>{% endif %}
 
-          {# Enhanced aggregated data display for duplicates; safe to leave empty if fields aren't present #}
-          {% if media and media.repeats and media.repeats != 1 %}
-            <div class="mt-2 space-y-1 text-xs text-gray-400">
-              {% with agg_progress=media|safe_attr:"aggregated_progress" %}
-                {% if agg_progress and item.media_type != MediaTypes.MOVIE.value %}
-                  <div class="flex items-center justify-between">
-                    <span>Total Progress:</span>
-                    <span class="text-indigo-400 font-medium">
-                      {{ media.formatted_aggregated_progress }}
-                      {% if media.max_progress %}/ {{ media.max_progress }}{% endif %}
-                    </span>
-                  </div>
-                {% endif %}
-              {% endwith %}
-
-              {% with agg_score=media|safe_attr:"aggregated_score" %}
-                {% if agg_score is not None %}
-                  <div class="flex items-center justify-between">
-                    <span>Avg Score:</span>
-                    <span class="text-yellow-400 font-medium">{{ agg_score }}</span>
-                  </div>
-                {% endif %}
-              {% endwith %}
-            </div>
-          {% endif %}
+          {# Aggregated chips already cover repeats; no extra text block. #}
         </div>
 
         {% if item.media_type == MediaTypes.EPISODE.value %}
@@ -244,7 +331,11 @@
                class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
             <div class="w-152 max-h-[90vh] px-4 md:px-0 relative z-60"
                  @click.outside="trackOpen = false">
-              <div id="{% component_id 'track' item media.id %}"></div>
+              {% if use_podcast_show|default:False and podcast_show %}
+                <div id="podcast-show-track-modal-{{ podcast_show.id }}"></div>
+              {% else %}
+                <div id="{% component_id 'track' item media.id %}"></div>
+              {% endif %}
             </div>
           </div>
         {% endif %}

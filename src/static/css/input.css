@@ -22,6 +22,10 @@
   object-fit: none;
 }
 
+.media-card-poster {
+  object-fit: cover;
+}
+
 .clip-half {
   clip-path: inset(0 50% 0 0);
 }
@@ -80,6 +84,10 @@
   z-index: 10;
 }
 
+[data-quick-season-mobile="false"] .media-card-progress {
+  display: none !important;
+}
+
 .stat-scroll-safe {
   width: 100%;
   overflow-x: hidden;
@@ -90,7 +98,7 @@
   display: flex;
   flex-direction: column;
   /* Fixed aspect ratio to prevent grid shift */
-  aspect-ratio: 2/3.4;
+  aspect-ratio: 2/3;
   overflow: hidden;
 }
 
@@ -167,17 +175,19 @@
   }
 
   .media-card-body {
-    padding: 0 !important;
+    padding: calc(var(--spacing) * 2) calc(var(--spacing) * 2) calc(var(--spacing) * 1.5) !important;
+  }
+
+  .media-card-body > .flex {
+    align-items: center;
+    justify-content: flex-start;
   }
 
   .media-card-title {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding-top: calc(var(--spacing) * 2);
-    font-weight: 400;
+    padding-top: 0;
+    font-weight: 600;
     font-size: var(--text-xs);
-    text-align: center !important;
+    text-align: left !important;
   }
 
   .media-card-body>*+* {
@@ -192,13 +202,17 @@
     display: none;
   }
 
-  /* Hide progress adjust buttons on mobile by default, unless user preference allows it */
+  /* Hide progress adjust buttons on mobile by default; always show in card context row. */
   .progress-adjust-btn {
     display: none !important;
   }
 
   [data-quick-season-mobile="true"] .progress-adjust-btn {
     display: block !important;
+  }
+
+  [data-quick-season-mobile="true"] .media-card-progress .progress-adjust-btn {
+    display: inline-flex !important;
   }
 
   .media-card-poster {
@@ -232,6 +246,10 @@
 
   [data-mobile-grid="compact"] .media-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  [data-mobile-grid="compact"] .media-card-progress .progress-unit {
+    display: none !important;
   }
 
   .media-card-progress,

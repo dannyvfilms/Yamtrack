@@ -138,13 +138,19 @@ def sample_search(media_type):
 @register.filter
 def short_unit(media_type):
     """Return the short unit for the media type."""
-    return config.get_unit(media_type, short=True)
+    try:
+        return config.get_unit(media_type, short=True)
+    except (KeyError, TypeError):
+        return ""
 
 
 @register.filter
 def long_unit(media_type):
     """Return the long unit for the media type."""
-    return config.get_unit(media_type, short=False)
+    try:
+        return config.get_unit(media_type, short=False)
+    except (KeyError, TypeError):
+        return ""
 
 
 @register.filter
@@ -295,6 +301,27 @@ def user_event_time(event, user):
         # Fallback to default format if there's an error
         local_dt = timezone.localtime(event.datetime)
         return f"at {local_dt.strftime('%H:%M')}"
+
+
+@register.filter
+def event_within_days(event, days):
+    """Return True if an event is within the next N days (inclusive)."""
+    if not event or not hasattr(event, "datetime"):
+        return False
+
+    try:
+        days = int(days)
+    except (TypeError, ValueError):
+        return False
+
+    try:
+        event_date = timezone.localtime(event.datetime).date()
+    except (ValueError, TypeError, AttributeError):
+        return False
+
+    today = timezone.localdate()
+    delta_days = (event_date - today).days
+    return 0 <= delta_days <= days
 
 
 @register.filter

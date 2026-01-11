@@ -989,6 +989,10 @@ class MediaManager(models.Manager):
             self._annotate_tv_released_episodes(media_list, current_datetime)
             return
 
+        if media_type == MediaTypes.SEASON.value:
+            self._annotate_season_released_episodes(media_list, current_datetime)
+            return
+
         # For other media types, calculate max_progress from events
         # Create a dictionary mapping item_id to max content_number
         max_progress_dict = {}
@@ -1080,6 +1084,66 @@ class MediaManager(models.Manager):
                 tv.max_progress = sum(breakdown.values())
             else:
                 tv.max_progress = None
+
+    def _annotate_season_released_episodes(self, season_list, current_datetime):
+        """Annotate seasons with the number of released episodes."""
+        if not season_list:
+            return
+
+        season_keys = {
+            (season.item.media_id, season.item.source, season.item.season_number)
+            for season in season_list
+        }
+        media_ids = {media_id for media_id, _, _ in season_keys}
+        media_sources = {source for _, source, _ in season_keys}
+        season_numbers = {season_number for _, _, season_number in season_keys if season_number is not None}
+
+        released_by_season: dict[tuple[str, str, int], int] = {}
+
+        episode_rows = (
+            Item.objects.filter(
+                media_type=MediaTypes.EPISODE.value,
+                media_id__in=media_ids,
+                source__in=media_sources,
+                season_number__in=season_numbers,
+                release_datetime__isnull=False,
+                release_datetime__lte=current_datetime,
+            )
+            .values("media_id", "source", "season_number")
+            .annotate(max_episode=models.Max("episode_number"))
+        )
+
+        for row in episode_rows:
+            key = (row["media_id"], row["source"], row["season_number"])
+            max_episode = row["max_episode"] or 0
+            released_by_season[key] = max(released_by_season.get(key, 0), max_episode)
+
+        released_events = (
+            events.models.Event.objects.filter(
+                item__media_id__in=media_ids,
+                item__source__in=media_sources,
+                item__media_type=MediaTypes.SEASON.value,
+                item__season_number__in=season_numbers,
+                datetime__lte=current_datetime,
+                content_number__isnull=False,
+            )
+            .exclude(datetime__year__lt=1900)
+            .values(
+                "item__media_id",
+                "item__source",
+                "item__season_number",
+            )
+            .annotate(max_episode=models.Max("content_number"))
+        )
+
+        for row in released_events:
+            key = (row["item__media_id"], row["item__source"], row["item__season_number"])
+            max_episode = row["max_episode"] or 0
+            released_by_season[key] = max(released_by_season.get(key, 0), max_episode)
+
+        for season in season_list:
+            key = (season.item.media_id, season.item.source, season.item.season_number)
+            season.max_progress = released_by_season.get(key)
 
     def get_media(
         self,
@@ -1802,6 +1866,8 @@ class Season(Media):
             self._sync_status_after_episode_change()
 
             self.item.fetch_releases(delay=True)
+
+        cache_utils.clear_time_left_cache_for_user(self.user_id)
 
     @property
     def progress(self):

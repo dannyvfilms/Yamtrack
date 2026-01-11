@@ -1,7 +1,77 @@
 {% load app_tags %}
+{% load user_tags %}
 
-{% for item in items %}
-  <div {% if forloop.last and has_next %} hx-get="{% url 'list_detail' custom_list.id %}?page={{ next_page_number }}" hx-trigger="revealed threshold:200px" hx-swap="afterend" hx-include="#filter-form" hx-indicator="#loading-indicator" {% endif %}>
-    {% include "app/components/media_card.html" with media=item.media item=item title=item from_grid=True user=user public_view=public_view|default:False current_sort=chip_sort|default:current_sort media_type=item.media_type score_chip_mode='conditional' progress_chip_mode='conditional' time_left_chip_mode='conditional' show_release_year_placeholder=True %}
+{% if items %}
+  {% for item in items %}
+    <div {% if forloop.last and has_next %} hx-get="{% url 'list_detail' custom_list.id %}?page={{ next_page_number }}" hx-trigger="revealed threshold:200px" hx-swap="afterend" hx-include="#filter-form" hx-indicator="#loading-indicator" {% endif %}>
+      {% include "app/components/media_card.html" with media=item.media item=item title=item from_grid=True user=user public_view=public_view|default:False current_sort=chip_sort|default:current_sort media_type=item.media_type score_chip_mode='conditional' progress_chip_mode='conditional' time_left_chip_mode='conditional' show_release_year_placeholder=True show_progress_chip=False %}
+      {% with media=item.media %}
+        {% if current_sort == 'end_date' %}
+          {% if media %}
+            {% with end_date=media|safe_attr:"aggregated_end_date"|default_if_none:media.end_date %}
+              {% if end_date %}
+                <p class="mt-2 text-sm font-semibold text-white">{{ end_date|user_date_format:user }}</p>
+              {% endif %}
+            {% endwith %}
+          {% endif %}
+        {% elif current_sort == 'start_date' %}
+          {% if media %}
+            {% with start_date=media|safe_attr:"aggregated_start_date"|default_if_none:media.start_date %}
+              {% if start_date %}
+                <p class="mt-2 text-sm font-semibold text-white">{{ start_date|user_date_format:user }}</p>
+              {% endif %}
+            {% endwith %}
+          {% endif %}
+        {% elif current_sort == 'date_added' %}
+          {% if item.list_date_added %}
+            <p class="mt-2 text-sm font-semibold text-white">{{ item.list_date_added|user_date_format:user }}</p>
+          {% endif %}
+        {% elif current_sort == 'progress' %}
+          {% if media %}
+            {% with aggregated_progress=media|safe_attr:"aggregated_progress" %}
+              {% if aggregated_progress %}
+                <p class="mt-2 text-sm font-semibold text-white">
+                  {{ media.formatted_aggregated_progress }}{% if media.max_progress %} / {{ media.max_progress }}{% endif %}
+                </p>
+              {% elif media.progress %}
+                <p class="mt-2 text-sm font-semibold text-white">
+                  {{ media.formatted_progress }}{% if media.max_progress %} / {{ media.max_progress }}{% endif %}
+                </p>
+              {% endif %}
+            {% endwith %}
+          {% endif %}
+        {% elif current_sort == 'media_type' %}
+          <p class="mt-2 text-sm font-semibold text-white">{{ item.media_type|media_type_readable }}</p>
+        {% endif %}
+      {% endwith %}
+    </div>
+  {% endfor %}
+{% elif items_count %}
+  {% if request.GET.q or request.GET.type and request.GET.type != 'all' %}
+    <div style="grid-column: 1 / -1;">
+      <div class="flex flex-col items-center justify-center py-32 px-4 bg-[#2a2f35] rounded-lg">
+        <div class="bg-[#39404b] rounded-full p-4 w-16 h-16 mx-auto mb-4 flex items-center justify-center">
+          {% include "app/icons/magnifying-glass.svg" with classes="w-8 h-8 text-gray-400" %}
+        </div>
+        <h3 class="text-xl font-semibold mb-2">No results found</h3>
+        <p class="text-gray-400 text-center max-w-md mb-8">
+          {% if request.GET.q %}
+            We couldn't find any matches for "{{ request.GET.q }}". Try a different search or recommend something new.
+          {% else %}
+            We couldn't find any matches with the current filters. Try adjusting them or recommend something new.
+          {% endif %}
+        </p>
+        {% if custom_list.can_recommend %}
+          <a href="{% url 'recommend_item' custom_list.id %}"
+             class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md transition-colors">Recommend Item</a>
+        {% endif %}
+      </div>
+    </div>
+  {% endif %}
+{% endif %}
+
+{% if is_partial %}
+  <div id="list-results-summary" hx-swap-oob="true">
+    {% include "lists/components/list_results_summary.html" %}
   </div>
-{% endfor %}
+{% endif %}

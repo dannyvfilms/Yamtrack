@@ -1,0 +1,12 @@
+{% if request.GET.q %}
+  {% if filtered_items_count %}
+    <div class="text-sm text-gray-400 -mt-4 mb-4">
+      <span class="font-semibold text-white">{{ filtered_items_count }}</span> result{{ filtered_items_count|pluralize }}
+      {% if custom_list.can_recommend %}
+        <span class="text-gray-500">•</span>
+        <a href="{% url 'recommend_item' custom_list.id %}"
+           class="text-indigo-400 hover:text-indigo-300 transition-colors">Recommend an item</a>
+      {% endif %}
+    </div>
+  {% endif %}
+{% endif %}

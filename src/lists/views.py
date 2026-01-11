@@ -8,6 +8,7 @@ from django.core.paginator import Paginator
 from django.db.models import Count, Exists, F, OuterRef, Q, Subquery
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_POST
 
 from app import helpers
@@ -114,6 +115,7 @@ def lists(request):
 
 
 @login_not_required
+@never_cache
 @require_GET
 def list_detail(request, list_id):
     """Return the detail page of a custom list."""
@@ -165,10 +167,12 @@ def list_detail(request, list_id):
 
     # Build and filter base queryset
     items = custom_list.items.all()
+    total_items_count = items.count()
     if params["search_query"]:
         items = items.filter(title__icontains=params["search_query"])
     if params["media_type"] != "all":
         items = items.filter(media_type=params["media_type"])
+    items = items.annotate(list_date_added=F("customlistitem__date_added"))
 
     def _attach_media_with_aggregation(item_list):
         media_by_item_id = {}
@@ -305,6 +309,7 @@ def list_detail(request, list_id):
 
         paginator = Paginator(all_items, 16)
         items_page = paginator.get_page(params["page"])
+        filtered_items_count = paginator.count
     else:
         # For database-backed sorts, apply ordering and paginate normally
         items = items.order_by(
@@ -314,6 +319,7 @@ def list_detail(request, list_id):
         # Paginate and prepare media objects
         paginator = Paginator(items, 16)
         items_page = paginator.get_page(params["page"])
+        filtered_items_count = paginator.count
 
         _attach_media_with_aggregation(items_page)
 
@@ -324,6 +330,7 @@ def list_detail(request, list_id):
 
     # Base context for both full and partial responses
     chip_sort = "score" if params["sort_by"] == "rating" else params["sort_by"]
+    is_partial = bool(request.headers.get("HX-Request"))
     context = {
         "user": request.user,
         "custom_list": custom_list,
@@ -332,6 +339,8 @@ def list_detail(request, list_id):
         "next_page_number": items_page.next_page_number()
         if items_page.has_next()
         else None,
+        "items_count": total_items_count,
+        "filtered_items_count": filtered_items_count,
         "current_sort": params["sort_by"],
         "chip_sort": chip_sort,
         "sort_choices": ListDetailSortChoices.choices,
@@ -340,15 +349,15 @@ def list_detail(request, list_id):
         "is_public_view": is_public_view,
         "recommendation_count": recommendation_count,
         "base_template": "base_public.html" if public_view else "base.html",
+        "is_partial": is_partial,
     }
 
     # Additional context for full page render
-    if not request.headers.get("HX-Request"):
+    if not is_partial:
         context.update(
             {
                 "form": CustomListForm(instance=custom_list) if can_edit else None,
                 "media_types": MediaTypes.values,
-                "items_count": paginator.count,
                 "collaborators_count": custom_list.collaborators.count() + 1,
             },
         )
@@ -915,11 +924,39 @@ def fetch_release_year(request):
     if item.release_datetime:
         return JsonResponse({"year": item.release_datetime.year})
 
+    if item.media_type == MediaTypes.SEASON.value and item.season_number:
+        episode_release = (
+            Item.objects.filter(
+                media_id=item.media_id,
+                source=item.source,
+                media_type=MediaTypes.EPISODE.value,
+                season_number=item.season_number,
+                release_datetime__isnull=False,
+            )
+            .order_by("release_datetime")
+            .values_list("release_datetime", flat=True)
+            .first()
+        )
+        if episode_release:
+            item.release_datetime = episode_release
+            item.save(update_fields=["release_datetime"])
+            return JsonResponse({"year": episode_release.year})
+
     try:
+        season_numbers = None
+        episode_number = None
+        if item.media_type == MediaTypes.SEASON.value and item.season_number:
+            season_numbers = [item.season_number]
+        elif item.media_type == MediaTypes.EPISODE.value and item.season_number and item.episode_number:
+            season_numbers = [item.season_number]
+            episode_number = item.episode_number
+
         metadata = services.get_media_metadata(
             item.media_type,
             item.media_id,
             item.source,
+            season_numbers=season_numbers,
+            episode_number=episode_number,
         )
         if metadata:
             release_datetime = helpers.extract_release_datetime(metadata)

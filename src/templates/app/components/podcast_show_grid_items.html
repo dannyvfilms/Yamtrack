@@ -44,14 +44,6 @@
         {% endif %}
       </div>
 
-      {# Score chip #}
-      {% if tracker.score %}
-        <div class="media-score-chip absolute sm:top-2 sm:right-2 sm:left-auto top-10 left-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md">
-          {% include "app/icons/star.svg" with classes="w-4 h-4 text-yellow-400 mr-1 fill-current" %}
-          <span class="text-sm text-white">{{ tracker.score|floatformat:1 }}</span>
-        </div>
-      {% endif %}
-
       {# Hover overlay with actions #}
       <div class="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 hover-tap:opacity-100{% if user.clickable_media_cards %} pointer-coarse:hidden{% endif %}">
         <a href="{% url 'podcast_show_detail' tracker.show.id %}" class="absolute inset-0"></a>
@@ -86,9 +78,17 @@
     </div>
 
     <div class="media-card-body p-3">
-      <a href="{% url 'podcast_show_detail' tracker.show.id %}"
-         class="media-card-title text-sm font-semibold text-white hover:text-indigo-400 transition duration-300 line-clamp-1"
-         title="{{ tracker.show.title }}">{{ tracker.show.title }}</a>
+      <div class="flex items-center gap-2 min-w-0">
+        <a href="{% url 'podcast_show_detail' tracker.show.id %}"
+           class="media-card-title text-sm font-semibold text-white hover:text-indigo-400 transition duration-300 line-clamp-1 min-w-0"
+           title="{{ tracker.show.title }}">{{ tracker.show.title }}</a>
+        {% if tracker.score %}
+          <span class="flex items-center gap-1 text-xs text-yellow-300 shrink-0">
+            {% include "app/icons/star.svg" with classes="w-3 h-3 text-yellow-400 fill-current" %}
+            <span class="font-medium">{{ tracker.score|floatformat:1 }}</span>
+          </span>
+        {% endif %}
+      </div>
       {% if tracker.show.author %}
         <p class="text-xs text-gray-400 mt-1 line-clamp-1">{{ tracker.show.author }}</p>
       {% endif %}

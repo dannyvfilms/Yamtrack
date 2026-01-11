@@ -143,7 +143,7 @@
   - Key: `time_left_sorted_v12_{user_id}_{media_type}_{status}_{search}_{direction}_{rating}`.
   - TTL: 300s for list entries; registry TTL uses `CACHE_TIMEOUT`.
   - Registry key: `time_left_sorted_v12_registry_{user_id}`.
-  - Invalidation: `cache_utils.clear_time_left_cache_for_user` on TV/Season saves.
+  - Invalidation: `cache_utils.clear_time_left_cache_for_user` on TV saves and explicit Season saves (Season overrides `save()` and now clears this cache).
   - Release sync throttle: `timeleft:release-sync:{source}:{media_id}` (TTL 1h).
 - TMDB season cache (used by time-left + runtime fallback):
   - Key: `tmdb_season_{media_id}_{season_number}`.
@@ -161,6 +161,12 @@
 
 ## HTTP response cache control
 - `@never_cache` on `track_modal` to prevent browser caching.
+- `@never_cache` on `lists.views.list_detail` to avoid stale list grids/context rows after HTMX sorts and back/forward navigation.
+- `@never_cache` on `app.views.media_list` to avoid stale media grids/context rows after HTMX sorts and back/forward navigation.
+- `list_detail.html` reloads on `pageshow` when `event.persisted` is true to bust Safari's back/forward cache restoring older list HTML.
+- `media_list.html` reloads on `pageshow` when `event.persisted` is true for the same Safari back/forward cache issue.
+- `list_detail.html` disables HTMX history caching on `#items-grid` (`hx-history="false"`) to prevent stale list grids from being restored.
+- `list_detail.html` sets `htmx.config.getCacheBusterParam = true` so HTMX GETs append `org.htmx.cache-buster`, which avoids Safari reusing cached list HTML.
 - Podcast episode list fragment sets `Cache-Control: no-cache, no-store, must-revalidate`, plus `Pragma`/`Expires`.
 - `sync_metadata()` uses `cache.ttl()` to prevent immediate re-sync, and deletes provider cache keys when allowed.
 - Static asset busting: `get_static_file_mtime()` appends `?mtime` to static URLs.

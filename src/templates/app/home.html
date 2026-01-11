@@ -89,3 +89,82 @@
     {% endfor %}
   </div>
 {% endblock content %}
+
+{% block js %}
+  <script>
+    const FETCH_URL = '{% url "fetch_release_year" %}';
+    const pendingFetches = new Set();
+    let fetchQueue = [];
+    let isProcessing = false;
+
+    function processQueue() {
+      if (isProcessing || fetchQueue.length === 0) return;
+      isProcessing = true;
+
+      const itemId = fetchQueue.shift();
+      if (!itemId || pendingFetches.has(itemId)) {
+        isProcessing = false;
+        if (fetchQueue.length > 0) {
+          setTimeout(processQueue, 50);
+        }
+        return;
+      }
+
+      pendingFetches.add(itemId);
+
+      fetch(`${FETCH_URL}?item_id=${itemId}`)
+        .then(response => response.json())
+        .then(data => {
+          if (data.year) {
+            document.querySelectorAll(`.release-year-placeholder[data-item-id="${itemId}"]`).forEach(el => {
+              const progressText = el.dataset.progressText;
+              el.textContent = progressText ? `${data.year} • ${progressText}` : data.year;
+              el.classList.remove('release-year-placeholder');
+            });
+          } else {
+            document.querySelectorAll(`.release-year-placeholder[data-item-id="${itemId}"]`).forEach(el => {
+              el.remove();
+            });
+          }
+          if (typeof initMediaCardHover === 'function') {
+            initMediaCardHover();
+          }
+        })
+        .catch(err => {
+          console.warn('Failed to fetch release year for item', itemId, err);
+        })
+        .finally(() => {
+          isProcessing = false;
+          if (fetchQueue.length > 0) {
+            setTimeout(processQueue, 100);
+          }
+        });
+    }
+
+    function queueReleaseYearFetch(itemId) {
+      if (!pendingFetches.has(itemId) && !fetchQueue.includes(itemId)) {
+        fetchQueue.push(itemId);
+        processQueue();
+      }
+    }
+
+    function loadVisibleReleaseYears() {
+      document.querySelectorAll('.release-year-placeholder[data-item-id]').forEach(el => {
+        const itemId = el.dataset.itemId;
+        if (itemId) {
+          queueReleaseYearFetch(itemId);
+        }
+      });
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', loadVisibleReleaseYears);
+    } else {
+      loadVisibleReleaseYears();
+    }
+
+    document.body.addEventListener('htmx:afterSwap', function() {
+      setTimeout(loadVisibleReleaseYears, 50);
+    });
+  </script>
+{% endblock js %}

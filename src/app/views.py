@@ -171,6 +171,7 @@ def progress_edit(request, media_type, instance_id):
     )
 
 
+@never_cache
 @require_GET
 def media_list(request, media_type):
     """Return the media list page."""

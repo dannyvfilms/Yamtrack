@@ -3726,6 +3726,10 @@
   object-fit: none;
 }
 
+.media-card-poster {
+  object-fit: cover;
+}
+
 .clip-half {
   clip-path: inset(0 50% 0 0);
 }
@@ -3794,17 +3798,19 @@
   }
 
   .media-card-body {
-    padding: 0 !important;
+    padding: calc(var(--spacing) * 2) calc(var(--spacing) * 2) calc(var(--spacing) * 1.5) !important;
+  }
+
+  .media-card-body > .flex {
+    align-items: center;
+    justify-content: flex-start;
   }
 
   .media-card-title {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding-top: calc(var(--spacing) * 2);
-    font-weight: 400;
+    padding-top: 0;
+    font-weight: 600;
     font-size: var(--text-xs);
-    text-align: center !important;
+    text-align: left !important;
   }
 
   .media-card-body>*+* {
@@ -3858,6 +3864,14 @@
 
   [data-quick-season-mobile="true"] .progress-adjust-btn {
     display: block !important;
+  }
+
+  [data-quick-season-mobile="true"] .media-card-progress .progress-adjust-btn {
+    display: inline-flex !important;
+  }
+
+  [data-mobile-grid="compact"] .media-card-progress .progress-unit {
+    display: none !important;
   }
 
   .media-card-progress,
@@ -4627,11 +4641,15 @@
   z-index: 10;
 }
 
+[data-quick-season-mobile="false"] .media-card-progress {
+  display: none !important;
+}
+
 .search-result-card {
   position: relative;
   display: flex;
   flex-direction: column;
-  aspect-ratio: 2/3.4;
+  aspect-ratio: 2/3;
   overflow: hidden;
 }
 
