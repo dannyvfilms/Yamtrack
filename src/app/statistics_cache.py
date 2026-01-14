@@ -383,7 +383,9 @@ def build_statistics_data(user, start_date, end_date):
         end_date,
     )
 
-    activity_data = stats.get_activity_data(user, start_date, end_date)
+    activity_data = stats.get_activity_data(
+        user, start_date, end_date, daily_hours_data=daily_hours_by_media_type
+    )
 
     return {
         "media_count": media_count,
@@ -1797,7 +1799,16 @@ def _build_daily_hours_chart(day_minutes_by_type, day_list):
     return {"labels": labels, "datasets": datasets}
 
 
-def _build_activity_data(date_counts, start_date, end_date):
+def _build_activity_data(date_counts, day_minutes_by_type, day_list, start_date, end_date):
+    """Build activity data for the calendar heatmap and stats cards.
+
+    Args:
+        date_counts: Dict mapping date -> activity count (for heatmap)
+        day_minutes_by_type: Dict mapping media_type -> {date_iso_str -> minutes}
+        day_list: List of date objects in the filtered range
+        start_date: Start of the date range
+        end_date: End of the date range
+    """
     if end_date is None:
         end_date = timezone.localtime()
 
@@ -1825,9 +1836,10 @@ def _build_activity_data(date_counts, start_date, end_date):
         for offset in range((end_date.date() - start_date_aligned.date()).days + 1)
     ]
 
-    most_active_day, day_percentage = stats.calculate_day_of_week_stats(
-        date_counts,
-        start_date.date(),
+    # Use day_minutes_by_type for most active day calculation (same data as chart)
+    most_active_day, day_percentage = stats.calculate_most_active_weekday(
+        day_minutes_by_type,
+        day_list,
     )
     end_date_value = end_date.date() if hasattr(end_date, "date") else end_date
     streaks = stats.calculate_streak_details(
@@ -2332,7 +2344,13 @@ def _aggregate_statistics_from_days(user, day_list, start_date, end_date, build_
         end_date = datetime.combine(day_list[-1], datetime.max.time())
 
     activity_counts_by_date = {day: activity_counts.get(day, 0) for day in day_list}
-    activity_data = _build_activity_data(activity_counts_by_date, start_date, end_date)
+    activity_data = _build_activity_data(
+        activity_counts_by_date,
+        day_minutes_by_type,
+        day_list,
+        start_date,
+        end_date,
+    )
 
     media_type_distribution = stats.get_media_type_distribution(
         media_count,

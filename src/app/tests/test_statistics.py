@@ -928,6 +928,70 @@ class StatisticsTests(TestCase):
         self.assertIsNone(most_active_day)
         self.assertEqual(percentage, 0)
 
+    def test_calculate_most_active_weekday(self):
+        """Test calculate_most_active_weekday based on consumption minutes."""
+        # Create day_minutes_by_type data (same format as used by daily hours chart)
+        day_minutes_by_type = {
+            "Movie": {
+                "2025-01-01": 120,  # Wednesday - 2 hours
+                "2025-01-02": 60,   # Thursday - 1 hour
+                "2025-01-03": 90,   # Friday - 1.5 hours
+                "2025-01-04": 0,    # Saturday - 0
+                "2025-01-05": 180,  # Sunday - 3 hours
+            },
+            "TV": {
+                "2025-01-01": 60,   # Wednesday - 1 hour (total: 3h)
+                "2025-01-02": 30,   # Thursday - 0.5 hour (total: 1.5h)
+                "2025-01-03": 0,    # Friday (total: 1.5h)
+                "2025-01-04": 0,    # Saturday (total: 0)
+                "2025-01-05": 120,  # Sunday - 2 hours (total: 5h)
+            },
+        }
+
+        day_list = [
+            datetime.date(2025, 1, 1),  # Wednesday
+            datetime.date(2025, 1, 2),  # Thursday
+            datetime.date(2025, 1, 3),  # Friday
+            datetime.date(2025, 1, 4),  # Saturday
+            datetime.date(2025, 1, 5),  # Sunday
+        ]
+
+        most_active_day, percentage = statistics.calculate_most_active_weekday(
+            day_minutes_by_type,
+            day_list,
+        )
+
+        # Sunday has highest total minutes (300 min = 5 hours)
+        self.assertEqual(most_active_day, "Sunday")
+        # 300 out of 660 total minutes = ~45%
+        self.assertEqual(percentage, 45)
+
+        # Test with empty data
+        empty_minutes = {}
+        most_active_day, percentage = statistics.calculate_most_active_weekday(
+            empty_minutes,
+            day_list,
+        )
+        self.assertIsNone(most_active_day)
+        self.assertEqual(percentage, 0)
+
+        # Test that weekdays not in day_list are not counted
+        # (This is the key fix - only days in the filtered range are considered)
+        short_day_list = [
+            datetime.date(2025, 1, 1),  # Wednesday
+            datetime.date(2025, 1, 2),  # Thursday
+            datetime.date(2025, 1, 3),  # Friday
+            # No Saturday or Sunday
+        ]
+
+        most_active_day, percentage = statistics.calculate_most_active_weekday(
+            day_minutes_by_type,
+            short_day_list,
+        )
+
+        # Wednesday should be most active (180 min) since Sunday is not in range
+        self.assertEqual(most_active_day, "Wednesday")
+
     def test_calculate_streaks(self):
         """Test the calculate_streaks function."""
         # Create sample date counts

@@ -605,8 +605,48 @@ def time_line_sort_key(media):
     return timezone.localdate(media.start_date)
 
 
-def get_activity_data(user, start_date, end_date):
-    """Get daily activity counts for the last year."""
+def _convert_chart_to_day_minutes(daily_hours_data):
+    """Convert Chart.js formatted daily hours data to day_minutes_by_type format.
+
+    Args:
+        daily_hours_data: {"labels": ["2025-01-01", ...], "datasets": [...]}
+
+    Returns:
+        Dict mapping media_type -> {date_iso_str -> minutes}
+    """
+    day_minutes_by_type = {}
+    labels = daily_hours_data.get("labels", [])
+    datasets = daily_hours_data.get("datasets", [])
+
+    for dataset in datasets:
+        # Use a generic key since we just need total minutes per day
+        media_type = dataset.get("label", "unknown")
+        data = dataset.get("data", [])
+
+        if media_type not in day_minutes_by_type:
+            day_minutes_by_type[media_type] = {}
+
+        for i, hours in enumerate(data):
+            if i < len(labels):
+                date_str = labels[i]
+                # Convert hours back to minutes
+                minutes = float(hours) * 60 if hours else 0
+                day_minutes_by_type[media_type][date_str] = minutes
+
+    return day_minutes_by_type
+
+
+def get_activity_data(user, start_date, end_date, daily_hours_data=None):
+    """Get daily activity counts for the activity calendar.
+
+    Args:
+        user: The user to get activity data for
+        start_date: Start of the date range
+        end_date: End of the date range
+        daily_hours_data: Optional Chart.js formatted daily hours data from
+            get_daily_hours_by_media_type(). If provided, used for more accurate
+            "most active day" calculation.
+    """
     if end_date is None:
         end_date = timezone.localtime()
 
@@ -634,11 +674,26 @@ def get_activity_data(user, start_date, end_date):
         for x in range((end_date.date() - start_date_aligned.date()).days + 1)
     ]
 
-    # Calculate activity statistics
-    most_active_day, day_percentage = calculate_day_of_week_stats(
-        date_counts,
-        start_date.date(),
+    # Calculate most active day using daily hours data if available
+    has_chart_data = (
+        daily_hours_data
+        and daily_hours_data.get("labels")
+        and daily_hours_data.get("datasets")
     )
+    if has_chart_data:
+        # Convert Chart.js format to day_minutes_by_type format
+        day_minutes_by_type = _convert_chart_to_day_minutes(daily_hours_data)
+        most_active_day, day_percentage = calculate_most_active_weekday(
+            day_minutes_by_type,
+            date_range,
+        )
+    else:
+        # Fallback to legacy calculation for backward compatibility
+        most_active_day, day_percentage = calculate_day_of_week_stats(
+            date_counts,
+            start_date.date(),
+        )
+
     streaks = calculate_streak_details(
         date_counts,
         end_date.date(),
@@ -773,6 +828,40 @@ def calculate_day_of_week_stats(date_counts, start_date):
     percentage = (most_active_day[1] / total_active_days) * 100
 
     return most_active_day[0], round(percentage)
+
+
+def calculate_most_active_weekday(day_minutes_by_type, day_list):
+    """Calculate most active weekday based on total consumption minutes.
+
+    Uses the same data source as 'Played Hours by Media Type' chart to ensure
+    the most active day is calculated from the same filtered data range.
+
+    Args:
+        day_minutes_by_type: Dict mapping media_type -> {date_iso_str -> minutes}
+        day_list: List of date objects in the filtered range
+
+    Returns:
+        (weekday_name, percentage) or (None, 0) if no data.
+    """
+    weekday_minutes = defaultdict(float)
+
+    for day in day_list:
+        day_str = day.isoformat()
+        day_total = 0
+        for minutes_map in day_minutes_by_type.values():
+            day_total += minutes_map.get(day_str, 0)
+        if day_total > 0:
+            weekday_name = day.strftime("%A")
+            weekday_minutes[weekday_name] += day_total
+
+    if not weekday_minutes:
+        return None, 0
+
+    total_minutes = sum(weekday_minutes.values())
+    most_active = max(weekday_minutes.items(), key=lambda x: x[1])
+    percentage = (most_active[1] / total_minutes) * 100
+
+    return most_active[0], round(percentage)
 
 
 def calculate_streak_details(date_counts, end_date):
