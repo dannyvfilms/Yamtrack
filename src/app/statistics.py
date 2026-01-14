@@ -315,28 +315,58 @@ def get_score_distribution(user_media):
 
     for media_type, media_list in user_media.items():
         score_counts = dict.fromkeys(score_range, 0)
-        scored_media = media_list.exclude(score__isnull=True).select_related("item")
+        media_list = media_list.select_related("item")
 
-        deduped_scored = {}
-        for media in scored_media:
+        # Group media by item to aggregate scores for items with multiple entries (e.g., games with multiple plays)
+        media_by_item = defaultdict(list)
+        for media in media_list:
             item = getattr(media, "item", None)
             key = item.id if item else media.id
-            dates = [d for d in (media.end_date, media.start_date) if d]
-            activity_date = max(dates) if dates else media.created_at
+            media_by_item[key].append(media)
 
-            existing = deduped_scored.get(key)
-            if not existing:
-                deduped_scored[key] = {
-                    "media": media,
-                    "activity_date": activity_date,
-                }
-                continue
+        # Aggregate scores and deduplicate
+        deduped_scored = {}
+        for item_id, entries in media_by_item.items():
+            if len(entries) == 1:
+                # Single entry - use it directly
+                media = entries[0]
+                score_to_use = media.score
+                display_media = media
+            else:
+                # Multiple entries - aggregate to find most recent score
+                display_media = entries[0]  # Use first entry as display
+                latest_rating = None
+                latest_activity = None
 
-            existing_activity = existing["activity_date"]
-            if activity_date and (not existing_activity or activity_date > existing_activity):
-                deduped_scored[key] = {
-                    "media": media,
+                for entry in entries:
+                    if entry.score is not None:
+                        # Determine the most recent activity for this entry
+                        entry_activity = None
+                        if entry.end_date:
+                            entry_activity = entry.end_date
+                        elif entry.progressed_at:
+                            entry_activity = entry.progressed_at
+                        else:
+                            entry_activity = entry.created_at
+
+                        # If this entry has more recent activity, use its rating
+                        if latest_activity is None or entry_activity > latest_activity:
+                            latest_activity = entry_activity
+                            latest_rating = entry.score
+
+                score_to_use = latest_rating
+                # Set aggregated_score for consistency with other code paths
+                if score_to_use is not None:
+                    display_media.aggregated_score = score_to_use
+
+            # Only include if there's a score
+            if score_to_use is not None:
+                dates = [d for d in (display_media.end_date, display_media.start_date) if d]
+                activity_date = max(dates) if dates else display_media.created_at
+                deduped_scored[item_id] = {
+                    "media": display_media,
                     "activity_date": activity_date,
+                    "score": score_to_use,
                 }
 
         deduped_media = [entry["media"] for entry in deduped_scored.values()]
@@ -345,35 +375,38 @@ def get_score_distribution(user_media):
         type_top_rated = []
         type_counter = itertools.count()
 
-        for media in deduped_media:
+        for entry_data in deduped_scored.values():
+            media = entry_data["media"]
+            score_value = entry_data["score"]
+
             # Add to global top rated (for backward compatibility)
             if len(top_rated) < top_rated_count:
                 heapq.heappush(
                     top_rated,
-                    (float(media.score), next(counter), media),
+                    (float(score_value), next(counter), media),
                 )
             else:
                 heapq.heappushpop(
                     top_rated,
-                    (float(media.score), next(counter), media),
+                    (float(score_value), next(counter), media),
                 )
 
             # Add to per-type top rated
             if len(type_top_rated) < top_rated_per_type_count:
                 heapq.heappush(
                     type_top_rated,
-                    (float(media.score), next(type_counter), media),
+                    (float(score_value), next(type_counter), media),
                 )
             else:
                 heapq.heappushpop(
                     type_top_rated,
-                    (float(media.score), next(type_counter), media),
+                    (float(score_value), next(type_counter), media),
                 )
 
-            binned_score = int(media.score)
+            binned_score = int(score_value)
             score_counts[binned_score] += 1
             total_scored += 1
-            total_score_sum += media.score
+            total_score_sum += score_value
 
         distribution[media_type] = score_counts
 
