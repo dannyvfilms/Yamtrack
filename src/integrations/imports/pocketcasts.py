@@ -339,23 +339,15 @@ class PocketCastsImporter:
             # Sort podcasts by published date for consistent sequencing
             new_completed_podcasts_sorted = sorted(new_completed_podcasts, key=lambda x: x[2])  # Sort by published_date
 
-            # Track completion times for sequencing
-            completion_times = {}
+            # Track inferred podcast completions as blocked intervals for subsequent inferences
+            # This prevents multiple podcasts from getting overlapping completion times
+            inferred_podcasts = []  # List of (end_time, buffer_seconds)
 
             # Infer completion dates for each new podcast in order
             for episode_data, duration_seconds, published_date in new_completed_podcasts_sorted:
                 episode_uuid = episode_data.get("uuid")
 
-                # Get other new podcasts that have already been processed (with their completion times)
-                other_podcasts = []
-                for (e, d, pub) in new_completed_podcasts_sorted:
-                    other_uuid = e.get("uuid")
-                    if other_uuid != episode_uuid:
-                        # Include completion time if already calculated
-                        completion_time = completion_times.get(other_uuid)
-                        other_podcasts.append((pub, d, completion_time))
-
-                # Infer completion date
+                # Infer completion date, passing previously inferred podcasts as blocked intervals
                 debug_context = {
                     "played_up_to": episode_data.get("playedUpTo"),
                     "old_played_up_to": 0,
@@ -368,15 +360,18 @@ class PocketCastsImporter:
                     sync_window_start,
                     sync_window_end,
                     existing_history,
-                    other_podcasts,
+                    [],  # other_new_podcasts no longer used for spacing
                     published_date,
                     episode_uuid,
                     previous_sync_at,
                     debug_context=debug_context,
+                    inferred_podcasts=inferred_podcasts,
                 )
 
-                # Store completion time for sequencing
-                completion_times[episode_uuid] = inferred_date
+                # Track this completion as a blocked interval for subsequent podcasts
+                # Use a buffer proportional to podcast duration (min 2 min, max 5 min)
+                buffer_seconds = max(120, min(duration_seconds // 10, 300))
+                inferred_podcasts.append((inferred_date, buffer_seconds))
 
                 # Update the podcast's completion_date in bulk_media
                 # Find the podcast in bulk_media and update it
@@ -758,30 +753,68 @@ class PocketCastsImporter:
                 merged[-1][1] = end
         return [(start, end) for start, end in merged]
 
-    def _build_blocked_intervals(self, existing_history_items, sync_window_start, sync_window_end):
+    def _build_blocked_intervals(self, existing_history_items, sync_window_start, sync_window_end, inferred_podcasts=None):
+        """Build blocked intervals from scrobbled items and previously inferred podcast completions.
+        
+        Args:
+            existing_history_items: List of (end_date, duration, type, is_scrobbled)
+            sync_window_start: Start of the sync window
+            sync_window_end: End of the sync window
+            inferred_podcasts: Optional list of (end_time, buffer_seconds) tuples
+        """
         intervals = []
+        
+        # Add scrobbled items (music, etc.) as blocked intervals
         for end_date, duration, _, is_scrobbled in existing_history_items:
             if not is_scrobbled or not end_date:
                 continue
             duration_seconds = max(0, duration or 0)
-            start = end_date - timedelta(seconds=duration_seconds) if duration_seconds > 0 else end_date
+            if duration_seconds > 0:
+                start = end_date - timedelta(seconds=duration_seconds)
+            else:
+                start = end_date
             if end_date < sync_window_start or start > sync_window_end:
                 continue
             start = max(start, sync_window_start)
             end = min(end_date, sync_window_end)
             intervals.append((start, end))
+        
+        # Add previously inferred podcast completions as blocked intervals
+        # This prevents multiple podcasts from overlapping
+        if inferred_podcasts:
+            for end_time, buffer_seconds in inferred_podcasts:
+                if not end_time:
+                    continue
+                # Create a small blocked interval around the inferred completion time
+                buffer = max(60, min(buffer_seconds, 300))  # 1-5 minute buffer
+                start = end_time - timedelta(seconds=buffer)
+                end = end_time + timedelta(seconds=60)  # Small buffer after
+                # Clamp to window
+                if end < sync_window_start or start > sync_window_end:
+                    continue
+                start = max(start, sync_window_start)
+                end = min(end, sync_window_end)
+                intervals.append((start, end))
+        
         return self._merge_intervals(intervals)
 
     def _has_gap_of_length(self, duration_seconds, sync_window_start, sync_window_end, blocked_intervals):
-        if duration_seconds <= 0:
+        """Check if there's a gap large enough for the placement buffer.
+        
+        Uses the same capped duration as _fit_completion_after_blocked for consistency.
+        """
+        # Use capped duration for gap checking (same as fitting logic)
+        check_duration = min(duration_seconds, 300)  # Max 5 minute buffer
+        
+        if check_duration <= 0:
             return True
         cursor = sync_window_start
         for start, end in blocked_intervals:
-            if (start - cursor).total_seconds() >= duration_seconds:
+            if (start - cursor).total_seconds() >= check_duration:
                 return True
             if end > cursor:
                 cursor = end
-        return (sync_window_end - cursor).total_seconds() >= duration_seconds
+        return (sync_window_end - cursor).total_seconds() >= check_duration
 
     def _compute_gaps(self, sync_window_start, sync_window_end, blocked_intervals):
         gaps = []
@@ -796,42 +829,91 @@ class PocketCastsImporter:
         return gaps
 
     def _fit_completion_after_blocked(self, base_completion_time, duration_seconds, sync_window_start, sync_window_end, blocked_intervals):
-        min_end = sync_window_start + timedelta(seconds=duration_seconds)
+        """Find a valid completion time that doesn't overlap with blocked intervals.
+        
+        We're placing an END time, not reserving the full playback span. The duration_seconds
+        is used to determine a "virtual start" for overlap checking, but the key is finding
+        a completion time within the window that doesn't conflict with blocked intervals.
+        
+        For non-anchored cases, duration_seconds is already capped to a small value (5 min),
+        making this more flexible. For anchored cases, it's the remaining time.
+        """
         max_end = sync_window_end
+        
+        # For placement purposes, use a reasonable buffer (not full duration for long podcasts)
+        # This prevents "can't fit 4 hours in 2 hour window" from triggering fallback
+        placement_buffer = min(duration_seconds, 300)  # Max 5 minute buffer for fitting
+        
+        min_end = sync_window_start + timedelta(seconds=placement_buffer)
         if min_end > max_end:
-            return None
+            # Even the minimum buffer doesn't fit - just place at window end
+            min_end = sync_window_start + timedelta(seconds=60)  # 1 minute minimum
+            if min_end > max_end:
+                return sync_window_end
 
         candidate_end = min(max(base_completion_time, min_end), max_end)
-        candidate_start = candidate_end - timedelta(seconds=duration_seconds)
+        candidate_start = candidate_end - timedelta(seconds=placement_buffer)
 
         for start, end in blocked_intervals:
             if end <= candidate_start:
                 continue
             if start >= candidate_end:
                 break
+            # Conflict: push candidate to after this blocked interval
             candidate_start = end
-            candidate_end = candidate_start + timedelta(seconds=duration_seconds)
+            candidate_end = candidate_start + timedelta(seconds=placement_buffer)
             if candidate_end > max_end:
+                # Can't fit after this blocked interval, but we might find a gap earlier
+                # Return None to trigger fallback which has better gap-finding logic
                 return None
 
         return candidate_end
 
     def _fallback_completion_time(self, episode_uuid, sync_window_start, sync_window_end, blocked_intervals):
+        """Place completion time in an available gap using hash-based distribution.
+        
+        Applies boundary avoidance to prevent landing exactly on gap start/end,
+        which would cause clustering on sync window boundaries.
+        """
         window_seconds = int((sync_window_end - sync_window_start).total_seconds())
         if window_seconds <= 0:
             return sync_window_end
 
         gaps = self._compute_gaps(sync_window_start, sync_window_end, blocked_intervals)
+        hash_int = self._stable_hash_int(episode_uuid)
+        
         if gaps:
-            hash_int = self._stable_hash_int(episode_uuid)
-            gap_start, gap_end = gaps[hash_int % len(gaps)]
+            # Select a gap using hash (prefer larger gaps by weighting)
+            # Sort gaps by size descending for better distribution
+            sorted_gaps = sorted(gaps, key=lambda g: (g[1] - g[0]).total_seconds(), reverse=True)
+            gap_start, gap_end = sorted_gaps[hash_int % len(sorted_gaps)]
             gap_seconds = int((gap_end - gap_start).total_seconds())
+            
             if gap_seconds <= 0:
                 return gap_start
-            offset_seconds = hash_int % gap_seconds
+            
+            # Boundary avoidance: don't land within 60s of gap boundaries
+            # This prevents stacking at sync_window_start or sync_window_end
+            buffer = min(60, gap_seconds // 4)  # At most 25% of gap, max 60 seconds
+            
+            if gap_seconds > buffer * 2:
+                # Enough room for buffers on both ends
+                effective_gap = gap_seconds - (buffer * 2)
+                offset_seconds = buffer + (hash_int % effective_gap)
+            else:
+                # Small gap: just use middle or hash distribution
+                offset_seconds = hash_int % gap_seconds
+            
             return gap_start + timedelta(seconds=offset_seconds)
 
-        offset_seconds = self._stable_hash_int(episode_uuid) % max(1, window_seconds)
+        # No gaps: distribute across entire window with boundary avoidance
+        buffer = min(60, window_seconds // 4)
+        if window_seconds > buffer * 2:
+            effective_window = window_seconds - (buffer * 2)
+            offset_seconds = buffer + (hash_int % effective_window)
+        else:
+            offset_seconds = hash_int % max(1, window_seconds)
+        
         return sync_window_start + timedelta(seconds=offset_seconds)
 
     def _log_completion_inference(
@@ -921,11 +1003,24 @@ class PocketCastsImporter:
         episode_uuid,
         previous_sync_at,
         debug_context=None,
+        inferred_podcasts=None,
     ):
-        """Infer completion date for a podcast by fitting it into timeline gaps."""
+        """Infer completion date for a podcast by fitting it into timeline gaps.
+        
+        For anchored cases (prior in-progress snapshot exists): uses remaining time
+        to calculate when the episode likely completed.
+        
+        For non-anchored cases (98% of completions): uses hash-based distribution
+        across the window since we have no information about when listening started.
+        
+        Args:
+            inferred_podcasts: List of (end_time, buffer_seconds) for already-inferred
+                podcasts in this sync, used to prevent overlapping placements.
+        """
         debug_context = debug_context or {}
         duration_seconds = max(0, podcast_duration_seconds or 0)
         debug_context.setdefault("duration_seconds", duration_seconds)
+        inferred_podcasts = inferred_podcasts or []
 
         last_in_progress_date, last_progress_minutes = self._get_last_in_progress_record(episode_uuid)
         window_seconds = int((sync_window_end - sync_window_start).total_seconds())
@@ -951,6 +1046,8 @@ class PocketCastsImporter:
         placement_duration_seconds = duration_seconds
 
         if anchor_used:
+            # Anchored path: use remaining time (e.g., 4-hour podcast with 20 min left)
+            # This correctly places the completion near anchor_time + remaining_time
             progress_seconds = last_progress_minutes * 60
             remaining_seconds = max(0, duration_seconds - progress_seconds)
             anchor_time = previous_sync_at or sync_window_start
@@ -959,25 +1056,18 @@ class PocketCastsImporter:
             base_completion_time = anchor_time + timedelta(seconds=remaining_seconds)
             placement_duration_seconds = remaining_seconds
         else:
-            base_completion_time = sync_window_start + timedelta(
-                seconds=min(duration_seconds, max(window_seconds - 1, 0))
-            )
+            # Non-anchored path: we have NO information about when listening started.
+            # A completed 4-hour podcast in a 2-hour window could have ended at any time.
+            # Use hash-based distribution across the entire window for fair placement.
+            hash_offset = self._stable_hash_int(episode_uuid) % window_seconds
+            base_completion_time = sync_window_start + timedelta(seconds=hash_offset)
+            # Use a small placement duration for gap-fitting (just needs to "fit" the end time)
+            placement_duration_seconds = min(300, duration_seconds)  # 5 min max for fitting
 
-        if not anchor_used:
-            latest_prev_completion = None
-            for _, _, completion_time in other_new_podcasts:
-                if completion_time and (latest_prev_completion is None or completion_time > latest_prev_completion):
-                    latest_prev_completion = completion_time
-            if latest_prev_completion:
-                spacing_seconds = 60
-                if duration_seconds:
-                    spacing_seconds = max(60, min(duration_seconds, 15 * 60))
-                base_completion_time = max(
-                    base_completion_time,
-                    latest_prev_completion + timedelta(seconds=spacing_seconds),
-                )
-
-        blocked_intervals = self._build_blocked_intervals(existing_history_items, sync_window_start, sync_window_end)
+        # Build blocked intervals including previously inferred podcast completions
+        blocked_intervals = self._build_blocked_intervals(
+            existing_history_items, sync_window_start, sync_window_end, inferred_podcasts
+        )
         fallback_reason = None
         completion_time = None
 
