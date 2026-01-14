@@ -49,8 +49,6 @@
     --color-indigo-700: oklch(45.7% 0.24 277.023);
     --color-violet-600: oklch(54.1% 0.281 293.009);
     --color-purple-400: oklch(71.4% 0.203 305.504);
-    --color-purple-600: oklch(55.8% 0.288 302.321);
-    --color-purple-700: oklch(49.6% 0.265 301.924);
     --color-fuchsia-400: oklch(74% 0.238 322.16);
     --color-fuchsia-600: oklch(59.1% 0.293 322.896);
     --color-fuchsia-700: oklch(51.8% 0.253 323.949);
@@ -3292,7 +3290,7 @@
   z-index: 5;
 }
 .media-card .media-status-chip, .media-card .media-score-chip, .media-card .media-progress-chip, .media-card .media-time-left-chip, .media-card .media-repeat-chip {
-  z-index: 10;
+  z-index: 6;
 }
 [data-quick-season-mobile="false"] .media-card-progress {
   display: none !important;

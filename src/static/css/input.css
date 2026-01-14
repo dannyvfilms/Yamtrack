@@ -81,7 +81,7 @@
 .media-card .media-progress-chip,
 .media-card .media-time-left-chip,
 .media-card .media-repeat-chip {
-  z-index: 10;
+  z-index: 6;
 }
 
 [data-quick-season-mobile="false"] .media-card-progress {
