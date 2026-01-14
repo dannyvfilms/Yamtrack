@@ -1451,7 +1451,11 @@ class Media(models.Model):
 
     @property
     def time_left(self):
-        """Return the estimated time left to complete the show in minutes."""
+        """Return the estimated time left to complete the show in minutes.
+
+        For accuracy, this sums actual episode runtimes for unwatched episodes
+        from the Item table, falling back to averages only when data is unavailable.
+        """
         if not hasattr(self, "max_progress") or self.max_progress is None:
             return 0
 
@@ -1459,20 +1463,114 @@ class Media(models.Model):
         if episodes_left <= 0:
             return 0
 
-        # Try to get runtime from cached data using the same approach as statistics
+        # First, try to sum actual unwatched episode runtimes from Item table
+        total_from_items = self._calc_unwatched_runtime_from_items(episodes_left)
+        if total_from_items is not None:
+            return total_from_items
+
+        # Fallback: use average runtime × episodes_left
+        runtime_minutes = self._get_fallback_runtime_minutes()
+
+        # Skip shows with unrealistic runtime (999999 fallback)
+        if runtime_minutes >= 999999:
+            return 0
+
+        return episodes_left * runtime_minutes
+
+    def _calc_unwatched_runtime_from_items(self, episodes_left):
+        """Sum actual runtimes for unwatched episodes from Item table.
+
+        Returns total runtime in minutes, or None if data is unavailable.
+        """
+        season_number = getattr(self.item, "season_number", None)
+
+        if self.item.media_type == MediaTypes.SEASON.value and season_number:
+            # For a Season: query episodes in this season where episode_number > progress
+            unwatched_episodes = Item.objects.filter(
+                media_id=self.item.media_id,
+                source=self.item.source,
+                media_type=MediaTypes.EPISODE.value,
+                season_number=season_number,
+                episode_number__gt=self.progress,
+                runtime_minutes__isnull=False,
+            ).exclude(
+                runtime_minutes=999999,
+            ).values_list("runtime_minutes", flat=True)
+
+            runtimes = list(unwatched_episodes)
+            if runtimes:
+                total = sum(runtimes)
+                # If we have data for all unwatched episodes, return exact sum
+                if len(runtimes) == episodes_left:
+                    return total
+                # Partial data: estimate missing episodes using average of known
+                missing_eps = episodes_left - len(runtimes)
+                avg_runtime = total / len(runtimes)
+                return total + int(missing_eps * avg_runtime)
+
+        elif self.item.media_type == MediaTypes.TV.value:
+            # For TV show: need to aggregate across seasons
+            # Use released_episode_breakdown if available
+            breakdown = getattr(self, "released_episode_breakdown", None)
+            if breakdown:
+                total_runtime = 0
+                episodes_with_data = 0
+                remaining_progress = self.progress
+
+                for season_num in sorted(breakdown.keys()):
+                    season_episode_count = breakdown[season_num]
+
+                    if remaining_progress >= season_episode_count:
+                        remaining_progress -= season_episode_count
+                    else:
+                        watched_in_season = remaining_progress
+                        remaining_progress = 0
+
+                        unwatched_episodes = Item.objects.filter(
+                            media_id=self.item.media_id,
+                            source=self.item.source,
+                            media_type=MediaTypes.EPISODE.value,
+                            season_number=season_num,
+                            episode_number__gt=watched_in_season,
+                            runtime_minutes__isnull=False,
+                        ).exclude(
+                            runtime_minutes=999999,
+                        ).values_list("runtime_minutes", flat=True)
+
+                        runtimes = list(unwatched_episodes)
+                        if runtimes:
+                            total_runtime += sum(runtimes)
+                            episodes_with_data += len(runtimes)
+
+                if episodes_with_data > 0:
+                    if episodes_with_data == episodes_left:
+                        return total_runtime
+                    # Partial data: estimate missing
+                    missing_eps = episodes_left - episodes_with_data
+                    avg_runtime = total_runtime / episodes_with_data
+                    return total_runtime + int(missing_eps * avg_runtime)
+
+        return None  # Signal to use fallback
+
+    def _get_fallback_runtime_minutes(self):
+        """Get average runtime for fallback calculation."""
+        from django.core.cache import cache
+
+        from app.statistics import parse_runtime_to_minutes
+
         runtime_minutes = None
 
-        # First, try to get from TV show runtime (like statistics does)
+        # First, try to get from TV show runtime
         if hasattr(self, "item") and self.item.runtime_minutes:
-            runtime_minutes = self.item.runtime_minutes
-        else:
+            if self.item.runtime_minutes < 999999:
+                runtime_minutes = self.item.runtime_minutes
+
+        if not runtime_minutes:
             # Try to get from season cache
-            from django.core.cache import cache
             season_cache_key = f"tmdb_season_{self.item.media_id}_1"
             cached_season_data = cache.get(season_cache_key)
 
             if cached_season_data and cached_season_data.get("details", {}).get("runtime"):
-                from app.statistics import parse_runtime_to_minutes
                 runtime_str = cached_season_data["details"]["runtime"]
                 runtime_minutes = parse_runtime_to_minutes(runtime_str)
             else:
@@ -1481,25 +1579,20 @@ class Media(models.Model):
                     season_cache_key = f"tmdb_season_{self.item.media_id}_{season_num}"
                     cached_season_data = cache.get(season_cache_key)
                     if cached_season_data and cached_season_data.get("details", {}).get("runtime"):
-                        from app.statistics import parse_runtime_to_minutes
                         runtime_str = cached_season_data["details"]["runtime"]
                         runtime_minutes = parse_runtime_to_minutes(runtime_str)
                         break
 
-        # If we still don't have runtime, use fallback values
+        # Use fallback values if nothing found
         if runtime_minutes is None:
             if self.item.source == "tmdb":
-                runtime_minutes = 30  # TMDB default
+                runtime_minutes = 30
             elif self.item.source == "mal":
-                runtime_minutes = 23  # MAL default
+                runtime_minutes = 23
             else:
-                runtime_minutes = 30  # Generic default
+                runtime_minutes = 30
 
-        # Skip shows with unrealistic runtime (999999 fallback)
-        if runtime_minutes >= 999999:
-            return 0  # Don't count these episodes
-
-        return episodes_left * runtime_minutes
+        return runtime_minutes
 
     @property
     def formatted_time_left(self):

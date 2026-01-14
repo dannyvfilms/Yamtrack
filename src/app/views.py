@@ -5222,8 +5222,60 @@ def _sort_tv_media_by_time_left(media_list, direction="asc"):
 
     logger = logging.getLogger(__name__)
 
+    def _calc_unwatched_runtime_total(media, episodes_left_count):
+        """Sum actual runtimes for unwatched episodes instead of using averages.
+
+        Returns (total_runtime, episodes_with_data) or (None, 0) if no data available.
+        """
+        from app.models import Item, MediaTypes
+
+        breakdown = getattr(media, "released_episode_breakdown", {})
+        if not breakdown:
+            return None, 0
+
+        total_runtime = 0
+        episodes_with_runtime_data = 0
+        remaining_progress = media.progress
+
+        # Process seasons in order to determine which episodes are unwatched
+        for season_num in sorted(breakdown.keys()):
+            season_episode_count = breakdown[season_num]
+
+            if remaining_progress >= season_episode_count:
+                # User has watched all episodes in this season
+                remaining_progress -= season_episode_count
+            else:
+                # User is partway through this season or hasn't started it
+                watched_in_season = remaining_progress
+                remaining_progress = 0
+
+                # Query unwatched episodes in this season (episode_number > watched count)
+                unwatched_episodes = Item.objects.filter(
+                    media_id=media.item.media_id,
+                    source=media.item.source,
+                    media_type=MediaTypes.EPISODE.value,
+                    season_number=season_num,
+                    episode_number__gt=watched_in_season,
+                    runtime_minutes__isnull=False,
+                ).exclude(
+                    runtime_minutes=999999,
+                ).values_list("runtime_minutes", flat=True)
+
+                runtimes = list(unwatched_episodes)
+                if runtimes:
+                    total_runtime += sum(runtimes)
+                    episodes_with_runtime_data += len(runtimes)
+                    logger.debug(
+                        f"{media.item.title} S{season_num}: {len(runtimes)} unwatched eps "
+                        f"(after ep {watched_in_season}), runtime sum={sum(runtimes)}min"
+                    )
+
+        if episodes_with_runtime_data > 0:
+            return total_runtime, episodes_with_runtime_data
+        return None, 0
+
     def _calc_runtime_minutes(media):
-        """Best-effort runtime in minutes for a TV show or fallback."""
+        """Best-effort average runtime in minutes for a TV show (fallback only)."""
         runtime_minutes = None
         # FIRST: Check locally stored runtime (but exclude 999999 marker for unknown)
         if hasattr(media, "item") and media.item.runtime_minutes:
@@ -5284,6 +5336,39 @@ def _sort_tv_media_by_time_left(media_list, direction="asc"):
                 runtime_minutes = 30
             logger.debug(f"Using fallback runtime for {media.item.title}: {runtime_minutes}min")
         return runtime_minutes
+
+    def _get_total_time_left(media, episodes_left):
+        """Get total time left by summing actual unwatched episode runtimes, with fallback."""
+        # First, try to sum actual unwatched episode runtimes
+        total_runtime, eps_with_data = _calc_unwatched_runtime_total(media, episodes_left)
+
+        if total_runtime is not None and eps_with_data == episodes_left:
+            # We have runtime data for all unwatched episodes - use exact sum
+            logger.debug(
+                f"{media.item.title}: Using exact sum of {eps_with_data} unwatched episodes = {total_runtime}min"
+            )
+            return total_runtime
+        elif total_runtime is not None and eps_with_data > 0:
+            # Partial data: use what we have + estimate for missing episodes
+            missing_eps = episodes_left - eps_with_data
+            avg_runtime = total_runtime / eps_with_data
+            estimated_missing = int(missing_eps * avg_runtime)
+            final_total = total_runtime + estimated_missing
+            logger.debug(
+                f"{media.item.title}: Partial data - {eps_with_data} eps={total_runtime}min + "
+                f"{missing_eps} eps estimated={estimated_missing}min (avg {avg_runtime:.0f}min/ep)"
+            )
+            return final_total
+        else:
+            # No runtime data for unwatched episodes - fall back to average method
+            runtime = _calc_runtime_minutes(media)
+            if not runtime or runtime <= 0:
+                runtime = 30
+            total = episodes_left * runtime
+            logger.debug(
+                f"{media.item.title}: Fallback to average - {episodes_left} eps × {runtime}min = {total}min"
+            )
+            return total
 
     def _end_date_for_sort(media):
         # Prefer aggregated_end_date when present, else media.end_date
@@ -5359,10 +5444,8 @@ def _sort_tv_media_by_time_left(media_list, direction="asc"):
     # 1) Active by least total minutes left
     def _active_key(entry):
         media, episodes_left = entry
-        runtime = _calc_runtime_minutes(media)
-        if not runtime or runtime <= 0:
-            runtime = 30  # Ensure fallback is used
-        total = episodes_left * runtime
+        # Use sum of actual unwatched episode runtimes instead of average
+        total = _get_total_time_left(media, episodes_left)
         # Store the display values using non-property attributes
         media.episodes_left_display = episodes_left
         if total > 0:
@@ -5374,7 +5457,6 @@ def _sort_tv_media_by_time_left(media_list, direction="asc"):
                 media.time_left_display = f"{minutes}m"
         else:
             media.time_left_display = f"{episodes_left} ep" if episodes_left > 0 else "-"
-        logger.debug(f"Active: {media.item.title} - {episodes_left} eps × {runtime}min = {total}min ({media.time_left_display})")
         return (total, media.item.title.lower())
     group_active_sorted = [m for (m, _) in sorted(group_active, key=_active_key)]
 
@@ -5410,27 +5492,30 @@ def _sort_tv_media_by_time_left(media_list, direction="asc"):
             m.episodes_left_display = episodes_left
 
             if episodes_left > 0:
-                runtime = _calc_runtime_minutes(m)
-                total = episodes_left * runtime
+                # Use sum of actual unwatched episode runtimes
+                total = _get_total_time_left(m, episodes_left)
                 hours = int(total // 60)
                 minutes = int(total % 60)
                 if hours > 0:
                     m.time_left_display = f"{hours}h {minutes}m"
                 else:
                     m.time_left_display = f"{minutes}m"
-                logger.debug(f"Dropped: {m.item.title} - {episodes_left} eps left × {runtime}min = {total}min ({m.time_left_display})")
+                # Store total for sorting
+                m._time_left_total = total
             else:
                 m.time_left_display = "0m"
+                m._time_left_total = 0
         else:
             # No max_progress data - show as unknown
             logger.debug(f"Dropped show NO DATA: {m.item.title} - Setting '-' display")
             m.episodes_left_display = 0
             m.time_left_display = "-"
+            m._time_left_total = 0
 
     # Sort dropped by least time left (ascending), then by title
     group_dropped_sorted = sorted(
         group_dropped,
-        key=lambda m: (m.episodes_left_display * _calc_runtime_minutes(m), m.item.title.lower()),
+        key=lambda m: (getattr(m, "_time_left_total", 0), m.item.title.lower()),
     )
 
     # 5) Tail (unreleased/unknown) - set display values
