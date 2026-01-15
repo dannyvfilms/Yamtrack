@@ -1,7 +1,8 @@
+import calendar
 import logging
 import time
-from datetime import UTC, date, timedelta
 from collections import defaultdict
+from datetime import UTC, date, timedelta
 from pathlib import Path
 
 from dateutil.relativedelta import relativedelta
@@ -19,8 +20,7 @@ from django.db.utils import OperationalError
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
-from django.utils import timezone
-from django.utils import formats
+from django.utils import formats, timezone
 from django.utils.dateparse import parse_date
 from django.utils.timezone import datetime
 from django.views.decorators.cache import never_cache
@@ -32,8 +32,10 @@ from app import (
     helpers,
     history_cache,
     history_processor,
-    statistics as stats,
     statistics_cache,
+)
+from app import (
+    statistics as stats,
 )
 from app.forms import EpisodeForm, ManualItemForm, get_form_class
 from app.models import (
@@ -1276,7 +1278,7 @@ def media_details(
                 media_id,
                 media_type,
                 source,
-            )
+            ),
         )
         if user_medias:
             def _activity_key(entry):
@@ -1349,7 +1351,7 @@ def media_details(
                     "total_minutes": total_minutes,
                     "total_hours": total_minutes // 60,
                     "total_minutes_remainder": total_minutes % 60,
-                }
+                },
             )
             days_played = set()
             total_minutes_for_avg = 0
@@ -2566,7 +2568,7 @@ def _build_anniversary_history_days(user, month, day, logging_style=None):
 
 
 def _build_release_history_days(user, month=None, day=None, date_filters=None):
-    active_types = list(getattr(user, "get_active_media_types", lambda: [])())
+    active_types = list(getattr(user, "get_active_media_types", list)())
     if not active_types:
         active_types = list(MediaTypes.values)
     include_podcasts = MediaTypes.PODCAST.value in active_types
@@ -2779,7 +2781,7 @@ def _build_release_history_days(user, month=None, day=None, date_filters=None):
                 "total_minutes": 0,
                 "total_runtime_display": f"{len(entries)} release{'s' if len(entries) != 1 else ''}",
                 "release_count": len(entries),
-            }
+            },
         )
     return history_days
 
@@ -2795,8 +2797,8 @@ def history(request):
 
         # Extract filter parameters from query string
         filters = {}
-        int_params = ['album', 'artist', 'tv', 'season', 'season_number', 'podcast_show']
-        str_params = ['genre', 'media_type', 'media_id', 'source']
+        int_params = ["album", "artist", "tv", "season", "season_number", "podcast_show"]
+        str_params = ["genre", "media_type", "media_id", "source"]
         for param in int_params:
             value = request.GET.get(param)
             if value:
@@ -2812,7 +2814,7 @@ def history(request):
         logging_style = request.GET.get("logging_style")
         if logging_style not in ("sessions", "repeats"):
             logging_style = None
-        
+
         # Extract date range filters
         date_filters = {}
         start_date_str = request.GET.get("start-date")
@@ -2822,73 +2824,108 @@ def history(request):
         if end_date_str:
             date_filters["end_date"] = end_date_str
 
-        month = request.GET.get("month")
-        day = request.GET.get("day")
+        # Anniversary mode: specific month/day across years
+        anniversary_month = request.GET.get("month")
+        anniversary_day = request.GET.get("day")
         try:
-            month = int(month) if month else None
-            day = int(day) if day else None
+            anniversary_month = int(anniversary_month) if anniversary_month else None
+            anniversary_day = int(anniversary_day) if anniversary_day else None
         except (TypeError, ValueError):
-            month = None
-            day = None
+            anniversary_month = None
+            anniversary_day = None
+
+        # Month-based pagination: year and month for calendar month view
+        now = timezone.localtime()
+        try:
+            view_year = int(request.GET.get("year", now.year))
+            view_month = int(request.GET.get("m", now.month))
+            # Validate month range
+            if view_month < 1 or view_month > 12:
+                view_month = now.month
+        except (TypeError, ValueError):
+            view_year = now.year
+            view_month = now.month
 
         logger.info(
-            "history_view_start user_id=%s page=%s filters=%s date_filters=%s logging_style=%s",
+            "history_view_start user_id=%s year=%s month=%s filters=%s date_filters=%s logging_style=%s",
             request.user.id,
-            request.GET.get("page", 1),
+            view_year,
+            view_month,
             filters,
             date_filters,
             logging_style,
         )
 
-        try:
-            page_number = int(request.GET.get("page", 1))
-        except (TypeError, ValueError):
-            page_number = 1
-
-        use_cache = history_mode == "activity" and not filters and not date_filters and not month and not day
+        # Determine if we can use month-based caching (no filters, date range)
+        use_month_cache = (
+            history_mode == "activity"
+            and not filters
+            and not date_filters
+            and not anniversary_month
+            and not anniversary_day
+        )
         history_refreshing = False
-        if use_cache:
-            history_days, total_days, cache_meta = history_cache.get_cached_history_page(
+
+        if use_month_cache:
+            # Month-based pagination: load from per-day caches
+            history_days, cache_meta = history_cache.get_month_history(
                 request.user,
-                page_number=page_number,
+                view_year,
+                view_month,
                 logging_style_override=logging_style,
             )
             history_refreshing = cache_meta.get("refreshing", False)
-            if total_days == 0:
-                paginator = Paginator([], history_cache.HISTORY_DAYS_PER_PAGE)
-                page_obj = None
-                history_days = []
-                current_page = 1
+
+            # No paginator needed - we show one month at a time
+            page_obj = None
+            current_page = 1
+            total_pages = 1
+            total_days = len(history_days)
+
+            # Calculate prev/next month for navigation
+            # "prev" = older month (going back in time)
+            # "next" = newer month (going forward toward present)
+            if view_month == 1:
+                prev_year, prev_month = view_year - 1, 12
             else:
-                paginator = Paginator(range(total_days), history_cache.HISTORY_DAYS_PER_PAGE)
-                try:
-                    page_obj = paginator.page(page_number)
-                except EmptyPage:
-                    page_obj = paginator.page(paginator.num_pages)
-                    current_page = page_obj.number
-                    if current_page != page_number:
-                        history_days, _, cache_meta = history_cache.get_cached_history_page(
-                            request.user,
-                            page_number=current_page,
-                            logging_style_override=logging_style,
-                        )
-                        history_refreshing = cache_meta.get("refreshing", False)
-                else:
-                    current_page = page_obj.number
+                prev_year, prev_month = view_year, view_month - 1
+            if view_month == 12:
+                next_year, next_month = view_year + 1, 1
+            else:
+                next_year, next_month = view_year, view_month + 1
+
+            # Month names for navigation labels
+            prev_month_name = calendar.month_abbr[prev_month]
+            next_month_name = calendar.month_abbr[next_month]
+
+            # Check if we're on the current month (can't go newer)
+            is_current_month = (view_year == now.year and view_month == now.month)
+
+            # Don't show next month link if it's in the future
+            show_next_month = (
+                next_year < now.year
+                or (next_year == now.year and next_month <= now.month)
+            )
         else:
+            # Filtered/special modes - use traditional pagination
+            try:
+                page_number = int(request.GET.get("page", 1))
+            except (TypeError, ValueError):
+                page_number = 1
+
             if history_mode == "release":
                 history_days_all = _build_release_history_days(
                     request.user,
-                    month=month,
-                    day=day,
+                    month=anniversary_month,
+                    day=anniversary_day,
                     date_filters=date_filters,
                 )
                 history_refreshing = False
-            elif month and day:
+            elif anniversary_month and anniversary_day:
                 history_days_all = _build_anniversary_history_days(
                     request.user,
-                    month=month,
-                    day=day,
+                    month=anniversary_month,
+                    day=anniversary_day,
                     logging_style=logging_style,
                 )
                 history_refreshing = False
@@ -2906,6 +2943,8 @@ def history(request):
                 page_obj = None
                 history_days = []
                 current_page = 1
+                total_pages = 1
+                total_days = 0
             else:
                 try:
                     page_obj = paginator.page(page_number)
@@ -2914,32 +2953,57 @@ def history(request):
 
                 history_days = page_obj.object_list
                 current_page = page_obj.number
+                total_pages = paginator.num_pages
+                total_days = paginator.count
+
+            # Set defaults for non-month-cache path
+            prev_year = prev_month = next_year = next_month = None
+            prev_month_name = next_month_name = None
+            show_next_month = False
+            is_current_month = False
 
         # Combine all filters for pagination (including date filters as query params)
         active_filters = filters.copy()
-        if date_filters.get('start_date'):
-            active_filters['start-date'] = date_filters['start_date']
-        if date_filters.get('end_date'):
-            active_filters['end-date'] = date_filters['end_date']
+        if date_filters.get("start_date"):
+            active_filters["start-date"] = date_filters["start_date"]
+        if date_filters.get("end_date"):
+            active_filters["end-date"] = date_filters["end_date"]
         if logging_style:
-            active_filters['logging_style'] = logging_style
-        if month and day:
-            active_filters["month"] = month
-            active_filters["day"] = day
+            active_filters["logging_style"] = logging_style
+        if anniversary_month and anniversary_day:
+            active_filters["month"] = anniversary_month
+            active_filters["day"] = anniversary_day
         if history_mode == "release":
             active_filters["history_mode"] = "release"
-        
+
+        # Build month display name for header
+        month_name = calendar.month_name[view_month] if use_month_cache else None
+
         context = {
             "user": request.user,
             "history_days": history_days,
             "page_obj": page_obj,
             "current_page": current_page,
-            "total_pages": paginator.num_pages,
-            "total_days": paginator.count,
-            "days_per_page": paginator.per_page,
-            "active_filters": active_filters,  # Pass filters to template for pagination
+            "total_pages": total_pages,
+            "total_days": total_days,
+            "active_filters": active_filters,
             "history_refreshing": history_refreshing,
             "history_mode": history_mode,
+            # Month-based navigation
+            "use_month_view": use_month_cache,
+            "view_year": view_year,
+            "view_month": view_month,
+            "month_name": month_name,
+            "prev_year": prev_year,
+            "prev_month": prev_month,
+            "prev_month_name": prev_month_name,
+            "next_year": next_year,
+            "next_month": next_month,
+            "next_month_name": next_month_name,
+            "show_next_month": show_next_month,
+            "is_current_month": is_current_month,
+            "current_year": now.year,
+            "current_month_num": now.month,
         }
         day_entry_counts = []
         total_entries = 0
@@ -2976,9 +3040,9 @@ def history(request):
             "history_view_end user_id=%s page=%s total_days=%s page_days=%s total_pages=%s elapsed_ms=%.2f response_bytes=%s",
             request.user.id,
             current_page,
-            paginator.count,
+            total_days,
             len(history_days),
-            paginator.num_pages,
+            total_pages,
             (time.perf_counter() - view_start) * 1000,
             response_bytes,
         )
@@ -4898,7 +4962,7 @@ def statistics(request):
 
         if selected_range_name in statistics_cache.PREDEFINED_RANGES:
             request.user.update_preference("statistics_default_range", selected_range_name)
-        
+
         # Get statistics data (cached for predefined ranges, computed inline for custom ranges)
         statistics_data = statistics_cache.get_statistics_data(
             request.user,
@@ -5267,7 +5331,7 @@ def _sort_tv_media_by_time_left(media_list, direction="asc"):
                     episodes_with_runtime_data += len(runtimes)
                     logger.debug(
                         f"{media.item.title} S{season_num}: {len(runtimes)} unwatched eps "
-                        f"(after ep {watched_in_season}), runtime sum={sum(runtimes)}min"
+                        f"(after ep {watched_in_season}), runtime sum={sum(runtimes)}min",
                     )
 
         if episodes_with_runtime_data > 0:
@@ -5345,10 +5409,10 @@ def _sort_tv_media_by_time_left(media_list, direction="asc"):
         if total_runtime is not None and eps_with_data == episodes_left:
             # We have runtime data for all unwatched episodes - use exact sum
             logger.debug(
-                f"{media.item.title}: Using exact sum of {eps_with_data} unwatched episodes = {total_runtime}min"
+                f"{media.item.title}: Using exact sum of {eps_with_data} unwatched episodes = {total_runtime}min",
             )
             return total_runtime
-        elif total_runtime is not None and eps_with_data > 0:
+        if total_runtime is not None and eps_with_data > 0:
             # Partial data: use what we have + estimate for missing episodes
             missing_eps = episodes_left - eps_with_data
             avg_runtime = total_runtime / eps_with_data
@@ -5356,19 +5420,18 @@ def _sort_tv_media_by_time_left(media_list, direction="asc"):
             final_total = total_runtime + estimated_missing
             logger.debug(
                 f"{media.item.title}: Partial data - {eps_with_data} eps={total_runtime}min + "
-                f"{missing_eps} eps estimated={estimated_missing}min (avg {avg_runtime:.0f}min/ep)"
+                f"{missing_eps} eps estimated={estimated_missing}min (avg {avg_runtime:.0f}min/ep)",
             )
             return final_total
-        else:
-            # No runtime data for unwatched episodes - fall back to average method
-            runtime = _calc_runtime_minutes(media)
-            if not runtime or runtime <= 0:
-                runtime = 30
-            total = episodes_left * runtime
-            logger.debug(
-                f"{media.item.title}: Fallback to average - {episodes_left} eps × {runtime}min = {total}min"
-            )
-            return total
+        # No runtime data for unwatched episodes - fall back to average method
+        runtime = _calc_runtime_minutes(media)
+        if not runtime or runtime <= 0:
+            runtime = 30
+        total = episodes_left * runtime
+        logger.debug(
+            f"{media.item.title}: Fallback to average - {episodes_left} eps × {runtime}min = {total}min",
+        )
+        return total
 
     def _end_date_for_sort(media):
         # Prefer aggregated_end_date when present, else media.end_date

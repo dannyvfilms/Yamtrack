@@ -134,8 +134,87 @@
     </div>
   </div>
   
-<div class="history-page -mx-4 sm:-mx-8 -mt-3 sm:-mt-6">
-  {% if total_pages|default:0 > 1 %}
+<div class="history-page">
+  {# Month-based navigation header #}
+  {# Left = toward present (newer), Right = toward past (older) #}
+  {% if use_month_view %}
+    <div class="flex items-center justify-between gap-1 sm:gap-2 mb-6">
+      {# Left side: First (current month) + Newer month #}
+      <div class="flex items-center gap-1 sm:gap-2">
+        {# First button - go to current month #}
+        {% if not is_current_month %}
+          <a href="?year={{ current_year }}&m={{ current_month_num }}{% if active_filters.logging_style %}&logging_style={{ active_filters.logging_style }}{% endif %}"
+             class="flex items-center gap-1 px-2 sm:px-3 py-2 rounded-md bg-[#2a2f35] text-white hover:bg-[#39404b] transition-colors cursor-pointer text-sm"
+             aria-label="Go to current month"
+             title="Go to current month">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
+              <path d="m11 17-5-5 5-5"></path>
+              <path d="m18 17-5-5 5-5"></path>
+            </svg>
+            <span>{{ current_year }}</span>
+          </a>
+        {% else %}
+          <span class="flex items-center gap-1 px-2 sm:px-3 py-2 rounded-md bg-gray-700 text-gray-500 cursor-not-allowed text-sm">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
+              <path d="m11 17-5-5 5-5"></path>
+              <path d="m18 17-5-5 5-5"></path>
+            </svg>
+            <span>{{ current_year }}</span>
+          </span>
+        {% endif %}
+
+        {# Newer month button (toward present) #}
+        {% if show_next_month %}
+          <a href="?year={{ next_year }}&m={{ next_month }}{% if active_filters.logging_style %}&logging_style={{ active_filters.logging_style }}{% endif %}"
+             class="flex items-center gap-1 px-2 sm:px-3 py-2 rounded-md bg-[#2a2f35] text-white hover:bg-[#39404b] transition-colors cursor-pointer text-sm"
+             aria-label="Go to {{ next_month_name }}">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
+              <path d="m15 18-6-6 6-6"></path>
+            </svg>
+            <span>{{ next_month_name }}</span>
+          </a>
+        {% else %}
+          <span class="flex items-center gap-1 px-2 sm:px-3 py-2 rounded-md bg-gray-700 text-gray-500 cursor-not-allowed text-sm">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
+              <path d="m15 18-6-6 6-6"></path>
+            </svg>
+            <span>{{ next_month_name }}</span>
+          </span>
+        {% endif %}
+      </div>
+
+      {# Center: Current month display #}
+      <h2 class="text-base sm:text-xl font-semibold text-white text-center whitespace-nowrap">{{ month_name }} {{ view_year }}</h2>
+
+      {# Right side: Older month + Last (earliest) #}
+      <div class="flex items-center gap-1 sm:gap-2">
+        {# Older month button (toward past) #}
+        <a href="?year={{ prev_year }}&m={{ prev_month }}{% if active_filters.logging_style %}&logging_style={{ active_filters.logging_style }}{% endif %}"
+           class="flex items-center gap-1 px-2 sm:px-3 py-2 rounded-md bg-[#2a2f35] text-white hover:bg-[#39404b] transition-colors cursor-pointer text-sm"
+           aria-label="Go to {{ prev_month_name }}">
+          <span>{{ prev_month_name }}</span>
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
+            <path d="m9 18 6-6-6-6"></path>
+          </svg>
+        </a>
+
+        {# Last button - go back 1 year from current view #}
+        <a href="?year={{ view_year|add:'-1' }}&m={{ view_month }}{% if active_filters.logging_style %}&logging_style={{ active_filters.logging_style }}{% endif %}"
+           class="flex items-center gap-1 px-2 sm:px-3 py-2 rounded-md bg-[#2a2f35] text-white hover:bg-[#39404b] transition-colors cursor-pointer text-sm"
+           aria-label="Go back one year"
+           title="Go back one year">
+          <span>{{ view_year|add:'-1' }}</span>
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
+            <path d="m13 17 5-5-5-5"></path>
+            <path d="m6 17 5-5-5-5"></path>
+          </svg>
+        </a>
+      </div>
+    </div>
+  {% endif %}
+
+  {# Legacy page-based pagination for filtered views #}
+  {% if not use_month_view and total_pages|default:0 > 1 %}
     <div class="history-pagination flex flex-wrap items-center justify-center gap-2 sm:gap-3 mb-3">
       {% if current_page > 1 %}
         <a href="?{% if active_filters %}{% for key, value in active_filters.items %}{{ key }}={{ value }}{% if not forloop.last %}&{% endif %}{% endfor %}{% if active_filters %}&{% endif %}{% endif %}page={{ current_page|add:'-1' }}"
@@ -258,161 +337,34 @@
             </div>
           </div>
 
-          <div class="media-grid">
-            {% for entry in day.entries %}
-              <div class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg transition-all duration-200 hover:-translate-y-1 hover:shadow-xl"
-                   x-data="{ historyOpen: false, listsOpen: false }">
-                <div class="relative">
-                  <a href="{% if entry.media_type == MediaTypes.MUSIC.value and entry.album %}{% url 'album_detail' entry.album.id %}{% elif entry.media_type == MediaTypes.PODCAST.value and entry.show and entry.show.podcast_uuid %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=entry.show.podcast_uuid title=entry.show.slug|default:entry.show.title|slug %}{% else %}{{ entry.item|media_url }}{% endif %}"
-                     class="relative block">
-                    <img alt="{{ entry.title }}"
-                         class="media-card-poster lazyload w-full aspect-[2/3] {% if entry.poster != IMG_NONE %}object-cover{% endif %}"
-                         data-src="{{ entry.poster }}"
-                         src="{{ IMG_NONE }}">
-
-                    {% if entry.status %}
-                      <span class="media-status-chip absolute top-2 left-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md">
-                        {% with status_value=entry.status %}
-                          <span class="w-4 h-4 {{ status_value|status_color }}">
-                            {% if status_value == "Completed" %}
-                              {% include "app/icons/states/completed.svg" %}
-                            {% elif status_value == "In progress" %}
-                              {% include "app/icons/states/in-progress.svg" %}
-                            {% elif status_value == "Paused" %}
-                              {% include "app/icons/states/paused.svg" %}
-                            {% elif status_value == "Planning" %}
-                              {% include "app/icons/states/planning.svg" %}
-                            {% elif status_value == "Dropped" %}
-                              {% include "app/icons/states/dropped.svg" %}
-                            {% endif %}
-                          </span>
-                        {% endwith %}
-                      </span>
-                    {% endif %}
-
-                    {% if entry.runtime_display %}
-                      <span class="absolute top-2 right-2 bg-black/80 text-white text-xs px-2 py-1 rounded-md shadow">
-                        {{ entry.runtime_display }}
-                      </span>
-                    {% endif %}
-
-                  </a>
-
-                  {% if entry.item and entry.item.media_type %}
-                    <div class="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 hover-tap:opacity-100{% if user.clickable_media_cards %} pointer-coarse:hidden{% endif %}">
-                      <a href="{% if entry.media_type == MediaTypes.MUSIC.value and entry.album %}{% url 'album_detail' entry.album.id %}{% elif entry.media_type == MediaTypes.PODCAST.value and entry.show and entry.show.podcast_uuid %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=entry.show.podcast_uuid title=entry.show.slug|default:entry.show.title|slug %}{% else %}{{ entry.item|media_url }}{% endif %}"
-                         class="absolute inset-0"></a>
-
-                      <div class="relative flex items-center justify-center space-x-2.5">
-                        {% if history_mode != "release" %}
-                        {# History Edit Button #}
-                        <button class="p-2.5 bg-indigo-600 text-white rounded-full hover:bg-indigo-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(99,102,241,0.5)] transition-all duration-200 cursor-pointer"
-                                title="Edit history"
-                                hx-get="{% media_view_url 'history_modal' entry.item %}"
-                                hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"{% if entry.instance_id %}, "instance_id": "{{ entry.instance_id }}"{% endif %}}'
-                                hx-target="#{% component_id 'history' entry.item entry.entry_key %}"
-                                hx-trigger="click once"
-                                @click="historyOpen = true">
-                          {% include "app/icons/edit.svg" with classes="w-4 h-4" %}
-                        </button>
-
-                        {# Lists Button #}
-                        <button class="p-2.5 bg-emerald-600 text-white rounded-full hover:bg-emerald-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(16,185,129,0.5)] transition-all duration-200 cursor-pointer"
-                                title="Add to custom lists"
-                                hx-get="{% media_view_url 'lists_modal' entry.item %}"
-                                hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
-                                hx-target="#{% component_id 'lists' entry.item entry.entry_key %}"
-                                hx-trigger="click once"
-                                @click="listsOpen = true">
-                          {% include "app/icons/list-add.svg" with classes="w-4 h-4" %}
-                        </button>
-
-                        {# History Button #}
-                        <a class="p-2.5 bg-amber-600 text-white rounded-full hover:bg-amber-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(245,158,11,0.5)] transition-all duration-200 cursor-pointer"
-                           title="View your activity history"
-                           href="{% url 'history' %}?{% if entry.media_type == MediaTypes.MUSIC.value and entry.album %}album={{ entry.album.id }}{% elif entry.media_type == MediaTypes.PODCAST.value and entry.show %}media_type={{ MediaTypes.PODCAST.value }}&podcast_show={{ entry.show.id }}{% elif entry.media_type == MediaTypes.EPISODE.value %}media_type={{ MediaTypes.TV.value }}&media_id={{ entry.item.media_id|urlencode }}&source={{ entry.item.source|urlencode }}{% if entry.item.season_number %}&season_number={{ entry.item.season_number }}{% endif %}{% else %}media_type={{ entry.media_type }}&media_id={{ entry.item.media_id|urlencode }}&source={{ entry.item.source|urlencode }}{% endif %}{% if entry.media_type == MediaTypes.GAME.value or entry.media_type == MediaTypes.BOARDGAME.value %}&logging_style=sessions{% endif %}">
-                          {% include "app/icons/history.svg" with classes="w-4 h-4" %}
-                        </a>
-                        {% endif %}
-                      </div>
-                    </div>
-                  {% endif %}
+          {# Split entries by aspect ratio: 2:3 for video/games, 1:1 for music/podcasts #}
+          {% with square_types="music,podcast" %}
+            {# Standard 2:3 aspect ratio entries (TV, Movies, Games, Anime, etc.) #}
+            {% with standard_entries=day.entries|exclude_media_types:square_types %}
+              {% if standard_entries %}
+                <div class="media-grid">
+                  {% for entry in standard_entries %}
+                    {% include "app/components/history_card.html" with entry=entry card_class="search-result-card" history_mode=history_mode user=user %}
+                  {% endfor %}
                 </div>
+              {% endif %}
+            {% endwith %}
 
-                <div class="p-3 space-y-1.5 truncate">
-                  <div class="flex items-center gap-2 text-xs text-gray-400">
-                    <div class="flex items-center gap-1">
-                      {% if history_mode == "release" %}
-                        <span class="font-semibold text-indigo-400">Released</span>
-                      {% else %}
-                        {% if entry.progress_display and entry.media_type == MediaTypes.GAME.value or entry.progress_display and entry.media_type == MediaTypes.BOARDGAME.value %}
-                          <span class="font-semibold text-indigo-400">{{ entry.progress_display }}</span>
-                        {% elif entry.media_type == MediaTypes.MOVIE.value %}
-                          <span class="font-semibold text-indigo-400">
-                            {{ entry.play_count|default:1 }} play{{ entry.play_count|default:1|pluralize }}
-                          </span>
-                        {% elif entry.media_type == MediaTypes.MUSIC.value %}
-                          <span class="font-semibold text-indigo-400">
-                            {{ entry.play_count|default:1 }} play{{ entry.play_count|default:1|pluralize }}
-                          </span>
-                        {% elif entry.media_type == MediaTypes.PODCAST.value %}
-                          <span class="font-semibold text-indigo-400">
-                            {{ entry.play_count|default:1 }} play{{ entry.play_count|default:1|pluralize }}
-                          </span>
-                        {% elif entry.episode_label %}
-                          <span class="font-semibold text-indigo-400">{{ entry.episode_label }}</span>
-                        {% elif entry.episode_code %}
-                          <span class="font-semibold text-indigo-400">{{ entry.episode_code }}</span>
-                        {% endif %}
-                      {% endif %}
-                    </div>
-                    <span class="text-xs text-white truncate whitespace-nowrap block max-w-full">{{ entry.display_title|default:entry.title }}</span>
-                  </div>
-                  <p class="text-xs text-gray-400">
-                    {% if history_mode == "release" %}
-                      <span class="hidden sm:inline">{{ entry.played_at_local|user_date_format:user }}</span>
-                      <span class="inline sm:hidden">{{ entry.played_at_local|user_date_format:user }}</span>
-                    {% else %}
-                      {% if entry.media_type == MediaTypes.GAME.value or entry.media_type == MediaTypes.BOARDGAME.value %}
-                        {{ entry.date_range_display }}
-                      {% elif entry.media_type == MediaTypes.MUSIC.value %}
-                        {{ entry.time_range_display }}
-                      {% else %}
-                        <span class="hidden sm:inline">{{ entry.played_at_local|user_datetime_format:user }}</span>
-                        <span class="inline sm:hidden">{{ entry.played_at_local|user_time_format:user }}</span>
-                      {% endif %}
-                    {% endif %}
-                  </p>
+            {# Square 1:1 aspect ratio entries (Music, Podcasts) #}
+            {% with square_entries=day.entries|filter_media_types:square_types %}
+              {% if square_entries %}
+                <div class="media-grid mt-4">
+                  {% for entry in square_entries %}
+                    {% include "app/components/history_card.html" with entry=entry card_class="search-result-card-square" history_mode=history_mode user=user %}
+                  {% endfor %}
                 </div>
-
-                {% if entry.item and entry.item.media_type and history_mode != "release" %}
-                  {# History Modal #}
-                  <div x-show="historyOpen"
-                       @keydown.escape.window="historyOpen = false"
-                       class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                    <div class="w-152 max-h-[90vh] px-4 md:px-0 relative z-60"
-                         @click.outside="historyOpen = false">
-                      <div id="{% component_id 'history' entry.item entry.entry_key %}"></div>
-                    </div>
-                  </div>
-
-                  {# Lists Modal #}
-                  <div x-show="listsOpen"
-                       @keydown.escape.window="listsOpen = false"
-                       class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                    <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
-                         @click.outside="listsOpen = false">
-                      <div id="{% component_id 'lists' entry.item entry.entry_key %}"></div>
-                    </div>
-                  </div>
-                {% endif %}
-              </div>
-            {% endfor %}
-          </div>
+              {% endif %}
+            {% endwith %}
+          {% endwith %}
         </div>
       {% endfor %}
     </div>
-    {% if total_pages|default:0 > 1 %}
+    {% if not use_month_view and total_pages|default:0 > 1 %}
       <div class="history-pagination flex flex-wrap items-center justify-center gap-2 sm:gap-3 mt-6">
         {% if current_page > 1 %}
           <a href="?{% if active_filters %}{% for key, value in active_filters.items %}{{ key }}={{ value }}{% if not forloop.last %}&{% endif %}{% endfor %}{% if active_filters %}&{% endif %}{% endif %}page={{ current_page|add:'-1' }}"

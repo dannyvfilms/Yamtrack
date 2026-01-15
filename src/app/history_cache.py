@@ -4,7 +4,7 @@ import hashlib
 import logging
 import time
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Iterable
 
 from django.conf import settings
@@ -2236,6 +2236,116 @@ def build_history_day(user, day_key, logging_style_override=None):
         if total_minutes
         else "0min",
     }
+
+
+def get_month_history(user, year: int, month: int, logging_style_override=None):
+    """Get history days for a specific calendar month.
+
+    Aggregates from per-day caches that are kept warm by media events.
+    Month-based pagination provides stable caching - same days always belong
+    to the same month, unlike rolling day-count pagination.
+
+    If per-day caches are cold (no cache hits), schedules a background refresh
+    and returns empty immediately with refreshing=True. The frontend will poll
+    for completion and auto-refresh.
+
+    Args:
+        user: User instance
+        year: Calendar year (e.g., 2026)
+        month: Calendar month (1-12)
+        logging_style_override: Optional logging style override
+
+    Returns:
+        Tuple of (history_days, cache_meta) where cache_meta contains:
+        - refreshing: bool - Whether a background refresh is in progress
+        - refresh_reason: str or None - Why refresh was triggered
+    """
+    start = time.perf_counter()
+    logging_style = _normalize_logging_style(logging_style_override, user)
+    cache_meta = {"refreshing": False, "refresh_reason": None}
+
+    # Calculate date range for the month
+    first_day = date(year, month, 1)
+    if month == 12:
+        last_day = date(year + 1, 1, 1) - timedelta(days=1)
+    else:
+        last_day = date(year, month + 1, 1) - timedelta(days=1)
+
+    # Build list of day keys for this month (ISO format YYYY-MM-DD)
+    num_days = (last_day - first_day).days + 1
+    day_keys = [(first_day + timedelta(days=i)).isoformat() for i in range(num_days)]
+
+    # Check if a refresh is already in progress
+    lock_key = _refresh_lock_key(user.id, logging_style)
+    refresh_lock = _clean_refresh_lock(lock_key)
+
+    # Fetch per-day caches (these are kept warm by media events)
+    day_cache_keys = [_day_cache_key(user.id, logging_style, dk) for dk in day_keys]
+    day_payloads = cache.get_many(day_cache_keys)
+
+    cache_hits = len(day_payloads)
+    logger.info(
+        "history_month_cache_lookup user_id=%s year=%s month=%s days_in_month=%s "
+        "cache_hits=%s lock=%s",
+        user.id,
+        year,
+        month,
+        num_days,
+        cache_hits,
+        refresh_lock is not None,
+    )
+
+    # If cache is completely cold, schedule background refresh and return empty
+    if cache_hits == 0:
+        if refresh_lock is not None:
+            # Already refreshing - return empty with refreshing flag
+            logger.info(
+                "history_month_cache_cold_refreshing user_id=%s year=%s month=%s",
+                user.id,
+                year,
+                month,
+            )
+            cache_meta.update({"refreshing": True, "refresh_reason": "month_refreshing"})
+            return [], cache_meta
+
+        # Schedule background refresh for this month's day keys
+        # day_keys are in ISO format (YYYY-MM-DD), which _day_key_from_value handles
+        scheduled = schedule_history_refresh(
+            user.id,
+            logging_style,
+            warm_days=0,  # We're specifying exact days
+            day_keys=day_keys,
+            allow_inline=False,
+        )
+        logger.info(
+            "history_month_cache_cold user_id=%s year=%s month=%s scheduled=%s",
+            user.id,
+            year,
+            month,
+            scheduled,
+        )
+        cache_meta.update({"refreshing": True, "refresh_reason": "month_cold"})
+        return [], cache_meta
+
+    # Build history days from cached data (most recent first)
+    history_days = []
+    for day_key in reversed(day_keys):
+        payload_key = _day_cache_key(user.id, logging_style, day_key)
+        payload = day_payloads.get(payload_key)
+        if payload:
+            history_days.append(_deserialize_history_day(payload))
+
+    logger.info(
+        "history_month_result user_id=%s year=%s month=%s days_with_activity=%s "
+        "source=cache elapsed_ms=%.2f",
+        user.id,
+        year,
+        month,
+        len(history_days),
+        (time.perf_counter() - start) * 1000,
+    )
+
+    return history_days, cache_meta
 
 
 def get_history_days(user, filters=None, date_filters=None, logging_style_override=None):

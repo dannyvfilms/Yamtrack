@@ -93,6 +93,27 @@
   overflow-x: hidden;
 }
 
+/*
+ * Statistics top card scroll containers
+ * Used by: Most Played, Top Genres, Top Rated, Top Artists, Top Albums,
+ *          Top Tracks, Top Decades, Top Countries, Most Listened, etc.
+ *
+ * Two types of list items exist in these cards:
+ * 1. Clickable items (<a> tags): Have `p-1 -m-1` classes for hover effect padding.
+ *    These are visually 48px tall (40px icon + 8px padding).
+ * 2. Non-clickable items (<div> tags): Plain flex containers at 40px tall.
+ *    Examples: Top Decades, Top Countries in Music section.
+ *
+ * The max-height is tuned to show exactly 5 items before scrolling.
+ */
+.statistics-card-scroll {
+  max-height: 275px;
+}
+
+.statistics-card-scroll > :not([hidden]) ~ :not([hidden]) {
+  margin-top: 12px; /* Gap between list items - replaces Tailwind space-y-3 */
+}
+
 .search-result-card {
   position: relative;
   display: flex;
@@ -160,6 +181,79 @@
 }
 
 .search-result-card:hover .media-card-year {
+  opacity: 1;
+  transition: opacity 0.2s ease;
+}
+
+/*
+ * Square variant for podcasts and music (1:1 aspect ratio)
+ * Used when mixing media types in history grids - square cards go on their own row
+ * to maintain grid coherence while respecting native artwork aspect ratios.
+ */
+.search-result-card-square {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  aspect-ratio: 1/1;
+  overflow: hidden;
+}
+
+.search-result-card-square > div:first-child {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+}
+
+.search-result-card-square > div:first-child > a:first-child,
+.search-result-card-square > div:first-child > div.cursor-pointer {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.search-result-card-square .media-card-poster {
+  width: 100%;
+  height: 100%;
+  object-fit: cover !important;
+  aspect-ratio: unset !important;
+}
+
+.search-result-card-square .media-card-title,
+.search-result-card-square .search-result-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.search-result-card-square:hover .media-card-title,
+.search-result-card-square:hover .search-result-title {
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+.search-result-card-square .media-card-body {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  transform: translateY(var(--year-height, 1.25rem));
+  transition: transform 0.2s ease;
+}
+
+.search-result-card-square .media-card-year {
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+
+.search-result-card-square:hover .media-card-body {
+  transform: translateY(0);
+}
+
+.search-result-card-square:hover .media-card-year {
   opacity: 1;
   transition: opacity 0.2s ease;
 }

@@ -688,3 +688,61 @@ def format_date_range_display(start_date, end_date):
 
     # If none of the predefined ranges match, return "Date Range"
     return "Date Range"
+
+
+@register.filter
+def filter_media_types(entries, media_types_str):
+    """Filter entries to only include specified media types.
+
+    Usage: {{ entries|filter_media_types:"music,podcast" }}
+
+    Args:
+        entries: List of history entry dicts with 'media_type' key
+        media_types_str: Comma-separated list of media types to include
+
+    Returns:
+        List of entries matching the specified media types
+    """
+    if not entries or not media_types_str:
+        return entries
+    media_types = {mt.strip().lower() for mt in media_types_str.split(",")}
+    return [
+        entry for entry in entries
+        if entry.get("media_type", "").lower() in media_types
+    ]
+
+
+@register.filter
+def exclude_media_types(entries, media_types_str):
+    """Filter entries to exclude specified media types.
+
+    Usage: {{ entries|exclude_media_types:"music,podcast" }}
+
+    Args:
+        entries: List of history entry dicts with 'media_type' key
+        media_types_str: Comma-separated list of media types to exclude
+
+    Returns:
+        List of entries NOT matching the specified media types
+    """
+    if not entries or not media_types_str:
+        return entries
+    media_types = {mt.strip().lower() for mt in media_types_str.split(",")}
+    return [
+        entry for entry in entries
+        if entry.get("media_type", "").lower() not in media_types
+    ]
+
+
+@register.filter
+def is_square_media_type(media_type):
+    """Check if a media type uses square (1:1) aspect ratio artwork.
+
+    Usage: {% if entry.media_type|is_square_media_type %}
+
+    Returns:
+        True for music and podcast types, False otherwise
+    """
+    if not media_type:
+        return False
+    return media_type.lower() in ("music", "podcast")
