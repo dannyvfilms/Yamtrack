@@ -746,3 +746,47 @@ def is_square_media_type(media_type):
     if not media_type:
         return False
     return media_type.lower() in ("music", "podcast")
+
+
+@register.filter
+def filter_home_media_types(items, media_types_str):
+    """Filter home page items to only include specified media types.
+
+    Usage: {{ media_list.items|filter_home_media_types:"music,podcast" }}
+
+    Args:
+        items: List of BasicMedia objects with item.media_type attribute
+        media_types_str: Comma-separated list of media types to include
+
+    Returns:
+        List of items matching the specified media types
+    """
+    if not items or not media_types_str:
+        return items
+    media_types = {mt.strip().lower() for mt in media_types_str.split(",")}
+    return [
+        item for item in items
+        if getattr(getattr(item, "item", None), "media_type", "").lower() in media_types
+    ]
+
+
+@register.filter
+def exclude_home_media_types(items, media_types_str):
+    """Filter home page items to exclude specified media types.
+
+    Usage: {{ media_list.items|exclude_home_media_types:"music,podcast" }}
+
+    Args:
+        items: List of BasicMedia objects with item.media_type attribute
+        media_types_str: Comma-separated list of media types to exclude
+
+    Returns:
+        List of items NOT matching the specified media types
+    """
+    if not items or not media_types_str:
+        return items
+    media_types = {mt.strip().lower() for mt in media_types_str.split(",")}
+    return [
+        item for item in items
+        if getattr(getattr(item, "item", None), "media_type", "").lower() not in media_types
+    ]

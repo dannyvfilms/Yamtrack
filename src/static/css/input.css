@@ -66,6 +66,17 @@
   }
 }
 
+/* Square (1:1) media grid for music and podcasts */
+.media-grid-square {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+}
+
+@media (min-width: 30rem) {
+  .media-grid-square {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)) !important;
+  }
+}
+
 /* https://tailwindcss.com/docs/upgrade-guide#hover-styles-on-mobile */
 @custom-variant hover-tap (&:hover);
 @custom-variant parent-hover-tap (.hover-tap:hover &);

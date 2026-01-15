@@ -4,7 +4,7 @@
 {% with current_sort|default_if_none:'' as current_sort_value %}
   {% with is_recommend_mode|default:False as recommend_mode %}
     {% with media_type|default:item.media_type as resolved_media_type %}
-      <div class="media-card {% if secondary_color %}bg-[#39404b]{% else %}bg-[#2a2f35]{% endif %} rounded-lg overflow-hidden shadow-lg relative {% if active %}ring-2 ring-indigo-700{% endif %} {% if from_grid %}hover:ring-2 hover:ring-indigo-500 transition-all search-result-card{% endif %} {% if recommend_mode %}cursor-pointer{% endif %} group"
+      <div class="media-card {% if secondary_color %}bg-[#39404b]{% else %}bg-[#2a2f35]{% endif %} rounded-lg overflow-hidden shadow-lg relative {% if active %}ring-2 ring-indigo-700{% endif %} {% if from_grid %}hover:ring-2 hover:ring-indigo-500 transition-all {% if resolved_media_type == 'podcast' or resolved_media_type == 'music' %}search-result-card-square{% else %}search-result-card{% endif %}{% endif %} {% if recommend_mode %}cursor-pointer{% endif %} group"
            data-media-type="{{ item.media_type }}"
            {% if recommend_mode %}hx-get="{% url 'recommend_search' recommend_list_id %}?show_preview=true&media_id={{ item.media_id }}&media_type={{ item.media_type }}&source={{ item.source }}&title={{ title|urlencode }}&image={{ item.image|urlencode }}" hx-target="#recommend-modal-container" hx-swap="innerHTML"{% endif %}
            x-data="{ trackOpen: false, listsOpen: false }">
@@ -12,14 +12,14 @@
           {% if recommend_mode %}
             <div class="cursor-pointer">
               <img alt="{% if resolved_media_type == MediaTypes.SEASON.value and item.season_number %}Season {{ item.season_number }}{% else %}{{ title }}{% endif %}"
-                   class="media-card-poster lazyload w-full {% if from_grid %}{% if resolved_media_type == 'podcast' %}aspect-[1/1]{% else %}aspect-[2/3] aspect-2/3{% endif %}{% else %}h-48{% endif %} bg-[#3e454d] {% if item.image != IMG_NONE %}object-cover{% endif %}"
+                   class="media-card-poster lazyload w-full {% if from_grid %}{% if resolved_media_type == 'podcast' or resolved_media_type == 'music' %}aspect-[1/1]{% else %}aspect-[2/3] aspect-2/3{% endif %}{% else %}h-48{% endif %} bg-[#3e454d] {% if item.image != IMG_NONE %}object-cover{% endif %}"
                    src="{{ item.image }}"
                    loading="lazy">
             </div>
           {% else %}
             <a href="{% if use_podcast_show|default:False and podcast_show %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=podcast_show.podcast_uuid title=podcast_show.slug|default:podcast_show.title|default:podcast_show.podcast_uuid|slug %}{% elif public_view|default:False %}{{ item|media_url }}?public_view=1{% else %}{{ item|media_url }}{% endif %}">
               <img alt="{% if use_podcast_show|default:False and podcast_show %}{{ podcast_show.title }}{% elif resolved_media_type == MediaTypes.SEASON.value and item.season_number %}Season {{ item.season_number }}{% else %}{{ title }}{% endif %}"
-                   class="media-card-poster lazyload w-full {% if from_grid %}{% if resolved_media_type == 'podcast' %}aspect-[1/1]{% else %}aspect-[2/3] aspect-2/3{% endif %}{% else %}h-48{% endif %} bg-[#3e454d] {% if item.image != IMG_NONE %}object-cover{% endif %}"
+                   class="media-card-poster lazyload w-full {% if from_grid %}{% if resolved_media_type == 'podcast' or resolved_media_type == 'music' %}aspect-[1/1]{% else %}aspect-[2/3] aspect-2/3{% endif %}{% else %}h-48{% endif %} bg-[#3e454d] {% if item.image != IMG_NONE %}object-cover{% endif %}"
                    data-src="{% if use_podcast_show|default:False and podcast_show and podcast_show.image %}{{ podcast_show.image }}{% else %}{{ item.image }}{% endif %}"
                    src="{{ IMG_NONE }}">
             </a>

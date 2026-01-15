@@ -51,10 +51,37 @@
           {# Combined or Disabled mode: use section_key as media_type #}
           <h2 class="text-xl font-semibold mb-2 sm:mb-4">{{ section_key|media_type_readable_plural }}</h2>
         {% endif %}
-        <div id="media-grid-{{ section_key }}"
-             class="media-grid">
-          {% include "app/components/home_grid.html" %}
-        </div>
+        {% if section_key == 'recently_not_rated' %}
+          {# Split mixed section by aspect ratio: 2:3 first, then 1:1 #}
+          <div id="media-grid-{{ section_key }}">
+            {% with square_types="music,podcast" %}
+              {% with standard_items=media_list.items|exclude_home_media_types:square_types %}
+                {% if standard_items %}
+                  <div class="media-grid">
+                    {% include "app/components/home_grid.html" with media_list_items=standard_items %}
+                  </div>
+                {% endif %}
+              {% endwith %}
+              {% with square_items=media_list.items|filter_home_media_types:square_types %}
+                {% if square_items %}
+                  <div class="media-grid media-grid-square mt-4">
+                    {% include "app/components/home_grid.html" with media_list_items=square_items %}
+                  </div>
+                {% endif %}
+              {% endwith %}
+            {% endwith %}
+          </div>
+        {% elif section_key == 'music' or section_key == 'podcast' %}
+          <div id="media-grid-{{ section_key }}"
+               class="media-grid media-grid-square">
+            {% include "app/components/home_grid.html" %}
+          </div>
+        {% else %}
+          <div id="media-grid-{{ section_key }}"
+               class="media-grid">
+            {% include "app/components/home_grid.html" %}
+          </div>
+        {% endif %}
 
         {% if media_list.total > items_limit %}
           <div class="mt-3 sm:mt-6 flex justify-center">
