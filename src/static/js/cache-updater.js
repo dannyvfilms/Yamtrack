@@ -106,6 +106,11 @@ class CacheUpdater {
             // Track latest built_at
             this.lastBuiltAt = data.built_at || null;
 
+            // Only reload if we've been polling for at least 2 seconds
+            // This ensures we were actually waiting for the refresh, not just detecting
+            // a refresh that completed before we started polling (which would cause loops)
+            const hasBeenPolling = Date.now() - this.startTime >= 2000;
+
             // If refresh just completed, update the page
             // This handles:
             // 1. Refresh completed during polling (refreshJustCompleted = true)
@@ -117,12 +122,20 @@ class CacheUpdater {
             // but we weren't waiting for it (wasRefreshingBefore = false), we shouldn't reload.
             // That would cause an infinite reload loop when the page loads after a refresh completes.
             // For history, we should update if refresh just completed OR if we were waiting
-            // and the refresh is now done (lock released). Also check recently_built to catch
-            // refreshes that completed just before we started polling.
-            const currentRangeDone = refreshJustCompleted ||
-                builtAtChanged ||
-                (wasRefreshingBefore && !data.is_refreshing && data.exists) ||
-                (wasRefreshingBefore && data.recently_built && !data.is_refreshing);
+            // and the refresh is now done (lock released).
+            // IMPORTANT: Only allow reload if we've been polling for at least 2 seconds to prevent
+            // reloads when we just started polling and weren't actually waiting.
+            // Note: We do NOT check recently_built here because if the cache was recently built
+            // but we weren't actively waiting for it, we shouldn't reload (the page already has fresh data).
+            // Only reload when we detect actual completion during polling.
+            // We rely on refreshJustCompleted (detects transition from refreshing to not) and
+            // builtAtChanged (detects cache rebuild even if lock state didn't update correctly).
+            // The third condition was redundant with refreshJustCompleted and could trigger
+            // reloads when we weren't actively waiting for a refresh.
+            const currentRangeDone = hasBeenPolling && (
+                refreshJustCompleted ||
+                builtAtChanged
+            );
 
             // For statistics, wait until all ranges are done before reloading
             // For history, reload as soon as current cache is done
@@ -214,6 +227,10 @@ class CacheUpdater {
      */
     updatePage() {
         console.log('CacheUpdater: Updating page to show fresh data');
+        // Mark that this is a cache-triggered reload with timestamp to prevent loops
+        if (this.cacheType === 'history') {
+            sessionStorage.setItem('history_cache_reload', Date.now().toString());
+        }
         // Reload the page to show fresh data
         // Using a small delay to ensure cache is fully updated
         setTimeout(() => {

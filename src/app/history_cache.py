@@ -2273,7 +2273,10 @@ def get_month_history(user, year: int, month: int, logging_style_override=None):
 
     # Build list of day keys for this month (ISO format YYYY-MM-DD)
     num_days = (last_day - first_day).days + 1
-    day_keys = [(first_day + timedelta(days=i)).isoformat() for i in range(num_days)]
+    iso_day_keys = [(first_day + timedelta(days=i)).isoformat() for i in range(num_days)]
+
+    # Normalize day keys to YYYYMMDD format to match what refresh task uses
+    day_keys = [history_day_key(dk) for dk in iso_day_keys if history_day_key(dk)]
 
     # Check if a refresh is already in progress
     lock_key = _refresh_lock_key(user.id, logging_style)
@@ -2309,12 +2312,12 @@ def get_month_history(user, year: int, month: int, logging_style_override=None):
             return [], cache_meta
 
         # Schedule background refresh for this month's day keys
-        # day_keys are in ISO format (YYYY-MM-DD), which _day_key_from_value handles
+        # day_keys are in normalized YYYYMMDD format (schedule_history_refresh will handle normalization)
         scheduled = schedule_history_refresh(
             user.id,
             logging_style,
             warm_days=0,  # We're specifying exact days
-            day_keys=day_keys,
+            day_keys=iso_day_keys,  # Pass ISO format for scheduling (will be normalized by schedule_history_refresh)
             allow_inline=False,
         )
         logger.info(

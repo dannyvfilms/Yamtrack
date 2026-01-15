@@ -18,6 +18,22 @@
       this.loggingStyle = urlLoggingStyle;
     }
 
+    // Check if this is a cache-triggered reload to prevent loops
+    // Use timestamp to ensure we skip checks for a reasonable period after reload
+    const cacheReloadFlag = sessionStorage.getItem('history_cache_reload');
+    let isCacheReload = false;
+    if (cacheReloadFlag) {
+      const reloadTime = parseInt(cacheReloadFlag, 10);
+      const now = Date.now();
+      // Skip cache check if reload happened within last 5 seconds
+      if (!isNaN(reloadTime) && (now - reloadTime) < 5000) {
+        isCacheReload = true;
+        console.log('History page: Detected recent cache-triggered reload, skipping initial cache check');
+      }
+      // Always remove the flag after checking
+      sessionStorage.removeItem('history_cache_reload');
+    }
+
     // Listen for HTMX-triggered refresh requests (e.g., deletes)
     window.addEventListener('history-refresh-start', () => {
       this.cacheRefreshing = true;
@@ -37,6 +53,8 @@
         },
         onUpdate: () => {
           console.log('History page: Update callback called, reloading page');
+          // Mark that this is a cache-triggered reload with timestamp to prevent loops
+          sessionStorage.setItem('history_cache_reload', Date.now().toString());
           // Reload the page to show fresh data
           setTimeout(() => {
             window.location.reload();
@@ -44,14 +62,11 @@
         }
       });
     }
-    
-    if (this.cacheRefreshing && this.cacheUpdater) {
-      this.cacheUpdater.wasRefreshing = true;
-      this.cacheUpdater.start();
-    }
 
     // Check initial cache status after a short delay to ensure Alpine.js is ready
     // Use requestAnimationFrame to ensure DOM is ready
+    // Always check cache status after init (matching statistics page)
+    // checkCacheStatus() will only start polling if there's an active refresh
     requestAnimationFrame(() => {
       setTimeout(() => {
         this.checkCacheStatus();
@@ -59,6 +74,17 @@
     });
   },
   async checkCacheStatus() {
+    // Skip cache status check if we just reloaded (additional safeguard)
+    const recentReloadFlag = sessionStorage.getItem('history_cache_reload');
+    if (recentReloadFlag) {
+      const reloadTime = parseInt(recentReloadFlag, 10);
+      const now = Date.now();
+      if (!isNaN(reloadTime) && (now - reloadTime) < 5000) {
+        console.log('History page: Recent reload detected in checkCacheStatus, skipping');
+        return;
+      }
+    }
+    
     // Skip cache status check if filters are applied (filtered results bypass cache)
     const urlParams = new URLSearchParams(window.location.search);
     const hasFilters = urlParams.has('genre') || urlParams.has('media_type') || 
@@ -82,14 +108,13 @@
       if (response.ok) {
         const data = await response.json();
         console.log('History page: Initial cache status', data);
-        // Show notification and start polling if:
-        // - Cache is stale (needs refresh)
-        // - Refresh is in progress (lock exists) - THIS IS THE KEY CASE
-        // 
+        // Show notification and start polling only when a refresh is actually running
+        // (matching statistics page behavior to avoid infinite reload loops).
+        // Do NOT start polling if cache is stale but not refreshing - the backend will
+        // schedule a refresh automatically when needed, and then we'll start polling.
         // Do NOT start polling if recently_built is true but is_refreshing is false,
         // as that means the refresh already completed and we're seeing fresh data.
-        // Starting polling in that case would cause an infinite reload loop.
-        if (data.is_stale || data.is_refreshing) {
+        if (data.is_refreshing) {
           console.log('History page: Showing notification and starting polling', {
             is_stale: data.is_stale,
             is_refreshing: data.is_refreshing,
@@ -103,7 +128,9 @@
             this.cacheUpdater.start();
           }
         } else {
-          console.log('History page: Cache is fresh, no notification needed', {
+          // Explicitly hide the banner when refresh is complete
+          this.cacheRefreshing = false;
+          console.log('History page: Cache is fresh or no refresh in progress, no notification needed', {
             is_stale: data.is_stale,
             is_refreshing: data.is_refreshing,
             recently_built: data.recently_built
@@ -138,24 +165,24 @@
   {# Month-based navigation header #}
   {# Left = toward present (newer), Right = toward past (older) #}
   {% if use_month_view %}
-    <div class="flex items-center justify-between gap-1 sm:gap-2 mb-6">
+    <div class="flex items-center justify-between gap-3 sm:gap-6 mb-6">
       {# Left side: First (current month) + Newer month #}
       <div class="flex items-center gap-1 sm:gap-2">
         {# First button - go to current month #}
         {% if not is_current_month %}
           <a href="?year={{ current_year }}&m={{ current_month_num }}{% if active_filters.logging_style %}&logging_style={{ active_filters.logging_style }}{% endif %}"
-             class="flex items-center gap-1 px-2 sm:px-3 py-2 rounded-md bg-[#2a2f35] text-white hover:bg-[#39404b] transition-colors cursor-pointer text-sm"
+             class="flex items-center gap-1 px-1.5 sm:px-2.5 py-1.5 rounded-md bg-[#2a2f35] text-white hover:bg-[#39404b] transition-colors cursor-pointer text-sm"
              aria-label="Go to current month"
              title="Go to current month">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5">
               <path d="m11 17-5-5 5-5"></path>
               <path d="m18 17-5-5 5-5"></path>
             </svg>
             <span>{{ current_year }}</span>
           </a>
         {% else %}
-          <span class="flex items-center gap-1 px-2 sm:px-3 py-2 rounded-md bg-gray-700 text-gray-500 cursor-not-allowed text-sm">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
+          <span class="flex items-center gap-1 px-1.5 sm:px-2.5 py-1.5 rounded-md bg-gray-700 text-gray-500 cursor-not-allowed text-sm">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5">
               <path d="m11 17-5-5 5-5"></path>
               <path d="m18 17-5-5 5-5"></path>
             </svg>
@@ -166,16 +193,16 @@
         {# Newer month button (toward present) #}
         {% if show_next_month %}
           <a href="?year={{ next_year }}&m={{ next_month }}{% if active_filters.logging_style %}&logging_style={{ active_filters.logging_style }}{% endif %}"
-             class="flex items-center gap-1 px-2 sm:px-3 py-2 rounded-md bg-[#2a2f35] text-white hover:bg-[#39404b] transition-colors cursor-pointer text-sm"
+             class="flex items-center gap-1 px-1.5 sm:px-2.5 py-1.5 rounded-md bg-[#2a2f35] text-white hover:bg-[#39404b] transition-colors cursor-pointer text-sm"
              aria-label="Go to {{ next_month_name }}">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5">
               <path d="m15 18-6-6 6-6"></path>
             </svg>
             <span>{{ next_month_name }}</span>
           </a>
         {% else %}
-          <span class="flex items-center gap-1 px-2 sm:px-3 py-2 rounded-md bg-gray-700 text-gray-500 cursor-not-allowed text-sm">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
+          <span class="flex items-center gap-1 px-1.5 sm:px-2.5 py-1.5 rounded-md bg-gray-700 text-gray-500 cursor-not-allowed text-sm">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5">
               <path d="m15 18-6-6 6-6"></path>
             </svg>
             <span>{{ next_month_name }}</span>
@@ -184,27 +211,27 @@
       </div>
 
       {# Center: Current month display #}
-      <h2 class="text-base sm:text-xl font-semibold text-white text-center whitespace-nowrap">{{ month_name }} {{ view_year }}</h2>
+      <h2 class="text-base sm:text-xl font-semibold text-white text-center whitespace-nowrap px-2 sm:px-4">{{ month_name }}</h2>
 
       {# Right side: Older month + Last (earliest) #}
       <div class="flex items-center gap-1 sm:gap-2">
         {# Older month button (toward past) #}
         <a href="?year={{ prev_year }}&m={{ prev_month }}{% if active_filters.logging_style %}&logging_style={{ active_filters.logging_style }}{% endif %}"
-           class="flex items-center gap-1 px-2 sm:px-3 py-2 rounded-md bg-[#2a2f35] text-white hover:bg-[#39404b] transition-colors cursor-pointer text-sm"
+           class="flex items-center gap-1 px-1.5 sm:px-2.5 py-1.5 rounded-md bg-[#2a2f35] text-white hover:bg-[#39404b] transition-colors cursor-pointer text-sm"
            aria-label="Go to {{ prev_month_name }}">
           <span>{{ prev_month_name }}</span>
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5">
             <path d="m9 18 6-6-6-6"></path>
           </svg>
         </a>
 
         {# Last button - go back 1 year from current view #}
         <a href="?year={{ view_year|add:'-1' }}&m={{ view_month }}{% if active_filters.logging_style %}&logging_style={{ active_filters.logging_style }}{% endif %}"
-           class="flex items-center gap-1 px-2 sm:px-3 py-2 rounded-md bg-[#2a2f35] text-white hover:bg-[#39404b] transition-colors cursor-pointer text-sm"
+           class="flex items-center gap-1 px-1.5 sm:px-2.5 py-1.5 rounded-md bg-[#2a2f35] text-white hover:bg-[#39404b] transition-colors cursor-pointer text-sm"
            aria-label="Go back one year"
            title="Go back one year">
           <span>{{ view_year|add:'-1' }}</span>
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5">
             <path d="m13 17 5-5-5-5"></path>
             <path d="m6 17 5-5-5-5"></path>
           </svg>
