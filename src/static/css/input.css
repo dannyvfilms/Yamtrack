@@ -44,12 +44,12 @@
     gap: calc(var(--spacing) * 4);
   }
 
-  .stats-card-grid > * {
+  .stats-card-grid>* {
     width: 120px;
   }
 
   /* Reset order on desktop */
-  .stats-card-grid > * {
+  .stats-card-grid>* {
     order: 0 !important;
   }
 }
@@ -125,6 +125,11 @@
 
 .media-card-overlay {
   z-index: 5;
+}
+
+.media-card-body {
+  position: relative;
+  z-index: 10;
 }
 
 /*

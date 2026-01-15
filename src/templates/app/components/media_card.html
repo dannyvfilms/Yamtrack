@@ -152,10 +152,13 @@
           {% endif %}
 
           {% if not recommend_mode and not public_view|default:False %}
-            <div class="media-card-overlay absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 hover-tap:opacity-100 transition-opacity duration-200 ease-in-out{% if user.clickable_media_cards %} pointer-coarse:hidden{% endif %}">
-              <a href="{% if use_podcast_show|default:False and podcast_show %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=podcast_show.podcast_uuid title=podcast_show.slug|default:podcast_show.title|default:podcast_show.podcast_uuid|slug %}{% else %}{{ item|media_url }}{% endif %}" class="absolute inset-0"></a>
+            <div class="media-card-overlay absolute inset-0 flex items-center justify-center opacity-0 hover-tap:opacity-100 transition-opacity duration-200 ease-in-out{% if user.clickable_media_cards %} pointer-coarse:hidden{% endif %}">
+              {# Darkening background layer #}
+              <div class="absolute inset-0 bg-black/50 z-0"></div>
+              
+              <a href="{% if use_podcast_show|default:False and podcast_show %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=podcast_show.podcast_uuid title=podcast_show.slug|default:podcast_show.title|default:podcast_show.podcast_uuid|slug %}{% else %}{{ item|media_url }}{% endif %}" class="absolute inset-0 z-0"></a>
 
-              <div class="relative flex items-center justify-center space-x-2.5">
+              <div class="relative z-10 flex items-center justify-center space-x-2.5">
                 {% if item.media_type == MediaTypes.EPISODE.value %}
                   <button @click="trackOpen = true"
                           class="p-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full hover:scale-110 hover:shadow-[0_0_15px_rgba(99,102,241,0.5)] transition-all duration-200 cursor-pointer">

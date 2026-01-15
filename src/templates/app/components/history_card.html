@@ -45,11 +45,14 @@
 
     {# Hover overlay with history-specific buttons #}
     {% if entry.item and entry.item.media_type %}
-      <div class="media-card-overlay absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 hover-tap:opacity-100 transition-opacity duration-200{% if user.clickable_media_cards %} pointer-coarse:hidden{% endif %}">
+      <div class="media-card-overlay absolute inset-0 flex items-center justify-center opacity-0 hover-tap:opacity-100 transition-opacity duration-200{% if user.clickable_media_cards %} pointer-coarse:hidden{% endif %}">
+        {# Darkening background layer #}
+        <div class="absolute inset-0 bg-black/50 z-0"></div>
+        
         <a href="{% if entry.media_type == MediaTypes.MUSIC.value and entry.album %}{% url 'album_detail' entry.album.id %}{% elif entry.media_type == MediaTypes.PODCAST.value and entry.show and entry.show.podcast_uuid %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=entry.show.podcast_uuid title=entry.show.slug|default:entry.show.title|slug %}{% else %}{{ entry.item|media_url }}{% endif %}"
-           class="absolute inset-0"></a>
+           class="absolute inset-0 z-0"></a>
 
-        <div class="relative flex items-center justify-center space-x-2.5">
+        <div class="relative z-10 flex items-center justify-center space-x-2.5">
           {% if history_mode != "release" %}
             {# Edit History Button #}
             <button class="p-2.5 bg-indigo-600 text-white rounded-full hover:bg-indigo-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(99,102,241,0.5)] transition-all duration-200 cursor-pointer"

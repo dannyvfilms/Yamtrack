@@ -41,10 +41,13 @@
       </div>
 
       {# Hover overlay with actions #}
-      <div class="media-card-overlay absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 hover-tap:opacity-100 transition-opacity duration-200 ease-in-out{% if user.clickable_media_cards %} pointer-coarse:hidden{% endif %}">
-        <a href="{% url 'artist_detail' tracker.artist.id %}" class="absolute inset-0"></a>
+      <div class="media-card-overlay absolute inset-0 flex items-center justify-center opacity-0 hover-tap:opacity-100 transition-opacity duration-200 ease-in-out{% if user.clickable_media_cards %} pointer-coarse:hidden{% endif %}">
+        {# Darkening background layer #}
+        <div class="absolute inset-0 bg-black/50 z-0"></div>
+        
+        <a href="{% url 'artist_detail' tracker.artist.id %}" class="absolute inset-0 z-0"></a>
 
-        <div class="relative flex items-center justify-center space-x-2.5">
+        <div class="relative z-10 flex items-center justify-center space-x-2.5">
           {# Track Button #}
           <button class="p-2.5 bg-indigo-600 text-white rounded-full hover:bg-indigo-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(99,102,241,0.5)] transition-all duration-200 cursor-pointer"
                   title="Edit tracking"
