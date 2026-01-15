@@ -23,6 +23,8 @@
 
       <form method="post" class="space-y-4">
         {% csrf_token %}
+        {# Hidden dummy password field to prevent iOS from focusing on username field #}
+        <input type="password" autocomplete="new-password" style="position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0;" tabindex="-1" aria-hidden="true">
         <div>
           <label for="{{ user_form.username.id_for_label }}"
                  class="block text-sm font-medium mb-2 text-gray-300">Username</label>
@@ -30,6 +32,8 @@
                  name="{{ user_form.username.html_name }}"
                  class="w-full py-2 px-3 bg-[#39404b] rounded-md text-white text-sm border {% if user_form.username.errors %}border-red-500{% else %}border-gray-600{% endif %} focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                  type="text"
+                 autocomplete="nickname"
+                 data-1p-ignore="true"
                  value="{{ user_form.username.value|default:user.username }}">
           {% if user_form.username.errors %}
             <p class="mt-1 text-sm text-red-400">{{ user_form.username.errors.0 }}</p>
