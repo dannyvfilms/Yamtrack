@@ -62,14 +62,30 @@
   @apply bg-indigo-700/95 border-indigo-600;
 }
 
+/*
+ * Card body gradient for text readability over poster images.
+ * Uses a ::before pseudo-element that extends above the content area
+ * to create a taller gradient that reaches higher into the card.
+ */
 .bg-card-body {
-  --card-body-bg: color-mix(in oklab, var(--color-gray-900) 90%, transparent);
-  background-color: transparent;
-  background-image: linear-gradient(
-    to bottom,
-    transparent 0%,
-    var(--card-body-bg) 100%
-  );
+  position: relative;
+}
+
+.bg-card-body::before {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  /* Extend gradient to 200% of content height to reach higher into card */
+  height: 200%;
+  pointer-events: none;
+  z-index: -1;
+  background-image: linear-gradient(to bottom,
+      transparent 0%,
+      color-mix(in oklab, var(--color-gray-900) 50%, transparent) 40%,
+      color-mix(in oklab, var(--color-gray-900) 85%, transparent) 70%,
+      color-mix(in oklab, var(--color-gray-900) 98%, transparent) 100%);
 }
 
 .media-card-overlay {
@@ -110,8 +126,9 @@
   max-height: 275px;
 }
 
-.statistics-card-scroll > :not([hidden]) ~ :not([hidden]) {
-  margin-top: 12px; /* Gap between list items - replaces Tailwind space-y-3 */
+.statistics-card-scroll> :not([hidden])~ :not([hidden]) {
+  margin-top: 12px;
+  /* Gap between list items - replaces Tailwind space-y-3 */
 }
 
 .search-result-card {
@@ -124,7 +141,7 @@
 }
 
 /* Poster container - fixed size, doesn't change on hover */
-.search-result-card > div:first-child {
+.search-result-card>div:first-child {
   position: absolute;
   top: 0;
   left: 0;
@@ -134,8 +151,8 @@
 }
 
 /* Ensure the image link/wrapper fills the poster container */
-.search-result-card > div:first-child > a:first-child,
-.search-result-card > div:first-child > div.cursor-pointer {
+.search-result-card>div:first-child>a:first-child,
+.search-result-card>div:first-child>div.cursor-pointer {
   display: block;
   width: 100%;
   height: 100%;
@@ -198,7 +215,7 @@
   overflow: hidden;
 }
 
-.search-result-card-square > div:first-child {
+.search-result-card-square>div:first-child {
   position: absolute;
   top: 0;
   left: 0;
@@ -207,8 +224,8 @@
   overflow: hidden;
 }
 
-.search-result-card-square > div:first-child > a:first-child,
-.search-result-card-square > div:first-child > div.cursor-pointer {
+.search-result-card-square>div:first-child>a:first-child,
+.search-result-card-square>div:first-child>div.cursor-pointer {
   display: block;
   width: 100%;
   height: 100%;
@@ -272,7 +289,7 @@
     padding: calc(var(--spacing) * 2) calc(var(--spacing) * 2) calc(var(--spacing) * 1.5) !important;
   }
 
-  .media-card-body > .flex {
+  .media-card-body>.flex {
     align-items: center;
     justify-content: flex-start;
   }
