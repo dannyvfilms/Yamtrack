@@ -2786,6 +2786,50 @@ def _build_release_history_days(user, month=None, day=None, date_filters=None):
     return history_days
 
 
+def _filter_history_by_enabled_media_types(history_days, user):
+    """Filter history entries to only include enabled media types.
+
+    Episodes and seasons are mapped to the 'tv' media type for filtering.
+
+    Args:
+        history_days: List of day dicts with 'entries' lists
+        user: User object with get_enabled_media_types method
+
+    Returns:
+        Filtered history_days with entries for disabled media types removed
+    """
+    enabled_types = user.get_enabled_media_types()
+    if not enabled_types:
+        return history_days
+
+    # Build a set of allowed media types for fast lookup
+    # Episodes and seasons map to 'tv' for filtering purposes
+    allowed_types = set(enabled_types)
+
+    # If 'tv' is enabled, also allow 'episode' and 'season' entries
+    if MediaTypes.TV.value in allowed_types:
+        allowed_types.add(MediaTypes.EPISODE.value)
+        allowed_types.add(MediaTypes.SEASON.value)
+
+    filtered_days = []
+    for day in history_days:
+        if isinstance(day, dict):
+            entries = day.get("entries", [])
+            filtered_entries = [
+                entry for entry in entries
+                if entry.get("media_type") in allowed_types
+            ]
+            if filtered_entries:
+                filtered_day = day.copy()
+                filtered_day["entries"] = filtered_entries
+                filtered_days.append(filtered_day)
+        else:
+            # Handle non-dict day objects (shouldn't happen, but be safe)
+            filtered_days.append(day)
+
+    return filtered_days
+
+
 @require_GET
 def history(request):
     """Show a day-by-day history of episode and movie plays."""
@@ -2876,6 +2920,9 @@ def history(request):
             )
             history_refreshing = cache_meta.get("refreshing", False)
 
+            # Filter by enabled media types
+            history_days = _filter_history_by_enabled_media_types(history_days, request.user)
+
             # No paginator needed - we show one month at a time
             page_obj = None
             current_page = 1
@@ -2936,6 +2983,9 @@ def history(request):
                     date_filters=date_filters,
                     logging_style_override=logging_style,
                 )
+
+            # Filter by enabled media types
+            history_days_all = _filter_history_by_enabled_media_types(history_days_all, request.user)
 
             paginator = Paginator(history_days_all, history_cache.HISTORY_DAYS_PER_PAGE)
 
