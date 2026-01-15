@@ -3361,6 +3361,11 @@
 .media-card-overlay {
   z-index: 5;
 }
+@media (pointer: coarse) {
+  body[data-mobile-grid="compact"] .media-card-overlay {
+    display: none;
+  }
+}
 .media-card .media-status-chip, .media-card .media-score-chip, .media-card .media-progress-chip, .media-card .media-time-left-chip, .media-card .media-repeat-chip {
   z-index: 6;
 }

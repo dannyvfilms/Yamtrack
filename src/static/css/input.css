@@ -92,6 +92,17 @@
   z-index: 5;
 }
 
+/*
+ * Hide hover overlay on mobile when grid is compact.
+ * Simplifies touch: tap anywhere to navigate to details,
+ * tap bottom to see title hover.
+ */
+@media (pointer: coarse) {
+  body[data-mobile-grid="compact"] .media-card-overlay {
+    display: none;
+  }
+}
+
 .media-card .media-status-chip,
 .media-card .media-score-chip,
 .media-card .media-progress-chip,
