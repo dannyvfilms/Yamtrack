@@ -65,6 +65,10 @@ This fork keeps Yamtrack’s core feel, but leans hard into *daily usability*: f
 <img src="https://github.com/user-attachments/assets/5e7b301a-3a92-4c0b-a7d6-573bca240058" />
 <img src="https://github.com/user-attachments/assets/04853bea-f5d9-4b71-9ea2-0f9414479f4e" />
 
+## 🚀 Repo Specific Demo
+
+You can try the app at [yamtrack.dannyvfilms.com](https://yamtrack.dannyvfilms.com) using the username `demo` and password `demodemo`.
+
 ## 📱 Repo Specific Installation
 Docker image is now available: ```docker pull ghcr.io/dannyvfilms/yamtrack:latest```
 
