@@ -1,227 +1,374 @@
-# Yamtrack
+# Yamtrack (Enhanced Fork)
 
-![App Tests](https://github.com/FuzzyGrim/Yamtrack/actions/workflows/app-tests.yml/badge.svg)
-![Docker Image](https://github.com/FuzzyGrim/Yamtrack/actions/workflows/docker-image.yml/badge.svg)
-![CodeFactor](https://www.codefactor.io/repository/github/fuzzygrim/yamtrack/badge)
-![Codecov](https://codecov.io/github/FuzzyGrim/Yamtrack/branch/dev/graph/badge.svg?token=PWUG660120)
-![GitHub](https://img.shields.io/badge/license-AGPL--3.0-blue)
+A self-hosted media tracker for movies, TV shows, music, podcasts, anime, manga, video games, books, comics, and board games—optimized for daily use with a focus on performance, mobile experience, and real-world usability.
 
-Yamtrack is a self hosted media tracker for movies, tv shows, music, anime, manga, video games, books, comics, and board games. 
+## Why This Fork Exists
 
-## 📱 Repo Specific Features
+This fork takes Yamtrack's solid foundation and enhances it for **daily usability**. While maintaining the core feel of the original, it adds:
 
-This fork keeps Yamtrack’s core feel, but leans hard into *daily usability*: faster navigation on large libraries, more “what should I watch next?” tooling, and a bunch of stability/performance work that makes the app feel snappier—especially on mobile and as a PWA.
+- **Faster navigation** on large libraries through intelligent caching
+- **Better mobile experience** with PWA support and responsive layouts
+- **More "what should I watch next?" tooling** like Time Left sorting and recommendations
+- **Real-world stability** with fixes for iOS/PWA issues, SQLite locking, and edge cases
+- **Additional media types** (board games, music, podcasts) so you don't need multiple tracking apps
 
-### For former Trakt users (quick visual tour)
+Perfect for former Trakt users looking for a self-hosted alternative, or anyone who wants a snappier, more feature-rich media tracking experience.
 
-- [Time Left Sort](https://ibb.co/yFr6dSDM): Trakt-style “Progress” page: mixes *In Progress* + *Planning*, then *Completed*, then *Dropped*, sorted by time left.
-- [History Page](https://ibb.co/tp51QHFF): A clean, single place to see *everything* you did—without hopping between media types or digging through detail pages.
-- [View Additional Plays](https://ibb.co/jvdswfHF): Drill into extra plays to understand a show/genre’s history, and quickly spot/remove duplicate plays.
-- [Activity Overview Statistics](https://ibb.co/r2cTxgcX): Year-in-review + all-time style stats with the kind of depth Trakt users expect.
-- [Sharable Lists](https://ibb.co/JjwX9hNX): Share your best lists, keep the link simple, and get recommendations based on what you share.
-- [More Media Types](https://ibb.co/C3d3HMxD): Beyond the originals: music + podcasts (and more), so your tracking isn’t split across multiple apps.
+## 🎯 For Former Trakt Users
 
-### Major additions (beyond upstream)
+If you're coming from Trakt, here's what you'll recognize and love:
 
-- **Music + Podcast tracking (real library support)**
-  - Albums / artists / tracks, plus scrobbling + metadata integrations (MusicBrainz, Plex music, artwork fetching)
-  - Podcast shows + episodes, RSS support, Pocket Casts import/sync, and better completion inference
+### Time Left Sort
+Trakt-style "Progress" page that mixes *In Progress* + *Planning*, then *Completed*, then *Dropped*, sorted by time left.
 
-- **History page rewrite**
-  - Replaced media timeline in statistics with a dedicated page
-  - Month-based navigation + per-day caching so big histories load quickly
-  - Background refresh + status polling, plus fixes for iOS/PWA refresh loops
-  - Supports filters for Today in History, Genres, and more
+<img alt="Screenshot 2026-01-15 at 11 22 57 AM" src="https://github.com/user-attachments/assets/ab5594ea-6ddc-4512-9837-87b68ec874c2" />
 
-- **Statistics page overhaul**
-  - Major additions in the types of statistics reported to match Trakt's year in review
-  - Cached stats with multiple time ranges, richer breakdowns, and better “what did I actually do?” views
-  - More useful distributions (including time-based views), streak tooling, and mobile-friendly layouts
+### History Page
+A clean, single place to see *everything* you watched or listened to—without hopping between media types or digging through detail pages.
 
-- **Lists + recommendations**
-  - Share your lists publicly with a Cloudflare Tunnel, Reverse Proxy, or similar workflow
-  - Better list detail experiences (sorting, filtering, searching)
-  - Recommendation workflow integrated into lists so lists can *generate ideas*, not just store them
+<img alt="Screenshot 2026-01-15 at 11 27 08 AM" src="https://github.com/user-attachments/assets/18927954-dd57-40ba-86ef-11ae986cf9ee" />
 
-- **Integrations that behave better under real usage**
-  - Improved Plex import/webhook handling (including edge cases like GUID quirks and SQLite locking)
-  - Scheduled Pocket Casts imports and more resilient background workflows
+### View Additional Plays
+Drill into extra plays to understand a show/genre's history, and quickly spot/remove duplicate plays.
 
-### Quality-of-life upgrades you feel every day
+<img alt="Screenshot 2026-01-15 at 11 24 58 AM" src="https://github.com/user-attachments/assets/4009d5ab-e2e9-4990-b225-0748b7c0a0dd" />
 
-- **Backlog-friendly TV sorting**: Time Left sorting helps you finish what’s closest to “done,” not what’s alphabetically next.
-- **Mobile-first tweaks**: compact vs comfortable grids, more readable cards, fewer tap-fights with overlays/z-index issues.
-- **Preferences that matter**: enable/disable media types, date/time formats, sort defaults, mobile layout choices, auto-pause behaviors.
-- **Cleaner tracking + data integrity**: runtime population/backfills, validation improvements, and fewer “why is this weird?” moments.
-- **Performance & stability**: caching infrastructure (history + stats), safer refresh behavior, and fewer long-load pages.
+### Activity Overview Statistics
+Year-in-review + all-time style stats with the kind of depth Trakt users expect (and actually want to browse).
 
-### A couple of feature screenshots
+<img alt="Screenshot 2026-01-15 at 11 31 01 AM" src="https://github.com/user-attachments/assets/be9da320-d745-45aa-8c6a-23efa66d0c6c" />
 
-**History**
-<img src="https://github.com/user-attachments/assets/e60ab087-5faa-4cc0-ad15-f1865453ec6e" />
-<img src="https://github.com/user-attachments/assets/72338fdf-bb24-4c82-92ca-828bd2c1820b" />
+### Shareable Lists
+Share your best lists, keep the link simple, and get recommendations based on what you share.
 
-**Statistics**
-<img src="https://github.com/user-attachments/assets/5e7b301a-3a92-4c0b-a7d6-573bca240058" />
-<img src="https://github.com/user-attachments/assets/04853bea-f5d9-4b71-9ea2-0f9414479f4e" />
+<img alt="Screenshot 2026-01-15 at 11 32 37 AM" src="https://github.com/user-attachments/assets/ef13eff1-dc14-4ab6-b5d0-39598a1264ec" />
 
-## 🚀 Repo Specific Demo
+### More Media Types
+Beyond the originals: music + podcasts (and more), so your tracking isn't split across multiple apps.
 
-You can try the app at [yamtrack.dannyvfilms.com](https://yamtrack.dannyvfilms.com) using the username `demo` and password `demodemo`.
+<img alt="Screenshot 2026-01-15 at 11 33 44 AM" src="https://github.com/user-attachments/assets/0c6da813-d73e-4f7c-9d2b-ba42d65221a7" />
 
-## 📱 Repo Specific Installation
-Docker image is now available: ```docker pull ghcr.io/dannyvfilms/yamtrack:latest```
+## 🚀 Quick Start
 
-Available tags:
-- `:latest` - Points to the stable release branch (default when no tag is specified)
-- `:release` - Explicit tag for the release branch
-- `:dev` - Exact copy of upstream repo (FuzzyGrim/Yamtrack)
+### Docker Compose (Recommended)
 
-Original Readme below, needs to be updated in several aspects.
+The easiest way to get started is with Docker Compose. This works great with Portainer stacks or standalone Docker.
 
-## 🚀 Demo
+**For SQLite (simple setup):**
 
-You can try the app at [yamtrack.fuzzygrim.com](https://yamtrack.fuzzygrim.com) using the username `demo` and password `demo`.
+```yaml
+services:
+  yamtrack:
+    image: ghcr.io/dannyvfilms/yamtrack:latest
+    container_name: yamtrack
+    restart: unless-stopped
+    depends_on:
+      - redis
+    environment:
+      - SECRET=your-secret-key-here-change-this
+      - REDIS_URL=redis://redis:6379
+      - TZ=America/New_York  # Your timezone
+    volumes:
+      - ./db:/yamtrack/db
+    ports:
+      - "8000:8000"
 
-## ✨ Features
+  redis:
+    image: redis:8-alpine
+    container_name: yamtrack-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
 
-- 🎬 Track movies, tv shows, anime, manga, games, books, comics, and board games.
-- 📺 Track each season of a tv show individually and episodes watched.
-- ⭐ Save score, status, progress, repeats (rewatches, rereads...), start and end dates, or write a note.
-- 📈 Keep a tracking history with each action with a media, such as when you added it, when you started it, when you started watching it again, etc.
-- ✏️ Create custom media entries, for niche media that cannot be found by the supported APIs.
-- 📂 Create personal lists to organize your media for any purpose, add other members to collaborate on your lists.
-- 📅 Keep up with your upcoming media with a calendar, which can be subscribed to in external applications using a iCalendar (.ics) URL.
-- 🔔 Receive notifications of upcoming releases via Apprise (supports Discord, Telegram, ntfy, Slack, email, and many more).
-- 🐳 Easy deployment with Docker via docker-compose with SQLite or PostgreSQL.
-- 👥 Multi-users functionality allowing individual accounts with personalized tracking.
-- 🔑 Flexible authentication options including OIDC and 100+ social providers (Google, GitHub, Discord, etc.) via django-allauth.
-- 🦀 Integration with [Jellyfin](https://jellyfin.org/), [Plex](https://plex.tv/) and [Emby](https://emby.media/) to automatically track new media watched.
-- 📥 Import from [Trakt](https://trakt.tv/), [Simkl](https://simkl.com/), [MyAnimeList](https://myanimelist.net/), [AniList](https://anilist.co/) and [Kitsu](https://kitsu.app/) with support for periodic automatic imports.
-- 📊 Export all your tracked media to a CSV file and import it back.
+volumes:
+  redis_data:
+```
 
-## 📱 Screenshots
-
-| Homepage                                                                                       | Calendar                                                                                    |
-| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| <img src="https://cdn.fuzzygrim.com/file/fuzzygrim/yamtrack/homepage.png?v2" alt="Homepage" /> | <img src="https://cdn.fuzzygrim.com/file/fuzzygrim/yamtrack/calendar.png" alt="calendar" /> |
-
-| Media List Grid                                                                                    | Media List Table                                                                                     |
-| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| <img src="https://cdn.fuzzygrim.com/file/fuzzygrim/yamtrack/medialist_grid.png" alt="List Grid" /> | <img src="https://cdn.fuzzygrim.com/file/fuzzygrim/yamtrack/medialist_table.png" alt="List Table" /> |
-
-| Media Details                                                                                         | Tracking                                                                                    |
-| ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| <img src="https://cdn.fuzzygrim.com/file/fuzzygrim/yamtrack/media_details.png" alt="Media Details" /> | <img src="https://cdn.fuzzygrim.com/file/fuzzygrim/yamtrack/tracking.png" alt="Tracking" /> |
-
-| Season Details                                                                                          | Tracking Episodes                                                                                            |
-| ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| <img src="https://cdn.fuzzygrim.com/file/fuzzygrim/yamtrack/season_details.png" alt="Season Details" /> | <img src="https://cdn.fuzzygrim.com/file/fuzzygrim/yamtrack/tracking_episode.png" alt="Tracking Episodes" /> |
-
-| Lists                                                                                 | Statistics                                                                                      |
-| ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| <img src="https://cdn.fuzzygrim.com/file/fuzzygrim/yamtrack/lists.png" alt="Lists" /> | <img src="https://cdn.fuzzygrim.com/file/fuzzygrim/yamtrack/statistics.png" alt="Statistics" /> |
-
-| Create Manual Entries                                                                                         | Import Data                                                                                       |
-| ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| <img src="https://cdn.fuzzygrim.com/file/fuzzygrim/yamtrack/create_custom.png" alt="Create Manual Entries" /> | <img src="https://cdn.fuzzygrim.com/file/fuzzygrim/yamtrack/import_data.png" alt="Import Data" /> |
-
-## 🐳 Installing with Docker
-
-Copy the default `docker-compose.yml` file from the repository and set the environment variables. This would use a SQlite database, which is enough for most use cases.
-
-The Docker image can be used with or without a tag:
-- `ghcr.io/dannyvfilms/yamtrack` (defaults to `:latest`)
-- `ghcr.io/dannyvfilms/yamtrack:latest` (explicit latest tag)
-- `ghcr.io/dannyvfilms/yamtrack:release` (explicit release tag)
-
-To start the containers run:
+Save this as `docker-compose.yml` and run:
 
 ```bash
 docker-compose up -d
 ```
 
-Alternatively, if you need a PostgreSQL database, you can use the `docker-compose.postgres.yml` file.
+Then visit `http://localhost:8000` and create your admin account.
 
-### 🌊 Reverse Proxy Setup
+**For PostgreSQL (production setup):**
 
-When using a reverse proxy, if you see a `403 - Forbidden` error, you need to set the `URLS` environment variable to the URL you are using for the app.
+Use `docker-compose.postgres.yml` from the repository, which includes a PostgreSQL database container.
 
-```bash
-services:
-  yamtrack:
-    ...
-    environment:
-      - URLS=https://yamtrack.mydomain.com
-    ...
+### Portainer Stack
+
+1. In Portainer, go to **Stacks** → **Add Stack**
+2. Name it `yamtrack`
+3. Paste the docker-compose configuration above
+4. Update the `SECRET` environment variable with a secure random string
+5. Deploy the stack
+
+### Environment Variables
+
+The only **required** variable is `SECRET` (a long random string for Django's secret key).
+
+**Optional but recommended:**
+- `TMDB_API` - For movie/TV metadata (get from [TMDB](https://www.themoviedb.org/settings/api))
+- `MAL_API` - For anime metadata (get from [MyAnimeList](https://myanimelist.net/apiconfig))
+- `IGDB_ID` / `IGDB_SECRET` - For game metadata (get from [IGDB](https://www.igdb.com/api))
+- `STEAM_API_KEY` - For Steam game imports
+- `URLS` - Your public URL if using a reverse proxy (e.g., `https://yamtrack.mydomain.com`)
+
+For a complete list, see the [Environment Variables documentation](https://github.com/FuzzyGrim/Yamtrack/wiki/Environment-Variables).
+
+### Reverse Proxy Setup
+
+If you're using a reverse proxy (Nginx, Traefik, Caddy, etc.) and see a `403 Forbidden` error, add your URL to the environment variables:
+
+```yaml
+environment:
+  - URLS=https://yamtrack.mydomain.com
 ```
 
-Note that the setting must include the correct protocol (`https` or `http`), and must not include the application `/` context path. Multiple origins can be specified by separating them with a comma (`,`).
+Multiple origins can be specified with commas: `https://yamtrack.mydomain.com,https://yamtrack-alt.mydomain.com`
 
-### ⚙️ Environment variables
+## ✨ Key Features
 
-For detailed information on environment variables, please refer to the [Environment Variables wiki page](https://github.com/FuzzyGrim/Yamtrack/wiki/Environment-Variables).
+### 🎵 Music & Podcast Tracking
 
-## 💻 Local development
+**Music Library Support:**
+- Track albums, artists, and individual tracks
+- Automatic scrobbling from Plex Music
+- MusicBrainz integration for rich metadata
+- Album artwork from iTunes
+- Artist discography views
+- Search and browse your music library
 
-Clone the repository and change directory to it.
+**Podcast Tracking:**
+- Track podcast shows and episodes
+- Pocket Casts integration with automatic imports
+- RSS feed support for podcast metadata
+- Episode completion tracking
+- Scheduled imports every 2 hours
 
-```bash
-git clone https://github.com/FuzzyGrim/Yamtrack.git
-cd Yamtrack
-```
+### 📅 History Page
 
-Install Redis or spin up a bare redis container:
+A complete rewrite focused on **fast, intuitive browsing** of your media history:
 
-```bash
-docker run -d --name redis -p 6379:6379 --restart unless-stopped redis:8-alpine
-```
+- **Month-based navigation** - Jump between months easily
+- **Per-day caching** - Large histories load instantly
+- **Background refresh** - Updates happen automatically without blocking
+- **Mobile-optimized** - Works great on phones and tablets
+- **Filter by media type** - Certain pages take you to filtered versions of history
+- **Clean, readable layout** - Focus on what you actually watched/listened to
 
-Create a `.env` file in the root directory and add the following variables.
+Perfect for answering "What did I watch last month?" or "When did I finish that show?"
 
-```bash
-TMDB_API=API_KEY
-MAL_API=API_KEY
-IGDB_ID=IGDB_ID
-IGDB_SECRET=IGDB_SECRET
-STEAM_API_KEY=STEAM_API_SECRET
-SECRET=SECRET
-DEBUG=True
-```
+### 📊 Enhanced Statistics
 
-Then run the following commands.
+A comprehensive statistics dashboard with **cached results** for fast loading:
 
-```bash
-python -m pip install -U -r requirements-dev.txt
-cd src
-python manage.py migrate
-python manage.py runserver & celery -A config worker --beat --scheduler django --loglevel DEBUG & tailwindcss -i ./static/css/input.css -o ./static/css/tailwind.css --watch
-```
+- **Multiple time ranges**: Last 7 Days, Last 30 Days, Last 12 Months, All Time
+- **Media type distribution** (in hours, not just counts)
+- **Daily activity charts** - See your consumption patterns
+- **Score distributions** - Understand your rating habits
+- **Genre breakdowns** - What genres do you actually consume?
+- **Streak tracking** - How consistent are your viewing habits?
+- **Most active day** - When do you consume the most media?
 
-Go to: http://localhost:8000
+All statistics are cached and refresh in the background, so pages load quickly even with years of data.
+
+### 📋 Lists & Recommendations
+
+**Enhanced List Features:**
+- **Public list sharing** - Share your lists with simple URLs
+- **List recommendations** - Get suggestions based on your lists
+- **Advanced sorting** - Sort by rating, date, and more
+- **Filter by content** - Find lists faster
+- **List activity tracking** - See when lists are updated
+
+### 🎮 Time Left Sorting
+
+**Backlog-friendly TV sorting** - Sort your TV shows by "Time Left" to see what's closest to completion. Perfect for clearing your backlog efficiently.
+
+### 📱 Mobile-First Experience
+
+**Mobile Optimizations:**
+- **Compact vs Comfortable grids** - Choose your preferred mobile layout
+- **PWA support** - Install as an app on your phone
+- **Touch-friendly controls** - No more tap-fights with overlays
+- **Responsive navigation** - Everything works great on small screens
+- **Mobile-specific preferences** - Customize your mobile experience
+
+### ⚙️ Comprehensive Preferences
+
+**Customize Everything:**
+- Enable/disable media types you don't use
+- Choose date and time formats (including YYYY-MM-DD)
+- Set default sort options for home and lists
+- Configure auto-pause for stale items
+- Mobile layout preferences
+- And much more
+
+### 🔗 Enhanced Integrations
+
+**Plex Integration:**
+- Improved import workflow
+- Better webhook handling
+- Edge case fixes (GUID quirks, SQLite locking)
+- Auto-pause for stale in-progress items
+
+**Pocket Casts:**
+- OAuth authentication
+- Scheduled automatic imports
+- Better completion inference
+- Podcast artwork fetching
+
+**Other Integrations:**
+- Jellyseerr webhook support
+- Enhanced Emby/Jellyfin webhooks
+- Improved import stability
+
+## 📸 Screenshots
+
+### History Page
+See everything you watched or listened to in one place, organized by day and month.
+
+<img src="https://github.com/user-attachments/assets/e60ab087-5faa-4cc0-ad15-f1865453ec6e" alt="History Page" />
+<img src="https://github.com/user-attachments/assets/72338fdf-bb24-4c82-92ca-828bd2c1820b" alt="History Page Mobile" />
+
+### Statistics Dashboard
+Comprehensive statistics with multiple time ranges and detailed breakdowns.
+
+<img src="https://github.com/user-attachments/assets/5e7b301a-3a92-4c0b-a7d6-573bca240058" alt="Statistics" />
+<img src="https://github.com/user-attachments/assets/04853bea-f5d9-4b71-9ea2-0f9414479f4e" alt="Statistics Mobile" />
+
+### Original Yamtrack Features
+All the core features from the original Yamtrack are still here:
+
+| Homepage | Calendar |
+|----------|----------|
+| <img src="https://cdn.fuzzygrim.com/file/fuzzygrim/yamtrack/homepage.png?v2" alt="Homepage" /> | <img src="https://cdn.fuzzygrim.com/file/fuzzygrim/yamtrack/calendar.png" alt="Calendar" /> |
+
+| Media List Grid | Media List Table |
+|-----------------|------------------|
+| <img src="https://cdn.fuzzygrim.com/file/fuzzygrim/yamtrack/medialist_grid.png" alt="List Grid" /> | <img src="https://cdn.fuzzygrim.com/file/fuzzygrim/yamtrack/medialist_table.png" alt="List Table" /> |
+
+| Media Details | Tracking |
+|---------------|----------|
+| <img src="https://cdn.fuzzygrim.com/file/fuzzygrim/yamtrack/media_details.png" alt="Media Details" /> | <img src="https://cdn.fuzzygrim.com/file/fuzzygrim/yamtrack/tracking.png" alt="Tracking" /> |
+
+## 🎯 Quality of Life Improvements
+
+Beyond the major features, this fork includes hundreds of small improvements that make daily use more pleasant:
+
+- **Z-index fixes** - Buttons and overlays work correctly on all pages
+- **Better card layouts** - 1:1 aspect ratio for music/podcasts, improved game stats cards
+- **Runtime data** - Accurate time-left calculations using actual episode runtimes
+- **Data validation** - Music library validation, runtime checks, better error handling
+- **Performance** - Caching infrastructure means pages load faster
+- **Stability** - Fixes for iOS/PWA refresh loops, SQLite locking, edge cases
+- **Sorting improvements** - Remember sort directions, better aggregate behavior
+- **Filtering** - Filter lists by content, history by media type, games by genre
+
+## 🐳 Docker Image Tags
+
+The Docker image is available at `ghcr.io/dannyvfilms/yamtrack` with the following tags:
+
+- `:latest` - Points to the stable release branch (default)
+- `:release` - Explicit tag for the release branch
+- `:dev` - Exact copy of upstream repo (FuzzyGrim/Yamtrack)
+
+## 💻 Local Development
+
+If you want to contribute or customize:
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/dannyvfilms/Yamtrack.git
+   cd Yamtrack
+   ```
+
+2. **Start Redis:**
+   ```bash
+   docker run -d --name redis -p 6379:6379 --restart unless-stopped redis:8-alpine
+   ```
+
+3. **Create `.env` file:**
+   ```bash
+   TMDB_API=your_key
+   MAL_API=your_key
+   IGDB_ID=your_id
+   IGDB_SECRET=your_secret
+   STEAM_API_KEY=your_key
+   SECRET=your_secret
+   DEBUG=True
+   ```
+
+4. **Install dependencies and run:**
+   ```bash
+   python -m pip install -U -r requirements-dev.txt
+   cd src
+   python manage.py migrate
+   python manage.py createsuperuser
+   ```
+
+5. **Start services** (in separate terminals):
+   ```bash
+   # Django server
+   python manage.py runserver
+
+   # Celery worker
+   celery -A config worker --beat --scheduler django --loglevel DEBUG
+
+   # Tailwind CSS watcher
+   tailwindcss -i ./static/css/input.css -o ./static/css/main.css --watch
+   ```
+
+Visit `http://localhost:8000` to see your local instance.
+
+## 🌐 Demo
+
+Try the app at [yamtrack.dannyvfilms.com](https://yamtrack.dannyvfilms.com) using:
+- Username: `demo`
+- Password: `demodemo`
+
+## 📚 Core Features (from Original Yamtrack)
+
+All the original Yamtrack features are preserved:
+
+- 🎬 Track movies, TV shows, anime, manga, games, books, comics, board games, **music, and podcasts**
+- 📺 Track each season of a TV show individually and episodes watched
+- ⭐ Save scores, status, progress, repeats, start/end dates, notes
+- 📈 Complete tracking history with timestamps for every action
+- ✏️ Create custom media entries for niche content
+- 📂 Create personal lists and collaborate with others
+- 📅 Calendar with iCalendar (.ics) subscription support
+- 🔔 Release notifications via Apprise (Discord, Telegram, ntfy, Slack, email, etc.)
+- 👥 Multi-user support with individual accounts
+- 🔑 OIDC and 100+ social providers (Google, GitHub, Discord, etc.)
+- 🦀 Integration with Jellyfin, Plex, and Emby for automatic tracking
+- 📥 Import from Trakt, Simkl, MyAnimeList, AniList, Kitsu, and more
+- 📊 Export/import CSV files
 
 ## 💪 Support the Project
 
-There are many ways you can support Yamtrack's development:
+### ⭐ Star the Repository
 
-### ⭐ Star the Project
-
-The simplest way to show your support is to star the repository on GitHub. It helps increase visibility and shows appreciation for the work.
+Show your support by starring the repository on GitHub!
 
 ### 🐛 Bug Reports
 
-Found a bug? Open an [issue](https://github.com/FuzzyGrim/Yamtrack/issues) on GitHub with detailed steps to reproduce it. Quality bug reports are incredibly valuable for improving stability.
+Found a bug? Open an [issue](https://github.com/dannyvfilms/Yamtrack/issues) with detailed steps to reproduce.
 
 ### 💡 Feature Suggestions
 
-Have ideas for new features? Share them through [GitHub issues](https://github.com/FuzzyGrim/Yamtrack/issues). Your feedback helps shape the future of Yamtrack.
+Have ideas? Share them through [GitHub issues](https://github.com/dannyvfilms/Yamtrack/issues).
 
 ### 🧪 Contributing
 
-Pull requests are welcome! Whether it's fixing typos, improving documentation, or adding new features, your contributions help make Yamtrack better for everyone.
+Pull requests are welcome! Whether it's fixing bugs, improving documentation, or adding features, your contributions help make Yamtrack better.
 
-### ☕ Donate
+## 📄 License
 
-If you'd like to support the project financially:
+This project is licensed under the AGPL-3.0 License.
 
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/fuzzygrim)
+## 🙏 Acknowledgments
+
+This fork is based on [FuzzyGrim/Yamtrack](https://github.com/FuzzyGrim/Yamtrack), an excellent self-hosted media tracker. This fork adds enhancements focused on daily usability, performance, and additional media types while maintaining compatibility with the core application.
