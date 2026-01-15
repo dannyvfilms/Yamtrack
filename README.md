@@ -10,31 +10,60 @@ Yamtrack is a self hosted media tracker for movies, tv shows, music, anime, mang
 
 ## 📱 Repo Specific Features
 
-### Major Features
-- Board Game tracking was developed by zskemp, and can be used with an API Key from BoardGameGeek.com.
-- Music tracking initially supports Plex for automatic scrobbling and imports. Last.fm support to come.
-- Preferences page for optional features and settings, allowing greater flexibility and choice.
-- History page to see exactly what you watched or listened to on particular days.
-- Statistics page revamp to show more data insights and favorites for the year.
+This fork keeps Yamtrack’s core feel, but leans hard into *daily usability*: faster navigation on large libraries, more “what should I watch next?” tooling, and a bunch of stability/performance work that makes the app feel snappier—especially on mobile and as a PWA.
 
-### Quality of Life
-- Designed with Video Games in mind, any media type can be changed from In Progress to Paused if left unattended for a configured amount of time.
-- Lists now support sorting by rating, and can be filtered by the content contained inside of them (e.g. "find my Movie lists faster")
-- Combine multiple plays of video games into one single line on the library view to see your total time played.
-- Sort TV Shows by Time Left to see what you can clear off your backlog the fastest.
-- Completed TV shows will be set to In Progress if a new season becomes available.
-- Choose between Comfortable (2 columns) or Compact (3 columns) for mobile.
-- Sort lists by ascending and descending, and remember the last direction.
-- Movie collections are displayed on the details page, by andrebk.
-- Choose the date and time format to display across the app.
-- Statistics page are now cached for faster load times.
-- Including dates in tracked media is now optional.
+### For former Trakt users (quick visual tour)
 
-| History                                                                                       | Statistics                                                                                    |
-| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-<img src="https://github.com/user-attachments/assets/e60ab087-5faa-4cc0-ad15-f1865453ec6e" /> | <img src="https://github.com/user-attachments/assets/5e7b301a-3a92-4c0b-a7d6-573bca240058" />
-<img src="https://github.com/user-attachments/assets/72338fdf-bb24-4c82-92ca-828bd2c1820b" /> | <img src="https://github.com/user-attachments/assets/04853bea-f5d9-4b71-9ea2-0f9414479f4e" />
+- [Time Left Sort](https://ibb.co/yFr6dSDM): Trakt-style “Progress” page: mixes *In Progress* + *Planning*, then *Completed*, then *Dropped*, sorted by time left.
+- [History Page](https://ibb.co/tp51QHFF): A clean, single place to see *everything* you did—without hopping between media types or digging through detail pages.
+- [View Additional Plays](https://ibb.co/jvdswfHF): Drill into extra plays to understand a show/genre’s history, and quickly spot/remove duplicate plays.
+- [Activity Overview Statistics](https://ibb.co/r2cTxgcX): Year-in-review + all-time style stats with the kind of depth Trakt users expect.
+- [Sharable Lists](https://ibb.co/JjwX9hNX): Share your best lists, keep the link simple, and get recommendations based on what you share.
+- [More Media Types](https://ibb.co/C3d3HMxD): Beyond the originals: music + podcasts (and more), so your tracking isn’t split across multiple apps.
 
+### Major additions (beyond upstream)
+
+- **Music + Podcast tracking (real library support)**
+  - Albums / artists / tracks, plus scrobbling + metadata integrations (MusicBrainz, Plex music, artwork fetching)
+  - Podcast shows + episodes, RSS support, Pocket Casts import/sync, and better completion inference
+
+- **History page rewrite**
+  - Replaced media timeline in statistics with a dedicated page
+  - Month-based navigation + per-day caching so big histories load quickly
+  - Background refresh + status polling, plus fixes for iOS/PWA refresh loops
+  - Supports filters for Today in History, Genres, and more
+
+- **Statistics page overhaul**
+  - Major additions in the types of statistics reported to match Trakt's year in review
+  - Cached stats with multiple time ranges, richer breakdowns, and better “what did I actually do?” views
+  - More useful distributions (including time-based views), streak tooling, and mobile-friendly layouts
+
+- **Lists + recommendations**
+  - Share your lists publicly with a Cloudflare Tunnel, Reverse Proxy, or similar workflow
+  - Better list detail experiences (sorting, filtering, searching)
+  - Recommendation workflow integrated into lists so lists can *generate ideas*, not just store them
+
+- **Integrations that behave better under real usage**
+  - Improved Plex import/webhook handling (including edge cases like GUID quirks and SQLite locking)
+  - Scheduled Pocket Casts imports and more resilient background workflows
+
+### Quality-of-life upgrades you feel every day
+
+- **Backlog-friendly TV sorting**: Time Left sorting helps you finish what’s closest to “done,” not what’s alphabetically next.
+- **Mobile-first tweaks**: compact vs comfortable grids, more readable cards, fewer tap-fights with overlays/z-index issues.
+- **Preferences that matter**: enable/disable media types, date/time formats, sort defaults, mobile layout choices, auto-pause behaviors.
+- **Cleaner tracking + data integrity**: runtime population/backfills, validation improvements, and fewer “why is this weird?” moments.
+- **Performance & stability**: caching infrastructure (history + stats), safer refresh behavior, and fewer long-load pages.
+
+### A couple of feature screenshots
+
+**History**
+<img src="https://github.com/user-attachments/assets/e60ab087-5faa-4cc0-ad15-f1865453ec6e" />
+<img src="https://github.com/user-attachments/assets/72338fdf-bb24-4c82-92ca-828bd2c1820b" />
+
+**Statistics**
+<img src="https://github.com/user-attachments/assets/5e7b301a-3a92-4c0b-a7d6-573bca240058" />
+<img src="https://github.com/user-attachments/assets/04853bea-f5d9-4b71-9ea2-0f9414479f4e" />
 
 ## 📱 Repo Specific Installation
 Docker image is now available: ```docker pull ghcr.io/dannyvfilms/yamtrack:latest```
@@ -43,6 +72,8 @@ Available tags:
 - `:latest` - Points to the stable release branch (default when no tag is specified)
 - `:release` - Explicit tag for the release branch
 - `:dev` - Exact copy of upstream repo (FuzzyGrim/Yamtrack)
+
+Original Readme below, needs to be updated in several aspects.
 
 ## 🚀 Demo
 
