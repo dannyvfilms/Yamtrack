@@ -30,6 +30,30 @@
   clip-path: inset(0 50% 0 0);
 }
 
+/* Game/Boardgame stats cards: 3x2 grid on mobile, flex-wrap on desktop */
+.stats-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: calc(var(--spacing) * 2);
+}
+
+@media (min-width: 48rem) {
+  .stats-card-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: calc(var(--spacing) * 4);
+  }
+
+  .stats-card-grid > * {
+    width: 120px;
+  }
+
+  /* Reset order on desktop */
+  .stats-card-grid > * {
+    order: 0 !important;
+  }
+}
+
 
 .media-grid {
   @apply grid gap-4;
