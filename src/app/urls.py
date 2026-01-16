@@ -91,7 +91,17 @@ urlpatterns = [
         views.prefetch_artist_covers,
         name="prefetch_artist_covers",
     ),
+    path(
+        "music/artist/<int:artist_id>/update-score/",
+        views.update_artist_score,
+        name="update_artist_score",
+    ),
     path("music/album/<int:album_id>/", views.album_detail, name="album_detail"),
+    path(
+        "music/album/<int:album_id>/update-score/",
+        views.update_album_score,
+        name="update_album_score",
+    ),
     path(
         "music/artist/<int:artist_id>/sync/",
         views.sync_artist_discography_view,

@@ -2,39 +2,54 @@
 {# Partial template for album grid - used by artist detail and async cover prefetch #}
 <div{% if grid_id %} id="{{ grid_id }}"{% endif %} class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
   {% for album in all_albums %}
-    <a href="{% url 'album_detail' album.id %}"
-       class="group bg-[#2a2f35] rounded-lg overflow-hidden hover:bg-[#343a40] transition-colors duration-200 relative">
-      {# Cover art #}
-      {% if album.image and album.image != IMG_NONE %}
-        <img src="{{ album.image }}"
-             alt="{{ album.title }}"
-             class="w-full aspect-square object-cover">
-      {% else %}
-        <div class="w-full aspect-square bg-[#1a1d20] flex items-center justify-center">
-          {% icon 'music' is_active=False extra_classes="w-12 h-12 text-gray-600" %}
-        </div>
-      {% endif %}
+    <div class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative search-result-card-square hover:ring-2 hover:ring-indigo-500 transition-all group"
+         data-media-type="music">
+      <div class="relative">
+        <a href="{% url 'album_detail' album.id %}">
+          {# Cover art #}
+          {% if album.image and album.image != IMG_NONE %}
+            <img alt="{{ album.title }}"
+                 class="media-card-poster lazyload w-full aspect-[1/1] object-cover bg-[#3e454d]"
+                 data-src="{{ album.image }}"
+                 src="{{ IMG_NONE }}">
+          {% else %}
+            <div class="w-full aspect-[1/1] bg-[#3e454d] flex items-center justify-center">
+              {% icon 'music' is_active=False extra_classes="w-12 h-12 text-gray-600" %}
+            </div>
+          {% endif %}
+        </a>
+        
+        {# Play count badge #}
+        {% if album.play_count %}
+          <div class="media-status-chip absolute top-2 left-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center gap-1.5 shadow-md max-w-[calc(100%-1rem)] overflow-hidden">
+            <span class="text-xs font-medium text-white drop-shadow-sm truncate">{{ album.play_count }} play{{ album.play_count|pluralize }}</span>
+          </div>
+        {% endif %}
+      </div>
       
-      {# Play count badge #}
-      {% if album.play_count %}
-        <div class="absolute top-2 left-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md">
-          <span class="text-sm text-white">{{ album.play_count }} play{{ album.play_count|pluralize }}</span>
+      <div class="media-card-body p-3 bg-card-body">
+        <div class="flex items-center gap-2 min-w-0">
+          <a href="{% url 'album_detail' album.id %}"
+             class="media-card-title text-sm font-semibold text-white hover:text-indigo-400 transition duration-300 line-clamp-2 min-w-0"
+             title="{{ album.title }}">
+            {{ album.title }}
+          </a>
+          {% if album.score is not None %}
+            <span class="flex items-center gap-1 text-xs text-yellow-300 shrink-0">
+              {% include "app/icons/star.svg" with classes="w-3 h-3 text-yellow-400 fill-current" %}
+              <span class="font-medium">{{ album.score }}</span>
+            </span>
+          {% endif %}
         </div>
-      {% endif %}
-      
-      <div class="p-3">
-        <h3 class="font-medium text-sm text-white group-hover:text-rose-400 transition-colors line-clamp-2 mb-1">
-          {{ album.title }}
-        </h3>
-        <div class="flex items-center gap-2">
+        <p class="media-card-year text-xs text-gray-400 mt-1">
           {% if album.release_date %}
-            <span class="text-xs text-gray-400 shrink-0">{{ album.release_date|date:"Y" }}</span>
+            {{ album.release_date|date:"Y" }}
           {% endif %}
           {% if show_release_type|default:True and album.release_type %}
-            <span class="text-xs text-gray-500 truncate">• {{ album.release_type|cut:"Album + " }}</span>
+            {% if album.release_date %} • {% endif %}{{ album.release_type|cut:"Album + " }}
           {% endif %}
-        </div>
+        </p>
       </div>
-    </a>
+    </div>
   {% endfor %}
 </div>

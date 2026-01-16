@@ -34,6 +34,8 @@ from app import (
     history_processor,
     statistics_cache,
 )
+
+# history_cache is imported above
 from app import (
     statistics as stats,
 )
@@ -1613,6 +1615,87 @@ def update_media_score(request, media_type, instance_id):
         "%s score updated to %s",
         media,
         score,
+    )
+
+    return JsonResponse(
+        {
+            "success": True,
+            "score": score,
+        },
+    )
+
+
+@require_POST
+def update_artist_score(request, artist_id):
+    """Update the user's score for an artist."""
+    from django.shortcuts import get_object_or_404
+
+    from app.models import Artist, ArtistTracker
+
+    artist = get_object_or_404(Artist, id=artist_id)
+
+    # Get or create the tracker for this user
+    tracker, _ = ArtistTracker.objects.get_or_create(
+        user=request.user,
+        artist=artist,
+    )
+
+    score = float(request.POST.get("score"))
+    tracker.score = score
+    tracker.save()
+    logger.info(
+        "%s score updated to %s",
+        artist,
+        score,
+    )
+
+    # Invalidate history cache since artist ratings might appear in history entries
+    # We invalidate all history days since ratings are metadata
+    history_cache.invalidate_history_cache(
+        request.user.id,
+        force=True,
+        logging_styles=("sessions", "repeats"),
+    )
+
+    return JsonResponse(
+        {
+            "success": True,
+            "score": score,
+        },
+    )
+
+
+@require_POST
+def update_album_score(request, album_id):
+    """Update the user's score for an album."""
+    from django.shortcuts import get_object_or_404
+
+    from app.models import Album, AlbumTracker
+
+    album = get_object_or_404(Album, id=album_id)
+
+    # Get or create the tracker for this user
+    tracker, _ = AlbumTracker.objects.get_or_create(
+        user=request.user,
+        album=album,
+    )
+
+    score = float(request.POST.get("score"))
+    tracker.score = score
+    tracker.save()
+    logger.info(
+        "%s score updated to %s",
+        album,
+        score,
+    )
+
+    # Invalidate history cache since album ratings appear in history entries
+    # We invalidate all history days since ratings are metadata displayed on all days
+    # where the album appears in history
+    history_cache.invalidate_history_cache(
+        request.user.id,
+        force=True,
+        logging_styles=("sessions", "repeats"),
     )
 
     return JsonResponse(
@@ -3417,9 +3500,23 @@ def artist_detail(request, artist_id):
             album_play_counts[music.album_id] = album_play_counts.get(music.album_id, 0) + play_count
             total_plays += play_count
 
-    # Attach play_count to each album
+    # Get user's album trackers for these albums
+    from app.models import AlbumTracker
+    album_trackers = AlbumTracker.objects.filter(
+        user=request.user,
+        album__in=all_albums,
+    ).select_related('album')
+
+    # Build a dict mapping album_id -> tracker score
+    album_scores = {}
+    for tracker in album_trackers:
+        if tracker.score is not None:
+            album_scores[tracker.album_id] = tracker.score
+
+    # Attach play_count and score to each album
     for album in all_albums:
         album.play_count = album_play_counts.get(album.id, 0)
+        album.score = album_scores.get(album.id)  # None if no tracker/score
 
     discography_groups = build_discography_groups(all_albums)
     missing_cover_count = sum(

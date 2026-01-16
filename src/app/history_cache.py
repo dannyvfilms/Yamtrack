@@ -407,7 +407,7 @@ def _get_music_runtime_minutes(music_entry, track_duration_cache=None):
     return 0
 
 
-def _build_music_album_entries(music_entries_for_album, album, day_date, user, track_duration_cache=None):
+def _build_music_album_entries(music_entries_for_album, album, day_date, user, track_duration_cache=None, album_scores=None):
     """Build a single history entry for an album's plays on a given day.
     
     Groups all track plays for an album on a day into one card showing:
@@ -416,6 +416,7 @@ def _build_music_album_entries(music_entries_for_album, album, day_date, user, t
     - Album name
     - Time range (earliest to latest play time)
     - Total runtime
+    - Album rating (if available)
     """
     if not music_entries_for_album:
         return None
@@ -479,6 +480,11 @@ def _build_music_album_entries(music_entries_for_album, album, day_date, user, t
     genres = _resolve_music_genres(album=album, artist=album.artist if album else None, track=track)
     entry_key = f"{album.id if album else 'album'}-{day_date.strftime('%Y%m%d')}"
 
+    # Get album score if available
+    album_score = None
+    if album_scores and album and album.id:
+        album_score = album_scores.get(album.id)
+
     entry = {
         "media_type": MediaTypes.MUSIC.value,
         "item": _serialize_item(entry_item),
@@ -496,6 +502,7 @@ def _build_music_album_entries(music_entries_for_album, album, day_date, user, t
         "runtime_display": helpers.minutes_to_hhmm(total_runtime_minutes) if total_runtime_minutes else None,
         "instance_id": instance_id,
         "entry_key": entry_key,
+        "score": album_score,  # Album tracker score
     }
     if genres:
         entry["genres"] = genres
@@ -1003,6 +1010,18 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                     recording_key = ("recording", track_data["musicbrainz_recording_id"])
                     track_duration_cache[recording_key] = track_data["duration_ms"]
 
+        # Fetch album trackers for albums in history to include scores
+        album_scores = {}
+        if album_ids_with_music:
+            from app.models import AlbumTracker
+            album_trackers = AlbumTracker.objects.filter(
+                user=user,
+                album_id__in=album_ids_with_music,
+            ).values("album_id", "score")
+            for tracker in album_trackers:
+                if tracker["score"] is not None:
+                    album_scores[tracker["album_id"]] = tracker["score"]
+
         # Now build one entry per album per day
         for (album_id, day_date), album_music_entries in music_by_album_day.items():
             album = album_lookup.get(album_id)
@@ -1022,7 +1041,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                 if not genre_match:
                     continue
 
-            entry = _build_music_album_entries(album_music_entries, album, day_date, user, track_duration_cache)
+            entry = _build_music_album_entries(album_music_entries, album, day_date, user, track_duration_cache, album_scores)
             if entry:
                 entries.append(entry)
                 entry_counts["music"] += 1
@@ -1857,6 +1876,18 @@ def build_history_day(user, day_key, logging_style_override=None):
                     recording_key = ("recording", track_data["musicbrainz_recording_id"])
                     track_duration_cache[recording_key] = track_data["duration_ms"]
 
+        # Fetch album trackers for albums in history to include scores
+        album_scores = {}
+        if album_ids:
+            from app.models import AlbumTracker
+            album_trackers = AlbumTracker.objects.filter(
+                user=user,
+                album_id__in=album_ids,
+            ).values("album_id", "score")
+            for tracker in album_trackers:
+                if tracker["score"] is not None:
+                    album_scores[tracker["album_id"]] = tracker["score"]
+
         album_groups = {}
         for record in music_history:
             played_at_local = _localize_datetime(record["end_date"])
@@ -1914,6 +1945,11 @@ def build_history_day(user, day_key, logging_style_override=None):
             genres = _resolve_music_genres(album=album, artist=album.artist if album else None, track=track)
             entry_key = f"{album_id or 'album'}-{day_key}"
 
+            # Get album score if available
+            album_score = None
+            if album_scores and album_id:
+                album_score = album_scores.get(album_id)
+
             entry = {
                 "media_type": MediaTypes.MUSIC.value,
                 "item": _serialize_item(entry_item),
@@ -1933,6 +1969,7 @@ def build_history_day(user, day_key, logging_style_override=None):
                 else None,
                 "instance_id": group["primary_music_id"],
                 "entry_key": entry_key,
+                "score": album_score,  # Album tracker score
             }
             if genres:
                 entry["genres"] = genres
@@ -2754,6 +2791,24 @@ def invalidate_history_cache(
                 user_id,
                 logging_style,
                 "full_clear",
+            )
+
+    # Schedule refresh after invalidating all cache
+    # This ensures cache is rebuilt and page doesn't get stuck
+    if force:
+        for style in logging_styles:
+            logging_style = _normalize_logging_style(style)
+            scheduled = schedule_history_refresh(
+                user_id,
+                logging_style,
+                warm_days=0,  # Index-only refresh, don't warm days
+            )
+            logger.info(
+                "history_index_refresh_scheduled user_id=%s logging_style=%s warm_days=0 scheduled=%s reason=%s",
+                user_id,
+                logging_style,
+                scheduled,
+                "album_score_change",
             )
 
 

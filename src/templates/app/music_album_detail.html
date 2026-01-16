@@ -93,6 +93,55 @@
             <p class="text-lg font-bold text-white text-center">{{ total_runtime }}</p>
           </div>
         {% endif %}
+        {# Your Score card - interactive rating popup #}
+        <div x-data="{ showRatingPopup: false, rating: {% if album_tracker %}{{ album_tracker.score|default:'null' }}{% else %}null{% endif %}, hoverRating: null, isHovering: false }"
+             class="relative">
+            <!-- Rating display -->
+            <div @click="showRatingPopup = !showRatingPopup"
+                 class="bg-[#2a2f35] p-3 rounded-lg cursor-pointer w-[120px]">
+              <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">YOUR SCORE</h3>
+              <div class="flex items-center justify-center">
+                {% include "app/icons/star.svg" with classes="w-5 h-5 mr-1.5 text-yellow-400 fill-yellow-400" %}
+                <template x-if="rating">
+                  <div class="flex items-baseline">
+                    <span class="text-lg font-bold text-white" x-text="rating"></span>
+                    <span class="text-gray-400 ml-0.5 text-sm">/10</span>
+                  </div>
+                </template>
+                <template x-if="!rating">
+                  <span class="text-lg font-bold text-gray-400">-</span>
+                </template>
+              </div>
+              <p class="text-xs text-gray-400 mt-0.5 text-center">Click to edit</p>
+            </div>
+
+            <!-- Rating popup -->
+            <div x-show="showRatingPopup"
+                 @click.outside="showRatingPopup = false; isHovering = false"
+                 class="absolute left-0 top-full mt-2 p-3 bg-[#2a2f35] rounded-lg shadow-lg z-10 w-[250px] border border-gray-700"
+                 @mouseenter="isHovering = true"
+                 @mouseleave="isHovering = false; hoverRating = null">
+              <div class="flex justify-between mb-1">
+                {% with rating_range=10|get_range %}
+                  {% for rating_value in rating_range %}
+                    <button @click="rating = {{ rating_value }}; showRatingPopup = false; isHovering = false"
+                            @mouseenter="hoverRating = {{ rating_value }}"
+                            hx-post="{% url 'update_album_score' album.id %}"
+                            hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+                            hx-vals='{"score": {{ rating_value }} }'
+                            hx-trigger="click"
+                            hx-swap="none"
+                            class="focus:outline-none flex flex-col items-center cursor-pointer">
+                      <div :class="{ 'text-yellow-400': {{ rating_value }} <= (isHovering ? hoverRating : rating), 'text-gray-600': {{ rating_value }} > (isHovering ? hoverRating : rating) }">
+                        {% include "app/icons/star.svg" with classes="w-5 h-5 hover:scale-110 transition-transform" %}
+                      </div>
+                      <span class="text-xs mt-1 text-gray-400">{{ rating_value }}</span>
+                    </button>
+                  {% endfor %}
+                {% endwith %}
+              </div>
+            </div>
+          </div>
       </div>
     </div>
   </div>
