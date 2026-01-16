@@ -343,7 +343,35 @@ def schedule_runtime_backfill_on_item_save(
     update_fields=None,
     **kwargs,
 ):  # noqa: ARG001
-    """Queue runtime/genre backfills for newly created or missing metadata items."""
+    """Queue runtime/genre backfills for newly created or missing metadata items.
+    
+    Also invalidates time_left cache when episode runtime changes.
+    """
+    # Check if runtime_minutes was actually updated (not just saving the same value)
+    runtime_updated = (
+        update_fields is None or "runtime_minutes" in update_fields
+    ) and instance.media_type == MediaTypes.EPISODE.value
+    
+    # Invalidate time_left cache for all users tracking this show/season when runtime changes
+    if runtime_updated:
+        from app.cache_utils import clear_time_left_cache_for_user
+        from app.models import BasicMedia
+        
+        # Get all users who track this show or season
+        tracking_users = BasicMedia.objects.filter(
+            item__media_id=instance.media_id,
+            item__source=instance.source,
+            item__media_type__in=[MediaTypes.TV.value, MediaTypes.SEASON.value],
+        ).values_list("user_id", flat=True).distinct()
+        
+        for user_id in tracking_users:
+            clear_time_left_cache_for_user(user_id)
+            logger.debug(
+                "Cleared time_left cache for user %s due to runtime update on %s",
+                user_id,
+                instance,
+            )
+    
     if instance.runtime_minutes is not None and instance.runtime_minutes != 999999:
         MetadataBackfillState.objects.filter(
             item=instance,

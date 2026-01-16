@@ -1499,6 +1499,68 @@ def season_details(
 
     episodes_in_db = current_instance.episodes.all() if current_instance else []
 
+    # Save episode runtimes from raw metadata before processing for display
+    # This ensures runtime data is persisted when viewing the season page
+    if source != Sources.MANUAL.value and season_metadata.get("episodes"):
+        from django.utils import timezone
+        from datetime import datetime
+        
+        raw_episodes = season_metadata["episodes"]
+        current_datetime = timezone.now()
+        episodes_to_update = []
+        
+        for episode in raw_episodes:
+            episode_number = episode.get("episode_number")
+            if episode_number is None:
+                continue
+            
+            # Get or create episode item
+            episode_item, _ = Item.objects.get_or_create(
+                media_id=media_id,
+                source=source,
+                media_type=MediaTypes.EPISODE.value,
+                season_number=season_number,
+                episode_number=episode_number,
+                defaults={"title": season_metadata.get("title", ""), "image": settings.IMG_NONE},
+            )
+            
+            # Extract runtime from raw episode data (TMDB returns integer minutes)
+            runtime_minutes = None
+            if episode.get("runtime") is not None:
+                runtime_minutes = int(episode["runtime"]) if episode["runtime"] > 0 else None
+            elif episode.get("air_date"):
+                # Check if episode has aired
+                try:
+                    if isinstance(episode["air_date"], str):
+                        date_obj = datetime.strptime(episode["air_date"], "%Y-%m-%d")
+                        air_date_dt = timezone.make_aware(date_obj, timezone.get_current_timezone())
+                    else:
+                        air_date_dt = episode["air_date"]
+                    
+                    if air_date_dt and air_date_dt.year > 1900 and air_date_dt <= current_datetime:
+                        # Episode has aired but no runtime - mark as unknown (use -1)
+                        runtime_minutes = -1
+                except (ValueError, TypeError):
+                    pass
+            
+            # Only update if runtime is actually new (not just saving the same value)
+            if episode_item.runtime_minutes != runtime_minutes:
+                episode_item.runtime_minutes = runtime_minutes
+                episodes_to_update.append(episode_item)
+        
+        if episodes_to_update:
+            Item.objects.bulk_update(episodes_to_update, ["runtime_minutes"], batch_size=100)
+            # Invalidate time_left cache for all users (runtime affects time calculations)
+            from app.cache_utils import clear_time_left_cache_for_user
+            # Get all users who track this show
+            tracking_users = BasicMedia.objects.filter(
+                item__media_id=media_id,
+                item__source=source,
+                item__media_type__in=[MediaTypes.TV.value, MediaTypes.SEASON.value],
+            ).values_list("user_id", flat=True).distinct()
+            for user_id in tracking_users:
+                clear_time_left_cache_for_user(user_id)
+
     if source == Sources.MANUAL.value:
         season_metadata["episodes"] = manual.process_episodes(
             season_metadata,
@@ -1609,6 +1671,9 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
             title += f" - Season {season_number}"
 
         if media_type == MediaTypes.SEASON.value:
+            # Store raw episodes before processing (for runtime extraction)
+            raw_episodes = metadata.get("episodes", [])
+            
             metadata["episodes"] = tmdb.process_episodes(
                 metadata,
                 [],
@@ -1627,6 +1692,12 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
 
             episodes_to_update = []
             episode_count = 0
+            
+            # Create a lookup for raw episode data by episode_number
+            raw_episode_map = {
+                ep["episode_number"]: ep
+                for ep in raw_episodes
+            }
 
             for episode_data in metadata["episodes"]:
                 episode_number = episode_data["episode_number"]
@@ -1634,6 +1705,28 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
                     episode_item = existing_episodes[episode_number]
                     episode_item.title = metadata["title"]
                     episode_item.image = episode_data["image"]
+                    
+                    # Extract and update release_datetime from TMDB air_date
+                    air_date = episode_data.get("air_date")
+                    if air_date is not None:
+                        # air_date is already converted to datetime by process_episodes
+                        # or it's None if TMDB returned null
+                        # Use same logic as process_season_episodes: only store meaningful dates
+                        if hasattr(air_date, "year") and air_date.year > 1900:
+                            episode_item.release_datetime = air_date
+                        else:
+                            episode_item.release_datetime = None
+                    # If air_date is None, don't update release_datetime (keep existing or None)
+                    
+                    # Extract and update runtime_minutes from raw episode data
+                    raw_episode = raw_episode_map.get(episode_number)
+                    if raw_episode and raw_episode.get("runtime") is not None:
+                        from app.statistics import parse_runtime_to_minutes
+                        # Raw episode runtime is an integer (minutes) from TMDB
+                        runtime_minutes = int(raw_episode["runtime"])
+                        if runtime_minutes > 0:
+                            episode_item.runtime_minutes = runtime_minutes
+                    
                     episodes_to_update.append(episode_item)
                     episode_count += 1
 
@@ -1646,11 +1739,11 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
             if episodes_to_update:
                 updated_count = Item.objects.bulk_update(
                     episodes_to_update,
-                    ["title", "image"],
+                    ["title", "image", "release_datetime", "runtime_minutes"],
                     batch_size=100,
                 )
                 logger.info(
-                    "Successfully updated %s episodes for %s",
+                    "Successfully updated %s episodes for %s (including release_datetime and runtime_minutes)",
                     updated_count,
                     title,
                 )
@@ -5372,7 +5465,9 @@ def _sort_tv_media_by_time_left(media_list, direction="asc"):
                     episode_number__gt=watched_in_season,
                     runtime_minutes__isnull=False,
                 ).exclude(
-                    runtime_minutes=999999,
+                    runtime_minutes=999999,  # Exclude placeholder for unknown runtime
+                ).exclude(
+                    runtime_minutes=-1,  # Exclude -1 marker for "aired but runtime unknown"
                 ).values_list("runtime_minutes", flat=True)
 
                 runtimes = list(unwatched_episodes)

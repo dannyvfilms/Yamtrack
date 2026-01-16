@@ -663,7 +663,8 @@
                     {# Set active to highlight the current movie in a collection. Avoid TV media, since seasons have same ID as the parent show #}
                     {% include "app/components/media_card.html" with item=result.item title=result.item.season_title|default:result.item.title media=result.media user=user active=media.media_id|str_equals:result.item.media_id from_grid=True %}
                   {% else %}
-                    {% include "app/components/media_card.html" with item=result.item title=result.item.season_title|default:result.item.title media=result.media user=user from_grid=True %}
+                    {# Seasons: hide progress chip (shown in hover subtitle) but keep time left chip #}
+                    {% include "app/components/media_card.html" with item=result.item title=result.item.season_title|default:result.item.title media=result.media user=user from_grid=True show_progress_chip=False show_release_year_placeholder=True %}
                   {% endif %}
                 {% endfor %}
               </div>

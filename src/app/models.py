@@ -1486,6 +1486,8 @@ class Media(models.Model):
 
         if self.item.media_type == MediaTypes.SEASON.value and season_number:
             # For a Season: query episodes in this season where episode_number > progress
+            # Only count episodes that have actually been released (have aired)
+            current_datetime = timezone.now()
             unwatched_episodes = Item.objects.filter(
                 media_id=self.item.media_id,
                 source=self.item.source,
@@ -1493,8 +1495,12 @@ class Media(models.Model):
                 season_number=season_number,
                 episode_number__gt=self.progress,
                 runtime_minutes__isnull=False,
+                release_datetime__isnull=False,  # Only count episodes with air dates
+                release_datetime__lte=current_datetime,  # Only count episodes that have aired
             ).exclude(
-                runtime_minutes=999999,
+                runtime_minutes=999999,  # Exclude placeholder for unknown runtime
+            ).exclude(
+                runtime_minutes=-1,  # Exclude -1 marker for "aired but runtime unknown"
             ).values_list("runtime_minutes", flat=True)
 
             runtimes = list(unwatched_episodes)
@@ -1964,34 +1970,57 @@ class Season(Media):
 
     @property
     def progress(self):
-        """Return the current episode number of the season."""
+        """Return the current episode number of the season.
+        
+        For rewatching: only considers it a rewatch if ALL episodes up to that point
+        have been watched at least that many times. Otherwise uses max episode number
+        to ignore errant repeats.
+        """
         episodes = self.episodes.all()
         if not episodes:
             return 0
 
+        # Calculate repeat counts for each episode number
+        episode_counts = {}
+        for ep in episodes:
+            ep_num = ep.item.episode_number
+            episode_counts[ep_num] = episode_counts.get(ep_num, 0) + 1
+
+        if not episode_counts:
+            return 0
+
         if self.status == Status.IN_PROGRESS.value:
-            # Calculate repeat counts for each episode number
-            episode_counts = {}
-            for ep in episodes:
-                ep_num = ep.item.episode_number
-                episode_counts[ep_num] = episode_counts.get(ep_num, 0) + 1
-
-            # Sort by repeat count then episode_number
-            sorted_episodes = sorted(
-                episodes,
-                key=lambda e: (
-                    -episode_counts[e.item.episode_number],
-                    -e.item.episode_number,
-                ),
-            )
-        else:
-            # Default sorting by episode_number
-            sorted_episodes = sorted(
-                episodes,
-                key=lambda e: -e.item.episode_number,
-            )
-
-        return sorted_episodes[0].item.episode_number
+            # Check for systematic rewatching: only consider it a rewatch if ALL episodes
+            # up to that point have been watched at least that many times.
+            # This prevents errant repeats (single episode watched twice) from skewing progress.
+            
+            sorted_episode_nums = sorted(episode_counts.keys())
+            max_rewatch_level = 0
+            max_rewatch_progress = 0
+            
+            # Check each possible rewatch level (2, 3, ...)
+            # Level 1 is just normal watching, so we start at 2
+            for rewatch_level in range(2, max(episode_counts.values()) + 1):
+                # Find the highest episode number where all episodes up to it have at least this many watches
+                consistent_up_to = 0
+                for ep_num in sorted_episode_nums:
+                    if episode_counts[ep_num] >= rewatch_level:
+                        consistent_up_to = ep_num
+                    else:
+                        # Can't be a consistent rewatch beyond this point
+                        break
+                
+                if consistent_up_to > max_rewatch_progress:
+                    max_rewatch_level = rewatch_level
+                    max_rewatch_progress = consistent_up_to
+            
+            # If we found a consistent rewatch pattern, use it
+            if max_rewatch_level > 1 and max_rewatch_progress > 0:
+                return max_rewatch_progress
+        
+        # Otherwise, use the maximum episode number watched (at least once)
+        # This handles normal watching and errant repeats
+        return max(episode_counts.keys())
 
     @property
     def progressed_at(self):
@@ -2261,6 +2290,8 @@ class Season(Media):
 
         image = settings.IMG_NONE
         runtime_minutes = None
+        release_datetime = None
+        
         for episode in season_metadata["episodes"]:
             if episode["episode_number"] == int(episode_number):
                 if episode.get("still_path"):
@@ -2273,10 +2304,29 @@ class Season(Media):
                 else:
                     image = settings.IMG_NONE
 
-                # Extract runtime from episode metadata
-                if episode.get("runtime"):
-                    from app.statistics import parse_runtime_to_minutes
-                    runtime_minutes = parse_runtime_to_minutes(episode["runtime"])
+                # Extract runtime from episode metadata (raw TMDB data has integer runtime in minutes)
+                if episode.get("runtime") is not None:
+                    # Runtime is an integer (minutes) from TMDB
+                    runtime_minutes = int(episode["runtime"]) if episode["runtime"] > 0 else None
+                
+                # Extract release_datetime from episode air_date
+                air_date = episode.get("air_date")
+                if air_date:
+                    from datetime import datetime
+                    from django.utils import timezone
+                    
+                    try:
+                        # TMDB returns dates in YYYY-MM-DD format (string)
+                        if isinstance(air_date, str):
+                            date_obj = datetime.strptime(air_date, "%Y-%m-%d")
+                            release_datetime = timezone.make_aware(date_obj, timezone.get_current_timezone())
+                        elif hasattr(air_date, "year"):
+                            # Already a datetime object
+                            release_datetime = air_date if timezone.is_aware(air_date) else timezone.make_aware(air_date)
+                    except (ValueError, TypeError):
+                        # If parsing fails, keep release_datetime as None
+                        pass
+                
                 break
 
         item, created = Item.objects.get_or_create(
@@ -2289,17 +2339,32 @@ class Season(Media):
                 "title": self.item.title,
                 "image": image,
                 "runtime_minutes": runtime_minutes,
+                "release_datetime": release_datetime,
             },
         )
 
-        # Update runtime if it's not set and we have it now
-        if not created and not item.runtime_minutes and runtime_minutes:
-            item.runtime_minutes = runtime_minutes
-            item.save()
-        elif created and runtime_minutes:
-            # Ensure runtime is set for newly created items
-            item.runtime_minutes = runtime_minutes
-            item.save()
+        # Update fields if not set and we have them now
+        updated = False
+        if not created:
+            if not item.runtime_minutes and runtime_minutes:
+                item.runtime_minutes = runtime_minutes
+                updated = True
+            if not item.release_datetime and release_datetime:
+                item.release_datetime = release_datetime
+                updated = True
+            if updated:
+                item.save(update_fields=["runtime_minutes", "release_datetime"])
+        elif created:
+            # Ensure runtime and release_datetime are set for newly created items
+            needs_save = False
+            if runtime_minutes and not item.runtime_minutes:
+                item.runtime_minutes = runtime_minutes
+                needs_save = True
+            if release_datetime and not item.release_datetime:
+                item.release_datetime = release_datetime
+                needs_save = True
+            if needs_save:
+                item.save(update_fields=["runtime_minutes", "release_datetime"])
 
         return item
 

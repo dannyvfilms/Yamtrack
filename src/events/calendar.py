@@ -612,14 +612,35 @@ def process_season_episodes(item, metadata, events_bulk):
             else None
         )
 
+        # Extract runtime from episode metadata (TMDB returns integer minutes)
+        # Use -1 to mark "aired but runtime unknown" vs None for "not aired yet"
+        runtime_minutes = None
+        if episode.get("runtime") is not None:
+            runtime_minutes = int(episode["runtime"]) if episode["runtime"] > 0 else None
+        elif release_datetime and release_datetime.year > 1900:
+            # Episode has aired but no runtime - mark as unknown (use -1)
+            # This distinguishes from None which means "not aired yet"
+            runtime_minutes = -1
+
         updated = False
+        update_fields = []
+        
         if episode_item.image == settings.IMG_NONE and image != settings.IMG_NONE:
             episode_item.image = image
             updated = True
+            update_fields.append("image")
 
         if episode_item.release_datetime != release_datetime:
             episode_item.release_datetime = release_datetime
             updated = True
+            update_fields.append("release_datetime")
+
+        # Only update runtime if it's actually new data (not just saving the same value)
+        # This prevents unnecessary cache invalidations
+        if episode_item.runtime_minutes != runtime_minutes:
+            episode_item.runtime_minutes = runtime_minutes
+            updated = True
+            update_fields.append("runtime_minutes")
 
         if updated and episode_item not in new_items:
             items_to_update.append(episode_item)
@@ -628,7 +649,9 @@ def process_season_episodes(item, metadata, events_bulk):
         Item.objects.bulk_create(new_items, batch_size=100)
 
     if items_to_update:
-        Item.objects.bulk_update(items_to_update, ["image", "release_datetime"], batch_size=100)
+        # Always include all fields that might be updated
+        # Django's bulk_update is efficient and only updates changed values
+        Item.objects.bulk_update(items_to_update, ["image", "release_datetime", "runtime_minutes"], batch_size=100)
 
 
 def update_tv_status_for_new_season(tv_item, season_number):

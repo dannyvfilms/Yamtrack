@@ -118,34 +118,42 @@
             {% if show_progress_chip|default_if_none:True %}
               {% with aggregated_progress=media|safe_attr:"aggregated_progress" %}
                 {% if aggregated_progress and resolved_media_type != MediaTypes.MOVIE.value and resolved_media_type != MediaTypes.GAME.value %}
-                  <div class="absolute top-2 right-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md">
-                    <span class="text-sm text-white">
-                      {{ media.formatted_aggregated_progress }}
-                      {% if media.max_progress %}/ {{ media.max_progress }}{% endif %}
-                    </span>
-                  </div>
-                {% elif media.progress and resolved_media_type != MediaTypes.MOVIE.value %}
-                  {% if resolved_media_type != MediaTypes.GAME.value or not aggregated_progress %}
-                    <div class="media-progress-chip absolute top-2 right-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md"
-                         data-progress-chip-mode="{{ progress_chip_mode|default:'always' }}"
-                         data-mobile-show="{% if current_sort_value == 'progress' %}true{% else %}false{% endif %}">
+                  {# Don't show progress chip for Seasons - progress is shown in hover subtitle #}
+                  {% if resolved_media_type != MediaTypes.SEASON.value %}
+                    <div class="absolute top-2 right-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md">
                       <span class="text-sm text-white">
-                        {{ media.formatted_progress }}
+                        {{ media.formatted_aggregated_progress }}
                         {% if media.max_progress %}/ {{ media.max_progress }}{% endif %}
                       </span>
                     </div>
+                  {% endif %}
+                {% elif media.progress and resolved_media_type != MediaTypes.MOVIE.value %}
+                  {% if resolved_media_type != MediaTypes.GAME.value or not aggregated_progress %}
+                    {# Don't show progress chip for Seasons - progress is shown in hover subtitle #}
+                    {% if resolved_media_type != MediaTypes.SEASON.value %}
+                      <div class="media-progress-chip absolute top-2 right-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md"
+                           data-progress-chip-mode="{{ progress_chip_mode|default:'always' }}"
+                           data-mobile-show="{% if current_sort_value == 'progress' %}true{% else %}false{% endif %}">
+                        <span class="text-sm text-white">
+                          {{ media.formatted_progress }}
+                          {% if media.max_progress %}/ {{ media.max_progress }}{% endif %}
+                        </span>
+                      </div>
+                    {% endif %}
                   {% endif %}
                 {% endif %}
               {% endwith %}
             {% endif %}
 
             {# Time Left display for time_left sort #}
-            {% if resolved_media_type == MediaTypes.TV.value and media and media.episodes_left > 0 %}
-              <div class="media-time-left-chip absolute top-2 right-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md"
-                   data-time-left-mode="{{ time_left_chip_mode|default:'always' }}"
-                   data-mobile-show="{% if current_sort_value == 'time_left' %}true{% else %}false{% endif %}">
-                <span class="text-sm text-white">{{ media.time_left_display|default:media.formatted_time_left }}</span>
-              </div>
+            {% if media and media.episodes_left > 0 %}
+              {% if resolved_media_type == MediaTypes.TV.value or resolved_media_type == MediaTypes.SEASON.value %}
+                <div class="media-time-left-chip absolute top-2 right-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md"
+                     data-time-left-mode="{{ time_left_chip_mode|default:'always' }}"
+                     data-mobile-show="{% if current_sort_value == 'time_left' %}true{% else %}false{% endif %}">
+                  <span class="text-sm text-white">{{ media.time_left_display|default:media.formatted_time_left }}</span>
+                </div>
+              {% endif %}
             {% endif %}
 
             {# Repeat chip removed from poster grid cards to reduce crowding. #}

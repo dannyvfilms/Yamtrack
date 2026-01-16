@@ -1932,8 +1932,13 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
             )
 
             if not season_metadata or f"season/{season_number}" not in season_metadata:
-                logger.warning("No season metadata for %s S%s", media_id, season_number)
-                error_count += 1
+                logger.warning(
+                    "No season metadata for %s S%s - skipping %s episodes needing runtime",
+                    media_id,
+                    season_number,
+                    len(eligible_missing),
+                )
+                error_count += len(eligible_missing)
                 for episode_item in eligible_missing:
                     _record_backfill_failure(
                         episode_item,
@@ -1948,7 +1953,13 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
 
             episodes_metadata = tmdb.process_episodes(season_data, [])
             if not episodes_metadata:
-                error_count += 1
+                logger.warning(
+                    "No episode metadata after processing for %s S%s - skipping %s episodes needing runtime",
+                    media_id,
+                    season_number,
+                    len(eligible_missing),
+                )
+                error_count += len(eligible_missing)
                 for episode_item in eligible_missing:
                     _record_backfill_failure(
                         episode_item,
@@ -1960,11 +1971,22 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
             for ep_data in episodes_metadata:
                 episode_number = ep_data.get("episode_number")
                 if episode_number is None:
+                    logger.debug(
+                        "Skipping episode in metadata for %s S%s - missing episode_number",
+                        media_id,
+                        season_number,
+                    )
                     continue
                 runtime_value = ep_data.get("runtime")
                 if not runtime_value:
                     missing_item = missing_by_number.pop(episode_number, None)
                     if missing_item:
+                        logger.debug(
+                            "Episode %s S%sE%s has no runtime in TMDB metadata",
+                            media_id,
+                            season_number,
+                            episode_number,
+                        )
                         _record_backfill_failure(
                             missing_item,
                             MetadataBackfillField.RUNTIME,
@@ -1976,6 +1998,13 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
                 if runtime_minutes is None:
                     missing_item = missing_by_number.pop(episode_number, None)
                     if missing_item:
+                        logger.warning(
+                            "Failed to parse runtime '%s' for %s S%sE%s",
+                            runtime_value,
+                            media_id,
+                            season_number,
+                            episode_number,
+                        )
                         _record_backfill_failure(
                             missing_item,
                             MetadataBackfillField.RUNTIME,
