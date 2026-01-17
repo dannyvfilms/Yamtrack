@@ -137,13 +137,16 @@
             {% endif %}
 
             {# Time Left display for time_left sort #}
+            {# Hide chip in media grid when sorted by time_left (shown in context row instead) #}
             {% if media and media.episodes_left > 0 %}
               {% if resolved_media_type == MediaTypes.TV.value or resolved_media_type == MediaTypes.SEASON.value %}
-                <div class="media-time-left-chip absolute top-2 right-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md"
-                     data-time-left-mode="{{ time_left_chip_mode|default:'always' }}"
-                     data-mobile-show="{% if current_sort_value == 'time_left' %}true{% else %}false{% endif %}">
-                  <span class="text-sm text-white">{{ media.time_left_display|default:media.formatted_time_left }}</span>
-                </div>
+                {% if not from_grid or current_sort_value != 'time_left' %}
+                  <div class="media-time-left-chip absolute top-2 right-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center shadow-md"
+                       data-time-left-mode="{{ time_left_chip_mode|default:'always' }}"
+                       data-mobile-show="{% if current_sort_value == 'time_left' %}true{% else %}false{% endif %}">
+                    <span class="text-sm text-white">{{ media.time_left_display|default:media.formatted_time_left }}</span>
+                  </div>
+                {% endif %}
               {% endif %}
             {% endif %}
 
