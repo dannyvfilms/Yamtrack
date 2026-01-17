@@ -80,18 +80,49 @@ def home(request):
         items_limit = 14
 
         if request.headers.get("HX-Request") and media_type_to_load == RECENTLY_NOT_RATED_KEY:
+            from django.template.loader import render_to_string
+            
             recent_items = BasicMedia.objects.get_recently_unrated(
                 request.user,
                 days=RECENTLY_NOT_RATED_DAYS,
             )
-            context = {
-                "media_list": {
-                    "items": recent_items[items_limit:],
-                    "total": len(recent_items),
-                    "show_played_chip": True,
-                },
-            }
-            return render(request, "app/components/home_grid.html", context)
+            items_to_load = recent_items[items_limit:]
+            
+            # Split items into 2:3 (standard) and 1:1 (square) types
+            square_types = {"music", "podcast"}
+            standard_items = [item for item in items_to_load if getattr(getattr(item, "item", None), "media_type", "").lower() not in square_types]
+            square_items = [item for item in items_to_load if getattr(getattr(item, "item", None), "media_type", "").lower() in square_types]
+            
+            # Render each group with proper grid wrappers
+            result_parts = []
+            
+            if standard_items:
+                standard_context = {
+                    "media_list": {
+                        "items": standard_items,
+                        "show_played_chip": True,
+                    },
+                    "user": request.user,
+                    "MediaTypes": MediaTypes,
+                    "csrf_token": request.META.get("CSRF_COOKIE"),
+                }
+                standard_html = render_to_string("app/components/home_grid.html", standard_context, request)
+                result_parts.append(f'<div class="media-grid">{standard_html}</div>')
+            
+            if square_items:
+                square_context = {
+                    "media_list": {
+                        "items": square_items,
+                        "show_played_chip": True,
+                    },
+                    "user": request.user,
+                    "MediaTypes": MediaTypes,
+                    "csrf_token": request.META.get("CSRF_COOKIE"),
+                }
+                square_html = render_to_string("app/components/home_grid.html", square_context, request)
+                result_parts.append(f'<div class="media-grid media-grid-square mt-4">{square_html}</div>')
+            
+            return HttpResponse("".join(result_parts))
 
         if media_type_to_load == RECENTLY_NOT_RATED_KEY:
             media_type_to_load = None
@@ -115,8 +146,37 @@ def home(request):
             days=RECENTLY_NOT_RATED_DAYS,
         )
         if recent_items:
+            # Split items into 2:3 (standard) and 1:1 (square) types
+            # This ensures both grids show if both types exist in the dataset
+            square_types = {"music", "podcast"}
+            
+            # Use direct attribute access since select_related("item") guarantees item is loaded
+            standard_items = []
+            square_items = []
+            for item in recent_items:
+                # BasicMedia objects have item attribute from select_related("item")
+                media_type = item.item.media_type.lower() if item.item else None
+                if media_type in square_types:
+                    square_items.append(item)
+                elif media_type:
+                    standard_items.append(item)
+            
+            # If both types exist, show items from both types up to the limit
+            # Prioritize showing both grids if both types are available
+            limited_items = []
+            if standard_items and square_items:
+                # Show a mix: take up to half from each type (rounded up for standard)
+                # This ensures both grids render
+                standard_count = min(len(standard_items), (items_limit + 1) // 2)
+                square_count = min(len(square_items), items_limit - standard_count)
+                limited_items = standard_items[:standard_count] + square_items[:square_count]
+            elif standard_items:
+                limited_items = standard_items[:items_limit]
+            elif square_items:
+                limited_items = square_items[:items_limit]
+            
             list_by_type[RECENTLY_NOT_RATED_KEY] = {
-                "items": recent_items[:items_limit],
+                "items": limited_items,
                 "total": len(recent_items),
                 "section_title": RECENTLY_NOT_RATED_LABEL,
                 "show_played_chip": True,
