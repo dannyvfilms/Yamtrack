@@ -878,6 +878,7 @@ class User(AbstractUser):
         "goodreads": "Import from GoodReads",
         "plex": "Import from Plex",
         "pocketcasts": "Import from Pocket Casts (Recurring)",
+        "lastfm": "Poll Last.fm for all users",
     }
 
         # Reverse mapping to get source from task name
@@ -950,6 +951,44 @@ class User(AbstractUser):
                         "next_run": schedule_info["next_run"],
                         "schedule": schedule_info["frequency"],
                         "mode": schedule_info["mode"],
+                    },
+                )
+
+        # Check for global Last.fm task (uses IntervalSchedule, not user-specific)
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        if hasattr(self, "lastfm_account") and self.lastfm_account and self.lastfm_account.is_connected:
+            lastfm_task = PeriodicTask.objects.filter(
+                task="Poll Last.fm for all users",
+                enabled=True,
+            ).select_related("interval").first()
+
+            if lastfm_task and lastfm_task.interval:
+                # Calculate next run from interval schedule
+                last_run = lastfm_task.last_run_at
+                if last_run:
+                    # Calculate next run based on interval
+                    interval_minutes = lastfm_task.interval.every
+                    next_run = last_run + timedelta(minutes=interval_minutes)
+                else:
+                    # If never run, use start_time or current time
+                    next_run = lastfm_task.start_time or timezone.now()
+                    interval_minutes = lastfm_task.interval.every
+
+                # Get username from account
+                username = self.lastfm_account.lastfm_username
+
+                schedules.append(
+                    {
+                        "task": lastfm_task,
+                        "source": "lastfm",
+                        "username": username,
+                        "last_run": lastfm_task.last_run_at,
+                        "next_run": next_run,
+                        "schedule": f"Every {interval_minutes} minutes",
+                        "mode": "Only New Items",
                     },
                 )
 

@@ -200,3 +200,220 @@ def import_pocketcasts(user_id, mode="new"):
 def import_pocketcasts_history(user_id):
     """Recurring import task for Pocket Casts (called every 2 hours via Celery beat)."""
     return import_pocketcasts.delay(user_id, mode="new")
+
+
+@shared_task(name="Poll Last.fm for all users")
+def poll_all_lastfm_scrobbles():
+    """Global task to poll Last.fm for all connected users.
+
+    This task processes all users with active Last.fm connections in batches.
+    Uses one global periodic schedule (not per-user) to avoid schedule table bloat.
+    """
+    from django.utils import timezone
+
+    from integrations import lastfm_api
+    from integrations.models import LastFMAccount
+    from integrations.webhooks import lastfm as lastfm_webhooks
+
+    # Get all connected users
+    accounts = LastFMAccount.objects.filter(connection_broken=False).select_related("user")
+
+    if not accounts.exists():
+        logger.debug("No Last.fm accounts to poll")
+        return {"processed": 0, "errors": 0, "message": "No accounts to poll"}
+
+    logger.info("Polling Last.fm for %d users", accounts.count())
+
+    from app import statistics_cache
+
+    processor = lastfm_webhooks.LastFMScrobbleProcessor()
+    processed_count = 0
+    error_count = 0
+    batch_size = 10
+    import random
+    import time
+
+    # Collect affected day_keys per user for batch cache refresh
+    user_affected_days: dict[int, set] = {}
+
+    # Process in batches with jitter to avoid thundering herd
+    accounts_list = list(accounts)
+    random.shuffle(accounts_list)  # Randomize order
+
+    for i, account in enumerate(accounts_list):
+        # Add jitter between batches
+        if i > 0 and i % batch_size == 0:
+            time.sleep(random.uniform(0.5, 2.0))
+
+        try:
+            # Check if user has music enabled
+            if not getattr(account.user, "music_enabled", False):
+                logger.debug(
+                    "Skipping Last.fm poll for user %s: music disabled",
+                    account.user.username,
+                )
+                continue
+
+            # Calculate from_timestamp with 60-second overlap for safety
+            from_timestamp_uts = None
+            if account.last_fetch_timestamp_uts:
+                from_timestamp_uts = account.last_fetch_timestamp_uts - 60
+
+            # Fetch all tracks (handles pagination)
+            try:
+                tracks = lastfm_api.get_all_recent_tracks(
+                    username=account.lastfm_username,
+                    from_timestamp_uts=from_timestamp_uts,
+                    extended=1,
+                )
+            except lastfm_api.LastFMRateLimitError as e:
+                logger.warning(
+                    "Rate limit exceeded for user %s, will retry next cycle: %s",
+                    account.user.username,
+                    e,
+                )
+                # Don't mark as broken for rate limits, just skip this cycle
+                error_count += 1
+                continue
+            except lastfm_api.LastFMClientError as e:
+                # Invalid username or user not found
+                logger.error(
+                    "Last.fm client error for user %s: %s",
+                    account.user.username,
+                    e,
+                )
+                account.connection_broken = True
+                account.failure_count += 1
+                account.last_error_code = "6"  # Invalid user
+                account.last_error_message = str(e)
+                account.last_failed_at = timezone.now()
+                account.save(
+                    update_fields=[
+                        "connection_broken",
+                        "failure_count",
+                        "last_error_code",
+                        "last_error_message",
+                        "last_failed_at",
+                    ],
+                )
+                error_count += 1
+                continue
+            except lastfm_api.LastFMAPIError as e:
+                logger.error(
+                    "Last.fm API error for user %s: %s",
+                    account.user.username,
+                    e,
+                )
+                account.failure_count += 1
+                account.last_error_code = "unknown"
+                account.last_error_message = str(e)[:500]  # Truncate long messages
+                account.last_failed_at = timezone.now()
+                account.save(
+                    update_fields=[
+                        "failure_count",
+                        "last_error_code",
+                        "last_error_message",
+                        "last_failed_at",
+                    ],
+                )
+                error_count += 1
+                continue
+
+            # Process tracks
+            stats = processor.process_tracks(tracks, account.user)
+
+            # Collect affected day_keys for this user
+            affected_day_keys = stats.get("affected_day_keys", set())
+            if affected_day_keys:
+                user_id = account.user.id
+                if user_id not in user_affected_days:
+                    user_affected_days[user_id] = set()
+                user_affected_days[user_id].update(affected_day_keys)
+
+            # Update timestamp to most recent track's timestamp
+            # Find the latest timestamp from processed tracks
+            latest_timestamp_uts = account.last_fetch_timestamp_uts or 0
+            for track in tracks:
+                date_attr = track.get("date", {})
+                date_uts = date_attr.get("uts")
+                if date_uts:
+                    try:
+                        track_timestamp = int(date_uts)
+                        if track_timestamp > latest_timestamp_uts:
+                            latest_timestamp_uts = track_timestamp
+                    except (ValueError, TypeError):
+                        continue
+
+            # Update account on success
+            account.last_fetch_timestamp_uts = latest_timestamp_uts
+            account.last_sync_at = timezone.now()
+            account.connection_broken = False
+            account.failure_count = 0
+            account.last_error_code = ""
+            account.last_error_message = ""
+            account.last_failed_at = None
+            account.save(
+                update_fields=[
+                    "last_fetch_timestamp_uts",
+                    "last_sync_at",
+                    "connection_broken",
+                    "failure_count",
+                    "last_error_code",
+                    "last_error_message",
+                    "last_failed_at",
+                ],
+            )
+
+            processed_count += 1
+            logger.info(
+                "Successfully polled Last.fm for user %s: %d processed, %d skipped, %d errors",
+                account.user.username,
+                stats["processed"],
+                stats["skipped"],
+                stats["errors"],
+            )
+
+        except Exception as e:
+            logger.error(
+                "Unexpected error polling Last.fm for user %s: %s",
+                account.user.username,
+                e,
+                exc_info=True,
+            )
+            account.failure_count += 1
+            account.last_error_code = "exception"
+            account.last_error_message = str(e)[:500]
+            account.last_failed_at = timezone.now()
+            account.save(
+                update_fields=[
+                    "failure_count",
+                    "last_error_code",
+                    "last_error_message",
+                    "last_failed_at",
+                ],
+            )
+            error_count += 1
+
+    # Trigger batch cache refresh for all affected users
+    # Note: History cache invalidation is already handled by per-track signals,
+    # so we only need to refresh statistics cache here
+    for user_id, affected_day_keys in user_affected_days.items():
+        if affected_day_keys:
+            statistics_cache.invalidate_statistics_days(
+                user_id,
+                day_values=list(affected_day_keys),
+                reason="lastfm_batch_import",
+            )
+            statistics_cache.schedule_all_ranges_refresh(user_id)
+
+    logger.info(
+        "Last.fm polling completed: %d users processed, %d errors",
+        processed_count,
+        error_count,
+    )
+
+    return {
+        "processed": processed_count,
+        "errors": error_count,
+        "total_accounts": accounts.count(),
+    }

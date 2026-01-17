@@ -485,6 +485,25 @@ def import_data(request):
     if pocketcasts_account:
         pocketcasts_account.refresh_from_db()
 
+    # Get Last.fm account
+    lastfm_account = getattr(request.user, "lastfm_account", None)
+    if lastfm_account:
+        lastfm_account.refresh_from_db()
+
+    # Get Last.fm periodic task status
+    lastfm_periodic_task = None
+    lastfm_poll_interval = getattr(settings, "LASTFM_POLL_INTERVAL_MINUTES", 15)
+    if lastfm_account:
+        from django_celery_beat.models import PeriodicTask
+
+        lastfm_periodic_task = PeriodicTask.objects.filter(
+            task="Poll Last.fm for all users",
+            enabled=True,
+        ).first()
+        # Get actual interval from task if it exists
+        if lastfm_periodic_task and lastfm_periodic_task.interval:
+            lastfm_poll_interval = lastfm_periodic_task.interval.every
+
     context = {
         "user": request.user,
         "import_tasks": import_tasks,
@@ -492,6 +511,9 @@ def import_data(request):
         "plex_sections": plex_sections,
         "plex_error": plex_error,
         "pocketcasts_account": pocketcasts_account,
+        "lastfm_account": lastfm_account,
+        "lastfm_periodic_task": lastfm_periodic_task,
+        "lastfm_poll_interval": lastfm_poll_interval,
     }
     return render(request, "users/import_data.html", context)
 

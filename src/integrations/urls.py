@@ -41,6 +41,9 @@ urlpatterns = [
     path("import/pocketcasts/connect", views.pocketcasts_connect, name="pocketcasts_connect"),
     path("import/pocketcasts/disconnect", views.pocketcasts_disconnect, name="pocketcasts_disconnect"),
     path("import/pocketcasts", views.import_pocketcasts, name="import_pocketcasts"),
+    path("import/lastfm/connect", views.lastfm_connect, name="lastfm_connect"),
+    path("import/lastfm/disconnect", views.lastfm_disconnect, name="lastfm_disconnect"),
+    path("import/lastfm/poll", views.poll_lastfm_manual, name="poll_lastfm_manual"),
     path("export/csv", views.export_csv, name="export_csv"),
     path(
         "webhook/jellyfin/<str:token>",

@@ -16,10 +16,11 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 import users
-from integrations import exports, pocketcasts_api, tasks
+from integrations import exports, lastfm_api, pocketcasts_api, tasks
 from integrations import plex as plex_api
 from integrations.imports import anilist, helpers, simkl, trakt
-from integrations.models import PlexAccount, PocketCastsAccount
+from integrations.models import LastFMAccount, PlexAccount, PocketCastsAccount
+from integrations.lastfm_api import LastFMAPIError, LastFMClientError, LastFMRateLimitError
 from integrations.pocketcasts_api import PocketCastsAuthError
 from integrations.webhooks import emby, jellyfin
 from integrations.webhooks import jellyseerr as jellyseerr_webhooks
@@ -644,6 +645,140 @@ def pocketcasts_disconnect(request):
     # Clear all credentials (full disconnect)
     PocketCastsAccount.objects.filter(user=request.user).delete()
     messages.info(request, "Disconnected Pocket Casts and removed scheduled imports.")
+    return redirect("import_data")
+
+
+@require_POST
+def lastfm_connect(request):
+    """Connect Last.fm account using username."""
+    username = request.POST.get("lastfm_username", "").strip()
+
+    if not username:
+        messages.error(request, "Last.fm username is required.")
+        return redirect("import_data")
+
+    # Validate username by making a test API call
+    try:
+        logger.debug("Validating Last.fm username: %s", username)
+        # Make a minimal API call to verify user exists and has public scrobbles
+        lastfm_api.get_recent_tracks(username=username, limit=1, page=1)
+        logger.info("Successfully validated Last.fm username: %s", username)
+    except LastFMClientError as e:
+        logger.error("Last.fm username validation failed: %s", e)
+        messages.error(
+            request,
+            f"Invalid Last.fm username or user not found. Please check your username and ensure your scrobbles are public.",
+        )
+        return redirect("import_data")
+    except LastFMRateLimitError as e:
+        logger.error("Last.fm rate limit during validation: %s", e)
+        messages.error(
+            request,
+            "Last.fm API rate limit exceeded. Please try again in a few moments.",
+        )
+        return redirect("import_data")
+    except LastFMAPIError as e:
+        logger.error("Last.fm API error during validation: %s", e)
+        messages.error(request, f"Failed to connect to Last.fm: {e}")
+        return redirect("import_data")
+    except Exception as e:
+        logger.error("Unexpected error validating Last.fm username: %s", e, exc_info=True)
+        messages.error(request, f"Failed to connect to Last.fm: {e}")
+        return redirect("import_data")
+
+    # Store username and initialize timestamp
+    try:
+        import time
+
+        current_timestamp = int(time.time())
+
+        LastFMAccount.objects.update_or_create(
+            user=request.user,
+            defaults={
+                "lastfm_username": username,
+                "last_fetch_timestamp_uts": current_timestamp,
+                "connection_broken": False,
+                "failure_count": 0,
+                "last_error_code": "",
+                "last_error_message": "",
+                "last_failed_at": None,
+            },
+        )
+
+        # Set up global recurring polling task if it doesn't exist
+        from django_celery_beat.models import IntervalSchedule, PeriodicTask
+
+        poll_interval_minutes = getattr(settings, "LASTFM_POLL_INTERVAL_MINUTES", 15)
+
+        existing_task = PeriodicTask.objects.filter(
+            task="Poll Last.fm for all users",
+            enabled=True,
+        ).first()
+
+        if not existing_task:
+            # Create interval schedule for polling
+            interval, _ = IntervalSchedule.objects.get_or_create(
+                every=poll_interval_minutes,
+                period=IntervalSchedule.MINUTES,
+            )
+
+            task_name = f"Poll Last.fm for all users (every {poll_interval_minutes} minutes)"
+            PeriodicTask.objects.create(
+                name=task_name,
+                task="Poll Last.fm for all users",
+                interval=interval,
+                start_time=timezone.now(),
+                enabled=True,
+            )
+
+            # Run initial poll
+            tasks.poll_all_lastfm_scrobbles.delay()
+            messages.success(
+                request,
+                f"Connected to Last.fm successfully. Initial sync queued. Recurring imports will run every {poll_interval_minutes} minutes.",
+            )
+        else:
+            messages.success(request, "Connected to Last.fm successfully. Scrobbles will be imported automatically.")
+    except Exception as e:
+        logger.error("Failed to store Last.fm connection: %s", e, exc_info=True)
+        messages.error(request, f"Failed to save Last.fm connection: {e}")
+
+    return redirect("import_data")
+
+
+@require_POST
+def lastfm_disconnect(request):
+    """Remove Last.fm connection."""
+    LastFMAccount.objects.filter(user=request.user).delete()
+
+    # Check if there are any other connected users
+    remaining_accounts = LastFMAccount.objects.filter(connection_broken=False).count()
+
+    # If no users left, we could disable the periodic task, but we'll leave it
+    # running - it will just skip if no users are connected
+    # This allows the task to stay configured for future users
+
+    messages.info(request, "Disconnected Last.fm.")
+    return redirect("import_data")
+
+
+@require_POST
+def poll_lastfm_manual(request):
+    """Manually trigger Last.fm polling for the current user."""
+    lastfm_account = getattr(request.user, "lastfm_account", None)
+    if not lastfm_account:
+        messages.error(request, "Connect Last.fm before syncing.")
+        return redirect("import_data")
+
+    if not lastfm_account.is_connected:
+        messages.error(request, "Last.fm connection is broken. Please reconnect.")
+        return redirect("import_data")
+
+    # Trigger the polling task for this user
+    from integrations import tasks
+
+    tasks.poll_all_lastfm_scrobbles.delay()
+    messages.info(request, "Last.fm sync queued. Scrobbles will be imported shortly.")
     return redirect("import_data")
 
 

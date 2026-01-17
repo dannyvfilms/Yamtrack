@@ -131,3 +131,55 @@ class PocketCastsAccount(models.Model):
         if not self.token_expires_at:
             return False
         return timezone.now() >= self.token_expires_at
+
+
+class LastFMAccount(models.Model):
+    """Store Last.fm username and sync state for a user."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="lastfm_account",
+    )
+    lastfm_username = models.CharField(max_length=255)
+    last_fetch_timestamp_uts = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="Unix timestamp (seconds) of last successful poll",
+    )
+    last_sync_at = models.DateTimeField(null=True, blank=True)
+    connection_broken = models.BooleanField(
+        default=False,
+        help_text="True if connection is broken (invalid username or persistent errors)",
+    )
+    failure_count = models.IntegerField(
+        default=0,
+        help_text="Number of consecutive failures",
+    )
+    last_error_code = models.CharField(
+        max_length=10,
+        blank=True,
+        help_text="Last.fm API error code (e.g., '29' for rate limit)",
+    )
+    last_error_message = models.TextField(
+        blank=True,
+        help_text="Human-readable error message",
+    )
+    last_failed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        """Model options."""
+
+        verbose_name = "Last.fm account"
+        verbose_name_plural = "Last.fm accounts"
+
+    def __str__(self):
+        """Readable representation."""
+        return f"LastFMAccount({self.lastfm_username})"
+
+    @property
+    def is_connected(self):
+        """Return True when we have a valid connection."""
+        return bool(self.lastfm_username) and not self.connection_broken
