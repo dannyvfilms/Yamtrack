@@ -104,7 +104,9 @@ for url in URLS:
     ALLOWED_HOSTS.append(urlparse(url).hostname)
 
 if BASE_URL:
-    CSRF_COOKIE_PATH = BASE_URL + "/"
+    # Cookie paths must match FORCE_SCRIPT_NAME exactly to ensure browsers
+    # send cookies with all requests under the base URL prefix
+    CSRF_COOKIE_PATH = BASE_URL
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
@@ -774,7 +776,9 @@ if BASE_URL:
     # Join base only if relative URL
     if not urlparse(ACCOUNT_LOGOUT_REDIRECT_URL).netloc:
         ACCOUNT_LOGOUT_REDIRECT_URL = urljoin(BASE_URL, ACCOUNT_LOGOUT_REDIRECT_URL)
-    SESSION_COOKIE_PATH = BASE_URL + "/"
+    # Cookie paths must match FORCE_SCRIPT_NAME exactly to ensure browsers
+    # send session cookies with all requests under the base URL prefix
+    SESSION_COOKIE_PATH = BASE_URL
 
 SOCIALACCOUNT_LOGIN_ON_GET = True
 
