@@ -96,6 +96,34 @@ Then visit `http://localhost:8000` and create your admin account.
 
 Use `docker-compose.postgres.yml` from the repository, which includes a PostgreSQL database container.
 
+### Docker Run (Quick Start)
+
+If you prefer a simple one-liner without docker-compose:
+
+```bash
+docker network create yamtrack-net
+
+docker run -d \
+  --name yamtrack-redis \
+  --network yamtrack-net \
+  --restart unless-stopped \
+  -v yamtrack-redis-data:/data \
+  redis:8-alpine
+
+docker run -d \
+  --name yamtrack \
+  --network yamtrack-net \
+  --restart unless-stopped \
+  -e TZ=America/New_York \
+  -e SECRET=your-secret-key-here-change-this \
+  -e REDIS_URL=redis://yamtrack-redis:6379 \
+  -v yamtrack-db:/yamtrack/db \
+  -p 8000:8000 \
+  ghcr.io/dannyvfilms/yamtrack:latest
+```
+
+Note: This setup uses named volumes (`yamtrack-db` and `yamtrack-redis-data`) and a shared network (`yamtrack-net`). For docker-compose with more options, see the Docker Compose section above.
+
 ### Portainer Stack
 
 1. In Portainer, go to **Stacks** → **Add Stack**
