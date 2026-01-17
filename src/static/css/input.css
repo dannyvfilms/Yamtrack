@@ -37,6 +37,28 @@
   gap: calc(var(--spacing) * 2);
 }
 
+/* Mobile order (3x2 grid) - only apply on mobile */
+@media (max-width: 47.999rem) {
+  .stats-card-grid>[data-mobile-order="1"] {
+    order: 1; /* Source Score - row 1, col 1 */
+  }
+  .stats-card-grid>[data-mobile-order="2"] {
+    order: 2; /* First Played - row 1, col 2 */
+  }
+  .stats-card-grid>[data-mobile-order="3"] {
+    order: 3; /* Total Hours - row 1, col 3 */
+  }
+  .stats-card-grid>[data-mobile-order="4"] {
+    order: 4; /* Your Score - row 2, col 1 */
+  }
+  .stats-card-grid>[data-mobile-order="5"] {
+    order: 5; /* Last Played - row 2, col 2 */
+  }
+  .stats-card-grid>[data-mobile-order="6"] {
+    order: 6; /* Avg Time - row 2, col 3 */
+  }
+}
+
 @media (min-width: 48rem) {
   .stats-card-grid {
     display: flex;
@@ -48,9 +70,24 @@
     width: 120px;
   }
 
-  /* Reset order on desktop */
-  .stats-card-grid>* {
-    order: 0 !important;
+  /* Desktop order (grouped: scores, dates, time stats) */
+  .stats-card-grid>[data-desktop-order="1"] {
+    order: 1; /* Source Score */
+  }
+  .stats-card-grid>[data-desktop-order="2"] {
+    order: 2; /* Your Score - group with Source Score */
+  }
+  .stats-card-grid>[data-desktop-order="3"] {
+    order: 3; /* First Played */
+  }
+  .stats-card-grid>[data-desktop-order="4"] {
+    order: 4; /* Last Played - group with First Played */
+  }
+  .stats-card-grid>[data-desktop-order="5"] {
+    order: 5; /* Total Hours */
+  }
+  .stats-card-grid>[data-desktop-order="6"] {
+    order: 6; /* Avg Time - group with Total Hours */
   }
 }
 

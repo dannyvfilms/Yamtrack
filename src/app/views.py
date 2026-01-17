@@ -1392,45 +1392,92 @@ def media_details(
         not public_view
         and current_instance
         and user_medias
-        and media_type in [MediaTypes.GAME.value, MediaTypes.BOARDGAME.value]
+        and media_type in [MediaTypes.GAME.value, MediaTypes.BOARDGAME.value, MediaTypes.TV.value]
     ):
-        BasicMedia.objects._aggregate_item_data(current_instance, user_medias)
-        aggregated_progress = getattr(current_instance, "aggregated_progress", None)
-        if aggregated_progress is None:
-            aggregated_progress = current_instance.progress or 0
-
-        play_stats = {
-            "first_played": getattr(current_instance, "aggregated_start_date", None)
-            or current_instance.start_date,
-            "last_played": getattr(current_instance, "aggregated_end_date", None)
-            or current_instance.end_date,
-        }
-
-        if media_type == MediaTypes.GAME.value:
-            total_minutes = int(aggregated_progress or 0)
-            play_stats.update(
-                {
+        if media_type == MediaTypes.TV.value:
+            # Calculate TV show play stats from watched episodes
+            import logging
+            logger = logging.getLogger(__name__)
+            
+            total_minutes = 0
+            episode_count = 0
+            first_played = None
+            last_played = None
+            
+            # Iterate through all seasons and episodes
+            seasons = current_instance.seasons.all().select_related("item").prefetch_related("episodes__item")
+            for season in seasons:
+                episodes = season.episodes.all().select_related("item")
+                for episode in episodes:
+                    # Only count episodes that have been watched (have end_date)
+                    if not episode.end_date:
+                        continue
+                    
+                    # Get runtime for this episode
+                    try:
+                        runtime_minutes = stats._calculate_episode_time_from_cache(episode, logger)
+                        if runtime_minutes > 0:
+                            total_minutes += runtime_minutes
+                            episode_count += 1
+                            
+                            # Track first and last played dates
+                            if first_played is None or episode.end_date < first_played:
+                                first_played = episode.end_date
+                            if last_played is None or episode.end_date > last_played:
+                                last_played = episode.end_date
+                    except (ValueError, AttributeError):
+                        # Skip episodes without runtime data
+                        continue
+            
+            # Only create play_stats if we have watched episodes
+            if episode_count > 0:
+                play_stats = {
+                    "first_played": first_played,
+                    "last_played": last_played,
                     "total_minutes": total_minutes,
                     "total_hours": total_minutes // 60,
                     "total_minutes_remainder": total_minutes % 60,
-                },
-            )
-            days_played = set()
-            total_minutes_for_avg = 0
-            for entry in user_medias:
-                entry_minutes = entry.progress or 0
-                if entry_minutes <= 0:
-                    continue
-                total_minutes_for_avg += entry_minutes
-                days_played.update(stats._get_entry_play_dates(entry))
-            total_days = len(days_played)
-            if total_days:
-                avg_minutes = int(round(total_minutes_for_avg / total_days))
-            else:
-                avg_minutes = 0
-            play_stats["avg_time_per_day"] = helpers.minutes_to_hhmm(avg_minutes)
+                    "episode_count": episode_count,
+                }
         else:
-            play_stats["total_plays"] = int(aggregated_progress or 0)
+            # Games and boardgames calculation (existing logic)
+            BasicMedia.objects._aggregate_item_data(current_instance, user_medias)
+            aggregated_progress = getattr(current_instance, "aggregated_progress", None)
+            if aggregated_progress is None:
+                aggregated_progress = current_instance.progress or 0
+
+            play_stats = {
+                "first_played": getattr(current_instance, "aggregated_start_date", None)
+                or current_instance.start_date,
+                "last_played": getattr(current_instance, "aggregated_end_date", None)
+                or current_instance.end_date,
+            }
+
+            if media_type == MediaTypes.GAME.value:
+                total_minutes = int(aggregated_progress or 0)
+                play_stats.update(
+                    {
+                        "total_minutes": total_minutes,
+                        "total_hours": total_minutes // 60,
+                        "total_minutes_remainder": total_minutes % 60,
+                    },
+                )
+                days_played = set()
+                total_minutes_for_avg = 0
+                for entry in user_medias:
+                    entry_minutes = entry.progress or 0
+                    if entry_minutes <= 0:
+                        continue
+                    total_minutes_for_avg += entry_minutes
+                    days_played.update(stats._get_entry_play_dates(entry))
+                total_days = len(days_played)
+                if total_days:
+                    avg_minutes = int(round(total_minutes_for_avg / total_days))
+                else:
+                    avg_minutes = 0
+                play_stats["avg_time_per_day"] = helpers.minutes_to_hhmm(avg_minutes)
+            else:
+                play_stats["total_plays"] = int(aggregated_progress or 0)
 
     # Enrich related items with user tracking data
     # For public views, use list owner's data if available
