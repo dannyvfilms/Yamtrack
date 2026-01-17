@@ -2749,11 +2749,13 @@ def invalidate_history_days(
                 user_id,
                 logging_style,
                 warm_days=0,
+                day_keys=normalized_keys if normalized_keys else None,
             )
             logger.info(
-                "history_index_refresh_scheduled user_id=%s logging_style=%s warm_days=0 scheduled=%s reason=%s",
+                "history_index_refresh_scheduled user_id=%s logging_style=%s warm_days=0 day_keys=%s scheduled=%s reason=%s",
                 user_id,
                 logging_style,
+                len(normalized_keys) if normalized_keys else 0,
                 scheduled,
                 reason or "unspecified",
             )
@@ -2886,7 +2888,22 @@ def refresh_history_cache(
         # Delete the refresh lock AFTER cache is saved to ensure frontend sees
         # the new cache when it detects refresh completion
         lock_key = _refresh_lock_key(user_id, logging_style)
+        # Get the lock to check for dedupe_key before deleting
+        refresh_lock = cache.get(lock_key)
+        dedupe_key = None
+        if refresh_lock and isinstance(refresh_lock, dict):
+            dedupe_key = refresh_lock.get("dedupe_key")
+        
+        # Delete both the main lock and any dedupe_key
         cache.delete(lock_key)
+        if dedupe_key and dedupe_key != lock_key:
+            cache.delete(dedupe_key)
+            logger.debug(
+                "Deleted dedupe_key %s for user %s",
+                dedupe_key,
+                user_id,
+            )
+        
         # Verify the lock was actually deleted
         verify_lock = cache.get(lock_key)
         logger.debug(
@@ -2899,7 +2916,14 @@ def refresh_history_cache(
     except Exception as e:
         # Always clear the lock, even on error, to prevent it from being stuck
         logger.error("Error refreshing history cache for user %s: %s", user_id, e, exc_info=True)
-        cache.delete(_refresh_lock_key(user_id, logging_style))
+        lock_key = _refresh_lock_key(user_id, logging_style)
+        refresh_lock = cache.get(lock_key)
+        dedupe_key = None
+        if refresh_lock and isinstance(refresh_lock, dict):
+            dedupe_key = refresh_lock.get("dedupe_key")
+        cache.delete(lock_key)
+        if dedupe_key and dedupe_key != lock_key:
+            cache.delete(dedupe_key)
         raise
 
 
@@ -2941,6 +2965,8 @@ def schedule_history_refresh(
     lock_payload = {"started_at": timezone.now()}
     if normalized_day_keys:
         lock_payload["day_keys"] = normalized_day_keys
+        # Store dedupe_key in payload so we can delete it when task completes
+        lock_payload["dedupe_key"] = dedupe_key
     if debounce_seconds and not cache.add(dedupe_key, lock_payload, debounce_seconds):
         return False
 

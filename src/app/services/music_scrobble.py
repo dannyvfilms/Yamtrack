@@ -313,7 +313,8 @@ def _populate_from_search(metadata: ResolvedMusicMetadata) -> None:
     query_parts = [metadata.track_title]
     if metadata.artist_name:
         query_parts.insert(0, metadata.artist_name)
-    if metadata.album_title:
+    # Only include album if it's meaningful (not a placeholder)
+    if metadata.album_title and metadata.album_title not in ("Unknown Album", "Unknown"):
         query_parts.append(metadata.album_title)
 
     query = " ".join(part for part in query_parts if part)
@@ -880,7 +881,13 @@ def _update_music_entry(
     track: Track,
     played_at,
 ) -> Music:
-    """Create or update the per-user Music row."""
+    """Create or update the per-user Music row.
+    
+    Each track has its own Music record (via unique item), so deduplication
+    only applies to the same track played multiple times. Different tracks
+    will always get separate Music records and be fully logged, even if
+    played within 2 minutes of each other.
+    """
     if not event.completed:
         # Do not create a new Music row on play/resume; only update existing
         music = Music.objects.filter(item=item, user=event.user).first()
@@ -902,6 +909,15 @@ def _update_music_entry(
             user=event.user,
             defaults=defaults,
         )
+        
+        # Log when a new track is being tracked (different tracks always get logged)
+        if created:
+            logger.debug(
+                "Created new Music record for track: %s - %s (item_id=%s)",
+                metadata.artist_name or "Unknown",
+                metadata.track_title or "Unknown",
+                item.id,
+            )
 
     changed = False
 
@@ -917,10 +933,24 @@ def _update_music_entry(
 
     if event.completed:
         prior_end = music.end_date
-        # If we've already recorded a completion very recently, avoid double counting
+        # Track-specific deduplication: Only prevent progress increment if THIS SAME TRACK
+        # was played within 2 minutes. Different tracks have different Music records (via
+        # unique item), so they are always fully logged regardless of timing.
+        #
+        # For short tracks (< 2 minutes), this ensures:
+        # - Same track played twice within 2 minutes: progress doesn't increment, but history is still recorded
+        # - Different tracks played within 2 minutes: both are fully logged (separate Music records)
         if prior_end and abs(played_at - prior_end) <= timedelta(minutes=2):
+            # Same track played within 2 minutes: don't increment progress, but still record history
             new_progress = music.progress or 1
+            logger.debug(
+                "Same track played within 2 minutes: %s - %s (progress=%s, not incrementing)",
+                metadata.artist_name or "Unknown",
+                metadata.track_title or "Unknown",
+                music.progress or 1,
+            )
         else:
+            # Different track or same track after 2 minutes: increment progress normally
             new_progress = (music.progress or 0) + 1
         if music.progress != new_progress:
             music.progress = new_progress
@@ -928,6 +958,9 @@ def _update_music_entry(
         if music.status != Status.COMPLETED.value:
             music.status = Status.COMPLETED.value
             changed = True
+        # Always update end_date to the new played_at timestamp to ensure a history record is created.
+        # This ensures every play is recorded in history, even when progress is deduplicated
+        # (same track within 2 minutes). Different tracks always get separate history records.
         if music.end_date != played_at:
             music.end_date = played_at
             changed = True
