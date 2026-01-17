@@ -827,7 +827,7 @@ class MediaManager(models.Manager):
                 ]
             else:
                 queryset = queryset.filter(
-                    Q(end_date__gte=cutoff) | Q(progressed_at__gte=cutoff),
+                    end_date__gte=cutoff,
                 )
                 order_by_fields = [
                     F("progressed_at").desc(nulls_last=True),

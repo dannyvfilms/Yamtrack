@@ -25,15 +25,6 @@
             </a>
           {% endif %}
 
-          {% if show_played_chip|default:False and media and media.last_played_at %}
-            <div class="absolute top-2 left-2 flex items-center gap-1.5 bg-black/80 px-2 py-1.5 rounded-md shadow-md whitespace-nowrap max-w-[98%]">
-              {% include "app/icons/history.svg" with classes="w-3.5 h-3.5 text-indigo-400" %}
-              <span class="text-xs font-medium text-white drop-shadow-sm truncate">
-                {{ media.last_played_at|user_datetime_format:user }}
-              </span>
-            </div>
-          {% endif %}
-
           {% if media %}
             {% if show_status_chip|default_if_none:True %}
               {% with has_watched=media.end_date|default_if_none:media|safe_attr:"aggregated_end_date"|default_if_none:media.status %}
@@ -248,7 +239,11 @@
           {% endwith %}
           {% with release_year=item|release_year:media %}
             {% if from_grid %}
-              {% if show_next_event_subtitle|default:False and media and media.next_event and not media.next_event.is_max_datetime %}
+              {% if show_played_chip|default:False and media and media.last_played_at %}
+                <p class="media-card-year text-xs text-gray-400 mt-1">
+                  {{ media.last_played_at|user_datetime_format:user }}
+                </p>
+              {% elif show_next_event_subtitle|default:False and media and media.next_event and not media.next_event.is_max_datetime %}
                 <p class="media-card-year text-xs text-gray-400 mt-1">
                   {% if media.next_event.content_number %}
                     {{ media.item.media_type|short_unit }}{{ media.next_event.content_number }}
