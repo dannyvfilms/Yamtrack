@@ -10,6 +10,7 @@ services:
       - redis
     environment:
       - TZ=Europe/Berlin
+      - TIME_ZONE=Europe/Berlin
       - SECRET=longstring
       - REDIS_URL=redis://redis:6379
       - DB_HOST=db
