@@ -613,14 +613,14 @@ def process_season_episodes(item, metadata, events_bulk):
         )
 
         # Extract runtime from episode metadata (TMDB returns integer minutes)
-        # Use -1 to mark "aired but runtime unknown" vs None for "not aired yet"
+        # Use 999998 to mark "aired but runtime unknown" vs None for "not aired yet"
         runtime_minutes = None
         if episode.get("runtime") is not None:
             runtime_minutes = int(episode["runtime"]) if episode["runtime"] > 0 else None
         elif release_datetime and release_datetime.year > 1900:
-            # Episode has aired but no runtime - mark as unknown (use -1)
+            # Episode has aired but no runtime - mark as unknown (use 999998)
             # This distinguishes from None which means "not aired yet"
-            runtime_minutes = -1
+            runtime_minutes = 999998
 
         updated = False
         update_fields = []

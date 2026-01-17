@@ -1540,8 +1540,8 @@ def season_details(
                         air_date_dt = episode["air_date"]
                     
                     if air_date_dt and air_date_dt.year > 1900 and air_date_dt <= current_datetime:
-                        # Episode has aired but no runtime - mark as unknown (use -1)
-                        runtime_minutes = -1
+                        # Episode has aired but no runtime - mark as unknown (use 999998)
+                        runtime_minutes = 999998
                 except (ValueError, TypeError):
                     pass
             
@@ -5564,7 +5564,7 @@ def _sort_tv_media_by_time_left(media_list, direction="asc"):
                 ).exclude(
                     runtime_minutes=999999,  # Exclude placeholder for unknown runtime
                 ).exclude(
-                    runtime_minutes=-1,  # Exclude -1 marker for "aired but runtime unknown"
+                    runtime_minutes=999998,  # Exclude 999998 marker for "aired but runtime unknown"
                 ).values_list("runtime_minutes", flat=True)
 
                 runtimes = list(unwatched_episodes)

@@ -1500,7 +1500,7 @@ class Media(models.Model):
             ).exclude(
                 runtime_minutes=999999,  # Exclude placeholder for unknown runtime
             ).exclude(
-                runtime_minutes=-1,  # Exclude -1 marker for "aired but runtime unknown"
+                runtime_minutes=999998,  # Exclude 999998 marker for "aired but runtime unknown"
             ).values_list("runtime_minutes", flat=True)
 
             runtimes = list(unwatched_episodes)
