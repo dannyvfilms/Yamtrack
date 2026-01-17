@@ -33,6 +33,14 @@
               {% endfor %}
             </div>
             <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-gray-400">
+              {% if is_public_view %}
+                <a href="{% url 'user_profile' custom_list.owner.username %}"
+                   class="inline-flex items-center gap-1 text-indigo-400 hover:text-indigo-300 transition-colors">
+                  {% include "app/icons/person.svg" with classes="w-3 h-3" %}
+                  <span>View Profile</span>
+                </a>
+                <span class="text-gray-400">•</span>
+              {% endif %}
               <span>{{ collaborators_count }} collaborator{{ collaborators_count|pluralize }}</span>
               <span class="inline-flex items-center gap-1">
                 <span class="text-gray-400">•</span>

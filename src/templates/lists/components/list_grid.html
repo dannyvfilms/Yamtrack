@@ -1,43 +1,42 @@
+{% load app_tags %}
+{% load user_tags %}
+
 {% for custom_list in custom_lists %}
-  <div class="bg-[#2a2f35] rounded-lg overflow-hidden hover:shadow-lg group"
-       x-data="{ showModal: false }"
-       {% if forloop.last and custom_lists.has_next %} hx-get="{% url 'lists' %}?page={{ custom_lists.next_page_number }}" hx-trigger="revealed threshold:200px" hx-swap="afterend" hx-include="#filter-form" hx-indicator="#loading-indicator" {% endif %}>
-    <div class="relative h-48 flex items-center justify-center">
-      <img alt="{{ custom_list.name }}"
-           class="{% if custom_list.image != IMG_NONE %}w-full h-full object-cover{% else %}w-3/5 h-3/5{% endif %}"
-           src="{{ custom_list.image }}">
+  <div {% if forloop.last and custom_lists.has_next %} hx-get="{% if profile_username %}{% url 'user_profile' profile_username %}?page={{ custom_lists.next_page_number }}{% else %}{% url 'lists' %}?page={{ custom_lists.next_page_number }}{% endif %}" hx-trigger="revealed threshold:200px" hx-swap="afterend" hx-include="#filter-form" hx-indicator="#loading-indicator" {% endif %}
+       x-data="{ showModal: false }">
+    <div class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative hover:ring-2 hover:ring-indigo-500 transition-all search-result-card-square group"
+         style="aspect-ratio: 3/2 !important;">
+      <div class="relative">
+        <a href="{% url 'list_detail' custom_list.id %}">
+          <img alt="{{ custom_list.name }}"
+               class="media-card-poster lazyload w-full aspect-[3/2] bg-[#3e454d] {% if custom_list.image != IMG_NONE %}object-cover{% endif %}"
+               data-src="{{ custom_list.image }}"
+               src="{{ IMG_NONE }}">
+        </a>
 
-      <div class="absolute inset-0 bg-black/40 transition-opacity group-hover:bg-black/50"></div>
-      <a href="{% url 'list_detail' custom_list.id %}"
-         class="absolute inset-0"></a>
-
-      <button class="absolute top-2 right-2 p-2 bg-black/50 hover:bg-black/75 rounded-full opacity-0 group-hover:opacity-100 transition-all duration-200 text-white hover:text-indigo-400 cursor-pointer"
-              @click="showModal = true"
-              title="Edit list">{% include "app/icons/horizontal-sliders.svg" with classes="w-4 h-4" %}</button>
-      <div class="absolute bottom-4 left-4 flex flex-col items-start max-w-[calc(100%-2rem)]">
-        <h3 class="text-xl font-semibold text-white mb-1 line-clamp-1 w-full">{{ custom_list.name }}</h3>
-        <p class="text-sm text-gray-200 line-clamp-2 w-full">{{ custom_list.description }}</p>
+        {% if not profile_username and custom_list.form %}
+          <button class="absolute top-2 right-2 z-20 p-2 bg-black/50 hover:bg-black/75 rounded-full opacity-0 group-hover:opacity-100 transition-all duration-200 text-white hover:text-indigo-400 cursor-pointer"
+                  @click="showModal = true"
+                  title="Edit list">{% include "app/icons/horizontal-sliders.svg" with classes="w-4 h-4" %}</button>
+        {% endif %}
       </div>
-    </div>
-    <div class="p-4">
-      <div class="flex items-center justify-between">
-        <div class="flex items-center">
-          {% include "app/icons/persons.svg" with classes="w-4 h-4 text-gray-400 mr-2" %}
-          <div class="flex -space-x-2">
-            <div class="w-6 h-6 rounded-full bg-[#4f46e5] flex items-center justify-center border-2 border-[#2a2f35] text-xs font-medium"
-                 title="{{ custom_list.owner.username }}">{{ custom_list.owner.username.0|upper }}</div>
-            {% for collaborator in custom_list.collaborators.all %}
-              <div class="w-6 h-6 rounded-full bg-[#4b5563] flex items-center justify-center border-2 border-[#2a2f35] text-xs font-medium"
-                   title="{{ collaborator.username }}">{{ collaborator.username.0|upper }}</div>
-            {% endfor %}
-          </div>
-        </div>
-        <div class="flex items-center text-gray-400 text-sm">
-          {% with item_count=custom_list.items.count %}<span>{{ item_count }} item{{ item_count|pluralize }}</span>{% endwith %}
-        </div>
-      </div>
-    </div>
 
-    {% include "lists/components/list_form.html" with form=custom_list.form %}
+      <div class="media-card-body p-3 bg-card-body">
+        <div class="flex items-center gap-2 min-w-0">
+          <a href="{% url 'list_detail' custom_list.id %}"
+             class="media-card-title text-sm font-semibold text-white hover:text-indigo-400 transition duration-300 line-clamp-1 min-w-0"
+             title="{{ custom_list.name }}">{{ custom_list.name }}</a>
+        </div>
+        <p class="media-card-year text-xs text-gray-400 mt-1">
+          {% with item_count=custom_list.items.count %}
+            {% if item_count > 0 %}{{ item_count }} item{{ item_count|pluralize }}{% endif %}
+          {% endwith %}
+        </p>
+      </div>
+
+      {% if not profile_username and custom_list.form %}
+        {% include "lists/components/list_form.html" with form=custom_list.form %}
+      {% endif %}
+    </div>
   </div>
 {% endfor %}

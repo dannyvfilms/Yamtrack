@@ -3,6 +3,7 @@ import logging
 
 from django.apps import apps
 from django.contrib import messages
+from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_not_required
 from django.core.paginator import Paginator
 from django.db.models import Count, Exists, F, OuterRef, Q, Subquery
@@ -25,6 +26,68 @@ from lists.models import (
 from users.models import ListDetailSortChoices, ListSortChoices
 
 logger = logging.getLogger(__name__)
+
+
+User = get_user_model()
+
+
+@login_not_required
+@never_cache
+@require_GET
+def user_profile(request, username):
+    """Return the public profile page showing all public lists for a user."""
+    profile_user = get_object_or_404(User, username=username)
+
+    # Get all public lists owned by this user
+    # Use a fresh query each time to avoid any caching issues
+    public_lists = (
+        CustomList.objects.filter(
+            owner=profile_user,
+            visibility="public",
+        )
+        .select_related("owner")
+        .prefetch_related("collaborators", "items")
+    )
+
+    # Sort by newest first (most recently created)
+    public_lists = public_lists.order_by("-id")
+
+    # Pagination
+    page = request.GET.get("page", 1)
+    items_per_page = 20
+    paginator = Paginator(public_lists, items_per_page)
+    lists_page = paginator.get_page(page)
+
+    # Determine if this is the current user's own profile
+    is_own_profile = request.user.is_authenticated and request.user == profile_user
+
+    # Determine base template: use public template for anonymous users, regular for authenticated
+    public_view = not request.user.is_authenticated
+    base_template = "base_public.html" if public_view else "base.html"
+
+    # HTMX partial response for pagination
+    if request.headers.get("HX-Request"):
+        return render(
+            request,
+            "lists/components/list_grid.html",
+            {
+                "custom_lists": lists_page,
+                "profile_username": username,
+            },
+        )
+
+    return render(
+        request,
+        "lists/user_profile.html",
+        {
+            "profile_user": profile_user,
+            "custom_lists": lists_page,
+            "is_own_profile": is_own_profile,
+            "public_view": public_view,
+            "base_template": base_template,
+            "profile_username": username,
+        },
+    )
 
 
 @require_GET

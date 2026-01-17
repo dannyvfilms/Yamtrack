@@ -3,6 +3,7 @@ from django.urls import path
 from lists import views
 
 urlpatterns = [
+    path("user/<str:username>", views.user_profile, name="user_profile"),
     path("lists", views.lists, name="lists"),
     path(
         "lists_modal/<source:source>/<media_type:media_type>/<str:media_id>",
