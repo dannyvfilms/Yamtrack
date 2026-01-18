@@ -88,6 +88,7 @@ class Item(CalendarTriggerMixin, models.Model):
     season_number = models.PositiveIntegerField(null=True, blank=True)
     episode_number = models.PositiveIntegerField(null=True, blank=True)
     runtime_minutes = models.PositiveIntegerField(null=True, blank=True, help_text="Runtime in minutes")
+    number_of_pages = models.PositiveIntegerField(null=True, blank=True, help_text="Number of pages for books")
     release_datetime = models.DateTimeField(null=True, blank=True)
     genres = models.JSONField(default=list, blank=True)
 
@@ -991,6 +992,33 @@ class MediaManager(models.Manager):
 
         if media_type == MediaTypes.SEASON.value:
             self._annotate_season_released_episodes(media_list, current_datetime)
+            return
+
+        if media_type == MediaTypes.BOOK.value:
+            # For books, use number_of_pages from Item model
+            # If not available, try to fetch from metadata
+            for media in media_list:
+                if media.item.number_of_pages:
+                    media.max_progress = media.item.number_of_pages
+                else:
+                    # Try to fetch from metadata if not stored
+                    try:
+                        from app.providers import services
+                        metadata = services.get_media_metadata(
+                            media.item.media_type,
+                            media.item.media_id,
+                            media.item.source,
+                        )
+                        number_of_pages = metadata.get("max_progress") or metadata.get("details", {}).get("number_of_pages")
+                        if number_of_pages:
+                            # Save it to the Item for future use
+                            media.item.number_of_pages = number_of_pages
+                            media.item.save(update_fields=["number_of_pages"])
+                            media.max_progress = number_of_pages
+                        else:
+                            media.max_progress = None
+                    except Exception:
+                        media.max_progress = None
             return
 
         # For other media types, calculate max_progress from events

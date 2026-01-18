@@ -1846,6 +1846,12 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
             source,
             [season_number],
         )
+        
+        # Extract number_of_pages for books
+        number_of_pages = None
+        if media_type == MediaTypes.BOOK.value:
+            number_of_pages = metadata.get("max_progress") or metadata.get("details", {}).get("number_of_pages")
+        
         item, _ = Item.objects.update_or_create(
             media_id=media_id,
             source=source,
@@ -1854,8 +1860,14 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
             defaults={
                 "title": metadata["title"],
                 "image": metadata["image"],
+                "number_of_pages": number_of_pages,
             },
         )
+        
+        # Update number_of_pages if it wasn't set but we have it now
+        if media_type == MediaTypes.BOOK.value and not item.number_of_pages and number_of_pages:
+            item.number_of_pages = number_of_pages
+            item.save(update_fields=["number_of_pages"])
         title = metadata["title"]
         if season_number:
             title += f" - Season {season_number}"
@@ -2246,6 +2258,12 @@ def media_save(request):
             from app.statistics import parse_runtime_to_minutes
             runtime_minutes = parse_runtime_to_minutes(metadata["details"]["runtime"])
 
+        # Extract number_of_pages for books
+        number_of_pages = None
+        if media_type == MediaTypes.BOOK.value:
+            # Try max_progress first (from metadata dict), then details.number_of_pages
+            number_of_pages = metadata.get("max_progress") or metadata.get("details", {}).get("number_of_pages")
+
         metadata_genres = []
         if media_type == MediaTypes.GAME.value:
             metadata_genres = stats._coerce_genre_list(metadata.get("genres"))
@@ -2259,17 +2277,21 @@ def media_save(request):
                 "title": metadata["title"],
                 "image": metadata["image"],
                 "runtime_minutes": runtime_minutes,
+                "number_of_pages": number_of_pages,
                 "genres": metadata_genres,
             },
         )
 
-        # Update image and runtime if they're not set and we have them now
+        # Update image, runtime, and number_of_pages if they're not set and we have them now
         needs_save = False
         if item.image == settings.IMG_NONE and metadata.get("image"):
             item.image = metadata["image"]
             needs_save = True
         if not item.runtime_minutes and runtime_minutes:
             item.runtime_minutes = runtime_minutes
+            needs_save = True
+        if not item.number_of_pages and number_of_pages:
+            item.number_of_pages = number_of_pages
             needs_save = True
         if metadata_genres and metadata_genres != item.genres:
             item.genres = metadata_genres
