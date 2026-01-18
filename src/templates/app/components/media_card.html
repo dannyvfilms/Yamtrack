@@ -272,7 +272,11 @@
                         <span class="ml-1 text-gray-400">• {{ media.formatted_progress }}</span>
                       {% endif %}
                     {% elif resolved_media_type == MediaTypes.BOOK.value and media.max_progress %}
-                      <span class="ml-1 text-gray-400">• {{ media.max_progress }} page{{ media.max_progress|pluralize }}</span>
+                      {% if media.status == Status.IN_PROGRESS.value and media.progress %}
+                        <span class="ml-1 text-gray-400">• {{ media.progress }}/{{ media.max_progress }} pages</span>
+                      {% else %}
+                        <span class="ml-1 text-gray-400">• {{ media.max_progress }} page{{ media.max_progress|pluralize }}</span>
+                      {% endif %}
                     {% elif media.max_progress and resolved_media_type != MediaTypes.MOVIE.value %}
                       {% with progress_value=aggregated_progress|default_if_none:media.progress %}
                         {% if progress_value or resolved_media_type == MediaTypes.SEASON.value %}
@@ -309,6 +313,8 @@
                        data-progress-text="{{ media.formatted_aggregated_progress }}"
                      {% elif resolved_media_type == MediaTypes.GAME.value and media.progress %}
                        data-progress-text="{{ media.formatted_progress }}"
+                     {% elif resolved_media_type == MediaTypes.BOOK.value and media.max_progress and media.status == Status.IN_PROGRESS.value and media.progress %}
+                       data-progress-text="{{ media.progress }}/{{ media.max_progress }} pages"
                      {% elif resolved_media_type == MediaTypes.BOOK.value and media.max_progress %}
                        data-progress-text="{{ media.max_progress }} page{{ media.max_progress|pluralize }}"
                      {% elif media.max_progress and resolved_media_type != MediaTypes.MOVIE.value %}
