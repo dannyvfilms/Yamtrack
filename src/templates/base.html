@@ -33,6 +33,9 @@
     <script src="{% static 'js/libraries/htmx-2.0.4.min.js' %}"></script>
     <script defer src="{% static 'js/libraries/alpinejs-3.14.9.min.js' %}"></script>
     <script src="{% static 'js/libraries/lazysizes-5.3.2.min.js' %}" async></script>
+    {# ZXing library for barcode decoding #}
+    <script src="https://cdn.jsdelivr.net/npm/@zxing/library@latest/umd/index.min.js" onload="console.log('ZXing library loaded');"></script>
+    <script src="{% static 'js/barcode-scanner.js' %}" onload="console.log('barcode-scanner.js loaded, barcodeScannerUtils available:', typeof window.barcodeScannerUtils);"></script>
 
     <link rel="apple-touch-icon"
           sizes="180x180"
@@ -239,7 +242,7 @@
                 <div class="relative w-full max-w-2xl">
                   <form method="get"
                         action="{% url 'search' %}"
-                        x-data=" { isOpen: false, selectedType: { display: '{{ search_type|media_type_readable_plural }}', value: '{{ search_type }}' }, mediaTypes: {% get_search_media_types user as search_types %}{{ search_types }}, getPlaceholder() { return `Search ${this.selectedType.display.toLowerCase()}...` } }">
+                        x-data="{ isOpen: false, selectedType: { display: '{{ search_type|media_type_readable_plural }}', value: '{{ search_type }}' }, mediaTypes: {% get_search_media_types user as search_types %}{{ search_types }}, getPlaceholder() { return `Search ${this.selectedType.display.toLowerCase()}...` }, barcodeScanning: false, barcodeError: null, barcodePreview: null, async handleBarcodeImage(event) { console.log('handleBarcodeImage called', event); const file = event.target.files?.[0]; if (!file) { console.log('No file selected'); return; } console.log('File selected:', file.name, file.type); this.barcodeScanning = true; this.barcodeError = null; this.barcodePreview = URL.createObjectURL(file); try { console.log('Checking for barcodeScannerUtils:', typeof window.barcodeScannerUtils); if (!window.barcodeScannerUtils) { throw new Error('Barcode scanner utilities not loaded. Please refresh the page.'); } console.log('Starting barcode decode...'); const isbn = await window.barcodeScannerUtils.decodeBarcodeFromFile(file); console.log('Decode result:', isbn); if (isbn) { const form = event.target.closest('form') || event.target.form || this.$root || document.querySelector('form[action*=' + 'search' + ']'); console.log('[FORM] ISBN received, form element:', form, 'tagName:', form?.tagName); const searchInput = form?.querySelector('input[name=q]'); console.log('[FORM] Search input found:', searchInput); if (searchInput && form) { searchInput.value = isbn; console.log('[FORM] Set input value to:', isbn, 'Current value:', searchInput.value); console.log('[FORM] Submitting form...'); form.submit(); console.log('[FORM] Form submit called'); } else { console.error('[FORM] Search input or form not found! Form:', form, 'Search input:', searchInput); } } else { this.barcodeError = 'Could not read barcode from image. Please try again or enter ISBN manually.'; } } catch (error) { console.error('Barcode scan error:', error); this.barcodeError = 'Error scanning barcode: ' + (error.message || 'Please try again.'); } finally { this.barcodeScanning = false; } }, clearBarcodeError() { this.barcodeError = null; this.barcodePreview = null; if (this.$refs.barcodeInput) { this.$refs.barcodeInput.value = ''; } }, init() { console.log('Search form Alpine.js initialized'); window.currentBarcodeHandler = (event) => { console.log('Fallback handler called via window.currentBarcodeHandler'); this.handleBarcodeImage(event); }; } }">
                     <div class="flex">
                       <div class="relative grow">
                         {# Search input #}
@@ -247,12 +250,33 @@
                                name="q"
                                value="{{ request.GET.q }}"
                                :placeholder="getPlaceholder()"
-                               class="w-full py-2 pl-10 pr-4 text-sm text-gray-300 bg-[#272c31] rounded-l-md focus:outline-none focus:ring-2 focus:ring-[#4a9eff] focus:ring-inset placeholder-gray-500">
+                               class="w-full py-2 pl-10 pr-4 text-sm text-gray-300 bg-[#272c31] rounded-l-md focus:outline-none focus:ring-2 focus:ring-[#4a9eff] focus:ring-inset placeholder-gray-500"
+                               :class="selectedType.value === 'book' ? 'pr-10' : ''">
                         <button type="submit"
                                 class="absolute left-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-white transition-colors duration-200 focus:outline-none cursor-pointer">
                           {% include "app/icons/magnifying-glass.svg" with classes="w-5 h-5" %}
 
                         </button>
+                        {# Camera button (only visible for books) #}
+                        <button type="button"
+                                x-show="selectedType.value === 'book'"
+                                @click="$refs.barcodeInput?.click()"
+                                x-bind:disabled="barcodeScanning"
+                                class="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-white transition-colors duration-200 focus:outline-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                                title="Scan barcode">
+                          <span x-show="barcodeScanning" class="block">
+                            <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-gray-400"></div>
+                          </span>
+                          <span x-show="!barcodeScanning" class="block">
+                            {% include "app/icons/camera.svg" with classes="w-5 h-5" %}
+                          </span>
+                        </button>
+                        {# Hidden file input for barcode scanning #}
+                        <input type="file"
+                               accept="image/*"
+                               x-ref="barcodeInput"
+                               class="hidden"
+                               @change="handleBarcodeImage($event)">
                       </div>
 
                       <input type="hidden" name="media_type" :value="selectedType.value">
@@ -283,7 +307,21 @@
                         </template>
                       </ul>
                     </div>
-                  </form>
+                    
+                    {# Barcode scanner error feedback #}
+                    <div x-show="barcodeError"
+                       x-cloak
+                       x-transition
+                       class="absolute z-30 mt-2 w-full max-w-2xl">
+                      <div class="flex items-center gap-2 rounded-md border px-3 py-2 shadow-lg text-white toast-info">
+                        {% include "app/icons/info.svg" with classes="w-4 h-4 text-indigo-300 shrink-0" %}
+                        <p class="text-sm font-medium flex-1" x-text="barcodeError"></p>
+                        <button class="text-current opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
+                                @click="clearBarcodeError()">
+                          {% include "app/icons/x.svg" with classes="w-4 h-4" %}
+                        </button>
+                      </div>
+                    </div>
                 </div>
                 {% endif %}
               </div>
