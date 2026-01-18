@@ -30,6 +30,11 @@
   clip-path: inset(0 50% 0 0);
 }
 
+/* Modal max height with padding from viewport */
+.modal-max-height {
+  max-height: calc(100vh - 4rem);
+}
+
 /* Game/Boardgame stats cards: 3x2 grid on mobile, flex-wrap on desktop */
 .stats-card-grid {
   display: grid;
