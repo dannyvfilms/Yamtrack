@@ -170,6 +170,7 @@
 - Podcast episode list fragment sets `Cache-Control: no-cache, no-store, must-revalidate`, plus `Pragma`/`Expires`.
 - `sync_metadata()` uses `cache.ttl()` to prevent immediate re-sync, and deletes provider cache keys when allowed.
 - Static asset busting: `get_static_file_mtime()` appends `?mtime` to static URLs.
+  - Applied to `css/main.css`, `js/date-range.js`, `js/statistics-charts.js`, and `js/barcode-scanner.js` (added for cache invalidation during development/debugging).
 
 ## Service worker caching (frontend)
 - `src/static/js/serviceworker.js` caches a small list of static assets and additional static GETs.

@@ -35,7 +35,7 @@
     <script src="{% static 'js/libraries/lazysizes-5.3.2.min.js' %}" async></script>
     {# ZXing library for barcode decoding #}
     <script src="https://cdn.jsdelivr.net/npm/@zxing/library@latest/umd/index.min.js" onload="console.log('ZXing library loaded');"></script>
-    <script src="{% static 'js/barcode-scanner.js' %}" onload="console.log('barcode-scanner.js loaded, barcodeScannerUtils available:', typeof window.barcodeScannerUtils);"></script>
+    <script src="{% static 'js/barcode-scanner.js' %}{% get_static_file_mtime 'js/barcode-scanner.js' %}" onload="console.log('barcode-scanner.js loaded, barcodeScannerUtils available:', typeof window.barcodeScannerUtils);"></script>
 
     <link rel="apple-touch-icon"
           sizes="180x180"
