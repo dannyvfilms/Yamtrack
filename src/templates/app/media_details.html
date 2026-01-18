@@ -21,7 +21,8 @@
       <div x-data="{ trackOpen: false }">
         {% if media_type == MediaTypes.PODCAST.value and podcast_show %}
           {# Podcast show tracker button #}
-          <button class="mt-4 p-3 rounded-lg w-full flex items-center text-white transition duration-300 cursor-pointer {% if podcast_tracker %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}"
+          <button type="button"
+                  class="mt-4 p-3 rounded-lg w-full flex items-center text-white transition duration-300 cursor-pointer {% if podcast_tracker %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}"
                   hx-get="{% url 'podcast_show_track_modal' podcast_show.id %}"
                   hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
                   hx-target="#podcast-show-track-modal"
@@ -51,7 +52,8 @@
           </div>
         {% else %}
           {# Standard media tracker button #}
-          <button class="mt-4 p-3 rounded-lg w-full flex items-center text-white transition duration-300 cursor-pointer {% if user_medias %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}"
+          <button type="button"
+                  class="mt-4 p-3 rounded-lg w-full flex items-center text-white transition duration-300 cursor-pointer {% if user_medias %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}"
                   hx-get="{% media_view_url 'track_modal' media %}"
                   hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}", "instance_id": "{{ current_instance.id }}"}'
                   hx-target="#{% component_id 'track' media current_instance.id %}"
