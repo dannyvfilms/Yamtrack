@@ -162,7 +162,7 @@ Multiple origins can be specified with commas: `https://yamtrack.mydomain.com,ht
 
 **Music Library Support:**
 - Track albums, artists, and individual tracks
-- Automatic scrobbling from Plex Music
+- Automatic scrobbling from Plex Music and Last.fm
 - MusicBrainz integration for rich metadata
 - Album artwork from iTunes
 - Artist discography views
@@ -211,6 +211,11 @@ All statistics are cached and refresh in the background, so pages load quickly e
 - **Filter by content** - Find lists faster
 - **List activity tracking** - See when lists are updated
 
+### 📚 Book Tracking
+
+**Enhanced Book Features:**
+- **Barcode scanner** - Photo upload barcode scanner for ISBN-13 detection
+
 ### 🎮 Time Left Sorting
 
 **Backlog-friendly TV sorting** - Sort your TV shows by "Time Left" to see what's closest to completion. Perfect for clearing your backlog efficiently.
@@ -247,6 +252,10 @@ All statistics are cached and refresh in the background, so pages load quickly e
 - Scheduled automatic imports
 - Better completion inference
 - Podcast artwork fetching
+
+**Last.fm Integration:**
+- Automatic scrobbling from Last.fm
+- Polls listening history every 15 minutes
 
 **Other Integrations:**
 - Jellyseerr webhook support
@@ -286,6 +295,7 @@ All the core features from the original Yamtrack are still here:
 
 Beyond the major features, this fork includes hundreds of small improvements that make daily use more pleasant:
 
+- **Barcode scanner for books** - Quick ISBN-13 scanning via photo upload (perfect for iOS/PWA)
 - **Z-index fixes** - Buttons and overlays work correctly on all pages
 - **Better card layouts** - 1:1 aspect ratio for music/podcasts, improved game stats cards
 - **Runtime data** - Accurate time-left calculations using actual episode runtimes
