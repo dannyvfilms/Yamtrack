@@ -87,7 +87,7 @@ volumes:
 Save this as `docker-compose.yml` and run:
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 Then visit `http://localhost:8000` and create your admin account.
@@ -99,7 +99,7 @@ It uses a dedicated `postgres_data` volume so it won't conflict with the SQLite 
 
 ### Docker Run (Quick Start)
 
-If you prefer a simple one-liner without docker-compose:
+If you prefer a simple one-liner without docker compose:
 
 ```bash
 docker network create yamtrack-net
@@ -123,13 +123,13 @@ docker run -d \
   ghcr.io/dannyvfilms/yamtrack:latest
 ```
 
-Note: This setup uses named volumes (`yamtrack-db` and `yamtrack-redis-data`) and a shared network (`yamtrack-net`). For docker-compose with more options, see the Docker Compose section above.
+Note: This setup uses named volumes (`yamtrack-db` and `yamtrack-redis-data`) and a shared network (`yamtrack-net`). For docker compose with more options, see the Docker Compose section above.
 
 ### Portainer Stack
 
 1. In Portainer, go to **Stacks** → **Add Stack**
 2. Name it `yamtrack`
-3. Paste the docker-compose configuration above
+3. Paste the docker compose configuration above
 4. Update the `SECRET` environment variable with a secure random string
 5. Deploy the stack
 
