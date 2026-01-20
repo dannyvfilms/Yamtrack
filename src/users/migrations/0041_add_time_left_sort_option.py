@@ -182,6 +182,10 @@ class Migration(migrations.Migration):
                 max_length=20,
             ),
         ),
+        migrations.RunSQL(
+            sql="ALTER TABLE users_user DROP CONSTRAINT IF EXISTS home_sort_valid;",
+            reverse_sql=migrations.RunSQL.noop,
+        ),
         migrations.AddConstraint(
             model_name="user",
             constraint=models.CheckConstraint(
