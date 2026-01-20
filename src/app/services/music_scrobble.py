@@ -656,16 +656,32 @@ def dedupe_artist_albums(artist: Artist) -> None:
         if len(group) <= 1:
             continue
         preferred = next((a for a in group if Music.objects.filter(album=a).exists()), group[0])
-        _dedupe_albums(artist, preferred, norm)
+        identity_groups: dict[str | None, list[Album]] = {}
+        for album in group:
+            identity = album.musicbrainz_release_group_id or album.musicbrainz_release_id
+            identity_groups.setdefault(identity, []).append(album)
+
+        non_null_identities = [key for key in identity_groups if key]
+        if len(non_null_identities) > 1:
+            for identity in non_null_identities:
+                albums_with_identity = identity_groups[identity]
+                if len(albums_with_identity) <= 1:
+                    continue
+                keep_album = preferred if preferred in albums_with_identity else albums_with_identity[0]
+                _dedupe_albums(artist, albums_with_identity, keep_album, norm)
+            continue
+
+        _dedupe_albums(artist, group, preferred, norm)
 
 
-def _dedupe_albums(artist: Artist, keep_album: Album, normalized_title: str) -> None:
+def _dedupe_albums(
+    artist: Artist,
+    albums: list[Album],
+    keep_album: Album,
+    normalized_title: str,
+) -> None:
     """Merge/delete duplicate albums with matching titles for the same artist."""
-    same_title = [
-        a
-        for a in Album.objects.filter(artist=artist)
-        if _normalize(a.title) == normalized_title
-    ]
+    same_title = [a for a in albums if _normalize(a.title) == normalized_title]
     if len(same_title) <= 1:
         return
 
