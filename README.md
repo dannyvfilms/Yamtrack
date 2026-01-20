@@ -69,7 +69,7 @@ services:
       - REDIS_URL=redis://redis:6379
       - TZ=America/New_York  # Your timezone
     volumes:
-      - ./db:/yamtrack/db
+      - ./db-sqlite:/yamtrack/db
     ports:
       - "8000:8000"
 
@@ -95,6 +95,7 @@ Then visit `http://localhost:8000` and create your admin account.
 **For PostgreSQL (production setup):**
 
 Use `docker-compose.postgres.yml` from the repository, which includes a PostgreSQL database container.
+It uses a dedicated `postgres_data` volume so it won't conflict with the SQLite `./db-sqlite` folder.
 
 ### Docker Run (Quick Start)
 

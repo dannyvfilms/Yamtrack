@@ -28,7 +28,7 @@ services:
       - POSTGRES_USER=yamtrack
       - POSTGRES_PASSWORD=yamtrack
     volumes:
-      - ./db:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
 
   redis:
@@ -40,3 +40,4 @@ services:
 
 volumes:
   redis_data:
+  postgres_data:
