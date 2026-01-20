@@ -211,6 +211,7 @@ All statistics are cached and refresh in the background, so pages load quickly e
 - **Advanced sorting** - Sort by rating, date, and more
 - **Filter by content** - Find lists faster
 - **List activity tracking** - See when lists are updated
+- **Import from Trakt** - Import your custom lists from Trakt.tv with OAuth authentication
 
 ### 📚 Book Tracking
 
@@ -257,6 +258,11 @@ All statistics are cached and refresh in the background, so pages load quickly e
 **Last.fm Integration:**
 - Automatic scrobbling from Last.fm
 - Polls listening history every 15 minutes
+
+**Trakt Integration:**
+- Import custom lists from Trakt.tv
+- OAuth authentication for secure list imports
+- Asynchronous background imports for better performance
 
 **Other Integrations:**
 - Jellyseerr webhook support
