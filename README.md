@@ -217,6 +217,7 @@ All statistics are cached and refresh in the background, so pages load quickly e
 
 **Enhanced Book Features:**
 - **Barcode scanner** - Photo upload barcode scanner for ISBN-13 detection
+- **Percentage progress** - Track reading progress as percentage (0-100) instead of pages/issues/chapters for books, comics, and manga, perfect for ebooks where page counts vary
 
 ### 🎮 Time Left Sorting
 

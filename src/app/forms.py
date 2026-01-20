@@ -259,6 +259,22 @@ class MangaForm(MediaForm):
             ),
         }
 
+    def __init__(self, *args, **kwargs):
+        """Initialize the form."""
+        user = kwargs.pop("user", None)
+        max_progress = kwargs.pop("max_progress", None)
+        super().__init__(*args, **kwargs)
+        
+        # Adjust progress field for percentage mode
+        if user and user.book_comic_manga_progress_percentage:
+            self.fields["progress"].label = "Progress (%)"
+            self.fields["progress"].widget.attrs.update({
+                "min": 0,
+                "max": 100,
+                "step": 0.1,
+                "placeholder": "%"
+            })
+
 
 class AnimeForm(MediaForm):
     """Form for anime."""
@@ -329,6 +345,22 @@ class BookForm(MediaForm):
             ),
         }
 
+    def __init__(self, *args, **kwargs):
+        """Initialize the form."""
+        user = kwargs.pop("user", None)
+        max_progress = kwargs.pop("max_progress", None)
+        super().__init__(*args, **kwargs)
+        
+        # Adjust progress field for percentage mode
+        if user and user.book_comic_manga_progress_percentage:
+            self.fields["progress"].label = "Progress (%)"
+            self.fields["progress"].widget.attrs.update({
+                "min": 0,
+                "max": 100,
+                "step": 0.1,
+                "placeholder": "%"
+            })
+
 
 class ComicForm(MediaForm):
     """Form for comics."""
@@ -343,6 +375,22 @@ class ComicForm(MediaForm):
                 f"({config.get_unit(MediaTypes.COMIC.value, short=False)}s)"
             ),
         }
+
+    def __init__(self, *args, **kwargs):
+        """Initialize the form."""
+        user = kwargs.pop("user", None)
+        max_progress = kwargs.pop("max_progress", None)
+        super().__init__(*args, **kwargs)
+        
+        # Adjust progress field for percentage mode
+        if user and user.book_comic_manga_progress_percentage:
+            self.fields["progress"].label = "Progress (%)"
+            self.fields["progress"].widget.attrs.update({
+                "min": 0,
+                "max": 100,
+                "step": 0.1,
+                "placeholder": "%"
+            })
 
 
 class TvForm(MediaForm):

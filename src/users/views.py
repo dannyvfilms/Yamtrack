@@ -355,6 +355,7 @@ def preferences(request):
         game_logging_style = request.POST.get("game_logging_style")
         mobile_grid_layout = request.POST.get("mobile_grid_layout")
         quick_season_update_mobile = request.POST.get("quick_season_update_mobile") == "1"
+        book_comic_manga_progress_percentage = request.POST.get("book_comic_manga_progress_percentage") == "1"
 
         fields_to_update = []
 
@@ -418,6 +419,10 @@ def preferences(request):
         if request.user.auto_pause_rules != normalized_rules:
             request.user.auto_pause_rules = normalized_rules
             fields_to_update.append("auto_pause_rules")
+
+        if request.user.book_comic_manga_progress_percentage != book_comic_manga_progress_percentage:
+            request.user.book_comic_manga_progress_percentage = book_comic_manga_progress_percentage
+            fields_to_update.append("book_comic_manga_progress_percentage")
 
         if fields_to_update:
             request.user.save(update_fields=fields_to_update)

@@ -578,6 +578,10 @@ class User(AbstractUser):
         blank=True,
         help_text="Auto-pause rules with per-library week thresholds",
     )
+    book_comic_manga_progress_percentage = models.BooleanField(
+        default=False,
+        help_text="Track book, comic, and manga progress as percentage instead of pages/issues/chapters",
+    )
 
     class Meta:
         """Meta options for the model."""
