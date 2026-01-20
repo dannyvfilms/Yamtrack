@@ -3,7 +3,7 @@ services:
     container_name: yamtrack
     # Image defaults to :latest tag (points to stable release branch)
     # You can also explicitly use :latest, :release, or :dev
-    image: ghcr.io/dannyvfilms/yamtrack
+    image: ghcr.io/dannyvfilms/yamtrack:latest
     restart: unless-stopped
     depends_on:
       - redis
@@ -15,6 +15,8 @@ services:
       - ./db:/yamtrack/db
     ports:
       - "8000:8000"
+    networks:
+      - yamtrack-net
 
   redis:
     container_name: yamtrack-redis
@@ -22,6 +24,13 @@ services:
     restart: unless-stopped
     volumes:
       - redis_data:/data
+    networks:
+      - yamtrack-net
 
 volumes:
   redis_data:
+
+
+networks:
+  yamtrack-net:
+    driver: bridge

@@ -718,7 +718,7 @@ CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 # https://docs.celeryq.dev/en/stable/userguide/configuration.html#task-serializer
 CELERY_TASK_SERIALIZER = "pickle"
 # https://docs.celeryq.dev/en/stable/userguide/configuration.html#std-setting-accept_content
-CELERY_ACCEPT_CONTENT = ["application/json", "application/x-python-serialize"]
+CELERY_ACCEPT_CONTENT = ["application/json", "application/x-python-serialize", "application/x-pickle"]
 
 
 DAILY_DIGEST_HOUR = config(
