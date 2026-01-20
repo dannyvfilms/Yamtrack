@@ -9,20 +9,56 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
-            model_name="user",
-            name="auto_pause_in_progress_enabled",
-            field=models.BooleanField(
-                default=False, help_text="Automatically pause stale in-progress items"
-            ),
-        ),
-        migrations.AddField(
-            model_name="user",
-            name="auto_pause_rules",
-            field=models.JSONField(
-                blank=True,
-                default=list,
-                help_text="Auto-pause rules with per-library week thresholds",
-            ),
+        migrations.SeparateDatabaseAndState(
+            database_operations=[
+                migrations.RunSQL(
+                    sql="""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'users_user' AND column_name = 'auto_pause_in_progress_enabled'
+                        ) THEN
+                            ALTER TABLE users_user ADD COLUMN auto_pause_in_progress_enabled BOOLEAN DEFAULT FALSE;
+                            COMMENT ON COLUMN users_user.auto_pause_in_progress_enabled IS 'Automatically pause stale in-progress items';
+                        END IF;
+                    END $$;
+                    """,
+                    reverse_sql=migrations.RunSQL.noop,
+                ),
+                migrations.RunSQL(
+                    sql="""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'users_user' AND column_name = 'auto_pause_rules'
+                        ) THEN
+                            ALTER TABLE users_user ADD COLUMN auto_pause_rules JSONB DEFAULT '[]'::jsonb;
+                            COMMENT ON COLUMN users_user.auto_pause_rules IS 'Auto-pause rules with per-library week thresholds';
+                        END IF;
+                    END $$;
+                    """,
+                    reverse_sql=migrations.RunSQL.noop,
+                ),
+            ],
+            state_operations=[
+                migrations.AddField(
+                    model_name="user",
+                    name="auto_pause_in_progress_enabled",
+                    field=models.BooleanField(
+                        default=False, help_text="Automatically pause stale in-progress items"
+                    ),
+                ),
+                migrations.AddField(
+                    model_name="user",
+                    name="auto_pause_rules",
+                    field=models.JSONField(
+                        blank=True,
+                        default=list,
+                        help_text="Auto-pause rules with per-library week thresholds",
+                    ),
+                ),
+            ],
         ),
     ]
