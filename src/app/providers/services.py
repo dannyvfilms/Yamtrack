@@ -201,6 +201,18 @@ def get_media_metadata(
             media_type = MediaTypes.TV.value
         return manual.metadata(media_id, media_type)
 
+    def tmdb_season_metadata():
+        """Return TMDB season metadata or raise a not-found error."""
+        seasons = tmdb.tv_with_seasons(media_id, season_numbers)
+        season_key = f"season/{season_numbers[0]}"
+        if season_key not in seasons:
+            raise_not_found_error(
+                Sources.TMDB.value,
+                media_id,
+                media_type=f"season {season_numbers[0]}",
+            )
+        return seasons[season_key]
+
     metadata_retrievers = {
         MediaTypes.ANIME.value: lambda: mal.anime(media_id),
         MediaTypes.MANGA.value: lambda: mangaupdates.manga(media_id)
@@ -208,9 +220,7 @@ def get_media_metadata(
         else mal.manga(media_id),
         MediaTypes.TV.value: lambda: tmdb.tv(media_id),
         "tv_with_seasons": lambda: tmdb.tv_with_seasons(media_id, season_numbers),
-        MediaTypes.SEASON.value: lambda: tmdb.tv_with_seasons(media_id, season_numbers)[
-            f"season/{season_numbers[0]}"
-        ],
+        MediaTypes.SEASON.value: tmdb_season_metadata,
         MediaTypes.EPISODE.value: lambda: tmdb.episode(
             media_id,
             season_numbers[0],
