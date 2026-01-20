@@ -20,18 +20,25 @@ TRAKT_API_BASE_URL = "https://api.trakt.tv"
 BULK_PAGE_SIZE = 1000
 
 
-def handle_oauth_callback(request):
+def handle_oauth_callback(request, redirect_uri=None, client_id=None, client_secret=None):
     """View for getting the Trakt OAuth2 token."""
     code = request.GET["code"]
 
     url = "https://api.trakt.tv/oauth/token"
 
+    if not redirect_uri:
+        redirect_uri = request.build_absolute_uri(reverse("import_trakt_private"))
+    if not client_id:
+        client_id = settings.TRAKT_API
+    if not client_secret:
+        client_secret = settings.TRAKT_API_SECRET
+
     params = {
-        "client_id": settings.TRAKT_API,
-        "client_secret": settings.TRAKT_API_SECRET,
+        "client_id": client_id,
+        "client_secret": client_secret,
         "code": code,
         "grant_type": "authorization_code",
-        "redirect_uri": request.build_absolute_uri(reverse("import_trakt_private")),
+        "redirect_uri": redirect_uri,
     }
 
     try:
@@ -48,19 +55,23 @@ def handle_oauth_callback(request):
         raise
 
     return {
+        "access_token": token_response["access_token"],
         "refresh_token": token_response["refresh_token"],
-        "username": get_username_from_oauth(token_response["access_token"]),
+        "username": get_username_from_oauth(token_response["access_token"], client_id=client_id),
     }
 
 
-def get_username_from_oauth(access_token):
+def get_username_from_oauth(access_token, client_id=None):
     """View for getting the Trakt OAuth2 username."""
     url = "https://api.trakt.tv/users/me"
+
+    if not client_id:
+        client_id = settings.TRAKT_API
 
     headers = {
         "Content-Type": "application/json",
         "trakt-api-version": "2",
-        "trakt-api-key": settings.TRAKT_API,
+        "trakt-api-key": client_id,
         "Authorization": f"Bearer {access_token}",
     }
 

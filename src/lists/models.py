@@ -57,6 +57,11 @@ class CustomListManager(models.Manager):
 class CustomList(models.Model):
     """Model for custom lists."""
 
+    SOURCE_CHOICES = [
+        ("local", "Local"),
+        ("trakt", "Trakt"),
+    ]
+
     VISIBILITY_CHOICES = [
         ("public", "Public"),
         ("private", "Private"),
@@ -85,6 +90,12 @@ class CustomList(models.Model):
         default=False,
         help_text="Allow anyone to recommend items to add to this list (only for public lists)",
     )
+    source = models.CharField(
+        max_length=20,
+        choices=SOURCE_CHOICES,
+        default="local",
+    )
+    source_id = models.CharField(max_length=100, blank=True, default="")
 
     objects = CustomListManager()
 

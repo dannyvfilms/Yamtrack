@@ -359,10 +359,17 @@ def get_image_url(response):
     """Return the image URL for the media."""
     # when no image, cover is not present in the response
     # e.g game: 287348
-    try:
-        return f"https://images.igdb.com/igdb/image/upload/t_original/{response['cover']['image_id']}.jpg"
-    except KeyError:
-        return settings.IMG_NONE
+    cover_image_id = response.get("cover", {}).get("image_id")
+    if cover_image_id:
+        return f"https://images.igdb.com/igdb/image/upload/t_original/{cover_image_id}.jpg"
+
+    artworks = response.get("artworks") or []
+    for artwork in artworks:
+        artwork_image_id = artwork.get("image_id")
+        if artwork_image_id:
+            return f"https://images.igdb.com/igdb/image/upload/t_original/{artwork_image_id}.jpg"
+
+    return settings.IMG_NONE
 
 
 def get_game_type(game_type_id):

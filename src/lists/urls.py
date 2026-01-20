@@ -24,6 +24,17 @@ urlpatterns = [
     path("list/create", views.create, name="list_create"),
     path("list/edit", views.edit, name="list_edit"),
     path("list/delete", views.delete, name="list_delete"),
+    path(
+        "lists/import/trakt/credentials",
+        views.trakt_lists_credentials,
+        name="trakt_lists_credentials",
+    ),
+    path("lists/import/trakt", views.trakt_lists_oauth, name="trakt_lists_oauth"),
+    path(
+        "lists/import/trakt/callback",
+        views.trakt_lists_callback,
+        name="trakt_lists_callback",
+    ),
     path("list_item_toggle", views.list_item_toggle, name="list_item_toggle"),
     # Recommendation URLs
     path(

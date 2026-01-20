@@ -183,3 +183,40 @@ class LastFMAccount(models.Model):
     def is_connected(self):
         """Return True when we have a valid connection."""
         return bool(self.lastfm_username) and not self.connection_broken
+
+
+class TraktAccount(models.Model):
+    """Store Trakt API client credentials for a user."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="trakt_account",
+    )
+    client_id = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Encrypted Trakt client ID",
+    )
+    client_secret = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Encrypted Trakt client secret",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        """Model options."""
+
+        verbose_name = "Trakt account"
+        verbose_name_plural = "Trakt accounts"
+
+    def __str__(self):
+        """Readable representation."""
+        return f"TraktAccount({self.user.username})"
+
+    @property
+    def is_configured(self):
+        """Return True when client credentials are stored."""
+        return bool(self.client_id and self.client_secret)

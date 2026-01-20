@@ -11,7 +11,7 @@
 {% endblock title %}
 
 {% block content %}
-  <div x-data="{ showModal: false }">
+  <div x-data="{ showModal: false, showTraktModal: false, traktDefaultStep: {% if trakt_has_credentials %}3{% else %}1{% endif %}, traktStep: {% if trakt_has_credentials %}3{% else %}1{% endif %} }">
     <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
       <div>
         <h1 class="text-3xl font-bold mb-2">Lists</h1>
@@ -23,11 +23,35 @@
           {% include "app/icons/person.svg" with classes="w-5 h-5 mr-2" %}
           Public Profile
         </a>
-        <button @click="showModal = true"
-                class="flex items-center px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors cursor-pointer">
-          {% include "app/icons/plus.svg" with classes="w-5 h-5 mr-2" %}
-          New List
-        </button>
+        <div class="relative inline-flex" x-data="{ open: false }">
+          <button @click="showModal = true"
+                  class="flex items-center px-4 py-2 bg-indigo-600 text-white rounded-l-md hover:bg-indigo-700 transition-colors cursor-pointer border-r border-indigo-500">
+            {% include "app/icons/plus.svg" with classes="w-5 h-5 mr-2" %}
+            New List
+          </button>
+          <button @click="open = !open"
+                  class="flex items-center px-2 py-2 bg-indigo-600 text-white rounded-r-md hover:bg-indigo-700 transition-colors cursor-pointer"
+                  aria-label="More list actions"
+                  type="button">
+            {% include "app/icons/chevron-down.svg" with classes="w-4 h-4" %}
+          </button>
+          <div class="absolute right-0 top-full mt-2 py-1 w-52 bg-[#39404b] rounded-md shadow-lg overflow-hidden z-10 border border-gray-700"
+               x-cloak
+               x-show="open"
+               @click.outside="open = false"
+               x-transition:enter="transition ease-out duration-100"
+               x-transition:enter-start="transform opacity-0 scale-95"
+               x-transition:enter-end="transform opacity-100 scale-100"
+               x-transition:leave="transition ease-in duration-75"
+               x-transition:leave-start="transform opacity-100 scale-100"
+               x-transition:leave-end="transform opacity-0 scale-95">
+            <button class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors cursor-pointer"
+                    type="button"
+                    @click.stop="open = false; showTraktModal = true; traktStep = traktDefaultStep">
+              Import from Trakt
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -166,9 +190,182 @@
     </div>
 
     {% include "lists/components/list_form.html" %}
+
+    {# Trakt OAuth Setup Modal #}
+    <div x-cloak
+         x-show="showTraktModal"
+         @click.away="showTraktModal = false"
+         class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50"
+         x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-150"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0">
+      <div class="bg-[#2a2f35] rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto"
+           @click.stop
+           x-transition:enter="transition ease-out duration-200"
+           x-transition:enter-start="opacity-0 transform scale-95"
+           x-transition:enter-end="opacity-100 transform scale-100"
+           x-transition:leave="transition ease-in duration-150"
+           x-transition:leave-start="opacity-100 transform scale-100"
+           x-transition:leave-end="opacity-0 transform scale-95">
+        <div class="p-6">
+          <div class="flex justify-between items-center mb-4">
+            <h2 class="text-2xl font-bold text-white">Setup Trakt Integration</h2>
+            <button @click="showTraktModal = false"
+                    class="text-gray-400 hover:text-white transition-colors">
+              {% include "app/icons/x.svg" with classes="w-6 h-6" %}
+            </button>
+          </div>
+
+          <div class="space-y-4" x-show="traktStep === 1" x-cloak>
+            <p class="text-gray-300">
+              Before importing lists from Trakt, create a Trakt API application and add a redirect URI.
+            </p>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-300 mb-2">
+                Redirect URI to add in Trakt:
+              </label>
+              <div class="bg-[#39404b] rounded-lg p-4 relative">
+                <div class="flex items-center gap-2">
+                  <input type="text"
+                         id="trakt-redirect-uri-step-1"
+                         value="{{ trakt_redirect_uri }}"
+                         readonly
+                         class="flex-1 text-sm text-indigo-300 font-mono bg-[#262a2f] p-3 rounded border-0 focus:ring-0 focus:outline-none cursor-text">
+                  <button type="button"
+                          class="flex items-center justify-center w-10 h-10 text-gray-300 hover:text-white bg-[#454d5a] hover:bg-[#505865] rounded transition-colors cursor-pointer"
+                          data-copy-target="#trakt-redirect-uri-step-1"
+                          title="Copy redirect URI">
+                    {% include "app/icons/copy.svg" with classes="w-5 h-5" %}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="bg-blue-900/20 border border-blue-700/50 rounded-lg p-4 space-y-2">
+              <p class="text-sm text-blue-200">
+                <strong>Note:</strong> Each URI should be on a new line in Trakt's settings. No query strings, just the full URI path.
+              </p>
+              <p class="text-sm text-blue-200">
+                After creating your application, click <strong>"Save"</strong> on Trakt to store your settings.
+              </p>
+            </div>
+
+            <div class="flex gap-3 pt-4">
+              <button type="button"
+                      @click="showTraktModal = false"
+                      class="flex-1 px-4 py-2 bg-[#39404b] text-white rounded-md hover:bg-[#454d5a] transition-colors cursor-pointer text-center">
+                Cancel
+              </button>
+              <a href="https://trakt.tv/oauth/applications/new"
+                 target="_blank"
+                 rel="noopener noreferrer"
+                 @click="traktStep = 2"
+                 class="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors cursor-pointer text-center">
+                Create Trakt Application
+              </a>
+            </div>
+          </div>
+
+          <div class="space-y-4" x-show="traktStep === 2" x-cloak>
+            <p class="text-gray-300">
+              Paste your Trakt client ID and client secret to store them securely for this account.
+            </p>
+
+            <div>
+              <label class="block text-sm font-medium text-gray-300 mb-2">
+                Redirect URI (for your Trakt app):
+              </label>
+              <div class="bg-[#39404b] rounded-lg p-4 relative">
+                <div class="flex items-center gap-2">
+                  <input type="text"
+                         id="trakt-redirect-uri-step-2"
+                         value="{{ trakt_redirect_uri }}"
+                         readonly
+                         class="flex-1 text-sm text-indigo-300 font-mono bg-[#262a2f] p-3 rounded border-0 focus:ring-0 focus:outline-none cursor-text">
+                  <button type="button"
+                          class="flex items-center justify-center w-10 h-10 text-gray-300 hover:text-white bg-[#454d5a] hover:bg-[#505865] rounded transition-colors cursor-pointer"
+                          data-copy-target="#trakt-redirect-uri-step-2"
+                          title="Copy redirect URI">
+                    {% include "app/icons/copy.svg" with classes="w-5 h-5" %}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <form method="post"
+                  action="{% url 'trakt_lists_credentials' %}"
+                  class="space-y-3">
+              {% csrf_token %}
+              <div>
+                <label class="block text-sm text-gray-400 mb-2">Client ID</label>
+                <input type="text"
+                       name="client_id"
+                       class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                       placeholder="Trakt Client ID"
+                       required>
+              </div>
+
+              <div>
+                <label class="block text-sm text-gray-400 mb-2">Client Secret</label>
+                <input type="password"
+                       name="client_secret"
+                       class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                       placeholder="Trakt Client Secret"
+                       required>
+              </div>
+
+              <div class="flex gap-3 pt-2">
+                <button type="button"
+                        @click="traktStep = 1"
+                        class="flex-1 px-4 py-2 bg-[#39404b] text-white rounded-md hover:bg-[#454d5a] transition-colors cursor-pointer text-center">
+                  Back
+                </button>
+                <button type="submit"
+                        class="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors cursor-pointer text-center">
+                  Save Credentials
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <div class="space-y-4" x-show="traktStep === 3" x-cloak>
+            <p class="text-gray-300">
+              Trakt credentials are saved. Authorize Yamtrack to import your lists.
+            </p>
+
+            <form method="post"
+                  action="{% url 'trakt_lists_oauth' %}">
+              {% csrf_token %}
+              <button type="submit"
+                      class="w-full px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors cursor-pointer text-center">
+                Login with Trakt
+              </button>
+            </form>
+
+            <div class="flex gap-3">
+              <button type="button"
+                      @click="traktStep = 2"
+                      class="flex-1 px-4 py-2 bg-[#39404b] text-white rounded-md hover:bg-[#454d5a] transition-colors cursor-pointer text-center">
+                Update Credentials
+              </button>
+              <button type="button"
+                      @click="showTraktModal = false"
+                      class="flex-1 px-4 py-2 bg-[#39404b] text-white rounded-md hover:bg-[#454d5a] transition-colors cursor-pointer text-center">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 {% endblock content %}
 
 {% block js %}
   {{ form.media.js }}
+  <script src="{% static 'js/copy-item.js' %}{% get_static_file_mtime 'js/copy-item.js' %}"></script>
 {% endblock js %}

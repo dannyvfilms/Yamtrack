@@ -1,21 +1,29 @@
 import datetime
 import logging
+import secrets
 
 from django.apps import apps
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import get_user_model
-from django.contrib.auth.decorators import login_not_required
+from django.contrib.auth.decorators import login_not_required, login_required
 from django.core.paginator import Paginator
 from django.db.models import Count, Exists, F, OuterRef, Q, Subquery
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_POST
 
 from app import helpers
 from app.models import Item, MediaManager, MediaTypes
 from app.providers import services
+from integrations.imports import helpers as import_helpers
+from integrations.imports import trakt as trakt_imports
+from integrations.models import TraktAccount
 from lists.forms import CustomListForm
+from lists.imports import trakt as trakt_lists
+from lists import tasks as list_tasks
 from lists.models import (
     CustomList,
     CustomListItem,
@@ -29,6 +37,24 @@ logger = logging.getLogger(__name__)
 
 
 User = get_user_model()
+
+
+def _get_trakt_credentials(user):
+    """Return decrypted Trakt client credentials for a user, if configured."""
+    trakt_account = TraktAccount.objects.filter(user=user).first()
+    if not trakt_account or not trakt_account.client_id or not trakt_account.client_secret:
+        return None
+    try:
+        client_id = import_helpers.decrypt(trakt_account.client_id)
+        client_secret = import_helpers.decrypt(trakt_account.client_secret)
+    except Exception:
+        logger.error(
+            "Failed to decrypt Trakt credentials for user %s",
+            user.username,
+            exc_info=True,
+        )
+        return None
+    return client_id, client_secret
 
 
 @login_not_required
@@ -162,6 +188,8 @@ def lists(request):
         )
 
     create_list_form = CustomListForm()
+    trakt_redirect_uri = request.build_absolute_uri(reverse("trakt_lists_callback"))
+    trakt_account = TraktAccount.objects.filter(user=request.user).first()
 
     return render(
         request,
@@ -173,8 +201,113 @@ def lists(request):
             "sort_choices": ListSortChoices.choices,
             "media_types": enabled_media_types,
             "current_media_type": selected_media_type,
+            "trakt_redirect_uri": trakt_redirect_uri,
+            "trakt_account": trakt_account,
+            "trakt_has_credentials": bool(trakt_account and trakt_account.is_configured),
         },
     )
+
+
+@login_required
+@require_POST
+def trakt_lists_credentials(request):
+    """Store Trakt client credentials for list imports."""
+    client_id = request.POST.get("client_id", "").strip()
+    client_secret = request.POST.get("client_secret", "").strip()
+
+    if not client_id or not client_secret:
+        messages.error(request, "Trakt client ID and secret are required.")
+        return redirect("lists")
+
+    try:
+        TraktAccount.objects.update_or_create(
+            user=request.user,
+            defaults={
+                "client_id": import_helpers.encrypt(client_id),
+                "client_secret": import_helpers.encrypt(client_secret),
+            },
+        )
+    except Exception as error:
+        logger.error("Failed to store Trakt credentials for user %s: %s", request.user.username, error)
+        messages.error(request, "Failed to save Trakt credentials. Please try again.")
+        return redirect("lists")
+
+    messages.success(request, "Trakt credentials saved. You can now authorize Trakt.")
+    return redirect("lists")
+
+
+@login_required
+@require_POST
+def trakt_lists_oauth(request):
+    """Start the Trakt OAuth flow for list imports."""
+    redirect_uri = request.build_absolute_uri(reverse("trakt_lists_callback"))
+    credentials = _get_trakt_credentials(request.user)
+    if not credentials:
+        messages.error(request, "Add your Trakt client ID and secret before authorizing.")
+        return redirect("lists")
+
+    client_id, _client_secret = credentials
+    state_token = secrets.token_urlsafe(32)
+    request.session[state_token] = {"source": "trakt_lists"}
+    request.session.modified = True
+    
+    # Build query string manually to match the working trakt_oauth pattern
+    # This ensures the redirect_uri is sent exactly as registered
+    url = "https://trakt.tv/oauth/authorize"
+    logger.debug(f"Trakt OAuth redirect URI: {redirect_uri}")
+    
+    return redirect(
+        f"{url}?client_id={client_id}&redirect_uri={redirect_uri}&response_type=code&state={state_token}",
+    )
+
+
+@login_required
+@require_GET
+def trakt_lists_callback(request):
+    """Handle Trakt OAuth callback and import lists."""
+    state_token = request.GET.get("state")
+    
+    if not state_token:
+        logger.error("Trakt OAuth callback missing state parameter")
+        messages.error(request, "Invalid Trakt authorization request. Missing state parameter.")
+        return redirect("lists")
+    
+    state_data = request.session.pop(state_token, None)
+
+    if not state_data:
+        logger.error(f"Trakt OAuth callback: state token '{state_token}' not found in session")
+        messages.error(
+            request,
+            "Invalid or expired Trakt authorization request. Please try again - make sure to complete the authorization process without closing your browser.",
+        )
+        return redirect("lists")
+
+    credentials = _get_trakt_credentials(request.user)
+    if not credentials:
+        messages.error(request, "Trakt credentials are missing. Please add them and try again.")
+        return redirect("lists")
+
+    client_id, client_secret = credentials
+
+    try:
+        oauth_callback = trakt_imports.handle_oauth_callback(
+            request,
+            redirect_uri=request.build_absolute_uri(reverse("trakt_lists_callback")),
+            client_id=client_id,
+            client_secret=client_secret,
+        )
+        # Queue the import task asynchronously so we can redirect immediately
+        list_tasks.import_trakt_lists_task.delay(
+            request.user.id,
+            oauth_callback["access_token"],
+            client_id=client_id,
+        )
+        messages.info(request, "Trakt authorization successful. Your lists are being imported in the background.")
+    except import_helpers.MediaImportError as error:
+        messages.error(request, f"Trakt list import failed: {error}")
+        return redirect("lists")
+
+    return redirect("lists")
 
 
 @login_not_required
