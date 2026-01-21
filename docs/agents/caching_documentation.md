@@ -160,13 +160,15 @@
   - `bgg_search_*`, `musicbrainz_*`, and other prefixes are not cleared by this endpoint.
 
 ## HTTP response cache control
-- `@never_cache` on `track_modal` to prevent browser caching.
+- `@never_cache` on `track_modal` to prevent browser caching. The view also explicitly sets `Cache-Control: no-cache, no-store, must-revalidate`, `Pragma: no-cache`, and `Expires: 0` headers for Safari compatibility.
 - `@never_cache` on `lists.views.list_detail` to avoid stale list grids/context rows after HTMX sorts and back/forward navigation.
 - `@never_cache` on `app.views.media_list` to avoid stale media grids/context rows after HTMX sorts and back/forward navigation.
 - `list_detail.html` reloads on `pageshow` when `event.persisted` is true to bust Safari's back/forward cache restoring older list HTML.
 - `media_list.html` reloads on `pageshow` when `event.persisted` is true for the same Safari back/forward cache issue.
+- `media_details.html` reloads on `pageshow` when `event.persisted` is true to bust Safari's back/forward cache restoring the page.
 - `list_detail.html` disables HTMX history caching on `#items-grid` (`hx-history="false"`) to prevent stale list grids from being restored.
 - `list_detail.html` sets `htmx.config.getCacheBusterParam = true` so HTMX GETs append `org.htmx.cache-buster`, which avoids Safari reusing cached list HTML.
+- `media_details.html` sets `htmx.config.getCacheBusterParam = true` for HTMX GET requests (including track modal requests). This prevents stale track modal HTML on previously visited pages. The configuration is set immediately and also on DOMContentLoaded as a fallback to ensure it's applied before any HTMX requests.
 - Podcast episode list fragment sets `Cache-Control: no-cache, no-store, must-revalidate`, plus `Pragma`/`Expires`.
 - `sync_metadata()` uses `cache.ttl()` to prevent immediate re-sync, and deletes provider cache keys when allowed.
 - Static asset busting: `get_static_file_mtime()` appends `?mtime` to static URLs.

@@ -233,6 +233,9 @@ class MediaForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         """Initialize the form."""
+        # Safely pop max_progress and user if they're passed (some form subclasses use them, others don't)
+        kwargs.pop("max_progress", None)
+        kwargs.pop("user", None)
         super().__init__(*args, **kwargs)
         # Make date fields optional to allow submission without dates
         if "start_date" in self.fields:

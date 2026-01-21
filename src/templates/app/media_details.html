@@ -55,8 +55,8 @@
           <button type="button"
                   class="mt-4 p-3 rounded-lg w-full flex items-center text-white transition duration-300 cursor-pointer {% if user_medias %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}"
                   hx-get="{% media_view_url 'track_modal' media %}"
-                  hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}", "instance_id": "{{ current_instance.id }}"}'
-                  hx-target="#{% component_id 'track' media current_instance.id %}"
+                  hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"{% if current_instance %}, "instance_id": "{{ current_instance.id }}"{% endif %}}'
+                  hx-target="#{% if current_instance %}{% component_id 'track' media current_instance.id %}{% else %}{% component_id 'track' media %}{% endif %}"
                   hx-trigger="click"
                   @click="trackOpen = true">
             <div class="flex-1 text-center font-medium">
@@ -79,7 +79,7 @@
                  @click.outside="trackOpen = false"
                  @click.stop>
               {# stop click propagation to avoid resetting the modal because this one doesn't have click once #}
-              <div id="{% component_id 'track' media current_instance.id %}"></div>
+              <div id="{% if current_instance %}{% component_id 'track' media current_instance.id %}{% else %}{% component_id 'track' media %}{% endif %}"></div>
             </div>
           </div>
         {% endif %}
@@ -821,6 +821,29 @@
           }
         });
       });
+
+      // Reload when Safari's back/forward cache restores the page
+      window.addEventListener('pageshow', function(event) {
+        if (event.persisted) {
+          window.location.reload();
+        }
+      });
+    })();
+  </script>
+  <script>
+    // Enable cache-busting for HTMX GET requests (including track modal requests)
+    // Set this immediately to ensure it's applied before any HTMX requests
+    (function() {
+      if (window.htmx) {
+        htmx.config.getCacheBusterParam = true;
+      } else {
+        // If HTMX isn't loaded yet, wait for it
+        document.addEventListener('DOMContentLoaded', function() {
+          if (window.htmx) {
+            htmx.config.getCacheBusterParam = true;
+          }
+        });
+      }
     })();
   </script>
 {% endblock content %}

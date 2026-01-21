@@ -2248,9 +2248,13 @@ def track_modal(
             title += f" S{season_number}"
 
     form_class = get_form_class(media_type)
-    form = form_class(instance=media, initial=initial_data, user=request.user, max_progress=max_progress)
+    # Only pass user and max_progress for book/comic/manga forms that handle them
+    if media_type in (MediaTypes.BOOK.value, MediaTypes.COMIC.value, MediaTypes.MANGA.value):
+        form = form_class(instance=media, initial=initial_data, user=request.user, max_progress=max_progress)
+    else:
+        form = form_class(instance=media, initial=initial_data)
 
-    return render(
+    response = render(
         request,
         "app/components/fill_track.html",
         {
@@ -2258,10 +2262,16 @@ def track_modal(
             "title": title,
             "form": form,
             "media": media,
-            "return_url": request.GET["return_url"],
+            "return_url": request.GET.get("return_url", ""),
             "max_progress": max_progress,
         },
     )
+    # Explicitly set cache control headers for Safari compatibility
+    # @never_cache should handle this, but Safari can be aggressive with caching
+    response["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response["Pragma"] = "no-cache"
+    response["Expires"] = "0"
+    return response
 
 
 @require_POST
@@ -2780,7 +2790,7 @@ def history_modal(
             "media_type": media_type,
             "timeline": timeline_entries,
             "total_medias": total_medias,
-            "return_url": request.GET["return_url"],
+            "return_url": request.GET.get("return_url", ""),
         },
     )
 
