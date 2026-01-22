@@ -548,7 +548,13 @@ def _get_or_create_album(metadata: ResolvedMusicMetadata, artist: Artist) -> tup
     if changed_fields:
         album.save(update_fields=changed_fields)
 
-    _dedupe_albums(artist, album, normalized_title)
+    # Find all albums with the same normalized title for deduplication
+    matching_albums = [
+        a for a in Album.objects.filter(artist=artist)
+        if _normalize(a.title) == normalized_title
+    ]
+    if len(matching_albums) > 1:
+        _dedupe_albums(artist, matching_albums, album, normalized_title)
 
     return album, created
 
