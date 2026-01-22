@@ -2641,14 +2641,31 @@ def get_cached_history_page(user, page_number: int = 1, logging_style_override=N
         build_start = time.perf_counter()
         for day_key in missing_days:
             day_payload = build_history_day(user, day_key, logging_style_override=logging_style)
-            if not day_payload:
-                continue
-            built_days[day_key] = day_payload
-            cache.set(
-                _day_cache_key(user.id, logging_style, day_key),
-                _serialize_history_day(day_payload),
-                timeout=HISTORY_CACHE_TIMEOUT,
-            )
+            if day_payload:
+                # Day has activity - cache it
+                built_days[day_key] = day_payload
+                cache.set(
+                    _day_cache_key(user.id, logging_style, day_key),
+                    _serialize_history_day(day_payload),
+                    timeout=HISTORY_CACHE_TIMEOUT,
+                )
+            else:
+                # Day has no activity - cache empty day to prevent refresh loops
+                day_date = _date_from_day_key(day_key)
+                if day_date:
+                    empty_day = {
+                        "date": day_date,
+                        "weekday": formats.date_format(day_date, "l"),
+                        "date_display": formats.date_format(day_date, "F j, Y"),
+                        "entries": [],
+                        "total_minutes": 0,
+                        "total_runtime_display": "0min",
+                    }
+                    cache.set(
+                        _day_cache_key(user.id, logging_style, day_key),
+                        _serialize_history_day(empty_day),
+                        timeout=HISTORY_CACHE_TIMEOUT,
+                    )
 
         if built_days:
             history_days = []
@@ -2934,14 +2951,32 @@ def refresh_history_cache(
                 warm_targets = day_keys[:warm_days]
         for day_key in warm_targets:
             day_payload = build_history_day(user, day_key, logging_style_override=logging_style)
-            if not day_payload:
-                continue
-            cache.set(
-                _day_cache_key(user_id, logging_style, day_key),
-                _serialize_history_day(day_payload),
-                timeout=HISTORY_CACHE_TIMEOUT,
-            )
-            warmed += 1
+            if day_payload:
+                # Day has activity - cache it
+                cache.set(
+                    _day_cache_key(user_id, logging_style, day_key),
+                    _serialize_history_day(day_payload),
+                    timeout=HISTORY_CACHE_TIMEOUT,
+                )
+                warmed += 1
+            else:
+                # Day has no activity - cache empty day to prevent refresh loops
+                # This marks the day as "checked" so we don't keep trying to refresh it
+                day_date = _date_from_day_key(day_key)
+                if day_date:
+                    empty_day = {
+                        "date": day_date,
+                        "weekday": formats.date_format(day_date, "l"),
+                        "date_display": formats.date_format(day_date, "F j, Y"),
+                        "entries": [],
+                        "total_minutes": 0,
+                        "total_runtime_display": "0min",
+                    }
+                    cache.set(
+                        _day_cache_key(user_id, logging_style, day_key),
+                        _serialize_history_day(empty_day),
+                        timeout=HISTORY_CACHE_TIMEOUT,
+                    )
         logger.info(
             "history_cache_refresh_done user_id=%s logging_style=%s days=%s warmed=%s",
             user_id,
