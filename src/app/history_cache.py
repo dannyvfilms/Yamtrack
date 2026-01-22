@@ -2369,11 +2369,75 @@ def get_month_history(user, year: int, month: int, logging_style_override=None):
 
     # Build history days from cached data (most recent first)
     history_days = []
+    missing_days = []
     for day_key in reversed(day_keys):
         payload_key = _day_cache_key(user.id, logging_style, day_key)
         payload = day_payloads.get(payload_key)
         if payload:
             history_days.append(_deserialize_history_day(payload))
+        else:
+            # Track missing days for partial cache miss recovery
+            missing_days.append(day_key)
+
+    # If there are missing days, check if a refresh is already in progress for them
+    if missing_days:
+        # Check if there's already a refresh scheduled for these specific days
+        # by computing the dedupe_key that schedule_history_refresh would use
+        missing_normalized = [dk for dk in missing_days]  # Already normalized
+        dedupe_seed = ",".join(sorted(missing_normalized))
+        dedupe_hash = hashlib.sha1(dedupe_seed.encode("utf-8")).hexdigest()[:10]
+        dedupe_key = f"{lock_key}_days_{dedupe_hash}"
+        existing_dedupe_lock = cache.get(dedupe_key)
+        
+        if existing_dedupe_lock is not None:
+            # Refresh already in progress for these specific days
+            logger.info(
+                "history_month_partial_miss_refreshing user_id=%s year=%s month=%s "
+                "cached=%s missing=%s",
+                user.id,
+                year,
+                month,
+                len(history_days),
+                len(missing_days),
+            )
+            cache_meta.update({"refreshing": True, "refresh_reason": "month_partial_miss_refreshing"})
+        elif refresh_lock is None:
+            # Convert missing day keys back to ISO format for schedule_history_refresh
+            missing_iso_keys = [
+                _date_from_day_key(dk).isoformat() for dk in missing_days
+            ]
+            scheduled = schedule_history_refresh(
+                user.id,
+                logging_style,
+                warm_days=0,  # We're specifying exact days
+                day_keys=missing_iso_keys,  # Pass ISO format for scheduling
+                allow_inline=False,
+            )
+            logger.info(
+                "history_month_partial_miss user_id=%s year=%s month=%s "
+                "cached=%s missing=%s scheduled=%s",
+                user.id,
+                year,
+                month,
+                len(history_days),
+                len(missing_days),
+                scheduled,
+            )
+            if scheduled:
+                cache_meta.update({"refreshing": True, "refresh_reason": "month_partial_miss"})
+        else:
+            # Main refresh lock exists but not for these specific days
+            # Still set refreshing flag since a refresh is happening
+            logger.info(
+                "history_month_partial_miss_refreshing user_id=%s year=%s month=%s "
+                "cached=%s missing=%s",
+                user.id,
+                year,
+                month,
+                len(history_days),
+                len(missing_days),
+            )
+            cache_meta.update({"refreshing": True, "refresh_reason": "month_partial_miss_refreshing"})
 
     logger.info(
         "history_month_result user_id=%s year=%s month=%s days_with_activity=%s "

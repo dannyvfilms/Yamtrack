@@ -5601,23 +5601,21 @@ def cache_status(request):
             logging_style = "repeats"
         cache_entry = cache.get(history_cache._cache_key(request.user.id, logging_style))
         refresh_lock_key = history_cache._refresh_lock_key(request.user.id, logging_style)
-        refresh_lock = cache.get(refresh_lock_key)
-        if refresh_lock and statistics_cache._lock_is_stale(refresh_lock):
-            cache.delete(refresh_lock_key)
-            refresh_lock = None
+        refresh_lock = history_cache._clean_refresh_lock(refresh_lock_key)
         lock_has_day_keys = isinstance(refresh_lock, dict) and bool(refresh_lock.get("day_keys"))
-
-        # If lock is too old, clear it to avoid a stuck "refreshing" state
-        if refresh_lock:
-            if isinstance(refresh_lock, dict):
-                started_at = refresh_lock.get("started_at")
-                if started_at and timezone.now() - started_at > history_cache.HISTORY_REFRESH_LOCK_MAX_AGE:
+        
+        # Also check dedupe_key if lock has day_keys (for page_days refreshes)
+        dedupe_key = None
+        if lock_has_day_keys and isinstance(refresh_lock, dict):
+            dedupe_key = refresh_lock.get("dedupe_key")
+            if dedupe_key and dedupe_key != refresh_lock_key:
+                # Check if dedupe lock is stale
+                dedupe_lock = history_cache._clean_refresh_lock(dedupe_key)
+                if dedupe_lock is None:
+                    # Dedupe lock is stale/missing, clear main lock too
                     cache.delete(refresh_lock_key)
                     refresh_lock = None
-            else:
-                # Legacy lock with no metadata - clear it
-                cache.delete(refresh_lock_key)
-                refresh_lock = None
+                    lock_has_day_keys = False
 
         # Debug logging to help diagnose lock issues
         logger.debug(
