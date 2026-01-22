@@ -22,7 +22,10 @@ def fetch_releases(user=None, items_to_process=None):
     if items_to_process and items_to_process[0].source == Sources.MANUAL.value:
         return "Manual sources are not processed"
 
-    items_to_process = items_to_process or get_items_to_process(user)
+    # Only fetch all items if items_to_process is explicitly None (full refresh)
+    # If items_to_process is an empty list or contains specific items, use those
+    if items_to_process is None:
+        items_to_process = get_items_to_process(user)
     if not items_to_process:
         return "No items to process"
 
