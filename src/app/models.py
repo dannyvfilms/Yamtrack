@@ -3112,3 +3112,76 @@ class PodcastShowTracker(models.Model):
     def status_readable(self):
         """Return the human-readable status."""
         return dict(Status.choices).get(self.status, self.status)
+
+
+class CollectionEntry(models.Model):
+    """Model to store user's collected media items with optional A/V metadata."""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    item = models.ForeignKey(Item, on_delete=models.CASCADE)
+
+    # Timestamps
+    collected_at = models.DateTimeField(
+        auto_now_add=True,
+        help_text="When the item was added to collection",
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        help_text="When the collection entry was last updated",
+    )
+
+    # Media source/format metadata
+    media_type = models.CharField(
+        max_length=20,
+        blank=True,
+        default="",
+        help_text="Physical/digital source: bluray, dvd, digital, etc.",
+    )
+
+    # Video metadata
+    resolution = models.CharField(
+        max_length=20,
+        blank=True,
+        default="",
+        help_text="Resolution: 720p, 1080p, 4k, etc.",
+    )
+    hdr = models.CharField(
+        max_length=30,
+        blank=True,
+        default="",
+        help_text="HDR format: HDR10, Dolby Vision, etc.",
+    )
+    is_3d = models.BooleanField(
+        default=False,
+        help_text="Whether the media is 3D",
+    )
+
+    # Audio metadata
+    audio_codec = models.CharField(
+        max_length=30,
+        blank=True,
+        default="",
+        help_text="Audio codec: AAC, DTS, TrueHD, Atmos, etc.",
+    )
+    audio_channels = models.CharField(
+        max_length=20,
+        blank=True,
+        default="",
+        help_text="Audio channels: 2.0, 5.1, 7.1.2, etc.",
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "item"],
+                name="unique_user_collection_item",
+            ),
+        ]
+        ordering = ["-collected_at"]
+        indexes = [
+            models.Index(fields=["user", "-collected_at"]),
+            models.Index(fields=["user", "item"]),
+        ]
+
+    def __str__(self):
+        return f"{self.user.username} - {self.item.title}"

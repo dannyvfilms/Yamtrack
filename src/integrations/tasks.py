@@ -4,8 +4,12 @@ from celery import shared_task
 from django.contrib.auth import get_user_model
 
 import events
+from app.collection_helpers import (
+    extract_collection_metadata_from_plex,
+)
+from app.helpers import is_item_collected
 from app.mixins import disable_fetch_releases
-from app.models import MediaTypes
+from app.models import CollectionEntry, Item, MediaTypes
 from app.templatetags import app_tags
 from integrations.imports import (
     anilist,
@@ -118,7 +122,30 @@ def import_media(importer_func, identifier, user_id, mode, oauth_username=None):
 
     events.tasks.reload_calendar.delay()
 
+    # Queue collection metadata update task for media server imports
+    _queue_post_import_collection_update(user_id, importer_func)
+
     return format_import_message(imported_counts, warnings)
+
+
+def _queue_post_import_collection_update(user_id, importer_func):
+    """Queue collection metadata update task after import if applicable.
+
+    Args:
+        user_id: User ID
+        importer_func: The importer function that was called
+    """
+    # Check if this is a media server import that supports collection updates
+    # Compare by function reference
+    import integrations.imports.plex as plex_import_module
+    if importer_func == plex_import_module.importer:
+        # Queue Plex collection update (run after calendar reload with a delay)
+        update_collection_metadata_from_plex.apply_async(
+            args=("all", user_id),
+            countdown=60,  # Run 60 seconds after import to allow calendar reload to complete
+        )
+        logger.info("Queued post-import collection metadata update for user %s", user_id)
+    # TODO: Add Jellyfin and Emby when their importers are available
 
 
 @shared_task(name="Import from Trakt")
@@ -416,4 +443,292 @@ def poll_all_lastfm_scrobbles():
         "processed": processed_count,
         "errors": error_count,
         "total_accounts": accounts.count(),
+    }
+
+
+@shared_task(name="Update collection metadata from Plex webhook")
+def update_collection_metadata_from_plex_webhook(
+    user_id,
+    item_id,
+    rating_key,
+    plex_uri,
+    plex_token,
+):
+    """Update collection metadata from Plex webhook event.
+
+    Args:
+        user_id: User ID
+        item_id: Item ID in Yamtrack
+        rating_key: Plex rating key
+        plex_uri: Plex server URI
+        plex_token: Plex authentication token
+    """
+    from integrations import plex as plex_api
+
+    User = get_user_model()
+    try:
+        user = User.objects.get(id=user_id)
+        item = Item.objects.get(id=item_id)
+    except (User.DoesNotExist, Item.DoesNotExist) as exc:
+        logger.warning(
+            "Cannot update collection metadata: %s (user_id=%s, item_id=%s)",
+            exc,
+            user_id,
+            item_id,
+        )
+        return None
+
+    # Fetch detailed metadata from Plex
+    try:
+        plex_metadata = plex_api.fetch_metadata(plex_token, plex_uri, rating_key)
+    except Exception as exc:
+        logger.warning(
+            "Failed to fetch Plex metadata for collection update: %s (rating_key=%s)",
+            exc,
+            rating_key,
+        )
+        return None
+
+    if not plex_metadata:
+        logger.debug("No Plex metadata returned for rating_key=%s", rating_key)
+        return None
+
+    # Extract collection metadata
+    collection_metadata = extract_collection_metadata_from_plex(plex_metadata)
+
+    # Get or create collection entry
+    entry, created = CollectionEntry.objects.get_or_create(
+        user=user,
+        item=item,
+        defaults=collection_metadata,
+    )
+
+    if not created:
+        # Update existing entry
+        for key, value in collection_metadata.items():
+            if value:  # Only update non-empty values
+                setattr(entry, key, value)
+        entry.save()
+
+    logger.info(
+        "Updated collection metadata for %s - %s (created=%s)",
+        user.username,
+        item.title,
+        created,
+    )
+
+    return entry.id
+
+
+@shared_task(name="Update collection metadata from Plex")
+def update_collection_metadata_from_plex(library, user_id):
+    """Update collection metadata for existing Yamtrack items from Plex server.
+
+    This task queries the Plex server for items that match existing Yamtrack items
+    and updates their collection metadata without performing a full import.
+
+    Args:
+        library: Plex library identifier (e.g., "all" or "machine_id::section_id")
+        user_id: User ID
+    """
+    from integrations import plex as plex_api
+    from app.collection_helpers import extract_collection_metadata_from_plex
+    from app.helpers import is_item_collected
+    from app.models import Item
+
+    User = get_user_model()
+    try:
+        user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        logger.warning("Cannot update collection metadata: user %s not found", user_id)
+        return {"error": "User not found"}
+
+    plex_account = getattr(user, "plex_account", None)
+    if not plex_account or not plex_account.plex_token:
+        logger.warning("Cannot update collection metadata: Plex not connected for user %s", user.username)
+        return {"error": "Plex not connected"}
+
+    try:
+        resources = plex_api.list_resources(plex_account.plex_token)
+    except plex_api.PlexAuthError as exc:
+        logger.warning("Plex token expired for user %s: %s", user.username, exc)
+        return {"error": "Plex token expired"}
+
+    # Get target sections
+    sections = plex_account.sections or []
+    if not sections:
+        sections = plex_api.list_sections(plex_account.plex_token)
+        plex_account.sections = sections
+        plex_account.sections_refreshed_at = timezone.now()
+        plex_account.save(update_fields=["sections", "sections_refreshed_at"])
+
+    if library != "all":
+        try:
+            machine_id, section_id = library.split("::", 1)
+            sections = [
+                s for s in sections
+                if s.get("machine_identifier") == machine_id
+                and str(s.get("id")) == str(section_id)
+            ]
+        except ValueError:
+            logger.warning("Invalid Plex library selection: %s", library)
+            return {"error": "Invalid library selection"}
+
+    if not sections:
+        logger.warning("No Plex sections found for user %s", user.username)
+        return {"error": "No sections found"}
+
+    updated_count = 0
+    error_count = 0
+
+    # Get user's tracked media items (Movies, TV, Music) that could have collection entries
+    from app.models import Movie, TV, Music
+    user_movies = Movie.objects.filter(user=user).select_related("item")
+    user_tv = TV.objects.filter(user=user).select_related("item")
+    user_music = Music.objects.filter(user=user).select_related("item")
+
+    all_user_items = list(user_movies.values_list("item_id", flat=True))
+    all_user_items.extend(user_tv.values_list("item_id", flat=True))
+    all_user_items.extend(user_music.values_list("item_id", flat=True))
+
+    if not all_user_items:
+        logger.info("No tracked media found for user %s, nothing to update", user.username)
+        return {"updated": 0, "errors": 0, "message": "No tracked media found"}
+
+    user_items = Item.objects.filter(id__in=all_user_items).select_related()
+
+    # For each section, we'll need to query Plex library and match items
+    # This is a simplified implementation - in practice, you'd want to:
+    # 1. Query Plex library for all items in the section
+    # 2. Match them with Yamtrack items by external IDs (TMDB, IMDB, TVDB, etc.)
+    # 3. For matched items, fetch detailed metadata and update collection entries
+
+    # For now, we'll use a simpler approach: iterate through user's items and try to find
+    # them in Plex by querying Plex history (which we already have access to)
+    # This is less efficient but works with existing infrastructure
+
+    for section in sections:
+        section_type = (section.get("type") or "").lower()
+        if section_type not in ("movie", "show", "artist", "music"):
+            continue
+
+        # Get server URI
+        connections = []
+        if section.get("uri"):
+            connections.append(section.get("uri"))
+        # Add connections from resources
+        for resource in resources:
+            if resource.get("machine_identifier") == section.get("machine_identifier"):
+                for conn in resource.get("connections", []):
+                    uri = conn.get("uri") if isinstance(conn, dict) else conn
+                    if uri and uri not in connections:
+                        connections.append(uri)
+
+        if not connections:
+            logger.warning("No connections found for section %s", section.get("title"))
+            continue
+
+        plex_uri = connections[0]  # Use first available connection
+
+        # Fetch recent history from this section to get rating keys
+        # This is a workaround - ideally we'd query the full library
+        try:
+            history_entries, _ = plex_api.fetch_history(
+                plex_account.plex_token,
+                plex_uri,
+                section.get("id"),
+                start=0,
+                size=1000,  # Get up to 1000 recent items
+            )
+
+            # Build a mapping of external IDs to rating keys from history
+            rating_key_map = {}  # Maps (media_type, external_id) -> rating_key
+            for entry in history_entries:
+                rating_key = entry.get("ratingKey") or entry.get("ratingkey")
+                if not rating_key:
+                    continue
+
+                # Extract external IDs from entry
+                guids = entry.get("Guid", [])
+                if not guids:
+                    single_guid = entry.get("guid")
+                    if single_guid:
+                        guids = [{"id": single_guid}]
+
+                for guid in guids:
+                    guid_value = guid.get("id") if isinstance(guid, dict) else guid
+                    if not guid_value:
+                        continue
+
+                    guid_lower = guid_value.lower()
+                    # Extract TMDB ID
+                    if "tmdb" in guid_lower or "themoviedb" in guid_lower:
+                        import re
+                        match = re.search(r"\d+", guid_value)
+                        if match:
+                            tmdb_id = match.group(0)
+                            item_type = "movie" if section_type == "movie" else "tv"
+                            rating_key_map[(item_type, tmdb_id)] = rating_key
+
+            # Now match user items with rating keys and update collection metadata
+            for item in user_items:
+                if item.media_type not in (MediaTypes.MOVIE.value, MediaTypes.TV.value):
+                    continue
+
+                # Try to find rating key for this item
+                rating_key = rating_key_map.get((item.media_type, item.media_id))
+                if not rating_key:
+                    continue
+
+                # Fetch detailed metadata and update collection
+                try:
+                    plex_metadata = plex_api.fetch_metadata(
+                        plex_account.plex_token,
+                        plex_uri,
+                        str(rating_key),
+                    )
+                    if not plex_metadata:
+                        continue
+
+                    collection_metadata = extract_collection_metadata_from_plex(plex_metadata)
+                    if not any(collection_metadata.values()):
+                        continue  # No metadata to update
+
+                    # Get or create collection entry
+                    entry, created = CollectionEntry.objects.get_or_create(
+                        user=user,
+                        item=item,
+                        defaults=collection_metadata,
+                    )
+
+                    if not created:
+                        # Update existing entry
+                        for key, value in collection_metadata.items():
+                            if value:  # Only update non-empty values
+                                setattr(entry, key, value)
+                        entry.save()
+
+                    updated_count += 1
+                    logger.debug(
+                        "Updated collection metadata for %s - %s",
+                        user.username,
+                        item.title,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to update collection metadata for %s: %s",
+                        item.title,
+                        exc,
+                    )
+                    error_count += 1
+
+        except Exception as exc:
+            logger.warning("Failed to process section %s: %s", section.get("title"), exc)
+            error_count += 1
+            continue
+
+    return {
+        "updated": updated_count,
+        "errors": error_count,
+        "message": f"Updated collection metadata for {updated_count} items",
     }

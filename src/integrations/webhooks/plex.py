@@ -482,3 +482,66 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
             return None, None
 
         return season_number, episode_number
+
+    def _queue_collection_metadata_update(self, payload, user, item):
+        """Queue collection metadata update task for Plex webhook."""
+        from integrations import tasks
+
+        # Get Plex account
+        plex_account = getattr(user, "plex_account", None)
+        if not plex_account or not plex_account.plex_token:
+            logger.debug("No Plex account found for user %s, skipping collection update", user.username)
+            return
+
+        # Extract rating key from payload
+        metadata = payload.get("Metadata", {})
+        rating_key = metadata.get("ratingKey") or metadata.get("ratingkey")
+        if not rating_key:
+            logger.debug("No rating key found in Plex payload, skipping collection update")
+            return
+
+        # Get server URI from Plex account sections or payload
+        plex_uri = None
+        server_info = payload.get("Server")
+        if server_info:
+            # Try to get URI from server info in payload
+            if isinstance(server_info, dict):
+                plex_uri = server_info.get("uri") or server_info.get("Uri")
+            elif isinstance(server_info, str):
+                # Sometimes it's just a string
+                plex_uri = server_info
+
+        # Fallback to getting URI from Plex account sections
+        if not plex_uri and plex_account.sections:
+            # Get first section's URI
+            for section in plex_account.sections:
+                if isinstance(section, dict):
+                    section_uri = section.get("uri")
+                    if section_uri:
+                        plex_uri = section_uri
+                        break
+
+        if not plex_uri:
+            logger.debug("No Plex server URI found, skipping collection update")
+            return
+
+        # Queue the collection metadata update task
+        try:
+            tasks.update_collection_metadata_from_plex_webhook.delay(
+                user.id,
+                item.id,
+                str(rating_key),
+                plex_uri,
+                plex_account.plex_token,
+            )
+            logger.debug(
+                "Queued collection metadata update for %s (rating_key=%s)",
+                item.title,
+                rating_key,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to queue collection metadata update: %s",
+                exc,
+                exc_info=True,
+            )

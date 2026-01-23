@@ -84,6 +84,7 @@ SpecialModels = [
     "PodcastShow",
     "PodcastEpisode",
     "MetadataBackfillState",
+    "CollectionEntry",
 ]
 for model in app_models:
     if (
@@ -172,3 +173,19 @@ from app.models import PodcastEpisode, PodcastShow  # noqa: E402
 
 admin.site.register(PodcastShow, PodcastShowAdmin)
 admin.site.register(PodcastEpisode, PodcastEpisodeAdmin)
+
+
+class CollectionEntryAdmin(admin.ModelAdmin):
+    """Admin for CollectionEntry model."""
+
+    list_display = ["user", "item", "collected_at", "media_type", "resolution"]
+    list_filter = ["media_type", "resolution", "hdr", "is_3d", "collected_at"]
+    search_fields = ["user__username", "item__title"]
+    readonly_fields = ["collected_at", "updated_at"]
+    raw_id_fields = ["user", "item"]
+
+
+# Register CollectionEntry with custom admin class
+from app.models import CollectionEntry  # noqa: E402
+
+admin.site.register(CollectionEntry, CollectionEntryAdmin)

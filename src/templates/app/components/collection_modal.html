@@ -1,0 +1,8 @@
+<div>
+<h2>Collection Entry</h2>
+<form method="post" action="{% url 'collection_add' %}">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit">Save</button>
+</form>
+</div>

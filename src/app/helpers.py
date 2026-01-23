@@ -8,7 +8,7 @@ from django.shortcuts import redirect
 from django.utils.encoding import iri_to_uri
 from django.utils.http import url_has_allowed_host_and_scheme
 
-from app.models import BasicMedia, MediaTypes
+from app.models import BasicMedia, CollectionEntry, MediaTypes
 
 
 def minutes_to_hhmm(total_minutes):
@@ -189,3 +189,70 @@ def extract_release_datetime(metadata):
             continue
 
     return None
+
+
+def get_user_collection(user, media_type=None):
+    """Get user's collection entries with optional media type filtering.
+
+    Args:
+        user: Django user object
+        media_type: Optional media type to filter by
+
+    Returns:
+        QuerySet of CollectionEntry objects
+    """
+    queryset = CollectionEntry.objects.filter(user=user).select_related("item")
+    if media_type:
+        queryset = queryset.filter(item__media_type=media_type)
+    return queryset
+
+
+def is_item_collected(user, item):
+    """Check if a specific item is in user's collection.
+
+    Args:
+        user: Django user object
+        item: Item object to check
+
+    Returns:
+        CollectionEntry object if found, None otherwise
+    """
+    try:
+        return CollectionEntry.objects.get(user=user, item=item)
+    except CollectionEntry.DoesNotExist:
+        return None
+
+
+def get_collection_stats(user):
+    """Get collection statistics for a user.
+
+    Args:
+        user: Django user object
+
+    Returns:
+        Dictionary with collection statistics:
+        - total: Total number of collection entries
+        - by_media_type: Count by media type
+        - by_format: Count by media_type (format) field
+    """
+    collection = CollectionEntry.objects.filter(user=user)
+    stats = {
+        "total": collection.count(),
+        "by_media_type": {},
+        "by_format": {},
+    }
+
+    # Count by media type (Item.media_type)
+    for entry in collection.select_related("item"):
+        item_media_type = entry.item.media_type
+        stats["by_media_type"][item_media_type] = (
+            stats["by_media_type"].get(item_media_type, 0) + 1
+        )
+
+        # Count by format (CollectionEntry.media_type)
+        if entry.media_type:
+            stats["by_format"][entry.media_type] = (
+                stats["by_format"].get(entry.media_type, 0) + 1
+            )
+
+    return stats

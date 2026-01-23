@@ -243,6 +243,19 @@ def import_plex(request):
             request.user.plex_usernames = cleaned_usernames
             request.user.save(update_fields=["plex_usernames"])
 
+    # Handle "update_collection" mode separately
+    if mode == "update_collection":
+        if frequency != "once":
+            messages.error(request, "Collection update mode only supports one-time execution.")
+            return redirect("import_data")
+
+        tasks.update_collection_metadata_from_plex.delay(
+            library=library,
+            user_id=request.user.id,
+        )
+        messages.info(request, "The task to update collection metadata from Plex has been queued.")
+        return redirect("import_data")
+
     if frequency != "once":
         helpers.create_import_schedule(
             username=plex_account.plex_username or request.user.username,

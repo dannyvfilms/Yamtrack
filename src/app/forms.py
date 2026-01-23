@@ -9,6 +9,7 @@ from app.models import (
     ArtistTracker,
     BoardGame,
     Book,
+    CollectionEntry,
     Comic,
     Episode,
     Game,
@@ -611,3 +612,36 @@ class AlbumTrackerForm(forms.ModelForm):
         if "end_date" in self.fields:
             self.fields["end_date"].required = False
             self.fields["end_date"].widget.attrs.pop("required", None)
+
+
+class CollectionEntryForm(forms.ModelForm):
+    """Form for adding/editing collection entries."""
+
+    class Meta:
+        model = CollectionEntry
+        fields = [
+            "item",
+            "media_type",
+            "resolution",
+            "hdr",
+            "is_3d",
+            "audio_codec",
+            "audio_channels",
+        ]
+        widgets = {
+            "item": forms.HiddenInput(),
+            "media_type": forms.TextInput(
+                attrs={"placeholder": "e.g., bluray, dvd, digital"},
+            ),
+            "resolution": forms.TextInput(attrs={"placeholder": "e.g., 1080p, 4k"}),
+            "hdr": forms.TextInput(attrs={"placeholder": "e.g., HDR10, Dolby Vision"}),
+            "is_3d": forms.CheckboxInput(),
+            "audio_codec": forms.TextInput(
+                attrs={"placeholder": "e.g., DTS, TrueHD, Atmos"},
+            ),
+            "audio_channels": forms.TextInput(attrs={"placeholder": "e.g., 5.1, 7.1.2"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        self.user = kwargs.pop("user", None)
+        super().__init__(*args, **kwargs)

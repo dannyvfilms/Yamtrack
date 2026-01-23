@@ -39,12 +39,18 @@ from app import (
 from app import (
     statistics as stats,
 )
-from app.forms import EpisodeForm, ManualItemForm, get_form_class
+from app.forms import (
+    CollectionEntryForm,
+    EpisodeForm,
+    ManualItemForm,
+    get_form_class,
+)
 from app.models import (
     TV,
     Album,
     Artist,
     BasicMedia,
+    CollectionEntry,
     Item,
     MediaTypes,
     Music,
@@ -6198,3 +6204,144 @@ def _adjust_month_delta(reference_date, months):
 
 def _dates_close(date_one, date_two, tolerance_days=1):
     return abs((date_one - date_two).days) <= tolerance_days
+
+
+@require_GET
+def collection_list(request, media_type=None):
+    """Display user's collection, optionally filtered by media_type."""
+    collection = helpers.get_user_collection(request.user, media_type)
+    paginator = Paginator(collection, 20)
+    page_number = request.GET.get("page", 1)
+
+    try:
+        page_obj = paginator.page(page_number)
+    except EmptyPage:
+        page_obj = paginator.page(paginator.num_pages)
+
+    return render(
+        request,
+        "app/collection_list.html",
+        {
+            "collection_entries": page_obj,
+            "media_type": media_type,
+        },
+    )
+
+
+@require_POST
+def collection_add(request):
+    """Add item to collection (with optional metadata)."""
+    item_id = request.POST.get("item_id")
+    if not item_id:
+        if request.headers.get("HX-Request"):
+            return HttpResponseBadRequest("Item ID is required")
+        messages.error(request, "Item ID is required")
+        return redirect("collection_list")
+
+    try:
+        item = Item.objects.get(id=item_id)
+    except Item.DoesNotExist:
+        if request.headers.get("HX-Request"):
+            return HttpResponseBadRequest("Item not found")
+        messages.error(request, "Item not found")
+        return redirect("collection_list")
+
+    # Check if entry already exists
+    existing_entry = helpers.is_item_collected(request.user, item)
+    
+    # Create mutable POST data and add item
+    post_data = request.POST.copy()
+    post_data["item"] = item.id
+    
+    if existing_entry:
+        # Update instead of creating duplicate
+        form = CollectionEntryForm(post_data, instance=existing_entry, user=request.user)
+    else:
+        form = CollectionEntryForm(post_data, user=request.user)
+
+    if form.is_valid():
+        entry = form.save(commit=False)
+        entry.user = request.user
+        entry.item = item
+        entry.save()
+        messages.success(request, f"Added {item.title} to collection")
+    else:
+        helpers.form_error_messages(form, request)
+
+    if request.headers.get("HX-Request"):
+        return JsonResponse({"success": True, "message": f"Added {item.title} to collection"})
+    return redirect("collection_list")
+
+
+@require_POST
+def collection_update(request, entry_id):
+    """Update collection entry metadata."""
+    try:
+        entry = CollectionEntry.objects.get(id=entry_id, user=request.user)
+    except CollectionEntry.DoesNotExist:
+        from django.http import Http404
+        raise Http404("Collection entry not found")
+
+    form = CollectionEntryForm(request.POST, instance=entry, user=request.user)
+    if form.is_valid():
+        form.save()
+        messages.success(request, f"Updated collection entry for {entry.item.title}")
+    else:
+        helpers.form_error_messages(form, request)
+
+    if request.headers.get("HX-Request"):
+        return JsonResponse({"success": True, "message": f"Updated collection entry"})
+    return redirect("collection_list")
+
+
+@require_POST
+def collection_remove(request, entry_id):
+    """Remove item from collection."""
+    try:
+        entry = CollectionEntry.objects.get(id=entry_id, user=request.user)
+    except CollectionEntry.DoesNotExist:
+        from django.http import Http404
+        raise Http404("Collection entry not found")
+
+    item_title = entry.item.title
+    entry.delete()
+    messages.success(request, f"Removed {item_title} from collection")
+
+    if request.headers.get("HX-Request"):
+        return JsonResponse({"success": True, "message": f"Removed {item_title} from collection"})
+    return redirect("collection_list")
+
+
+@never_cache
+@require_GET
+def collection_modal(request, source, media_type, media_id):
+    """Return modal HTML for adding/editing collection entry."""
+    try:
+        item = Item.objects.get(
+            media_id=media_id,
+            source=source,
+            media_type=media_type,
+        )
+    except Item.DoesNotExist:
+        if request.headers.get("HX-Request"):
+            return HttpResponseBadRequest("Item not found")
+        messages.error(request, "Item not found")
+        return redirect("home")
+
+    # Check if collection entry already exists
+    existing_entry = helpers.is_item_collected(request.user, item)
+    form = CollectionEntryForm(instance=existing_entry, user=request.user)
+    form.fields["item"].initial = item.id
+
+    return_url = request.GET.get("return_url", "")
+
+    return render(
+        request,
+        "app/components/collection_modal.html",
+        {
+            "item": item,
+            "entry": existing_entry,
+            "form": form,
+            "return_url": return_url,
+        },
+    )

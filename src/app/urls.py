@@ -200,4 +200,27 @@ urlpatterns = [
         views.podcast_show_delete,
         name="podcast_show_delete",
     ),
+    # Collection endpoints
+    path("collection/", views.collection_list, name="collection_list"),
+    path(
+        "collection/<media_type:media_type>/",
+        views.collection_list,
+        name="collection_list_filtered",
+    ),
+    path("collection/add/", views.collection_add, name="collection_add"),
+    path(
+        "collection/<int:entry_id>/update/",
+        views.collection_update,
+        name="collection_update",
+    ),
+    path(
+        "collection/<int:entry_id>/remove/",
+        views.collection_remove,
+        name="collection_remove",
+    ),
+    path(
+        "collection/modal/<source:source>/<media_type:media_type>/<path:media_id>/",
+        views.collection_modal,
+        name="collection_modal",
+    ),
 ]

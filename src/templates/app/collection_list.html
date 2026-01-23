@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Collection</h1>
+{% if media_type %}
+<p>Filtered by: {{ media_type }}</p>
+{% endif %}
+<ul>
+{% for entry in collection_entries %}
+    <li>{{ entry.item.title }}</li>
+{% empty %}
+    <li>No collection entries</li>
+{% endfor %}
+</ul>
+{% endblock %}

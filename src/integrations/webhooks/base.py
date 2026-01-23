@@ -444,6 +444,13 @@ class BaseWebhookProcessor:
                 Status.COMPLETED.value if movie_played else Status.IN_PROGRESS.value,
             )
 
+        # Queue collection metadata update if supported
+        self._queue_collection_metadata_update(payload, user, movie_item)
+
+    def _queue_collection_metadata_update_for_tv(self, payload, user, tv_item):
+        """Queue collection metadata update for TV show (not episode-specific)."""
+        self._queue_collection_metadata_update(payload, user, tv_item)
+
     def _handle_tv_episode(
         self,
         media_id,
@@ -572,6 +579,9 @@ class BaseWebhookProcessor:
                 episode_number,
             )
 
+        # Queue collection metadata update for TV show (not episode-specific)
+        self._queue_collection_metadata_update_for_tv(payload, user, tv_item)
+
     def _handle_anime(self, media_id, episode_number, payload, user):
         """Handle anime playback event."""
         anime_metadata = app.providers.mal.anime(media_id)
@@ -632,3 +642,11 @@ class BaseWebhookProcessor:
                 status,
                 episode_number,
             )
+
+    def _queue_collection_metadata_update(self, payload, user, item):
+        """Queue collection metadata update task if media server info is available.
+        
+        This is a no-op by default. Subclasses should override to implement
+        collection metadata extraction for their specific media server.
+        """
+        pass
