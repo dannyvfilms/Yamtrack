@@ -290,15 +290,15 @@
           {% for track_data in tracks %}
             <div class="bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg">
               <div class="flex flex-col md:flex-row">
-                {# Track image (album cover thumbnail) - like Episode still #}
-                <div class="md:w-32 md:h-24 shrink-0">
+                {# Track image (album cover thumbnail) - square like album art #}
+                <div class="md:w-32 md:h-32 shrink-0">
                   {% if album.image and album.image != IMG_NONE %}
                     <img src="{{ album.image }}"
                          alt="{{ track_data.track.title }}"
                          class="w-full h-full object-cover"
                          referrerpolicy="origin">
                   {% else %}
-                    <div class="w-full h-full min-h-[96px] bg-[#1a1d20] flex items-center justify-center">
+                    <div class="w-full h-full bg-[#1a1d20] flex items-center justify-center">
                       {% icon 'music' is_active=False extra_classes="w-8 h-8 text-gray-600" %}
                     </div>
                   {% endif %}
