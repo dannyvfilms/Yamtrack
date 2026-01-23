@@ -277,16 +277,24 @@
       </div>
 
       {# Collection #}
-      <h2 class="text-xl font-bold mb-4">Collection</h2>
+      <h2 class="text-xl font-bold mb-4 mt-6">Collection</h2>
       <div class="bg-[#2a2f35] p-4 rounded-lg text-center md:text-start">
         <div class="mb-4">
           <h3 class="text-sm font-semibold text-gray-400">COLLECTED ALBUMS</h3>
-          <p class="text-gray-200">{{ collection_stats.collected_albums }}</p>
+          <p class="text-gray-200">{{ collection_stats.collected_albums }}/{{ collection_stats.total_albums }}</p>
+          {% if collection_stats.total_albums > 0 %}
+            {% widthratio collection_stats.collected_albums collection_stats.total_albums 100 as album_percentage %}
+            <p class="text-xs text-gray-400 mt-1">{{ album_percentage }}%</p>
+          {% endif %}
         </div>
         
         <div>
           <h3 class="text-sm font-semibold text-gray-400">COLLECTED TRACKS</h3>
-          <p class="text-gray-200">{{ collection_stats.collected_tracks }}</p>
+          <p class="text-gray-200">{{ collection_stats.collected_tracks }}/{{ collection_stats.total_tracks }}</p>
+          {% if collection_stats.total_tracks > 0 %}
+            {% widthratio collection_stats.collected_tracks collection_stats.total_tracks 100 as track_percentage %}
+            <p class="text-xs text-gray-400 mt-1">{{ track_percentage }}%</p>
+          {% endif %}
         </div>
       </div>
     </div>

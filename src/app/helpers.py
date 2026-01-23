@@ -359,6 +359,7 @@ def get_artist_collection_stats(user, artist):
     
     # Get all albums for this artist
     albums = Album.objects.filter(artist=artist)
+    total_albums = albums.count()
     
     # Get all music entries (tracks) for these albums
     music_entries = Music.objects.filter(
@@ -366,12 +367,17 @@ def get_artist_collection_stats(user, artist):
         album__in=albums,
     ).select_related("item", "album")
     
+    # Count total tracks (all tracks from all albums for this artist)
+    total_tracks = music_entries.count()
+    
     # Get collection entries for all items from this artist
     item_ids = [m.item_id for m in music_entries if m.item_id]
     if not item_ids:
         return {
             "collected_albums": 0,
+            "total_albums": total_albums,
             "collected_tracks": 0,
+            "total_tracks": total_tracks,
         }
     
     collection_entries = CollectionEntry.objects.filter(
@@ -382,7 +388,9 @@ def get_artist_collection_stats(user, artist):
     if not collection_entries.exists():
         return {
             "collected_albums": 0,
+            "total_albums": total_albums,
             "collected_tracks": 0,
+            "total_tracks": total_tracks,
         }
     
     # Count distinct albums that have at least one collected track
@@ -398,5 +406,7 @@ def get_artist_collection_stats(user, artist):
     
     return {
         "collected_albums": len(collected_album_ids),
+        "total_albums": total_albums,
         "collected_tracks": collected_track_count,
+        "total_tracks": total_tracks,
     }
