@@ -1515,6 +1515,22 @@ def media_details(
                     notes_entry = entry
                     break
 
+    # Get collection entry for this item (if not public view and not podcast)
+    collection_entry = None
+    if not public_view and media_type != MediaTypes.PODCAST.value:
+        from app.models import Item
+        from app.helpers import is_item_collected
+        
+        try:
+            item = Item.objects.get(
+                media_id=media_id,
+                source=source,
+                media_type=media_type,
+            )
+            collection_entry = is_item_collected(request.user, item)
+        except Item.DoesNotExist:
+            pass
+
     context = {
         "user": request.user,
         "media": media_metadata,
@@ -1526,6 +1542,7 @@ def media_details(
         "public_view": public_view,
         "play_stats": play_stats,
         "notes_entry": notes_entry,
+        "collection_entry": collection_entry,
     }
     return render(request, "app/media_details.html", context)
 
@@ -1700,6 +1717,23 @@ def season_details(
                     )
                 )
 
+    # Get collection entry for this season's TV show item (if not public view)
+    collection_entry = None
+    if not public_view:
+        from app.models import Item
+        from app.helpers import is_item_collected
+        
+        # Get the TV show item (not the season item)
+        try:
+            tv_item = Item.objects.get(
+                media_id=media_id,
+                source=source,
+                media_type=MediaTypes.TV.value,
+            )
+            collection_entry = is_item_collected(request.user, tv_item)
+        except Item.DoesNotExist:
+            pass
+
     context = {
         "user": request.user,
         "media": season_metadata,
@@ -1708,6 +1742,7 @@ def season_details(
         "user_medias": user_medias,
         "current_instance": current_instance,
         "public_view": public_view,
+        "collection_entry": collection_entry,
     }
     return render(request, "app/media_details.html", context)
 

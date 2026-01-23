@@ -650,6 +650,66 @@
           <div class="text-gray-200">No details available</div>
         {% endif %}
       </div>
+
+      {# Collection #}
+      {% if not public_view and media_type != MediaTypes.PODCAST.value and collection_entry %}
+        <h2 class="text-xl font-bold mb-4 mt-6">Collection</h2>
+        <div class="bg-[#2a2f35] p-4 rounded-lg text-center md:text-start">
+          {% if collection_entry.media_type %}
+            <div class="mb-4">
+              <h3 class="text-sm font-semibold text-gray-400">MEDIA TYPE</h3>
+              <p class="text-gray-200">{{ collection_entry.media_type|title }}</p>
+            </div>
+          {% endif %}
+          
+          {% if collection_entry.resolution %}
+            <div class="mb-4">
+              <h3 class="text-sm font-semibold text-gray-400">RESOLUTION</h3>
+              <p class="text-gray-200">{{ collection_entry.resolution }}</p>
+            </div>
+          {% endif %}
+          
+          {% if collection_entry.hdr %}
+            <div class="mb-4">
+              <h3 class="text-sm font-semibold text-gray-400">HDR</h3>
+              <p class="text-gray-200">{{ collection_entry.hdr }}</p>
+            </div>
+          {% endif %}
+          
+          {% if collection_entry.is_3d %}
+            <div class="mb-4">
+              <h3 class="text-sm font-semibold text-gray-400">3D</h3>
+              <p class="text-gray-200">Yes</p>
+            </div>
+          {% endif %}
+          
+          {% if collection_entry.audio_codec %}
+            <div class="mb-4">
+              <h3 class="text-sm font-semibold text-gray-400">AUDIO CODEC</h3>
+              <p class="text-gray-200">{{ collection_entry.audio_codec }}</p>
+            </div>
+          {% endif %}
+          
+          {% if collection_entry.audio_channels %}
+            <div class="mb-4">
+              <h3 class="text-sm font-semibold text-gray-400">AUDIO CHANNELS</h3>
+              <p class="text-gray-200">{{ collection_entry.audio_channels }}</p>
+            </div>
+          {% endif %}
+          
+          {% if collection_entry.bitrate %}
+            <div class="mb-4">
+              <h3 class="text-sm font-semibold text-gray-400">BITRATE</h3>
+              <p class="text-gray-200">{{ collection_entry.bitrate }} kbps</p>
+            </div>
+          {% endif %}
+          
+          <div>
+            <h3 class="text-sm font-semibold text-gray-400">COLLECTED</h3>
+            <p class="text-gray-200">{{ collection_entry.collected_at|user_date_format:user }}</p>
+          </div>
+        </div>
+      {% endif %}
     </div>
 
     {# Related Media #}

@@ -273,9 +273,26 @@ This document outlines the required UI components and testing points for the Col
 - Collection entry creation/update/delete operations verified
 
 **Test Results:**
-- Music track collection metadata successfully extracted and stored (audio_codec: MP3, audio_channels: 2.0)
+- Music track collection metadata successfully extracted and stored (audio_codec: MP3, audio_channels: 2.0, bitrate: 128)
 - Plex webhook integration queues collection updates correctly
 - Album-level collection metadata aggregation implemented and ready for UI display
+
+## UI Implementation Status
+
+✅ **Music Album Detail Page** (2026-01-23)
+- Collection metadata chips displayed at album level (aggregated from tracks)
+- Chips show: audio codec (with microphone icon), bitrate (with signal icon), audio channels (with speaker icon), media type
+- Chips positioned in badge section alongside release type and year
+
+✅ **Music Artist Detail Page** (2026-01-23)
+- Collection section added showing collected albums and tracks
+- Displays format: "X/Y • Z%" for both albums and tracks
+- Section positioned after Details section with proper spacing
+
+🔄 **Media Details Page** (In Progress)
+- Need to add Collection section for all media types (Movies, TV, Games, Books, Comics, etc.)
+- Should display collection metadata similar to artist/album pages
+- Should show collection entry if item is collected
 
 ## Notes
 
