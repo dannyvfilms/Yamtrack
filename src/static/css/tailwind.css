@@ -1499,6 +1499,9 @@
   .bg-gray-700 {
     background-color: var(--color-gray-700);
   }
+  .bg-gray-900 {
+    background-color: var(--color-gray-900);
+  }
   .bg-gray-900\/90 {
     background-color: color-mix(in srgb, oklch(21% 0.034 264.665) 90%, transparent);
     @supports (color: color-mix(in lab, red, red)) {
@@ -1536,6 +1539,12 @@
     background-color: color-mix(in srgb, oklch(51.1% 0.262 276.966) 20%, transparent);
     @supports (color: color-mix(in lab, red, red)) {
       background-color: color-mix(in oklab, var(--color-indigo-600) 20%, transparent);
+    }
+  }
+  .bg-indigo-600\/90 {
+    background-color: color-mix(in srgb, oklch(51.1% 0.262 276.966) 90%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--color-indigo-600) 90%, transparent);
     }
   }
   .bg-indigo-700 {

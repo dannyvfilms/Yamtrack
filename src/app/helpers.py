@@ -341,3 +341,62 @@ def get_collection_stats(user):
             )
 
     return stats
+
+
+def get_artist_collection_stats(user, artist):
+    """Get collection statistics for an artist.
+    
+    Args:
+        user: Django user object
+        artist: Artist object
+        
+    Returns:
+        Dictionary with collection statistics:
+        - collected_albums: Number of distinct albums with at least one collected track
+        - collected_tracks: Total number of collected tracks from this artist
+    """
+    from app.models import Album, Music
+    
+    # Get all albums for this artist
+    albums = Album.objects.filter(artist=artist)
+    
+    # Get all music entries (tracks) for these albums
+    music_entries = Music.objects.filter(
+        user=user,
+        album__in=albums,
+    ).select_related("item", "album")
+    
+    # Get collection entries for all items from this artist
+    item_ids = [m.item_id for m in music_entries if m.item_id]
+    if not item_ids:
+        return {
+            "collected_albums": 0,
+            "collected_tracks": 0,
+        }
+    
+    collection_entries = CollectionEntry.objects.filter(
+        user=user,
+        item_id__in=item_ids,
+    ).select_related("item")
+    
+    if not collection_entries.exists():
+        return {
+            "collected_albums": 0,
+            "collected_tracks": 0,
+        }
+    
+    # Count distinct albums that have at least one collected track
+    collected_album_ids = set()
+    collected_track_count = 0
+    
+    for entry in collection_entries:
+        # Find which album this track belongs to
+        music_entry = music_entries.filter(item_id=entry.item_id).first()
+        if music_entry and music_entry.album_id:
+            collected_album_ids.add(music_entry.album_id)
+        collected_track_count += 1
+    
+    return {
+        "collected_albums": len(collected_album_ids),
+        "collected_tracks": collected_track_count,
+    }

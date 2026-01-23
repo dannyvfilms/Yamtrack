@@ -3858,6 +3858,10 @@ def artist_detail(request, artist_id):
         # Use top tags as genre chips if no official genres
         genre_chips = [t["name"].title() for t in tags[:6]]
 
+    # Get collection statistics for this artist
+    from app.helpers import get_artist_collection_stats
+    collection_stats = get_artist_collection_stats(request.user, artist)
+
     context = {
         "user": request.user,
         "artist": artist,
@@ -3873,6 +3877,7 @@ def artist_detail(request, artist_id):
         "bio": bio,  # Wikipedia extract
         "mb_rating": mb_rating,
         "mb_rating_count": mb_rating_count,
+        "collection_stats": collection_stats,
     }
     return render(request, "app/music_artist_detail.html", context)
 
