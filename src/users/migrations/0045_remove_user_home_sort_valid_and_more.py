@@ -3,6 +3,49 @@
 from django.db import migrations, models
 
 
+def ensure_auto_pause_columns(apps, schema_editor):
+    """Ensure auto-pause columns exist with valid JSON before table rebuilds."""
+    if schema_editor.connection.vendor != "sqlite":
+        return
+
+    from django.db import connection
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='users_user'"
+        )
+        if not cursor.fetchone():
+            return
+
+        cursor.execute("PRAGMA table_info(users_user)")
+        columns = {row[1] for row in cursor.fetchall()}
+
+        if "auto_pause_in_progress_enabled" not in columns:
+            cursor.execute(
+                "ALTER TABLE users_user "
+                "ADD COLUMN auto_pause_in_progress_enabled bool NOT NULL DEFAULT 0"
+            )
+
+        if "auto_pause_rules" not in columns:
+            cursor.execute(
+                "ALTER TABLE users_user "
+                "ADD COLUMN auto_pause_rules TEXT NOT NULL DEFAULT '[]'"
+            )
+
+        try:
+            cursor.execute(
+                "UPDATE users_user SET auto_pause_rules = '[]' "
+                "WHERE auto_pause_rules IS NULL OR JSON_VALID(auto_pause_rules) = 0"
+            )
+        except Exception:
+            cursor.execute(
+                "UPDATE users_user SET auto_pause_rules = '[]' "
+                "WHERE auto_pause_rules IS NULL "
+                "OR auto_pause_rules = '' "
+                "OR auto_pause_rules = 'auto_pause_rules'"
+            )
+
+
 class Migration(migrations.Migration):
     dependencies = [
         ("app", "0053_item_release_datetime"),
@@ -11,6 +54,7 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.RunPython(ensure_auto_pause_columns, migrations.RunPython.noop),
         migrations.RemoveConstraint(
             model_name="user",
             name="home_sort_valid",

@@ -12,33 +12,11 @@ class Migration(migrations.Migration):
         migrations.SeparateDatabaseAndState(
             database_operations=[
                 migrations.RunSQL(
-                    sql="""
-                    DO $$
-                    BEGIN
-                        IF NOT EXISTS (
-                            SELECT 1 FROM information_schema.columns 
-                            WHERE table_name = 'users_user' AND column_name = 'auto_pause_in_progress_enabled'
-                        ) THEN
-                            ALTER TABLE users_user ADD COLUMN auto_pause_in_progress_enabled BOOLEAN DEFAULT FALSE;
-                            COMMENT ON COLUMN users_user.auto_pause_in_progress_enabled IS 'Automatically pause stale in-progress items';
-                        END IF;
-                    END $$;
-                    """,
+                    sql=migrations.RunSQL.noop,
                     reverse_sql=migrations.RunSQL.noop,
                 ),
                 migrations.RunSQL(
-                    sql="""
-                    DO $$
-                    BEGIN
-                        IF NOT EXISTS (
-                            SELECT 1 FROM information_schema.columns 
-                            WHERE table_name = 'users_user' AND column_name = 'auto_pause_rules'
-                        ) THEN
-                            ALTER TABLE users_user ADD COLUMN auto_pause_rules JSONB DEFAULT '[]'::jsonb;
-                            COMMENT ON COLUMN users_user.auto_pause_rules IS 'Auto-pause rules with per-library week thresholds';
-                        END IF;
-                    END $$;
-                    """,
+                    sql=migrations.RunSQL.noop,
                     reverse_sql=migrations.RunSQL.noop,
                 ),
             ],

@@ -85,6 +85,8 @@ class Migration(migrations.Migration):
                     ("book", "Book"),
                     ("comic", "Comic"),
                     ("boardgame", "Board Game"),
+                    ("music", "Music"),
+                    ("podcast", "Podcast"),
                 ],
                 default="tv",
                 max_length=10,
@@ -105,6 +107,8 @@ class Migration(migrations.Migration):
                             "book",
                             "comic",
                             "boardgame",
+                            "music",
+                            "podcast",
                         ],
                     )
                 ),

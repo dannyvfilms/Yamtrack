@@ -18,7 +18,7 @@ class Migration(migrations.Migration):
             field=models.CharField(choices=[('upcoming', 'Upcoming'), ('recent', 'Recent'), ('completion', 'Completion'), ('episodes_left', 'Episodes Left'), ('title', 'Title')], default='upcoming', max_length=20),
         ),
         migrations.RunSQL(
-            sql="ALTER TABLE users_user DROP CONSTRAINT IF EXISTS home_sort_valid;",
+            sql="",
             reverse_sql=migrations.RunSQL.noop,
         ),
         migrations.AddConstraint(

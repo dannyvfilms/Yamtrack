@@ -30,7 +30,7 @@ class Migration(migrations.Migration):
             ),
         ),
         migrations.RunSQL(
-            sql="ALTER TABLE users_user DROP CONSTRAINT IF EXISTS home_sort_valid;",
+            sql="",
             reverse_sql=migrations.RunSQL.noop,
         ),
         migrations.AddConstraint(
