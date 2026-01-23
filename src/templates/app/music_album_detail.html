@@ -75,6 +75,30 @@
         {% if album.release_date %}
           <span class="px-3 py-1 bg-gray-600 text-white rounded-full text-sm">{{ album.release_date|date:"Y" }}</span>
         {% endif %}
+        {# Collection metadata chips (aggregated from tracks) #}
+        {% if collection_metadata.has_collection %}
+          {% if collection_metadata.audio_codec %}
+            <span class="px-3 py-1 bg-indigo-600 text-white rounded-full text-sm flex items-center gap-1.5">
+              {% include "app/icons/microphone.svg" with classes="w-3.5 h-3.5" %}
+              <span>{{ collection_metadata.audio_codec }}</span>
+            </span>
+          {% endif %}
+          {% if collection_metadata.bitrate %}
+            <span class="px-3 py-1 bg-indigo-600 text-white rounded-full text-sm flex items-center gap-1.5">
+              {% include "app/icons/signal.svg" with classes="w-3.5 h-3.5" %}
+              <span>{{ collection_metadata.bitrate }}</span>
+            </span>
+          {% endif %}
+          {% if collection_metadata.audio_channels %}
+            <span class="px-3 py-1 bg-indigo-600 text-white rounded-full text-sm flex items-center gap-1.5">
+              {% include "app/icons/speaker.svg" with classes="w-3.5 h-3.5" %}
+              <span>{{ collection_metadata.audio_channels }}</span>
+            </span>
+          {% endif %}
+          {% if collection_metadata.media_type %}
+            <span class="px-3 py-1 bg-indigo-600 text-white rounded-full text-sm">{{ collection_metadata.media_type|title }}</span>
+          {% endif %}
+        {% endif %}
       </div>
 
       {# Stats cards (like scores on Season) #}

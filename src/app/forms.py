@@ -627,6 +627,7 @@ class CollectionEntryForm(forms.ModelForm):
             "is_3d",
             "audio_codec",
             "audio_channels",
+            "bitrate",
         ]
         widgets = {
             "item": forms.HiddenInput(),
@@ -640,6 +641,7 @@ class CollectionEntryForm(forms.ModelForm):
                 attrs={"placeholder": "e.g., DTS, TrueHD, Atmos"},
             ),
             "audio_channels": forms.TextInput(attrs={"placeholder": "e.g., 5.1, 7.1.2"}),
+            "bitrate": forms.NumberInput(attrs={"placeholder": "e.g., 128, 320, 1411"}),
         }
 
     def __init__(self, *args, **kwargs):

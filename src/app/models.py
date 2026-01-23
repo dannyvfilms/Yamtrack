@@ -3169,6 +3169,11 @@ class CollectionEntry(models.Model):
         default="",
         help_text="Audio channels: 2.0, 5.1, 7.1.2, etc.",
     )
+    bitrate = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="Audio bitrate in kbps (e.g., 128, 320, 1411)",
+    )
 
     class Meta:
         constraints = [

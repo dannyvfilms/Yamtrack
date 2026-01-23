@@ -22,6 +22,7 @@ def extract_collection_metadata_from_plex(plex_metadata):
         "hdr": "",
         "audio_codec": "",
         "audio_channels": "",
+        "bitrate": None,
         "media_type": "",
     }
 
@@ -96,6 +97,14 @@ def extract_collection_metadata_from_plex(plex_metadata):
         channels_str = str(audio_channels)
         result["audio_channels"] = channel_map.get(channels_str, channels_str)
 
+    # Extract bitrate (in kbps)
+    bitrate = media.get("bitrate")
+    if bitrate:
+        try:
+            result["bitrate"] = int(bitrate)
+        except (TypeError, ValueError):
+            result["bitrate"] = None
+
     # Extract container (helps determine source type)
     container = media.get("container") or ""
     if container:
@@ -129,6 +138,7 @@ def extract_collection_metadata_from_jellyfin(jellyfin_metadata):
         "hdr": "",
         "audio_codec": "",
         "audio_channels": "",
+        "bitrate": None,
         "media_type": "",
         "is_3d": False,
     }
@@ -204,6 +214,20 @@ def extract_collection_metadata_from_jellyfin(jellyfin_metadata):
                 8: "7.1",
             }
             result["audio_channels"] = channel_map.get(channels, str(channels))
+
+        # Extract bitrate (in kbps) - Jellyfin provides bitrate in MediaSources
+        bitrate = audio_stream.get("Bitrate")
+        if not bitrate:
+            # Try MediaSources for overall bitrate
+            media_sources = jellyfin_metadata.get("MediaSources") or []
+            if media_sources:
+                bitrate = media_sources[0].get("Bitrate")
+        if bitrate:
+            try:
+                # Jellyfin bitrate is in bps, convert to kbps
+                result["bitrate"] = int(bitrate) // 1000
+            except (TypeError, ValueError):
+                result["bitrate"] = None
 
     # Extract container from MediaSources
     media_sources = jellyfin_metadata.get("MediaSources") or []

@@ -4129,6 +4129,10 @@ def album_detail(request, album_id):
         album_details["musicbrainz_id"] = album.musicbrainz_release_group_id
         album_details["musicbrainz_url"] = f"https://musicbrainz.org/release-group/{album.musicbrainz_release_group_id}"
 
+    # Get collection metadata for this album (aggregated from tracks)
+    from app.helpers import get_album_collection_metadata
+    collection_metadata = get_album_collection_metadata(request.user, album)
+
     context = {
         "user": request.user,
         "album": album,
@@ -4141,6 +4145,7 @@ def album_detail(request, album_id):
         "total_runtime": total_runtime,
         "has_mb_identity": has_mb_identity,  # For template to show correct message
         "album_tracker": album_tracker,  # User's tracking for this album
+        "collection_metadata": collection_metadata,  # Collection metadata aggregated from tracks
     }
     return render(request, "app/music_album_detail.html", context)
 

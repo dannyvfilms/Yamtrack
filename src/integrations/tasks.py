@@ -465,6 +465,14 @@ def update_collection_metadata_from_plex_webhook(
     """
     from integrations import plex as plex_api
 
+    logger.info(
+        "Starting collection metadata update task (user_id=%s, item_id=%s, rating_key=%s, uri=%s)",
+        user_id,
+        item_id,
+        rating_key,
+        plex_uri,
+    )
+
     User = get_user_model()
     try:
         user = User.objects.get(id=user_id)
@@ -478,23 +486,46 @@ def update_collection_metadata_from_plex_webhook(
         )
         return None
 
+    logger.debug("Found user=%s, item=%s (media_type=%s)", user.username, item.title, item.media_type)
+
     # Fetch detailed metadata from Plex
     try:
+        logger.debug("Fetching Plex metadata for rating_key=%s from uri=%s", rating_key, plex_uri)
         plex_metadata = plex_api.fetch_metadata(plex_token, plex_uri, rating_key)
     except Exception as exc:
         logger.warning(
-            "Failed to fetch Plex metadata for collection update: %s (rating_key=%s)",
+            "Failed to fetch Plex metadata for collection update: %s (rating_key=%s, uri=%s). "
+            "This may indicate the URI is incorrect or the server is unreachable.",
             exc,
             rating_key,
+            plex_uri,
+            exc_info=True,
         )
-        return None
+        # If HTTP failed, try HTTPS (some servers require HTTPS)
+        if plex_uri.startswith("http://") and "500" in str(exc):
+            https_uri = plex_uri.replace("http://", "https://")
+            logger.debug("Retrying with HTTPS: %s", https_uri)
+            try:
+                plex_metadata = plex_api.fetch_metadata(plex_token, https_uri, rating_key)
+                logger.info("Successfully fetched metadata using HTTPS URI")
+            except Exception as https_exc:
+                logger.debug("HTTPS retry also failed: %s", https_exc)
+                return None
+        else:
+            return None
 
     if not plex_metadata:
         logger.debug("No Plex metadata returned for rating_key=%s", rating_key)
         return None
 
+    logger.debug("Received Plex metadata with keys: %s", list(plex_metadata.keys()))
+
     # Extract collection metadata
     collection_metadata = extract_collection_metadata_from_plex(plex_metadata)
+    logger.debug(
+        "Extracted collection metadata: %s",
+        {k: v for k, v in collection_metadata.items() if v},
+    )
 
     # Get or create collection entry
     entry, created = CollectionEntry.objects.get_or_create(
@@ -505,16 +536,25 @@ def update_collection_metadata_from_plex_webhook(
 
     if not created:
         # Update existing entry
+        updated_fields = []
         for key, value in collection_metadata.items():
             if value:  # Only update non-empty values
-                setattr(entry, key, value)
-        entry.save()
+                old_value = getattr(entry, key, None)
+                if old_value != value:
+                    setattr(entry, key, value)
+                    updated_fields.append(f"{key}={old_value}->{value}")
+        if updated_fields:
+            entry.save()
+            logger.debug("Updated collection entry fields: %s", ", ".join(updated_fields))
+        else:
+            logger.debug("No changes to collection entry")
 
     logger.info(
-        "Updated collection metadata for %s - %s (created=%s)",
+        "Collection metadata update completed for %s - %s (created=%s, entry_id=%s)",
         user.username,
         item.title,
         created,
+        entry.id,
     )
 
     return entry.id

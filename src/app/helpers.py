@@ -223,6 +223,91 @@ def is_item_collected(user, item):
         return None
 
 
+def get_album_collection_metadata(user, album):
+    """Get aggregated collection metadata for an album from all its tracks.
+    
+    For music albums, we aggregate collection metadata from all tracks that have
+    collection entries. Returns the most common values (or first non-empty value)
+    for fields that should be consistent across tracks (like audio_codec, audio_channels).
+    
+    Args:
+        user: Django user object
+        album: Album object
+        
+    Returns:
+        Dictionary with collection metadata:
+        - audio_codec: Most common audio codec across collected tracks
+        - audio_channels: Most common audio channels across collected tracks
+        - media_type: Most common media_type across collected tracks
+        - has_collection: Boolean indicating if any tracks are collected
+        - collected_count: Number of tracks with collection entries
+    """
+    from app.models import Music
+    
+    # Get all Music entries for this album
+    music_entries = Music.objects.filter(
+        user=user,
+        album=album,
+    ).select_related("item")
+    
+    # Get collection entries for all items in this album
+    item_ids = [m.item_id for m in music_entries if m.item_id]
+    if not item_ids:
+        return {
+            "has_collection": False,
+            "collected_count": 0,
+            "audio_codec": None,
+            "audio_channels": None,
+            "bitrate": None,
+            "media_type": None,
+        }
+    
+    collection_entries = CollectionEntry.objects.filter(
+        user=user,
+        item_id__in=item_ids,
+    ).select_related("item")
+    
+    if not collection_entries.exists():
+        return {
+            "has_collection": False,
+            "collected_count": 0,
+            "audio_codec": None,
+            "audio_channels": None,
+            "media_type": None,
+        }
+    
+    # Aggregate metadata - find most common values
+    audio_codecs = {}
+    audio_channels_list = {}
+    bitrates = {}
+    media_types = {}
+    
+    for entry in collection_entries:
+        if entry.audio_codec:
+            audio_codecs[entry.audio_codec] = audio_codecs.get(entry.audio_codec, 0) + 1
+        if entry.audio_channels:
+            audio_channels_list[entry.audio_channels] = audio_channels_list.get(entry.audio_channels, 0) + 1
+        if entry.bitrate:
+            bitrates[entry.bitrate] = bitrates.get(entry.bitrate, 0) + 1
+        if entry.media_type:
+            media_types[entry.media_type] = media_types.get(entry.media_type, 0) + 1
+    
+    # Get most common value (or first if tie)
+    audio_codec = max(audio_codecs.items(), key=lambda x: x[1])[0] if audio_codecs else None
+    audio_channels = max(audio_channels_list.items(), key=lambda x: x[1])[0] if audio_channels_list else None
+    bitrate = max(bitrates.items(), key=lambda x: x[1])[0] if bitrates else None
+    media_type = max(media_types.items(), key=lambda x: x[1])[0] if media_types else None
+    
+    return {
+        "has_collection": True,
+        "collected_count": collection_entries.count(),
+        "audio_codec": audio_codec,
+        "audio_channels": audio_channels,
+        "bitrate": bitrate,
+        "media_type": media_type,
+    }
+
+
 def get_collection_stats(user):
     """Get collection statistics for a user.
 

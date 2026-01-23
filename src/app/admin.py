@@ -178,7 +178,7 @@ admin.site.register(PodcastEpisode, PodcastEpisodeAdmin)
 class CollectionEntryAdmin(admin.ModelAdmin):
     """Admin for CollectionEntry model."""
 
-    list_display = ["user", "item", "collected_at", "media_type", "resolution"]
+    list_display = ["user", "item", "collected_at", "media_type", "resolution", "audio_codec", "bitrate"]
     list_filter = ["media_type", "resolution", "hdr", "is_3d", "collected_at"]
     search_fields = ["user__username", "item__title"]
     readonly_fields = ["collected_at", "updated_at"]

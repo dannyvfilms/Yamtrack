@@ -68,6 +68,20 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
                 music_entry.status,
                 music_entry.progress,
             )
+            
+            # Queue collection metadata update for music
+            if music_entry.item:
+                logger.debug(
+                    "Queueing collection metadata update for music track: %s (item_id=%s)",
+                    music_entry.item.title,
+                    music_entry.item.id,
+                )
+                self._queue_collection_metadata_update(payload, user, music_entry.item)
+            else:
+                logger.warning(
+                    "Cannot queue collection metadata update: music_entry has no item"
+                )
+            
             return music_entry
 
         ids = self.resolve_external_ids(payload)
@@ -486,6 +500,7 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
     def _queue_collection_metadata_update(self, payload, user, item):
         """Queue collection metadata update task for Plex webhook."""
         from integrations import tasks
+        from integrations import plex as plex_api
 
         # Get Plex account
         plex_account = getattr(user, "plex_account", None)
@@ -500,18 +515,18 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
             logger.debug("No rating key found in Plex payload, skipping collection update")
             return
 
-        # Get server URI from Plex account sections or payload
+        # Get server URI - try multiple methods, prioritizing known-good sources
         plex_uri = None
-        server_info = payload.get("Server")
+        
+        # Method 1: Try to get from Server info in payload (most reliable from webhook)
+        server_info = payload.get("Server", {})
         if server_info:
-            # Try to get URI from server info in payload
             if isinstance(server_info, dict):
                 plex_uri = server_info.get("uri") or server_info.get("Uri")
             elif isinstance(server_info, str):
-                # Sometimes it's just a string
                 plex_uri = server_info
 
-        # Fallback to getting URI from Plex account sections
+        # Method 2: Use Plex account sections (known to work, already tested)
         if not plex_uri and plex_account.sections:
             # Get first section's URI
             for section in plex_account.sections:
@@ -521,9 +536,47 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
                         plex_uri = section_uri
                         break
 
+        # Method 3: Try to get from Plex resources API
         if not plex_uri:
-            logger.debug("No Plex server URI found, skipping collection update")
+            try:
+                resources = plex_api.list_resources(plex_account.plex_token)
+                for resource in resources:
+                    connections = resource.get("connections", [])
+                    if connections:
+                        # Use first connection
+                        if isinstance(connections[0], dict):
+                            plex_uri = connections[0].get("uri")
+                        else:
+                            plex_uri = connections[0]
+                        if plex_uri:
+                            break
+            except Exception as exc:
+                logger.debug("Failed to get Plex URI from resources API: %s", exc)
+
+        # Method 4: Last resort - try Player addresses (may not be server URI)
+        if not plex_uri:
+            player_info = payload.get("Player", {})
+            if player_info:
+                if isinstance(player_info, dict):
+                    # Prefer localAddress over publicAddress for local connections
+                    plex_uri = player_info.get("localAddress") or player_info.get("publicAddress")
+
+        if not plex_uri:
+            logger.warning(
+                "No Plex server URI found for collection update (item=%s, rating_key=%s). "
+                "Tried Player.localAddress, Server.uri, account sections, and resources API.",
+                item.title,
+                rating_key,
+            )
             return
+
+        # Normalize URI to ensure it has a scheme
+        # If URI is just an IP address or hostname without scheme, add http://
+        if plex_uri and not plex_uri.startswith(("http://", "https://")):
+            # Prefer localAddress for local connections (usually http)
+            # publicAddress might be remote, but default to http for compatibility
+            plex_uri = f"http://{plex_uri}"
+            logger.debug("Normalized Plex URI (added http:// scheme): %s", plex_uri)
 
         # Queue the collection metadata update task
         try:
@@ -534,14 +587,17 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
                 plex_uri,
                 plex_account.plex_token,
             )
-            logger.debug(
-                "Queued collection metadata update for %s (rating_key=%s)",
+            logger.info(
+                "Queued collection metadata update for %s (item_id=%s, rating_key=%s, uri=%s)",
                 item.title,
+                item.id,
                 rating_key,
+                plex_uri,
             )
         except Exception as exc:
             logger.warning(
-                "Failed to queue collection metadata update: %s",
+                "Failed to queue collection metadata update for %s: %s",
+                item.title,
                 exc,
                 exc_info=True,
             )
