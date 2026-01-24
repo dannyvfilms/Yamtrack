@@ -123,12 +123,12 @@ This document outlines the required UI components and testing points for the Col
 - Hide fields that are blank/not applicable
 
 **Testing Points**:
-- [ ] Collection metadata displays on media detail pages
-- [ ] Metadata formatting is readable and concise
-- [ ] Blank/empty fields are hidden
-- [ ] Metadata displays correctly for all media types
-- [ ] Metadata updates when collection entry is edited
-- [ ] Metadata disappears when collection entry is removed
+- [x] Collection metadata displays on media detail pages (✅ Media details page, album page, artist page)
+- [x] Metadata formatting is readable and concise (✅ Chips on album page, section on detail pages)
+- [x] Blank/empty fields are hidden (✅ Only shows fields with values)
+- [x] Metadata displays correctly for all media types (✅ Media details page supports all types)
+- [ ] Metadata updates when collection entry is edited (UI editing not yet implemented)
+- [ ] Metadata disappears when collection entry is removed (UI removal not yet implemented)
 
 ## UI Testing Checklist (After Backend Tests Pass)
 
@@ -173,14 +173,17 @@ This document outlines the required UI components and testing points for the Col
 ### Media Type Specific Testing
 
 6. **Movies**:
-   - [ ] Can add movie to collection with A/V metadata
-   - [ ] Collection metadata displays correctly (resolution, HDR, audio, etc.)
-   - [ ] Collection entry independent of Media tracking
+   - [ ] Can add movie to collection with A/V metadata (backend ready, UI not yet implemented)
+   - [x] Collection metadata displays correctly (resolution, HDR, audio, etc.) (✅ Media details page shows all fields)
+   - [x] Collection entry independent of Media tracking (✅ Backend verified)
 
 7. **TV Shows**:
-   - [ ] Can add TV show to collection
-   - [ ] Collection entry at show level (not season/episode level)
-   - [ ] Collection metadata displays correctly
+   - [ ] Can add TV show to collection (backend ready, UI not yet implemented)
+   - [x] Collection entry at show level (not season/episode level) (✅ Backend verified)
+   - [x] Collection metadata displays correctly (✅ Media details page shows show-level collection)
+   - [x] Season detail pages show collected episodes count and aggregated metadata (✅ Implemented 2026-01-24)
+   - [x] Episode-level collection entries created by Plex import task (✅ Implemented 2026-01-24)
+   - [x] Collection statistics show correct counts (collected seasons/episodes) (✅ Implemented 2026-01-24)
 
 8. **Games**:
    - [ ] Can add game to collection with platform/store info
@@ -194,9 +197,9 @@ This document outlines the required UI components and testing points for the Col
    - [ ] Manual entry works for books without format info
 
 10. **Music**:
-    - [ ] Can add music track to collection with format metadata
-    - [ ] Plex Music imports auto-populate format when available
-    - [ ] Collection metadata displays correctly (codec, bitrate, etc.)
+    - [ ] Can add music track to collection with format metadata (backend ready, UI not yet implemented)
+    - [x] Plex Music imports auto-populate format when available (✅ Webhook integration working)
+    - [x] Collection metadata displays correctly (codec, bitrate, etc.) (✅ Album page chips, artist page stats, media details section)
 
 11. **Comics/Manga**:
     - [ ] Can add comic/manga to collection (manual entry only)
@@ -211,19 +214,19 @@ This document outlines the required UI components and testing points for the Col
     - [ ] Post-import collection updates work (after regular imports)
 
 13. **Webhook Integration**:
-    - [ ] Plex webhook creates/updates collection entries (async)
-    - [ ] Collection metadata extracted from Plex API correctly
-    - [ ] Webhook doesn't block response (async task queued)
+    - [x] Plex webhook creates/updates collection entries (async) (✅ Implemented for Music, Movies, TV Shows)
+    - [x] Collection metadata extracted from Plex API correctly (✅ Tested with music tracks)
+    - [x] Webhook doesn't block response (async task queued) (✅ Celery task queuing working)
 
 ### Edge Cases
 
 14. **Edge Cases**:
-    - [ ] Cannot create duplicate collection entries (uniqueness constraint)
-    - [ ] Collection entry persists when Media tracking is deleted
-    - [ ] Collection entry deleted when Item is deleted (CASCADE)
-    - [ ] Collection works independently of Media tracking (can have collection without tracking, and vice versa)
-    - [ ] Empty/blank metadata fields handled gracefully in UI
-    - [ ] Long metadata values don't break UI layout
+    - [x] Cannot create duplicate collection entries (uniqueness constraint) (✅ Backend constraint verified)
+    - [x] Collection entry persists when Media tracking is deleted (✅ Backend verified - independent models)
+    - [x] Collection entry deleted when Item is deleted (CASCADE) (✅ Backend CASCADE verified)
+    - [x] Collection works independently of Media tracking (can have collection without tracking, and vice versa) (✅ Backend verified)
+    - [x] Empty/blank metadata fields handled gracefully in UI (✅ Only shows fields with values)
+    - [ ] Long metadata values don't break UI layout (needs testing)
 
 ### Responsive Design Testing
 
@@ -274,8 +277,10 @@ This document outlines the required UI components and testing points for the Col
 
 **Test Results:**
 - Music track collection metadata successfully extracted and stored (audio_codec: MP3, audio_channels: 2.0, bitrate: 128)
-- Plex webhook integration queues collection updates correctly
-- Album-level collection metadata aggregation implemented and ready for UI display
+- Plex webhook integration queues collection updates correctly for Music, Movies, and TV Shows
+- Album-level collection metadata aggregation implemented and displayed in UI
+- Artist-level collection statistics implemented and displayed in UI
+- Media detail page collection display implemented for all media types
 
 ## UI Implementation Status
 
@@ -289,10 +294,17 @@ This document outlines the required UI components and testing points for the Col
 - Displays format: "X/Y • Z%" for both albums and tracks
 - Section positioned after Details section with proper spacing
 
-🔄 **Media Details Page** (In Progress)
-- Need to add Collection section for all media types (Movies, TV, Games, Books, Comics, etc.)
-- Should display collection metadata similar to artist/album pages
-- Should show collection entry if item is collected
+✅ **Media Details Page** (2026-01-23)
+- Collection section added for all media types (Movies, TV, Games, Books, Comics, etc.)
+- Displays collection metadata in Details section format
+- Shows all collection fields (media_type, resolution, HDR, 3D, audio_codec, audio_channels, bitrate)
+- Displays collected date
+- Only shows for authenticated users and non-podcast media types
+- For TV shows/anime: Shows collected seasons and episodes statistics (X/Y • Z%)
+- Season detail pages show:
+  - Collected episodes statistics for that season (X/Y • Z%)
+  - Aggregated collection metadata from all collected episodes in the season (resolution, HDR, audio codec, etc.)
+  - Falls back to season-level or show-level collection entry if no episode-level entries exist
 
 ## Notes
 

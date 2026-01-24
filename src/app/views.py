@@ -1517,9 +1517,10 @@ def media_details(
 
     # Get collection entry for this item (if not public view and not podcast)
     collection_entry = None
+    collection_stats = None
     if not public_view and media_type != MediaTypes.PODCAST.value:
         from app.models import Item
-        from app.helpers import is_item_collected
+        from app.helpers import is_item_collected, get_tv_show_collection_stats
         
         try:
             item = Item.objects.get(
@@ -1528,6 +1529,12 @@ def media_details(
                 media_type=media_type,
             )
             collection_entry = is_item_collected(request.user, item)
+            
+            # For TV shows, also get collection statistics (episodes/seasons)
+            if media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
+                # Use episode count from metadata if available to match Details pane
+                metadata_episode_count = media_metadata.get("details", {}).get("episodes") or media_metadata.get("episodes")
+                collection_stats = get_tv_show_collection_stats(request.user, item, metadata_episode_count=metadata_episode_count)
         except Item.DoesNotExist:
             pass
 
@@ -1543,6 +1550,7 @@ def media_details(
         "play_stats": play_stats,
         "notes_entry": notes_entry,
         "collection_entry": collection_entry,
+        "collection_stats": collection_stats,
     }
     return render(request, "app/media_details.html", context)
 
@@ -1634,7 +1642,6 @@ def season_details(
     # Save episode runtimes from raw metadata before processing for display
     # This ensures runtime data is persisted when viewing the season page
     if source != Sources.MANUAL.value and season_metadata.get("episodes"):
-        from django.utils import timezone
         from datetime import datetime
         
         raw_episodes = season_metadata["episodes"]
@@ -1717,20 +1724,58 @@ def season_details(
                     )
                 )
 
-    # Get collection entry for this season's TV show item (if not public view)
+    # Get collection entry, stats, and metadata for this season (if not public view)
     collection_entry = None
+    season_collection_stats = None
     if not public_view:
-        from app.models import Item
-        from app.helpers import is_item_collected
+        from app.helpers import is_item_collected, get_season_collection_stats, get_season_collection_metadata
         
-        # Get the TV show item (not the season item)
+        # Get the season item
         try:
-            tv_item = Item.objects.get(
+            season_item = Item.objects.get(
                 media_id=media_id,
                 source=source,
-                media_type=MediaTypes.TV.value,
+                media_type=MediaTypes.SEASON.value,
+                season_number=season_number,
             )
-            collection_entry = is_item_collected(request.user, tv_item)
+            # Get collection entry for the season item itself (if it exists)
+            season_collection_entry = is_item_collected(request.user, season_item)
+            
+            # Get aggregated collection metadata from episodes (or season/show-level entry)
+            season_collection_metadata = get_season_collection_metadata(request.user, season_item)
+            
+            # Use season-level entry if it exists, otherwise use aggregated metadata
+            if season_collection_entry:
+                collection_entry = season_collection_entry
+            elif season_collection_metadata:
+                # Check if aggregated metadata has any actual values
+                has_metadata = any([
+                    season_collection_metadata.get("resolution"),
+                    season_collection_metadata.get("hdr"),
+                    season_collection_metadata.get("audio_codec"),
+                    season_collection_metadata.get("audio_channels"),
+                    season_collection_metadata.get("bitrate"),
+                    season_collection_metadata.get("media_type"),
+                    season_collection_metadata.get("is_3d"),
+                ])
+                
+                if has_metadata:
+                    # Create a mock collection entry object from aggregated metadata
+                    # This allows the template to access fields like collection_entry.resolution
+                    from types import SimpleNamespace
+                    collection_entry = SimpleNamespace(
+                        resolution=season_collection_metadata.get("resolution") or "",
+                        hdr=season_collection_metadata.get("hdr") or "",
+                        audio_codec=season_collection_metadata.get("audio_codec") or "",
+                        audio_channels=season_collection_metadata.get("audio_channels") or "",
+                        bitrate=season_collection_metadata.get("bitrate"),
+                        media_type=season_collection_metadata.get("media_type") or "",
+                        is_3d=season_collection_metadata.get("is_3d", False),
+                        collected_at=season_collection_metadata.get("collected_at"),
+                    )
+            
+            # Get collection stats for this season (episodes)
+            season_collection_stats = get_season_collection_stats(request.user, season_item)
         except Item.DoesNotExist:
             pass
 
@@ -1743,6 +1788,7 @@ def season_details(
         "current_instance": current_instance,
         "public_view": public_view,
         "collection_entry": collection_entry,
+        "collection_stats": season_collection_stats,  # For season, this is episode stats
     }
     return render(request, "app/media_details.html", context)
 

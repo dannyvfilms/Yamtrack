@@ -276,6 +276,63 @@ def fetch_history(
     return entries, total
 
 
+def fetch_section_all_items(
+    token: str,
+    uri: str,
+    section_key: str,
+    start: int = 0,
+    size: int | None = None,
+) -> tuple[list[dict[str, Any]], int]:
+    """Fetch all items from a Plex library section.
+    
+    Args:
+        token: Plex authentication token
+        uri: Plex server URI
+        section_key: Section key (from section.get("key") or section.get("id"))
+        start: Starting offset for pagination
+        size: Number of items to fetch per page
+        
+    Returns:
+        Tuple of (items list, total count)
+    """
+    page_size = size or settings.PLEX_HISTORY_PAGE_SIZE
+    params = {
+        "X-Plex-Token": token,
+        "X-Plex-Container-Start": start,
+        "X-Plex-Container-Size": page_size,
+    }
+    
+    # Ensure section_key is numeric (section ID) or use it as-is if it's already a path
+    if not section_key.startswith("/"):
+        section_key = f"/library/sections/{section_key}"
+    
+    try:
+        response = requests.get(
+            f"{uri}{section_key}/all",
+            headers=_headers(token),
+            params=params,
+            timeout=20,
+            verify=settings.PLEX_SSL_VERIFY,
+        )
+    except RequestException as exc:
+        raise PlexClientError(str(exc)) from exc
+    _raise_for_auth(response)
+
+    content_type = response.headers.get("Content-Type", "")
+    if "json" in content_type:
+        payload = response.json()
+        container = payload.get("MediaContainer") or {}
+        entries = container.get("Metadata") or []
+        total = container.get("totalSize") or container.get("size") or len(entries)
+        return entries, _coerce_int(total, len(entries))
+
+    try:
+        entries, total = _parse_history_xml(response.text)
+    except ElementTree.ParseError as exc:  # pragma: no cover - defensive
+        raise PlexClientError(f"Could not parse Plex library items: {exc}") from exc
+    return entries, total
+
+
 def fetch_metadata(token: str, uri: str, rating_key: str) -> dict[str, Any] | None:
     """Fetch rich metadata for a history item."""
     try:
@@ -477,6 +534,47 @@ def _coerce_int(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def extract_external_ids_from_guids(guids: list[dict[str, Any] | str]) -> dict[str, str]:
+    """Extract external IDs (TMDB, IMDB, TVDB) from Plex GUIDs.
+    
+    Args:
+        guids: List of GUID dictionaries or strings from Plex metadata
+        
+    Returns:
+        Dictionary with keys: 'tmdb_id', 'imdb_id', 'tvdb_id' (if found)
+    """
+    import re
+    
+    external_ids = {}
+    
+    for guid in guids:
+        guid_value = guid.get("id") if isinstance(guid, dict) else guid
+        if not guid_value:
+            continue
+            
+        guid_lower = guid_value.lower()
+        
+        # Extract TMDB ID
+        if "tmdb" in guid_lower or "themoviedb" in guid_lower:
+            match = re.search(r"\d+", guid_value)
+            if match and "tmdb_id" not in external_ids:
+                external_ids["tmdb_id"] = match.group(0)
+        
+        # Extract IMDB ID (changed from elif to if so all IDs can be extracted)
+        if "imdb" in guid_lower:
+            match = re.search(r"tt\d+", guid_value)
+            if match and "imdb_id" not in external_ids:
+                external_ids["imdb_id"] = match.group(0)
+        
+        # Extract TVDB ID (changed from elif to if so all IDs can be extracted)
+        if "tvdb" in guid_lower:
+            match = re.search(r"\d+", guid_value)
+            if match and "tvdb_id" not in external_ids:
+                external_ids["tvdb_id"] = match.group(0)
+    
+    return external_ids
 
 
 def _raise_for_auth(response: requests.Response):

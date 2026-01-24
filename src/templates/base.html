@@ -218,7 +218,7 @@
         {# Main content #}
         <div class="flex-1 flex flex-col min-h-screen">
           {# Top bar #}
-          <div class="sticky top-0 z-10 bg-[#1a1d20] border-b border-[#2c3136] shadow-md">
+          <div class="sticky top-0 z-50 bg-[#1a1d20] border-b border-[#2c3136] shadow-md">
             <div class="container mx-auto px-4">
               <div class="flex items-center justify-between lg:justify-center h-16">
                 {# Mobile: sidebar toggle button #}
@@ -301,7 +301,7 @@
                           x-transition:leave="transition ease-in duration-75"
                           x-transition:leave-start="transform opacity-100 scale-100"
                           x-transition:leave-end="transform opacity-0 scale-95"
-                          class="absolute z-20 py-1 mt-12 overflow-auto text-sm text-gray-300 bg-[#2a2e33] rounded-md shadow-lg right-0 w-32">
+                          class="absolute z-50 py-1 mt-12 overflow-auto text-sm text-gray-300 bg-[#2a2e33] rounded-md shadow-lg right-0 w-32">
                         <template x-for="type in mediaTypes" :key="type.value">
                           <li @click="selectedType = type; isOpen = false"
                               class="px-4 py-2 cursor-pointer hover:bg-[#343a40] transition duration-150 ease-in-out"
@@ -314,7 +314,7 @@
                     <div x-show="barcodeError"
                        x-cloak
                        x-transition
-                       class="absolute z-30 mt-2 w-full max-w-2xl">
+                       class="absolute z-50 mt-2 w-full max-w-2xl">
                       <div class="flex items-center gap-2 rounded-md border px-3 py-2 shadow-lg text-white toast-info">
                         {% include "app/icons/info.svg" with classes="w-4 h-4 text-indigo-300 shrink-0" %}
                         <p class="text-sm font-medium flex-1" x-text="barcodeError"></p>
