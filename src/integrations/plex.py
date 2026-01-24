@@ -333,14 +333,21 @@ def fetch_section_all_items(
     return entries, total
 
 
-def fetch_metadata(token: str, uri: str, rating_key: str) -> dict[str, Any] | None:
-    """Fetch rich metadata for a history item."""
+def fetch_metadata(token: str, uri: str, rating_key: str, timeout: int = 20) -> dict[str, Any] | None:
+    """Fetch rich metadata for a history item.
+    
+    Args:
+        token: Plex authentication token
+        uri: Plex server URI
+        rating_key: Plex rating key
+        timeout: Request timeout in seconds (default: 20)
+    """
     try:
         response = requests.get(
             f"{uri}/library/metadata/{rating_key}",
             headers=_headers(token),
             params={"X-Plex-Token": token},
-            timeout=10,
+            timeout=timeout,
             verify=settings.PLEX_SSL_VERIFY,
         )
     except RequestException as exc:

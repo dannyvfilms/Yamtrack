@@ -832,6 +832,16 @@ def update_collection_metadata_from_plex(library, user_id):
     updated_count = 0
     error_count = 0
     match_stats = {"tmdb": 0, "imdb": 0, "tvdb": 0, "unmatched": 0}
+    
+    logger.info(
+        "Starting collection metadata update for user %s: %d tracked items (Movies: %d, TV: %d, Anime: %d, Music: %d)",
+        user.username,
+        user_items.count(),
+        user_movies.count(),
+        user_tv.count(),
+        user_anime.count(),
+        user_music.count(),
+    )
 
     # Get user's tracked media items (Movies, TV, Anime, Music) that could have collection entries
     from app.models import Movie, TV, Music, Anime
@@ -1110,6 +1120,16 @@ def update_collection_metadata_from_plex(library, user_id):
 
                 if not rating_key:
                     match_stats["unmatched"] += 1
+                    # Log unmatched items at debug level (can be enabled for troubleshooting)
+                    if match_stats["unmatched"] % 100 == 0:
+                        logger.debug(
+                            "Unmatched items so far: %d (latest: %s - %s, source=%s, media_id=%s)",
+                            match_stats["unmatched"],
+                            item.title,
+                            item.media_type,
+                            item.source,
+                            item.media_id,
+                        )
                     continue
                 
                 # Track match type
@@ -1161,6 +1181,12 @@ def update_collection_metadata_from_plex(library, user_id):
                                 item.title,
                             )
                         else:
+                            # Log when we skip due to no metadata (helps diagnose why items aren't updated)
+                            logger.debug(
+                                "Skipping %s - no collection metadata found (matched by %s)",
+                                item.title,
+                                match_type or "tmdb",
+                            )
                             continue  # No metadata to update
 
                     # Get or create collection entry (only collection, no Media instances)
@@ -1257,12 +1283,22 @@ def update_collection_metadata_from_plex(library, user_id):
                                 item.title,
                             )
                 except Exception as exc:
-                    logger.warning(
-                        "Failed to update collection metadata for %s: %s",
-                        item.title,
-                        exc,
-                        exc_info=True,
-                    )
+                    # Log timeout errors separately for better visibility
+                    if "timeout" in str(exc).lower() or "ReadTimeout" in str(type(exc).__name__):
+                        logger.warning(
+                            "Timeout fetching collection metadata for %s: %s (rating_key=%s)",
+                            item.title,
+                            exc,
+                            rating_key,
+                        )
+                    else:
+                        logger.warning(
+                            "Failed to update collection metadata for %s: %s (rating_key=%s)",
+                            item.title,
+                            exc,
+                            rating_key,
+                            exc_info=True,
+                        )
                     error_count += 1
 
         except Exception as exc:
@@ -1275,11 +1311,12 @@ def update_collection_metadata_from_plex(library, user_id):
             error_count += 1
             continue
 
-        # Log final statistics
+        # Log final statistics for this section
         total_processed = sum(match_stats.values())
         if total_processed > 0:
             logger.info(
-                "Matching statistics: TMDB: %d, IMDB: %d, TVDB: %d, Unmatched: %d (Total: %d)",
+                "Section %s matching statistics: TMDB: %d, IMDB: %d, TVDB: %d, Unmatched: %d (Total: %d)",
+                section.get("title"),
                 match_stats["tmdb"],
                 match_stats["imdb"],
                 match_stats["tvdb"],
@@ -1287,9 +1324,18 @@ def update_collection_metadata_from_plex(library, user_id):
                 total_processed,
             )
         
-        return {
-            "updated": updated_count,
-            "errors": error_count,
-            "message": f"Updated collection metadata for {updated_count} items",
-            "match_stats": match_stats,
-        }
+        # Reset match_stats for next section
+        match_stats = {"tmdb": 0, "imdb": 0, "tvdb": 0, "unmatched": 0}
+    
+    # Log final summary across all sections
+    logger.info(
+        "Collection update task completed: %d items updated, %d errors",
+        updated_count,
+        error_count,
+    )
+    
+    return {
+        "updated": updated_count,
+        "errors": error_count,
+        "message": f"Updated collection metadata for {updated_count} items",
+    }
