@@ -44,6 +44,50 @@ def import_trakt_lists(user, access_token, client_id=None):
                     defaults={"added_by": user},
                 )
 
+        # Import Watchlist as a special list
+        try:
+            logger.info("Fetching Watchlist for user %s", user.username)
+            watchlist_items = _get_trakt_watchlist_items(access_token, client_id=client_id)
+            logger.info(
+                "Fetched %s items from Watchlist for user %s",
+                len(watchlist_items) if watchlist_items else 0,
+                user.username,
+            )
+            watchlist_list = CustomList.objects.create(
+                name="Watchlist",
+                description="",
+                owner=user,
+                visibility="private",
+                allow_recommendations=False,
+                source="trakt",
+                source_id="watchlist",
+            )
+            imported_count += 1
+            if watchlist_items:
+                for entry in watchlist_items:
+                    item = _build_item_from_entry(entry)
+                    if not item:
+                        skipped_items += 1
+                        continue
+                    CustomListItem.objects.get_or_create(
+                        custom_list=watchlist_list,
+                        item=item,
+                        defaults={"added_by": user},
+                    )
+            logger.info(
+                "Successfully imported Watchlist for user %s (%s items)",
+                user.username,
+                watchlist_list.items.count(),
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to import Watchlist for %s: %s",
+                user.username,
+                e,
+                exc_info=True,
+            )
+            skipped_lists += 1
+
     logger.info(
         "Imported %s Trakt lists for %s (%s lists skipped, %s items skipped)",
         imported_count,
@@ -65,6 +109,12 @@ def _get_trakt_lists(access_token, client_id=None):
 def _get_trakt_list_items(access_token, list_id, client_id=None):
     """Fetch items for a Trakt list."""
     url = f"{TRAKT_API_BASE_URL}/users/me/lists/{list_id}/items"
+    return _make_trakt_request(access_token, url, client_id=client_id)
+
+
+def _get_trakt_watchlist_items(access_token, client_id=None):
+    """Fetch items from the Trakt watchlist."""
+    url = f"{TRAKT_API_BASE_URL}/users/me/watchlist"
     return _make_trakt_request(access_token, url, client_id=client_id)
 
 
