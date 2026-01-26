@@ -116,6 +116,7 @@ def user_profile(request, username):
     )
 
 
+@never_cache
 @require_GET
 def lists(request):
     """Return the custom list page."""
@@ -170,13 +171,81 @@ def lists(request):
     paginator = Paginator(custom_lists, items_per_page)
     lists_page = paginator.get_page(page)
 
+    # Validate lists and filter out any broken ones
+    valid_lists = []
+    broken_list_ids = []
+    for custom_list in lists_page:
+        try:
+            # Verify the list still exists and is accessible
+            # This catches cases where lists were deleted between query and render
+            verified_list = CustomList.objects.get(id=custom_list.id)
+            # Verify owner still exists
+            if not verified_list.owner:
+                logger.warning(
+                    "List ID %s has no owner, excluding from display",
+                    custom_list.id,
+                )
+                broken_list_ids.append(custom_list.id)
+                continue
+            valid_lists.append(custom_list)
+        except CustomList.DoesNotExist:
+            logger.warning(
+                "List ID %s (%s) no longer exists, excluding from display",
+                custom_list.id,
+                custom_list.name,
+            )
+            broken_list_ids.append(custom_list.id)
+            continue
+        except Exception as e:
+            logger.error(
+                "Error validating list ID %s: %s",
+                custom_list.id,
+                e,
+                exc_info=True,
+            )
+            broken_list_ids.append(custom_list.id)
+            continue
+
+    if broken_list_ids:
+        logger.warning(
+            "Filtered out %s broken lists from display: %s",
+            len(broken_list_ids),
+            broken_list_ids,
+        )
+        messages.warning(
+            request,
+            f"Some lists were removed from display because they no longer exist "
+            f"(likely deleted during a re-import). Please refresh the page.",
+        )
+        # Re-fetch the page without broken lists
+        # This is a workaround - ideally we'd filter in the query, but pagination makes it complex
+        valid_list_ids = [l.id for l in valid_lists]
+        if valid_list_ids:
+            custom_lists = custom_lists.filter(id__in=valid_list_ids)
+            paginator = Paginator(custom_lists, items_per_page)
+            lists_page = paginator.get_page(page)
+        else:
+            # All lists on this page were broken, show empty page
+            lists_page = paginator.get_page(1)
+            lists_page.object_list = []
+
     # Create a form for each list
     # needs unique id for django-select2
     for i, custom_list in enumerate(lists_page, start=1):
-        custom_list.form = CustomListForm(
-            instance=custom_list,
-            auto_id=f"id_{i}_%s",
-        )
+        try:
+            custom_list.form = CustomListForm(
+                instance=custom_list,
+                auto_id=f"id_{i}_%s",
+            )
+        except Exception as e:
+            logger.error(
+                "Error creating form for list ID %s: %s",
+                custom_list.id,
+                e,
+                exc_info=True,
+            )
+            # Skip form creation for this list
+            custom_list.form = None
 
     if request.headers.get("HX-Request"):
         return render(
@@ -315,10 +384,50 @@ def trakt_lists_callback(request):
 @require_GET
 def list_detail(request, list_id):
     """Return the detail page of a custom list."""
-    custom_list = get_object_or_404(
-        CustomList.objects.select_related("owner").prefetch_related("collaborators"),
-        id=list_id,
-    )
+    try:
+        custom_list = CustomList.objects.select_related("owner").prefetch_related(
+            "collaborators"
+        ).get(id=list_id)
+    except CustomList.DoesNotExist:
+        # List doesn't exist - investigate why it might have been shown on lists page
+        logger.warning(
+            "List ID %s not found. User: %s, Authenticated: %s",
+            list_id,
+            request.user.username if request.user.is_authenticated else "anonymous",
+            request.user.is_authenticated,
+        )
+        
+        # Check if user has any lists that might match (for debugging)
+        if request.user.is_authenticated:
+            user_lists = CustomList.objects.get_user_lists(request.user)
+            logger.info(
+                "User %s has %s accessible lists. Checking if list %s should be in that set...",
+                request.user.username,
+                user_lists.count(),
+                list_id,
+            )
+            
+            # Check if there's a list with similar characteristics that was re-imported
+            # This helps identify if it's a re-import issue
+            trakt_lists = CustomList.objects.filter(
+                owner=request.user,
+                source="trakt",
+            )
+            logger.info(
+                "User has %s Trakt lists. Recent list IDs: %s",
+                trakt_lists.count(),
+                list(trakt_lists.order_by("-id")[:5].values_list("id", flat=True)),
+            )
+            
+            messages.error(
+                request,
+                f"List ID {list_id} not found. This may indicate a data inconsistency. "
+                "The list may have been deleted or re-imported with a new ID. "
+                "Please refresh the lists page to see current lists.",
+            )
+            return redirect("lists")
+        # For anonymous users, just show 404
+        raise Http404("List not found")
 
     # Check access: public lists are viewable by anyone, private lists require auth
     if not custom_list.user_can_view(request.user):

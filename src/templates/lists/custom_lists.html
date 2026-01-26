@@ -368,4 +368,12 @@
 {% block js %}
   {{ form.media.js }}
   <script src="{% static 'js/copy-item.js' %}{% get_static_file_mtime 'js/copy-item.js' %}"></script>
+  <script>
+    // Reload page if restored from Safari's back/forward cache to prevent stale list data
+    window.addEventListener('pageshow', (event) => {
+      if (event.persisted) {
+        window.location.reload();
+      }
+    });
+  </script>
 {% endblock js %}

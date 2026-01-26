@@ -1,8 +1,10 @@
 from django.conf import settings
+from django.core.cache import cache
 from django.db import models
 from django.db.models import Prefetch, Q
 
-from app.models import Item
+from app.models import Item, MediaTypes, Sources
+from app.providers import services
 
 
 class CustomListManager(models.Manager):
@@ -141,8 +143,72 @@ class CustomList(models.Model):
 
     @property
     def image(self):
-        """Return the image of the first item in the list."""
-        return self.items.first().image if self.items.first() else settings.IMG_NONE
+        """Return the image of the first item in the list.
+        
+        For TMDB movies and TV shows, prefer horizontal backdrop image
+        over the 2:3 poster for better display in list cards.
+        """
+        first_item = self.items.first()
+        if not first_item:
+            return settings.IMG_NONE
+        
+        # For TMDB movies and TV shows, try to get backdrop image
+        if (
+            first_item.source == Sources.TMDB.value
+            and first_item.media_type in (MediaTypes.MOVIE.value, MediaTypes.TV.value)
+        ):
+            try:
+                backdrop_url = self._get_tmdb_backdrop(
+                    first_item.media_type,
+                    first_item.media_id,
+                )
+                if backdrop_url and backdrop_url != settings.IMG_NONE:
+                    return backdrop_url
+            except Exception:
+                # If anything fails, fall back to regular poster
+                pass
+        
+        # Fall back to regular poster image
+        return first_item.image
+    
+    def _get_tmdb_backdrop(self, media_type, media_id):
+        """Get backdrop image URL from TMDB for movies and TV shows.
+        
+        Uses caching to avoid repeated API calls for the same item.
+        """
+        cache_key = f"tmdb_backdrop_{media_type}_{media_id}"
+        cached_backdrop = cache.get(cache_key)
+        if cached_backdrop is not None:
+            return cached_backdrop
+        
+        try:
+            from app.providers import tmdb
+            
+            if media_type == MediaTypes.MOVIE.value:
+                url = f"{tmdb.base_url}/movie/{media_id}"
+            else:
+                url = f"{tmdb.base_url}/tv/{media_id}"
+            
+            params = tmdb.base_params.copy()
+            response = services.api_request(
+                Sources.TMDB.value,
+                "GET",
+                url,
+                params=params,
+            )
+            
+            backdrop_path = response.get("backdrop_path")
+            if backdrop_path:
+                backdrop_url = f"https://image.tmdb.org/t/p/w1280{backdrop_path}"
+                # Cache for 7 days (same as TMDB metadata cache)
+                cache.set(cache_key, backdrop_url, 60 * 60 * 24 * 7)
+                return backdrop_url
+        except Exception:
+            pass
+        
+        # Cache the absence of backdrop to avoid repeated failed calls
+        cache.set(cache_key, settings.IMG_NONE, 60 * 60 * 24)
+        return settings.IMG_NONE
 
 
 class CustomListItemManager(models.Manager):
