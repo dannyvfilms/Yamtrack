@@ -102,6 +102,12 @@ class DeleteHistoryRecordViewTests(TestCase):
 
     def test_delete_history_record(self):
         """Test deleting a history record."""
+        # Verify the history record exists before deletion
+        self.assertEqual(
+            self.movie.history.filter(history_id=self.history_id).count(),
+            1,
+        )
+
         response = self.client.delete(
             reverse(
                 "delete_history_record",
@@ -114,9 +120,17 @@ class DeleteHistoryRecordViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
 
+        # Verify the history record is actually deleted from the database
         self.assertEqual(
             self.movie.history.filter(history_id=self.history_id).count(),
             0,
+        )
+
+        # Verify the record doesn't exist in the historical table directly
+        from django.apps import apps
+        HistoricalMovie = apps.get_model("app", "HistoricalMovie")
+        self.assertFalse(
+            HistoricalMovie.objects.filter(history_id=self.history_id).exists(),
         )
 
     def test_delete_nonexistent_history_record(self):
@@ -132,5 +146,48 @@ class DeleteHistoryRecordViewTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 404)
+
+    def test_delete_history_record_verification(self):
+        """Test that deletion verification works correctly."""
+        # Create another history entry
+        self.movie.status = Status.PAUSED.value
+        self.movie.save()
+        second_history = self.movie.history.first()
+        second_history_id = second_history.history_id
+        second_history.history_user = self.user
+        second_history.save()
+
+        # Verify both records exist
+        self.assertEqual(
+            self.movie.history.filter(history_id=self.history_id).count(),
+            1,
+        )
+        self.assertEqual(
+            self.movie.history.filter(history_id=second_history_id).count(),
+            1,
+        )
+
+        # Delete the first record
+        response = self.client.delete(
+            reverse(
+                "delete_history_record",
+                kwargs={
+                    "media_type": MediaTypes.MOVIE.value,
+                    "history_id": self.history_id,
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        # Verify only the first record is deleted
+        self.assertEqual(
+            self.movie.history.filter(history_id=self.history_id).count(),
+            0,
+        )
+        self.assertEqual(
+            self.movie.history.filter(history_id=second_history_id).count(),
+            1,
+        )
 
 

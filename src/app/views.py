@@ -3054,32 +3054,73 @@ def delete_history_record(request, media_type, history_id):
                     f"History record {history_id} not found for user {request.user}",
                 )
 
+        # Capture all needed data BEFORE deletion to ensure we have it for cache invalidation
+        # and verification, even if the object becomes invalid after deletion
+        media_instance_id = history_record.id
+        start_date = getattr(history_record, "start_date", None)
+        end_date = getattr(history_record, "end_date", None)
+        created_at = getattr(history_record, "created_at", None)
+        media_type_lower = media_type.lower()
+
+        logger.info(
+            "Attempting to delete history record %s (media_type=%s, media_instance_id=%s, user=%s)",
+            str(history_id),
+            media_type_lower,
+            media_instance_id,
+            str(request.user),
+        )
+
         # Get music_id or podcast_id from query params if provided (for updating count)
         music_id = request.GET.get("music_id")
         podcast_id = request.GET.get("podcast_id")
 
-        history_record.delete()
+        # Perform the deletion
+        try:
+            history_record.delete()
+        except Exception as e:
+            logger.error(
+                "Failed to delete history record %s: %s",
+                str(history_id),
+                str(e),
+                exc_info=True,
+            )
+            return HttpResponse("Failed to delete record", status=500)
+
+        # Verify deletion succeeded by checking if the record still exists
+        try:
+            verification_query = historical_model.objects.filter(history_id=history_id)
+            if verification_query.exists():
+                logger.error(
+                    "Deletion verification failed: history record %s still exists after delete() call",
+                    str(history_id),
+                )
+                return HttpResponse("Deletion failed", status=500)
+        except Exception as e:
+            logger.warning(
+                "Could not verify deletion of history record %s: %s",
+                str(history_id),
+                str(e),
+            )
+            # Continue anyway as the delete() call may have succeeded
 
         logger.info(
-            "Deleted history record %s",
+            "Successfully deleted history record %s (media_type=%s, media_instance_id=%s)",
             str(history_id),
+            media_type_lower,
+            media_instance_id,
         )
 
         # Invalidate caches since history changed
         # This is needed because deleting a historical record doesn't trigger
         # the model's post_delete signal (we're deleting Historical*, not the actual model)
-        media_type_lower = media_type.lower()
+        # Use the captured data instead of accessing the deleted object
         logging_styles = ("sessions", "repeats")
         if media_type_lower in ("game", "boardgame"):
-            start_dt = getattr(history_record, "start_date", None) or getattr(history_record, "end_date", None)
-            end_dt = getattr(history_record, "end_date", None) or getattr(history_record, "start_date", None)
+            start_dt = start_date or end_date
+            end_dt = end_date or start_date
             history_day_keys = history_cache.history_day_keys_for_range(start_dt, end_dt)
         else:
-            activity_dt = (
-                getattr(history_record, "end_date", None)
-                or getattr(history_record, "start_date", None)
-                or getattr(history_record, "created_at", None)
-            )
+            activity_dt = end_date or start_date or created_at
             history_day_key = history_cache.history_day_key(activity_dt)
             history_day_keys = [history_day_key] if history_day_key else []
 
