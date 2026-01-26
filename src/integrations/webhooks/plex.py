@@ -24,9 +24,10 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
 
     def process_payload(self, payload, user):
         """Process the incoming Plex webhook payload."""
+        event_type = payload.get("event")
+        logger.info("Received Plex webhook event: %s", event_type)
         logger.debug("Received Plex webhook payload: %s", json.dumps(payload, indent=2))
 
-        event_type = payload.get("event")
         if not self._is_supported_event(payload.get("event")):
             logger.debug("Ignoring Plex webhook event type: %s", event_type)
             return None
@@ -83,6 +84,10 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
                 )
             
             return music_entry
+
+        # Handle rating events separately
+        if event_type == "media.rate":
+            return self._process_rating(payload, user)
 
         ids = self.resolve_external_ids(payload)
         logger.info("Extracted IDs from payload: %s", ids)
@@ -256,6 +261,176 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
         return None, None, None
 
 
+    def _process_rating(self, payload, user):
+        """Process media.rate webhook events to update user ratings.
+        
+        Note: Plex may not send media.rate webhook events reliably.
+        Ratings are primarily synced via the Plex import process which
+        fetches ratings from library items.
+        """
+        logger.info("Processing media.rate webhook event")
+        logger.debug("Full rating payload: %s", json.dumps(payload, indent=2))
+        
+        metadata = payload.get("Metadata", {})
+        # Try different possible field names for user rating
+        user_rating = (
+            metadata.get("userRating") or 
+            metadata.get("user_rating") or 
+            metadata.get("rating") or
+            payload.get("rating") or
+            payload.get("userRating")
+        )
+        
+        logger.debug("Rating payload metadata keys: %s", list(metadata.keys()))
+        logger.debug("userRating value: %s (tried: userRating, user_rating, rating)", user_rating)
+        
+        if user_rating is None:
+            logger.warning(
+                "No userRating found in Plex rating payload. "
+                "Available metadata keys: %s, Top-level payload keys: %s",
+                list(metadata.keys()),
+                list(payload.keys()),
+            )
+            # Try fetching rating from Plex API as fallback
+            rating_key = metadata.get("ratingKey") or metadata.get("ratingkey")
+            if rating_key:
+                logger.info("Attempting to fetch rating from Plex API for rating_key: %s", rating_key)
+                user_rating = self._fetch_rating_from_plex_api(user, rating_key, payload)
+                if user_rating is None:
+                    logger.warning("Could not fetch rating from Plex API either")
+                    return None
+            else:
+                logger.warning("No ratingKey found in payload, cannot fetch rating from API")
+                return None
+
+        title = self._get_media_title(payload)
+        media_type = self._get_media_type(payload)
+        
+        logger.debug("Media type: %s, Title: %s", media_type, title)
+        
+        if not media_type:
+            logger.warning("Ignoring rating for unsupported media type. Payload type: %s", metadata.get("type"))
+            return None
+
+        # Normalize rating
+        normalized_rating = self._normalize_rating(user_rating, title)
+        if normalized_rating is None:
+            logger.warning("Invalid rating value '%s' for %s - skipped", user_rating, title)
+            return None
+
+        logger.info("Processing rating for %s: %s (rating: %s -> normalized: %s)", media_type, title, user_rating, normalized_rating)
+
+        # Resolve external IDs
+        ids = self.resolve_external_ids(payload)
+        if not any(ids.get(key) for key in ("tmdb_id", "imdb_id", "tvdb_id")):
+            logger.warning("Ignoring Plex rating webhook because no ID was found for %s", title)
+            return None
+
+        # Apply rating based on media type
+        if media_type == MediaTypes.MOVIE.value:
+            self._apply_movie_rating(payload, user, ids, normalized_rating)
+        elif media_type == MediaTypes.TV.value:
+            # For TV, apply rating to the show (not episode-specific)
+            self._apply_tv_rating(payload, user, ids, normalized_rating)
+        else:
+            logger.debug("Rating sync not supported for media type: %s", media_type)
+            return None
+
+        return normalized_rating
+
+    def _apply_movie_rating(self, payload, user, ids, rating):
+        """Apply rating to a movie instance."""
+        from app.models import Sources, Status
+
+        tmdb_id = ids.get("tmdb_id")
+        if not tmdb_id:
+            logger.warning("Cannot apply movie rating: no TMDB ID found")
+            return
+
+        try:
+            movie_metadata = app.providers.tmdb.movie(tmdb_id)
+        except Exception as exc:
+            logger.warning("Failed to fetch movie metadata for TMDB ID %s: %s", tmdb_id, exc)
+            return
+
+        movie_item, _ = app.models.Item.objects.get_or_create(
+            media_id=tmdb_id,
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            defaults={
+                "title": movie_metadata["title"],
+                "image": movie_metadata["image"],
+            },
+        )
+
+        # Get or create movie instance
+        movie_instance, created = app.models.Movie.objects.get_or_create(
+            item=movie_item,
+            user=user,
+            defaults={
+                "status": Status.COMPLETED.value,
+                "progress": 1,
+            },
+        )
+
+        # Update rating (Plex is master, overwrites existing)
+        movie_instance.score = rating
+        movie_instance.save(update_fields=["score"])
+
+        action = "Created" if created else "Updated"
+        logger.info(
+            "%s movie rating for %s: %.1f",
+            action,
+            movie_item.title,
+            rating,
+        )
+
+    def _apply_tv_rating(self, payload, user, ids, rating):
+        """Apply rating to a TV show instance (show-level rating)."""
+        from app.models import Sources, Status
+
+        tmdb_id = ids.get("tmdb_id")
+        if not tmdb_id:
+            logger.warning("Cannot apply TV rating: no TMDB ID found")
+            return
+
+        try:
+            tv_metadata = app.providers.tmdb.tv(tmdb_id)
+        except Exception as exc:
+            logger.warning("Failed to fetch TV metadata for TMDB ID %s: %s", tmdb_id, exc)
+            return
+
+        tv_item, _ = app.models.Item.objects.get_or_create(
+            media_id=tmdb_id,
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            defaults={
+                "title": tv_metadata["title"],
+                "image": tv_metadata["image"],
+            },
+        )
+
+        # Get or create TV instance
+        tv_instance, created = app.models.TV.objects.get_or_create(
+            item=tv_item,
+            user=user,
+            defaults={
+                "status": Status.IN_PROGRESS.value,
+            },
+        )
+
+        # Update rating (Plex is master, overwrites existing)
+        tv_instance.score = rating
+        tv_instance.save(update_fields=["score"])
+
+        action = "Created" if created else "Updated"
+        logger.info(
+            "%s TV show rating for %s: %.1f",
+            action,
+            tv_item.title,
+            rating,
+        )
+
     def _process_media(self, payload, user, ids):
         """Route processing based on media type, extracting season/episode for TV."""
         media_type = self._get_media_type(payload)
@@ -276,7 +451,94 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
             self._process_movie(payload, user, ids)
 
     def _is_supported_event(self, event_type):
-        return event_type in ("media.scrobble", "media.play")
+        return event_type in ("media.scrobble", "media.play", "media.rate")
+
+    def _fetch_rating_from_plex_api(self, user, rating_key, payload):
+        """Fetch user rating from Plex API as fallback if not in webhook payload."""
+        from integrations import plex as plex_api
+        
+        plex_account = getattr(user, "plex_account", None)
+        if not plex_account or not plex_account.plex_token:
+            logger.debug("No Plex account found for user %s", user.username)
+            return None
+
+        # Get server URI from payload or account
+        plex_uri = None
+        server_info = payload.get("Server", {})
+        if server_info:
+            if isinstance(server_info, dict):
+                plex_uri = server_info.get("uri") or server_info.get("Uri")
+            elif isinstance(server_info, str):
+                plex_uri = server_info
+
+        if not plex_uri and plex_account.sections:
+            for section in plex_account.sections:
+                if isinstance(section, dict):
+                    section_uri = section.get("uri")
+                    if section_uri:
+                        plex_uri = section_uri
+                        break
+
+        if not plex_uri:
+            logger.debug("No Plex server URI found for rating fetch")
+            return None
+
+        try:
+            metadata = plex_api.fetch_metadata(
+                plex_account.plex_token,
+                plex_uri,
+                str(rating_key),
+            )
+            if metadata:
+                user_rating = metadata.get("userRating")
+                logger.debug("Fetched userRating from Plex API: %s", user_rating)
+                return user_rating
+        except Exception as exc:
+            logger.warning("Failed to fetch rating from Plex API: %s", exc)
+
+        return None
+
+    def _normalize_rating(self, rating_value, title: str | None = None) -> float | None:
+        """Normalize Plex rating values onto a 0-10 scale.
+        
+        Plex ratings can be on different scales:
+        - 0-5 scale: multiply by 2
+        - 1-10 scale: use directly
+        - 0-100 scale: divide by 10
+        """
+        if rating_value in (None, ""):
+            return None
+
+        try:
+            rating = float(rating_value)
+        except (TypeError, ValueError):
+            entry_title = title or "Unknown title"
+            logger.warning("Invalid Plex rating '%s' for %s - skipped", rating_value, entry_title)
+            return None
+
+        if rating < 0:
+            entry_title = title or "Unknown title"
+            logger.warning("Invalid Plex rating '%s' for %s (negative) - skipped", rating_value, entry_title)
+            return None
+
+        if rating <= 5:
+            rating *= 2
+        elif rating <= 10:
+            rating = rating
+        elif rating <= 100:
+            rating /= 10
+        else:
+            entry_title = title or "Unknown title"
+            logger.warning("Invalid Plex rating '%s' for %s (out of range) - skipped", rating_value, entry_title)
+            return None
+
+        rating = round(rating, 1)
+        if rating < 0 or rating > 10:
+            entry_title = title or "Unknown title"
+            logger.warning("Invalid Plex rating '%s' for %s (normalized out of range) - skipped", rating_value, entry_title)
+            return None
+
+        return rating
 
     def _is_valid_user(self, payload_user, user):
         stored_usernames = [

@@ -85,6 +85,8 @@ class PlexHistoryImporter:
         self._artists_for_prefetch: set[int] = set()
         # Track unique music tracks (by item key) for counting purposes
         self._unique_music_tracks: set[tuple[str, str]] = set()
+        # Store ratings from library items to apply during bulk media creation
+        self._library_ratings: dict[tuple[str, str], float] = {}
 
     def import_data(self):
         """Import history for the selected library."""
@@ -332,6 +334,19 @@ class PlexHistoryImporter:
             len(self._movie_records),
             len(self._episode_records),
         )
+
+        # Fetch and apply ratings from library items
+        try:
+            self._import_ratings_from_library(section, uri_used)
+        except Exception as exc:
+            logger.warning(
+                "Failed to import ratings from library items for section %s: %s",
+                section.get("title") or section.get("id"),
+                exc,
+            )
+            self.warnings.append(
+                f"Failed to import ratings from library items: {exc}",
+            )
 
     def _fetch_history_entries(self, connections: list[str], section_id: str | None) -> tuple[list[dict], str]:
         """Pull all history pages up front to minimize per-page overhead, trying fallbacks."""
@@ -869,6 +884,101 @@ class PlexHistoryImporter:
         played_at = datetime.fromtimestamp(ts_int, tz=UTC)
         return timezone.localtime(played_at)
 
+    def _import_ratings_from_library(self, section: dict, uri: str):
+        """Fetch ratings from Plex library items and apply them to imported media instances.
+        
+        This complements history import by fetching ratings from library items,
+        which may have ratings even if they weren't in the watch history.
+        """
+        section_type = (section.get("type") or "").lower()
+        if section_type not in ("movie", "show"):
+            # Only import ratings for movies and TV shows
+            return
+
+        section_key = section.get("key") or section.get("id")
+        if not section_key:
+            logger.debug("No section key found, skipping rating import")
+            return
+
+        logger.info(
+            "Fetching ratings from library items for section '%s'",
+            section.get("title") or section.get("id"),
+        )
+
+        # Fetch all library items (paginated)
+        ratings_map = {}  # Maps (source, media_id) -> rating
+        start = 0
+        page_size = settings.PLEX_HISTORY_PAGE_SIZE
+        total_fetched = 0
+
+        while True:
+            try:
+                items, total = plex_api.fetch_section_all_items(
+                    self.account.plex_token,
+                    uri,
+                    str(section_key),
+                    start=start,
+                    size=page_size,
+                )
+            except plex_api.PlexAuthError as exc:
+                raise MediaImportError("Plex token expired; reconnect and try again.") from exc
+            except plex_api.PlexClientError as exc:
+                logger.warning(
+                    "Failed to fetch library items for rating import: %s",
+                    exc,
+                )
+                break
+
+            if not items:
+                break
+
+            for item in items:
+                user_rating = item.get("userRating")
+                if user_rating is None:
+                    continue
+
+                # Extract external IDs
+                guids = item.get("Guid", [])
+                if not guids:
+                    single_guid = item.get("guid")
+                    if single_guid:
+                        guids = [{"id": single_guid}]
+
+                external_ids = plex_api.extract_external_ids_from_guids(guids)
+                
+                # Normalize rating
+                title = item.get("title") or "Unknown"
+                normalized_rating = self._normalize_rating(user_rating, title)
+                if normalized_rating is None:
+                    continue
+
+                # Store rating by external ID (prefer TMDB, fallback to IMDB/TVDB)
+                if external_ids.get("tmdb_id"):
+                    ratings_map[("tmdb", external_ids["tmdb_id"])] = normalized_rating
+                if external_ids.get("imdb_id"):
+                    ratings_map[("imdb", external_ids["imdb_id"])] = normalized_rating
+                if external_ids.get("tvdb_id"):
+                    ratings_map[("tvdb", external_ids["tvdb_id"])] = normalized_rating
+
+            total_fetched += len(items)
+            if len(items) < page_size or total_fetched >= total:
+                break
+            start += page_size
+
+        if not ratings_map:
+            logger.debug("No ratings found in library items for section '%s'", section.get("title"))
+            return
+
+        logger.info(
+            "Found %d ratings in library items for section '%s'",
+            len(ratings_map),
+            section.get("title") or section.get("id"),
+        )
+
+        # Store ratings to apply during bulk media creation
+        self._library_ratings.update(ratings_map)
+
+
     def _normalize_rating(self, rating_value, title: str | None) -> float | None:
         """Normalize Plex rating values onto a 0-10 scale."""
         if rating_value in (None, ""):
@@ -1012,8 +1122,16 @@ class PlexHistoryImporter:
                 end_date=record["watched_at"],
                 status=Status.COMPLETED.value,
             )
+            # Apply rating from history if available, otherwise try library rating
             if record["rating"] is not None:
                 movie_obj.score = record["rating"]
+            else:
+                # Try to get rating from library items
+                rating = self._library_ratings.get(("tmdb", actual_tmdb_id))
+                if rating is None and item.source == Sources.IMDB.value:
+                    rating = self._library_ratings.get(("imdb", item.media_id))
+                if rating is not None:
+                    movie_obj.score = rating
 
             movie_obj._history_date = record["watched_at"]
             self.bulk_media[MediaTypes.MOVIE.value].append(movie_obj)
@@ -1074,6 +1192,23 @@ class PlexHistoryImporter:
                 )
                 if existing and self.mode == "new":
                     tv_obj = existing
+                    # Apply rating from library items if available and different
+                    rating = self._library_ratings.get(("tmdb", actual_tmdb_id))
+                    if rating is None:
+                        # Try TVDB fallback
+                        tv_metadata = self._tv_metadata_cache.get(actual_tmdb_id)
+                        if tv_metadata:
+                            tvdb_id = tv_metadata.get("tvdb_id")
+                            if tvdb_id:
+                                rating = self._library_ratings.get(("tvdb", str(tvdb_id)))
+                    if rating is not None and tv_obj.score != rating:
+                        tv_obj.score = rating
+                        tv_obj.save(update_fields=["score"])
+                        logger.debug(
+                            "Applied library rating %.1f to existing TV show %s",
+                            rating,
+                            tv_obj.item.title,
+                        )
                     self.media_instances[MediaTypes.TV.value][tv_key] = [tv_obj]
                 else:
                     tv_item = self._get_or_create_item(
@@ -1086,6 +1221,15 @@ class PlexHistoryImporter:
                         user=self.user,
                         status=Status.IN_PROGRESS.value,
                     )
+                    # Apply rating from library items if available
+                    rating = self._library_ratings.get(("tmdb", actual_tmdb_id))
+                    if rating is None:
+                        # Try TVDB fallback
+                        tvdb_id = tv_metadata.get("tvdb_id")
+                        if tvdb_id:
+                            rating = self._library_ratings.get(("tvdb", str(tvdb_id)))
+                    if rating is not None:
+                        tv_obj.score = rating
                     tv_obj._history_date = record["watched_at"]
                     self.bulk_media[MediaTypes.TV.value].append(tv_obj)
                     self.media_instances[MediaTypes.TV.value][tv_key] = [tv_obj]

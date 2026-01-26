@@ -250,6 +250,7 @@ All statistics are cached and refresh in the background, so pages load quickly e
 - Better webhook handling
 - Edge case fixes (GUID quirks, SQLite locking)
 - Auto-pause for stale in-progress items
+- **Rating sync** - Sync user ratings from Plex library items during import, or manually via the "Sync Metadata" button on media details pages. Note: While webhook support for `media.rate` events is implemented, Plex may not reliably send these events (varies by server version and client app). The import and manual sync methods provide reliable rating synchronization.
 
 **Pocket Casts:**
 - OAuth authentication

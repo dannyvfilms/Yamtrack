@@ -2177,6 +2177,9 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
 
         item.fetch_releases(delay=False)
 
+        # Sync rating from Plex if user has Plex connected and webhooks configured
+        _sync_plex_rating(request, item, media_type)
+
         msg = f"{title} was synced to {Sources(source).label} successfully."
         messages.success(request, msg)
 
@@ -2188,6 +2191,232 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
             },
         )
     return helpers.redirect_back(request)
+
+
+def _sync_plex_rating(request, item, media_type):
+    """Sync user rating from Plex for a specific item.
+    
+    This is called when syncing metadata if the user has Plex connected
+    and webhooks configured (indicating they want Plex integration).
+    """
+    from app.models import CollectionEntry, MediaTypes, Status
+    from integrations import plex as plex_api
+    
+    # Check if user has Plex connected and webhooks configured
+    plex_account = getattr(request.user, "plex_account", None)
+    if not plex_account or not plex_account.plex_token:
+        return
+    
+    # Check if user has webhooks configured (has plex_usernames set)
+    if not getattr(request.user, "plex_usernames", None):
+        return
+    
+    # Only sync ratings for Movies and TV shows
+    if media_type not in (MediaTypes.MOVIE.value, MediaTypes.TV.value):
+        return
+    
+    logger.info("Attempting to sync Plex rating for %s - %s", request.user.username, item.title)
+    
+    # Try to get rating key from cached CollectionEntry
+    rating_key = None
+    plex_uri = None
+    
+    collection_entry = CollectionEntry.objects.filter(
+        user=request.user,
+        item=item,
+        plex_rating_key__isnull=False,
+        plex_uri__isnull=False,
+    ).first()
+    
+    if collection_entry:
+        rating_key = collection_entry.plex_rating_key
+        plex_uri = collection_entry.plex_uri
+        logger.debug("Using cached rating key %s for %s", rating_key, item.title)
+    else:
+        # Search for item in Plex library
+        try:
+            resources = plex_api.list_resources(plex_account.plex_token)
+        except Exception as exc:
+            logger.debug("Failed to list Plex resources for rating sync: %s", exc)
+            return
+        
+        # Get sections
+        sections = plex_account.sections or []
+        if not sections:
+            try:
+                sections = plex_api.list_sections(plex_account.plex_token)
+            except Exception as exc:
+                logger.debug("Failed to list Plex sections for rating sync: %s", exc)
+                return
+        
+        # Find matching item in Plex
+        for section in sections:
+            section_type = (section.get("type") or "").lower()
+            if media_type == MediaTypes.MOVIE.value and section_type != "movie":
+                continue
+            if media_type == MediaTypes.TV.value and section_type != "show":
+                continue
+            
+            section_uri = section.get("uri")
+            if not section_uri:
+                continue
+            
+            try:
+                # Search library items (first 100 should be enough for most cases)
+                library_items, total = plex_api.fetch_section_all_items(
+                    plex_account.plex_token,
+                    section_uri,
+                    str(section.get("key") or section.get("id")),
+                    start=0,
+                    size=100,
+                )
+                
+                for plex_item in library_items:
+                    # Extract external IDs
+                    guids = plex_item.get("Guid", [])
+                    if not guids:
+                        single_guid = plex_item.get("guid")
+                        if single_guid:
+                            guids = [{"id": single_guid}]
+                    
+                    external_ids = plex_api.extract_external_ids_from_guids(guids)
+                    
+                    # Check if this matches our item
+                    matches = False
+                    if item.source == "tmdb" and external_ids.get("tmdb_id") == str(item.media_id):
+                        matches = True
+                    elif item.source == "imdb" and external_ids.get("imdb_id") == item.media_id:
+                        matches = True
+                    elif item.source == "tvdb" and external_ids.get("tvdb_id") == str(item.media_id):
+                        matches = True
+                    
+                    if matches:
+                        rating_key = plex_item.get("ratingKey") or plex_item.get("ratingkey")
+                        plex_uri = section_uri
+                        logger.info("Found matching Plex item for %s (rating_key=%s)", item.title, rating_key)
+                        break
+                
+                if rating_key:
+                    break
+            except Exception as exc:
+                logger.debug("Failed to search Plex section %s for rating: %s", section.get("title"), exc)
+                continue
+    
+    if not rating_key or not plex_uri:
+        logger.debug("Could not find Plex rating key for %s", item.title)
+        return
+    
+    # Fetch metadata from Plex to get user rating
+    # Use longer timeout for rating sync (30 seconds)
+    try:
+        plex_metadata = plex_api.fetch_metadata(
+            plex_account.plex_token,
+            plex_uri,
+            str(rating_key),
+            timeout=30,
+        )
+    except Exception as exc:
+        logger.warning("Failed to fetch Plex metadata for rating sync: %s", exc)
+        # Try HTTPS if HTTP failed, or vice versa
+        if plex_uri.startswith("http://"):
+            https_uri = plex_uri.replace("http://", "https://")
+            logger.debug("Retrying with HTTPS: %s", https_uri)
+            try:
+                plex_metadata = plex_api.fetch_metadata(
+                    plex_account.plex_token,
+                    https_uri,
+                    str(rating_key),
+                    timeout=30,
+                )
+            except Exception as https_exc:
+                logger.debug("HTTPS retry also failed: %s", https_exc)
+                return
+        elif plex_uri.startswith("https://"):
+            http_uri = plex_uri.replace("https://", "http://")
+            logger.debug("Retrying with HTTP: %s", http_uri)
+            try:
+                plex_metadata = plex_api.fetch_metadata(
+                    plex_account.plex_token,
+                    http_uri,
+                    str(rating_key),
+                    timeout=30,
+                )
+            except Exception as http_exc:
+                logger.debug("HTTP retry also failed: %s", http_exc)
+                return
+        else:
+            return
+    
+    if not plex_metadata:
+        logger.debug("No Plex metadata returned for rating_key %s", rating_key)
+        return
+    
+    user_rating = plex_metadata.get("userRating")
+    if user_rating is None:
+        logger.debug("No userRating found in Plex metadata for %s", item.title)
+        return
+    
+    # Normalize rating (Plex uses 1-10 scale, Yamtrack uses 0-10)
+    try:
+        rating_float = float(user_rating)
+    except (TypeError, ValueError):
+        logger.debug("Invalid rating value '%s' for %s", user_rating, item.title)
+        return
+    
+    # Plex ratings are typically 1-10, but handle other scales
+    if rating_float <= 5:
+        normalized_rating = rating_float * 2
+    elif rating_float <= 10:
+        normalized_rating = rating_float
+    elif rating_float <= 100:
+        normalized_rating = rating_float / 10
+    else:
+        logger.debug("Rating out of expected range: %s", user_rating)
+        return
+    
+    normalized_rating = round(normalized_rating, 1)
+    if normalized_rating < 0 or normalized_rating > 10:
+        logger.debug("Normalized rating out of range: %s", normalized_rating)
+        return
+    
+    if normalized_rating is None:
+        logger.debug("Invalid rating value '%s' for %s", user_rating, item.title)
+        return
+    
+    # Apply rating to media instance
+    if media_type == MediaTypes.MOVIE.value:
+        from app.models import Movie
+        movie_instance = Movie.objects.filter(item=item, user=request.user).first()
+        if movie_instance:
+            movie_instance.score = normalized_rating
+            movie_instance.save(update_fields=["score"])
+            logger.info("Synced Plex rating %.1f for movie %s", normalized_rating, item.title)
+        else:
+            # Create movie instance if it doesn't exist
+            Movie.objects.create(
+                item=item,
+                user=request.user,
+                status=Status.COMPLETED.value,
+                progress=1,
+                score=normalized_rating,
+            )
+            logger.info("Created movie instance with Plex rating %.1f for %s", normalized_rating, item.title)
+    elif media_type == MediaTypes.TV.value:
+        from app.models import TV
+        tv_instance = TV.objects.filter(item=item, user=request.user).first()
+        if tv_instance:
+            tv_instance.score = normalized_rating
+            tv_instance.save(update_fields=["score"])
+            logger.info("Synced Plex rating %.1f for TV show %s", normalized_rating, item.title)
+        else:
+            # Create TV instance if it doesn't exist
+            TV.objects.create(
+                item=item,
+                user=request.user,
+                status=Status.IN_PROGRESS.value,
+                score=normalized_rating,
+            )
+            logger.info("Created TV instance with Plex rating %.1f for %s", normalized_rating, item.title)
 
 
 @never_cache

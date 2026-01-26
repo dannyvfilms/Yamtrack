@@ -979,6 +979,9 @@ def plex_webhook(request, token):
         return HttpResponse("Missing payload", status=400)
 
     payload = json.loads(data)
+    event_type = payload.get("event")
+    logger.info("Received Plex webhook request - Event: %s, User: %s", event_type, user.username)
+    
     processor = plex_webhooks.PlexWebhookProcessor()
     processor.process_payload(payload, user)
     return HttpResponse(status=200)
