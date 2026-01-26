@@ -143,6 +143,7 @@ The only **required** variable is `SECRET` (a long random string for Django's se
 - `IGDB_ID` / `IGDB_SECRET` - For game metadata (get from [IGDB](https://www.igdb.com/api))
 - `STEAM_API_KEY` - For Steam game imports
 - `URLS` - Your public URL if using a reverse proxy (e.g., `https://yamtrack.mydomain.com`)
+- `ADMIN_ENABLED` - Set to `True` to enable the Django admin interface at `/admin/` (see [Admin Page documentation](https://github.com/FuzzyGrim/Yamtrack/wiki/Admin-Page) for setup instructions)
 
 For a complete list, see the [Environment Variables documentation](https://github.com/FuzzyGrim/Yamtrack/wiki/Environment-Variables).
 

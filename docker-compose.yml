@@ -11,6 +11,7 @@ services:
       - TZ=Europe/Berlin
       - SECRET=longstring
       - REDIS_URL=redis://redis:6379
+      - ADMIN_ENABLED=False
     volumes:
       - ./db:/yamtrack/db
     ports:

@@ -17,6 +17,7 @@ services:
       - DB_USER=yamtrack
       - DB_PASSWORD=yamtrack
       - DB_PORT=5432
+      - ADMIN_ENABLED=False
     ports:
       - "8000:8000"
 
