@@ -282,6 +282,7 @@ def fetch_section_all_items(
     section_key: str,
     start: int = 0,
     size: int | None = None,
+    max_retries: int = 3,
 ) -> tuple[list[dict[str, Any]], int]:
     """Fetch all items from a Plex library section.
     
@@ -291,10 +292,13 @@ def fetch_section_all_items(
         section_key: Section key (from section.get("key") or section.get("id"))
         start: Starting offset for pagination
         size: Number of items to fetch per page
+        max_retries: Maximum number of retry attempts for network errors
         
     Returns:
         Tuple of (items list, total count)
     """
+    import time
+    
     page_size = size or settings.PLEX_HISTORY_PAGE_SIZE
     params = {
         "X-Plex-Token": token,
@@ -306,17 +310,42 @@ def fetch_section_all_items(
     if not section_key.startswith("/"):
         section_key = f"/library/sections/{section_key}"
     
-    try:
-        response = requests.get(
-            f"{uri}{section_key}/all",
-            headers=_headers(token),
-            params=params,
-            timeout=20,
-            verify=settings.PLEX_SSL_VERIFY,
-        )
-    except RequestException as exc:
-        raise PlexClientError(str(exc)) from exc
-    _raise_for_auth(response)
+    last_exc = None
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(
+                f"{uri}{section_key}/all",
+                headers=_headers(token),
+                params=params,
+                timeout=30,  # Increased timeout
+                verify=settings.PLEX_SSL_VERIFY,
+            )
+            _raise_for_auth(response)
+            break  # Success, exit retry loop
+        except (RequestException, TimeoutError, ConnectionError) as exc:
+            last_exc = exc
+            if attempt < max_retries - 1:
+                # Exponential backoff: 1s, 2s, 4s
+                wait_time = 2 ** attempt
+                logger.debug(
+                    "Plex API request failed (attempt %d/%d), retrying in %ds: %s",
+                    attempt + 1,
+                    max_retries,
+                    wait_time,
+                    exc,
+                )
+                time.sleep(wait_time)
+            else:
+                # Last attempt failed
+                logger.warning(
+                    "Plex API request failed after %d attempts: %s",
+                    max_retries,
+                    exc,
+                )
+                raise PlexClientError(f"Failed after {max_retries} attempts: {exc}") from exc
+    
+    if last_exc:
+        raise PlexClientError(str(last_exc)) from last_exc
 
     content_type = response.headers.get("Content-Type", "")
     if "json" in content_type:

@@ -9,7 +9,7 @@ from dateutil.relativedelta import relativedelta
 from django.apps import apps
 from django.conf import settings
 from django.contrib import messages
-from django.contrib.auth.decorators import login_not_required
+from django.contrib.auth.decorators import login_not_required, login_required
 from django.core.cache import cache
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.paginator import EmptyPage, Paginator
@@ -1518,6 +1518,9 @@ def media_details(
     # Get collection entry for this item (if not public view and not podcast)
     collection_entry = None
     collection_stats = None
+    fetching_collection_data = False
+    item_id_for_polling = None
+    
     if not public_view and media_type != MediaTypes.PODCAST.value:
         from app.models import Item
         from app.helpers import is_item_collected, get_tv_show_collection_stats
@@ -1535,6 +1538,17 @@ def media_details(
                 # Use episode count from metadata if available to match Details pane
                 metadata_episode_count = media_metadata.get("details", {}).get("episodes") or media_metadata.get("episodes")
                 collection_stats = get_tv_show_collection_stats(request.user, item, metadata_episode_count=metadata_episode_count)
+            
+            # If no collection entry exists and user has Plex connected, trigger background fetch
+            if not collection_entry:
+                plex_account = getattr(request.user, "plex_account", None)
+                if plex_account and plex_account.plex_token:
+                    from integrations.tasks import fetch_collection_metadata_for_item
+                    # Trigger background task to fetch collection data
+                    fetch_collection_metadata_for_item.delay(user_id=request.user.id, item_id=item.id)
+                    logger.info("Triggered background collection fetch for %s - %s (item_id=%s)", request.user.username, item.title, item.id)
+                    fetching_collection_data = True
+                    item_id_for_polling = item.id
         except Item.DoesNotExist:
             pass
 
@@ -1551,6 +1565,8 @@ def media_details(
         "notes_entry": notes_entry,
         "collection_entry": collection_entry,
         "collection_stats": collection_stats,
+        "fetching_collection_data": fetching_collection_data if not public_view else False,
+        "item_id_for_polling": item_id_for_polling if not public_view else None,
     }
     return render(request, "app/media_details.html", context)
 
@@ -1759,6 +1775,7 @@ def season_details(
     # Get collection entry, stats, and metadata for this season (if not public view)
     collection_entry = None
     season_collection_stats = None
+    fetching_collection_data = False
     if not public_view:
         from app.helpers import is_item_collected, get_season_collection_stats, get_season_collection_metadata
         from app.models import Item as ItemModel  # Use alias to avoid any potential shadowing
@@ -1771,6 +1788,43 @@ def season_details(
                 media_type=MediaTypes.SEASON.value,
                 season_number=season_number,
             )
+            
+            # Check if the show has collection data, and trigger background fetch if not
+            # We check the show item (not season) because episode collection data is tied to the show
+            try:
+                show_item = ItemModel.objects.get(
+                    media_id=media_id,
+                    source=source,
+                    media_type__in=(MediaTypes.TV.value, MediaTypes.ANIME.value),
+                )
+                show_collection_entry = is_item_collected(request.user, show_item)
+                
+                logger.info("Season page: Checking show %s (item_id=%s) - collection entry exists: %s", 
+                           show_item.title, show_item.id, show_collection_entry is not None)
+                
+                # If no collection entry exists for the show and user has Plex connected, trigger background fetch
+                if not show_collection_entry:
+                    plex_account = getattr(request.user, "plex_account", None)
+                    if plex_account and plex_account.plex_token:
+                        try:
+                            from integrations.tasks import fetch_collection_metadata_for_item
+                            # Trigger background task to fetch collection data for the show
+                            result = fetch_collection_metadata_for_item.delay(user_id=request.user.id, item_id=show_item.id)
+                            logger.info("Triggered background collection fetch for show %s - %s (item_id=%s) from season page (task_id=%s)", 
+                                       request.user.username, show_item.title, show_item.id, result.id if result else "None")
+                            fetching_collection_data = True
+                        except Exception as task_exc:
+                            logger.error("Failed to trigger background collection fetch for show %s - %s: %s", 
+                                        request.user.username, show_item.title, task_exc, exc_info=True)
+                    else:
+                        logger.info("Season page: User %s does not have Plex connected, skipping background fetch", request.user.username)
+            except ItemModel.DoesNotExist:
+                # Show item doesn't exist yet, skip background fetch
+                logger.debug("Season page: Show item not found for media_id=%s, source=%s", media_id, source)
+                pass
+            except Exception as exc:
+                logger.error("Error checking show collection entry in season_details: %s", exc, exc_info=True)
+            
             # Get collection entry for the season item itself (if it exists)
             season_collection_entry = is_item_collected(request.user, season_item)
             
@@ -1822,6 +1876,8 @@ def season_details(
         "public_view": public_view,
         "collection_entry": collection_entry,
         "collection_stats": season_collection_stats,  # For season, this is episode stats
+        "fetching_collection_data": fetching_collection_data if not public_view else False,
+        "item_id_for_polling": item_id_for_polling if not public_view else None,
     }
     return render(request, "app/media_details.html", context)
 
@@ -6492,3 +6548,23 @@ def collection_modal(request, source, media_type, media_id):
             "return_url": return_url,
         },
     )
+
+
+@login_required
+@require_GET
+@never_cache
+def collection_status_api(request, item_id):
+    """API endpoint to check if collection entry exists for an item."""
+    from django.http import JsonResponse
+    from app.helpers import is_item_collected
+    
+    try:
+        item = Item.objects.get(id=item_id)
+        collection_entry = is_item_collected(request.user, item)
+        
+        return JsonResponse({
+            "has_collection_data": collection_entry is not None,
+            "item_id": item_id,
+        })
+    except Item.DoesNotExist:
+        return JsonResponse({"error": "Item not found"}, status=404)

@@ -223,4 +223,9 @@ urlpatterns = [
         views.collection_modal,
         name="collection_modal",
     ),
+    path(
+        "api/collection-status/<int:item_id>/",
+        views.collection_status_api,
+        name="collection_status_api",
+    ),
 ]

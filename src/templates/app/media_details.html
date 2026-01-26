@@ -10,6 +10,75 @@
 {% endblock title %}
 
 {% block content %}
+  {# Collection data fetching notification banner #}
+  {% if fetching_collection_data and not public_view and item_id_for_polling %}
+  <div x-data="{
+    showBanner: true,
+    itemId: {{ item_id_for_polling }},
+    pollInterval: null,
+    pollCount: 0,
+    maxPolls: 120,
+    init() {
+      // Start polling for collection data
+      this.startPolling();
+    },
+    startPolling() {
+      this.pollInterval = setInterval(() => {
+        this.checkCollectionStatus();
+      }, 2000); // Poll every 2 seconds
+    },
+    async checkCollectionStatus() {
+      if (this.pollCount >= this.maxPolls) {
+        // Stop polling after max attempts (4 minutes)
+        this.stopPolling();
+        return;
+      }
+      
+      this.pollCount++;
+      
+      try {
+        const response = await fetch(`/api/collection-status/${this.itemId}/`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.has_collection_data) {
+            // Collection data is now available, dismiss banner and reload
+            this.stopPolling();
+            this.showBanner = false;
+            // Reload page after a short delay to show the new data
+            setTimeout(() => {
+              window.location.reload();
+            }, 500);
+          }
+        }
+      } catch (error) {
+        console.error('Error checking collection status:', error);
+      }
+    },
+    stopPolling() {
+      if (this.pollInterval) {
+        clearInterval(this.pollInterval);
+        this.pollInterval = null;
+      }
+    }
+  }"
+       x-show="showBanner"
+       x-cloak
+       x-transition
+       class="fixed top-24 right-0 left-0 {% block messages_sidebar_offset %}lg:left-64{% endblock messages_sidebar_offset %} z-50 flex justify-center pointer-events-none mb-4">
+    <div class="w-full max-w-xl px-4 pointer-events-auto">
+      <div class="flex items-center gap-2 rounded-md border px-3 py-2 shadow-lg text-white toast-info opacity-0"
+           x-init="setTimeout(() => $el.classList.add('opacity-100', 'transform-none'), 10); $el.classList.add('transition-all', 'duration-300', 'ease-out', 'transform', 'translate-y-[-1rem]')">
+        {% include "app/icons/info.svg" with classes="w-4 h-4 text-indigo-300 shrink-0 animate-pulse" %}
+        <p class="text-sm font-medium flex-1">Fetching collection data in background...</p>
+        <button class="text-current opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
+                @click="showBanner = false; stopPolling();">
+          {% include "app/icons/x.svg" with classes="w-4 h-4" %}
+        </button>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
   {# Top section #}
   <div class="flex flex-col md:flex-row gap-8 md:gap-10 mb-12 md:mb-8">
     <div class="w-full md:w-1/4 max-w-[250px] mx-auto md:mx-0">
