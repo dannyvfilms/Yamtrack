@@ -70,7 +70,7 @@ logger = logging.getLogger(__name__)
 MEDIA_RATING_CHOICES = (
     ("all", "All"),
     ("rated", "Rated"),
-    ("not_rated", "Not Rated"),
+    # "not_rated" is handled in logic but not shown in dropdown (toggle behavior)
 )
 RECENTLY_NOT_RATED_KEY = "recently_not_rated"
 RECENTLY_NOT_RATED_LABEL = "Recently Played - Not Rated"
@@ -281,8 +281,16 @@ def media_list(request, media_type):
         request.GET.get("status"),
     )
     rating_filter = request.GET.get("rating", "all")
-    if rating_filter not in {choice[0] for choice in MEDIA_RATING_CHOICES}:
+    # Allow "not_rated" even though it's not in display choices (toggle behavior)
+    valid_rating_filters = {"all", "rated", "not_rated"}
+    if rating_filter not in valid_rating_filters:
         rating_filter = "all"
+    
+    collection_filter = request.GET.get("collection", "all")
+    valid_collection_filters = {"all", "collected", "not_collected"}
+    if collection_filter not in valid_collection_filters:
+        collection_filter = "all"
+    
     search_query = request.GET.get("search", "")
     try:
         page = int(request.GET.get("page", 1))
@@ -304,6 +312,43 @@ def media_list(request, media_type):
             return media_items
         should_be_rated = filter_value == "rated"
         return [media for media in media_items if is_rated(media) == should_be_rated]
+    
+    def apply_collection_filter(media_items, filter_value, user, media_type):
+        """Filter media items based on collection status.
+        
+        For TV shows, checks both show-level and episode-level collection entries.
+        """
+        if filter_value == "all":
+            return media_items
+        
+        from app.models import Item, CollectionEntry, MediaTypes
+        
+        filtered_items = []
+        for media in media_items:
+            # Check show/item-level collection entry
+            has_collection = helpers.is_item_collected(user, media.item) is not None
+            
+            # For TV shows, also check episode-level collection entries
+            if not has_collection and media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
+                episode_items = Item.objects.filter(
+                    media_id=media.item.media_id,
+                    source=media.item.source,
+                    media_type=MediaTypes.EPISODE.value
+                )
+                if episode_items.exists():
+                    has_episode_collection = CollectionEntry.objects.filter(
+                        user=user,
+                        item__in=episode_items
+                    ).exists()
+                    has_collection = has_episode_collection
+            
+            # Apply filter
+            if filter_value == "collected" and has_collection:
+                filtered_items.append(media)
+            elif filter_value == "not_collected" and not has_collection:
+                filtered_items.append(media)
+        
+        return filtered_items
 
     # Get media list with filters applied
     media_queryset = BasicMedia.objects.get_media_list(
@@ -314,7 +359,11 @@ def media_list(request, media_type):
         search=search_query,
         direction=direction,
     )
-    media_queryset = apply_rating_filter(media_queryset, rating_filter)
+    
+    # Convert to list for filtering (rating and collection filters work on lists)
+    media_list = list(media_queryset)
+    media_list = apply_rating_filter(media_list, rating_filter)
+    media_list = apply_collection_filter(media_list, collection_filter, request.user, media_type)
 
     # Handle time_left sorting for TV shows
     if sort_filter == "time_left" and media_type == MediaTypes.TV.value:
@@ -332,6 +381,7 @@ def media_list(request, media_type):
             search_query,
             direction,
             rating_filter,
+            collection_filter,
         )
         cached_results = cache.get(cache_key)
 
@@ -341,9 +391,8 @@ def media_list(request, media_type):
         else:
             logger.debug(f"DEBUG: Starting time_left sort for page {page} (no cache)")
 
-            # Get all media objects for sorting
-            media_list = list(media_queryset)
-            logger.debug(f"DEBUG: Got {len(media_list)} media objects from queryset")
+            # media_list already has filters applied from above
+            logger.debug(f"DEBUG: Got {len(media_list)} media objects after filtering")
 
             # Annotate max_progress first
             BasicMedia.objects.annotate_max_progress(media_list, media_type)
@@ -378,7 +427,7 @@ def media_list(request, media_type):
     else:
         # Paginate results normally
         items_per_page = 32
-        paginator = Paginator(media_queryset, items_per_page)
+        paginator = Paginator(media_list, items_per_page)
         media_page = paginator.get_page(page)
 
         BasicMedia.objects.annotate_max_progress(

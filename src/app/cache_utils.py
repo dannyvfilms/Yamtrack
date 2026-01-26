@@ -18,15 +18,17 @@ def build_time_left_cache_key(
     search_query: str,
     direction: str,
     rating_filter: str,
+    collection_filter: str = "",
 ) -> str:
     """Create the cache key used for time-left sorted TV lists."""
     normalized_status = status_filter or ""
     normalized_query = search_query or ""
     normalized_direction = direction or ""
     normalized_rating = rating_filter or ""
+    normalized_collection = collection_filter or ""
     return (
         f"{TIME_LEFT_CACHE_PREFIX}_{user_id}_{media_type}_{normalized_status}_"
-        f"{normalized_query}_{normalized_direction}_{normalized_rating}"
+        f"{normalized_query}_{normalized_direction}_{normalized_rating}_{normalized_collection}"
     )
 
 
