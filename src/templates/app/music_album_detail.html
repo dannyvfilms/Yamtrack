@@ -389,6 +389,11 @@
                        class="text-xs text-gray-400 mt-2 px-4">
                       Last listened: {{ track_data.history.0.end_date|user_date_format:user|default_if_none:"No date provided" }}
                       {% if track_data.history|length > 1 %}• Listened {{ track_data.history|length }} times{% endif %}
+                      {% if track_data.collection_entry and track_data.collection_entry.audio_codec %}• Collected: {{ track_data.collection_entry.audio_codec }}{% endif %}
+                    </p>
+                  {% elif track_data.collection_entry and track_data.collection_entry.audio_codec %}
+                    <p class="text-xs text-gray-400 mt-2 px-4">
+                      Collected: {{ track_data.collection_entry.audio_codec }}
                     </p>
                   {% endif %}
                 </div>

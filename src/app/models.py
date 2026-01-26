@@ -3175,6 +3175,26 @@ class CollectionEntry(models.Model):
         help_text="Audio bitrate in kbps (e.g., 128, 320, 1411)",
     )
 
+    # Plex rating key cache (for faster bulk imports)
+    plex_rating_key = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Cached Plex rating key for this item (populated from webhook events)",
+    )
+    plex_uri = models.CharField(
+        max_length=500,
+        null=True,
+        blank=True,
+        help_text="Cached Plex server URI for this item",
+    )
+    plex_rating_key_updated_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the Plex rating key was last updated",
+    )
+
     class Meta:
         constraints = [
             models.UniqueConstraint(
@@ -3186,6 +3206,7 @@ class CollectionEntry(models.Model):
         indexes = [
             models.Index(fields=["user", "-collected_at"]),
             models.Index(fields=["user", "item"]),
+            models.Index(fields=["user", "plex_rating_key"]),
         ]
 
     def __str__(self):

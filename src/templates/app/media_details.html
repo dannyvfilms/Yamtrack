@@ -670,7 +670,7 @@
                   {% endif %}
                 </p>
               </div>
-              {% if collection_entry %}<hr class="border-gray-700 my-4">{% endif %}
+              {% if collection_entry %}<hr class="border-gray-700 mb-4 mt-4">{% endif %}
             {% else %}
               {# For TV shows/Anime, show season and episode stats #}
               <div class="mb-4">
@@ -696,7 +696,7 @@
                   {% endif %}
                 </p>
               </div>
-              <hr class="border-gray-700 my-4">
+              {% if collection_entry %}<hr class="border-gray-700 mb-4 mt-4">{% endif %}
             {% endif %}
           {% endif %}
           
@@ -898,7 +898,7 @@
                       {% endif %}
                     </div>
                     {% if episode.overview %}
-                    <div class="{% if episode.history %}md:h-[calc(2*1.5rem)]{% else %}md:h-[calc(3*1.5rem)]{% endif %} md:overflow-y-auto px-4">
+                    <div class="{% if episode.history or episode.collection_entry and episode.collection_entry.resolution %}md:h-[calc(2*1.5rem)]{% else %}md:h-[calc(3*1.5rem)]{% endif %} md:overflow-y-auto px-4">
                       <p class="text-sm text-gray-300 leading-relaxed text-pretty">{{ episode.overview }}</p>
                     </div>
                     {% endif %}
@@ -907,6 +907,11 @@
                     <p class="text-xs text-gray-400 mt-2 px-4">
                       Last watched: {{ episode.history.0.end_date|user_date_format:user|default_if_none:"No date provided" }}
                       {% if episode.history|length > 1 %}• Watched {{ episode.history|length }} times{% endif %}
+                      {% if episode.collection_entry and episode.collection_entry.resolution %}• Collected: {{ episode.collection_entry.resolution }}{% endif %}
+                    </p>
+                  {% elif episode.collection_entry and episode.collection_entry.resolution %}
+                    <p class="text-xs text-gray-400 mt-2 px-4">
+                      Collected: {{ episode.collection_entry.resolution }}
                     </p>
                   {% endif %}
                 </div>

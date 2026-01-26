@@ -1711,6 +1711,38 @@ def season_details(
             episodes_in_db,
         )
 
+    # Add collection_entry data to each episode (if not public view)
+    if not public_view and season_metadata.get("episodes"):
+        from app.models import Item as ItemModel, CollectionEntry
+        
+        # Get all episode items for this season
+        episode_numbers = [ep.get("episode_number") for ep in season_metadata["episodes"]]
+        episode_items = ItemModel.objects.filter(
+            media_id=media_id,
+            source=source,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=season_number,
+            episode_number__in=episode_numbers,
+        )
+        
+        # Get all collection entries for these episodes in one query
+        episode_item_ids = list(episode_items.values_list('id', flat=True))
+        collection_entries = {}
+        if episode_item_ids:
+            collection_entries_qs = CollectionEntry.objects.filter(
+                user=request.user,
+                item_id__in=episode_item_ids,
+            )
+            # Map by (season_number, episode_number) for quick lookup
+            for entry in collection_entries_qs:
+                if entry.item.episode_number is not None:
+                    collection_entries[entry.item.episode_number] = entry
+        
+        # Add collection_entry to each episode
+        for episode in season_metadata["episodes"]:
+            episode_number = episode.get("episode_number")
+            episode["collection_entry"] = collection_entries.get(episode_number)
+
     # Enrich related items with user tracking data
     # For public views, use list owner's data if available
     if season_metadata.get("related"):
@@ -1729,10 +1761,11 @@ def season_details(
     season_collection_stats = None
     if not public_view:
         from app.helpers import is_item_collected, get_season_collection_stats, get_season_collection_metadata
+        from app.models import Item as ItemModel  # Use alias to avoid any potential shadowing
         
         # Get the season item
         try:
-            season_item = Item.objects.get(
+            season_item = ItemModel.objects.get(
                 media_id=media_id,
                 source=source,
                 media_type=MediaTypes.SEASON.value,
@@ -1776,7 +1809,7 @@ def season_details(
             
             # Get collection stats for this season (episodes)
             season_collection_stats = get_season_collection_stats(request.user, season_item)
-        except Item.DoesNotExist:
+        except ItemModel.DoesNotExist:
             pass
 
     context = {
@@ -4156,16 +4189,39 @@ def album_detail(request, album_id):
     # Build track data with user's tracking info (like Episodes)
     tracks_with_data = []
     total_duration_ms = 0
+    
+    # Get collection entries for all tracks in one query (if user is authenticated)
+    from app.helpers import is_item_collected
+    from app.models import CollectionEntry
+    
+    collection_entries_by_item_id = {}
+    if request.user.is_authenticated:
+        # Get all item IDs from music entries
+        music_item_ids = [m.item_id for m in user_music_entries if m.item_id]
+        if music_item_ids:
+            # Fetch all collection entries for these items in one query
+            collection_entries = CollectionEntry.objects.filter(
+                user=request.user,
+                item_id__in=music_item_ids,
+            )
+            collection_entries_by_item_id = {ce.item_id: ce for ce in collection_entries}
+    
     for track in all_tracks:
         # Look up user's Music entry for this track
         music_entry = user_music_by_track.get(track.id)
         if not music_entry and track.musicbrainz_recording_id:
             music_entry = user_music_by_track.get(f"recording_{track.musicbrainz_recording_id}")
 
+        # Get collection entry for this track
+        collection_entry = None
+        if music_entry and music_entry.item_id:
+            collection_entry = collection_entries_by_item_id.get(music_entry.item_id)
+
         track_data = {
             "track": track,
             "music": music_entry,
             "history": list(music_entry.history.all().order_by("-end_date")) if music_entry else [],
+            "collection_entry": collection_entry,
         }
         tracks_with_data.append(track_data)
         if track.duration_ms:
