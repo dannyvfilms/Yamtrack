@@ -2353,13 +2353,36 @@ def _sync_plex_rating(request, item, media_type):
         logger.debug("No userRating found in Plex metadata for %s", item.title)
         return
     
-    # Normalize rating (Plex uses 1-10 scale, Yamtrack uses 0-10)
+    # Check if this is a rating removal event (-1.0)
     try:
         rating_float = float(user_rating)
+        if rating_float == -1.0:
+            logger.info("Detected rating removal event for %s: %s", media_type, item.title)
+            # Remove rating from existing instances only
+            if media_type == MediaTypes.MOVIE.value:
+                from app.models import Movie
+                movie_instance = Movie.objects.filter(item=item, user=request.user).first()
+                if movie_instance:
+                    movie_instance.score = None
+                    movie_instance.save(update_fields=["score"])
+                    logger.info("Removed rating for movie: %s", item.title)
+                else:
+                    logger.debug("No movie instance found to remove rating for %s", item.title)
+            elif media_type == MediaTypes.TV.value:
+                from app.models import TV
+                tv_instance = TV.objects.filter(item=item, user=request.user).first()
+                if tv_instance:
+                    tv_instance.score = None
+                    tv_instance.save(update_fields=["score"])
+                    logger.info("Removed rating for TV show: %s", item.title)
+                else:
+                    logger.debug("No TV instance found to remove rating for %s", item.title)
+            return
     except (TypeError, ValueError):
         logger.debug("Invalid rating value '%s' for %s", user_rating, item.title)
         return
     
+    # Normalize rating (Plex uses 1-10 scale, Yamtrack uses 0-10)
     # Plex ratings are typically 1-10, but handle other scales
     if rating_float <= 5:
         normalized_rating = rating_float * 2

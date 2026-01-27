@@ -312,6 +312,23 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
             logger.warning("Ignoring rating for unsupported media type. Payload type: %s", metadata.get("type"))
             return None
 
+        # Check if this is a rating removal event (-1.0)
+        try:
+            rating_float = float(user_rating)
+            if rating_float == -1.0:
+                logger.info("Detected rating removal event for %s: %s", media_type, title)
+                # Resolve external IDs for removal
+                ids = self.resolve_external_ids(payload)
+                if not any(ids.get(key) for key in ("tmdb_id", "imdb_id", "tvdb_id")):
+                    logger.warning("Ignoring Plex rating removal webhook because no ID was found for %s", title)
+                    return None
+                # Handle rating removal
+                self._remove_rating(payload, user, ids, media_type)
+                return None
+        except (TypeError, ValueError):
+            # Not a numeric value, continue with normal processing
+            pass
+
         # Normalize rating
         normalized_rating = self._normalize_rating(user_rating, title)
         if normalized_rating is None:
@@ -430,6 +447,82 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
             tv_item.title,
             rating,
         )
+
+    def _remove_rating(self, payload, user, ids, media_type):
+        """Remove rating from a movie or TV instance.
+        
+        Only removes ratings from existing instances; does not create new instances.
+        """
+        from app.models import Sources
+
+        tmdb_id = ids.get("tmdb_id")
+        if not tmdb_id:
+            logger.warning("Cannot remove rating: no TMDB ID found")
+            return
+
+        title = self._get_media_title(payload)
+
+        if media_type == MediaTypes.MOVIE.value:
+            try:
+                movie_metadata = app.providers.tmdb.movie(tmdb_id)
+            except Exception as exc:
+                logger.warning("Failed to fetch movie metadata for TMDB ID %s: %s", tmdb_id, exc)
+                return
+
+            movie_item, _ = app.models.Item.objects.get_or_create(
+                media_id=tmdb_id,
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.MOVIE.value,
+                defaults={
+                    "title": movie_metadata["title"],
+                    "image": movie_metadata["image"],
+                },
+            )
+
+            # Only remove rating from existing instances
+            movie_instance = app.models.Movie.objects.filter(
+                item=movie_item,
+                user=user,
+            ).first()
+
+            if movie_instance:
+                movie_instance.score = None
+                movie_instance.save(update_fields=["score"])
+                logger.info("Removed rating for movie: %s", movie_item.title)
+            else:
+                logger.debug("No movie instance found to remove rating for %s", movie_item.title)
+
+        elif media_type == MediaTypes.TV.value:
+            try:
+                tv_metadata = app.providers.tmdb.tv(tmdb_id)
+            except Exception as exc:
+                logger.warning("Failed to fetch TV metadata for TMDB ID %s: %s", tmdb_id, exc)
+                return
+
+            tv_item, _ = app.models.Item.objects.get_or_create(
+                media_id=tmdb_id,
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.TV.value,
+                defaults={
+                    "title": tv_metadata["title"],
+                    "image": tv_metadata["image"],
+                },
+            )
+
+            # Only remove rating from existing instances
+            tv_instance = app.models.TV.objects.filter(
+                item=tv_item,
+                user=user,
+            ).first()
+
+            if tv_instance:
+                tv_instance.score = None
+                tv_instance.save(update_fields=["score"])
+                logger.info("Removed rating for TV show: %s", tv_item.title)
+            else:
+                logger.debug("No TV instance found to remove rating for %s", tv_item.title)
+        else:
+            logger.debug("Rating removal not supported for media type: %s", media_type)
 
     def _process_media(self, payload, user, ids):
         """Route processing based on media type, extracting season/episode for TV."""
