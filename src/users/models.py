@@ -154,6 +154,13 @@ class MobileGridLayoutChoices(models.TextChoices):
     COMPACT = "compact", "Compact (3 columns)"
 
 
+class MediaCardSubtitleDisplayChoices(models.TextChoices):
+    """Choices for media card subtitle visibility."""
+
+    HOVER = "hover", "On hover"
+    ALWAYS = "always", "Always visible"
+
+
 class PlannedHomeDisplayChoices(models.TextChoices):
     """Choices for how planned items are displayed on home page."""
 
@@ -470,6 +477,12 @@ class User(AbstractUser):
         default=False,
         help_text="Hide hover overlay on touch devices",
     )
+    media_card_subtitle_display = models.CharField(
+        max_length=20,
+        default=MediaCardSubtitleDisplayChoices.HOVER,
+        choices=MediaCardSubtitleDisplayChoices.choices,
+        help_text="Control when media card subtitles are visible",
+    )
 
     # Tracking settings
     quick_watch_date = models.CharField(
@@ -761,6 +774,10 @@ class User(AbstractUser):
             models.CheckConstraint(
                 name="activity_history_view_valid",
                 condition=models.Q(activity_history_view__in=ActivityHistoryViewChoices.values),
+            ),
+            models.CheckConstraint(
+                name="media_card_subtitle_display_valid",
+                condition=models.Q(media_card_subtitle_display__in=MediaCardSubtitleDisplayChoices.values),
             ),
             models.CheckConstraint(
                 name="statistics_default_range_valid",

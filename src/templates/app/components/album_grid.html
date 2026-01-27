@@ -2,7 +2,7 @@
 {# Partial template for album grid - used by artist detail and async cover prefetch #}
 <div{% if grid_id %} id="{{ grid_id }}"{% endif %} class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
   {% for album in all_albums %}
-    <div class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative search-result-card-square hover:ring-2 hover:ring-indigo-500 transition-all group"
+    <div class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative search-result-card-square hover:ring-2 hover:ring-indigo-500 transition-all group{% if request.user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %}"
          data-media-type="music">
       <div class="relative">
         <a href="{% url 'album_detail' album.id %}">

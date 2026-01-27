@@ -24,6 +24,7 @@ from users.models import (
     ActivityHistoryViewChoices,
     DateFormatChoices,
     GameLoggingStyleChoices,
+    MediaCardSubtitleDisplayChoices,
     MobileGridLayoutChoices,
     PlannedHomeDisplayChoices,
     QuickWatchDateChoices,
@@ -368,6 +369,7 @@ def preferences(request):
         activity_history_view = request.POST.get("activity_history_view")
         game_logging_style = request.POST.get("game_logging_style")
         mobile_grid_layout = request.POST.get("mobile_grid_layout")
+        media_card_subtitle_display = request.POST.get("media_card_subtitle_display")
         quick_season_update_mobile = request.POST.get("quick_season_update_mobile") == "1"
         book_comic_manga_progress_percentage = request.POST.get("book_comic_manga_progress_percentage") == "1"
 
@@ -410,6 +412,15 @@ def preferences(request):
             if request.user.mobile_grid_layout != mobile_grid_layout:
                 request.user.mobile_grid_layout = mobile_grid_layout
                 fields_to_update.append("mobile_grid_layout")
+
+        if (
+            media_card_subtitle_display
+            and media_card_subtitle_display
+            in [choice[0] for choice in MediaCardSubtitleDisplayChoices.choices]
+        ):
+            if request.user.media_card_subtitle_display != media_card_subtitle_display:
+                request.user.media_card_subtitle_display = media_card_subtitle_display
+                fields_to_update.append("media_card_subtitle_display")
 
         if request.user.quick_season_update_mobile != quick_season_update_mobile:
             request.user.quick_season_update_mobile = quick_season_update_mobile

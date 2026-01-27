@@ -4,7 +4,7 @@
 {# History card component - used for both 2:3 and 1:1 aspect ratio cards #}
 {# Args: entry, card_class (search-result-card or search-result-card-square), history_mode, user #}
 
-<div class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative {{ card_class }}"
+<div class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative {{ card_class }}{% if user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %}"
      data-media-type="{{ entry.media_type }}"
      x-data="{ historyOpen: false, listsOpen: false }">
   <div class="relative">

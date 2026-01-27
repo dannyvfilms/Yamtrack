@@ -3410,6 +3410,12 @@
   opacity: 1;
   transition: opacity 0.2s ease;
 }
+.search-result-card.media-card-subtitle-always .media-card-body {
+  transform: translateY(0);
+}
+.search-result-card.media-card-subtitle-always .media-card-year {
+  opacity: 1;
+}
 .search-result-card-square {
   position: relative;
   display: flex;
@@ -3464,6 +3470,12 @@
 .search-result-card-square:hover .media-card-year {
   opacity: 1;
   transition: opacity 0.2s ease;
+}
+.search-result-card-square.media-card-subtitle-always .media-card-body {
+  transform: translateY(0);
+}
+.search-result-card-square.media-card-subtitle-always .media-card-year {
+  opacity: 1;
 }
 .stat-scroll-safe.stat-tooltip-safe {
   overflow: visible;

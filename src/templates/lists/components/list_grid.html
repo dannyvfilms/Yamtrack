@@ -4,7 +4,7 @@
 {% for custom_list in custom_lists %}
   <div {% if forloop.last and custom_lists.has_next %} hx-get="{% if profile_username %}{% url 'user_profile' profile_username %}?page={{ custom_lists.next_page_number }}{% else %}{% url 'lists' %}?page={{ custom_lists.next_page_number }}{% endif %}" hx-trigger="revealed threshold:200px" hx-swap="afterend" hx-include="#filter-form" hx-indicator="#loading-indicator" {% endif %}
        x-data="{ showModal: false }">
-    <div class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative hover:ring-2 hover:ring-indigo-500 transition-all search-result-card-square group"
+    <div class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative hover:ring-2 hover:ring-indigo-500 transition-all search-result-card-square group{% if request.user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %}"
          style="aspect-ratio: 3/2 !important;">
       <div class="relative">
         <a href="{% url 'list_detail' custom_list.id %}">

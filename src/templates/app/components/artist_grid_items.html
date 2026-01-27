@@ -3,7 +3,7 @@
 
 {% for tracker in media_list %}
   <div {% if forloop.last and media_list.has_next %} hx-get="{% url 'medialist' media_type %}?page={{ media_list.next_page_number }}" hx-trigger="revealed threshold:200px" hx-swap="afterend" hx-include="#filter-form" hx-indicator="#loading-indicator" class="pagination-trigger" data-page="{{ media_list.next_page_number }}" {% endif %}
-       class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative group hover:ring-2 hover:ring-indigo-500 transition-all search-result-card"
+       class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative group hover:ring-2 hover:ring-indigo-500 transition-all search-result-card{% if user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %}"
        data-media-type="{{ MediaTypes.MUSIC.value }}"
        x-data="{ trackOpen: false }">
     <div class="relative">
