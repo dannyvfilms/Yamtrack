@@ -3288,6 +3288,16 @@ def delete_history_record(request, media_type, history_id):
         created_at = getattr(history_record, "created_at", None)
         media_type_lower = media_type.lower()
 
+        # These media types store each play as a separate model instance.
+        # Deleting only the historical record leaves the live row behind.
+        instance_delete_types = {
+            MediaTypes.MOVIE.value,
+            MediaTypes.EPISODE.value,
+            MediaTypes.GAME.value,
+            MediaTypes.BOARDGAME.value,
+        }
+        delete_instance = media_type_lower in instance_delete_types
+
         logger.info(
             "Attempting to delete history record %s (media_type=%s, media_instance_id=%s, user=%s)",
             str(history_id),
@@ -3301,45 +3311,109 @@ def delete_history_record(request, media_type, history_id):
         podcast_id = request.GET.get("podcast_id")
 
         # Perform the deletion
-        try:
-            history_record.delete()
-        except Exception as e:
-            logger.error(
-                "Failed to delete history record %s: %s",
-                str(history_id),
-                str(e),
-                exc_info=True,
-            )
-            return HttpResponse("Failed to delete record", status=500)
-
-        # Verify deletion succeeded by checking if the record still exists
-        try:
-            verification_query = historical_model.objects.filter(history_id=history_id)
-            if verification_query.exists():
-                logger.error(
-                    "Deletion verification failed: history record %s still exists after delete() call",
-                    str(history_id),
+        if delete_instance:
+            try:
+                media_instance = BasicMedia.objects.get_media(
+                    request.user,
+                    media_type_lower,
+                    media_instance_id,
                 )
-                return HttpResponse("Deletion failed", status=500)
-        except Exception as e:
-            logger.warning(
-                "Could not verify deletion of history record %s: %s",
-                str(history_id),
-                str(e),
+            except (ObjectDoesNotExist, ValueError, TypeError):
+                logger.exception(
+                    "Media instance %s not found for history record %s (media_type=%s, user=%s)",
+                    str(media_instance_id),
+                    str(history_id),
+                    media_type_lower,
+                    str(request.user),
+                )
+                return HttpResponse("Record not found", status=404)
+
+            related_season = (
+                getattr(media_instance, "related_season", None)
+                if media_type_lower == MediaTypes.EPISODE.value
+                else None
             )
-            # Continue anyway as the delete() call may have succeeded
+
+            try:
+                media_instance.delete()
+            except Exception as e:
+                logger.error(
+                    "Failed to delete media instance %s for history record %s: %s",
+                    str(media_instance_id),
+                    str(history_id),
+                    str(e),
+                    exc_info=True,
+                )
+                return HttpResponse("Failed to delete record", status=500)
+
+            # Keep season/TV status in sync when deleting episode plays
+            if related_season:
+                related_season._sync_status_after_episode_change()
+                cache_utils.clear_time_left_cache_for_user(related_season.user_id)
+
+            # Verify deletion succeeded by checking if the instance still exists
+            try:
+                model = apps.get_model(app_label="app", model_name=media_type_lower)
+                verification_query = model.objects.filter(id=media_instance_id)
+                if media_type_lower == MediaTypes.EPISODE.value:
+                    verification_query = verification_query.filter(
+                        related_season__user=request.user,
+                    )
+                else:
+                    verification_query = verification_query.filter(user=request.user)
+
+                if verification_query.exists():
+                    logger.error(
+                        "Deletion verification failed: media instance %s still exists after delete() call",
+                        str(media_instance_id),
+                    )
+                    return HttpResponse("Deletion failed", status=500)
+            except Exception as e:
+                logger.warning(
+                    "Could not verify deletion of media instance %s: %s",
+                    str(media_instance_id),
+                    str(e),
+                )
+                # Continue anyway as the delete() call may have succeeded
+        else:
+            try:
+                history_record.delete()
+            except Exception as e:
+                logger.error(
+                    "Failed to delete history record %s: %s",
+                    str(history_id),
+                    str(e),
+                    exc_info=True,
+                )
+                return HttpResponse("Failed to delete record", status=500)
+
+            # Verify deletion succeeded by checking if the record still exists
+            try:
+                verification_query = historical_model.objects.filter(history_id=history_id)
+                if verification_query.exists():
+                    logger.error(
+                        "Deletion verification failed: history record %s still exists after delete() call",
+                        str(history_id),
+                    )
+                    return HttpResponse("Deletion failed", status=500)
+            except Exception as e:
+                logger.warning(
+                    "Could not verify deletion of history record %s: %s",
+                    str(history_id),
+                    str(e),
+                )
+                # Continue anyway as the delete() call may have succeeded
 
         logger.info(
-            "Successfully deleted history record %s (media_type=%s, media_instance_id=%s)",
+            "Successfully deleted %s %s (media_type=%s, media_instance_id=%s)",
+            "media instance" if delete_instance else "history record",
             str(history_id),
             media_type_lower,
             media_instance_id,
         )
 
-        # Invalidate caches since history changed
-        # This is needed because deleting a historical record doesn't trigger
-        # the model's post_delete signal (we're deleting Historical*, not the actual model)
-        # Use the captured data instead of accessing the deleted object
+        # Invalidate caches since history changed.
+        # Use the captured data instead of accessing the deleted object.
         logging_styles = ("sessions", "repeats")
         if media_type_lower in ("game", "boardgame"):
             start_dt = start_date or end_date

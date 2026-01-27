@@ -2,7 +2,6 @@
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
-
 from app.models import (
     Item,
     MediaTypes,
@@ -107,6 +106,9 @@ class DeleteHistoryRecordViewTests(TestCase):
             self.movie.history.filter(history_id=self.history_id).count(),
             1,
         )
+        self.assertTrue(
+            Movie.objects.filter(id=self.movie.id).exists(),
+        )
 
         response = self.client.delete(
             reverse(
@@ -124,6 +126,10 @@ class DeleteHistoryRecordViewTests(TestCase):
         self.assertEqual(
             self.movie.history.filter(history_id=self.history_id).count(),
             0,
+        )
+        # Verify the live movie instance is removed
+        self.assertFalse(
+            Movie.objects.filter(id=self.movie.id).exists(),
         )
 
         # Verify the record doesn't exist in the historical table directly
@@ -148,7 +154,7 @@ class DeleteHistoryRecordViewTests(TestCase):
         self.assertEqual(response.status_code, 404)
 
     def test_delete_history_record_verification(self):
-        """Test that deletion verification works correctly."""
+        """Test that deletion verification removes the live instance."""
         # Create another history entry
         self.movie.status = Status.PAUSED.value
         self.movie.save()
@@ -180,14 +186,15 @@ class DeleteHistoryRecordViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
 
-        # Verify only the first record is deleted
+        # Deleting a movie history entry removes the live instance and all history
         self.assertEqual(
             self.movie.history.filter(history_id=self.history_id).count(),
             0,
         )
         self.assertEqual(
             self.movie.history.filter(history_id=second_history_id).count(),
-            1,
+            0,
         )
-
-
+        self.assertFalse(
+            Movie.objects.filter(id=self.movie.id).exists(),
+        )
