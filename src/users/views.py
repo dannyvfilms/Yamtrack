@@ -294,10 +294,54 @@ def test_notification(request):
     return redirect("notifications")
 
 
+@require_http_methods(["GET", "POST"])
+def sidebar(request):
+    """Render the sidebar settings page (media types visibility and UI preferences)."""
+    # Get all media types except episode
+    media_types = [mt.value for mt in MediaTypes if mt.value != MediaTypes.EPISODE.value]
+    
+    if request.method == "POST":
+        # Prevent demo users from updating preferences
+        if request.user.is_demo:
+            messages.error(request, "This section is view-only for demo accounts.")
+            return redirect("sidebar")
+        
+        fields_to_update = []
+        
+        # Handle clickable_media_cards preference
+        clickable_media_cards = request.POST.get("clickable_media_cards") == "on"
+        if request.user.clickable_media_cards != clickable_media_cards:
+            request.user.clickable_media_cards = clickable_media_cards
+            fields_to_update.append("clickable_media_cards")
+        
+        # Handle media types checkboxes
+        selected_media_types = request.POST.getlist("media_types_checkboxes")
+        for media_type in media_types:
+            enabled_field = f"{media_type}_enabled"
+            is_enabled = media_type in selected_media_types
+            current_value = getattr(request.user, enabled_field, False)
+            if current_value != is_enabled:
+                setattr(request.user, enabled_field, is_enabled)
+                fields_to_update.append(enabled_field)
+        
+        if fields_to_update:
+            request.user.save(update_fields=fields_to_update)
+            messages.success(request, "Settings updated successfully.")
+        else:
+            messages.info(request, "No changes to save.")
+        
+        return redirect("sidebar")
+    
+    context = {
+        "media_types": media_types,
+    }
+    return render(request, "users/sidebar.html", context)
+
+
 @require_GET
 def ui_preferences(request):
-    """Redirect to preferences page (UI preferences merged into main preferences)."""
-    return redirect("preferences")
+    """Redirect to sidebar page (UI preferences renamed to Sidebar)."""
+    return redirect("sidebar")
 
 
 @require_http_methods(["GET", "POST"])

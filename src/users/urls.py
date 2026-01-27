@@ -18,7 +18,7 @@ urlpatterns = [
     ),
     path("test_notification", views.test_notification, name="test_notification"),
     path("settings/ui", views.ui_preferences, name="ui_preferences"),
-    path("settings/sidebar", views.ui_preferences, name="sidebar"),
+    path("settings/sidebar", views.sidebar, name="sidebar"),
     path("settings/preferences", views.preferences, name="preferences"),
     path("settings/integrations", views.integrations, name="integrations"),
     path("settings/import", views.import_data, name="import_data"),
