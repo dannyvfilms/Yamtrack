@@ -952,3 +952,47 @@ class ListItemToggleTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.context["has_item"])  # Item was removed
+
+
+class ListRssFeedTests(TestCase):
+    """Tests for the public list RSS feed."""
+
+    def setUp(self):
+        """Set up test data."""
+        self.user = get_user_model().objects.create_user(
+            username="rssuser",
+            password="testpassword",
+        )
+        self.custom_list = CustomList.objects.create(
+            name="Public RSS List",
+            description="Test RSS list",
+            owner=self.user,
+            visibility="public",
+        )
+        self.movie_item = Item.objects.create(
+            media_id="rss-1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="RSS Movie",
+        )
+        CustomListItem.objects.create(
+            custom_list=self.custom_list,
+            item=self.movie_item,
+        )
+
+    def test_public_list_rss_feed(self):
+        """Return RSS feed for a public list."""
+        response = self.client.get(reverse("list_rss", args=[self.custom_list.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"rss", response.content)
+        self.assertIn(b"RSS Movie", response.content)
+
+    def test_private_list_rss_feed_returns_404(self):
+        """Return 404 for private lists."""
+        self.custom_list.visibility = "private"
+        self.custom_list.save(update_fields=["visibility"])
+
+        response = self.client.get(reverse("list_rss", args=[self.custom_list.id]))
+
+        self.assertEqual(response.status_code, 404)

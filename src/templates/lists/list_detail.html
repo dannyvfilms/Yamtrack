@@ -21,6 +21,12 @@
               {% include "app/icons/globe.svg" with classes="w-3 h-3" %}
               Public
             </span>
+            <a href="{% url 'list_rss' custom_list.id %}"
+               class="text-sm bg-[#39404b] text-gray-200 rounded-md flex items-center gap-1 px-1.5 py-0.5 hover:bg-[#454d5a] transition-colors"
+               aria-label="RSS feed">
+              {% include "app/icons/link.svg" with classes="w-3 h-3" %}
+              RSS
+            </a>
           {% endif %}
         </div>
         {% if custom_list.description %}<p class="text-gray-400 mb-2">{{ custom_list.description }}</p>{% endif %}

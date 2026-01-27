@@ -1,6 +1,6 @@
 from django.urls import path
 
-from lists import views
+from lists import feeds, views
 
 urlpatterns = [
     path("user/<str:username>", views.user_profile, name="user_profile"),
@@ -21,6 +21,7 @@ urlpatterns = [
         name="lists_modal",
     ),
     path("list/<int:list_id>", views.list_detail, name="list_detail"),
+    path("list/<int:list_id>/rss", feeds.PublicListFeed(), name="list_rss"),
     path("list/create", views.create, name="list_create"),
     path("list/edit", views.edit, name="list_edit"),
     path("list/delete", views.delete, name="list_delete"),
