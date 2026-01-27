@@ -7,6 +7,27 @@ import model_utils.fields
 import simple_history.models
 from django.conf import settings
 from django.db import migrations, models
+from django.db.utils import OperationalError
+
+
+class CreateModelIfNotExists(migrations.CreateModel):
+    """CreateModel that skips if table already exists (for SQLite compatibility)."""
+    
+    def database_forwards(self, app_label, schema_editor, from_state, to_state):
+        if schema_editor.connection.vendor == "sqlite":
+            # Check if table already exists
+            table_name = f"{app_label}_{self.name.lower()}"
+            with schema_editor.connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                    [table_name]
+                )
+                if cursor.fetchone():
+                    # Table exists, skip creation
+                    return
+        
+        # Table doesn't exist or not SQLite, proceed normally
+        super().database_forwards(app_label, schema_editor, from_state, to_state)
 
 
 class Migration(migrations.Migration):
@@ -17,7 +38,7 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.CreateModel(
+        CreateModelIfNotExists(
             name='BoardGame',
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
@@ -35,7 +56,7 @@ class Migration(migrations.Migration):
                 'abstract': False,
             },
         ),
-        migrations.CreateModel(
+        CreateModelIfNotExists(
             name='HistoricalBoardGame',
             fields=[
                 ('id', models.BigIntegerField(auto_created=True, blank=True, db_index=True, verbose_name='ID')),
