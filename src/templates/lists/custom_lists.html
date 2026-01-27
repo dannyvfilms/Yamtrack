@@ -4,6 +4,10 @@
 
 {% block extra_head %}
   {{ form.media.css }}
+  <meta name="cache-control" content="no-cache, no-store, must-revalidate, max-age=0">
+  <meta name="pragma" content="no-cache">
+  <meta http-equiv="expires" content="0">
+  <meta name="cache-buster" content="{{ cache_buster }}">
 {% endblock extra_head %}
 
 {% block title %}
@@ -164,7 +168,8 @@
 
     {% if custom_lists %}
       <div id="lists-grid"
-           class="grid gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+           class="grid gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4"
+           hx-history="false">
         {% include "lists/components/list_grid.html" %}
       </div>
     {% else %}
@@ -373,6 +378,18 @@
     window.addEventListener('pageshow', (event) => {
       if (event.persisted) {
         window.location.reload();
+      }
+    });
+  </script>
+  <script>
+    // Enable HTMX cache busting to prevent stale list data on HTMX requests
+    if (window.htmx) {
+      htmx.config.getCacheBusterParam = true;
+    }
+    // Also set it on DOMContentLoaded as a fallback
+    document.addEventListener('DOMContentLoaded', () => {
+      if (window.htmx) {
+        htmx.config.getCacheBusterParam = true;
       }
     });
   </script>

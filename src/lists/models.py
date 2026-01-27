@@ -1,3 +1,4 @@
+import requests
 from django.conf import settings
 from django.core.cache import cache
 from django.db import models
@@ -147,6 +148,7 @@ class CustomList(models.Model):
         
         For TMDB movies and TV shows, prefer horizontal backdrop image
         over the 2:3 poster for better display in list cards.
+        For IGDB games, prefer widescreen screenshots or artworks over cover art.
         """
         first_item = self.items.first()
         if not first_item:
@@ -166,6 +168,42 @@ class CustomList(models.Model):
                     return backdrop_url
             except Exception:
                 # If anything fails, fall back to regular poster
+                pass
+        
+        # For IGDB games, try to get widescreen artwork or screenshot
+        if (
+            first_item.source == Sources.IGDB.value
+            and first_item.media_type == MediaTypes.GAME.value
+        ):
+            try:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.debug(
+                    "Attempting to get IGDB backdrop for list cover: game_id=%s, item_id=%s",
+                    first_item.media_id,
+                    first_item.id,
+                )
+                backdrop_url = self._get_igdb_backdrop(first_item.media_id)
+                if backdrop_url and backdrop_url != settings.IMG_NONE:
+                    logger.debug(
+                        "Using IGDB backdrop for list cover: %s",
+                        backdrop_url,
+                    )
+                    return backdrop_url
+                else:
+                    logger.debug(
+                        "No IGDB backdrop found, falling back to cover art for game %s",
+                        first_item.media_id,
+                    )
+            except Exception as exc:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    "Error getting IGDB backdrop for list cover: %s",
+                    exc,
+                    exc_info=True,
+                )
+                # If anything fails, fall back to regular cover
                 pass
         
         # Fall back to regular poster image
@@ -209,6 +247,449 @@ class CustomList(models.Model):
         # Cache the absence of backdrop to avoid repeated failed calls
         cache.set(cache_key, settings.IMG_NONE, 60 * 60 * 24)
         return settings.IMG_NONE
+    
+    def _get_igdb_backdrop(self, media_id):
+        """Get widescreen backdrop image URL from IGDB for games.
+        
+        Prefers artworks (promotional images, typically widescreen) over screenshots.
+        Uses caching to avoid repeated API calls for the same item.
+        
+        First tries to extract from the raw API response used by igdb.game(),
+        then falls back to a lightweight API call if needed.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        cache_key = f"igdb_backdrop_{media_id}"
+        cached_backdrop = cache.get(cache_key)
+        if cached_backdrop is not None:
+            if cached_backdrop == settings.IMG_NONE:
+                logger.debug(
+                    "IGDB backdrop cache hit (no backdrop): game_id=%s, cache_key=%s",
+                    media_id,
+                    cache_key,
+                )
+            else:
+                logger.debug(
+                    "IGDB backdrop cache hit: game_id=%s, url=%s",
+                    media_id,
+                    cached_backdrop,
+                )
+            return cached_backdrop
+        
+        # Try to get artworks/screenshots from a fresh API call
+        # We make our own call because igdb.game() caches processed data, not raw response
+        try:
+            from app.providers import igdb, services
+            import requests
+            
+            logger.debug("IGDB backdrop cache miss for game_id=%s, making API request", media_id)
+            
+            # Make a lightweight request to get artwork image_ids and screenshot image_ids
+            # We request both artworks.image_id (to get image_ids) and artworks (to get artwork IDs for fetching image_type)
+            # Note: IGDB API doesn't support artworks.image_type as nested field,
+            # so we'll fetch artworks separately to get image_type
+            # Key Art is identified by image_type=4 in the artworks endpoint, not a separate field
+            access_token = igdb.get_access_token()
+            url = "https://api.igdb.com/v4/games"
+            data = (
+                "fields artworks,artworks.image_id,screenshots,screenshots.image_id;"
+                f"where id = {media_id};"
+            )
+            headers = {
+                "Client-ID": settings.IGDB_ID,
+                "Authorization": f"Bearer {access_token}",
+            }
+            
+            logger.debug(
+                "Making IGDB API request for game %s: url=%s, fields=artworks,screenshots",
+                media_id,
+                url,
+            )
+            
+            try:
+                response = services.api_request(
+                    Sources.IGDB.value,
+                    "POST",
+                    url,
+                    data=data,
+                    headers=headers,
+                )
+            except requests.exceptions.HTTPError as error:
+                # Handle token refresh like igdb.game() does
+                from app.providers.igdb import handle_error
+                error_resp = handle_error(error)
+                if error_resp and error_resp.get("retry"):
+                    logger.debug("Retrying IGDB API request with new access token for game %s", media_id)
+                    headers["Authorization"] = f"Bearer {igdb.get_access_token()}"
+                    response = services.api_request(
+                        Sources.IGDB.value,
+                        "POST",
+                        url,
+                        data=data,
+                        headers=headers,
+                    )
+                else:
+                    raise
+            
+            logger.debug("IGDB API response for game %s: type=%s, length=%s", media_id, type(response), len(response) if response else 0)
+            
+            if response and len(response) > 0:
+                game_response = response[0]
+                logger.debug(
+                    "IGDB game response for %s - keys: %s",
+                    media_id,
+                    list(game_response.keys()) if isinstance(game_response, dict) else None,
+                )
+                
+                # Get artwork and screenshot data
+                # When requesting artworks.image_id, IGDB returns a list of dicts with image_id
+                # When requesting just artworks, IGDB returns a list of artwork IDs
+                artworks_raw = game_response.get("artworks") or []
+                screenshots_raw = game_response.get("screenshots") or []
+                
+                # Extract artwork IDs and image_ids
+                artwork_ids = []  # Artwork record IDs for fetching details to get image_type
+                artwork_image_ids = []  # Direct image_ids from nested field
+                
+                # Process artworks - check if we got nested data or just IDs
+                if artworks_raw:
+                    if isinstance(artworks_raw[0], dict):
+                        # We got nested data with image_id (from artworks.image_id request)
+                        for artwork in artworks_raw:
+                            image_id = artwork.get("image_id")
+                            artwork_id = artwork.get("id")
+                            if image_id:
+                                artwork_image_ids.append(image_id)
+                            if artwork_id:
+                                artwork_ids.append(artwork_id)
+                    else:
+                        # Just a list of artwork IDs (from artworks request)
+                        artwork_ids = artworks_raw
+                
+                # Extract screenshot image_ids
+                screenshot_ids = []
+                if screenshots_raw:
+                    if isinstance(screenshots_raw[0], dict):
+                        screenshot_ids = [s.get("image_id") for s in screenshots_raw if s.get("image_id")]
+                    else:
+                        screenshot_ids = screenshots_raw
+                
+                logger.debug("IGDB artwork data for game %s: raw_count=%s, artwork_ids=%s, artwork_image_ids=%s", 
+                           media_id, len(artworks_raw), artwork_ids, artwork_image_ids)
+                logger.debug("IGDB screenshot IDs for game %s: count=%s, data=%s", media_id, len(screenshot_ids), screenshot_ids)
+                
+                # Fetch artwork details to get image_type (to identify Key Art)
+                # Key Art is identified by image_type=4 in the artworks endpoint
+                key_arts = []
+                other_artworks = []
+                
+                # Fetch artwork details to get image_type (to identify Key Art)
+                # Even if we have image_ids, we still need image_type to prioritize Key Art
+                if artwork_ids:
+                    # Fetch artwork details with image_type
+                    # IGDB API uses "in" operator for multiple IDs: where id = (1,2,3);
+                    artworks_url = "https://api.igdb.com/v4/artworks"
+                    
+                    # Process artworks in batches to avoid query length issues
+                    batch_size = 50
+                    all_artwork_details = []
+                    
+                    logger.debug("Fetching artwork details for game %s: %s artworks", media_id, len(artwork_ids))
+                    
+                    try:
+                        for i in range(0, len(artwork_ids), batch_size):
+                            batch_ids = artwork_ids[i:i + batch_size]
+                            artwork_id_list = ','.join(str(aid) for aid in batch_ids)
+                            # IGDB artwork types: 0=Other, 1=Box Art, 2=Screenshot, 3=Clear Logo, 4=Top Banner, 5=Marquee, 6=Steam Grid, 7=Hero, 8=Logo, 9=Icon
+                            # Key Art is typically artwork_type=4 (Top Banner) or artwork_type=7 (Hero)
+                            artworks_data = (
+                                f"fields image_id,artwork_type;"
+                                f"where id = ({artwork_id_list});"
+                            )
+                            
+                            logger.debug("Fetching artwork details batch %s-%s for game %s", i+1, min(i+batch_size, len(artwork_ids)), media_id)
+                            
+                            try:
+                                artworks_response = services.api_request(
+                                    Sources.IGDB.value,
+                                    "POST",
+                                    artworks_url,
+                                    data=artworks_data,
+                                    headers=headers,
+                                )
+                                if artworks_response:
+                                    all_artwork_details.extend(artworks_response)
+                            except requests.exceptions.HTTPError as error:
+                                # Log the actual error response for debugging
+                                try:
+                                    error_json = error.response.json()
+                                    logger.warning(
+                                        "IGDB artworks API error for game %s batch: %s",
+                                        media_id,
+                                        error_json,
+                                    )
+                                except:
+                                    logger.warning(
+                                        "IGDB artworks API error for game %s batch: %s",
+                                        media_id,
+                                        error,
+                                    )
+                                # Continue with other batches even if one fails
+                                continue
+                        
+                        if all_artwork_details:
+                            # Log all artwork types to help identify which is Key Art
+                            artwork_types_found = {}
+                            for artwork in all_artwork_details:
+                                artwork_type = artwork.get("artwork_type")
+                                if artwork_type is not None:
+                                    artwork_types_found[artwork_type] = artwork_types_found.get(artwork_type, 0) + 1
+                            logger.debug("Artwork types found for game %s: %s", media_id, artwork_types_found)
+                            
+                            for artwork in all_artwork_details:
+                                image_id = artwork.get("image_id")
+                                artwork_type = artwork.get("artwork_type")
+                                if image_id:
+                                    # IGDB artwork types: 0=Other, 1=Box Art, 2=Screenshot, 3=Clear Logo, 4=Top Banner, 5=Marquee, 6=Steam Grid, 7=Hero, 8=Logo, 9=Icon
+                                    # Based on user feedback, artwork_type=4 might be Concept Art, not Key Art
+                                    # Need to identify the correct type for Key Art - possibly type 7 (Hero) or a different value
+                                    # For now, let's try type 7 (Hero) as Key Art, and if that doesn't work, we'll need to check the actual values
+                                    if artwork_type == 7:  # Hero - trying this as Key Art
+                                        key_arts.append(image_id)
+                                        logger.debug("Identified Key Art (Hero) for game %s: image_id=%s, artwork_type=%s", media_id, image_id, artwork_type)
+                                    elif artwork_type == 4:  # Top Banner - might be Concept Art based on user feedback
+                                        # Skip type 4 for now since user says it's showing Concept Art
+                                        other_artworks.append(image_id)
+                                        logger.debug("Skipping Top Banner (might be Concept Art) for game %s: image_id=%s, artwork_type=%s", media_id, image_id, artwork_type)
+                                    else:
+                                        other_artworks.append(image_id)
+                                        logger.debug("Other artwork for game %s: image_id=%s, artwork_type=%s", media_id, image_id, artwork_type)
+                            
+                            logger.debug("Separated artworks for game %s: Key Arts=%s, Other artworks=%s", media_id, len(key_arts), len(other_artworks))
+                        else:
+                            logger.warning("No artwork details returned for game %s", media_id)
+                            # Fallback to using all artwork image_ids
+                            if artwork_image_ids:
+                                other_artworks = artwork_image_ids
+                                logger.debug("Using artwork image_ids as fallback (no artwork details returned) for game %s", media_id)
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to fetch artwork details for game %s: %s. Will try all artworks without filtering by type.",
+                            media_id,
+                            exc,
+                            exc_info=True,
+                        )
+                        # Fallback: if we have image_ids but artwork details fetch failed,
+                        # use them without type filtering (will still filter by aspect ratio)
+                        if artwork_image_ids:
+                            other_artworks = artwork_image_ids
+                            logger.debug("Using artwork image_ids as fallback (artwork details fetch failed) for game %s", media_id)
+                        else:
+                            # No image_ids available, skip artworks
+                            logger.debug("Skipping artworks for game %s due to failed artwork details fetch", media_id)
+                elif artwork_image_ids:
+                    # We have image_ids but no artwork IDs to fetch details
+                    # This shouldn't happen if we requested both, but handle it gracefully
+                    other_artworks = artwork_image_ids
+                    logger.debug("Using artwork image_ids directly (no artwork IDs to fetch details) for game %s", media_id)
+                
+                # Process artworks with priority: Key Art first (no aspect ratio check), then filter other artworks by aspect ratio
+                # First priority: Try Key Art (use directly without aspect ratio check)
+                if key_arts:
+                    logger.debug("Trying %s Key Art images for game %s", len(key_arts), media_id)
+                    # Use first Key Art image directly - Key Art is designed to be widescreen
+                    key_art_id = key_arts[0]
+                    backdrop_url = (
+                        f"https://images.igdb.com/igdb/image/upload/"
+                        f"t_screenshot_big_2x/{key_art_id}.jpg"
+                    )
+                    logger.info(
+                        "Found IGDB Key Art backdrop for game %s: %s",
+                        media_id,
+                        backdrop_url,
+                    )
+                    cache.set(cache_key, backdrop_url, 60 * 60 * 24 * 7)
+                    return backdrop_url
+                
+                # Second priority: Try other artworks, filtering by aspect ratio
+                if other_artworks:
+                    logger.debug("Trying %s other artwork images for game %s", len(other_artworks), media_id)
+                    for artwork_id in other_artworks:
+                        backdrop_url = self._check_igdb_image_aspect_ratio(artwork_id, media_id, "artwork")
+                        if backdrop_url:
+                            # backdrop_url from _check_igdb_image_aspect_ratio is already the full URL
+                            logger.info(
+                                "Found IGDB artwork backdrop for game %s: %s",
+                                media_id,
+                                backdrop_url,
+                            )
+                            cache.set(cache_key, backdrop_url, 60 * 60 * 24 * 7)
+                            return backdrop_url
+                        else:
+                            logger.debug("Artwork image_id=%s failed aspect ratio check for game %s", artwork_id, media_id)
+                
+                if key_arts or other_artworks:
+                    logger.debug("No suitable artworks found (after aspect ratio filtering) for game %s. Key Arts tried: %s, Other artworks tried: %s", media_id, len(key_arts), len(other_artworks))
+                
+                # Third priority: Fall back to screenshots only if no suitable artworks found
+                if screenshot_ids and len(screenshot_ids) > 0:
+                    # Handle both list of dicts and list of image_ids
+                    screenshot_image_id = None
+                    if isinstance(screenshot_ids[0], dict):
+                        screenshot_image_id = screenshot_ids[0].get("image_id")
+                    else:
+                        # If screenshots is a list of image_ids directly
+                        screenshot_image_id = screenshot_ids[0]
+                    
+                    if screenshot_image_id:
+                        # Use screenshot_big_2x size for widescreen background (high quality)
+                        # Screenshots don't need aspect ratio filtering per user requirements
+                        backdrop_url = (
+                            f"https://images.igdb.com/igdb/image/upload/"
+                            f"t_screenshot_big_2x/{screenshot_image_id}.jpg"
+                        )
+                        logger.info(
+                            "Found IGDB screenshot backdrop for game %s: %s",
+                            media_id,
+                            backdrop_url,
+                        )
+                        # Cache for 7 days
+                        cache.set(cache_key, backdrop_url, 60 * 60 * 24 * 7)
+                        return backdrop_url
+                    else:
+                        logger.debug("First screenshot in list has no image_id for game %s", media_id)
+                else:
+                    logger.debug("No screenshots found for game %s", media_id)
+                
+                logger.warning(
+                    "No artworks or screenshots found for IGDB game %s. Response keys: %s",
+                    media_id,
+                    list(game_response.keys()) if isinstance(game_response, dict) else None,
+                )
+            else:
+                logger.warning("Empty response from IGDB API for game %s", media_id)
+        except Exception as exc:
+            logger.warning(
+                "Failed to fetch IGDB backdrop for game %s: %s",
+                media_id,
+                exc,
+                exc_info=True,
+            )
+        
+        # Cache the absence of backdrop to avoid repeated failed calls
+        logger.debug("Caching IMG_NONE for game %s (no backdrop found)", media_id)
+        cache.set(cache_key, settings.IMG_NONE, 60 * 60 * 24)
+        return settings.IMG_NONE
+    
+    def _check_igdb_image_aspect_ratio(self, image_id, media_id, image_type_label):
+        """Check if an IGDB image has a suitable aspect ratio for list covers.
+        
+        Prefers 16:9 or closer to 3:2 (aspect ratio between 1.5 and 1.777).
+        Skips images wider than 16:9 (aspect ratio > 1.777).
+        
+        Returns the backdrop URL if suitable, None otherwise.
+        """
+        import logging
+        import requests
+        from PIL import Image
+        from io import BytesIO
+        
+        logger = logging.getLogger(__name__)
+        
+        try:
+            # Fetch a small version of the image to check dimensions
+            # For artworks, use t_cover_big_2x; for screenshots, use t_thumb
+            # But since we don't know the type here, try t_cover_big_2x first (works for artworks)
+            # If that fails, we'll catch the exception and return None
+            image_url = f"https://images.igdb.com/igdb/image/upload/t_cover_big_2x/{image_id}.jpg"
+            
+            logger.debug(
+                "Checking aspect ratio for %s image_id=%s: fetching %s",
+                image_type_label,
+                image_id,
+                image_url,
+            )
+            
+            # Fetch image with timeout
+            response = requests.get(image_url, timeout=5, stream=True)
+            if response.status_code == 404:
+                # Try t_thumb as fallback (for screenshots)
+                image_url = f"https://images.igdb.com/igdb/image/upload/t_thumb/{image_id}.jpg"
+                response = requests.get(image_url, timeout=5, stream=True)
+            response.raise_for_status()
+            
+            # Read image and check dimensions
+            img_data = BytesIO(response.content)
+            img = Image.open(img_data)
+            width, height = img.size
+            
+            if width == 0 or height == 0:
+                logger.debug(
+                    "Invalid image dimensions for %s image_id=%s: %sx%s",
+                    image_type_label,
+                    image_id,
+                    width,
+                    height,
+                )
+                return None
+            
+            aspect_ratio = width / height
+            logger.debug(
+                "Image dimensions for %s image_id=%s: %sx%s, aspect_ratio=%.3f",
+                image_type_label,
+                image_id,
+                width,
+                height,
+                aspect_ratio,
+            )
+            
+            # Prefer 16:9 (1.777...) or closer to 3:2 (1.5)
+            # Skip if wider than 16:9 (aspect_ratio > 1.778, allowing small rounding)
+            # Accept if between 1.5 and 1.778 (inclusive)
+            # 16:9 = 1.777777..., so we allow up to 1.778 to account for rounding
+            if aspect_ratio > 1.778:
+                logger.debug(
+                    "Skipping %s image_id=%s: aspect ratio %.3f is wider than 16:9",
+                    image_type_label,
+                    image_id,
+                    aspect_ratio,
+                )
+                return None
+            
+            if aspect_ratio < 1.5:
+                logger.debug(
+                    "Skipping %s image_id=%s: aspect ratio %.3f is narrower than 3:2",
+                    image_type_label,
+                    image_id,
+                    aspect_ratio,
+                )
+                return None
+            
+            # Aspect ratio is suitable (between 1.5 and 1.777)
+            # Use screenshot_big_2x for artworks (widescreen, high quality)
+            # This size exists for both artworks and screenshots
+            backdrop_url = (
+                f"https://images.igdb.com/igdb/image/upload/"
+                f"t_screenshot_big_2x/{image_id}.jpg"
+            )
+            logger.debug(
+                "Accepting %s image_id=%s: aspect ratio %.3f is suitable (16:9 or closer to 3:2)",
+                image_type_label,
+                image_id,
+                aspect_ratio,
+            )
+            return backdrop_url
+            
+        except Exception as exc:
+            logger.debug(
+                "Failed to check aspect ratio for %s image_id=%s: %s",
+                image_type_label,
+                image_id,
+                exc,
+            )
+            # If we can't check aspect ratio, skip this image
+            return None
 
 
 class CustomListItemManager(models.Manager):

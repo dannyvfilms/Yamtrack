@@ -275,7 +275,7 @@ def game(media_id):
         access_token = get_access_token()
         url = f"{base_url}/games"
         data = (
-            "fields name,cover.image_id,artworks.image_id,"
+            "fields name,cover.image_id,artworks.image_id,screenshots.image_id,"
             "url,summary,game_type,first_release_date,total_rating,total_rating_count,"
             "genres.name,themes.name,platforms.name,involved_companies.company.name,"
             "parent_game.name,parent_game.cover.image_id,"

@@ -8,7 +8,7 @@ from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_not_required, login_required
 from django.core.paginator import Paginator
-from django.db.models import Count, Exists, F, OuterRef, Q, Subquery
+from django.db.models import Count, Exists, F, OuterRef, Prefetch, Q, Subquery
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -130,7 +130,16 @@ def lists(request):
     if selected_media_type != "all" and selected_media_type not in enabled_media_types:
         selected_media_type = "all"
 
-    custom_lists = CustomList.objects.get_user_lists(request.user)
+    # Start with base queryset and annotate items_count first (before prefetch)
+    # This ensures the count is accurate and not affected by prefetch cache
+    custom_lists = (
+        CustomList.objects.filter(Q(owner=request.user) | Q(collaborators=request.user))
+        .select_related("owner")
+        .annotate(
+            items_count=Count("items", distinct=True),
+        )
+        .distinct()
+    )
 
     if search_query:
         custom_lists = custom_lists.filter(
@@ -145,14 +154,26 @@ def lists(request):
                     item__media_type=selected_media_type,
                 ),
             ),
-        ).filter(has_media_type=True)
+        ).filter(has_media_type=True).distinct()
 
+    # Add prefetch after annotations to avoid interfering with counts
+    # This is for the list image property which uses items.first()
+    custom_lists = custom_lists.prefetch_related(
+        "collaborators",
+        Prefetch(
+            "items",
+            queryset=Item.objects.order_by("-customlistitem__date_added"),
+        ),
+        Prefetch(
+            "customlistitem_set",
+            queryset=CustomListItem.objects.order_by("-date_added"),
+        ),
+    )
+    
     if sort_by == "name":
         custom_lists = custom_lists.order_by("name")
     elif sort_by == "items_count":
-        custom_lists = custom_lists.annotate(
-            items_count=Count("items", distinct=True),
-        ).order_by("-items_count")
+        custom_lists = custom_lists.order_by("-items_count")
     elif sort_by == "newest_first":
         custom_lists = custom_lists.order_by("-id")
     else:  # last_item_added is the default
@@ -166,7 +187,7 @@ def lists(request):
                 .values("date_added")[:1],
             ),
         ).order_by("-latest_update", "name")
-
+    
     items_per_page = 20
     paginator = Paginator(custom_lists, items_per_page)
     lists_page = paginator.get_page(page)
@@ -247,20 +268,32 @@ def lists(request):
             # Skip form creation for this list
             custom_list.form = None
 
+    # Add timestamp to context for cache busting
+    import time
+    cache_buster = int(time.time())
+    
     if request.headers.get("HX-Request"):
-        return render(
+        response = render(
             request,
             "lists/components/list_grid.html",
             {
                 "custom_lists": lists_page,
+                "cache_buster": cache_buster,
             },
         )
+        # Explicitly set cache control headers for HTMX responses
+        response["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+        response["Pragma"] = "no-cache"
+        response["Expires"] = "0"
+        response["Vary"] = "Cookie, HX-Request"
+        response["X-Cache-Buster"] = str(cache_buster)
+        return response
 
     create_list_form = CustomListForm()
     trakt_redirect_uri = request.build_absolute_uri(reverse("trakt_lists_callback"))
     trakt_account = TraktAccount.objects.filter(user=request.user).first()
 
-    return render(
+    response = render(
         request,
         "lists/custom_lists.html",
         {
@@ -273,8 +306,17 @@ def lists(request):
             "trakt_redirect_uri": trakt_redirect_uri,
             "trakt_account": trakt_account,
             "trakt_has_credentials": bool(trakt_account and trakt_account.is_configured),
+            "cache_buster": cache_buster,
         },
     )
+    # Explicitly set cache control headers for Safari compatibility
+    # @never_cache should handle this, but Safari can be aggressive with caching
+    response["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+    response["Pragma"] = "no-cache"
+    response["Expires"] = "0"
+    response["Vary"] = "Cookie"
+    response["X-Cache-Buster"] = str(cache_buster)
+    return response
 
 
 @login_required

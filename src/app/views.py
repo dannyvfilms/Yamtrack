@@ -1451,9 +1451,6 @@ def media_details(
     ):
         if media_type == MediaTypes.TV.value:
             # Calculate TV show play stats from watched episodes
-            import logging
-            logger = logging.getLogger(__name__)
-            
             total_minutes = 0
             episode_count = 0
             first_played = None

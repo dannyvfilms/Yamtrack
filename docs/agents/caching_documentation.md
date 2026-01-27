@@ -161,18 +161,24 @@
 
 ## HTTP response cache control
 - `@never_cache` on `track_modal` to prevent browser caching. The view also explicitly sets `Cache-Control: no-cache, no-store, must-revalidate`, `Pragma: no-cache`, and `Expires: 0` headers for Safari compatibility.
+- `@never_cache` on `lists.views.lists` to avoid stale list data after items are added/removed. The view also explicitly sets `Cache-Control: no-cache, no-store, must-revalidate`, `Pragma: no-cache`, `Expires: 0`, and `Vary: Cookie` headers for Safari compatibility and to ensure user-specific responses aren't cached.
 - `@never_cache` on `lists.views.list_detail` to avoid stale list grids/context rows after HTMX sorts and back/forward navigation.
 - `@never_cache` on `app.views.media_list` to avoid stale media grids/context rows after HTMX sorts and back/forward navigation.
+- `custom_lists.html` reloads on `pageshow` when `event.persisted` is true to bust Safari's back/forward cache restoring older list HTML.
 - `list_detail.html` reloads on `pageshow` when `event.persisted` is true to bust Safari's back/forward cache restoring older list HTML.
 - `media_list.html` reloads on `pageshow` when `event.persisted` is true for the same Safari back/forward cache issue.
 - `media_details.html` reloads on `pageshow` when `event.persisted` is true to bust Safari's back/forward cache restoring the page.
+- `custom_lists.html` disables HTMX history caching on `#lists-grid` (`hx-history="false"`) to prevent stale list grids from being restored.
 - `list_detail.html` disables HTMX history caching on `#items-grid` (`hx-history="false"`) to prevent stale list grids from being restored.
+- `custom_lists.html` sets `htmx.config.getCacheBusterParam = true` so HTMX GETs append `org.htmx.cache-buster`, which avoids Safari reusing cached list HTML.
 - `list_detail.html` sets `htmx.config.getCacheBusterParam = true` so HTMX GETs append `org.htmx.cache-buster`, which avoids Safari reusing cached list HTML.
 - `media_details.html` sets `htmx.config.getCacheBusterParam = true` for HTMX GET requests (including track modal requests). This prevents stale track modal HTML on previously visited pages. The configuration is set immediately and also on DOMContentLoaded as a fallback to ensure it's applied before any HTMX requests.
+- `custom_lists.html` includes meta tags (`cache-control`, `pragma`, `expires`) in the `<head>` to provide additional cache-busting hints to browsers.
 - Podcast episode list fragment sets `Cache-Control: no-cache, no-store, must-revalidate`, plus `Pragma`/`Expires`.
 - `sync_metadata()` uses `cache.ttl()` to prevent immediate re-sync, and deletes provider cache keys when allowed.
 - Static asset busting: `get_static_file_mtime()` appends `?mtime` to static URLs.
   - Applied to `css/main.css`, `js/date-range.js`, `js/statistics-charts.js`, and `js/barcode-scanner.js` (added for cache invalidation during development/debugging).
+- Lists view uses annotated `items_count` instead of `items.count()` to avoid stale prefetch cache. The count is always computed fresh from the database via `Count("items", distinct=True)` annotation.
 
 ## Service worker caching (frontend)
 - `src/static/js/serviceworker.js` caches a small list of static assets and additional static GETs.

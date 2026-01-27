@@ -28,9 +28,7 @@
              title="{{ custom_list.name }}">{{ custom_list.name }}</a>
         </div>
         <p class="media-card-year text-xs text-gray-400 mt-1">
-          {% with item_count=custom_list.items.count %}
-            {% if item_count > 0 %}{{ item_count }} item{{ item_count|pluralize }}{% endif %}
-          {% endwith %}
+          {% if custom_list.items_count > 0 %}{{ custom_list.items_count }} item{{ custom_list.items_count|pluralize }}{% endif %}
         </p>
       </div>
 
