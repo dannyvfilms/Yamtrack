@@ -131,6 +131,7 @@ def book(media_id):
               edition_format
               isbn_13
               isbn_10
+              release_date
               publisher {
                 name
               }
@@ -171,7 +172,9 @@ def book(media_id):
 
         if not book_data:
             services.raise_not_found_error(
-                Sources.HARDCOVER.value, media_id, "book",
+                Sources.HARDCOVER.value,
+                media_id,
+                "book",
             )
 
         edition_details = get_edition_details(book_data.get("default_cover_edition"))
@@ -191,7 +194,8 @@ def book(media_id):
             "details": {
                 "format": edition_details.get("format"),
                 "number_of_pages": book_data.get("pages"),
-                "publish_date": book_data.get("release_date"),
+                "publish_date": edition_details.get("release_date")
+                or book_data.get("release_date"),
                 "author": book_data.get("cached_contributors"),
                 "publisher": edition_details.get("publisher"),
                 "isbn": edition_details.get("isbn"),
@@ -236,6 +240,7 @@ def get_edition_details(edition_data):
         "format": edition_data.get("edition_format") or "Unknown",
         "publisher": publisher_name,
         "isbn": isbns if isbns else None,
+        "release_date": edition_data.get("release_date"),
     }
 
 

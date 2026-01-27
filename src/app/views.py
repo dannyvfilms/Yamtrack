@@ -1592,7 +1592,8 @@ def media_details(
                     from integrations.tasks import fetch_collection_metadata_for_item
                     # Trigger background task to fetch collection data
                     fetch_collection_metadata_for_item.delay(user_id=request.user.id, item_id=item.id)
-                    logger.info("Triggered background collection fetch for %s - %s (item_id=%s)", request.user.username, item.title, item.id)
+                    # Use module-level logger directly to avoid UnboundLocalError
+                    logging.getLogger(__name__).info("Triggered background collection fetch for %s - %s (item_id=%s)", request.user.username, item.title, item.id)
                     fetching_collection_data = True
                     item_id_for_polling = item.id
         except Item.DoesNotExist:
@@ -3254,6 +3255,7 @@ def history_modal(
                     history,
                     media_type,
                     media_entry_number,
+                    request.user,
                 ),
             )
     return render(

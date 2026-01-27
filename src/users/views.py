@@ -26,6 +26,7 @@ from users.models import (
     GameLoggingStyleChoices,
     MobileGridLayoutChoices,
     PlannedHomeDisplayChoices,
+    QuickWatchDateChoices,
     TimeFormatChoices,
 )
 
@@ -293,41 +294,10 @@ def test_notification(request):
     return redirect("notifications")
 
 
-@require_http_methods(["GET", "POST"])
+@require_GET
 def ui_preferences(request):
-    """Render the UI preferences settings page."""
-    media_types = MediaTypes.values
-    media_types.remove(MediaTypes.EPISODE.value)
-
-    if request.method == "GET":
-        return render(
-            request,
-            "users/ui_preferences.html",
-            {"media_types": media_types},
-        )
-
-    # Prevent demo users from updating preferences
-    if request.user.is_demo:
-        messages.error(request, "This section is view-only for demo accounts.")
-        return redirect("ui_preferences")
-
-    # Process form submission
-    request.user.clickable_media_cards = "clickable_media_cards" in request.POST
-    media_types_checked = request.POST.getlist("media_types_checkboxes")
-
-    # Update user preferences for each media type
-    for media_type in media_types:
-        setattr(
-            request.user,
-            f"{media_type}_enabled",
-            media_type in media_types_checked,
-        )
-
-    # Save changes and redirect
-    request.user.save()
-    messages.success(request, "Settings updated.")
-
-    return redirect("ui_preferences")
+    """Redirect to preferences page (UI preferences merged into main preferences)."""
+    return redirect("preferences")
 
 
 @require_http_methods(["GET", "POST"])

@@ -692,7 +692,7 @@
             <div class="mb-4">
               <h3 class="text-sm font-semibold text-gray-400">{{ key|no_underscore|upper }}</h3>
               {% if value|is_list %}
-                {% for item in value %}<p class="text-gray-200">{{ item }}</p>{% endfor %}
+                {% for item in value %}<p class="text-gray-200">{{ item|iso_date_format:request.user }}</p>{% endfor %}
               {% else %}
                 {% if key == 'first_air_date' or key == 'last_air_date' %}
                   <p class="text-gray-200">{{ value|user_date_format:user|default_if_none:"Unknown" }}</p>
@@ -715,6 +715,16 @@
               {% endif %}
             </div>
           </div>
+          {% if media.external_links %}
+            <div class="mt-4">
+              <h3 class="text-sm font-semibold text-gray-400">EXTERNAL LINKS</h3>
+              {% for name, url in media.external_links.items %}
+                <a href="{{ url }}"
+                   class="text-gray-200 hover:text-indigo-500 transition-colors duration-200 block"
+                   target="_blank">{{ name }}</a>
+              {% endfor %}
+            </div>
+          {% endif %}
         {% else %}
           <div class="text-gray-200">No details available</div>
         {% endif %}

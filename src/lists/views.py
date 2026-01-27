@@ -3,7 +3,6 @@ import logging
 import secrets
 
 from django.apps import apps
-from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_not_required, login_required
@@ -31,7 +30,7 @@ from lists.models import (
     ListActivityType,
     ListRecommendation,
 )
-from users.models import ListDetailSortChoices, ListSortChoices
+from users.models import ListDetailSortChoices, ListSortChoices, MediaStatusChoices
 
 logger = logging.getLogger(__name__)
 
@@ -508,6 +507,10 @@ def list_detail(request, list_id):
     params = {
         "sort_by": sort_by,
         "media_type": request.GET.get("type", "all"),
+        "status_filter": request.user.update_preference(
+            "list_detail_status",
+            request.GET.get("status"),
+        ),
         "page": int(request.GET.get("page", 1)),
         "search_query": request.GET.get("q", ""),
     }
@@ -598,6 +601,23 @@ def list_detail(request, list_id):
         if isinstance(value, datetime.date):
             return datetime.datetime.combine(value, datetime.time.min).timestamp()
         return float("inf") if direction == "asc" else float("-inf")
+
+    # Get distinct media types for filtering
+    media_types = items.values_list("media_type", flat=True).distinct()
+    media_manager = MediaManager()
+    media_by_item_id = {}
+
+    # Filter by status if specified
+    if params["status_filter"] != MediaStatusChoices.ALL:
+        item_ids = items.values_list("id", flat=True)
+        media_by_item_id = media_manager.fetch_media_for_items(
+            media_types,
+            item_ids,
+            request.user,
+            status_filter=params["status_filter"],
+        )
+        # Filter items to only those with the specified status
+        items = items.filter(id__in=media_by_item_id.keys())
 
     # Apply sorting
     sort_mapping = {
@@ -690,7 +710,9 @@ def list_detail(request, list_id):
         "filtered_items_count": filtered_items_count,
         "current_sort": params["sort_by"],
         "chip_sort": chip_sort,
+        "current_status": params["status_filter"] or MediaStatusChoices.ALL,
         "sort_choices": ListDetailSortChoices.choices,
+        "status_choices": MediaStatusChoices.choices,
         "public_view": public_view,
         "can_edit": can_edit,
         "is_public_view": is_public_view,

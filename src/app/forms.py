@@ -397,6 +397,21 @@ class ComicForm(MediaForm):
             })
 
 
+class BoardgameForm(MediaForm):
+    """Form for board games."""
+
+    class Meta(MediaForm.Meta):
+        """Bind form to model."""
+
+        model = BoardGame
+        labels = {
+            "progress": (
+                "Progress "
+                f"({config.get_unit(MediaTypes.BOARDGAME.value, short=False)}s)"
+            ),
+        }
+
+
 class TvForm(MediaForm):
     """Form for TV shows."""
 

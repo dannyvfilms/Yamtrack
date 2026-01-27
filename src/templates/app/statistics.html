@@ -2744,7 +2744,8 @@
 {% endblock content %}
 
 {% block js %}
-  <script src="{% static 'js/date-range.js' %}{% get_static_file_mtime 'js/date-range.js' %}"></script>
+  <script src="{% static 'js/date-range.js' %}{% get_static_file_mtime 'js/date-range.js' %}"
+          data-date-format="{{ user.date_format }}"></script>
 
   <script src="{% static 'js/libraries/chartjs-4.4.9.min.js' %}"></script>
   <script src="{% static 'js/libraries/chartjs-datalabels-2.0.0.min.js' %}"></script>

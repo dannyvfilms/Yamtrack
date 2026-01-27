@@ -18,6 +18,13 @@
               <span>Account</span>
             </a>
 
+            {% url 'preferences' as preferences_url %}
+            <a href="{{ preferences_url }}"
+               class="w-full flex items-center space-x-3 px-2 py-2 rounded-md transition-colors text-left border-l-2 cursor-pointer text-sm {% if request.path == preferences_url %}bg-[#39404b] text-white border-indigo-500{% else %}text-gray-400 border-transparent hover:bg-[#313842] hover:text-white{% endif %}">
+              {% include "app/icons/vertical-sliders.svg" with classes="w-5 h-5" %}
+              <span>Preferences</span>
+            </a>
+
             {% url 'notifications' as notifications_url %}
             <a href="{{ notifications_url }}"
                class="w-full flex items-center space-x-3 px-2 py-2 rounded-md transition-colors text-left border-l-2 cursor-pointer text-sm {% if request.path == notifications_url %}bg-[#39404b] text-white border-indigo-500{% else %}text-gray-400 border-transparent hover:bg-[#313842] hover:text-white{% endif %}">
@@ -75,7 +82,7 @@
             {% url 'advanced' as advanced_url %}
             <a href="{{ advanced_url }}"
                class="w-full flex items-center space-x-3 px-2 py-2 rounded-md transition-colors text-left border-l-2 cursor-pointer text-sm {% if request.path == advanced_url %}bg-[#39404b] text-white border-indigo-500{% else %}text-gray-400 border-transparent hover:bg-[#313842] hover:text-white{% endif %}">
-              {% include "app/icons/vertical-sliders.svg" with classes="w-5 h-5" %}
+              {% include "app/icons/shield-alert.svg" with classes="w-5 h-5" %}
               <span>Advanced</span>
             </a>
 
