@@ -495,14 +495,32 @@ def update_collection_metadata_from_plex_webhook(
         logger.debug("Fetching Plex metadata for rating_key=%s from uri=%s", rating_key, plex_uri)
         plex_metadata = plex_api.fetch_metadata(plex_token, plex_uri, rating_key)
     except Exception as exc:
-        logger.warning(
-            "Failed to fetch Plex metadata for collection update: %s (rating_key=%s, uri=%s). "
-            "This may indicate the URI is incorrect or the server is unreachable.",
-            exc,
-            rating_key,
-            plex_uri,
-            exc_info=True,
+        # Check if this is a timeout (expected network issue)
+        is_timeout = (
+            "timeout" in str(exc).lower() or
+            "ReadTimeout" in str(type(exc).__name__) or
+            "TimeoutError" in str(type(exc).__name__)
         )
+        
+        if is_timeout:
+            # Timeouts are expected - log at debug level
+            logger.debug(
+                "Timeout fetching Plex metadata for rating_key=%s from uri=%s: %s",
+                rating_key,
+                plex_uri,
+                exc,
+            )
+        else:
+            # Other errors are more serious - log as warning
+            logger.warning(
+                "Failed to fetch Plex metadata for collection update: %s (rating_key=%s, uri=%s). "
+                "This may indicate the URI is incorrect or the server is unreachable.",
+                exc,
+                rating_key,
+                plex_uri,
+                exc_info=True,
+            )
+        
         # If HTTP failed, try HTTPS (some servers require HTTPS)
         if plex_uri.startswith("http://") and "500" in str(exc):
             https_uri = plex_uri.replace("http://", "https://")
@@ -1066,6 +1084,244 @@ def fetch_collection_metadata_for_item(user_id, item_id):
     return None
 
 
+def _find_plex_rating_key_for_item(
+    user,
+    item,
+    plex_account,
+    sections,
+    resources,
+    available_uris=None,
+):
+    """Find Plex rating key for a Yamtrack item.
+    
+    Checks cached rating keys first, then searches Plex library if needed.
+    
+    Args:
+        user: User object
+        item: Item object to find rating key for
+        plex_account: PlexAccount object
+        sections: List of Plex sections
+        resources: List of Plex resources
+        available_uris: Optional list of Plex URIs to try (if None, will be determined)
+        
+    Returns:
+        Tuple of (rating_key, plex_uri, match_type) or None if not found.
+        match_type can be: "cached", "tmdb", "imdb", "tvdb", or None
+    """
+    from integrations import plex as plex_api
+    from integrations.plex import extract_external_ids_from_guids
+    
+    # Step 1: Check for cached rating keys (fast path)
+    cached_entry = CollectionEntry.objects.filter(
+        user=user,
+        item=item,
+        plex_rating_key__isnull=False,
+        plex_uri__isnull=False,
+    ).first()
+    
+    if cached_entry and cached_entry.plex_rating_key and cached_entry.plex_uri:
+        logger.debug("Using cached rating key for %s - %s", user.username, item.title)
+        return (cached_entry.plex_rating_key, cached_entry.plex_uri, "cached")
+    
+    # For TV shows, also check episode-level cached entries
+    if item.media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
+        from app.models import Item as ItemModel
+        episode_items = ItemModel.objects.filter(
+            media_id=item.media_id,
+            source=item.source,
+            media_type=MediaTypes.EPISODE.value,
+        )
+        episode_item_ids = list(episode_items.values_list('id', flat=True))
+        if episode_item_ids:
+            cached_episode_entry = CollectionEntry.objects.filter(
+                user=user,
+                item_id__in=episode_item_ids,
+                plex_rating_key__isnull=False,
+                plex_uri__isnull=False,
+            ).first()
+            
+            if cached_episode_entry:
+                # Derive show rating key from episode
+                episode_rating_key = cached_episode_entry.plex_rating_key
+                episode_plex_uri = cached_episode_entry.plex_uri
+                
+                try:
+                    episode_metadata = plex_api.fetch_metadata(
+                        plex_account.plex_token,
+                        episode_plex_uri,
+                        str(episode_rating_key),
+                    )
+                    
+                    if episode_metadata:
+                        show_key = episode_metadata.get("grandparentKey")
+                        if show_key and "/" in show_key:
+                            show_rating_key_str = show_key.split("/")[-1]
+                            try:
+                                rating_key = str(int(show_rating_key_str))
+                                logger.debug("Derived show rating key %s from episode %s", rating_key, episode_rating_key)
+                                return (rating_key, episode_plex_uri, "cached")
+                            except (ValueError, TypeError):
+                                pass
+                except Exception as exc:
+                    logger.debug("Failed to derive show rating key from episode: %s", exc)
+    
+    # Step 2: If no cached rating key, search Plex library
+    if available_uris is None:
+        available_uris = []
+        if sections:
+            for section in sections:
+                if section.get("uri") and section.get("uri") not in available_uris:
+                    available_uris.append(section.get("uri"))
+            
+            for resource in resources:
+                machine_id = resource.get("machine_identifier")
+                if machine_id:
+                    for section in sections:
+                        if section.get("machine_identifier") == machine_id:
+                            for conn in resource.get("connections", []):
+                                uri = conn.get("uri") if isinstance(conn, dict) else conn
+                                if uri and uri not in available_uris:
+                                    available_uris.append(uri)
+                            break
+        
+        if not available_uris:
+            logger.debug("No Plex URIs available for user %s", user.username)
+            return None
+    
+    # Search for the item in Plex sections
+    for section in sections:
+        section_type = (section.get("type") or "").lower()
+        if section_type not in ("movie", "show"):
+            continue
+        
+        if item.media_type == MediaTypes.MOVIE.value and section_type != "movie":
+            continue
+        if item.media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value) and section_type != "show":
+            continue
+        
+        # Get section key
+        section_key = section.get("key") or section.get("id")
+        if isinstance(section_key, str) and section_key.startswith("/library/sections/"):
+            section_key = section_key.split("/")[-1]
+        
+        # Try each available URI until one works
+        section_uri = None
+        total = 0
+        
+        for uri_to_try in available_uris:
+            try:
+                library_items, total = plex_api.fetch_section_all_items(
+                    plex_account.plex_token,
+                    uri_to_try,
+                    str(section_key),
+                    start=0,
+                    size=1,  # Just get the total count
+                )
+                section_uri = uri_to_try
+                break
+            except Exception as uri_exc:
+                logger.debug("Failed to connect to Plex URI %s: %s", uri_to_try, uri_exc)
+                if uri_to_try == available_uris[-1]:
+                    continue
+        
+        if not section_uri:
+            continue
+        
+        try:
+            # Fast path: Check first 100 items
+            if total > 0:
+                library_items, _ = plex_api.fetch_section_all_items(
+                    plex_account.plex_token,
+                    section_uri,
+                    str(section_key),
+                    start=0,
+                    size=min(100, total),
+                )
+                
+                for entry in library_items:
+                    guids = entry.get("Guid", [])
+                    if not guids:
+                        single_guid = entry.get("guid")
+                        if single_guid:
+                            guids = [{"id": single_guid}]
+                    
+                    external_ids = extract_external_ids_from_guids(guids)
+                    
+                    matches = False
+                    match_type = None
+                    if item.source == "tmdb" and external_ids.get("tmdb_id") == str(item.media_id):
+                        matches = True
+                        match_type = "tmdb"
+                    elif item.source == "imdb" and external_ids.get("imdb_id") == item.media_id:
+                        matches = True
+                        match_type = "imdb"
+                    elif item.source == "tvdb" and external_ids.get("tvdb_id") == str(item.media_id):
+                        matches = True
+                        match_type = "tvdb"
+                    
+                    if matches:
+                        rating_key = entry.get("ratingKey") or entry.get("ratingkey")
+                        if rating_key:
+                            logger.debug("Found match in first 100 items by %s", match_type)
+                            return (rating_key, section_uri, match_type)
+            
+            # If not found and library is large, search more pages
+            if total > 100:
+                page_size = 100
+                max_pages_to_check = min(50, (total + page_size - 1) // page_size)
+                
+                for page in range(1, max_pages_to_check + 1):
+                    start = (page - 1) * page_size
+                    
+                    try:
+                        page_items, _ = plex_api.fetch_section_all_items(
+                            plex_account.plex_token,
+                            section_uri,
+                            str(section_key),
+                            start=start,
+                            size=page_size,
+                        )
+                        
+                        if not page_items:
+                            break
+                        
+                        # Check external IDs
+                        for entry in page_items:
+                            guids = entry.get("Guid", [])
+                            if not guids:
+                                single_guid = entry.get("guid")
+                                if single_guid:
+                                    guids = [{"id": single_guid}]
+                            
+                            external_ids = extract_external_ids_from_guids(guids)
+                            
+                            matches = False
+                            match_type = None
+                            if item.source == "tmdb" and external_ids.get("tmdb_id") == str(item.media_id):
+                                matches = True
+                                match_type = "tmdb"
+                            elif item.source == "imdb" and external_ids.get("imdb_id") == item.media_id:
+                                matches = True
+                                match_type = "imdb"
+                            elif item.source == "tvdb" and external_ids.get("tvdb_id") == str(item.media_id):
+                                matches = True
+                                match_type = "tvdb"
+                            
+                            if matches:
+                                rating_key = entry.get("ratingKey") or entry.get("ratingkey")
+                                if rating_key:
+                                    logger.debug("Found match at position %d-%d by %s", start, start + len(page_items), match_type)
+                                    return (rating_key, section_uri, match_type)
+                    except Exception as page_exc:
+                        logger.debug("Error searching page %d: %s", page, page_exc)
+                        continue
+        except Exception as exc:
+            logger.debug("Error searching section '%s' for item %s: %s", section.get("title"), item.title, exc)
+            continue
+    
+    return None
+
+
 def _aggregate_tv_show_collection_metadata(
     token: str, 
     uri: str, 
@@ -1362,16 +1618,22 @@ def update_collection_metadata_from_plex(library, user_id):
 
     updated_count = 0
     error_count = 0
-    match_stats = {"tmdb": 0, "imdb": 0, "tvdb": 0, "unmatched": 0}
+    match_stats = {"tmdb": 0, "imdb": 0, "tvdb": 0, "unmatched": 0, "cached": 0}
+    
+    # Get counts before filtering
+    from app.models import Movie, TV, Music, Anime
+    user_movies_count = Movie.objects.filter(user=user).count()
+    user_tv_count = TV.objects.filter(user=user).count()
+    user_anime_count = Anime.objects.filter(user=user).count()
+    user_music_count = Music.objects.filter(user=user).count()
     
     logger.info(
-        "Starting collection metadata update for user %s: %d tracked items (Movies: %d, TV: %d, Anime: %d, Music: %d)",
+        "Starting collection metadata update for user %s: tracked items (Movies: %d, TV: %d, Anime: %d, Music: %d)",
         user.username,
-        user_items.count(),
-        user_movies.count(),
-        user_tv.count(),
-        user_anime.count(),
-        user_music.count(),
+        user_movies_count,
+        user_tv_count,
+        user_anime_count,
+        user_music_count,
     )
 
     # Get user's tracked media items (Movies, TV, Anime, Music) that could have collection entries
@@ -1391,16 +1653,29 @@ def update_collection_metadata_from_plex(library, user_id):
         return {"updated": 0, "errors": 0, "message": "No tracked media found"}
 
     user_items = Item.objects.filter(id__in=all_user_items).select_related()
+    
+    # Get available URIs once for reuse
+    available_uris = []
+    if sections:
+        for section in sections:
+            if section.get("uri") and section.get("uri") not in available_uris:
+                available_uris.append(section.get("uri"))
+        
+        for resource in resources:
+            machine_id = resource.get("machine_identifier")
+            if machine_id:
+                for section in sections:
+                    if section.get("machine_identifier") == machine_id:
+                        for conn in resource.get("connections", []):
+                            uri = conn.get("uri") if isinstance(conn, dict) else conn
+                            if uri and uri not in available_uris:
+                                available_uris.append(uri)
+                        break
 
-    # Build a mapping of Yamtrack items by external IDs for efficient lookup
-    # Maps (source, media_id) -> item for quick matching
-    yamtrack_items_by_id = {}
-    for item in user_items:
-        if item.media_type in (MediaTypes.MOVIE.value, MediaTypes.TV.value, MediaTypes.ANIME.value):
-            # Primary key: (source, media_id)
-            yamtrack_items_by_id[(item.source, item.media_id)] = item
-
-    # Process each section: query full library and match items
+    # Process each section incrementally: process cached items first, then scan in batches
+    import time
+    start_time = time.time()
+    
     for section in sections:
         section_type = (section.get("type") or "").lower()
         # Only process movie and show sections (Anime maps to show sections in Plex)
@@ -1437,536 +1712,286 @@ def update_collection_metadata_from_plex(library, user_id):
             section_key = section_key.split("/")[-1]
 
         try:
-            # First, try to get cached rating keys from CollectionEntry records
-            # This avoids scanning the library for items we've seen before via webhooks
-            cached_rating_keys = {}  # Maps (source, media_id) -> (rating_key, plex_uri)
-            cached_count = 0
-            
-            # Get cached rating keys for items in this section type
+            # Get items for this section type
             section_items = [
                 item for item in user_items
                 if (item.media_type == MediaTypes.MOVIE.value and section_type == "movie") or
                    (item.media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value) and section_type == "show")
             ]
             
-            if section_items:
-                # Query CollectionEntry for cached rating keys
-                item_ids = [item.id for item in section_items]
-                cached_entries = CollectionEntry.objects.filter(
-                    user=user,
-                    item_id__in=item_ids,
-                    plex_rating_key__isnull=False,
-                ).select_related("item")
-                
-                for entry in cached_entries:
-                    item = entry.item
-                    if entry.plex_rating_key and entry.plex_uri:
-                        # Store by (source, media_id) for easy lookup
-                        cached_rating_keys[(item.source, item.media_id)] = (
-                            entry.plex_rating_key,
-                            entry.plex_uri,
+            if not section_items:
+                continue
+            
+            logger.info(
+                "Processing section '%s': %d items to check",
+                section.get("title"),
+                len(section_items),
+            )
+            
+            # Step 1: Process cached items immediately (fast path)
+            cached_processed = 0
+            cached_updated = 0
+            cached_errors = 0
+            
+            # Get cached entries for section items
+            item_ids = [item.id for item in section_items]
+            cached_entries = CollectionEntry.objects.filter(
+                user=user,
+                item_id__in=item_ids,
+                plex_rating_key__isnull=False,
+                plex_uri__isnull=False,
+            ).select_related("item")
+            
+            cached_items_map = {entry.item_id: entry for entry in cached_entries}
+            
+            for item in section_items:
+                cached_entry = cached_items_map.get(item.id)
+                if cached_entry:
+                    try:
+                        # Use webhook function for consistency
+                        entry_id = update_collection_metadata_from_plex_webhook(
+                            user_id=user.id,
+                            item_id=item.id,
+                            rating_key=str(cached_entry.plex_rating_key),
+                            plex_uri=cached_entry.plex_uri,
+                            plex_token=plex_account.plex_token,
                         )
-                        # Also store by just TMDB if source is tmdb
-                        if item.source == "tmdb":
-                            cached_rating_keys[("tmdb", item.media_id)] = (
-                                entry.plex_rating_key,
-                                entry.plex_uri,
-                            )
-                        cached_count += 1
-                
+                        if entry_id:
+                            cached_updated += 1
+                            updated_count += 1
+                            match_stats["cached"] = match_stats.get("cached", 0) + 1
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to update cached item %s: %s",
+                            item.title,
+                            exc,
+                        )
+                        cached_errors += 1
+                        error_count += 1
+                    cached_processed += 1
+            
+            if cached_processed > 0:
                 logger.info(
-                    "Found %d cached rating keys for section %s (out of %d items)",
-                    cached_count,
+                    "Processed %d cached items in section '%s': %d updated, %d errors",
+                    cached_processed,
                     section.get("title"),
-                    len(section_items),
+                    cached_updated,
+                    cached_errors,
                 )
             
-            # Build list of items that need library scanning (no cached rating key)
+            # Step 2: Get items that need library scanning
             items_needing_scan = [
                 item for item in section_items
-                if (item.source, item.media_id) not in cached_rating_keys and
-                   (item.source != "tmdb" or ("tmdb", item.media_id) not in cached_rating_keys)
+                if not CollectionEntry.objects.filter(
+                    user=user,
+                    item=item,
+                    plex_rating_key__isnull=False,
+                ).exists()
             ]
-            
-            # Query all items in the section (not just history) with pagination
-            # Only scan if we have items that need it
-            rating_key_map = {}  # Maps (source, media_id) -> rating_key
-            # Start with cached rating keys
-            for key, (rating_key, uri) in cached_rating_keys.items():
-                rating_key_map[key] = rating_key
             
             if not items_needing_scan:
                 logger.info(
-                    "All items in section %s have cached rating keys, skipping library scan",
+                    "All items in section '%s' processed (cached or already have entries)",
                     section.get("title"),
                 )
-            else:
-                logger.info(
-                    "Scanning library for %d items without cached rating keys in section %s",
-                    len(items_needing_scan),
-                    section.get("title"),
-                )
+                continue
+            
+            # Step 3: Scan library in batches and process matches incrementally
+            logger.info(
+                "Scanning library for %d uncached items in section '%s'",
+                len(items_needing_scan),
+                section.get("title"),
+            )
+            
+            # Build set of items we're looking for (for early stopping)
+            items_to_find = set((item.source, item.media_id) for item in items_needing_scan)
+            items_found_set = set()
+            
+            # Build mapping of items by external ID for quick lookup
+            items_by_external_id = {}
+            for item in items_needing_scan:
+                key = (item.source, item.media_id)
+                items_by_external_id[key] = item
+                # Also index by TMDB if source is tmdb
+                if item.source == "tmdb":
+                    items_by_external_id[("tmdb", item.media_id)] = item
+            
+            batch_size = 500
+            start = 0
+            total_items = None
+            batch_processed = 0
+            batch_matched = 0
+            section_start_time = time.time()
+            
+            from integrations.plex import extract_external_ids_from_guids
+            
+            while True:
+                # Early stopping: if we've found all items, stop scanning
+                if len(items_found_set) >= len(items_to_find):
+                    logger.info(
+                        "Found all %d uncached items in section '%s', stopping scan",
+                        len(items_to_find),
+                        section.get("title"),
+                    )
+                    break
                 
-                # Build set of external IDs we're looking for (for early stopping)
-                target_tmdb_ids = set()
-                for item in items_needing_scan:
-                    if item.source == "tmdb":
-                        target_tmdb_ids.add(str(item.media_id))
-                
-                start = 0
-                page_size = 1000
-                total_items = None
-                items_found = 0
-                
-                while True:
-                    # Early stopping: if we've found all items needing scan, stop
-                    if items_found >= len(target_tmdb_ids):
-                        logger.info(
-                            "Found all %d uncached items in section %s, stopping scan",
-                            len(target_tmdb_ids),
-                            section.get("title"),
-                        )
-                        break
+                # Fetch batch of library items
+                try:
                     library_items, total = plex_api.fetch_section_all_items(
                         plex_account.plex_token,
                         plex_uri,
                         str(section_key),
                         start=start,
-                        size=page_size,
+                        size=batch_size,
                     )
-                    
-                    if total_items is None:
-                        total_items = total
-                        logger.debug(
-                            "Processing section %s: %d total items (scanning for %d uncached items)",
-                            section.get("title"),
-                            total_items,
-                            len(target_tmdb_ids),
-                        )
-                    
-                    if not library_items:
-                        break
-                    
-                    # Build mapping of external IDs to rating keys from library items
-                    processed_count = 0
-                    for entry in library_items:
-                        # Early stopping check
-                        if items_found >= len(target_tmdb_ids):
-                            break
-                        
-                        rating_key = entry.get("ratingKey") or entry.get("ratingkey")
-                        if not rating_key:
-                            continue
-
-                        processed_count += 1
-
-                        # Extract external IDs from entry
-                        guids = entry.get("Guid", [])
-                        if not guids:
-                            single_guid = entry.get("guid")
-                            if single_guid:
-                                guids = [{"id": single_guid}]
-
-                        # Extract external IDs using helper function
-                        external_ids = plex_api.extract_external_ids_from_guids(guids)
-                        
-                        # Track whether we fetched detailed metadata (for rate limiting)
-                        fetched_detailed_metadata = False
-                        
-                        # If no external IDs found and we only have plex:// GUIDs, fetch detailed metadata
-                        if not external_ids and guids:
-                            guid_value = guids[0].get("id") if isinstance(guids[0], dict) else guids[0]
-                            if guid_value and guid_value.startswith("plex://"):
-                                # Fetch detailed metadata to get external IDs
-                                try:
-                                    detailed_metadata = plex_api.fetch_metadata(
-                                        plex_account.plex_token,
-                                        plex_uri,
-                                        str(rating_key),
-                                    )
-                                    if detailed_metadata:
-                                        fetched_detailed_metadata = True
-                                        # Extract GUIDs from detailed metadata
-                                        detailed_guids = detailed_metadata.get("Guid", [])
-                                        if not detailed_guids:
-                                            single_guid = detailed_metadata.get("guid")
-                                            if single_guid:
-                                                detailed_guids = [{"id": single_guid}]
-                                        
-                                        # Extract external IDs from detailed metadata
-                                        external_ids = plex_api.extract_external_ids_from_guids(detailed_guids)
-                                except Exception as exc:
-                                    logger.debug(
-                                        "Failed to fetch detailed metadata for ratingKey %s: %s",
-                                        rating_key,
-                                        exc,
-                                    )
-                                    continue
-                        
-                        # Store all external IDs in the map (TMDB, IMDB, TVDB)
-                        # This allows matching by any external ID, not just TMDB
-                        # Track if we found a target item for early stopping
-                        if "tmdb_id" in external_ids:
-                            tmdb_id = external_ids["tmdb_id"]
-                            rating_key_map[("tmdb", tmdb_id)] = rating_key
-                            if str(tmdb_id) in target_tmdb_ids:
-                                items_found += 1
-                        if "imdb_id" in external_ids:
-                            imdb_id = external_ids["imdb_id"]
-                            rating_key_map[("imdb", imdb_id)] = rating_key
-                        if "tvdb_id" in external_ids:
-                            tvdb_id = external_ids["tvdb_id"]
-                            rating_key_map[("tvdb", tvdb_id)] = rating_key
-                        
-                        # Log progress every 100 items
-                        if processed_count % 100 == 0:
-                            logger.info(
-                                "Processed %d/%d items in section %s (found %d with external IDs, %d/%d target items found)",
-                                processed_count,
-                                total_items,
-                                section.get("title"),
-                                len(rating_key_map),
-                                items_found,
-                                len(target_tmdb_ids),
-                            )
-                        
-                        # Add small delay to avoid overwhelming Plex server (only when fetching detailed metadata)
-                        if fetched_detailed_metadata:
-                            time.sleep(0.05)  # 50ms delay between metadata fetches
-                    
-                    # Check if we need to paginate
-                    start += len(library_items)
-                    if start >= total or len(library_items) == 0:
-                        break
-
-            # Count external ID types found in this section
-            tmdb_count = sum(1 for k in rating_key_map.keys() if k[0] == "tmdb")
-            imdb_count = sum(1 for k in rating_key_map.keys() if k[0] == "imdb")
-            tvdb_count = sum(1 for k in rating_key_map.keys() if k[0] == "tvdb")
-            
-            logger.info(
-                "Built rating key map for section %s: %d total mappings (TMDB: %d, IMDB: %d, TVDB: %d)",
-                section.get("title"),
-                len(rating_key_map),
-                tmdb_count,
-                imdb_count,
-                tvdb_count,
-            )
-
-            # Now match Yamtrack items with rating keys and update collection metadata
-            for item in user_items:
-                # Only process Movies, TV Shows, and Anime
-                if item.media_type not in (MediaTypes.MOVIE.value, MediaTypes.TV.value, MediaTypes.ANIME.value):
-                    continue
-
-                # For Anime, search in show sections
-                if item.media_type == MediaTypes.ANIME.value and section_type != "show":
-                    continue
-
-                # Try to find rating key for this item
-                # First check cached rating keys (fast path)
-                cached_key_data = cached_rating_keys.get((item.source, item.media_id))
-                if not cached_key_data and item.source == "tmdb":
-                    cached_key_data = cached_rating_keys.get(("tmdb", item.media_id))
-                
-                rating_key = None
-                match_type = None
-                item_plex_uri = plex_uri  # Default to section URI
-                
-                if cached_key_data:
-                    # Use cached rating key (fast path - no scanning needed)
-                    rating_key, item_plex_uri = cached_key_data
-                    match_type = "cached"
-                    logger.debug("Using cached rating key for %s", item.title)
-                else:
-                    # Fallback to rating_key_map (from library scan)
-                    # First try direct match by (source, media_id)
-                    rating_key = rating_key_map.get((item.source, item.media_id))
-                    
-                    # If not found and source is TMDB, item.media_id should match
-                    if not rating_key and item.source == "tmdb":
-                        rating_key = rating_key_map.get(("tmdb", item.media_id))
-                        if rating_key:
-                            match_type = "tmdb"
-                
-                # Fallback: If TMDB match failed, fetch TMDB metadata to get IMDB/TVDB IDs and try matching by those
-                if not rating_key and item.source == "tmdb":
-                    try:
-                        from app.providers import services
-                        tmdb_metadata = services.get_media_metadata(
-                            item.media_type,
-                            item.media_id,
-                            item.source,
-                        )
-                        
-                        # Try IMDB match
-                        if tmdb_metadata:
-                            # For movies, need to fetch raw TMDB API response to get external_ids
-                            if item.media_type == MediaTypes.MOVIE.value:
-                                import requests
-                                from django.conf import settings
-                                url = f"https://api.themoviedb.org/3/movie/{item.media_id}"
-                                params = {
-                                    "api_key": settings.TMDB_API,
-                                    "language": "en",
-                                    "append_to_response": "external_ids",
-                                }
-                                raw_response = requests.get(url, params=params, timeout=10).json()
-                                external_ids = raw_response.get("external_ids", {})
-                                imdb_id = external_ids.get("imdb_id")
-                            elif item.media_type == MediaTypes.TV.value:
-                                # TV shows have tvdb_id directly in processed metadata
-                                tvdb_id = tmdb_metadata.get("tvdb_id")
-                                if tvdb_id:
-                                    rating_key = rating_key_map.get(("tvdb", str(tvdb_id)))
-                                if rating_key:
-                                    match_type = "tvdb"
-                                    logger.debug(
-                                        "Matched %s by TVDB ID %s (fallback)",
-                                        item.title,
-                                        tvdb_id,
-                                    )
-                                
-                                # Also try IMDB for TV shows
-                                import requests
-                                from django.conf import settings
-                                url = f"https://api.themoviedb.org/3/tv/{item.media_id}"
-                                params = {
-                                    "api_key": settings.TMDB_API,
-                                    "language": "en",
-                                    "append_to_response": "external_ids",
-                                }
-                                raw_response = requests.get(url, params=params, timeout=10).json()
-                                external_ids = raw_response.get("external_ids", {})
-                                imdb_id = external_ids.get("imdb_id")
-                            else:
-                                imdb_id = None
-                            
-                            # Try IMDB match if we got an IMDB ID
-                            if not rating_key and imdb_id:
-                                rating_key = rating_key_map.get(("imdb", imdb_id))
-                                if rating_key:
-                                    match_type = "imdb"
-                                    logger.debug(
-                                        "Matched %s by IMDB ID %s (fallback)",
-                                        item.title,
-                                        imdb_id,
-                                    )
-                    except Exception as exc:
-                        logger.debug(
-                            "Failed to fetch TMDB metadata for fallback matching %s: %s",
-                            item.title,
-                            exc,
-                        )
-
-                if not rating_key:
-                    match_stats["unmatched"] += 1
-                    # Log unmatched items at debug level (can be enabled for troubleshooting)
-                    if match_stats["unmatched"] % 100 == 0:
-                        logger.debug(
-                            "Unmatched items so far: %d (latest: %s - %s, source=%s, media_id=%s)",
-                            match_stats["unmatched"],
-                            item.title,
-                            item.media_type,
-                            item.source,
-                            item.media_id,
-                        )
-                    continue
-                
-                # Track match type
-                if match_type:
-                    if match_type == "cached":
-                        # Count cached matches separately for statistics
-                        if "cached" not in match_stats:
-                            match_stats["cached"] = 0
-                        match_stats["cached"] += 1
-                        match_type = "tmdb"  # Use tmdb for logging purposes
-                    match_stats[match_type] += 1
-                else:
-                    match_stats["tmdb"] += 1  # Default to TMDB if match_type not set
-
-                # Fetch detailed metadata and update collection
-                try:
-                    plex_metadata = plex_api.fetch_metadata(
-                        plex_account.plex_token,
-                        item_plex_uri,  # Use cached URI if available, otherwise section URI
-                        str(rating_key),
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to fetch batch from section '%s' (start=%d): %s",
+                        section.get("title"),
+                        start,
+                        exc,
                     )
-                    if not plex_metadata:
+                    break
+                
+                if total_items is None:
+                    total_items = total
+                    logger.info(
+                        "Section '%s' has %d total items (scanning for %d uncached items)",
+                        section.get("title"),
+                        total_items,
+                        len(items_to_find),
+                    )
+                
+                if not library_items:
+                    break
+                
+                # Process this batch: match items and update immediately
+                batch_matches = 0
+                for entry in library_items:
+                    rating_key = entry.get("ratingKey") or entry.get("ratingkey")
+                    if not rating_key:
                         continue
-
-                    collection_metadata = extract_collection_metadata_from_plex(plex_metadata)
-                    episode_list = []  # Will be populated for TV shows
                     
-                    # For TV shows, always fetch episode list to create episode entries
-                    # If show-level metadata is empty, also use aggregated metadata from episodes
-                    if item.media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
-                        # Only fetch detailed episode metadata if show-level metadata is empty
-                        # (needed for aggregation). Otherwise, just get episode lists.
-                        fetch_episode_details = not any(collection_metadata.values())
-                        
-                        aggregated_metadata, episode_list = _aggregate_tv_show_collection_metadata(
-                            plex_account.plex_token,
-                            item_plex_uri,  # Use cached URI if available
-                            str(rating_key),
-                            show_metadata=plex_metadata,  # Pass already-fetched metadata to avoid duplicate call
-                            fetch_episode_details=fetch_episode_details,
-                        )
-                        
-                        # Only use aggregated metadata if show-level metadata is empty
-                        if not any(collection_metadata.values()):
-                            logger.debug(
-                                "Show-level metadata empty for %s, using aggregated metadata from episodes",
-                                item.title,
-                            )
-                            collection_metadata = aggregated_metadata
-                        else:
-                            logger.debug(
-                                "Show-level metadata exists for %s, using it (episode list fetched for episode entries)",
-                                item.title,
-                            )
+                    batch_processed += 1
                     
-                    if not any(collection_metadata.values()):
-                        # If no show-level metadata, but we have episodes, still create episode entries
-                        if item.media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value) and episode_list:
-                            logger.debug(
-                                "No show-level metadata for %s, but creating episode entries",
-                                item.title,
-                            )
-                        else:
-                            # Log when we skip due to no metadata (helps diagnose why items aren't updated)
-                            logger.debug(
-                                "Skipping %s - no collection metadata found (matched by %s)",
-                                item.title,
-                                match_type or "tmdb",
-                            )
-                            continue  # No metadata to update
-
-                    # Get or create collection entry (only collection, no Media instances)
-                    # Only create if we have metadata
-                    if any(collection_metadata.values()):
-                        entry, created = CollectionEntry.objects.get_or_create(
-                            user=user,
-                            item=item,
-                            defaults=collection_metadata,
-                        )
-
-                        if not created:
-                            # Update existing entry
-                            for key, value in collection_metadata.items():
-                                if value:  # Only update non-empty values
-                                    setattr(entry, key, value)
-                            entry.updated_at = timezone.now()
-                            entry.save()
-
-                        # Store rating key and URI for future bulk imports (cache for faster lookups)
-                        # Update if rating key changed or wasn't set
-                        if entry.plex_rating_key != rating_key or entry.plex_uri != item_plex_uri:
-                            entry.plex_rating_key = rating_key
-                            entry.plex_uri = item_plex_uri
-                            entry.plex_rating_key_updated_at = timezone.now()
-                            entry.save(update_fields=["plex_rating_key", "plex_uri", "plex_rating_key_updated_at"])
-                            logger.debug(
-                                "Cached rating key for %s: %s (uri=%s)",
-                                item.title,
-                                rating_key,
-                                item_plex_uri,
-                            )
-
-                        updated_count += 1
-                        logger.debug(
-                            "Updated collection metadata for %s - %s",
-                            user.username,
-                            item.title,
-                        )
+                    # Extract external IDs
+                    guids = entry.get("Guid", [])
+                    if not guids:
+                        single_guid = entry.get("guid")
+                        if single_guid:
+                            guids = [{"id": single_guid}]
                     
-                    # For TV shows, also create episode-level collection entries
-                    if item.media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value) and episode_list:
-                        episode_entries_created = 0
-                        episode_entries_updated = 0
-                        
-                        for episode_data in episode_list:
-                            season_number = episode_data["season_number"]
-                            episode_number = episode_data["episode_number"]
-                            episode_collection_metadata = episode_data["collection_metadata"]
-                            
-                            # Skip Season 0 (Specials) to match Details pane behavior
-                            if season_number == 0:
-                                continue
-                            
-                            # Find or create the episode Item
+                    external_ids = extract_external_ids_from_guids(guids)
+                    
+                    # If no external IDs, try fetching detailed metadata
+                    if not external_ids and guids:
+                        guid_value = guids[0].get("id") if isinstance(guids[0], dict) else guids[0]
+                        if guid_value and guid_value.startswith("plex://"):
                             try:
-                                episode_item, episode_item_created = Item.objects.get_or_create(
-                                    media_id=item.media_id,
-                                    source=item.source,
-                                    media_type=MediaTypes.EPISODE.value,
-                                    season_number=season_number,
-                                    episode_number=episode_number,
-                                    defaults={
-                                        "title": f"Episode {episode_number}",
-                                        "image": item.image,
-                                    },
+                                detailed_metadata = plex_api.fetch_metadata(
+                                    plex_account.plex_token,
+                                    plex_uri,
+                                    str(rating_key),
                                 )
-                                
-                                # Create or update collection entry for this episode
-                                episode_entry, episode_entry_created = CollectionEntry.objects.get_or_create(
-                                    user=user,
-                                    item=episode_item,
-                                    defaults=episode_collection_metadata,
-                                )
-                                
-                                if episode_entry_created:
-                                    episode_entries_created += 1
-                                else:
-                                    # Update existing entry
-                                    updated = False
-                                    for key, value in episode_collection_metadata.items():
-                                        if value:  # Only update non-empty values
-                                            old_value = getattr(episode_entry, key, None)
-                                            if old_value != value:
-                                                setattr(episode_entry, key, value)
-                                                updated = True
-                                    if updated:
-                                        episode_entry.updated_at = timezone.now()
-                                        episode_entry.save()
-                                        episode_entries_updated += 1
-                                        
+                                if detailed_metadata:
+                                    detailed_guids = detailed_metadata.get("Guid", [])
+                                    if not detailed_guids:
+                                        single_guid = detailed_metadata.get("guid")
+                                        if single_guid:
+                                            detailed_guids = [{"id": single_guid}]
+                                    external_ids = extract_external_ids_from_guids(detailed_guids)
                             except Exception as exc:
-                                logger.debug(
-                                    "Failed to create collection entry for episode S%02dE%02d of %s: %s",
-                                    season_number,
-                                    episode_number,
-                                    item.title,
+                                logger.debug("Failed to fetch detailed metadata for ratingKey %s: %s", rating_key, exc)
+                    
+                    # Try to match this Plex item with our items
+                    matched_item = None
+                    match_type = None
+                    
+                    if "tmdb_id" in external_ids:
+                        tmdb_id = external_ids["tmdb_id"]
+                        key = ("tmdb", tmdb_id)
+                        if key in items_by_external_id:
+                            matched_item = items_by_external_id[key]
+                            match_type = "tmdb"
+                    
+                    if not matched_item and "imdb_id" in external_ids:
+                        imdb_id = external_ids["imdb_id"]
+                        key = ("imdb", imdb_id)
+                        if key in items_by_external_id:
+                            matched_item = items_by_external_id[key]
+                            match_type = "imdb"
+                    
+                    if not matched_item and "tvdb_id" in external_ids:
+                        tvdb_id = external_ids["tvdb_id"]
+                        key = ("tvdb", tvdb_id)
+                        if key in items_by_external_id:
+                            matched_item = items_by_external_id[key]
+                            match_type = "tvdb"
+                    
+                    # If we found a match, process it immediately
+                    if matched_item:
+                        item_key = (matched_item.source, matched_item.media_id)
+                        if item_key not in items_found_set:
+                            try:
+                                # Use webhook function for consistency
+                                entry_id = update_collection_metadata_from_plex_webhook(
+                                    user_id=user.id,
+                                    item_id=matched_item.id,
+                                    rating_key=str(rating_key),
+                                    plex_uri=plex_uri,
+                                    plex_token=plex_account.plex_token,
+                                )
+                                if entry_id:
+                                    items_found_set.add(item_key)
+                                    batch_matches += 1
+                                    batch_matched += 1
+                                    updated_count += 1
+                                    match_stats[match_type] = match_stats.get(match_type, 0) + 1
+                            except Exception as exc:
+                                logger.warning(
+                                    "Failed to update item %s: %s",
+                                    matched_item.title,
                                     exc,
                                 )
-                                continue
-                        
-                        if episode_entries_created > 0 or episode_entries_updated > 0:
-                            logger.info(
-                                "Created %d and updated %d episode collection entries for %s - %s",
-                                episode_entries_created,
-                                episode_entries_updated,
-                                user.username,
-                                item.title,
-                            )
-                except Exception as exc:
-                    # Log timeout errors separately for better visibility
-                    if "timeout" in str(exc).lower() or "ReadTimeout" in str(type(exc).__name__):
-                        logger.warning(
-                            "Timeout fetching collection metadata for %s: %s (rating_key=%s)",
-                            item.title,
-                            exc,
-                            rating_key,
-                        )
-                    else:
-                        logger.warning(
-                            "Failed to update collection metadata for %s: %s (rating_key=%s)",
-                            item.title,
-                            exc,
-                            rating_key,
-                            exc_info=True,
-                        )
-                    error_count += 1
+                                error_count += 1
+                
+                # Log progress after each batch
+                elapsed = time.time() - section_start_time
+                items_remaining = len(items_to_find) - len(items_found_set)
+                match_rate = (batch_matched / batch_processed * 100) if batch_processed > 0 else 0
+                
+                # Estimate time remaining
+                if batch_processed > 0 and total_items:
+                    items_per_second = batch_processed / elapsed if elapsed > 0 else 0
+                    remaining_items = total_items - start - len(library_items)
+                    estimated_seconds = remaining_items / items_per_second if items_per_second > 0 else 0
+                    estimated_minutes = int(estimated_seconds / 60)
+                else:
+                    estimated_minutes = None
+                
+                logger.info(
+                    "Processed %d/%d items in section '%s': %d matched this batch, %d total matched (%.1f%% overall), "
+                    "%d/%d target items found. Updated: %d so far%s",
+                    start + len(library_items),
+                    total_items or "?",
+                    section.get("title"),
+                    batch_matches,
+                    batch_matched,
+                    match_rate,
+                    len(items_found_set),
+                    len(items_to_find),
+                    updated_count,
+                    f", ~{estimated_minutes} min remaining" if estimated_minutes is not None else "",
+                )
+                
+                # Check if we need to paginate
+                start += len(library_items)
+                if start >= total or len(library_items) == 0:
+                    break
+            # Count unmatched items
+            unmatched_count = len(items_needing_scan) - len(items_found_set)
+            if unmatched_count > 0:
+                match_stats["unmatched"] = match_stats.get("unmatched", 0) + unmatched_count
 
         except Exception as exc:
             logger.warning(
@@ -1978,25 +2003,39 @@ def update_collection_metadata_from_plex(library, user_id):
             error_count += 1
             continue
 
-        # Log final statistics for this section
-        total_processed = sum(match_stats.values())
-        if total_processed > 0:
+        # Log final statistics for this section (before resetting)
+        section_cached = match_stats.get("cached", 0)
+        section_tmdb = match_stats.get("tmdb", 0)
+        section_imdb = match_stats.get("imdb", 0)
+        section_tvdb = match_stats.get("tvdb", 0)
+        section_unmatched = match_stats.get("unmatched", 0)
+        section_total = section_cached + section_tmdb + section_imdb + section_tvdb + section_unmatched
+        
+        if section_total > 0:
             logger.info(
-                "Section %s matching statistics: TMDB: %d, IMDB: %d, TVDB: %d, Unmatched: %d (Total: %d)",
+                "Section '%s' matching statistics: Cached: %d, TMDB: %d, IMDB: %d, TVDB: %d, Unmatched: %d (Total: %d)",
                 section.get("title"),
-                match_stats["tmdb"],
-                match_stats["imdb"],
-                match_stats["tvdb"],
-                match_stats["unmatched"],
-                total_processed,
+                section_cached,
+                section_tmdb,
+                section_imdb,
+                section_tvdb,
+                section_unmatched,
+                section_total,
             )
         
-        # Reset match_stats for next section
-        match_stats = {"tmdb": 0, "imdb": 0, "tvdb": 0, "unmatched": 0}
+        # Reset match_stats for next section (totals are accumulated in updated_count)
+        match_stats["tmdb"] = 0
+        match_stats["imdb"] = 0
+        match_stats["tvdb"] = 0
+        match_stats["unmatched"] = 0
+        match_stats["cached"] = 0
     
     # Log final summary across all sections
+    total_elapsed = time.time() - start_time
+    
     logger.info(
-        "Collection update task completed: %d items updated, %d errors",
+        "Collection update task completed in %.1f minutes: %d items updated, %d errors",
+        total_elapsed / 60,
         updated_count,
         error_count,
     )
