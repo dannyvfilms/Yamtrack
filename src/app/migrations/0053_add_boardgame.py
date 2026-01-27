@@ -30,6 +30,26 @@ class CreateModelIfNotExists(migrations.CreateModel):
         super().database_forwards(app_label, schema_editor, from_state, to_state)
 
 
+class AddFieldIfNotExists(migrations.AddField):
+    """AddField that skips if column already exists (for SQLite compatibility)."""
+
+    def database_forwards(self, app_label, schema_editor, from_state, to_state):
+        if schema_editor.connection.vendor == "sqlite":
+            model = to_state.apps.get_model(app_label, self.model_name)
+            field = model._meta.get_field(self.name)
+            table_name = model._meta.db_table
+            column_name = field.column
+            with schema_editor.connection.cursor() as cursor:
+                cursor.execute(
+                    f"PRAGMA table_info({schema_editor.quote_name(table_name)})"
+                )
+                columns = {row[1] for row in cursor.fetchall()}
+            if column_name in columns:
+                return
+
+        super().database_forwards(app_label, schema_editor, from_state, to_state)
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -90,32 +110,32 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name='item',
             name='media_type',
-            field=models.CharField(choices=[('tv', 'TV Show'), ('season', 'TV Season'), ('episode', 'Episode'), ('movie', 'Movie'), ('anime', 'Anime'), ('manga', 'Manga'), ('game', 'Game'), ('book', 'Book'), ('comic', 'Comic'), ('boardgame', 'Board Game')], default='movie', max_length=10),
+            field=models.CharField(choices=[('tv', 'TV Show'), ('season', 'TV Season'), ('episode', 'Episode'), ('movie', 'Movie'), ('anime', 'Anime'), ('manga', 'Manga'), ('game', 'Game'), ('book', 'Book'), ('comic', 'Comic'), ('boardgame', 'Board Game'), ('music', 'Music'), ('podcast', 'Podcast')], default='movie', max_length=10),
         ),
         migrations.AlterField(
             model_name='item',
             name='source',
-            field=models.CharField(choices=[('tmdb', 'The Movie Database'), ('mal', 'MyAnimeList'), ('mangaupdates', 'MangaUpdates'), ('igdb', 'Internet Game Database'), ('openlibrary', 'Open Library'), ('hardcover', 'Hardcover'), ('comicvine', 'Comic Vine'), ('bgg', 'BoardGameGeek'), ('manual', 'Manual')], max_length=20),
+            field=models.CharField(choices=[('tmdb', 'The Movie Database'), ('mal', 'MyAnimeList'), ('mangaupdates', 'MangaUpdates'), ('igdb', 'Internet Game Database'), ('openlibrary', 'Open Library'), ('hardcover', 'Hardcover'), ('comicvine', 'Comic Vine'), ('bgg', 'BoardGameGeek'), ('musicbrainz', 'MusicBrainz'), ('pocketcasts', 'Pocket Casts'), ('manual', 'Manual')], max_length=20),
         ),
         migrations.AddConstraint(
             model_name='item',
-            constraint=models.CheckConstraint(condition=models.Q(('source__in', ['tmdb', 'mal', 'mangaupdates', 'igdb', 'openlibrary', 'hardcover', 'comicvine', 'bgg', 'manual'])), name='app_item_source_valid'),
+            constraint=models.CheckConstraint(condition=models.Q(('source__in', ['tmdb', 'mal', 'mangaupdates', 'igdb', 'openlibrary', 'hardcover', 'comicvine', 'bgg', 'musicbrainz', 'pocketcasts', 'manual'])), name='app_item_source_valid'),
         ),
         migrations.AddConstraint(
             model_name='item',
-            constraint=models.CheckConstraint(condition=models.Q(('media_type__in', ['tv', 'season', 'episode', 'movie', 'anime', 'manga', 'game', 'book', 'comic', 'boardgame'])), name='app_item_media_type_valid'),
+            constraint=models.CheckConstraint(condition=models.Q(('media_type__in', ['tv', 'season', 'episode', 'movie', 'anime', 'manga', 'game', 'book', 'comic', 'boardgame', 'music', 'podcast'])), name='app_item_media_type_valid'),
         ),
-        migrations.AddField(
+        AddFieldIfNotExists(
             model_name='boardgame',
             name='item',
             field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to='app.item'),
         ),
-        migrations.AddField(
+        AddFieldIfNotExists(
             model_name='boardgame',
             name='user',
             field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to=settings.AUTH_USER_MODEL),
         ),
-        migrations.AddField(
+        AddFieldIfNotExists(
             model_name='historicalboardgame',
             name='history_user',
             field=models.ForeignKey(null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='+', to=settings.AUTH_USER_MODEL),
