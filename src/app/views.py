@@ -1823,6 +1823,7 @@ def season_details(
     collection_entry = None
     season_collection_stats = None
     fetching_collection_data = False
+    item_id_for_polling = None
     if not public_view:
         from app.helpers import is_item_collected, get_season_collection_stats, get_season_collection_metadata
         from app.models import Item as ItemModel  # Use alias to avoid any potential shadowing
@@ -1860,6 +1861,7 @@ def season_details(
                             logger.info("Triggered background collection fetch for show %s - %s (item_id=%s) from season page (task_id=%s)", 
                                        request.user.username, show_item.title, show_item.id, result.id if result else "None")
                             fetching_collection_data = True
+                            item_id_for_polling = show_item.id
                         except Exception as task_exc:
                             logger.error("Failed to trigger background collection fetch for show %s - %s: %s", 
                                         request.user.username, show_item.title, task_exc, exc_info=True)
