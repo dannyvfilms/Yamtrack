@@ -228,7 +228,8 @@ def _resolve_runtime_minutes(*items):
             continue
 
         runtime = getattr(item, "runtime_minutes", None)
-        if runtime and runtime < 999999:
+        # Exclude fallback values: 999998 (aired but runtime unknown) and 999999 (unknown runtime)
+        if runtime and runtime < 999998:
             return runtime
 
     return 0
