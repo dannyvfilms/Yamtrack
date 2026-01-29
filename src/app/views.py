@@ -6392,6 +6392,31 @@ def statistics(request):
         return render(request, "app/statistics.html", context)
 
 
+@require_POST
+def refresh_statistics(request):
+    """Force refresh statistics cache for the current range."""
+    from django.http import JsonResponse
+    
+    range_name = request.POST.get("range_name")
+    if not range_name:
+        return JsonResponse({"error": "range_name is required"}, status=400)
+    
+    if range_name not in statistics_cache.PREDEFINED_RANGES:
+        return JsonResponse({"error": "Invalid range_name"}, status=400)
+    
+    # Invalidate the cache and schedule a refresh
+    statistics_cache.invalidate_statistics_cache(request.user.id, range_name)
+    statistics_cache.schedule_statistics_refresh(
+        request.user.id,
+        range_name,
+        debounce_seconds=0,  # No debounce for manual refresh
+        countdown=0,  # Start immediately
+        allow_inline=True,
+    )
+    
+    return JsonResponse({"success": True, "message": "Statistics refresh scheduled"})
+
+
 @require_GET
 def cache_status(request):
     """Return cache status metadata for history or statistics cache.

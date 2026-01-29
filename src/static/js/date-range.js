@@ -1,5 +1,5 @@
 function dateRangePicker(options = {}) {
-  const { initialRangeName = "", initialStartDate = "", initialEndDate = "" } =
+  const { initialRangeName = "", initialStartDate = "", initialEndDate = "", refreshUrl = "", csrfToken = "" } =
     options;
   const defaultStartDate = new Date(
     new Date().setFullYear(new Date().getFullYear() - 1)
@@ -16,6 +16,7 @@ function dateRangePicker(options = {}) {
     startDate: hasInitialDates ? initialStartDate : defaultStartDate,
     endDate: hasInitialDates ? initialEndDate : defaultEndDate,
     customRangeLabel: "",
+    refreshing: false,
 
     predefinedRanges: [
       { name: "Today" },
@@ -352,6 +353,45 @@ function dateRangePicker(options = {}) {
         this.startDate
       )} - ${this.formatDisplayDate(this.endDate)}`;
       this.selectedRange = this.customRangeLabel;
+    },
+
+    async refreshStatistics() {
+      // Only refresh if we have a predefined range (custom ranges are computed inline)
+      if (!this.selectedRange || this.predefinedRanges.findIndex(r => r.name === this.selectedRange) === -1) {
+        return;
+      }
+
+      if (!refreshUrl) {
+        console.error("Refresh URL not available");
+        return;
+      }
+
+      this.refreshing = true;
+      try {
+        const formData = new FormData();
+        formData.append("range_name", this.selectedRange);
+        if (csrfToken) {
+          formData.append("csrfmiddlewaretoken", csrfToken);
+        }
+
+        const response = await fetch(refreshUrl, {
+          method: "POST",
+          body: formData,
+        });
+
+        if (response.ok) {
+          // Reload the page after a short delay to show refreshed data
+          setTimeout(() => {
+            window.location.reload();
+          }, 500);
+        } else {
+          console.error("Failed to refresh statistics");
+          this.refreshing = false;
+        }
+      } catch (error) {
+        console.error("Error refreshing statistics:", error);
+        this.refreshing = false;
+      }
     },
   };
 }

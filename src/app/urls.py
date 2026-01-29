@@ -81,6 +81,7 @@ urlpatterns = [
         name="search_parent_season",
     ),
     path("statistics", views.statistics, name="statistics"),
+    path("statistics/refresh", views.refresh_statistics, name="refresh_statistics"),
     path("history", views.history, name="history"),
     path("api/cache-status/", views.cache_status, name="cache_status"),
     path("serviceworker.js", views.service_worker, name="service_worker"),
