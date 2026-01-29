@@ -6650,10 +6650,10 @@ def _sort_tv_media_by_time_left(media_list, direction="asc"):
     def _calc_runtime_minutes(media):
         """Best-effort average runtime in minutes for a TV show (fallback only)."""
         runtime_minutes = None
-        # FIRST: Check locally stored runtime (but exclude 999999 marker for unknown)
+        # FIRST: Check locally stored runtime (but exclude fallback markers)
         if hasattr(media, "item") and media.item.runtime_minutes:
-            # 999999 is a placeholder value meaning "unknown runtime" - skip it
-            if media.item.runtime_minutes < 999999:
+            # Exclude fallback values: 999998 (aired but runtime unknown) and 999999 (unknown runtime)
+            if media.item.runtime_minutes < 999998:
                 runtime_minutes = media.item.runtime_minutes
                 logger.debug(f"Using stored runtime for {media.item.title}: {runtime_minutes}min")
             else:
@@ -6669,7 +6669,9 @@ def _sort_tv_media_by_time_left(media_list, direction="asc"):
                 media_type=MediaTypes.EPISODE.value,
                 runtime_minutes__isnull=False,
             ).exclude(
-                runtime_minutes=999999,
+                runtime_minutes=999999,  # Exclude placeholder for unknown runtime
+            ).exclude(
+                runtime_minutes=999998,  # Exclude 999998 marker for "aired but runtime unknown"
             ).values_list("runtime_minutes", flat=True)
 
             if episodes_with_runtime.exists():

@@ -722,7 +722,8 @@ def _safe_runtime_minutes(value):
         minutes = int(value)
     except (TypeError, ValueError):
         return 0
-    if minutes >= 999999:
+    # Exclude fallback values: 999998 (aired but runtime unknown) and 999999 (unknown runtime)
+    if minutes >= 999998:
         return 0
     return minutes
 

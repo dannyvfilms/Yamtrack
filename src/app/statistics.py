@@ -1490,7 +1490,8 @@ def _get_media_runtime_from_cache(media, logger, context=""):
         return 0  # Skip this media instead of failing
 
     runtime_minutes = getattr(media.item, "runtime_minutes", None)
-    if runtime_minutes and runtime_minutes < 999999:
+    # Exclude fallback values: 999998 (aired but runtime unknown) and 999999 (unknown runtime)
+    if runtime_minutes and runtime_minutes < 999998:
         logger.debug(
             f"Media '{media.item.title}' {context}: using cached runtime {runtime_minutes} minutes",
         )
@@ -1500,7 +1501,8 @@ def _get_media_runtime_from_cache(media, logger, context=""):
     # This helps prevent race conditions when multiple tasks run in parallel
     from app.models import Item
     db_runtime = Item.objects.filter(id=media.item.id).values_list("runtime_minutes", flat=True).first()
-    if db_runtime and db_runtime < 999999:
+    # Exclude fallback values: 999998 (aired but runtime unknown) and 999999 (unknown runtime)
+    if db_runtime and db_runtime < 999998:
         logger.debug(
             f"Media '{media.item.title}' {context}: using database runtime {db_runtime} minutes (saved by another task)",
         )
@@ -1537,7 +1539,8 @@ def _get_media_runtime_from_cache(media, logger, context=""):
                     metadata_runtime = parsed
                     break
 
-    if metadata_runtime and metadata_runtime < 999999:
+    # Exclude fallback values: 999998 (aired but runtime unknown) and 999999 (unknown runtime)
+    if metadata_runtime and metadata_runtime < 999998:
         logger.debug(
             f"Media '{media.item.title}' {context}: fetched runtime {metadata_runtime} minutes",
         )
