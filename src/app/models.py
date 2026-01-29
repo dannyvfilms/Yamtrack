@@ -991,7 +991,28 @@ class MediaManager(models.Manager):
             return
 
         if media_type == MediaTypes.SEASON.value:
-            self._annotate_season_released_episodes(media_list, current_datetime)
+            # For seasons, use metadata max_progress instead of database annotation
+            # The metadata value is more accurate as it reflects the actual total episodes
+            # from the provider, not just episodes with release_datetime set
+            from app.providers import services
+            for season in media_list:
+                try:
+                    season_metadata = services.get_media_metadata(
+                        MediaTypes.SEASON.value,
+                        season.item.media_id,
+                        season.item.source,
+                        [season.item.season_number],
+                    )
+                    # Use metadata max_progress if available, otherwise fall back to annotation
+                    metadata_max_progress = season_metadata.get("max_progress")
+                    if metadata_max_progress is not None:
+                        season.max_progress = metadata_max_progress
+                    else:
+                        # Fall back to database annotation if metadata doesn't have max_progress
+                        self._annotate_season_released_episodes([season], current_datetime)
+                except Exception:
+                    # If metadata fetch fails, fall back to database annotation
+                    self._annotate_season_released_episodes([season], current_datetime)
             return
 
         if media_type == MediaTypes.BOOK.value:
