@@ -87,17 +87,111 @@ def home(request):
 
         if request.headers.get("HX-Request") and media_type_to_load == RECENTLY_NOT_RATED_KEY:
             from django.template.loader import render_to_string
+            from collections import defaultdict
+            from django.conf import settings
+            from app.models import Album, Item, Sources
             
             recent_items = BasicMedia.objects.get_recently_unrated(
                 request.user,
                 days=RECENTLY_NOT_RATED_DAYS,
             )
-            items_to_load = recent_items[items_limit:]
+            
+            # Aggregate music tracks to albums (same logic as main view)
+            music_tracks = []
+            other_items = []
+            albums_by_id = {}
+            
+            for item in recent_items:
+                if item.item.media_type == MediaTypes.MUSIC.value:
+                    music_tracks.append(item)
+                else:
+                    other_items.append(item)
+            
+            # Aggregate music tracks to albums
+            album_play_counts = defaultdict(int)
+            album_last_played = {}
+            album_primary_track = {}
+            
+            for track in music_tracks:
+                album = getattr(track, "album", None)
+                if album:
+                    album_id = album.id
+                    albums_by_id[album_id] = album
+                    play_count = getattr(track, "repeats", None) or 1
+                    album_play_counts[album_id] += play_count
+                    last_played = track.last_played_at or track.created_at
+                    if album_id not in album_last_played or last_played > album_last_played[album_id]:
+                        album_last_played[album_id] = last_played
+                        album_primary_track[album_id] = track
+            
+            # Create AlbumAdapter for each unique album
+            class AlbumAdapter:
+                """Adapter to make Album compatible with media components."""
+                
+                def __init__(self, album, play_count, last_played_at, primary_track):
+                    self.album = album
+                    self.id = album.id
+                    self.play_count = play_count
+                    self.last_played_at = last_played_at
+                    self.created_at = last_played_at
+                    
+                    # Media-like attributes for template compatibility
+                    self.status = None  # Albums don't have status in Recently Played - Not Rated
+                    self.end_date = last_played_at  # Use last_played_at as end_date
+                    self.next_event = None  # Albums don't have next events
+                    self.score = None  # Albums in Recently Played - Not Rated don't have scores
+                    self.title = album.title  # For template title display
+                    
+                    album_media_id = f"album_{album.id}"
+                    self.item, _ = Item.objects.get_or_create(
+                        media_id=album_media_id,
+                        source=Sources.MANUAL.value,
+                        media_type=MediaTypes.MUSIC.value,
+                        defaults={
+                            "title": album.title,
+                            "image": album.image or settings.IMG_NONE,
+                        },
+                    )
+                    album_image = album.image or settings.IMG_NONE
+                    if self.item.title != album.title or self.item.image != album_image:
+                        self.item.title = album.title
+                        self.item.image = album_image
+                        self.item.save(update_fields=["title", "image"])
+                    
+                    self.primary_track = primary_track
+                
+                def __str__(self):
+                    """Return album title for string representation."""
+                    return self.album.title
+            
+            album_adapters = [
+                AlbumAdapter(
+                    albums_by_id[album_id],
+                    album_play_counts[album_id],
+                    album_last_played[album_id],
+                    album_primary_track[album_id],
+                )
+                for album_id in albums_by_id.keys()
+            ]
+            
+            album_adapters.sort(key=lambda a: a.last_played_at or a.created_at, reverse=True)
+            all_items = album_adapters + other_items
+            
+            items_to_load = all_items[items_limit:]
             
             # Split items into 2:3 (standard) and 1:1 (square) types
             square_types = {"music", "podcast"}
-            standard_items = [item for item in items_to_load if getattr(getattr(item, "item", None), "media_type", "").lower() not in square_types]
-            square_items = [item for item in items_to_load if getattr(getattr(item, "item", None), "media_type", "").lower() in square_types]
+            standard_items = []
+            square_items = []
+            for item in items_to_load:
+                if isinstance(item, AlbumAdapter):
+                    square_items.append(item)
+                else:
+                    media_type = getattr(getattr(item, "item", None), "media_type", "").lower() if getattr(item, "item", None) else None
+                    if media_type in square_types:
+                        square_items.append(item)
+                    elif media_type:
+                        standard_items.append(item)
             
             # Render each group with proper grid wrappers
             result_parts = []
@@ -152,20 +246,117 @@ def home(request):
             days=RECENTLY_NOT_RATED_DAYS,
         )
         if recent_items:
+            # Aggregate music tracks to albums
+            from collections import defaultdict
+            from django.conf import settings
+            from app.models import Album, Item, Sources
+            
+            music_tracks = []
+            other_items = []
+            albums_by_id = {}  # Track albums we've seen
+            
+            for item in recent_items:
+                if item.item.media_type == MediaTypes.MUSIC.value:
+                    music_tracks.append(item)
+                else:
+                    other_items.append(item)
+            
+            # Aggregate music tracks to albums
+            album_play_counts = defaultdict(int)
+            album_last_played = {}
+            album_primary_track = {}
+            
+            for track in music_tracks:
+                album = getattr(track, "album", None)
+                if album:
+                    album_id = album.id
+                    albums_by_id[album_id] = album
+                    # Count plays (repeats or 1)
+                    play_count = getattr(track, "repeats", None) or 1
+                    album_play_counts[album_id] += play_count
+                    # Track most recent play
+                    last_played = track.last_played_at or track.created_at
+                    if album_id not in album_last_played or last_played > album_last_played[album_id]:
+                        album_last_played[album_id] = last_played
+                        album_primary_track[album_id] = track
+            
+            # Create AlbumAdapter for each unique album
+            class AlbumAdapter:
+                """Adapter to make Album compatible with media components."""
+                
+                def __init__(self, album, play_count, last_played_at, primary_track):
+                    self.album = album
+                    self.id = album.id
+                    self.play_count = play_count
+                    self.last_played_at = last_played_at
+                    self.created_at = last_played_at  # For sorting
+                    
+                    # Media-like attributes for template compatibility
+                    self.status = None  # Albums don't have status in Recently Played - Not Rated
+                    self.end_date = last_played_at  # Use last_played_at as end_date
+                    self.next_event = None  # Albums don't have next events
+                    self.score = None  # Albums in Recently Played - Not Rated don't have scores
+                    self.title = album.title  # For template title display
+                    
+                    # Create a mock Item for compatibility with media components
+                    # Use a unique identifier for the album
+                    album_media_id = f"album_{album.id}"
+                    self.item, _ = Item.objects.get_or_create(
+                        media_id=album_media_id,
+                        source=Sources.MANUAL.value,
+                        media_type=MediaTypes.MUSIC.value,
+                        defaults={
+                            "title": album.title,
+                            "image": album.image or settings.IMG_NONE,
+                        },
+                    )
+                    # Update item if album data changed
+                    album_image = album.image or settings.IMG_NONE
+                    if self.item.title != album.title or self.item.image != album_image:
+                        self.item.title = album.title
+                        self.item.image = album_image
+                        self.item.save(update_fields=["title", "image"])
+                    
+                    # Store primary track for reference
+                    self.primary_track = primary_track
+                
+                def __str__(self):
+                    """Return album title for string representation."""
+                    return self.album.title
+            
+            album_adapters = [
+                AlbumAdapter(
+                    albums_by_id[album_id],
+                    album_play_counts[album_id],
+                    album_last_played[album_id],
+                    album_primary_track[album_id],
+                )
+                for album_id in albums_by_id.keys()
+            ]
+            
+            # Sort albums by last played (most recent first)
+            album_adapters.sort(key=lambda a: a.last_played_at or a.created_at, reverse=True)
+            
+            # Combine albums with other items
+            all_items = album_adapters + other_items
+            
             # Split items into 2:3 (standard) and 1:1 (square) types
             # This ensures both grids show if both types exist in the dataset
             square_types = {"music", "podcast"}
             
-            # Use direct attribute access since select_related("item") guarantees item is loaded
             standard_items = []
             square_items = []
-            for item in recent_items:
-                # BasicMedia objects have item attribute from select_related("item")
-                media_type = item.item.media_type.lower() if item.item else None
-                if media_type in square_types:
+            for item in all_items:
+                # For AlbumAdapter, it's always music (square)
+                # For other items, check media_type
+                if isinstance(item, AlbumAdapter):
                     square_items.append(item)
-                elif media_type:
-                    standard_items.append(item)
+                else:
+                    media_type = item.item.media_type.lower() if item.item else None
+                    if media_type in square_types:
+                        square_items.append(item)
+                    elif media_type:
+                        standard_items.append(item)
             
             # If both types exist, show items from both types up to the limit
             # Prioritize showing both grids if both types are available
@@ -183,7 +374,7 @@ def home(request):
             
             list_by_type[RECENTLY_NOT_RATED_KEY] = {
                 "items": limited_items,
-                "total": len(recent_items),
+                "total": len(all_items),
                 "section_title": RECENTLY_NOT_RATED_LABEL,
                 "show_played_chip": True,
             }

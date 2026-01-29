@@ -3279,7 +3279,7 @@
 }
 @media (min-width: 30rem) {
   .media-grid-square {
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)) !important;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)) !important;
   }
 }
 .toast-error {

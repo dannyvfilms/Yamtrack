@@ -17,7 +17,7 @@
                    loading="lazy">
             </div>
           {% else %}
-            <a href="{% if use_podcast_show|default:False and podcast_show %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=podcast_show.podcast_uuid title=podcast_show.slug|default:podcast_show.title|default:podcast_show.podcast_uuid|slug %}{% elif public_view|default:False %}{{ item|media_url }}?public_view=1{% else %}{{ item|media_url }}{% endif %}">
+            <a href="{% if media.album %}{% url 'album_detail' media.album.id %}{% elif use_podcast_show|default:False and podcast_show %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=podcast_show.podcast_uuid title=podcast_show.slug|default:podcast_show.title|default:podcast_show.podcast_uuid|slug %}{% elif public_view|default:False %}{{ item|media_url }}?public_view=1{% else %}{{ item|media_url }}{% endif %}">
               <img alt="{% if use_podcast_show|default:False and podcast_show %}{{ podcast_show.title }}{% elif resolved_media_type == MediaTypes.SEASON.value and item.season_number %}Season {{ item.season_number }}{% else %}{{ title }}{% endif %}"
                    class="media-card-poster lazyload w-full {% if from_grid %}{% if resolved_media_type == 'podcast' or resolved_media_type == 'music' %}aspect-[1/1]{% else %}aspect-[2/3] aspect-2/3{% endif %}{% else %}h-48{% endif %} bg-[#3e454d] {% if item.image != IMG_NONE %}object-cover{% endif %}"
                    data-src="{% if use_podcast_show|default:False and podcast_show and podcast_show.image %}{{ podcast_show.image }}{% else %}{{ item.image|default:IMG_NONE }}{% endif %}"
@@ -244,7 +244,12 @@
             {% if from_grid %}
               {% if show_played_chip|default:False and media and media.last_played_at %}
                 <p class="media-card-year text-xs text-gray-400 mt-1">
-                  {{ media.last_played_at|user_datetime_format:user }}
+                  {% if media.play_count and resolved_media_type == MediaTypes.MUSIC.value %}
+                    <span class="text-indigo-400 font-medium">{{ media.play_count }} play{{ media.play_count|pluralize }}</span>
+                    <span class="ml-1">{{ media.last_played_at|user_datetime_format:user }}</span>
+                  {% else %}
+                    {{ media.last_played_at|user_datetime_format:user }}
+                  {% endif %}
                 </p>
               {% elif show_next_event_subtitle|default:False and media and media.next_event and not media.next_event.is_max_datetime %}
                 <p class="media-card-year text-xs text-gray-400 mt-1">

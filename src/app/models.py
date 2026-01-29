@@ -839,6 +839,8 @@ class MediaManager(models.Manager):
             select_related_fields = ["item"]
             if media_type == MediaTypes.PODCAST.value:
                 select_related_fields.append("show")
+            elif media_type == MediaTypes.MUSIC.value:
+                select_related_fields.append("album")
 
             queryset = queryset.annotate(
                 repeats=Window(
