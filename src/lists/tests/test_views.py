@@ -1045,3 +1045,178 @@ class ListRssFeedTests(TestCase):
         response = self.client.get(reverse("list_rss", args=[self.custom_list.id]))
 
         self.assertEqual(response.status_code, 404)
+
+
+class ListJsonExportTests(TestCase):
+    """Tests for the public list JSON export endpoints."""
+
+    def setUp(self):
+        """Set up test data."""
+        self.user = get_user_model().objects.create_user(
+            username="jsonuser",
+            password="testpassword",
+        )
+        self.custom_list = CustomList.objects.create(
+            name="Public JSON List",
+            description="Test JSON list",
+            owner=self.user,
+            visibility="public",
+        )
+        # Create TMDB movie
+        self.movie_item = Item.objects.create(
+            media_id="12345",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Test Movie",
+        )
+        CustomListItem.objects.create(
+            custom_list=self.custom_list,
+            item=self.movie_item,
+        )
+        # Create TMDB TV show
+        self.tv_item = Item.objects.create(
+            media_id="67890",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Test TV Show",
+        )
+        CustomListItem.objects.create(
+            custom_list=self.custom_list,
+            item=self.tv_item,
+        )
+        # Create non-TMDB item (should be excluded)
+        self.manual_item = Item.objects.create(
+            media_id="manual-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Manual Movie",
+        )
+        CustomListItem.objects.create(
+            custom_list=self.custom_list,
+            item=self.manual_item,
+        )
+
+    def test_radarr_json_format(self):
+        """Return JSON in Radarr format for public list."""
+        response = self.client.get(
+            reverse("list_json", args=[self.custom_list.id]) + "?arr=radarr",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/json")
+        data = response.json()
+        self.assertIsInstance(data, list)
+        # Should only include TMDB movies
+        self.assertEqual(len(data), 1)
+        self.assertIn({"id": 12345}, data)
+
+    def test_sonarr_json_format(self):
+        """Return JSON in Sonarr format for public list."""
+        # Mock TMDB TV metadata with TVDB ID
+        from unittest.mock import patch
+
+        mock_metadata = {
+            "media_id": "67890",
+            "title": "Test TV Show",
+            "tvdb_id": 81189,
+        }
+
+        with patch("lists.feeds.tmdb.tv", return_value=mock_metadata):
+            response = self.client.get(
+                reverse("list_json", args=[self.custom_list.id]) + "?arr=sonarr",
+            )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response["Content-Type"], "application/json")
+            data = response.json()
+            self.assertIsInstance(data, list)
+            # Should only include TMDB TV shows with TVDB IDs
+            self.assertEqual(len(data), 1)
+            self.assertIn({"tvdbId": 81189}, data)
+
+    def test_sonarr_skips_items_without_tvdb_id(self):
+        """Sonarr endpoint skips TV shows without TVDB ID mapping."""
+        from unittest.mock import patch
+
+        # Mock TMDB TV metadata without TVDB ID
+        mock_metadata = {
+            "media_id": "67890",
+            "title": "Test TV Show",
+            "tvdb_id": None,
+        }
+
+        with patch("lists.feeds.tmdb.tv", return_value=mock_metadata):
+            response = self.client.get(
+                reverse("list_json", args=[self.custom_list.id]) + "?arr=sonarr",
+            )
+
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            # Should be empty since TV show has no TVDB ID
+            self.assertEqual(len(data), 0)
+
+    def test_private_list_json_returns_404(self):
+        """Return 404 for private lists."""
+        self.custom_list.visibility = "private"
+        self.custom_list.save(update_fields=["visibility"])
+
+        response = self.client.get(
+            reverse("list_json", args=[self.custom_list.id]) + "?arr=radarr",
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_json_filters_by_media_type(self):
+        """JSON endpoints filter items by media type correctly."""
+        # Radarr should only return movies
+        response = self.client.get(
+            reverse("list_json", args=[self.custom_list.id]) + "?arr=radarr",
+        )
+        data = response.json()
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]["id"], 12345)
+
+        # Sonarr should only return TV shows
+        from unittest.mock import patch
+
+        mock_metadata = {
+            "media_id": "67890",
+            "title": "Test TV Show",
+            "tvdb_id": 81189,
+        }
+
+        with patch("lists.feeds.tmdb.tv", return_value=mock_metadata):
+            response = self.client.get(
+                reverse("list_json", args=[self.custom_list.id]) + "?arr=sonarr",
+            )
+            data = response.json()
+            self.assertEqual(len(data), 1)
+            self.assertIn("tvdbId", data[0])
+
+    def test_json_only_includes_tmdb_items(self):
+        """JSON endpoints only include items from TMDB source."""
+        response = self.client.get(
+            reverse("list_json", args=[self.custom_list.id]) + "?arr=radarr",
+        )
+        data = response.json()
+        # Should not include manual item
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]["id"], 12345)
+
+    def test_missing_arr_parameter_returns_error(self):
+        """Missing arr parameter returns 400 error."""
+        response = self.client.get(reverse("list_json", args=[self.custom_list.id]))
+
+        self.assertEqual(response.status_code, 400)
+        data = response.json()
+        self.assertIn("error", data)
+
+    def test_invalid_arr_parameter_returns_error(self):
+        """Invalid arr parameter returns 400 error."""
+        response = self.client.get(
+            reverse("list_json", args=[self.custom_list.id]) + "?arr=invalid",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        data = response.json()
+        self.assertIn("error", data)
