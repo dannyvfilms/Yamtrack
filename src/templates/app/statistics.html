@@ -33,6 +33,18 @@
     /* Mobile-only highlight carousel */
     .stats-highlight-dots {
       display: flex;
+      margin-top: 0.75rem;
+      margin-bottom: 0.75rem;
+    }
+    .stats-highlight-dot {
+      width: 0.5rem;
+      height: 0.5rem;
+      border-radius: 9999px;
+      background: #4b5563;
+      transition: background-color 150ms ease;
+    }
+    .stats-highlight-dot.is-active {
+      background: #818cf8;
     }
     @media (min-width: 769px) {
       .stats-highlight-dots {
@@ -498,24 +510,24 @@
           </div>
         {% endif %}
         </div>
-        <div class="stats-highlight-dots mt-3 items-center justify-center gap-2">
-          <button class="h-2 w-2 rounded-full transition-colors"
-                  :class="activeIndex === 0 ? 'bg-indigo-400' : 'bg-gray-600'"
+        <div class="stats-highlight-dots items-center justify-center gap-2">
+          <button class="stats-highlight-dot"
+                  :class="{ 'is-active': activeIndex === 0 }"
                   @click="scrollTo(0)"
                   type="button"
                   aria-label="Show first highlight"></button>
-          <button class="h-2 w-2 rounded-full transition-colors"
-                  :class="activeIndex === 1 ? 'bg-indigo-400' : 'bg-gray-600'"
+          <button class="stats-highlight-dot"
+                  :class="{ 'is-active': activeIndex === 1 }"
                   @click="scrollTo(1)"
                   type="button"
                   aria-label="Show second highlight"></button>
-          <button class="h-2 w-2 rounded-full transition-colors"
-                  :class="activeIndex === 2 ? 'bg-indigo-400' : 'bg-gray-600'"
+          <button class="stats-highlight-dot"
+                  :class="{ 'is-active': activeIndex === 2 }"
                   @click="scrollTo(2)"
                   type="button"
                   aria-label="Show third highlight"></button>
-          <button class="h-2 w-2 rounded-full transition-colors"
-                  :class="activeIndex === 3 ? 'bg-indigo-400' : 'bg-gray-600'"
+          <button class="stats-highlight-dot"
+                  :class="{ 'is-active': activeIndex === 3 }"
                   @click="scrollTo(3)"
                   type="button"
                   aria-label="Show fourth highlight"></button>
