@@ -29,6 +29,31 @@
       scrollbar-width: thin;
       scrollbar-color: #4b5563 #2a2f35;
     }
+
+    /* Mobile-only highlight carousel */
+    .stats-highlight-dots {
+      display: flex;
+    }
+    @media (min-width: 769px) {
+      .stats-highlight-dots {
+        display: none;
+      }
+    }
+    @media (max-width: 768px) {
+      .stats-highlight-track {
+        display: flex;
+        gap: 0.75rem;
+        overflow-x: auto;
+        scroll-snap-type: x mandatory;
+      }
+      .stats-highlight-card {
+        flex: 0 0 100%;
+        scroll-snap-align: start;
+      }
+      .stats-highlight-track::-webkit-scrollbar {
+        height: 0;
+      }
+    }
   </style>
   
   <div x-data="{
@@ -322,13 +347,17 @@
 
     <div class="space-y-8">
       {% with highlights=history_highlights %}
-      <div class="grid grid-cols-2 gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-2 sm:mb-4">
+      <div x-data="highlightCarousel()" x-init="init()" class="mb-2 sm:mb-4">
+        <div x-ref="track"
+             class="stats-highlight-track grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         {% if highlights.first_play %}
           <a href="{{ highlights.first_play.item|media_url }}"
-             class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative hover:ring-2 hover:ring-indigo-500 transition-all search-result-card-square group{% if request.user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %} block"
+             class="stats-highlight-card media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative hover:ring-2 hover:ring-indigo-500 transition-all search-result-card-square group{% if request.user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %} block"
+             data-carousel-card
              style="aspect-ratio: 3/2 !important;">
         {% else %}
-          <div class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative hover:ring-2 hover:ring-indigo-500 transition-all search-result-card-square group{% if request.user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %} block"
+          <div class="stats-highlight-card media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative hover:ring-2 hover:ring-indigo-500 transition-all search-result-card-square group{% if request.user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %} block"
+               data-carousel-card
                style="aspect-ratio: 3/2 !important;">
         {% endif %}
           <div class="relative">
@@ -360,10 +389,12 @@
 
         {% if highlights.last_play %}
           <a href="{{ highlights.last_play.item|media_url }}"
-             class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative hover:ring-2 hover:ring-indigo-500 transition-all search-result-card-square group{% if request.user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %} block"
+             class="stats-highlight-card media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative hover:ring-2 hover:ring-indigo-500 transition-all search-result-card-square group{% if request.user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %} block"
+             data-carousel-card
              style="aspect-ratio: 3/2 !important;">
         {% else %}
-          <div class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative hover:ring-2 hover:ring-indigo-500 transition-all search-result-card-square group{% if request.user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %} block"
+          <div class="stats-highlight-card media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative hover:ring-2 hover:ring-indigo-500 transition-all search-result-card-square group{% if request.user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %} block"
+               data-carousel-card
                style="aspect-ratio: 3/2 !important;">
         {% endif %}
           <div class="relative">
@@ -395,10 +426,12 @@
 
         {% if highlights.today_in_history %}
           <a href="{% url 'history' %}?history_mode=release&month={{ highlights.today_month }}&day={{ highlights.today_day }}"
-             class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative hover:ring-2 hover:ring-indigo-500 transition-all search-result-card-square group{% if request.user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %} block"
+             class="stats-highlight-card media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative hover:ring-2 hover:ring-indigo-500 transition-all search-result-card-square group{% if request.user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %} block"
+             data-carousel-card
              style="aspect-ratio: 3/2 !important;">
         {% else %}
-          <div class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative hover:ring-2 hover:ring-indigo-500 transition-all search-result-card-square group{% if request.user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %} block"
+          <div class="stats-highlight-card media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative hover:ring-2 hover:ring-indigo-500 transition-all search-result-card-square group{% if request.user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %} block"
+               data-carousel-card
                style="aspect-ratio: 3/2 !important;">
         {% endif %}
           <div class="relative">
@@ -430,10 +463,12 @@
 
         {% if highlights.today_in_user_history %}
           <a href="{% url 'history' %}?month={{ highlights.today_month }}&day={{ highlights.today_day }}"
-             class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative hover:ring-2 hover:ring-indigo-500 transition-all search-result-card-square group{% if request.user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %} block"
+             class="stats-highlight-card media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative hover:ring-2 hover:ring-indigo-500 transition-all search-result-card-square group{% if request.user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %} block"
+             data-carousel-card
              style="aspect-ratio: 3/2 !important;">
         {% else %}
-          <div class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative hover:ring-2 hover:ring-indigo-500 transition-all search-result-card-square group{% if request.user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %} block"
+          <div class="stats-highlight-card media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative hover:ring-2 hover:ring-indigo-500 transition-all search-result-card-square group{% if request.user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %} block"
+               data-carousel-card
                style="aspect-ratio: 3/2 !important;">
         {% endif %}
           <div class="relative">
@@ -462,6 +497,29 @@
         {% else %}
           </div>
         {% endif %}
+        </div>
+        <div class="stats-highlight-dots mt-3 items-center justify-center gap-2">
+          <button class="h-2 w-2 rounded-full transition-colors"
+                  :class="activeIndex === 0 ? 'bg-indigo-400' : 'bg-gray-600'"
+                  @click="scrollTo(0)"
+                  type="button"
+                  aria-label="Show first highlight"></button>
+          <button class="h-2 w-2 rounded-full transition-colors"
+                  :class="activeIndex === 1 ? 'bg-indigo-400' : 'bg-gray-600'"
+                  @click="scrollTo(1)"
+                  type="button"
+                  aria-label="Show second highlight"></button>
+          <button class="h-2 w-2 rounded-full transition-colors"
+                  :class="activeIndex === 2 ? 'bg-indigo-400' : 'bg-gray-600'"
+                  @click="scrollTo(2)"
+                  type="button"
+                  aria-label="Show third highlight"></button>
+          <button class="h-2 w-2 rounded-full transition-colors"
+                  :class="activeIndex === 3 ? 'bg-indigo-400' : 'bg-gray-600'"
+                  @click="scrollTo(3)"
+                  type="button"
+                  aria-label="Show fourth highlight"></button>
+        </div>
       </div>
       {% endwith %}
 
@@ -2797,6 +2855,55 @@
 {% block js %}
   <script src="{% static 'js/date-range.js' %}{% get_static_file_mtime 'js/date-range.js' %}"
           data-date-format="{{ user.date_format }}"></script>
+
+  <script>
+    function highlightCarousel() {
+      return {
+        activeIndex: 0,
+        init() {
+          const track = this.$refs.track;
+          if (!track) return;
+          const cards = Array.from(track.querySelectorAll("[data-carousel-card]"));
+          if (!cards.length) return;
+
+          const updateActive = () => {
+            if (window.matchMedia("(min-width: 769px)").matches) {
+              this.activeIndex = 0;
+              return;
+            }
+            const trackRect = track.getBoundingClientRect();
+            const center = trackRect.left + trackRect.width / 2;
+            let closestIndex = 0;
+            let closestDistance = Infinity;
+            cards.forEach((card, index) => {
+              const rect = card.getBoundingClientRect();
+              const cardCenter = rect.left + rect.width / 2;
+              const distance = Math.abs(cardCenter - center);
+              if (distance < closestDistance) {
+                closestDistance = distance;
+                closestIndex = index;
+              }
+            });
+            this.activeIndex = closestIndex;
+          };
+
+          this._updateActive = updateActive;
+          track.addEventListener("scroll", updateActive, { passive: true });
+          window.addEventListener("resize", updateActive);
+          requestAnimationFrame(updateActive);
+        },
+        scrollTo(index) {
+          const track = this.$refs.track;
+          if (!track) return;
+          const cards = Array.from(track.querySelectorAll("[data-carousel-card]"));
+          const target = cards[index];
+          if (!target) return;
+          target.scrollIntoView({ behavior: "smooth", inline: "start", block: "nearest" });
+          this.activeIndex = index;
+        },
+      };
+    }
+  </script>
 
   <script src="{% static 'js/libraries/chartjs-4.4.9.min.js' %}"></script>
   <script src="{% static 'js/libraries/chartjs-datalabels-2.0.0.min.js' %}"></script>
