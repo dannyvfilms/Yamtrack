@@ -288,11 +288,13 @@ Target flow: Start here -> Use it -> Connect stuff -> Run it -> Fix it -> Deep r
 - Upgrade Guide: dev -> release (DONE - drafted in `wiki/Upgrade-Guide-dev-release.md` on 2026-01-30): Research prompts: Identify migrations, new models, cache behavior changes, and integration additions from migrations and settings. Drafting prompts: Write an upgrade checklist and "things that might surprise you" section.
 
 ## 2) User Guide
-- Using Yamtrack (NEW hub): Research prompts: Define the core mental model (track items, imports feed history, stats cached, collection is separate layer). Drafting prompts: Write a short hub page with links to core feature pages.
-- History (NEW): Research prompts: Confirm filters, logging style, cache refresh UX, and how entries are generated. Drafting prompts: Explain filters, cache refresh messaging, and how to interpret timeline entries.
-- Statistics (NEW): Research prompts: Confirm range picker behavior, refresh workflow, caching, and media-specific sections in the template and JS. Drafting prompts: Document ranges, refresh button, and major chart groupings.
-- Search and Add (NEW): Research prompts: Verify search dropdown behavior, enabled media types, and barcode scanning for books. Drafting prompts: Explain search modes and the barcode flow with error handling.
-- Preferences (NEW): Research prompts: Enumerate all preference fields added in users/models.py and users/preferences.html. Drafting prompts: Group settings by layout/date/time/history/auto-pause and explain defaults.
+- Using Yamtrack (DONE - drafted in `wiki/Using-Yamtrack.md` on 2026-01-30): Research prompts: Define the core mental model (track items, imports feed history, stats cached, collection is separate layer). Drafting prompts: Write a short hub page with links to core feature pages.
+- History (DONE - drafted in `wiki/History.md` on 2026-01-30): Research prompts: Confirm filters, logging style, cache refresh UX, and how entries are generated. Drafting prompts: Explain filters, cache refresh messaging, and how to interpret timeline entries.
+- Statistics (DONE - drafted in `wiki/Statistics.md` on 2026-01-30): Research prompts: Confirm range picker behavior, refresh workflow, caching, and media-specific sections in the template and JS. Drafting prompts: Document ranges, refresh button, and major chart groupings.
+- Search and Add (DONE - drafted in `wiki/Search-and-Add.md` on 2026-01-30): Research prompts: Verify search dropdown behavior, enabled media types, and barcode scanning for books. Drafting prompts: Explain search modes and the barcode flow with error handling.
+- Preferences (DONE - drafted in `wiki/Preferences.md` on 2026-01-30): Research prompts: Enumerate all preference fields added in users/models.py and users/preferences.html. Drafting prompts: Group settings by layout/date/time/history/auto-pause and explain defaults.
+- Home and Media Lists (DONE - drafted in `wiki/Home-and-Media-Lists.md` on 2026-01-30): Research prompts: Explain list sorting/direction toggles, time-left sorting, filters, and music/podcast list behavior. Drafting prompts: Document list controls, saved preferences, and special-case list displays.
+- Media Details and Tracking (DONE - drafted in `wiki/Media-Details-and-Tracking.md` on 2026-01-30): Research prompts: Confirm detail page actions, collection metadata panels, and music/podcast history links. Drafting prompts: Describe tracking actions, collection fetch banners, and music/podcast linking/aggregation.
 
 ## 3) Media Types
 - Media Types Overview (NEW): Research prompts: List supported media types and their providers from app/config.py. Drafting prompts: Explain differences by media type at a high level.

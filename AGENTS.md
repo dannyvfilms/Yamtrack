@@ -35,6 +35,12 @@ Conflict-resolution steps:
 - `docs/agents/` issue and workflow notes.
 - `.github/workflows/` CI definitions.
 - `Dockerfile`, `docker-compose*.yml`, `entrypoint.sh`, `nginx.conf`, `supervisord.conf` for container runtime.
+- `wiki/` is a separate Git repository for the project wiki (edit and commit there, not in this repo).
+
+## Wiki Workflow (Important)
+- Keep wiki pages in `wiki/` so they can be edited locally and pushed to the wiki repo.
+- Treat `wiki/` as its own git repo (not a submodule); run commits/pushes from `wiki/`.
+- Do not add `wiki/` to the main repo index; it should remain untracked here.
 
 ## Agent Docs
 - `docs/agents/media_type_integration.md`: playbook for adding new media types safely.
