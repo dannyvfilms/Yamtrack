@@ -319,19 +319,19 @@ Target flow: Start here -> Use it -> Connect stuff -> Run it -> Fix it -> Deep r
 - Yamtrack CSV Format (keep, move): Research prompts: Confirm supported fields and limitations. Drafting prompts: Include migration guidance and caveats.
 
 ## 6) Lists and Sharing
-- Lists Overview (NEW): Research prompts: Confirm list visibility modes, activity, and recommendation workflow. Drafting prompts: Document creating lists, managing visibility, and recommendations.
-- Public Lists: RSS and JSON Exports (NEW): Research prompts: Confirm RSS endpoint and JSON export formats (Radarr/Sonarr). Drafting prompts: Provide endpoint URLs, parameters, and example payloads.
+- Lists Overview (DONE - drafted in `wiki/5.-Lists.md` on 2026-01-30): Research prompts: Confirm list visibility modes, activity, and recommendation workflow. Drafting prompts: Document creating lists, managing visibility, and recommendations.
+- Public Lists: RSS and JSON Exports (DONE - drafted in `wiki/5.-Lists.md` on 2026-01-30): Research prompts: Confirm RSS endpoint and JSON export formats (Radarr/Sonarr). Drafting prompts: Provide endpoint URLs, parameters, and example payloads.
 
 ## 7) Admin and Operations
-- Admin Guide (merge): Research prompts: Collect all admin-related instructions from existing wiki drafts. Drafting prompts: Create one consolidated page with enable/login/manage steps.
-- Configuration Overview (NEW hub): Research prompts: Identify all config sources (env vars, docker, secrets). Drafting prompts: Explain minimal required vs optional settings and link to env var reference.
-- Environment Variables (rewrite): Research prompts: Catalog env vars by domain (core, db, redis, celery, integrations). Drafting prompts: Build a grouped reference with examples.
-- Docker Deployment (reorg): Research prompts: Confirm compose defaults, image tags, COMMIT_SHA usage, ADMIN_ENABLED. Drafting prompts: Provide a primary Docker path with advanced notes.
-- Database: SQLite vs Postgres (NEW): Research prompts: Confirm SQLite tuning, retry middleware, and Postgres compose config. Drafting prompts: Offer guidance on when to use each and how to migrate.
-- Redis and Sessions (rewrite): Research prompts: Confirm session backend settings and required Redis config. Drafting prompts: Explain why sessions moved to Redis and how to configure.
-- Celery and Background Tasks (rewrite): Research prompts: Confirm runtime population, cache refresh tasks, and health checks. Drafting prompts: Document common worker setup and status checks.
-- Host Under Subpath / Self-signed Certificates / Docker Secrets (keep): Research prompts: Validate existing docs still apply and any new settings. Drafting prompts: Update with current settings names and examples.
-- Social Authentication (keep, move under Ops): Research prompts: Confirm providers and configuration env vars. Drafting prompts: Keep concise and link to upstream provider docs.
+- Admin Guide (DONE - merged into `wiki/6.-Admin-and-Operations.md` on 2026-01-30): Research prompts: Collect all admin-related instructions from existing wiki drafts. Drafting prompts: Create one consolidated page with enable/login/manage steps.
+- Configuration Overview (DONE - merged into `wiki/6.-Admin-and-Operations.md` on 2026-01-30): Research prompts: Identify all config sources (env vars, docker, secrets). Drafting prompts: Explain minimal required vs optional settings and link to env var reference.
+- Environment Variables (DONE - merged into `wiki/6.-Admin-and-Operations.md` on 2026-01-30): Research prompts: Catalog env vars by domain (core, db, redis, celery, integrations). Drafting prompts: Build a grouped reference with examples.
+- Docker Deployment (DONE - merged into `wiki/6.-Admin-and-Operations.md` on 2026-01-30): Research prompts: Confirm compose defaults, image tags, COMMIT_SHA usage, ADMIN_ENABLED. Drafting prompts: Provide a primary Docker path with advanced notes.
+- Database: SQLite vs Postgres (DONE - merged into `wiki/6.-Admin-and-Operations.md` on 2026-01-30): Research prompts: Confirm SQLite tuning, retry middleware, and Postgres compose config. Drafting prompts: Offer guidance on when to use each and how to migrate.
+- Redis and Sessions (DONE - merged into `wiki/6.-Admin-and-Operations.md` on 2026-01-30): Research prompts: Confirm session backend settings and required Redis config. Drafting prompts: Explain why sessions moved to Redis and how to configure.
+- Celery and Background Tasks (DONE - merged into `wiki/6.-Admin-and-Operations.md` on 2026-01-30): Research prompts: Confirm runtime population, cache refresh tasks, and health checks. Drafting prompts: Document common worker setup and status checks.
+- Host Under Subpath / Self-signed Certificates / Docker Secrets (DONE - merged into `wiki/6.-Admin-and-Operations.md` on 2026-01-30): Research prompts: Validate existing docs still apply and any new settings. Drafting prompts: Update with current settings names and examples.
+- Social Authentication (DONE - merged into `wiki/6.-Admin-and-Operations.md` on 2026-01-30): Research prompts: Confirm providers and configuration env vars. Drafting prompts: Keep concise and link to upstream provider docs.
 
 ## 8) Troubleshooting (NEW)
 - Troubleshooting Hub: Research prompts: Identify top failure modes from code and logs (imports stuck, cache refreshing, Plex mismatch, public pages). Drafting prompts: Provide symptom -> cause -> fix structure.
@@ -343,8 +343,8 @@ Target flow: Start here -> Use it -> Connect stuff -> Run it -> Fix it -> Deep r
 - Agent Docs Index (NEW): Research prompts: Inventory docs/agents files and summarize purpose. Drafting prompts: Provide a link list with 1-line summaries to avoid duplication.
 
 ## Existing Pages: Merge / Move / Keep
-- Merge into Admin Guide: Research prompts: Identify overlapping pages (Admin Page, Enabling Admin Interface, Logging In, Changing User to Admin, Creating Admin User, Admin Interface Overview). Drafting prompts: Merge into a single page with clear headings.
-- Merge into Environment Variables: Research prompts: Identify Postgres-specific env var pages and SSL notes. Drafting prompts: Fold under a "Postgres" subheading within env vars.
+- Merge into Admin Guide (DONE - moved to `wiki/6.-Admin-and-Operations.md` on 2026-01-30): Research prompts: Identify overlapping pages (Admin Page, Enabling Admin Interface, Logging In, Changing User to Admin, Creating Admin User, Admin Interface Overview). Drafting prompts: Merge into a single page with clear headings.
+- Merge into Environment Variables (DONE - moved to `wiki/6.-Admin-and-Operations.md` on 2026-01-30): Research prompts: Identify Postgres-specific env var pages and SSL notes. Drafting prompts: Fold under a "Postgres" subheading within env vars.
 - Merge into Media Import Overview: Research prompts: Identify current Media Sources / Media Import / Media Import Configuration pages. Drafting prompts: Create one overview and push details into per-integration pages.
 - Keep standalone leaf pages: Research prompts: Confirm these pages still apply (Host under subpath, Self-signed certificates, Docker secrets). Drafting prompts: Update for current settings names and examples.
 
