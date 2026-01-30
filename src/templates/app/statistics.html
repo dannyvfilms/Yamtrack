@@ -65,6 +65,21 @@
       .stats-highlight-track::-webkit-scrollbar {
         height: 0;
       }
+      .stats-range-row {
+        align-items: stretch;
+      }
+      .stats-range-wrapper {
+        flex: 1 1 auto;
+      }
+      .stats-range-button,
+      .stats-refresh-button {
+        height: 2.75rem;
+        padding-top: 0;
+        padding-bottom: 0;
+      }
+      .stats-range-button {
+        width: 100%;
+      }
     }
   </style>
   
@@ -188,11 +203,11 @@
       <h1 class="text-3xl font-bold mb-2">Statistics</h1>
       <p class="text-gray-400">Track your media consumption habits</p>
     </div>
-    <div class="flex items-center gap-2 mb-4 sm:mb-8">
-      <div class="relative">
+    <div class="stats-range-row flex items-center gap-2 mb-4 sm:mb-8">
+      <div class="stats-range-wrapper relative">
         <!-- Trigger Button -->
         <button @click="toggleDropdown()"
-                class="flex items-center gap-2 px-4 py-2.5 bg-[#2a2f35] hover:bg-[#343a40] rounded-lg transition-all duration-200 border border-gray-700 shadow-sm cursor-pointer">
+                class="stats-range-button flex items-center gap-2 px-4 py-2.5 bg-[#2a2f35] hover:bg-[#343a40] rounded-lg transition-all duration-200 border border-gray-700 shadow-sm cursor-pointer">
           <svg xmlns="http://www.w3.org/2000/svg"
                width="24"
                height="24"
@@ -336,7 +351,7 @@
       <!-- Refresh Button -->
       <button @click="refreshStatistics()"
               :disabled="refreshing"
-              class="flex items-center justify-center px-3 py-2.5 bg-[#2a2f35] hover:bg-[#343a40] disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-all duration-200 border border-gray-700 shadow-sm cursor-pointer"
+              class="stats-refresh-button flex items-center justify-center px-3 py-2.5 bg-[#2a2f35] hover:bg-[#343a40] disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-all duration-200 border border-gray-700 shadow-sm cursor-pointer"
               title="Refresh statistics">
         <svg xmlns="http://www.w3.org/2000/svg"
              width="24"
