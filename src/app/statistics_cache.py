@@ -24,7 +24,7 @@ from django.utils import timezone
 from app import config, helpers
 from app import statistics as stats
 from app import history_cache
-from app.models import MediaTypes, Status
+from app.models import MediaTypes, Sources, Status
 from app.templatetags import app_tags
 
 logger = logging.getLogger(__name__)
@@ -465,14 +465,82 @@ def _history_entry_card_payload(entry):
     if not item:
         return None
     played_at = entry.get("played_at_local")
+    fallback_image = entry.get("poster") or getattr(item, "image", "")
     return {
         "entry": entry,
         "item": item,
         "media_type": entry.get("media_type") or getattr(item, "media_type", None),
         "title": entry.get("display_title") or entry.get("title") or getattr(item, "title", ""),
-        "image": entry.get("poster") or getattr(item, "image", ""),
+        "image": _get_horizontal_history_image(item, fallback_image),
         "played_at": played_at,
     }
+
+
+def _get_horizontal_history_image(item, fallback_image):
+    """Prefer horizontal artwork when available, matching list hub behavior."""
+    if not item:
+        return fallback_image or settings.IMG_NONE
+
+    # Handle both dict (serialized) and model instance
+    if isinstance(item, dict):
+        image = fallback_image or item.get("image", "")
+        source = item.get("source")
+        media_type = item.get("media_type")
+        media_id = item.get("media_id")
+    else:
+        image = fallback_image or getattr(item, "image", "")
+        source = getattr(item, "source", None)
+        media_type = getattr(item, "media_type", None)
+        media_id = getattr(item, "media_id", None)
+
+    if not source or not media_type or not media_id:
+        return image or settings.IMG_NONE
+
+    try:
+        from lists.models import CustomList
+    except Exception:
+        return image or settings.IMG_NONE
+
+    # For episodes/seasons, use the TV show's media_id to get the backdrop
+    # Episodes/seasons share the same media_id as their TV show
+    if source == Sources.TMDB.value and media_type in (MediaTypes.EPISODE.value, MediaTypes.SEASON.value):
+        try:
+            backdrop_url = CustomList()._get_tmdb_backdrop(MediaTypes.TV.value, media_id)
+            if backdrop_url and backdrop_url != settings.IMG_NONE:
+                return backdrop_url
+        except Exception:
+            pass
+
+    if source == Sources.TMDB.value and media_type in (MediaTypes.MOVIE.value, MediaTypes.TV.value):
+        try:
+            backdrop_url = CustomList()._get_tmdb_backdrop(media_type, media_id)
+            if backdrop_url and backdrop_url != settings.IMG_NONE:
+                return backdrop_url
+        except Exception:
+            pass
+
+    if source == Sources.IGDB.value and media_type == MediaTypes.GAME.value:
+        try:
+            backdrop_url = CustomList()._get_igdb_backdrop(media_id)
+            if backdrop_url and backdrop_url != settings.IMG_NONE:
+                return backdrop_url
+        except Exception:
+            pass
+
+    return image or settings.IMG_NONE
+
+
+def _normalize_history_highlight_images(history_highlights):
+    """Ensure highlight cards prefer horizontal artwork, even for cached payloads."""
+    if not isinstance(history_highlights, dict):
+        return
+
+    for key in ("first_play", "last_play", "today_in_history", "today_in_user_history"):
+        entry = history_highlights.get(key)
+        if not isinstance(entry, dict):
+            continue
+        fallback = entry.get("image") or entry.get("poster")
+        entry["image"] = _get_horizontal_history_image(entry.get("item"), fallback)
 
 
 def _select_history_entry_for_day(day_payload, pick_earliest=False, pick_latest=False):
@@ -558,7 +626,7 @@ def _get_today_release_entry(user):
                 "item": item,
                 "media_type": item.media_type,
                 "title": item.title,
-                "image": item.image,
+                "image": _get_horizontal_history_image(item, item.image),
                 "release_date": release_date,
             })
 
@@ -592,11 +660,12 @@ def _get_today_release_entry(user):
             continue
         release_date = localized.date()
         display_title = history_cache._get_episode_display_title(episode)
+        episode_poster = history_cache._get_episode_poster(episode)
         items_by_year[release_date.year].append({
             "item": episode_item,
             "media_type": MediaTypes.EPISODE.value,
             "title": display_title or episode_item.title,
-            "image": history_cache._get_episode_poster(episode),
+            "image": _get_horizontal_history_image(episode_item, episode_poster),
             "release_date": release_date,
         })
 
@@ -632,7 +701,7 @@ def _get_today_release_entry(user):
                 "item": item,
                 "media_type": MediaTypes.PODCAST.value,
                 "title": title,
-                "image": image,
+                "image": _get_horizontal_history_image(item, image),
                 "release_date": release_date,
             })
 
@@ -668,7 +737,7 @@ def _get_today_release_entry(user):
                 "item": item,
                 "media_type": MediaTypes.PODCAST.value,
                 "title": title,
-                "image": image,
+                "image": _get_horizontal_history_image(item, image),
                 "release_date": release_date,
             })
 
@@ -678,6 +747,8 @@ def _get_today_release_entry(user):
     available_years = sorted(items_by_year.keys())
     selected_year = random.choice(available_years)
     selected_item = random.choice(items_by_year[selected_year]) if items_by_year[selected_year] else None
+    if not selected_item:
+        return None, None
     return selected_item, selected_year
 
 
@@ -2638,6 +2709,7 @@ def get_statistics_data(user, start_date, end_date, range_name=None):
             build_missing=True,
         )
         _normalize_hours_per_media_type(data.get("hours_per_media_type"))
+        _normalize_history_highlight_images(data.get("history_highlights"))
         return data
 
     cache_entry = cache.get(_cache_key(user.id, range_name))
@@ -2654,6 +2726,7 @@ def get_statistics_data(user, start_date, end_date, range_name=None):
                 schedule_statistics_refresh(user.id, range_name, allow_inline=False)
         data = cache_entry.get("data", {})
         _normalize_hours_per_media_type(data.get("hours_per_media_type"))
+        _normalize_history_highlight_images(data.get("history_highlights"))
         return data
 
     # Cache miss - check if refresh is in progress
@@ -2671,6 +2744,7 @@ def get_statistics_data(user, start_date, end_date, range_name=None):
         data = refresh_statistics_cache(user.id, range_name)
         if data:
             _normalize_hours_per_media_type(data.get("hours_per_media_type"))
+            _normalize_history_highlight_images(data.get("history_highlights"))
             return data
         return _get_empty_statistics_data()
 

@@ -356,13 +356,19 @@ function dateRangePicker(options = {}) {
     },
 
     async refreshStatistics() {
-      // Only refresh if we have a predefined range (custom ranges are computed inline)
-      if (!this.selectedRange || this.predefinedRanges.findIndex(r => r.name === this.selectedRange) === -1) {
+      if (!refreshUrl) {
+        console.error("Refresh URL not available");
         return;
       }
 
-      if (!refreshUrl) {
-        console.error("Refresh URL not available");
+      const isPredefinedRange = this.selectedRange && this.predefinedRanges.findIndex(r => r.name === this.selectedRange) !== -1;
+
+      // For custom ranges, just reload the page (they're computed inline)
+      if (!isPredefinedRange) {
+        this.refreshing = true;
+        setTimeout(() => {
+          window.location.reload();
+        }, 100);
         return;
       }
 
@@ -380,10 +386,66 @@ function dateRangePicker(options = {}) {
         });
 
         if (response.ok) {
-          // Reload the page after a short delay to show refreshed data
-          setTimeout(() => {
-            window.location.reload();
-          }, 500);
+          // Poll for cache completion instead of reloading immediately
+          // This ensures the refresh is complete before reloading
+          const maxAttempts = 60; // 60 attempts * 1 second = 60 seconds max
+          let attempts = 0;
+          
+          const pollForCompletion = async () => {
+            attempts++;
+            try {
+              const params = new URLSearchParams({
+                cache_type: 'statistics',
+                range_name: this.selectedRange
+              });
+              const statusResponse = await fetch(`/api/cache-status/?${params.toString()}`);
+              
+              if (statusResponse.ok) {
+                const statusData = await statusResponse.json();
+                
+                // Check if refresh is complete:
+                // 1. Not currently refreshing (is_refreshing includes refresh_lock, refresh_scheduled, metadata_refreshing)
+                // 2. No other ranges are refreshing
+                // 3. Cache exists and is fresh (recently built or not stale)
+                const isComplete = !statusData.is_refreshing && 
+                                  !statusData.any_range_refreshing && 
+                                  statusData.exists && 
+                                  (statusData.recently_built || !statusData.is_stale);
+                
+                if (isComplete) {
+                  // Refresh is complete, reload the page to show fresh data
+                  console.log('Statistics refresh complete, reloading page');
+                  window.location.reload();
+                } else if (attempts >= maxAttempts) {
+                  // Timeout - reload anyway
+                  console.warn('Statistics refresh polling timeout, reloading page');
+                  window.location.reload();
+                } else {
+                  // Continue polling
+                  setTimeout(pollForCompletion, 1000);
+                }
+              } else {
+                // If status check fails, reload after a few attempts
+                console.error('Failed to check cache status:', statusResponse.status);
+                if (attempts >= 5) {
+                  window.location.reload();
+                } else {
+                  setTimeout(pollForCompletion, 1000);
+                }
+              }
+            } catch (error) {
+              console.error("Error polling cache status:", error);
+              // If polling fails, reload after a few attempts
+              if (attempts >= 5) {
+                window.location.reload();
+              } else {
+                setTimeout(pollForCompletion, 1000);
+              }
+            }
+          };
+          
+          // Start polling after a short delay to give the refresh time to start
+          setTimeout(pollForCompletion, 1000);
         } else {
           console.error("Failed to refresh statistics");
           this.refreshing = false;
