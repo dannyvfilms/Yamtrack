@@ -653,11 +653,11 @@
 
 /* Search field in multiple selection */
 .select2-container--tailwindcss-4 .select2-selection--multiple .select2-search--inline {
-  @apply block my-0.5;
+  @apply inline-flex items-center flex-none my-0.5;
 }
 
 .select2-container--tailwindcss-4 .select2-selection--multiple .select2-search--inline .select2-search__field {
-  @apply h-[1.5rem] p-0 m-0 text-sm/6 bg-transparent border-0 focus:outline-hidden focus:ring-0 placeholder:text-gray-500 placeholder:text-sm/6 placeholder:font-sans;
+  @apply w-auto min-w-[6ch] h-[1.5rem] p-0 m-0 text-sm/6 bg-transparent border-0 focus:outline-hidden focus:ring-0 placeholder:text-gray-500 placeholder:text-sm/6 placeholder:font-sans;
 }
 
 /* Focus styles for keyboard navigation */

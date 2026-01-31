@@ -42,3 +42,13 @@ class CustomListFormTest(TestCase):
         }
         form = CustomListForm(data=form_data)
         self.assertTrue(form.is_valid())
+
+    def test_custom_list_form_tags_normalized(self):
+        """Ensure tags are normalized and deduplicated."""
+        form_data = {
+            "name": "Test List",
+            "tags": ["  Sci   Fi  ", "sci fi", "Drama", ""],
+        }
+        form = CustomListForm(data=form_data)
+        self.assertTrue(form.is_valid())
+        self.assertEqual(form.cleaned_data["tags"], ["Sci Fi", "Drama"])

@@ -13,10 +13,19 @@
   </div>
 
   {% if custom_lists %}
-    <div id="lists-grid"
-         class="grid gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
-      {% include "lists/components/list_grid.html" %}
-    </div>
+    {% for section in tag_sections %}
+      <div class="mb-6">
+        <div class="flex items-center gap-2 mb-4">
+          <h2 class="text-lg font-semibold text-white">{{ section.tag }}</h2>
+          <span class="text-xs text-gray-400">
+            {{ section.lists|length }} list{{ section.lists|length|pluralize }}
+          </span>
+        </div>
+        <div class="grid gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+          {% include "lists/components/list_grid.html" with custom_lists=section.lists %}
+        </div>
+      </div>
+    {% endfor %}
   {% else %}
     <div class="flex flex-col items-center justify-center py-16 bg-[#2a2f35] rounded-lg">
       <div class="text-center max-w-md mx-auto p-6">
@@ -28,10 +37,4 @@
       </div>
     </div>
   {% endif %}
-
-  <div id="loading-indicator" class="htmx-indicator text-center pt-8">
-    <div class="inline-flex justify-center items-center">
-      <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500"></div>
-    </div>
-  </div>
 {% endblock content %}

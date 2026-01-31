@@ -1,4 +1,5 @@
 from django import forms
+from django.db.models import Q
 from django_select2 import forms as s2forms
 
 from lists.models import CustomList
@@ -10,6 +11,13 @@ class CollaboratorsWidget(s2forms.ModelSelect2MultipleWidget):
     search_fields = ["username__icontains"]
 
 
+class TagsField(forms.MultipleChoiceField):
+    """Allow arbitrary tags while still supporting select2 choices."""
+
+    def valid_value(self, value):
+        return True
+
+
 class CustomListForm(forms.ModelForm):
     """Form for creating new custom lists."""
 
@@ -17,6 +25,18 @@ class CustomListForm(forms.ModelForm):
         required=False,
         label="Public (read-only access)",
         help_text="Anyone with the link can view this list",
+    )
+    tags = TagsField(
+        required=False,
+        label="Tags",
+        help_text="Group lists on your public profile",
+        widget=s2forms.Select2TagWidget(
+            attrs={
+                "data-minimum-input-length": 1,
+                "data-placeholder": "Start typing to add tags...",
+                "data-allow-clear": "false",
+            },
+        ),
     )
 
     class Meta:
@@ -26,6 +46,7 @@ class CustomListForm(forms.ModelForm):
         fields = [
             "name",
             "description",
+            "tags",
             "collaborators",
             "is_public",
             "allow_recommendations",
@@ -42,9 +63,40 @@ class CustomListForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         """Initialize form and map visibility to a public toggle."""
+        self.user = kwargs.pop("user", None)
+        available_tags = kwargs.pop("available_tags", None)
         super().__init__(*args, **kwargs)
         if self.instance and self.instance.pk:
             self.initial["is_public"] = self.instance.visibility == "public"
+            self.initial["tags"] = self._normalize_tags(self.instance.tags)
+
+        existing_tags = []
+        if available_tags is not None:
+            existing_tags.extend(list(available_tags))
+        elif self.user:
+            for custom_list in CustomList.objects.filter(
+                Q(owner=self.user) | Q(collaborators=self.user),
+            ).only("tags"):
+                existing_tags.extend(custom_list.tags or [])
+
+        if self.instance and self.instance.tags:
+            existing_tags.extend(self.instance.tags)
+
+        if self.data:
+            field_key = self.add_prefix("tags")
+            if hasattr(self.data, "getlist"):
+                existing_tags.extend(self.data.getlist(field_key))
+            else:
+                value = self.data.get(field_key, [])
+                if isinstance(value, (list, tuple)):
+                    existing_tags.extend(value)
+                elif value:
+                    existing_tags.append(value)
+
+        normalized_tags = self._normalize_tags(existing_tags)
+        self.fields["tags"].choices = [
+            (tag, tag) for tag in sorted(normalized_tags, key=str.lower)
+        ]
 
     def save(self, commit=True):
         """Save the list with visibility mapped from the public toggle."""
@@ -57,3 +109,27 @@ class CustomListForm(forms.ModelForm):
             instance.save()
             self.save_m2m()
         return instance
+
+    def clean_tags(self):
+        """Normalize tags input."""
+        tags = self.cleaned_data.get("tags") or []
+        return self._normalize_tags(tags)
+
+    @staticmethod
+    def _normalize_tags(tags):
+        cleaned = []
+        seen = set()
+        for tag in tags or []:
+            if tag is None:
+                continue
+            if not isinstance(tag, str):
+                tag = str(tag)
+            normalized = " ".join(tag.strip().split())
+            if not normalized:
+                continue
+            key = normalized.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            cleaned.append(normalized)
+        return cleaned

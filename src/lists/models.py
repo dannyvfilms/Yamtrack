@@ -72,6 +72,11 @@ class CustomList(models.Model):
 
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True, default="")
+    tags = models.JSONField(
+        blank=True,
+        default=list,
+        help_text="Optional tags used to group public lists.",
+    )
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     collaborators = models.ManyToManyField(
         settings.AUTH_USER_MODEL,

@@ -65,23 +65,36 @@ def user_profile(request, username):
 
     # Get all public lists owned by this user
     # Use a fresh query each time to avoid any caching issues
-    public_lists = (
+    public_lists = list(
         CustomList.objects.filter(
             owner=profile_user,
             visibility="public",
         )
         .select_related("owner")
         .prefetch_related("collaborators", "items")
+        .order_by("-id")
     )
 
-    # Sort by newest first (most recently created)
-    public_lists = public_lists.order_by("-id")
+    tag_map = {}
+    for custom_list in public_lists:
+        tags = [
+            tag.strip()
+            for tag in (custom_list.tags or [])
+            if isinstance(tag, str) and tag.strip()
+        ]
+        if not tags:
+            tag_map.setdefault("Untagged", []).append(custom_list)
+            continue
+        for tag in tags:
+            tag_map.setdefault(tag, []).append(custom_list)
 
-    # Pagination
-    page = request.GET.get("page", 1)
-    items_per_page = 20
-    paginator = Paginator(public_lists, items_per_page)
-    lists_page = paginator.get_page(page)
+    def _tag_sort_key(tag_name):
+        return (tag_name == "Untagged", tag_name.lower())
+
+    tag_sections = [
+        {"tag": tag_name, "lists": tag_map[tag_name]}
+        for tag_name in sorted(tag_map, key=_tag_sort_key)
+    ]
 
     # Determine if this is the current user's own profile
     is_own_profile = request.user.is_authenticated and request.user == profile_user
@@ -90,23 +103,13 @@ def user_profile(request, username):
     public_view = not request.user.is_authenticated
     base_template = "base_public.html" if public_view else "base.html"
 
-    # HTMX partial response for pagination
-    if request.headers.get("HX-Request"):
-        return render(
-            request,
-            "lists/components/list_grid.html",
-            {
-                "custom_lists": lists_page,
-                "profile_username": username,
-            },
-        )
-
     return render(
         request,
         "lists/user_profile.html",
         {
             "profile_user": profile_user,
-            "custom_lists": lists_page,
+            "custom_lists": public_lists,
+            "tag_sections": tag_sections,
             "is_own_profile": is_own_profile,
             "public_view": public_view,
             "base_template": base_template,
@@ -249,6 +252,14 @@ def lists(request):
             lists_page = paginator.get_page(1)
             lists_page.object_list = []
 
+    available_tags = CustomListForm._normalize_tags(
+        tag
+        for custom_list in CustomList.objects.filter(
+            Q(owner=request.user) | Q(collaborators=request.user),
+        ).only("tags")
+        for tag in (custom_list.tags or [])
+    )
+
     # Create a form for each list
     # needs unique id for django-select2
     for i, custom_list in enumerate(lists_page, start=1):
@@ -256,6 +267,8 @@ def lists(request):
             custom_list.form = CustomListForm(
                 instance=custom_list,
                 auto_id=f"id_{i}_%s",
+                user=request.user,
+                available_tags=available_tags,
             )
         except Exception as e:
             logger.error(
@@ -288,7 +301,10 @@ def lists(request):
         response["X-Cache-Buster"] = str(cache_buster)
         return response
 
-    create_list_form = CustomListForm()
+    create_list_form = CustomListForm(
+        user=request.user,
+        available_tags=available_tags,
+    )
     trakt_redirect_uri = request.build_absolute_uri(reverse("trakt_lists_callback"))
     trakt_account = TraktAccount.objects.filter(user=request.user).first()
 
@@ -725,7 +741,9 @@ def list_detail(request, list_id):
     if not is_partial:
         context.update(
             {
-                "form": CustomListForm(instance=custom_list) if can_edit else None,
+                "form": CustomListForm(instance=custom_list, user=request.user)
+                if can_edit
+                else None,
                 "media_types": MediaTypes.values,
                 "collaborators_count": custom_list.collaborators.count() + 1,
             },
@@ -739,7 +757,7 @@ def list_detail(request, list_id):
 @require_POST
 def create(request):
     """Create a new custom list."""
-    form = CustomListForm(request.POST)
+    form = CustomListForm(request.POST, user=request.user)
     if form.is_valid():
         custom_list = form.save(commit=False)
         custom_list.owner = request.user
@@ -763,7 +781,7 @@ def edit(request):
     list_id = request.POST.get("list_id")
     custom_list = get_object_or_404(CustomList, id=list_id)
     if custom_list.user_can_edit(request.user):
-        form = CustomListForm(request.POST, instance=custom_list)
+        form = CustomListForm(request.POST, instance=custom_list, user=request.user)
         if form.is_valid():
             form.save()
             logger.info("%s list edited successfully.", custom_list)

@@ -3764,10 +3764,13 @@
 }
 .select2-container--tailwindcss-4 .select2-selection--multiple .select2-search--inline {
   margin-block: calc(var(--spacing) * 0.5);
-  display: block;
+  display: inline-flex;
+  align-items: center;
 }
 .select2-container--tailwindcss-4 .select2-selection--multiple .select2-search--inline .select2-search__field {
   margin: calc(var(--spacing) * 0);
+  width: auto;
+  min-width: 6ch;
   height: 1.5rem;
   border-style: var(--tw-border-style);
   border-width: 0px;
