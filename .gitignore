@@ -8,7 +8,6 @@ src/db/db.sqlite3
 db.sqlite3-shm
 db.sqlite3-wal
 .DS_Store
-src/.DS_Store
 .vscode/launch.json
 CLAUDE.md
 requests.http
