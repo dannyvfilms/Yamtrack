@@ -71,6 +71,9 @@ def user_profile(request, username):
             visibility="public",
         )
         .select_related("owner")
+        .annotate(
+            items_count=Count("items", distinct=True),
+        )
         .prefetch_related("collaborators", "items")
         .order_by("-id")
     )
