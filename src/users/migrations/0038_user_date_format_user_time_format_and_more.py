@@ -2,14 +2,12 @@
 
 from django.db import migrations, models
 from django.db import connection
-import json
-import os
+import logging
 
 
 def check_constraint_values(apps, schema_editor):
     """Check all constraint-related field values before migration to identify invalid data."""
-    # #region agent log
-    log_path = "/Users/dannyvfilms/Developer/Cursor/release/.cursor/debug.log"
+    logger = logging.getLogger(__name__)
     try:
         User = apps.get_model("users", "User")
         users = User.objects.all()
@@ -60,43 +58,20 @@ def check_constraint_values(apps, schema_editor):
                             "username": user.username,
                             "value": value,
                         })
-        
-        log_entry = {
-            "sessionId": "debug-session",
-            "runId": "pre-migration-check",
-            "hypothesisId": "A",
-            "location": "0038_migration:check_constraint_values",
-            "message": "Checking constraint field values before migration",
-            "data": {
-                "total_users": users.count(),
-                "invalid_fields": invalid_fields,
-            },
-            "timestamp": int(__import__("time").time() * 1000),
-        }
-        with open(log_path, "a") as f:
-            f.write(json.dumps(log_entry) + "\n")
+
+        if invalid_fields:
+            logger.warning(
+                "Invalid constraint values detected in users migration check: %s",
+                invalid_fields,
+            )
     except Exception as e:
-        log_entry = {
-            "sessionId": "debug-session",
-            "runId": "pre-migration-check",
-            "hypothesisId": "A",
-            "location": "0038_migration:check_constraint_values",
-            "message": "Error checking constraint values",
-            "data": {"error": str(e)},
-            "timestamp": int(__import__("time").time() * 1000),
-        }
-        with open(log_path, "a") as f:
-            f.write(json.dumps(log_entry) + "\n")
-    # #endregion
+        logger.warning("Error checking constraint values: %s", e)
 
 
 def fix_invalid_constraint_values(apps, schema_editor):
     """Fix invalid constraint field values using raw SQL to avoid ORM issues."""
-    # #region agent log
-    log_path = "/Users/dannyvfilms/Developer/Cursor/release/.cursor/debug.log"
+    logger = logging.getLogger(__name__)
     try:
-        from django.db import connection
-        
         fixed_counts = {}
         
         # Default values and valid values for each constraint
@@ -232,61 +207,13 @@ def fix_invalid_constraint_values(apps, schema_editor):
                             [default_value, user_id],
                         )
                         fixed_counts[field_name] = fixed_counts.get(field_name, 0) + 1
-                        
-                        log_entry = {
-                            "sessionId": "debug-session",
-                            "runId": "pre-migration-fix",
-                            "hypothesisId": "A",
-                            "location": "0038_migration:fix_invalid_constraint_values",
-                            "message": f"Fixed invalid {field_name} value",
-                            "data": {
-                                "user_id": user_id,
-                                "username": username,
-                                "field": field_name,
-                                "old_value": old_value,
-                                "new_value": default_value,
-                            },
-                            "timestamp": int(__import__("time").time() * 1000),
-                        }
-                        with open(log_path, "a") as f:
-                            f.write(json.dumps(log_entry) + "\n")
                 except Exception as field_error:
-                    log_entry = {
-                        "sessionId": "debug-session",
-                        "runId": "pre-migration-fix",
-                        "hypothesisId": "A",
-                        "location": "0038_migration:fix_invalid_constraint_values",
-                        "message": f"Error fixing {field_name}",
-                        "data": {"error": str(field_error)},
-                        "timestamp": int(__import__("time").time() * 1000),
-                    }
-                    with open(log_path, "a") as f:
-                        f.write(json.dumps(log_entry) + "\n")
-        
-        log_entry = {
-            "sessionId": "debug-session",
-            "runId": "pre-migration-fix",
-            "hypothesisId": "A",
-            "location": "0038_migration:fix_invalid_constraint_values",
-            "message": "Completed fixing invalid constraint values",
-            "data": {"fixed_counts": fixed_counts},
-            "timestamp": int(__import__("time").time() * 1000),
-        }
-        with open(log_path, "a") as f:
-            f.write(json.dumps(log_entry) + "\n")
+                    logger.warning("Error fixing %s: %s", field_name, field_error)
+
+        if fixed_counts:
+            logger.info("Fixed invalid constraint values: %s", fixed_counts)
     except Exception as e:
-        log_entry = {
-            "sessionId": "debug-session",
-            "runId": "pre-migration-fix",
-            "hypothesisId": "A",
-            "location": "0038_migration:fix_invalid_constraint_values",
-            "message": "Error fixing constraint values",
-            "data": {"error": str(e)},
-            "timestamp": int(__import__("time").time() * 1000),
-        }
-        with open(log_path, "a") as f:
-            f.write(json.dumps(log_entry) + "\n")
-    # #endregion
+        logger.warning("Error fixing constraint values: %s", e)
 
 
 class Migration(migrations.Migration):
