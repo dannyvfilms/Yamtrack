@@ -262,11 +262,11 @@ def lists(request):
 
     # Create a form for each list
     # needs unique id for django-select2
-    for i, custom_list in enumerate(lists_page, start=1):
+    for custom_list in lists_page:
         try:
             custom_list.form = CustomListForm(
                 instance=custom_list,
-                auto_id=f"id_{i}_%s",
+                auto_id=f"id_{custom_list.id}_%s",
                 user=request.user,
                 available_tags=available_tags,
             )

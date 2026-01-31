@@ -386,6 +386,18 @@
     {% endblock js %}
 
     <script>
+      function initDjangoSelect2(root) {
+        if (!window.jQuery || !jQuery.fn || !jQuery.fn.djangoSelect2) return;
+        const $root = root ? jQuery(root) : jQuery(document);
+        $root.find('.django-select2').not('.select2-hidden-accessible').djangoSelect2();
+      }
+
+      document.addEventListener('DOMContentLoaded', () => initDjangoSelect2(document));
+      document.body.addEventListener('htmx:afterSwap', () => initDjangoSelect2(document));
+      document.body.addEventListener('htmx:afterSettle', () => initDjangoSelect2(document));
+    </script>
+
+    <script>
       // Media card hover - slide body up to reveal expanded title + year
       function initMediaCardHover() {
         document.querySelectorAll('.search-result-card').forEach(card => {
