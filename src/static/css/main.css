@@ -656,9 +656,6 @@
   .h-10 {
     height: calc(var(--spacing) * 10);
   }
-  .h-11 {
-    height: calc(var(--spacing) * 11);
-  }
   .h-12 {
     height: calc(var(--spacing) * 12);
   }
@@ -673,6 +670,9 @@
   }
   .h-24 {
     height: calc(var(--spacing) * 24);
+  }
+  .h-40 {
+    height: calc(var(--spacing) * 40);
   }
   .h-48 {
     height: calc(var(--spacing) * 48);
@@ -760,9 +760,6 @@
   }
   .w-10 {
     width: calc(var(--spacing) * 10);
-  }
-  .w-11 {
-    width: calc(var(--spacing) * 11);
   }
   .w-12 {
     width: calc(var(--spacing) * 12);
@@ -1280,6 +1277,9 @@
   .border-\[\#2c3136\] {
     border-color: #2c3136;
   }
+  .border-\[\#39404b\] {
+    border-color: #39404b;
+  }
   .border-amber-400\/30 {
     border-color: color-mix(in srgb, oklch(82.8% 0.189 84.429) 30%, transparent);
     @supports (color: color-mix(in lab, red, red)) {
@@ -1345,6 +1345,9 @@
   }
   .bg-\[\#1a1d20\] {
     background-color: #1a1d20;
+  }
+  .bg-\[\#1f2328\] {
+    background-color: #1f2328;
   }
   .bg-\[\#2a2e33\] {
     background-color: #2a2e33;
@@ -1814,10 +1817,6 @@
   .leading-relaxed {
     --tw-leading: var(--leading-relaxed);
     line-height: var(--leading-relaxed);
-  }
-  .leading-snug {
-    --tw-leading: var(--leading-snug);
-    line-height: var(--leading-snug);
   }
   .leading-tight {
     --tw-leading: var(--leading-tight);
@@ -2717,11 +2716,6 @@
       height: calc(var(--spacing) * 8);
     }
   }
-  .sm\:h-16 {
-    @media (width >= 40rem) {
-      height: calc(var(--spacing) * 16);
-    }
-  }
   .sm\:min-h-\[380px\] {
     @media (width >= 40rem) {
       min-height: 380px;
@@ -2730,11 +2724,6 @@
   .sm\:w-8 {
     @media (width >= 40rem) {
       width: calc(var(--spacing) * 8);
-    }
-  }
-  .sm\:w-16 {
-    @media (width >= 40rem) {
-      width: calc(var(--spacing) * 16);
     }
   }
   .sm\:w-32 {
@@ -3141,12 +3130,6 @@
   .lg\:pb-40 {
     @media (width >= 64rem) {
       padding-bottom: calc(var(--spacing) * 40);
-    }
-  }
-  .lg\:text-xl {
-    @media (width >= 64rem) {
-      font-size: var(--text-xl);
-      line-height: var(--tw-leading, var(--text-xl--line-height));
     }
   }
   .xl\:grid-cols-3 {
@@ -3765,13 +3748,14 @@
 .select2-container--tailwindcss-4 .select2-selection--multiple .select2-search--inline {
   margin-block: calc(var(--spacing) * 0.5);
   display: inline-flex;
+  flex: none;
   align-items: center;
 }
 .select2-container--tailwindcss-4 .select2-selection--multiple .select2-search--inline .select2-search__field {
   margin: calc(var(--spacing) * 0);
+  height: 1.5rem;
   width: auto;
   min-width: 6ch;
-  height: 1.5rem;
   border-style: var(--tw-border-style);
   border-width: 0px;
   background-color: transparent;
