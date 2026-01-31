@@ -10,7 +10,11 @@ from app.helpers import (
     minutes_to_hhmm,
     redirect_back,
 )
-from app.models import Item, MediaTypes, Movie, Sources, Status
+from datetime import timedelta
+
+from django.utils import timezone
+
+from app.models import Game, Item, MediaTypes, Movie, Sources, Status
 
 
 class HelpersTest(TestCase):
@@ -192,3 +196,53 @@ class EnrichItemsWithUserDataTest(TestCase):
             unknown_movie_enriched["item"]["description"],
             "This movie doesn't exist in our database",
         )
+
+    def test_enrich_items_with_user_data_aggregates_game_progress(self):
+        """Ensure game entries aggregate progress across duplicates."""
+        game_item = Item.objects.create(
+            media_id="game-1",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Test Game",
+            image="http://example.com/game.jpg",
+        )
+
+        # Older in-progress session
+        older_session = Game.objects.create(
+            item=game_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=60,
+            end_date=timezone.now(),
+        )
+        Game.objects.filter(id=older_session.id).update(
+            created_at=timezone.now() - timedelta(days=2),
+        )
+
+        # Newer session
+        newer_session = Game.objects.create(
+            item=game_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=45,
+            end_date=timezone.now(),
+        )
+        Game.objects.filter(id=newer_session.id).update(
+            created_at=timezone.now() - timedelta(days=1),
+        )
+
+        raw_items = [
+            {
+                "media_id": "game-1",
+                "source": Sources.IGDB.value,
+                "media_type": MediaTypes.GAME.value,
+                "title": "Test Game",
+                "image": "http://example.com/game.jpg",
+            },
+        ]
+
+        enriched_items = enrich_items_with_user_data(self.request, raw_items)
+        self.assertEqual(len(enriched_items), 1)
+        media = enriched_items[0]["media"]
+        self.assertIsNotNone(media)
+        self.assertEqual(media.aggregated_progress, 105)

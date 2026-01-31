@@ -120,15 +120,24 @@ def enrich_items_with_user_data(request, items, user=None):
     # Create a lookup dictionary for fast matching
     # For podcasts with multiple entries, keep only the most recent one (first after ordering)
     media_lookup = {}
+    media_grouped = {}
     for media in media_queryset:
         if media_type == MediaTypes.SEASON.value:
             key = (media.item.media_id, media.item.source, media.item.season_number)
         else:
             key = (media.item.media_id, media.item.source)
 
+        media_grouped.setdefault(key, []).append(media)
+
         # Only store the first (most recent for podcasts) entry for each key
         if key not in media_lookup:
             media_lookup[key] = media
+
+    # Aggregate duplicates for non-podcast media to expose total progress/recent status
+    if media_type != MediaTypes.PODCAST.value:
+        for key, entries in media_grouped.items():
+            if len(entries) > 1 and key in media_lookup:
+                BasicMedia.objects._aggregate_item_data(media_lookup[key], entries)
 
     # Enrich items with matched media
     enriched_items = []
