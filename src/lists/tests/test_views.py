@@ -378,6 +378,15 @@ class ListDetailViewTests(TestCase):
             MediaTypes.ANIME.value,
         )
 
+    def test_list_detail_view_anonymous_public(self):
+        """Ensure anonymous users can view public lists without preference errors."""
+        self.custom_list.visibility = "public"
+        self.custom_list.save(update_fields=["visibility"])
+
+        self.client.logout()
+        response = self.client.get(reverse("list_detail", args=[self.custom_list.id]))
+        self.assertEqual(response.status_code, 200)
+
     @patch.object(get_user_model(), "update_preference")
     @patch.object(CustomList, "user_can_view")
     def test_list_detail_view_search(

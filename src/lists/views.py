@@ -523,13 +523,21 @@ def list_detail(request, list_id):
         if sort_by not in valid_sorts:
             sort_by = "date_added"
 
+    if request.user.is_authenticated:
+        status_filter = request.user.update_preference(
+            "list_detail_status",
+            request.GET.get("status"),
+        )
+    else:
+        status_filter = request.GET.get("status", MediaStatusChoices.ALL)
+        valid_statuses = [choice[0] for choice in MediaStatusChoices.choices]
+        if status_filter not in valid_statuses:
+            status_filter = MediaStatusChoices.ALL
+
     params = {
         "sort_by": sort_by,
         "media_type": request.GET.get("type", "all"),
-        "status_filter": request.user.update_preference(
-            "list_detail_status",
-            request.GET.get("status"),
-        ),
+        "status_filter": status_filter,
         "page": int(request.GET.get("page", 1)),
         "search_query": request.GET.get("q", ""),
     }
@@ -632,7 +640,7 @@ def list_detail(request, list_id):
         media_by_item_id = media_manager.fetch_media_for_items(
             media_types,
             item_ids,
-            request.user,
+            media_user,
             status_filter=params["status_filter"],
         )
         # Filter items to only those with the specified status
