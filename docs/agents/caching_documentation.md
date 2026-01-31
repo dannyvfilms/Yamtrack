@@ -161,6 +161,7 @@
 
 ## HTTP response cache control
 - `@never_cache` on `track_modal` to prevent browser caching. The view also explicitly sets `Cache-Control: no-cache, no-store, must-revalidate`, `Pragma: no-cache`, and `Expires: 0` headers for Safari compatibility.
+- `@never_cache` on `collection_modal` to prevent browser caching. The view also explicitly sets `Cache-Control: no-cache, no-store, must-revalidate, max-age=0`, `Pragma: no-cache`, `Expires: 0`, and `Vary: Cookie, HX-Request` to avoid Safari reusing stale modal HTML.
 - `@never_cache` on `lists.views.lists` to avoid stale list data after items are added/removed. The view also explicitly sets `Cache-Control: no-cache, no-store, must-revalidate`, `Pragma: no-cache`, `Expires: 0`, and `Vary: Cookie` headers for Safari compatibility and to ensure user-specific responses aren't cached.
 - `@never_cache` on `lists.views.list_detail` to avoid stale list grids/context rows after HTMX sorts and back/forward navigation.
 - `@never_cache` on `app.views.media_list` to avoid stale media grids/context rows after HTMX sorts and back/forward navigation.

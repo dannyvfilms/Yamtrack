@@ -663,6 +663,7 @@ class CollectionEntryForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         self.user = kwargs.pop("user", None)
         collection_media_type = kwargs.pop("collection_media_type", None)
+        collection_choices_override = kwargs.pop("collection_choices_override", None) or {}
         super().__init__(*args, **kwargs)
         if settings.TRACK_TIME:
             collected_widget = forms.DateTimeInput(attrs={"type": "datetime-local"})
@@ -689,6 +690,8 @@ class CollectionEntryForm(forms.ModelForm):
                 self.fields[field_name].label = label
 
         choices_by_field = config_entry.get("choices", {})
+        if collection_choices_override:
+            choices_by_field = {**choices_by_field, **collection_choices_override}
         for field_name, choices in choices_by_field.items():
             if field_name not in self.fields:
                 continue
@@ -702,6 +705,9 @@ class CollectionEntryForm(forms.ModelForm):
             existing_values = {str(value) for value, _ in normalized}
             if current_value and str(current_value) not in existing_values:
                 normalized.append((current_value, current_value))
+            submitted_value = self.data.get(field_name)
+            if submitted_value and str(submitted_value) not in existing_values:
+                normalized.append((submitted_value, submitted_value))
             choices_list = [("", "—"), *normalized]
             self.fields[field_name].widget = forms.Select(choices=choices_list)
             self.fields[field_name].required = False

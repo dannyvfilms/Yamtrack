@@ -7210,11 +7210,10 @@ def collection_modal(request, source, media_type, media_id):
         lookup["episode_number"] = episode_number
 
     item = Item.objects.filter(**lookup).first()
-    if not item:
-        item_defaults = {
-            "title": "",
-            "image": settings.IMG_NONE,
-        }
+    metadata = None
+    needs_metadata = item is None or media_type == MediaTypes.GAME.value
+
+    if needs_metadata:
         try:
             metadata = services.get_media_metadata(
                 media_type,
@@ -7223,23 +7222,32 @@ def collection_modal(request, source, media_type, media_id):
                 [season_number] if season_number is not None else None,
                 episode_number=episode_number,
             )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Collection modal metadata lookup failed for %s: %s", media_id, exc)
+
+    if not item:
+        item_defaults = {
+            "title": "",
+            "image": settings.IMG_NONE,
+        }
+        try:
             item_defaults["title"] = (
-                metadata.get("title")
-                or metadata.get("season_title")
-                or metadata.get("name")
+                (metadata or {}).get("title")
+                or (metadata or {}).get("season_title")
+                or (metadata or {}).get("name")
                 or ""
             )
-            item_defaults["image"] = metadata.get("image") or settings.IMG_NONE
+            item_defaults["image"] = (metadata or {}).get("image") or settings.IMG_NONE
 
             if media_type == MediaTypes.BOOK.value:
                 item_defaults["number_of_pages"] = (
-                    metadata.get("max_progress")
-                    or metadata.get("details", {}).get("number_of_pages")
+                    (metadata or {}).get("max_progress")
+                    or (metadata or {}).get("details", {}).get("number_of_pages")
                 )
 
-            if metadata.get("details", {}).get("runtime"):
+            if (metadata or {}).get("details", {}).get("runtime"):
                 from app.statistics import parse_runtime_to_minutes
-                runtime_minutes = parse_runtime_to_minutes(metadata["details"]["runtime"])
+                runtime_minutes = parse_runtime_to_minutes((metadata or {})["details"]["runtime"])
                 if runtime_minutes:
                     item_defaults["runtime_minutes"] = runtime_minutes
         except Exception as exc:  # pragma: no cover - defensive
@@ -7251,18 +7259,25 @@ def collection_modal(request, source, media_type, media_id):
         )
 
     # Check if collection entry already exists
+    platform_choices = None
+    if media_type == MediaTypes.GAME.value:
+        platforms = (metadata or {}).get("details", {}).get("platforms") or []
+        if platforms:
+            platform_choices = platforms
+
     existing_entry = helpers.is_item_collected(request.user, item)
     form = CollectionEntryForm(
         instance=existing_entry,
         user=request.user,
         collection_media_type=item.media_type,
+        collection_choices_override={"resolution": platform_choices} if platform_choices else None,
     )
     form.fields["item"].initial = item.id
 
     return_url = request.GET.get("return_url", "")
     collection_fields = getattr(form, "collection_fields", [])
 
-    return render(
+    response = render(
         request,
         "app/components/collection_modal.html",
         {
@@ -7273,6 +7288,13 @@ def collection_modal(request, source, media_type, media_id):
             "collection_fields": collection_fields,
         },
     )
+    # Explicitly set cache control headers for Safari compatibility
+    # @never_cache should handle this, but Safari can be aggressive with caching
+    response["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+    response["Pragma"] = "no-cache"
+    response["Expires"] = "0"
+    response["Vary"] = "Cookie, HX-Request"
+    return response
 
 
 @login_required
