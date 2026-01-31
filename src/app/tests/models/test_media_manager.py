@@ -22,7 +22,7 @@ from app.models import (
     Status,
 )
 from events.models import Event
-from users.models import MediaStatusChoices
+from users.models import HomeSortChoices, MediaStatusChoices
 
 mock_path = Path(__file__).resolve().parent.parent / "mock_data"
 
@@ -195,6 +195,35 @@ class MediaManagerTests(TestCase):
         )
 
         self.assertEqual(len(media_list), 1)
+
+    def test_get_in_progress_excludes_latest_completed(self):
+        """Ensure home in-progress list ignores items whose latest status is completed."""
+        manager = MediaManager()
+
+        # Make the existing in-progress entry older
+        Game.objects.filter(id=self.game.id).update(
+            created_at=timezone.now() - timedelta(days=2),
+        )
+
+        # Create a newer completed entry for the same item
+        completed_entry = Game.objects.create(
+            item=self.game_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=200,
+            end_date=timezone.now(),
+        )
+        Game.objects.filter(id=completed_entry.id).update(
+            created_at=timezone.now() - timedelta(days=1),
+        )
+
+        list_by_type = manager.get_in_progress(
+            self.user,
+            HomeSortChoices.RECENT,
+            items_limit=10,
+        )
+
+        self.assertNotIn(MediaTypes.GAME.value, list_by_type)
 
     def test_get_media_list_with_search(self):
         """Test the get_media_list method with search parameter."""
@@ -816,5 +845,3 @@ class MediaManagerTests(TestCase):
         ).first()
 
         self.assertIsNone(non_existent)
-
-

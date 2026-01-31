@@ -414,15 +414,16 @@ class MediaManager(models.Manager):
         else:
             display_media.aggregated_end_date = None
 
-        # Aggregate status (most recent status)
-        display_media.aggregated_status = display_media.status  # Already the most recent due to row_number=1
+        # Aggregate status (most recent status by activity)
+        latest_status = None
+        latest_status_activity = None
 
         # Aggregate rating (find the most recent rating among all entries)
         # Since created_at only represents when the entry was first created,
         # we need to use a different approach to find the most recent rating
         # We'll prioritize entries with more recent activity (end_date, progressed_at)
         latest_rating = None
-        latest_activity = None
+        latest_rating_activity = None
 
         for entry in all_media_entries:
             if entry.score is not None:
@@ -436,9 +437,19 @@ class MediaManager(models.Manager):
                     entry_activity = entry.created_at
 
                 # If this entry has more recent activity, use its rating
-                if latest_activity is None or entry_activity > latest_activity:
-                    latest_activity = entry_activity
+                if latest_rating_activity is None or entry_activity > latest_rating_activity:
+                    latest_rating_activity = entry_activity
                     latest_rating = entry.score
+            else:
+                entry_activity = entry.end_date or entry.progressed_at or entry.created_at
+
+            if entry_activity and (
+                latest_status_activity is None or entry_activity > latest_status_activity
+            ):
+                latest_status_activity = entry_activity
+                latest_status = entry.status
+
+        display_media.aggregated_status = latest_status or display_media.status
 
         if latest_rating is not None:
             display_media.aggregated_score = latest_rating
@@ -642,6 +653,17 @@ class MediaManager(models.Manager):
         # Get user preference for planned items display mode
         planned_mode = getattr(user, "show_planned_on_home", users.models.PlannedHomeDisplayChoices.DISABLED)
 
+        def filter_by_latest_status(media_list, desired_status):
+            """Filter media entries by their most recent status across duplicates."""
+            if not media_list:
+                return media_list
+            filtered = []
+            for media in media_list:
+                latest_status = getattr(media, "aggregated_status", None) or getattr(media, "status", None)
+                if latest_status == desired_status:
+                    filtered.append(media)
+            return filtered
+
         for media_type in media_types:
             base_media_type = media_type
 
@@ -653,6 +675,7 @@ class MediaManager(models.Manager):
                 sort_filter=None,
             )
             in_progress_list = list(in_progress_list)
+            in_progress_list = filter_by_latest_status(in_progress_list, Status.IN_PROGRESS.value)
 
             # Get planned items if needed
             planned_list = []
@@ -663,7 +686,7 @@ class MediaManager(models.Manager):
                     status_filter=Status.PLANNING.value,
                     sort_filter=None,
                 )
-                planned_list = list(planned_queryset)
+                planned_list = filter_by_latest_status(list(planned_queryset), Status.PLANNING.value)
 
             # Handle different modes
             if planned_mode == users.models.PlannedHomeDisplayChoices.DISABLED:
