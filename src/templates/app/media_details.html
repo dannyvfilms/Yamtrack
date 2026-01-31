@@ -732,7 +732,28 @@
 
       {# Collection #}
       {% if not public_view and media_type != MediaTypes.PODCAST.value %}
-        <h2 class="text-xl font-bold mb-4 mt-6">Collection</h2>
+        <div class="flex items-center justify-between mb-4 mt-6">
+          <h2 class="text-xl font-bold">Collection</h2>
+          <div x-data="{ collectionOpen: false }">
+            <button class="p-2 text-white rounded-md bg-indigo-600 hover:bg-indigo-700 transition-colors cursor-pointer"
+                    hx-get="{% media_view_url 'collection_modal' media %}"
+                    hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}", "season_number": "{{ media.season_number|default:'' }}", "episode_number": "{{ media.episode_number|default:'' }}"}'
+                    hx-target="#{% component_id 'collection' media %}"
+                    hx-trigger="click once"
+                    @click="collectionOpen = true"
+                    title="Add collection data">{% include "app/icons/plus.svg" with classes="w-4 h-4" %}</button>
+
+            {# Collection Modal #}
+            <div x-show="collectionOpen"
+                 @keydown.escape.window="collectionOpen = false"
+                 class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+              <div class="w-152 modal-max-height overflow-y-auto px-4 md:px-0 relative z-60"
+                   @click.outside="collectionOpen = false">
+                <div id="{% component_id 'collection' media %}"></div>
+              </div>
+            </div>
+          </div>
+        </div>
         <div class="bg-[#2a2f35] p-4 rounded-lg text-center md:text-start">
           {# Collection statistics for TV shows/Anime or Seasons #}
           {% if collection_stats %}

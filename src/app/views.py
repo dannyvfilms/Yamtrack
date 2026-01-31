@@ -7093,15 +7093,28 @@ def collection_add(request):
     
     if existing_entry:
         # Update instead of creating duplicate
-        form = CollectionEntryForm(post_data, instance=existing_entry, user=request.user)
+        form = CollectionEntryForm(
+            post_data,
+            instance=existing_entry,
+            user=request.user,
+            collection_media_type=item.media_type,
+        )
     else:
-        form = CollectionEntryForm(post_data, user=request.user)
+        form = CollectionEntryForm(
+            post_data,
+            user=request.user,
+            collection_media_type=item.media_type,
+        )
 
     if form.is_valid():
         entry = form.save(commit=False)
         entry.user = request.user
         entry.item = item
         entry.save()
+        collected_at = form.cleaned_data.get("collected_at")
+        if collected_at:
+            CollectionEntry.objects.filter(id=entry.id).update(collected_at=collected_at)
+            entry.collected_at = collected_at
         messages.success(request, f"Added {item.title} to collection")
     else:
         helpers.form_error_messages(form, request)
@@ -7120,9 +7133,18 @@ def collection_update(request, entry_id):
         from django.http import Http404
         raise Http404("Collection entry not found")
 
-    form = CollectionEntryForm(request.POST, instance=entry, user=request.user)
+    form = CollectionEntryForm(
+        request.POST,
+        instance=entry,
+        user=request.user,
+        collection_media_type=entry.item.media_type,
+    )
     if form.is_valid():
-        form.save()
+        entry = form.save()
+        collected_at = form.cleaned_data.get("collected_at")
+        if collected_at:
+            CollectionEntry.objects.filter(id=entry.id).update(collected_at=collected_at)
+            entry.collected_at = collected_at
         messages.success(request, f"Updated collection entry for {entry.item.title}")
     else:
         helpers.form_error_messages(form, request)
@@ -7154,24 +7176,91 @@ def collection_remove(request, entry_id):
 @require_GET
 def collection_modal(request, source, media_type, media_id):
     """Return modal HTML for adding/editing collection entry."""
-    try:
-        item = Item.objects.get(
-            media_id=media_id,
-            source=source,
-            media_type=media_type,
+    def _parse_optional_int(value):
+        if value in (None, "", "null"):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    season_number = _parse_optional_int(request.GET.get("season_number"))
+    episode_number = _parse_optional_int(request.GET.get("episode_number"))
+
+    lookup = {
+        "media_id": media_id,
+        "source": source,
+        "media_type": media_type,
+    }
+
+    if media_type == MediaTypes.SEASON.value:
+        if season_number is None:
+            if request.headers.get("HX-Request"):
+                return HttpResponseBadRequest("Season number is required")
+            messages.error(request, "Season number is required")
+            return redirect("home")
+        lookup["season_number"] = season_number
+    elif media_type == MediaTypes.EPISODE.value:
+        if season_number is None or episode_number is None:
+            if request.headers.get("HX-Request"):
+                return HttpResponseBadRequest("Season and episode numbers are required")
+            messages.error(request, "Season and episode numbers are required")
+            return redirect("home")
+        lookup["season_number"] = season_number
+        lookup["episode_number"] = episode_number
+
+    item = Item.objects.filter(**lookup).first()
+    if not item:
+        item_defaults = {
+            "title": "",
+            "image": settings.IMG_NONE,
+        }
+        try:
+            metadata = services.get_media_metadata(
+                media_type,
+                media_id,
+                source,
+                [season_number] if season_number is not None else None,
+                episode_number=episode_number,
+            )
+            item_defaults["title"] = (
+                metadata.get("title")
+                or metadata.get("season_title")
+                or metadata.get("name")
+                or ""
+            )
+            item_defaults["image"] = metadata.get("image") or settings.IMG_NONE
+
+            if media_type == MediaTypes.BOOK.value:
+                item_defaults["number_of_pages"] = (
+                    metadata.get("max_progress")
+                    or metadata.get("details", {}).get("number_of_pages")
+                )
+
+            if metadata.get("details", {}).get("runtime"):
+                from app.statistics import parse_runtime_to_minutes
+                runtime_minutes = parse_runtime_to_minutes(metadata["details"]["runtime"])
+                if runtime_minutes:
+                    item_defaults["runtime_minutes"] = runtime_minutes
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Collection modal metadata lookup failed for %s: %s", media_id, exc)
+
+        item, _ = Item.objects.get_or_create(
+            **lookup,
+            defaults=item_defaults,
         )
-    except Item.DoesNotExist:
-        if request.headers.get("HX-Request"):
-            return HttpResponseBadRequest("Item not found")
-        messages.error(request, "Item not found")
-        return redirect("home")
 
     # Check if collection entry already exists
     existing_entry = helpers.is_item_collected(request.user, item)
-    form = CollectionEntryForm(instance=existing_entry, user=request.user)
+    form = CollectionEntryForm(
+        instance=existing_entry,
+        user=request.user,
+        collection_media_type=item.media_type,
+    )
     form.fields["item"].initial = item.id
 
     return_url = request.GET.get("return_url", "")
+    collection_fields = getattr(form, "collection_fields", [])
 
     return render(
         request,
@@ -7181,6 +7270,7 @@ def collection_modal(request, source, media_type, media_id):
             "entry": existing_entry,
             "form": form,
             "return_url": return_url,
+            "collection_fields": collection_fields,
         },
     )
 

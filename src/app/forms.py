@@ -1,5 +1,6 @@
 from django import forms
 from django.conf import settings
+from django.utils import timezone
 
 from app import config
 from app.models import (
@@ -647,18 +648,60 @@ class CollectionEntryForm(forms.ModelForm):
         widgets = {
             "item": forms.HiddenInput(),
             "media_type": forms.TextInput(
-                attrs={"placeholder": "e.g., bluray, dvd, digital"},
+                attrs={"placeholder": "Bluray, DVD, Digital"},
             ),
-            "resolution": forms.TextInput(attrs={"placeholder": "e.g., 1080p, 4k"}),
-            "hdr": forms.TextInput(attrs={"placeholder": "e.g., HDR10, Dolby Vision"}),
+            "resolution": forms.TextInput(attrs={"placeholder": "1080p, 4k"}),
+            "hdr": forms.TextInput(attrs={"placeholder": "HDR10, Dolby Vision"}),
             "is_3d": forms.CheckboxInput(),
             "audio_codec": forms.TextInput(
-                attrs={"placeholder": "e.g., DTS, TrueHD, Atmos"},
+                attrs={"placeholder": "DTS, TrueHD, Atmos"},
             ),
-            "audio_channels": forms.TextInput(attrs={"placeholder": "e.g., 5.1, 7.1.2"}),
-            "bitrate": forms.NumberInput(attrs={"placeholder": "e.g., 128, 320, 1411"}),
+            "audio_channels": forms.TextInput(attrs={"placeholder": "5.1, 7.1.2"}),
+            "bitrate": forms.NumberInput(attrs={"placeholder": "128, 320, 1411"}),
         }
 
     def __init__(self, *args, **kwargs):
         self.user = kwargs.pop("user", None)
+        collection_media_type = kwargs.pop("collection_media_type", None)
         super().__init__(*args, **kwargs)
+        if settings.TRACK_TIME:
+            collected_widget = forms.DateTimeInput(attrs={"type": "datetime-local"})
+        else:
+            collected_widget = forms.DateInput(attrs={"type": "date"})
+
+        self.fields["collected_at"] = forms.DateTimeField(
+            required=False,
+            label="Collected At",
+            widget=collected_widget,
+        )
+        if self.instance and self.instance.pk and self.instance.collected_at:
+            collected_at = self.instance.collected_at
+            if timezone.is_aware(collected_at):
+                collected_at = timezone.localtime(collected_at)
+            self.fields["collected_at"].initial = collected_at
+
+        config_entry = config.get_collection_field_config(collection_media_type)
+        self.collection_fields = config_entry.get("fields", [])
+
+        labels = config_entry.get("labels", {})
+        for field_name, label in labels.items():
+            if field_name in self.fields:
+                self.fields[field_name].label = label
+
+        choices_by_field = config_entry.get("choices", {})
+        for field_name, choices in choices_by_field.items():
+            if field_name not in self.fields:
+                continue
+            normalized = []
+            for option in choices:
+                if isinstance(option, (tuple, list)) and len(option) == 2:
+                    normalized.append((option[0], option[1]))
+                else:
+                    normalized.append((option, option))
+            current_value = getattr(self.instance, field_name, None)
+            existing_values = {str(value) for value, _ in normalized}
+            if current_value and str(current_value) not in existing_values:
+                normalized.append((current_value, current_value))
+            choices_list = [("", "—"), *normalized]
+            self.fields[field_name].widget = forms.Select(choices=choices_list)
+            self.fields[field_name].required = False
