@@ -1776,8 +1776,8 @@ def media_details(
                 metadata_episode_count = media_metadata.get("details", {}).get("episodes") or media_metadata.get("episodes")
                 collection_stats = get_tv_show_collection_stats(request.user, item, metadata_episode_count=metadata_episode_count)
             
-            # If no collection entry exists and user has Plex connected, trigger background fetch
-            if not collection_entry:
+            # If no collection entry exists and auto-fetch is supported, trigger background fetch
+            if not collection_entry and config.supports_collection_auto_fetch(media_type):
                 plex_account = getattr(request.user, "plex_account", None)
                 if plex_account and plex_account.plex_token:
                     from integrations.tasks import fetch_collection_metadata_for_item
@@ -2041,8 +2041,8 @@ def season_details(
                 logger.info("Season page: Checking show %s (item_id=%s) - collection entry exists: %s", 
                            show_item.title, show_item.id, show_collection_entry is not None)
                 
-                # If no collection entry exists for the show and user has Plex connected, trigger background fetch
-                if not show_collection_entry:
+                # If no collection entry exists for the show and auto-fetch is supported, trigger background fetch
+                if not show_collection_entry and config.supports_collection_auto_fetch(show_item.media_type):
                     plex_account = getattr(request.user, "plex_account", None)
                     if plex_account and plex_account.plex_token:
                         try:

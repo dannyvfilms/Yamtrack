@@ -5,9 +5,11 @@ from django.test import TestCase
 from django.urls import reverse
 
 from app.models import (
+    Item,
     MediaTypes,
     Sources,
 )
+from integrations.models import PlexAccount
 
 
 class MediaDetailsViewTests(TestCase):
@@ -115,4 +117,48 @@ class MediaDetailsViewTests(TestCase):
             [1],
         )
 
+    @patch("integrations.tasks.fetch_collection_metadata_for_item.delay")
+    @patch("app.providers.services.get_media_metadata")
+    def test_game_details_skips_collection_autofetch(self, mock_get_metadata, mock_fetch_delay):
+        """Game details should not trigger collection auto-fetch."""
+        mock_get_metadata.return_value = {
+            "media_id": "game-123",
+            "title": "Test Game",
+            "media_type": MediaTypes.GAME.value,
+            "source": Sources.IGDB.value,
+            "image": "http://example.com/game.jpg",
+            "overview": "Test overview",
+            "release_date": "2023-01-01",
+        }
+
+        Item.objects.create(
+            media_id="game-123",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Test Game",
+            image="http://example.com/game.jpg",
+        )
+
+        PlexAccount.objects.create(
+            user=self.user,
+            plex_token="plex-token",
+            plex_username="plex-user",
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.IGDB.value,
+                    "media_type": MediaTypes.GAME.value,
+                    "media_id": "game-123",
+                    "title": "test-game",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.context["fetching_collection_data"])
+        self.assertIsNone(response.context["item_id_for_polling"])
+        mock_fetch_delay.assert_not_called()
 

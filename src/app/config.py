@@ -26,6 +26,7 @@ MEDIA_TYPE_CONFIG = {
         "verb": ("watch", "watched"),
         "text_color": COLORS["emerald"]["text"],
         "stats_color": COLORS["emerald"]["hex"],
+        "collection_auto_fetch": True,
         "svg_icon": """
             <rect width="20" height="15" x="2" y="7" rx="2" ry="2"/>
             <polyline points="17 2 12 7 7 2"/>""",
@@ -61,6 +62,7 @@ MEDIA_TYPE_CONFIG = {
         "verb": ("watch", "watched"),
         "text_color": COLORS["orange"]["text"],
         "stats_color": COLORS["orange"]["hex"],
+        "collection_auto_fetch": True,
         "svg_icon": """
             <rect width="18" height="18" x="3" y="3" rx="2"/>
             <path d="M7 3v18"/>
@@ -80,6 +82,7 @@ MEDIA_TYPE_CONFIG = {
         "verb": ("watch", "watched"),
         "text_color": COLORS["blue"]["text"],
         "stats_color": COLORS["blue"]["hex"],
+        "collection_auto_fetch": True,
         "svg_icon": """
             <circle cx="12" cy="12" r="10"/>
             <polygon points="10 8 16 12 10 16 10 8"/>""",
@@ -258,6 +261,12 @@ def get_default_source_name(media_type):
 def get_sample_query(media_type):
     """Get the sample search query."""
     return get_property(media_type, "sample_query")
+
+
+def supports_collection_auto_fetch(media_type):
+    """Return True when collection metadata auto-fetch is enabled for the type."""
+    config_entry = get_config(media_type) or {}
+    return bool(config_entry.get("collection_auto_fetch", False))
 
 
 def get_sample_search_url(media_type):
