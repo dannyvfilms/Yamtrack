@@ -708,6 +708,6 @@ class CollectionEntryForm(forms.ModelForm):
             submitted_value = self.data.get(field_name)
             if submitted_value and str(submitted_value) not in existing_values:
                 normalized.append((submitted_value, submitted_value))
-            choices_list = [("", "—"), *normalized]
+            choices_list = [("", "Select"), *normalized]
             self.fields[field_name].widget = forms.Select(choices=choices_list)
             self.fields[field_name].required = False

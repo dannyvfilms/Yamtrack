@@ -44,9 +44,56 @@
                     </button>
                   </div>
                 {% elif field.field.widget.input_type == 'select' %}
-                  {{ field|add_class:"w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent appearance-none cursor-pointer" }}
-                  <div class="absolute inset-y-0 right-2 flex items-center pointer-events-none">
-                    {% include "app/icons/chevron-down.svg" with classes="w-4 h-4 text-gray-400" %}
+                    <div class="relative z-30 overflow-visible"
+                         x-data="{
+                          open: false,
+                          selectedValue: '{{ field.value|default_if_none:''|escapejs }}',
+                          selectedLabel: '',
+                          options: [],
+                          init() {
+                            this.options = Array.from(this.$el.querySelectorAll('[data-choice]')).map((optionEl) => ({
+                              value: optionEl.dataset.choiceValue ?? '',
+                              label: optionEl.dataset.choiceLabel ?? optionEl.textContent.trim(),
+                            }));
+                            const current = String(this.selectedValue ?? '');
+                            const match = this.options.find(option => String(option.value) === current);
+                            this.selectedLabel = match ? match.label : (this.options[0]?.label ?? '');
+                          },
+                          choose(value, label) {
+                            this.selectedValue = String(value ?? '');
+                            this.selectedLabel = label;
+                            this.open = false;
+                          }
+                         }">
+                    <button type="button"
+                            @click="open = !open"
+                            @click.outside="open = false"
+                            id="{{ field.id_for_label }}"
+                            :aria-expanded="open"
+                            class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
+                      <span x-text="selectedLabel" :class="selectedValue === '' ? 'text-gray-500' : ''"></span>
+                      {% include "app/icons/chevron-down.svg" with classes="w-4 h-4 text-gray-400" %}
+                    </button>
+                    <div x-show="open"
+                         x-transition:enter="transition ease-out duration-100"
+                         x-transition:enter-start="transform opacity-0 scale-95"
+                         x-transition:enter-end="transform opacity-100 scale-100"
+                         x-transition:leave="transition ease-in duration-75"
+                         x-transition:leave-start="transform opacity-100 scale-100"
+                         x-transition:leave-end="transform opacity-0 scale-95"
+                         class="absolute left-0 right-0 mt-2 py-1 bg-[#272c31] rounded-md shadow-lg overflow-hidden z-50 border border-gray-600">
+                      {% for value, label in field.field.widget.choices %}
+                        <button type="button"
+                                data-choice
+                                data-choice-value="{{ value|default_if_none:'' }}"
+                                data-choice-label="{{ label }}"
+                                @click="choose('{{ value|default_if_none:''|escapejs }}', '{{ label|escapejs }}')"
+                                class="block w-full px-3 py-2 text-left text-sm transition-colors {% if value == '' %}text-gray-500{% else %}text-gray-300 hover:bg-[#39404b] hover:text-white{% endif %}">
+                          {{ label }}
+                        </button>
+                      {% endfor %}
+                    </div>
+                    <input type="hidden" name="{{ field.name }}" x-model="selectedValue">
                   </div>
                 {% else %}
                   {{ field|add_class:"w-full p-2 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff]" }}
