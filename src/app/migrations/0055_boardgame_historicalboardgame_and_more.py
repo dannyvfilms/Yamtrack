@@ -9,6 +9,52 @@ from django.conf import settings
 from django.db import migrations, models
 
 
+def _table_exists(schema_editor, table_name: str) -> bool:
+    with schema_editor.connection.cursor() as cursor:
+        introspection = schema_editor.connection.introspection
+        if hasattr(introspection, "table_names"):
+            table_names = introspection.table_names(cursor)
+        else:
+            table_names = [table.name for table in introspection.get_table_list(cursor)]
+    return table_name in table_names
+
+
+def _column_exists(schema_editor, table_name: str, column_name: str) -> bool:
+    with schema_editor.connection.cursor() as cursor:
+        try:
+            description = schema_editor.connection.introspection.get_table_description(
+                cursor, table_name
+            )
+        except Exception:
+            return False
+    columns = {getattr(column, "name", column[0]) for column in description}
+    return column_name in columns
+
+
+class CreateModelIfNotExists(migrations.CreateModel):
+    """CreateModel that skips if the table already exists."""
+
+    def database_forwards(self, app_label, schema_editor, from_state, to_state):
+        model = to_state.apps.get_model(app_label, self.name)
+        table_name = model._meta.db_table
+        if _table_exists(schema_editor, table_name):
+            return
+        super().database_forwards(app_label, schema_editor, from_state, to_state)
+
+
+class AddFieldIfNotExists(migrations.AddField):
+    """AddField that skips if column already exists."""
+
+    def database_forwards(self, app_label, schema_editor, from_state, to_state):
+        model = to_state.apps.get_model(app_label, self.model_name)
+        field = model._meta.get_field(self.name)
+        table_name = model._meta.db_table
+        column_name = field.column
+        if _column_exists(schema_editor, table_name, column_name):
+            return
+        super().database_forwards(app_label, schema_editor, from_state, to_state)
+
+
 class Migration(migrations.Migration):
     dependencies = [
         ("app", "0054_merge_20251130_1949"),
@@ -16,7 +62,7 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.CreateModel(
+        CreateModelIfNotExists(
             name="BoardGame",
             fields=[
                 (
@@ -73,7 +119,7 @@ class Migration(migrations.Migration):
                 "abstract": False,
             },
         ),
-        migrations.CreateModel(
+        CreateModelIfNotExists(
             name="HistoricalBoardGame",
             fields=[
                 (
@@ -224,21 +270,21 @@ class Migration(migrations.Migration):
                 name="app_item_media_type_valid",
             ),
         ),
-        migrations.AddField(
+        AddFieldIfNotExists(
             model_name="boardgame",
             name="item",
             field=models.ForeignKey(
                 on_delete=django.db.models.deletion.CASCADE, to="app.item"
             ),
         ),
-        migrations.AddField(
+        AddFieldIfNotExists(
             model_name="boardgame",
             name="user",
             field=models.ForeignKey(
                 on_delete=django.db.models.deletion.CASCADE, to=settings.AUTH_USER_MODEL
             ),
         ),
-        migrations.AddField(
+        AddFieldIfNotExists(
             model_name="historicalboardgame",
             name="history_user",
             field=models.ForeignKey(

@@ -7,45 +7,52 @@ import model_utils.fields
 import simple_history.models
 from django.conf import settings
 from django.db import migrations, models
-from django.db.utils import OperationalError
+
+
+def _table_exists(schema_editor, table_name: str) -> bool:
+    with schema_editor.connection.cursor() as cursor:
+        introspection = schema_editor.connection.introspection
+        if hasattr(introspection, "table_names"):
+            table_names = introspection.table_names(cursor)
+        else:
+            table_names = [table.name for table in introspection.get_table_list(cursor)]
+    return table_name in table_names
+
+
+def _column_exists(schema_editor, table_name: str, column_name: str) -> bool:
+    with schema_editor.connection.cursor() as cursor:
+        try:
+            description = schema_editor.connection.introspection.get_table_description(
+                cursor, table_name
+            )
+        except Exception:
+            return False
+    columns = {getattr(column, "name", column[0]) for column in description}
+    return column_name in columns
 
 
 class CreateModelIfNotExists(migrations.CreateModel):
-    """CreateModel that skips if table already exists (for SQLite compatibility)."""
-    
+    """CreateModel that skips if the table already exists."""
+
     def database_forwards(self, app_label, schema_editor, from_state, to_state):
-        if schema_editor.connection.vendor == "sqlite":
-            # Check if table already exists
-            table_name = f"{app_label}_{self.name.lower()}"
-            with schema_editor.connection.cursor() as cursor:
-                cursor.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-                    [table_name]
-                )
-                if cursor.fetchone():
-                    # Table exists, skip creation
-                    return
-        
-        # Table doesn't exist or not SQLite, proceed normally
+        model = to_state.apps.get_model(app_label, self.name)
+        table_name = model._meta.db_table
+        if _table_exists(schema_editor, table_name):
+            return
+
         super().database_forwards(app_label, schema_editor, from_state, to_state)
 
 
 class AddFieldIfNotExists(migrations.AddField):
-    """AddField that skips if column already exists (for SQLite compatibility)."""
+    """AddField that skips if column already exists."""
 
     def database_forwards(self, app_label, schema_editor, from_state, to_state):
-        if schema_editor.connection.vendor == "sqlite":
-            model = to_state.apps.get_model(app_label, self.model_name)
-            field = model._meta.get_field(self.name)
-            table_name = model._meta.db_table
-            column_name = field.column
-            with schema_editor.connection.cursor() as cursor:
-                cursor.execute(
-                    f"PRAGMA table_info({schema_editor.quote_name(table_name)})"
-                )
-                columns = {row[1] for row in cursor.fetchall()}
-            if column_name in columns:
-                return
+        model = to_state.apps.get_model(app_label, self.model_name)
+        field = model._meta.get_field(self.name)
+        table_name = model._meta.db_table
+        column_name = field.column
+        if _column_exists(schema_editor, table_name, column_name):
+            return
 
         super().database_forwards(app_label, schema_editor, from_state, to_state)
 
