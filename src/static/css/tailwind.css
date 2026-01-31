@@ -674,6 +674,9 @@
   .h-24 {
     height: calc(var(--spacing) * 24);
   }
+  .h-40 {
+    height: calc(var(--spacing) * 40);
+  }
   .h-48 {
     height: calc(var(--spacing) * 48);
   }
@@ -1289,6 +1292,9 @@
   .border-\[\#2c3136\] {
     border-color: #2c3136;
   }
+  .border-\[\#39404b\] {
+    border-color: #39404b;
+  }
   .border-amber-400\/30 {
     border-color: color-mix(in srgb, oklch(82.8% 0.189 84.429) 30%, transparent);
     @supports (color: color-mix(in lab, red, red)) {
@@ -1354,6 +1360,9 @@
   }
   .bg-\[\#1a1d20\] {
     background-color: #1a1d20;
+  }
+  .bg-\[\#1f2328\] {
+    background-color: #1f2328;
   }
   .bg-\[\#2a2e33\] {
     background-color: #2a2e33;
