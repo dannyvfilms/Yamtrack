@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% load app_tags %}
+{% load user_tags %}
 
 {% block title %}
   Search Music - Yamtrack
@@ -34,6 +35,128 @@
       </div>
     </div>
   </div>
+
+  {% if local_results %}
+    <div class="mb-8">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-semibold text-gray-300">In Your Library</h3>
+        <div class="text-sm text-gray-400">
+          {{ local_results_total }} result{{ local_results_total|pluralize }}
+          {% if local_results_total > local_results|length %}
+            <span class="text-gray-500">· Showing first {{ local_results|length }}</span>
+          {% endif %}
+        </div>
+      </div>
+      {% if local_results_kind == 'artists' %}
+        <div class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
+          {% for tracker in local_results %}
+            <div class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative group hover:ring-2 hover:ring-indigo-500 transition-all search-result-card{% if user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %}"
+                 data-media-type="{{ MediaTypes.MUSIC.value }}"
+                 x-data="{ trackOpen: false }">
+              <div class="relative">
+                <a href="{% url 'artist_detail' tracker.artist.id %}">
+                  {% if tracker.artist.image and tracker.artist.image != IMG_NONE %}
+                    <img alt="{{ tracker.artist.name }}"
+                         class="media-card-poster lazyload w-full aspect-[2/3] bg-[#3e454d] object-cover"
+                         data-src="{{ tracker.artist.image }}"
+                         src="{{ IMG_NONE }}">
+                  {% else %}
+                    <div class="w-full aspect-[2/3] bg-[#3e454d] flex items-center justify-center">
+                      {% include "app/icons/person.svg" with classes="w-16 h-16 text-gray-600" %}
+                    </div>
+                  {% endif %}
+                </a>
+
+                <div class="media-status-chip absolute top-2 left-2 bg-gray-900/90 text-white text-xs px-2 py-1 rounded-md flex items-center gap-1.5 shadow-md max-w-[calc(100%-1rem)] overflow-hidden">
+                  {% with status_value=tracker.status %}
+                    <div class="w-4 h-4 {{ status_value|status_color }}">
+                      {% if status_value == Status.COMPLETED.value %}
+                        {% include "app/icons/states/completed.svg" %}
+                      {% elif status_value == Status.IN_PROGRESS.value %}
+                        {% include "app/icons/states/in-progress.svg" %}
+                      {% elif status_value == Status.PAUSED.value %}
+                        {% include "app/icons/states/paused.svg" %}
+                      {% elif status_value == Status.PLANNING.value %}
+                        {% include "app/icons/states/planning.svg" %}
+                      {% elif status_value == Status.DROPPED.value %}
+                        {% include "app/icons/states/dropped.svg" %}
+                      {% endif %}
+                    </div>
+                  {% endwith %}
+                </div>
+
+                <div class="media-card-overlay absolute inset-0 flex items-center justify-center opacity-0 hover-tap:opacity-100 transition-opacity duration-200 ease-in-out{% if user.clickable_media_cards %} pointer-coarse:hidden{% endif %}">
+                  <div class="absolute inset-0 bg-black/50 z-0"></div>
+                  <a href="{% url 'artist_detail' tracker.artist.id %}" class="absolute inset-0 z-0"></a>
+                  <div class="relative z-10 flex items-center justify-center space-x-2.5">
+                    <button class="p-2.5 bg-indigo-600 text-white rounded-full hover:bg-indigo-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(99,102,241,0.5)] transition-all duration-200 cursor-pointer"
+                            title="Edit tracking"
+                            hx-get="{% url 'artist_track_modal' tracker.artist.id %}"
+                            hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
+                            hx-target="#artist-track-modal-{{ tracker.artist.id }}"
+                            hx-trigger="click once"
+                            @click="trackOpen = true">
+                      {% include "app/icons/edit.svg" with classes="w-4 h-4" %}
+                    </button>
+                    <a href="{% url 'artist_detail' tracker.artist.id %}"
+                       class="p-2.5 bg-emerald-600 text-white rounded-full hover:bg-emerald-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(16,185,129,0.5)] transition-all duration-200 cursor-pointer"
+                       title="View artist">
+                      {% include "app/icons/person.svg" with classes="w-4 h-4" %}
+                    </a>
+                    <a href="{% url 'history' %}?artist={{ tracker.artist.id }}"
+                       class="p-2.5 bg-amber-600 text-white rounded-full hover:bg-amber-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(245,158,11,0.5)] transition-all duration-200 cursor-pointer"
+                       title="View listening history">
+                      {% include "app/icons/history.svg" with classes="w-4 h-4" %}
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              <div class="media-card-body p-3 bg-card-body">
+                <div class="flex items-center gap-2 min-w-0">
+                  <a href="{% url 'artist_detail' tracker.artist.id %}"
+                     class="media-card-title text-sm font-semibold text-white hover:text-indigo-400 transition duration-300 line-clamp-1 min-w-0"
+                     title="{{ tracker.artist.name }}">{{ tracker.artist.name }}</a>
+                  {% if tracker.score %}
+                    <span class="flex items-center gap-1 text-xs text-yellow-300 shrink-0">
+                      {% include "app/icons/star.svg" with classes="w-3 h-3 text-yellow-400 fill-current" %}
+                      <span class="font-medium">{{ tracker.score|floatformat:1 }}</span>
+                    </span>
+                  {% endif %}
+                </div>
+                {% if tracker.end_date %}
+                  <p class="media-card-year text-xs text-gray-400 mt-1">{{ tracker.end_date|user_date_format:user }}</p>
+                {% elif tracker.start_date %}
+                  <p class="media-card-year text-xs text-gray-400 mt-1">{{ tracker.start_date|user_date_format:user }}</p>
+                {% endif %}
+              </div>
+
+              <div x-show="trackOpen"
+                   @keydown.escape.window="trackOpen = false"
+                   class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                <div class="w-152 modal-max-height overflow-y-auto px-4 md:px-0 relative z-60"
+                     @click.outside="trackOpen = false">
+                  <div id="artist-track-modal-{{ tracker.artist.id }}"></div>
+                </div>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div {% if layout == 'grid' %}
+             class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
+          {% for result in local_results %}
+            {% include "app/components/media_card.html" with item=result.item title=result.item.title media=result.media user=user from_grid=True %}
+          {% endfor %}
+        {% else %}
+          class="grid grid-cols-1 gap-4">
+          {% for result in local_results %}
+            {% include "app/components/media_card_list.html" with item=result.item title=result.item.title media=result.media user=user %}
+          {% endfor %}
+        {% endif %}
+      {% endif %}
+    </div>
+  {% endif %}
 
   {# Artists Section - only show on first page #}
   {% if music_artists %}
@@ -165,7 +288,7 @@
   {% endif %}
 
   {# No results #}
-  {% if not music_artists and not music_releases and not data.results %}
+  {% if not local_results and not music_artists and not music_releases and not data.results %}
     <div class="flex flex-col items-center justify-center py-32 px-4 bg-[#2a2f35] rounded-lg">
       <div class="bg-[#39404b] rounded-full p-4 w-16 h-16 mx-auto mb-4 flex items-center justify-center">
         {% include "app/icons/magnifying-glass.svg" with classes="w-8 h-8 text-gray-400" %}

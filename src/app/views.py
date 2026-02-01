@@ -963,6 +963,86 @@ def media_search(request):
     page = int(request.GET.get("page", 1))
     layout = request.GET.get("layout", "grid")
 
+    local_results = []
+    local_results_total = 0
+    local_results_limit = 24
+    local_results_kind = "media"
+    if request.user.is_authenticated and query and page == 1:
+        try:
+            if media_type == MediaTypes.PODCAST.value:
+                from django.conf import settings
+
+                from app.models import Item, PodcastShowTracker, Sources
+
+                show_trackers = (
+                    PodcastShowTracker.objects.filter(user=request.user)
+                    .exclude(show__title__isnull=True)
+                    .exclude(show__title__exact="")
+                    .filter(show__title__icontains=query)
+                )
+                local_results_total = show_trackers.count()
+                show_trackers = show_trackers.order_by("show__title")[:local_results_limit]
+
+                class PodcastShowAdapter:
+                    """Adapter to make PodcastShowTracker compatible with media components."""
+
+                    def __init__(self, tracker):
+                        self.tracker = tracker
+                        self.id = tracker.id
+                        self.status = tracker.status
+                        self.score = tracker.score
+                        self.start_date = tracker.start_date
+                        self.end_date = tracker.end_date
+                        self.notes = tracker.notes
+                        self.created_at = tracker.created_at
+                        self.updated_at = tracker.updated_at
+
+                        self.item, _ = Item.objects.get_or_create(
+                            media_id=tracker.show.podcast_uuid,
+                            source=Sources.POCKETCASTS.value,
+                            media_type=MediaTypes.PODCAST.value,
+                            defaults={
+                                "title": tracker.show.title,
+                                "image": tracker.show.image or settings.IMG_NONE,
+                            },
+                        )
+                        show_image = tracker.show.image or settings.IMG_NONE
+                        if self.item.title != tracker.show.title or self.item.image != show_image:
+                            self.item.title = tracker.show.title
+                            self.item.image = show_image
+                            self.item.save(update_fields=["title", "image"])
+
+                adapted_media = [PodcastShowAdapter(tracker) for tracker in show_trackers]
+                local_results = [{"item": media.item, "media": media} for media in adapted_media]
+            elif media_type == MediaTypes.MUSIC.value:
+                from app.models import ArtistTracker
+
+                artist_trackers = (
+                    ArtistTracker.objects.filter(user=request.user)
+                    .exclude(artist__name__isnull=True)
+                    .exclude(artist__name__exact="")
+                    .filter(artist__name__icontains=query)
+                    .select_related("artist")
+                )
+                local_results_total = artist_trackers.count()
+                local_results = list(artist_trackers.order_by("artist__name")[:local_results_limit])
+                local_results_kind = "artists"
+            else:
+                local_queryset = BasicMedia.objects.get_media_list(
+                    request.user,
+                    media_type,
+                    MediaStatusChoices.ALL,
+                    "title",
+                    search=query,
+                    direction="asc",
+                )
+                local_results_total = local_queryset.count()
+                local_media = list(local_queryset[:local_results_limit])
+                BasicMedia.objects.annotate_max_progress(local_media, media_type)
+                local_results = [{"item": media.item, "media": media} for media in local_media]
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Local search failed for %s: %s", query, exc)
+
     # only receives source when searching with secondary source
     source = request.GET.get(
         "source",
@@ -988,6 +1068,10 @@ def media_search(request):
             "source": source,
             "media_type": media_type,
             "layout": layout,
+            "local_results": local_results,
+            "local_results_total": local_results_total,
+            "local_results_limit": local_results_limit,
+            "local_results_kind": local_results_kind,
         }
         return render(request, "app/search_music.html", context)
 
@@ -1001,6 +1085,10 @@ def media_search(request):
         "source": source,
         "media_type": media_type,
         "layout": layout,
+        "local_results": local_results,
+        "local_results_total": local_results_total,
+        "local_results_limit": local_results_limit,
+        "local_results_kind": local_results_kind,
     }
 
     return render(request, "app/search.html", context)
