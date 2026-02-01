@@ -431,6 +431,11 @@ def media_view_url(view_name, media):
         if media.episode_number is not None:
             kwargs["episode_number"] = media.episode_number
 
+    # collection_modal URL does not accept season/episode in the path
+    if view_name == "collection_modal":
+        kwargs.pop("season_number", None)
+        kwargs.pop("episode_number", None)
+
     return reverse(view_name, kwargs=kwargs)
 
 
