@@ -43,64 +43,19 @@
     </form>
 
     <div class="flex flex-col md:flex-row gap-4 mb-6">
-      <div class="flex gap-2 flex-wrap filter-toolbar">
-        <!-- Filter by Status -->
-        <div class="relative filter-control" x-data="{ open: false }">
-          <button class="flex items-center px-4 py-2 bg-[#39404b] rounded-md hover:bg-[#454d5a] transition-colors cursor-pointer"
-                  @click="open = !open"
-                  type="button">
-            {% include "app/icons/funnel.svg" with classes="w-4 h-4 mr-2" %}
-            <span x-text="statusLabels[status] || status"></span>
-            {% include "app/icons/chevron-down.svg" with classes="w-4 h-4 ml-2" %}
-          </button>
-
-          <div class="absolute z-40 mt-2 py-1 w-48 bg-[#39404b] rounded-md shadow-lg overflow-hidden border border-gray-700"
-               x-cloak
-               x-show="open"
-               @click.outside="open = false"
-               x-transition:enter="transition ease-out duration-100"
-               x-transition:enter-start="transform opacity-0 scale-95"
-               x-transition:enter-end="transform opacity-100 scale-100"
-               x-transition:leave="transition ease-in duration-75"
-               x-transition:leave-start="transform opacity-100 scale-100"
-               x-transition:leave-end="transform opacity-0 scale-95">
-            {% for value, label in status_choices %}
-              <button hx-get="{% url 'medialist' media_type %}"
-                      {% if media_list %} hx-target="{{ layout_class }}" {% else %} hx-target="#empty_list" {% endif %}
-                      hx-include="#filter-form"
-                      hx-indicator="#loading-indicator"
-                      class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
-                      :class="status === '{{ value }}' ? 'bg-indigo-600 text-white font-medium' : 'text-gray-300 hover:bg-[#454d5a] hover:text-white'"
-                      @click="status = '{{ value }}'; open = false"
-                      type="button">{{ label }}</button>
-            {% endfor %}
-          </div>
-        </div>
-
+      <div class="flex gap-1 flex-wrap w-full items-center filter-toolbar">
         <!-- Filter by Rating/Collection (Combined Dropdown) -->
         <div class="relative filter-control" x-data="{ open: false }">
-          <button class="flex items-center px-4 py-2 bg-[#39404b] rounded-md hover:bg-[#454d5a] transition-colors cursor-pointer"
+          <button class="flex items-center px-2 py-2 rounded-md text-gray-200 hover:text-white transition-colors cursor-pointer"
                   @click="open = !open"
                   type="button">
-            <span class="mr-2 w-4 h-4 flex items-center justify-center">
-              <span x-show="(rating === 'all' || rating === '') && (collection === 'all' || collection === '')">
-                {% include "app/icons/funnel.svg" with classes="w-4 h-4" %}
-              </span>
-              <span x-show="rating === 'rated'">
-                {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
-              </span>
-              <span x-show="rating === 'not_rated'">
-                {% include "app/icons/circle-x.svg" with classes="w-4 h-4 text-gray-400" %}
-              </span>
-              <span x-show="collection === 'collected' && (rating === 'all' || rating === '')">
-                {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
-              </span>
-              <span x-show="collection === 'not_collected' && (rating === 'all' || rating === '')">
-                {% include "app/icons/circle-x.svg" with classes="w-4 h-4 text-gray-400" %}
-              </span>
-            </span>
-            <span x-text="(rating !== 'all' && rating !== '' ? ratingLabels[rating] : '') || (collection !== 'all' && collection !== '' ? collectionLabels[collection] : '') || 'Filter'"></span>
-            {% include "app/icons/chevron-down.svg" with classes="w-4 h-4 ml-2" %}
+            <span x-text="(rating !== 'all' && rating !== '' ? ratingLabels[rating] : '') || (collection !== 'all' && collection !== '' ? collectionLabels[collection] : '') || 'All'"></span>
+            <svg xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 20 20"
+                class="w-4 h-4 ml-2"
+                aria-hidden="true">
+              <path d="M10 14 L4.5 7 H15.5 Z" fill="currentColor"></path>
+            </svg>
           </button>
 
           <div class="absolute z-40 mt-2 py-1 w-48 bg-[#39404b] rounded-md shadow-lg overflow-hidden border border-gray-700"
@@ -165,36 +120,62 @@
           </div>
         </div>
 
-        <!-- Sort by -->
+        <!-- Filter by Status -->
         <div class="relative filter-control" x-data="{ open: false }">
-          <button class="flex items-center px-4 py-2 bg-[#39404b] rounded-md hover:bg-[#454d5a] transition-colors cursor-pointer"
+          <button class="flex items-center px-2 py-2 rounded-md text-gray-200 hover:text-white transition-colors cursor-pointer"
                   @click="open = !open"
                   type="button">
-            {% include "app/icons/arrows-up-down.svg" with classes="w-4 h-4 mr-2" %}
+            <span x-text="(status === 'all' || status === '') ? 'Status' : (statusLabels[status] || status)"></span>
+            <svg xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 20 20"
+                class="w-4 h-4 ml-2"
+                aria-hidden="true">
+              <path d="M10 14 L4.5 7 H15.5 Z" fill="currentColor"></path>
+            </svg>
+          </button>
+
+          <div class="absolute z-40 mt-2 py-1 w-48 bg-[#39404b] rounded-md shadow-lg overflow-hidden border border-gray-700"
+               x-cloak
+               x-show="open"
+               @click.outside="open = false"
+               x-transition:enter="transition ease-out duration-100"
+               x-transition:enter-start="transform opacity-0 scale-95"
+               x-transition:enter-end="transform opacity-100 scale-100"
+               x-transition:leave="transition ease-in duration-75"
+               x-transition:leave-start="transform opacity-100 scale-100"
+               x-transition:leave-end="transform opacity-0 scale-95">
+            {% for value, label in status_choices %}
+              <button hx-get="{% url 'medialist' media_type %}"
+                      {% if media_list %} hx-target="{{ layout_class }}" {% else %} hx-target="#empty_list" {% endif %}
+                      hx-include="#filter-form"
+                      hx-indicator="#loading-indicator"
+                      class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
+                      :class="status === '{{ value }}' ? 'bg-indigo-600 text-white font-medium' : 'text-gray-300 hover:bg-[#454d5a] hover:text-white'"
+                      @click="status = '{{ value }}'; open = false"
+                      type="button">{{ label }}</button>
+            {% endfor %}
+          </div>
+        </div>
+
+        <!-- Sort by -->
+        <div class="relative filter-control" x-data="{ open: false }">
+          <button class="flex items-center px-2 py-2 rounded-md text-gray-200 hover:text-white transition-colors cursor-pointer"
+                  @click="open = !open"
+                  type="button">
             <span x-text="sortLabels[sort] || sort"></span>
             <svg xmlns="http://www.w3.org/2000/svg"
-                 width="24"
-                 height="24"
-                 viewBox="0 0 24 24"
-                 fill="none"
-                 stroke="currentColor"
-                 stroke-width="2"
-                 stroke-linecap="round"
-                 stroke-linejoin="round"
-                 class="w-4 h-4 ml-2" x-show="direction === 'asc'">
-              <path d="m6 15 6-6 6 6"></path>
+                viewBox="0 0 20 20"
+                class="w-4 h-4 ml-2"
+                x-show="direction === 'asc'"
+                aria-hidden="true">
+              <path d="M10 5 L16 15 H4 Z" fill="currentColor"></path>
             </svg>
             <svg xmlns="http://www.w3.org/2000/svg"
-                 width="24"
-                 height="24"
-                 viewBox="0 0 24 24"
-                 fill="none"
-                 stroke="currentColor"
-                 stroke-width="2"
-                 stroke-linecap="round"
-                 stroke-linejoin="round"
-                 class="w-4 h-4 ml-2" x-show="direction !== 'asc'">
-              <path d="m6 9 6 6 6-6"></path>
+                viewBox="0 0 20 20"
+                class="w-4 h-4 ml-2"
+                x-show="direction !== 'asc'"
+                aria-hidden="true">
+              <path d="M10 15 L4 5 H16 Z" fill="currentColor"></path>
             </svg>
           </button>
 
@@ -225,8 +206,16 @@
           </div>
         </div>
 
+        <div class="px-4 py-2 bg-[#2a2f35] rounded-md text-gray-200 text-sm font-semibold">
+          {% if media_list.paginator %}
+            {{ media_list.paginator.count }}
+          {% else %}
+            {{ media_list|length }}
+          {% endif %}
+        </div>
+
         <!-- Layout Toggle -->
-        <div class="flex rounded-md overflow-hidden border border-gray-700 layout-toggle">
+        <div class="ml-auto flex rounded-md overflow-hidden border border-gray-700 layout-toggle shrink-0">
           <a :href="`{% url 'medialist' media_type %}?${search ? 'search=' + search + '&' : ''}${status !== 'all' ? 'status=' + status + '&' : ''}${rating !== 'all' ? 'rating=' + rating + '&' : ''}${collection !== 'all' ? 'collection=' + collection + '&' : ''}${direction ? 'direction=' + direction + '&' : ''}${sort !== 'score' ? 'sort=' + sort + '&' : ''}layout=grid`"
              class="p-2 cursor-pointer"
              :class="layout === 'grid' ? 'bg-indigo-600 text-white' : 'bg-[#39404b] hover:bg-[#454d5a]'"
