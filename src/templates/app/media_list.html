@@ -488,7 +488,7 @@
           <button class="flex items-center px-2 py-2 rounded-md text-gray-200 hover:text-white transition-colors cursor-pointer"
                   @click="open = !open"
                   type="button">
-            <span x-text="(status === 'all' || status === '') ? 'Status' : (statusLabels[status] || status)"></span>
+            <span x-text="(status === 'all' || status === 'All' || status === '') ? 'Status' : (statusLabels[status] || status)"></span>
             <svg xmlns="http://www.w3.org/2000/svg"
                 viewBox="0 0 20 20"
                 class="w-4 h-4 ml-2"
@@ -579,14 +579,14 @@
 
         <!-- Layout Toggle -->
         <div class="ml-auto flex rounded-md overflow-hidden border border-gray-700 layout-toggle shrink-0">
-          <a :href="`{% url 'medialist' media_type %}?${search ? 'search=' + search + '&' : ''}${status !== 'all' ? 'status=' + status + '&' : ''}${rating !== 'all' ? 'rating=' + rating + '&' : ''}${collection !== 'all' ? 'collection=' + collection + '&' : ''}${genre ? 'genre=' + genre + '&' : ''}${year ? 'year=' + year + '&' : ''}${source ? 'source=' + source + '&' : ''}${language ? 'language=' + language + '&' : ''}${country ? 'country=' + country + '&' : ''}${direction ? 'direction=' + direction + '&' : ''}${sort !== 'score' ? 'sort=' + sort + '&' : ''}layout=grid`"
+          <a :href="`{% url 'medialist' media_type %}?${search ? 'search=' + search + '&' : ''}${status && status !== 'all' && status !== 'All' ? 'status=' + status + '&' : ''}${rating !== 'all' ? 'rating=' + rating + '&' : ''}${collection !== 'all' ? 'collection=' + collection + '&' : ''}${genre ? 'genre=' + genre + '&' : ''}${year ? 'year=' + year + '&' : ''}${source ? 'source=' + source + '&' : ''}${language ? 'language=' + language + '&' : ''}${country ? 'country=' + country + '&' : ''}${direction ? 'direction=' + direction + '&' : ''}${sort !== 'score' ? 'sort=' + sort + '&' : ''}layout=grid`"
              class="p-2 cursor-pointer"
              :class="layout === 'grid' ? 'bg-indigo-600 text-white' : 'bg-[#39404b] hover:bg-[#454d5a]'"
              title="Grid View"
              @click="layout = 'grid'">
             {% include "app/icons/four-square.svg" with classes="w-5 h-5" %}
           </a>
-          <a :href="`{% url 'medialist' media_type %}?${search ? 'search=' + search + '&' : ''}${status !== 'all' ? 'status=' + status + '&' : ''}${rating !== 'all' ? 'rating=' + rating + '&' : ''}${collection !== 'all' ? 'collection=' + collection + '&' : ''}${genre ? 'genre=' + genre + '&' : ''}${year ? 'year=' + year + '&' : ''}${source ? 'source=' + source + '&' : ''}${language ? 'language=' + language + '&' : ''}${country ? 'country=' + country + '&' : ''}${direction ? 'direction=' + direction + '&' : ''}${sort !== 'score' ? 'sort=' + sort + '&' : ''}layout=table`"
+          <a :href="`{% url 'medialist' media_type %}?${search ? 'search=' + search + '&' : ''}${status && status !== 'all' && status !== 'All' ? 'status=' + status + '&' : ''}${rating !== 'all' ? 'rating=' + rating + '&' : ''}${collection !== 'all' ? 'collection=' + collection + '&' : ''}${genre ? 'genre=' + genre + '&' : ''}${year ? 'year=' + year + '&' : ''}${source ? 'source=' + source + '&' : ''}${language ? 'language=' + language + '&' : ''}${country ? 'country=' + country + '&' : ''}${direction ? 'direction=' + direction + '&' : ''}${sort !== 'score' ? 'sort=' + sort + '&' : ''}layout=table`"
              class="p-2 cursor-pointer"
              :class="layout === 'table' ? 'bg-indigo-600 text-white' : 'bg-[#39404b] hover:bg-[#454d5a]'"
              title="Table View"
