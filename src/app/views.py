@@ -1,4 +1,5 @@
 import calendar
+import json
 import logging
 import time
 from collections import defaultdict
@@ -746,23 +747,52 @@ def media_list(request, media_type):
 
         # Handle HTMX requests for partial updates
         if request.headers.get("HX-Request"):
+            is_artist_list = context.get("is_artist_list", False)
+
+            # Changing from empty list to a status with items
             if request.headers.get("HX-Target") == "empty_list":
                 response = HttpResponse()
                 response["HX-Redirect"] = reverse("medialist", args=[media_type])
                 return response
 
+            # Check if this is a pagination request (has page parameter and is not the first page)
             is_pagination = request.GET.get("page") and int(request.GET.get("page", 1)) > 1
             context["is_pagination"] = bool(is_pagination)
 
             if layout == "grid":
-                template_name = "app/components/media_grid_items.html"
+                template_name = (
+                    "app/components/artist_grid_items.html"
+                    if is_artist_list
+                    else "app/components/media_grid_items.html"
+                )
             else:
-                template_name = "app/components/media_table_items.html"
-        else:
-            context["is_pagination"] = False
-            template_name = "app/media_list.html"
+                template_name = (
+                    "app/components/artist_table_items.html"
+                    if is_artist_list
+                    else "app/components/media_table_items.html"
+                )
 
-        return render(request, template_name, context)
+            # --- Result-count update via HX-Trigger (keeps toolbar count in sync) ---
+            from django.template.loader import render_to_string
+
+            html = render_to_string(template_name, context, request=request)
+
+            media_page = context.get("media_list")
+            if media_page is not None and getattr(media_page, "paginator", None) is not None:
+                total_count = media_page.paginator.count
+            else:
+                try:
+                    total_count = len(media_page) if media_page is not None else 0
+                except TypeError:
+                    total_count = 0
+
+            response = HttpResponse(html)
+            response["HX-Trigger"] = json.dumps({"resultCountUpdated": {"count": total_count}})
+            return response
+
+        # Non-HTMX full render
+        context["is_pagination"] = False
+        return render(request, "app/media_list.html", context)
 
     if media_type == MediaTypes.MUSIC.value:
         from django.conf import settings
@@ -945,9 +975,26 @@ def media_list(request, media_type):
                 if is_artist_list
                 else "app/components/media_table_items.html"
             )
-    else:
-        context["is_pagination"] = False
-        template_name = "app/media_list.html"
+
+        from django.template.loader import render_to_string
+
+        html = render_to_string(template_name, context, request=request)
+
+        media_page = context.get("media_list")
+        if media_page is not None and getattr(media_page, "paginator", None) is not None:
+            total_count = media_page.paginator.count
+        else:
+            try:
+                total_count = len(media_page) if media_page is not None else 0
+            except TypeError:
+                total_count = 0
+
+        response = HttpResponse(html)
+        response["HX-Trigger"] = json.dumps({"resultCountUpdated": {"count": total_count}})
+        return response
+
+    context["is_pagination"] = False
+    template_name = "app/media_list.html"
 
     return render(request, template_name, context)
 

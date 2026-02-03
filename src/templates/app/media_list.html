@@ -43,7 +43,7 @@
     </form>
 
     <div class="flex flex-col md:flex-row gap-4 mb-6">
-      <div class="flex gap-1 flex-wrap w-full items-center filter-toolbar">
+      <div class="flex gap-1 flex-wrap md:flex-nowrap w-full items-center filter-toolbar">
         <!-- Filter by Rating/Collection (Combined Dropdown) -->
         <div class="relative filter-control" x-data="{ open: false }">
           <button class="flex items-center px-2 py-2 rounded-md text-gray-200 hover:text-white transition-colors cursor-pointer"
@@ -206,7 +206,7 @@
           </div>
         </div>
 
-        <div class="px-4 py-2 bg-[#2a2f35] rounded-md text-gray-200 text-sm font-semibold">
+        <div id="result-count" class="px-4 py-2 bg-[#2a2f35] rounded-md text-gray-200 text-sm font-semibold">
           {% if media_list.paginator %}
             {{ media_list.paginator.count }}
           {% else %}
@@ -467,5 +467,18 @@
         console.log(`Trigger ${index}: Page ${pageNumber}, URL: ${url}, Trigger: ${triggerType}`);
       });
     };
+  </script>
+
+  <script>
+    document.body.addEventListener('resultCountUpdated', function(evt) {
+      const count = evt.detail && evt.detail.count;
+      if (count === undefined || count === null) {
+        return;
+      }
+      const el = document.getElementById('result-count');
+      if (el) {
+        el.textContent = String(count);
+      }
+    });
   </script>
 {% endblock content %}
