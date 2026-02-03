@@ -60,6 +60,8 @@
         }
       })();
     </script>
+    <script defer src="{% static 'js/libraries/marked-12.0.2.min.js' %}"></script>
+    <script defer src="{% static 'js/markdown-editor.js' %}{% get_static_file_mtime 'js/markdown-editor.js' %}"></script>
     <script defer src="{% static 'js/libraries/alpinejs-3.14.9.min.js' %}"></script>
     <script src="{% static 'js/libraries/lazysizes-5.3.2.min.js' %}" async></script>
     {# ZXing library for barcode decoding #}

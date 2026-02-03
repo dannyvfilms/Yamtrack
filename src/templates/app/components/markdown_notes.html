@@ -1,0 +1,77 @@
+{% load widget_tweaks %}
+
+<div class="mb-5" data-markdown-editor>
+  <div class="flex items-center justify-between mb-2">
+    <label class="block text-sm font-medium text-gray-300" for="{{ notes_field.id_for_label }}">{{ notes_field.label }}</label>
+    <span class="text-xs text-gray-400">Markdown supported</span>
+  </div>
+
+  <div class="border border-gray-600 rounded-md overflow-hidden bg-[#1f2328]">
+    <div class="flex flex-wrap items-center gap-1 border-b border-gray-700 bg-[#2a2f35] text-xs sm:text-sm">
+      <button type="button"
+              data-md-tab="write"
+              class="px-3 py-2 text-gray-400 hover:text-white">
+        Write
+      </button>
+      <button type="button"
+              data-md-tab="preview"
+              class="px-3 py-2 text-gray-400 hover:text-white">
+        Preview
+      </button>
+      <div class="ml-auto flex items-center gap-1 px-2">
+        <button type="button"
+                data-md-action="heading"
+                class="px-2 py-1 text-gray-300 hover:text-white hover:bg-gray-700 rounded"
+                title="Heading">
+          H
+        </button>
+        <button type="button"
+                data-md-action="bold"
+                class="px-2 py-1 text-gray-300 hover:text-white hover:bg-gray-700 rounded"
+                title="Bold">
+          B
+        </button>
+        <button type="button"
+                data-md-action="italic"
+                class="px-2 py-1 text-gray-300 hover:text-white hover:bg-gray-700 rounded"
+                title="Italic">
+          I
+        </button>
+        <button type="button"
+                data-md-action="code"
+                class="px-2 py-1 text-gray-300 hover:text-white hover:bg-gray-700 rounded"
+                title="Code">
+          &lt;&gt;
+        </button>
+        <button type="button"
+                data-md-action="link"
+                class="px-2 py-1 text-gray-300 hover:text-white hover:bg-gray-700 rounded"
+                title="Link">
+          Link
+        </button>
+        <button type="button"
+                data-md-action="quote"
+                class="px-2 py-1 text-gray-300 hover:text-white hover:bg-gray-700 rounded"
+                title="Quote">
+          &gt;
+        </button>
+        <button type="button"
+                data-md-action="ul"
+                class="px-2 py-1 text-gray-300 hover:text-white hover:bg-gray-700 rounded"
+                title="Bulleted list">
+          UL
+        </button>
+        <button type="button"
+                data-md-action="ol"
+                class="px-2 py-1 text-gray-300 hover:text-white hover:bg-gray-700 rounded"
+                title="Numbered list">
+          OL
+        </button>
+      </div>
+    </div>
+    <div data-md-pane="write" class="p-3 bg-[#2a2f35]">
+      {{ notes_field|add_class:"w-full min-h-[150px] bg-[#2a2f35] p-2 text-sm text-gray-100 border-0 focus:outline-none" }}
+    </div>
+    <div data-md-pane="preview" class="p-3 min-h-[150px] max-h-72 overflow-y-auto bg-[#2a2f35] hidden"></div>
+  </div>
+</div>
