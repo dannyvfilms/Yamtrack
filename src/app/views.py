@@ -3,6 +3,7 @@ import json
 import logging
 import time
 from collections import defaultdict
+from decimal import Decimal, InvalidOperation
 from datetime import UTC, date, timedelta
 from pathlib import Path
 
@@ -2650,7 +2651,20 @@ def update_media_score(request, media_type, instance_id):
         instance_id,
     )
 
-    score = float(request.POST.get("score"))
+    score_raw = request.POST.get("score")
+    toggle = request.POST.get("toggle")
+    score = None
+    if score_raw is not None:
+        score_raw = score_raw.strip()
+        if score_raw and score_raw.lower() != "null":
+            try:
+                score = Decimal(score_raw)
+            except (InvalidOperation, TypeError):
+                return HttpResponseBadRequest("Invalid score.")
+
+    if toggle and score is not None and media.score == score:
+        score = None
+
     media.score = score
     media.save()
     logger.info(
@@ -2662,7 +2676,7 @@ def update_media_score(request, media_type, instance_id):
     return JsonResponse(
         {
             "success": True,
-            "score": score,
+            "score": float(score) if score is not None else None,
         },
     )
 

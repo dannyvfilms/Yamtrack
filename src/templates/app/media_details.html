@@ -386,11 +386,11 @@
               <div class="flex justify-between mb-1">
                 {% with rating_range=10|get_range %}
                   {% for rating_value in rating_range %}
-                    <button @click="rating = {{ rating_value }}; showRatingPopup = false; isHovering = false"
+                    <button @click="if (rating === {{ rating_value }}) { rating = null; } else { rating = {{ rating_value }}; } showRatingPopup = false; isHovering = false"
                             @mouseenter="hoverRating = {{ rating_value }}"
                             hx-post="{% url 'update_media_score' media_type current_instance.id %}"
                             hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
-                            hx-vals='{"score": {{ rating_value }} }'
+                            hx-vals='{"score": {{ rating_value }}, "toggle": true }'
                             hx-trigger="click"
                             hx-swap="none"
                             class="focus:outline-none flex flex-col items-center cursor-pointer">
