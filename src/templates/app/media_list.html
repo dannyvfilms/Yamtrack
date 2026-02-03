@@ -7,7 +7,16 @@
 {% endblock title %}
 
 {% block content %}
-  <h1 class="text-3xl font-bold mb-6">{{ media_type|media_type_readable_plural }}</h1>
+  <div class="flex items-center gap-3 mb-6">
+    <h1 class="text-3xl font-bold">{{ media_type|media_type_readable_plural }}</h1>
+    <div class="result-count-badge md:hidden px-4 py-2 bg-[#2a2f35] rounded-md text-gray-200 text-sm font-semibold">
+      {% if media_list.paginator %}
+        {{ media_list.paginator.count }}
+      {% else %}
+        {{ media_list|length }}
+      {% endif %}
+    </div>
+  </div>
 
   <div x-data="{ sort: '{{ current_sort }}', direction: '{{ current_direction }}', status: '{{ current_status }}', rating: '{{ current_rating }}', collection: '{{ current_collection }}', genre: '{{ current_genre|default:'' }}', year: '{{ current_year|default:'' }}', source: '{{ current_source|default:'' }}', language: '{{ current_language|default:'' }}', country: '{{ current_country|default:'' }}', platform: '{{ current_platform|default:'' }}', origin: '{{ current_origin|default:'' }}', layout: '{{ current_layout }}', search: '{{ request.GET.search|default:'' }}', showLanguages: {{ filter_data.show_languages|yesno:'true,false' }}, showCountries: {{ filter_data.show_countries|yesno:'true,false' }}, showPlatforms: {{ filter_data.show_platforms|yesno:'true,false' }}, showOrigins: {{ filter_data.show_origins|yesno:'true,false' }}, statusLabels: {
     {% for value, label in status_choices %}
@@ -50,7 +59,7 @@
     </form>
 
     <div class="flex flex-col md:flex-row gap-4 mb-6">
-      <div class="flex gap-1 flex-wrap md:flex-nowrap w-full items-center filter-toolbar">
+      <div class="flex gap-1 flex-wrap md:flex-nowrap w-full items-center filter-toolbar media-filter-toolbar">
         {% if filter_data %}
           {{ filter_data|json_script:"media-filter-data" }}
         {% endif %}
@@ -681,7 +690,7 @@
           </div>
         </div>
 
-        <div id="result-count" class="px-4 py-2 bg-[#2a2f35] rounded-md text-gray-200 text-sm font-semibold">
+        <div id="result-count" class="result-count-badge hidden md:block px-4 py-2 bg-[#2a2f35] rounded-md text-gray-200 text-sm font-semibold">
           {% if media_list.paginator %}
             {{ media_list.paginator.count }}
           {% else %}
