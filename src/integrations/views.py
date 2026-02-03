@@ -911,6 +911,28 @@ def import_goodreads(request):
     return redirect("import_data")
 
 
+@require_POST
+def import_hardcover(request):
+    """View for importing books data from Hardcover CSV."""
+    file = request.FILES.get("hardcover_csv")
+
+    if not file:
+        messages.error(request, "Hardcover CSV file is required.")
+        return redirect("import_data")
+
+    mode = request.POST["mode"]
+    tasks.import_hardcover.delay(
+        file=request.FILES["hardcover_csv"],
+        user_id=request.user.id,
+        mode=mode,
+    )
+    messages.info(
+        request,
+        "The task to import media from Hardcover CSV file has been queued.",
+    )
+    return redirect("import_data")
+
+
 @require_GET
 def export_csv(request):
     """View for exporting all media data to a CSV file."""

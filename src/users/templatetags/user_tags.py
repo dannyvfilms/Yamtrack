@@ -69,6 +69,10 @@ SOURCES_CONFIG = {
         "name": "Last.fm",
         "logo": static("img/lastfm-logo.png"),
     },
+    "hardcover": {
+        "name": "Hardcover",
+        "logo": static("img/hardcover-logo.png"),
+    },
 }
 
 

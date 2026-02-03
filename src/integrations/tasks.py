@@ -16,6 +16,7 @@ from app.templatetags import app_tags
 from integrations.imports import (
     anilist,
     goodreads,
+    hardcover,
     helpers,
     hltb,
     imdb,
@@ -211,6 +212,12 @@ def import_imdb(file, user_id, mode):
 def import_goodreads(file, user_id, mode):
     """Celery task for importing media data from GoodReads."""
     return import_media(goodreads.importer, file, user_id, mode)
+
+
+@shared_task(name="Import from Hardcover")
+def import_hardcover(file, user_id, mode):
+    """Celery task for importing media data from Hardcover."""
+    return import_media(hardcover.importer, file, user_id, mode)
 
 
 @shared_task(name="Import from Plex")
