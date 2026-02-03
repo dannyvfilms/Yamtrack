@@ -482,6 +482,12 @@ def media_list(request, media_type):
     valid_collection_filters = {"all", "collected", "not_collected"}
     if collection_filter not in valid_collection_filters:
         collection_filter = "all"
+
+    genre_filter = (request.GET.get("genre") or "").strip()
+    year_filter = (request.GET.get("year") or "").strip()
+    source_filter = (request.GET.get("source") or "").strip()
+    language_filter = (request.GET.get("language") or "").strip()
+    country_filter = (request.GET.get("country") or "").strip()
     
     search_query = request.GET.get("search", "")
     try:
@@ -542,6 +548,96 @@ def media_list(request, media_type):
         
         return filtered_items
 
+    def _normalize_filter_value(value):
+        return str(value or "").strip().lower()
+
+    def apply_genre_filter(media_items, filter_value):
+        if not filter_value:
+            return media_items
+        target = _normalize_filter_value(filter_value)
+        filtered_items = []
+        for media in media_items:
+            item = getattr(media, "item", None)
+            genres = getattr(item, "genres", None) or []
+            if any(_normalize_filter_value(genre) == target for genre in genres):
+                filtered_items.append(media)
+        return filtered_items
+
+    def apply_year_filter(media_items, filter_value):
+        if not filter_value:
+            return media_items
+        target = _normalize_filter_value(filter_value)
+        if target == "unknown":
+            return [
+                media
+                for media in media_items
+                if not getattr(getattr(media, "item", None), "release_datetime", None)
+            ]
+        try:
+            target_year = int(target)
+        except (TypeError, ValueError):
+            return media_items
+        return [
+            media
+            for media in media_items
+            if getattr(getattr(media, "item", None), "release_datetime", None)
+            and getattr(media.item.release_datetime, "year", None) == target_year
+        ]
+
+    def apply_source_filter(media_items, filter_value):
+        if not filter_value:
+            return media_items
+        target = str(filter_value).strip()
+        return [
+            media
+            for media in media_items
+            if getattr(getattr(media, "item", None), "source", None) == target
+        ]
+
+    def build_filter_data_from_items(media_items):
+        from app.models import Sources
+
+        genres_set = set()
+        years_set = set()
+        sources_set = set()
+        has_unknown_year = False
+        for media in media_items:
+            item = getattr(media, "item", None)
+            if not item:
+                continue
+            for genre in getattr(item, "genres", None) or []:
+                genre_value = str(genre).strip()
+                if genre_value:
+                    genres_set.add(genre_value)
+            release_dt = getattr(item, "release_datetime", None)
+            if release_dt and getattr(release_dt, "year", None):
+                years_set.add(release_dt.year)
+            else:
+                has_unknown_year = True
+            if getattr(item, "source", None):
+                sources_set.add(item.source)
+
+        genres = sorted(genres_set, key=lambda value: value.lower())
+        years = [
+            {"value": str(year), "label": str(year)}
+            for year in sorted(years_set, reverse=True)
+        ]
+        if has_unknown_year:
+            years.append({"value": "unknown", "label": "Unknown"})
+
+        source_labels = dict(Sources.choices)
+        sources = [
+            {"value": source, "label": source_labels.get(source, source)}
+            for source in sorted(sources_set)
+        ]
+        return {
+            "genres": genres,
+            "years": years,
+            "sources": sources,
+            "languages": [],
+            "countries": [],
+        }
+
     # Get media list with filters applied
     media_queryset = BasicMedia.objects.get_media_list(
         user=request.user,
@@ -554,8 +650,12 @@ def media_list(request, media_type):
     
     # Convert to list for filtering (rating and collection filters work on lists)
     media_list = list(media_queryset)
+    filter_data = build_filter_data_from_items(media_list)
     media_list = apply_rating_filter(media_list, rating_filter)
     media_list = apply_collection_filter(media_list, collection_filter, request.user, media_type)
+    media_list = apply_genre_filter(media_list, genre_filter)
+    media_list = apply_year_filter(media_list, year_filter)
+    media_list = apply_source_filter(media_list, source_filter)
 
     # Handle time_left sorting for TV shows
     if sort_filter == "time_left" and media_type == MediaTypes.TV.value:
@@ -574,6 +674,9 @@ def media_list(request, media_type):
             direction,
             rating_filter,
             collection_filter,
+            genre_filter,
+            year_filter,
+            source_filter,
         )
         cached_results = cache.get(cache_key)
 
@@ -638,9 +741,16 @@ def media_list(request, media_type):
         "current_direction": direction,
         "current_status": status_filter,
         "current_rating": rating_filter,
+        "current_collection": collection_filter,
+        "current_genre": genre_filter,
+        "current_year": year_filter,
+        "current_source": source_filter,
+        "current_language": language_filter,
+        "current_country": country_filter,
         "sort_choices": MediaSortChoices.choices,
         "status_choices": MediaStatusChoices.choices,
         "rating_choices": MEDIA_RATING_CHOICES,
+        "filter_data": filter_data,
     }
 
     # For music, show tracked artists instead of individual tracks
@@ -649,7 +759,7 @@ def media_list(request, media_type):
     if media_type == MediaTypes.PODCAST.value:
         from django.conf import settings
 
-        from app.models import Item, PodcastShowTracker, Sources
+        from app.models import Item, PodcastShowTracker
 
         show_trackers = (
             PodcastShowTracker.objects.filter(user=request.user)
@@ -685,6 +795,55 @@ def media_list(request, media_type):
         else:
             # Default: most recently updated
             show_trackers = show_trackers.order_by("-updated_at")
+
+        show_trackers_list = list(show_trackers)
+
+        def _build_podcast_filter_data(trackers):
+            genres_set = set()
+            languages_set = set()
+            for tracker in trackers:
+                show = tracker.show
+                for genre in (show.genres or []):
+                    genre_value = str(genre).strip()
+                    if genre_value:
+                        genres_set.add(genre_value)
+                language_value = (show.language or "").strip()
+                if language_value:
+                    languages_set.add(language_value)
+
+            genres = sorted(genres_set, key=lambda value: value.lower())
+            languages = [
+                {"value": value, "label": value.upper() if len(value) <= 3 else value}
+                for value in sorted(languages_set)
+            ]
+            return {
+                "genres": genres,
+                "years": [],
+                "sources": [],
+                "languages": languages,
+                "countries": [],
+            }
+
+        filter_data = _build_podcast_filter_data(show_trackers_list)
+
+        if genre_filter:
+            target_genre = _normalize_filter_value(genre_filter)
+            show_trackers_list = [
+                tracker
+                for tracker in show_trackers_list
+                if any(
+                    _normalize_filter_value(genre) == target_genre
+                    for genre in (tracker.show.genres or [])
+                )
+            ]
+
+        if language_filter:
+            target_language = _normalize_filter_value(language_filter)
+            show_trackers_list = [
+                tracker
+                for tracker in show_trackers_list
+                if _normalize_filter_value(tracker.show.language) == target_language
+            ]
 
         # Convert show trackers to Media-like objects for standard templates
         # Create a simple adapter class to make trackers compatible with media components
@@ -722,7 +881,7 @@ def media_list(request, media_type):
                     self.item.save(update_fields=["title", "image"])
 
         # Convert trackers to adapters
-        adapted_media = [PodcastShowAdapter(tracker) for tracker in show_trackers]
+        adapted_media = [PodcastShowAdapter(tracker) for tracker in show_trackers_list]
 
         # Paginate adapted media
         media_paginator = Paginator(adapted_media, 32)
@@ -739,10 +898,17 @@ def media_list(request, media_type):
             "current_direction": direction,
             "current_status": status_filter,
             "current_rating": rating_filter,
+            "current_collection": collection_filter,
+            "current_genre": genre_filter,
+            "current_year": year_filter,
+            "current_source": source_filter,
+            "current_language": language_filter,
+            "current_country": country_filter,
             "sort_choices": MediaSortChoices.choices,
             "status_choices": MediaStatusChoices.choices,
             "rating_choices": MEDIA_RATING_CHOICES,
             "search_query": search_query,
+            "filter_data": filter_data,
         }
 
         # Handle HTMX requests for partial updates
@@ -835,8 +1001,57 @@ def media_list(request, media_type):
             # Default: most recently updated
             artist_trackers = artist_trackers.order_by("-updated_at")
 
+        artist_trackers_list = list(artist_trackers)
+
+        def _build_music_filter_data(trackers):
+            genres_set = set()
+            countries_set = set()
+            for tracker in trackers:
+                artist = tracker.artist
+                for genre in (artist.genres or []):
+                    genre_value = str(genre).strip()
+                    if genre_value:
+                        genres_set.add(genre_value)
+                country_value = (artist.country or "").strip()
+                if country_value:
+                    countries_set.add(country_value)
+
+            genres = sorted(genres_set, key=lambda value: value.lower())
+            countries = [
+                {"value": value, "label": value.upper() if len(value) <= 3 else value}
+                for value in sorted(countries_set)
+            ]
+            return {
+                "genres": genres,
+                "years": [],
+                "sources": [],
+                "languages": [],
+                "countries": countries,
+            }
+
+        filter_data = _build_music_filter_data(artist_trackers_list)
+
+        if genre_filter:
+            target_genre = _normalize_filter_value(genre_filter)
+            artist_trackers_list = [
+                tracker
+                for tracker in artist_trackers_list
+                if any(
+                    _normalize_filter_value(genre) == target_genre
+                    for genre in (tracker.artist.genres or [])
+                )
+            ]
+
+        if country_filter:
+            target_country = _normalize_filter_value(country_filter)
+            artist_trackers_list = [
+                tracker
+                for tracker in artist_trackers_list
+                if _normalize_filter_value(tracker.artist.country) == target_country
+            ]
+
         # Paginate artist trackers first
-        artist_paginator = Paginator(artist_trackers, 32)
+        artist_paginator = Paginator(artist_trackers_list, 32)
         artist_page = artist_paginator.get_page(page)
 
         # Backfill missing artist images from album covers (no API calls - uses existing data)
@@ -949,6 +1164,7 @@ def media_list(request, media_type):
         # This ensures HTMX pagination works correctly and images are backfilled for new pages
         context["media_list"] = artist_page
         context["is_artist_list"] = True
+        context["filter_data"] = filter_data
 
     # Handle HTMX requests for partial updates
     if request.headers.get("HX-Request"):
