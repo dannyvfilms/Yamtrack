@@ -1,3 +1,4 @@
+import json
 import logging
 from collections import defaultdict
 from csv import DictReader
@@ -13,8 +14,31 @@ from app.providers import services
 from app.templatetags import app_tags
 from integrations.imports import helpers
 from integrations.imports.helpers import MediaImportError, MediaImportUnexpectedError
+from lists.models import CustomList, CustomListItem
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_bool(value):
+    """Parse truthy values from CSV strings."""
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "t"}
+
+
+def _parse_tags(value):
+    """Parse list tags from JSON or comma-delimited string."""
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+        if isinstance(parsed, list):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+    return [tag.strip() for tag in str(value).split(",") if tag.strip()]
 
 
 def importer(file, user, mode):
@@ -47,6 +71,7 @@ class YamtrackImporter:
 
         # Track bulk creation lists for each media type
         self.bulk_media = defaultdict(list)
+        self.list_map = {}
 
         logger.info(
             "Initialized Yamtrack CSV importer for user %s with mode %s",
@@ -91,6 +116,21 @@ class YamtrackImporter:
 
     def _process_row(self, row):
         """Process a single row from the CSV file."""
+        row_type = (row.get("row_type") or "").strip().lower()
+        if row_type in ("", "media"):
+            self._process_media_row(row)
+            return
+        if row_type == "list":
+            self._process_list_row(row)
+            return
+        if row_type == "list_item":
+            self._process_list_item_row(row)
+            return
+
+        self.warnings.append(f"Skipping unknown row type: {row_type}")
+
+    def _process_media_row(self, row):
+        """Process a single media row from the CSV file."""
         media_type = row["media_type"]
 
         season_number = (
@@ -162,6 +202,151 @@ class YamtrackImporter:
             error_msg = f"{row['title']} ({media_type}): {form.errors.as_json()}"
             self.warnings.append(error_msg)
             logger.error(error_msg)
+
+    def _process_list_row(self, row):
+        """Process a list definition row."""
+        list_uid = (row.get("list_uid") or "").strip()
+        list_name = (row.get("list_name") or "").strip()
+        if not list_name:
+            self.warnings.append("Skipping list row without a name.")
+            return
+
+        list_source = (row.get("list_source") or "local").strip() or "local"
+        list_source_id = (row.get("list_source_id") or "").strip()
+        list_visibility = (row.get("list_visibility") or "private").strip() or "private"
+        list_description = row.get("list_description") or ""
+        list_allow_recommendations = _parse_bool(row.get("list_allow_recommendations"))
+        list_tags = _parse_tags(row.get("list_tags"))
+
+        existing = None
+        if list_source_id:
+            existing = CustomList.objects.filter(
+                owner=self.user,
+                source=list_source,
+                source_id=list_source_id,
+            ).first()
+        if not existing:
+            existing = CustomList.objects.filter(owner=self.user, name=list_name).first()
+
+        seen_key = list_uid or list_name
+        already_seen = bool(seen_key and seen_key in self.list_map)
+
+        if existing:
+            if self.mode == "overwrite":
+                existing.description = list_description
+                existing.tags = list_tags
+                existing.visibility = list_visibility
+                existing.allow_recommendations = list_allow_recommendations
+                existing.source = list_source
+                existing.source_id = list_source_id
+                existing.save(
+                    update_fields=[
+                        "description",
+                        "tags",
+                        "visibility",
+                        "allow_recommendations",
+                        "source",
+                        "source_id",
+                    ],
+                )
+                if not already_seen:
+                    CustomListItem.objects.filter(custom_list=existing).delete()
+            custom_list = existing
+        else:
+            custom_list = CustomList.objects.create(
+                name=list_name,
+                description=list_description,
+                tags=list_tags,
+                visibility=list_visibility,
+                allow_recommendations=list_allow_recommendations,
+                source=list_source,
+                source_id=list_source_id,
+                owner=self.user,
+            )
+
+        if list_uid:
+            self.list_map[list_uid] = custom_list
+        else:
+            self.list_map[list_name] = custom_list
+
+    def _process_list_item_row(self, row):
+        """Process a list item row without creating tracked media."""
+        list_uid = (row.get("list_uid") or "").strip()
+        list_name = (row.get("list_name") or "").strip()
+
+        custom_list = None
+        if list_uid:
+            custom_list = self.list_map.get(list_uid)
+        if not custom_list and list_name:
+            custom_list = self.list_map.get(list_name) or CustomList.objects.filter(
+                owner=self.user,
+                name=list_name,
+            ).first()
+        if not custom_list and list_name:
+            custom_list = CustomList.objects.create(
+                name=list_name,
+                owner=self.user,
+            )
+            if list_uid:
+                self.list_map[list_uid] = custom_list
+            else:
+                self.list_map[list_name] = custom_list
+        if not custom_list:
+            self.warnings.append("Skipping list item row without a list reference.")
+            return
+
+        media_type = row.get("media_type") or ""
+        if not media_type:
+            self.warnings.append(
+                f"Skipping list item without media_type for list {custom_list.name}."
+            )
+            return
+
+        season_number = (
+            int(row["season_number"]) if row.get("season_number") else None
+        )
+        episode_number = (
+            int(row["episode_number"]) if row.get("episode_number") else None
+        )
+
+        if (
+            row.get("media_id") == ""
+            or row.get("title") == ""
+            or row.get("image") == ""
+        ):
+            self._handle_missing_metadata(
+                row,
+                media_type,
+                season_number,
+                episode_number,
+            )
+
+        item, _ = helpers.retry_on_lock(
+            lambda: app.models.Item.objects.update_or_create(
+                media_id=row["media_id"],
+                source=row["source"],
+                media_type=media_type,
+                season_number=season_number,
+                episode_number=episode_number,
+                defaults={
+                    "title": row["title"],
+                    "image": row["image"],
+                },
+            ),
+        )
+
+        list_item, created = CustomListItem.objects.get_or_create(
+            custom_list=custom_list,
+            item=item,
+            defaults={"added_by": self.user},
+        )
+        list_item_date = row.get("list_item_date_added")
+        if created and list_item_date:
+            parsed_date = parse_datetime(list_item_date)
+            if parsed_date:
+                CustomListItem.objects.filter(pk=list_item.pk).update(
+                    date_added=parsed_date,
+                )
 
     def _handle_missing_metadata(self, row, media_type, season_number, episode_number):
         """Handle missing metadata by fetching from provider."""

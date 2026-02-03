@@ -1,4 +1,5 @@
 import csv
+import json
 import logging
 
 from django.apps import apps
@@ -6,6 +7,7 @@ from django.db.models import Field, Prefetch
 
 from app import helpers
 from app.models import Episode, Item, MediaTypes, Season
+from lists.models import CustomList
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +29,11 @@ def generate_rows(user):
     fields = {
         "item": get_model_fields(Item),
         "track": get_track_fields(),
+        "list": get_list_fields(),
     }
 
     # Yield header row
-    yield writer.writerow(fields["item"] + fields["track"])
+    yield writer.writerow(["row_type"] + fields["item"] + fields["track"] + fields["list"])
 
     prefetch_config = {
         MediaTypes.TV.value: Prefetch(
@@ -66,20 +69,69 @@ def generate_rows(user):
         logger.debug("Streaming %ss to CSV", media_type)
 
         for media in queryset.iterator(chunk_size=500):
-            row = [getattr(media.item, field, "") for field in fields["item"]] + [
-                getattr(media, field, "") for field in fields["track"]
-            ]
+            row = (
+                ["media"]
+                + [getattr(media.item, field, "") for field in fields["item"]]
+                + [getattr(media, field, "") for field in fields["track"]]
+                + [""] * len(fields["list"])
+            )
 
             if media_type == MediaTypes.GAME.value:
                 # calculate index of progress field
                 progress_index = fields["track"].index("progress")
-                row[progress_index + len(fields["item"])] = helpers.minutes_to_hhmm(
+                row[progress_index + 1 + len(fields["item"])] = helpers.minutes_to_hhmm(
                     media.progress,
                 )
 
             yield writer.writerow(row)
 
         logger.debug("Finished streaming %ss to CSV", media_type)
+
+    # Export custom lists owned by the user
+    custom_lists = (
+        CustomList.objects.filter(owner=user)
+        .prefetch_related("customlistitem_set__item")
+        .order_by("name")
+    )
+
+    for custom_list in custom_lists:
+        list_row = (
+            ["list"]
+            + [""] * len(fields["item"])
+            + [""] * len(fields["track"])
+            + [
+                custom_list.id,
+                custom_list.name,
+                custom_list.description,
+                json.dumps(custom_list.tags or []),
+                custom_list.visibility,
+                custom_list.allow_recommendations,
+                custom_list.source,
+                custom_list.source_id,
+                "",
+            ]
+        )
+        yield writer.writerow(list_row)
+
+        for list_item in custom_list.customlistitem_set.all():
+            item = list_item.item
+            list_item_row = (
+                ["list_item"]
+                + [getattr(item, field, "") for field in fields["item"]]
+                + [""] * len(fields["track"])
+                + [
+                    custom_list.id,
+                    custom_list.name,
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    list_item.date_added.isoformat() if list_item.date_added else "",
+                ]
+            )
+            yield writer.writerow(list_item_row)
 
 
 def get_model_fields(model):
@@ -119,3 +171,18 @@ def get_track_fields():
             all_fields.append(timestamp_field)
 
     return list(all_fields)
+
+
+def get_list_fields():
+    """Get list-specific export fields."""
+    return [
+        "list_uid",
+        "list_name",
+        "list_description",
+        "list_tags",
+        "list_visibility",
+        "list_allow_recommendations",
+        "list_source",
+        "list_source_id",
+        "list_item_date_added",
+    ]

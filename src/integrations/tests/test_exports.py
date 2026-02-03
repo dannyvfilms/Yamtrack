@@ -7,6 +7,7 @@ from django.db.models import Q
 from django.test import TestCase
 from django.urls import reverse
 
+from app.mixins import disable_fetch_releases
 from app.models import (
     Anime,
     Book,
@@ -20,6 +21,7 @@ from app.models import (
     Sources,
     Status,
 )
+from lists.models import CustomList, CustomListItem
 
 
 class ExportCSVTest(TestCase):
@@ -31,114 +33,127 @@ class ExportCSVTest(TestCase):
         self.user = get_user_model().objects.create_superuser(**self.credentials)
         self.client.login(**self.credentials)
 
-        item_movie = Item.objects.create(
-            media_id="10494",
-            source=Sources.TMDB.value,
-            media_type=MediaTypes.MOVIE.value,
-            title="Perfect Blue",
-            image="https://image.url",
-        )
-        Movie.objects.create(
-            item=item_movie,
-            user=self.user,
-            score=9,
-            status=Status.COMPLETED.value,
-            notes="Nice",
-            start_date=datetime(2023, 6, 1, 0, 0, tzinfo=UTC),
-            end_date=datetime(2023, 6, 1, 0, 0, tzinfo=UTC),
-        )
+        with disable_fetch_releases():
+            item_movie = Item.objects.create(
+                media_id="10494",
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.MOVIE.value,
+                title="Perfect Blue",
+                image="https://image.url",
+            )
+            Movie.objects.create(
+                item=item_movie,
+                user=self.user,
+                score=9,
+                status=Status.COMPLETED.value,
+                notes="Nice",
+                start_date=datetime(2023, 6, 1, 0, 0, tzinfo=UTC),
+                end_date=datetime(2023, 6, 1, 0, 0, tzinfo=UTC),
+            )
 
-        item_season = Item.objects.create(
-            media_id="1668",
-            source=Sources.TMDB.value,
-            media_type=MediaTypes.SEASON.value,
-            title="Friends",
-            image="https://image.url",
-            season_number=1,
-        )
+            item_season = Item.objects.create(
+                media_id="1668",
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.SEASON.value,
+                title="Friends",
+                image="https://image.url",
+                season_number=1,
+            )
 
-        season = Season.objects.create(
-            item=item_season,
-            user=self.user,
-            score=9,
-            status=Status.IN_PROGRESS.value,
-            notes="Nice",
-        )
+            season = Season.objects.create(
+                item=item_season,
+                user=self.user,
+                score=9,
+                status=Status.IN_PROGRESS.value,
+                notes="Nice",
+            )
 
-        item_episode = Item.objects.create(
-            media_id="1668",
-            source=Sources.TMDB.value,
-            media_type=MediaTypes.EPISODE.value,
-            title="Friends",
-            image="https://image.url",
-            season_number=1,
-            episode_number=1,
-        )
-        Episode.objects.create(
-            item=item_episode,
-            related_season=season,
-            end_date=datetime(2023, 6, 1, 0, 0, tzinfo=UTC),
-        )
+            item_episode = Item.objects.create(
+                media_id="1668",
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.EPISODE.value,
+                title="Friends",
+                image="https://image.url",
+                season_number=1,
+                episode_number=1,
+            )
+            Episode.objects.create(
+                item=item_episode,
+                related_season=season,
+                end_date=datetime(2023, 6, 1, 0, 0, tzinfo=UTC),
+            )
 
-        item_anime = Item.objects.create(
-            media_id="1",
-            source=Sources.MAL.value,
-            media_type=MediaTypes.ANIME.value,
-            title="Cowboy Bebop",
-            image="https://image.url",
-        )
-        Anime.objects.create(
-            item=item_anime,
-            user=self.user,
-            status=Status.IN_PROGRESS.value,
-            progress=2,
-            start_date=datetime(2021, 6, 1, 0, 0, tzinfo=UTC),
-        )
+            item_anime = Item.objects.create(
+                media_id="1",
+                source=Sources.MAL.value,
+                media_type=MediaTypes.ANIME.value,
+                title="Cowboy Bebop",
+                image="https://image.url",
+            )
+            Anime.objects.create(
+                item=item_anime,
+                user=self.user,
+                status=Status.IN_PROGRESS.value,
+                progress=2,
+                start_date=datetime(2021, 6, 1, 0, 0, tzinfo=UTC),
+            )
 
-        item_manga = Item.objects.create(
-            media_id="1",
-            source=Sources.MAL.value,
-            media_type=MediaTypes.MANGA.value,
-            title="Berserk",
-            image="https://image.url",
-        )
-        Manga.objects.create(
-            item=item_manga,
-            user=self.user,
-            status=Status.IN_PROGRESS.value,
-            progress=2,
-            start_date=datetime(2021, 6, 1, 0, 0, tzinfo=UTC),
-        )
+            item_manga = Item.objects.create(
+                media_id="1",
+                source=Sources.MAL.value,
+                media_type=MediaTypes.MANGA.value,
+                title="Berserk",
+                image="https://image.url",
+            )
+            Manga.objects.create(
+                item=item_manga,
+                user=self.user,
+                status=Status.IN_PROGRESS.value,
+                progress=2,
+                start_date=datetime(2021, 6, 1, 0, 0, tzinfo=UTC),
+            )
 
-        item_game = Item.objects.create(
-            media_id="1",
-            source=Sources.IGDB.value,
-            media_type=MediaTypes.GAME.value,
-            title="The Witcher 3: Wild Hunt",
-            image="https://image.url",
-        )
-        Game.objects.create(
-            item=item_game,
-            user=self.user,
-            status=Status.IN_PROGRESS.value,
-            progress=120,
-            start_date=datetime(2021, 6, 1, 0, 0, tzinfo=UTC),
-        )
+            item_game = Item.objects.create(
+                media_id="1",
+                source=Sources.IGDB.value,
+                media_type=MediaTypes.GAME.value,
+                title="The Witcher 3: Wild Hunt",
+                image="https://image.url",
+            )
+            Game.objects.create(
+                item=item_game,
+                user=self.user,
+                status=Status.IN_PROGRESS.value,
+                progress=120,
+                start_date=datetime(2021, 6, 1, 0, 0, tzinfo=UTC),
+            )
 
-        item_book = Item.objects.create(
-            media_id="OL21733390M",
-            source=Sources.OPENLIBRARY.value,
-            media_type=MediaTypes.BOOK.value,
-            title="Fantastic Mr. Fox",
-            image="https://image.url",
-        )
-        Book.objects.create(
-            item=item_book,
-            user=self.user,
-            status=Status.IN_PROGRESS.value,
-            progress=120,
-            start_date=datetime(2021, 6, 1, 0, 0, tzinfo=UTC),
-        )
+            item_book = Item.objects.create(
+                media_id="OL21733390M",
+                source=Sources.OPENLIBRARY.value,
+                media_type=MediaTypes.BOOK.value,
+                title="Fantastic Mr. Fox",
+                image="https://image.url",
+            )
+            Book.objects.create(
+                item=item_book,
+                user=self.user,
+                status=Status.IN_PROGRESS.value,
+                progress=120,
+                start_date=datetime(2021, 6, 1, 0, 0, tzinfo=UTC),
+            )
+
+            custom_list = CustomList.objects.create(
+                name="Favorites",
+                description="Top picks",
+                owner=self.user,
+                visibility="private",
+            )
+            CustomListItem.objects.create(
+                custom_list=custom_list,
+                item=item_movie,
+                added_by=self.user,
+            )
 
     def test_export_csv(self):
         """Basic test exporting media to CSV."""
@@ -170,7 +185,23 @@ class ExportCSVTest(TestCase):
             ).values_list("media_id", flat=True),
         )
 
+        list_rows = []
+        list_item_rows = []
+
         # Verify each row in the CSV exists in the database
         for row in reader:
+            row_type = row.get("row_type") or "media"
+            if row_type == "list":
+                list_rows.append(row)
+                continue
+            if row_type == "list_item":
+                list_item_rows.append(row)
+                continue
+
             media_id = row["media_id"]
             self.assertIn(media_id, db_media_ids)
+
+        self.assertEqual(len(list_rows), 1)
+        self.assertEqual(list_rows[0]["list_name"], "Favorites")
+        self.assertEqual(len(list_item_rows), 1)
+        self.assertEqual(list_item_rows[0]["list_name"], "Favorites")

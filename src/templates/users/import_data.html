@@ -529,7 +529,7 @@
                title="View CSV format documentation">{% include "app/icons/info.svg" with classes="w-4 h-4" %}</a>
           </div>
           <p class="text-sm text-gray-400 mb-3"
-             x-text="importFrequency === 'once' ? 'Import from YamTrack backup' : 'File uploads are not available for periodic imports'">
+             x-text="importFrequency === 'once' ? 'Import from YamTrack backup (media + lists)' : 'File uploads are not available for periodic imports'">
           </p>
           <form method="post"
                 action="{% url 'import_yamtrack' %}"
