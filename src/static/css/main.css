@@ -3639,6 +3639,13 @@
     padding-inline: calc(var(--spacing) * 2) !important;
     font-size: var(--text-xs);
   }
+  .result-count-mobile {
+    display: inline-flex;
+    align-items: center;
+  }
+  .result-count-desktop {
+    display: none;
+  }
   .media-filter-toolbar .layout-toggle {
     margin-left: 0 !important;
     justify-self: end;
@@ -3674,6 +3681,13 @@
 @media (min-width: 769px) {
   .stat-scroll-safe {
     max-width: none;
+  }
+  .result-count-mobile {
+    display: none;
+  }
+  .result-count-desktop {
+    display: inline-flex;
+    align-items: center;
   }
 }
 .select2-container--tailwindcss-4 {
