@@ -31,6 +31,35 @@
           href="{% static 'css/main.css' %}{% get_static_file_mtime 'css/main.css' %}">
 
     <script src="{% static 'js/libraries/htmx-2.0.4.min.js' %}"></script>
+    <script>
+      (function() {
+        function initHtmxCacheBusting() {
+          if (!window.htmx) {
+            return;
+          }
+
+          htmx.config.getCacheBusterParam = true;
+
+          document.body.addEventListener("htmx:configRequest", function(event) {
+            const path = event.detail && event.detail.path ? event.detail.path : "";
+            if (!path.includes("track_modal")) {
+              return;
+            }
+
+            if (!event.detail.parameters) {
+              event.detail.parameters = {};
+            }
+            event.detail.parameters.cache_bust = Date.now().toString();
+          });
+        }
+
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", initHtmxCacheBusting, { once: true });
+        } else {
+          initHtmxCacheBusting();
+        }
+      })();
+    </script>
     <script defer src="{% static 'js/libraries/alpinejs-3.14.9.min.js' %}"></script>
     <script src="{% static 'js/libraries/lazysizes-5.3.2.min.js' %}" async></script>
     {# ZXing library for barcode decoding #}
