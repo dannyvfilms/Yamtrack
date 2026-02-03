@@ -88,7 +88,7 @@
         {% if tracker.score %}
           <span class="flex items-center gap-1 text-xs text-yellow-300 shrink-0">
             {% include "app/icons/star.svg" with classes="w-3 h-3 text-yellow-400 fill-current" %}
-            <span class="font-medium">{{ tracker.score|floatformat:1 }}</span>
+            <span class="font-medium">{{ tracker.score|score_display:user|floatformat:1 }}</span>
           </span>
         {% endif %}
       </div>

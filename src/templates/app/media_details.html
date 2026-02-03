@@ -359,7 +359,7 @@
 
         {# User score - mobile: order-4 (row 2, col 1), desktop: order-2 #}
         {% if user_medias and current_instance and not public_view|default:False %}
-          <div x-data="{ showRatingPopup: false, rating: {{ current_instance.score|default:'null' }}, hoverRating: null, isHovering: false }"
+          <div x-data="{ showRatingPopup: false, rating: {{ current_instance.score|score_display:user|default:'null' }}, hoverRating: null, isHovering: false }"
                class="relative" data-mobile-order="4" data-desktop-order="2">
             <!-- Rating display -->
             <div @click="showRatingPopup = !showRatingPopup"
@@ -370,7 +370,7 @@
                 <template x-if="rating">
                   <div class="flex items-baseline">
                     <span class="text-lg font-bold text-white" x-text="rating"></span>
-                    <span class="text-gray-400 ml-0.5 text-sm">/10</span>
+                    <span class="text-gray-400 ml-0.5 text-sm">/{{ user|rating_scale_max }}</span>
                   </div>
                 </template>
                 <template x-if="!rating">
@@ -387,7 +387,7 @@
                  @mouseenter="isHovering = true"
                  @mouseleave="isHovering = false; hoverRating = null">
               <div class="flex justify-between mb-1">
-                {% with rating_range=10|get_range %}
+                {% with rating_range=user|rating_scale_max|get_range %}
                   {% for rating_value in rating_range %}
                     <button @click="if (rating === {{ rating_value }}) { rating = null; } else { rating = {{ rating_value }}; } showRatingPopup = false; isHovering = false"
                             @mouseenter="hoverRating = {{ rating_value }}"
@@ -522,7 +522,7 @@
                           {% include "app/icons/star.svg" with classes="w-4 h-4 mr-2 text-gray-400 fill-gray-400" %}
                         {% endif %}
                         {% if user_media.score %}
-                          <span class="text-sm font-medium text-gray-300">{{ user_media.score }}</span>
+                          <span class="text-sm font-medium text-gray-300">{{ user_media.score|score_display:user }}</span>
                         {% else %}
                           <span class="text-sm font-medium text-gray-400">Not rated</span>
                         {% endif %}

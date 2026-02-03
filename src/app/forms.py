@@ -198,7 +198,37 @@ class ManualItemForm(forms.ModelForm):
         return instance
 
 
-class MediaForm(forms.ModelForm):
+class RatingScaleFormMixin:
+    """Apply user rating scale preferences to score fields."""
+
+    def __init__(self, *args, **kwargs):
+        self.user = kwargs.pop("user", None)
+        super().__init__(*args, **kwargs)
+        self._apply_rating_scale()
+
+    def _apply_rating_scale(self):
+        if not self.user or "score" not in self.fields:
+            return
+        scale_max = self.user.rating_scale_max
+        self.fields["score"].widget.attrs.update(
+            {
+                "min": 0,
+                "max": scale_max,
+                "step": 0.1,
+                "placeholder": f"0-{scale_max}",
+            },
+        )
+        if not self.is_bound and self.instance and getattr(self.instance, "score", None) is not None:
+            self.initial["score"] = self.user.scale_score_for_display(self.instance.score)
+
+    def clean_score(self):
+        score = self.cleaned_data.get("score")
+        if score is None or not self.user:
+            return score
+        return self.user.scale_score_for_storage(score)
+
+
+class MediaForm(RatingScaleFormMixin, forms.ModelForm):
     """Base form for all media types."""
 
     instance_id = forms.CharField(widget=forms.HiddenInput(), required=False)
@@ -237,7 +267,6 @@ class MediaForm(forms.ModelForm):
         """Initialize the form."""
         # Safely pop max_progress and user if they're passed (some form subclasses use them, others don't)
         kwargs.pop("max_progress", None)
-        kwargs.pop("user", None)
         super().__init__(*args, **kwargs)
         # Make date fields optional to allow submission without dates
         if "start_date" in self.fields:
@@ -266,12 +295,11 @@ class MangaForm(MediaForm):
 
     def __init__(self, *args, **kwargs):
         """Initialize the form."""
-        user = kwargs.pop("user", None)
         max_progress = kwargs.pop("max_progress", None)
         super().__init__(*args, **kwargs)
         
         # Adjust progress field for percentage mode
-        if user and user.book_comic_manga_progress_percentage:
+        if self.user and self.user.book_comic_manga_progress_percentage:
             self.fields["progress"].label = "Progress (%)"
             self.fields["progress"].widget.attrs.update({
                 "min": 0,
@@ -352,12 +380,11 @@ class BookForm(MediaForm):
 
     def __init__(self, *args, **kwargs):
         """Initialize the form."""
-        user = kwargs.pop("user", None)
         max_progress = kwargs.pop("max_progress", None)
         super().__init__(*args, **kwargs)
         
         # Adjust progress field for percentage mode
-        if user and user.book_comic_manga_progress_percentage:
+        if self.user and self.user.book_comic_manga_progress_percentage:
             self.fields["progress"].label = "Progress (%)"
             self.fields["progress"].widget.attrs.update({
                 "min": 0,
@@ -383,12 +410,11 @@ class ComicForm(MediaForm):
 
     def __init__(self, *args, **kwargs):
         """Initialize the form."""
-        user = kwargs.pop("user", None)
         max_progress = kwargs.pop("max_progress", None)
         super().__init__(*args, **kwargs)
         
         # Adjust progress field for percentage mode
-        if user and user.book_comic_manga_progress_percentage:
+        if self.user and self.user.book_comic_manga_progress_percentage:
             self.fields["progress"].label = "Progress (%)"
             self.fields["progress"].widget.attrs.update({
                 "min": 0,
@@ -501,7 +527,7 @@ class PodcastForm(MediaForm):
         }
 
 
-class ArtistTrackerForm(forms.ModelForm):
+class ArtistTrackerForm(RatingScaleFormMixin, forms.ModelForm):
     """Form for tracking artists - mirrors MediaForm but without progress."""
 
     artist_id = forms.IntegerField(widget=forms.HiddenInput(), required=True)
@@ -544,7 +570,7 @@ class ArtistTrackerForm(forms.ModelForm):
             self.fields["end_date"].widget.attrs.pop("required", None)
 
 
-class PodcastShowTrackerForm(forms.ModelForm):
+class PodcastShowTrackerForm(RatingScaleFormMixin, forms.ModelForm):
     """Form for tracking podcast shows - mirrors ArtistTrackerForm."""
 
     show_id = forms.IntegerField(widget=forms.HiddenInput(), required=True)
@@ -587,7 +613,7 @@ class PodcastShowTrackerForm(forms.ModelForm):
             self.fields["end_date"].widget.attrs.pop("required", None)
 
 
-class AlbumTrackerForm(forms.ModelForm):
+class AlbumTrackerForm(RatingScaleFormMixin, forms.ModelForm):
     """Form for tracking albums - mirrors MediaForm but without progress."""
 
     album_id = forms.IntegerField(widget=forms.HiddenInput(), required=True)

@@ -1,4 +1,5 @@
 import secrets
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from django.contrib.auth.models import AbstractUser
 from django.db import models
@@ -115,6 +116,13 @@ class TimeFormatChoices(models.TextChoices):
     HH_MM_AMPM = "hh_mm_ampm", "12-hour, leading zero (hh:mm AM/PM)"
     HH_MM = "hh_mm", "24-hour (HH:mm)"
     HH_MM_SS = "hh_mm_ss", "24-hour with seconds (HH:mm:ss)"
+
+
+class RatingScaleChoices(models.TextChoices):
+    """Choices for rating scale preferences."""
+
+    TEN = "10", "1-10 stars"
+    FIVE = "5", "1-5 stars"
 
 
 class ActivityHistoryViewChoices(models.TextChoices):
@@ -491,6 +499,12 @@ class User(AbstractUser):
         choices=QuickWatchDateChoices.choices,
         help_text="Date to use when bulk-marking media as completed",
     )
+    rating_scale = models.CharField(
+        max_length=2,
+        default=RatingScaleChoices.TEN,
+        choices=RatingScaleChoices.choices,
+        help_text="Preferred rating scale for user scores",
+    )
     date_format = models.CharField(
         max_length=20,
         default=DateFormatChoices.ISO_8601,
@@ -855,6 +869,10 @@ class User(AbstractUser):
                 name="quick_watch_date_valid",
                 condition=models.Q(quick_watch_date__in=QuickWatchDateChoices.values),
             ),
+            models.CheckConstraint(
+                name="rating_scale_valid",
+                condition=models.Q(rating_scale__in=RatingScaleChoices.values),
+            ),
         ]
 
     def update_preference(self, field_name, new_value):
@@ -895,6 +913,57 @@ class User(AbstractUser):
             self.save(update_fields=[field_name])
 
         return new_value
+
+    @property
+    def rating_scale_max(self):
+        """Return the max rating value for the user's configured scale."""
+        try:
+            return int(self.rating_scale)
+        except (TypeError, ValueError):
+            return 10
+
+    def _coerce_score_decimal(self, score):
+        """Coerce a score into a Decimal, returning None on failure."""
+        if score is None:
+            return None
+        if isinstance(score, Decimal):
+            return score
+        try:
+            return Decimal(str(score))
+        except (InvalidOperation, TypeError, ValueError):
+            return None
+
+    def scale_score_for_display(self, score):
+        """Convert internal scores (0-10) to the user's display scale."""
+        score_decimal = self._coerce_score_decimal(score)
+        if score_decimal is None:
+            return None
+        if self.rating_scale_max == 5:
+            score_decimal = score_decimal / Decimal("2")
+        return score_decimal.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+
+    def scale_score_for_storage(self, score):
+        """Convert display scores to internal 0-10 scale for storage."""
+        score_decimal = self._coerce_score_decimal(score)
+        if score_decimal is None:
+            return None
+        if self.rating_scale_max == 5:
+            score_decimal = score_decimal * Decimal("2")
+        score_decimal = score_decimal.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+        if score_decimal < 0:
+            return Decimal("0")
+        if score_decimal > 10:
+            return Decimal("10")
+        return score_decimal
+
+    def format_score_for_display(self, score):
+        """Return score formatted for display based on rating scale."""
+        score_decimal = self.scale_score_for_display(score)
+        if score_decimal is None:
+            return None
+        if score_decimal == score_decimal.to_integral_value():
+            return int(score_decimal)
+        return float(score_decimal)
 
     def resolve_watch_date(self, now, release_date):
         """

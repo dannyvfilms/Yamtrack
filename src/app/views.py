@@ -2661,6 +2661,9 @@ def update_media_score(request, media_type, instance_id):
                 score = Decimal(score_raw)
             except (InvalidOperation, TypeError):
                 return HttpResponseBadRequest("Invalid score.")
+            score = request.user.scale_score_for_storage(score)
+            if score is None:
+                return HttpResponseBadRequest("Invalid score.")
 
     if toggle and score is not None and media.score == score:
         score = None
@@ -2676,7 +2679,7 @@ def update_media_score(request, media_type, instance_id):
     return JsonResponse(
         {
             "success": True,
-            "score": float(score) if score is not None else None,
+            "score": request.user.format_score_for_display(score) if score is not None else None,
         },
     )
 
@@ -2696,7 +2699,16 @@ def update_artist_score(request, artist_id):
         artist=artist,
     )
 
-    score = float(request.POST.get("score"))
+    score_raw = request.POST.get("score")
+    if score_raw is None:
+        return HttpResponseBadRequest("Invalid score.")
+    try:
+        score = Decimal(score_raw)
+    except (InvalidOperation, TypeError):
+        return HttpResponseBadRequest("Invalid score.")
+    score = request.user.scale_score_for_storage(score)
+    if score is None:
+        return HttpResponseBadRequest("Invalid score.")
     tracker.score = score
     tracker.save()
     logger.info(
@@ -2716,7 +2728,7 @@ def update_artist_score(request, artist_id):
     return JsonResponse(
         {
             "success": True,
-            "score": score,
+            "score": request.user.format_score_for_display(score),
         },
     )
 
@@ -2736,7 +2748,16 @@ def update_album_score(request, album_id):
         album=album,
     )
 
-    score = float(request.POST.get("score"))
+    score_raw = request.POST.get("score")
+    if score_raw is None:
+        return HttpResponseBadRequest("Invalid score.")
+    try:
+        score = Decimal(score_raw)
+    except (InvalidOperation, TypeError):
+        return HttpResponseBadRequest("Invalid score.")
+    score = request.user.scale_score_for_storage(score)
+    if score is None:
+        return HttpResponseBadRequest("Invalid score.")
     tracker.score = score
     tracker.save()
     logger.info(
@@ -2757,7 +2778,7 @@ def update_album_score(request, album_id):
     return JsonResponse(
         {
             "success": True,
-            "score": score,
+            "score": request.user.format_score_for_display(score),
         },
     )
 
@@ -3189,7 +3210,11 @@ def track_modal(
             return_url = request.GET.get("return_url", "")
 
             initial_data = {"show_id": show.id}
-            form = PodcastShowTrackerForm(instance=tracker, initial=initial_data)
+            form = PodcastShowTrackerForm(
+                instance=tracker,
+                initial=initial_data,
+                user=request.user,
+            )
 
             return render(
                 request,
@@ -3451,9 +3476,18 @@ def track_modal(
     form_class = get_form_class(media_type)
     # Only pass user and max_progress for book/comic/manga forms that handle them
     if media_type in (MediaTypes.BOOK.value, MediaTypes.COMIC.value, MediaTypes.MANGA.value):
-        form = form_class(instance=media, initial=initial_data, user=request.user, max_progress=max_progress)
+        form = form_class(
+            instance=media,
+            initial=initial_data,
+            user=request.user,
+            max_progress=max_progress,
+        )
     else:
-        form = form_class(instance=media, initial=initial_data)
+        form = form_class(
+            instance=media,
+            initial=initial_data,
+            user=request.user,
+        )
 
     response = render(
         request,
@@ -3706,7 +3740,7 @@ def media_save(request):
 
     # Validate the form and save the instance if it's valid
     form_class = get_form_class(media_type)
-    form = form_class(request.POST, instance=instance)
+    form = form_class(request.POST, instance=instance, user=request.user)
     if form.is_valid():
         form.save()
         logger.info("%s saved successfully.", form.instance)
@@ -3835,7 +3869,7 @@ def create_entry(request):
     # Prepare and validate the media form
     updated_request = request.POST.copy()
     updated_request.update({"source": item.source, "media_id": item.media_id})
-    media_form = get_form_class(item.media_type)(updated_request)
+    media_form = get_form_class(item.media_type)(updated_request, user=request.user)
 
     if not media_form.is_valid():
         # Handle media form validation errors
@@ -5546,7 +5580,11 @@ def artist_track_modal(request, artist_id):
     tracker = ArtistTracker.objects.filter(user=request.user, artist=artist).first()
 
     initial_data = {"artist_id": artist.id}
-    form = ArtistTrackerForm(instance=tracker, initial=initial_data)
+    form = ArtistTrackerForm(
+        instance=tracker,
+        initial=initial_data,
+        user=request.user,
+    )
 
     return render(
         request,
@@ -5574,7 +5612,7 @@ def artist_save(request):
     # Get existing tracker or None
     tracker = ArtistTracker.objects.filter(user=request.user, artist=artist).first()
 
-    form = ArtistTrackerForm(request.POST, instance=tracker)
+    form = ArtistTrackerForm(request.POST, instance=tracker, user=request.user)
     if form.is_valid():
         tracker = form.save(commit=False)
         tracker.user = request.user
@@ -5678,7 +5716,11 @@ def podcast_show_track_modal(request, show_id):
     tracker = PodcastShowTracker.objects.filter(user=request.user, show=show).first()
 
     initial_data = {"show_id": show.id}
-    form = PodcastShowTrackerForm(instance=tracker, initial=initial_data)
+    form = PodcastShowTrackerForm(
+        instance=tracker,
+        initial=initial_data,
+        user=request.user,
+    )
 
     return render(
         request,
@@ -5987,7 +6029,7 @@ def podcast_show_save(request):
     # Get existing tracker or None
     tracker = PodcastShowTracker.objects.filter(user=request.user, show=show).first()
 
-    form = PodcastShowTrackerForm(request.POST, instance=tracker)
+    form = PodcastShowTrackerForm(request.POST, instance=tracker, user=request.user)
     if form.is_valid():
         tracker = form.save(commit=False)
         tracker.user = request.user
@@ -6206,7 +6248,11 @@ def album_track_modal(request, album_id):
     tracker = AlbumTracker.objects.filter(user=request.user, album=album).first()
 
     initial_data = {"album_id": album.id}
-    form = AlbumTrackerForm(instance=tracker, initial=initial_data)
+    form = AlbumTrackerForm(
+        instance=tracker,
+        initial=initial_data,
+        user=request.user,
+    )
 
     return render(
         request,
@@ -6234,7 +6280,7 @@ def album_save(request):
     # Get existing tracker or None
     tracker = AlbumTracker.objects.filter(user=request.user, album=album).first()
 
-    form = AlbumTrackerForm(request.POST, instance=tracker)
+    form = AlbumTrackerForm(request.POST, instance=tracker, user=request.user)
     if form.is_valid():
         tracker = form.save(commit=False)
         tracker.user = request.user

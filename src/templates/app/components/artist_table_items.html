@@ -57,7 +57,7 @@
       <td class="p-2 text-center">
         <div class="flex items-center justify-center">
           {% include "app/icons/star.svg" with classes="w-4 h-4 text-yellow-400 mr-1 fill-current" %}
-          <span class="text-white -mt-[3px]">{{ tracker.score|floatformat:1 }}</span>
+          <span class="text-white -mt-[3px]">{{ tracker.score|score_display:user|floatformat:1 }}</span>
         </div>
       </td>
     {% else %}
@@ -88,4 +88,3 @@
   </tr>
 {% endfor %}
 {% if not is_pagination %}</tbody>{% endif %}
-

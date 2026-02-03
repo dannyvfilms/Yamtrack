@@ -103,7 +103,7 @@
 
         {# Your Score card - interactive rating popup #}
         {% if artist_tracker %}
-          <div x-data="{ showRatingPopup: false, rating: {{ artist_tracker.score|default:'null' }}, hoverRating: null, isHovering: false }"
+          <div x-data="{ showRatingPopup: false, rating: {{ artist_tracker.score|score_display:user|default:'null' }}, hoverRating: null, isHovering: false }"
                class="relative">
             <!-- Rating display -->
             <div @click="showRatingPopup = !showRatingPopup"
@@ -114,7 +114,7 @@
                 <template x-if="rating">
                   <div class="flex items-baseline">
                     <span class="text-lg font-bold text-white" x-text="rating"></span>
-                    <span class="text-gray-400 ml-0.5 text-sm">/10</span>
+                    <span class="text-gray-400 ml-0.5 text-sm">/{{ user|rating_scale_max }}</span>
                   </div>
                 </template>
                 <template x-if="!rating">
@@ -131,7 +131,7 @@
                  @mouseenter="isHovering = true"
                  @mouseleave="isHovering = false; hoverRating = null">
               <div class="flex justify-between mb-1">
-                {% with rating_range=10|get_range %}
+                {% with rating_range=user|rating_scale_max|get_range %}
                   {% for rating_value in rating_range %}
                     <button @click="rating = {{ rating_value }}; showRatingPopup = false; isHovering = false"
                             @mouseenter="hoverRating = {{ rating_value }}"

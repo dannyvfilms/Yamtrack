@@ -37,7 +37,7 @@
           {% if album.score is not None %}
             <span class="flex items-center gap-1 text-xs text-yellow-300 shrink-0">
               {% include "app/icons/star.svg" with classes="w-3 h-3 text-yellow-400 fill-current" %}
-              <span class="font-medium">{{ album.score }}</span>
+              <span class="font-medium">{{ album.score|score_display:user }}</span>
             </span>
           {% endif %}
         </div>

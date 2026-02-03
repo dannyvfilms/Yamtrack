@@ -199,6 +199,8 @@ def format_description(field_name, old_value, new_value, media_type=None, user=N
     Provides natural language descriptions for various types of changes,
     taking into account the media type and status transitions.
     """
+    rating_scale_max = user.rating_scale_max if user else 10
+
     if field_name in {"start_date", "end_date"}:
         new_value = app_tags.date_format(new_value, user)
         old_value = app_tags.date_format(old_value, user)
@@ -220,7 +222,8 @@ def format_description(field_name, old_value, new_value, media_type=None, user=N
                 return f"{action} paused {verb}ing"
 
         if field_name == "score":
-            return f"Rated {new_value}/10"
+            display_score = user.format_score_for_display(new_value) if user else new_value
+            return f"Rated {display_score}/{rating_scale_max}"
 
         if field_name == "progress" and media_type:
             verb = config.get_verb(media_type, past_tense=True).title()
@@ -270,9 +273,11 @@ def format_description(field_name, old_value, new_value, media_type=None, user=N
         )
 
     if field_name == "score":
+        display_new = user.format_score_for_display(new_value) if user else new_value
         if old_value == 0:
-            return f"Rated {new_value}/10"
-        return f"Changed rating from {old_value} to {new_value}"
+            return f"Rated {display_new}/{rating_scale_max}"
+        display_old = user.format_score_for_display(old_value) if user else old_value
+        return f"Changed rating from {display_old} to {display_new}"
 
     if field_name == "progress":
         diff = new_value - old_value

@@ -125,6 +125,31 @@ def datetime_format(datetime, user):
 
 
 @register.filter
+def rating_scale_max(user):
+    """Return the user's rating scale max (defaults to 10)."""
+    if not user:
+        return 10
+    try:
+        return user.rating_scale_max
+    except AttributeError:
+        return 10
+
+
+@register.filter
+def score_display(score, user):
+    """Format a score using the user's rating scale."""
+    if score is None:
+        return None
+    if not user:
+        return score
+    try:
+        formatted = user.format_score_for_display(score)
+    except AttributeError:
+        return score
+    return formatted if formatted is not None else score
+
+
+@register.filter
 def is_list(arg1):
     """Return True if the object is a list."""
     return isinstance(arg1, list)

@@ -31,8 +31,13 @@ document.addEventListener("DOMContentLoaded", function () {
       let formattedTitle = title;
       if (chart.canvas.id === "scoreStackedChart") {
         const score = parseInt(title);
-        if (score === 10) {
-          formattedTitle = `Score: 10`;
+        const scoreMax =
+          (chart.options &&
+            chart.options.plugins &&
+            chart.options.plugins.scoreScaleMax) ||
+          10;
+        if (score === scoreMax) {
+          formattedTitle = `Score: ${scoreMax}`;
         } else {
           formattedTitle = `Score: ${score}.0-${score}.9`;
         }
@@ -433,6 +438,7 @@ document.addEventListener("DOMContentLoaded", function () {
   if (scoreDistributionElement) {
     const scoreData = JSON.parse(scoreDistributionElement.textContent);
     const scoreChartOptions = JSON.parse(JSON.stringify(barChartConfig)); // Deep clone
+    const scoreScaleMax = scoreData.scale_max || 10;
 
     // Add score-specific configurations
     scoreChartOptions.scales.x.title = {
@@ -451,12 +457,13 @@ document.addEventListener("DOMContentLoaded", function () {
 
     scoreChartOptions.plugins.title = {
       display: true,
-      text: `Average Score: ${scoreData.average_score} (${scoreData.total_scored
+      text: `Average Score: ${scoreData.average_score} / ${scoreScaleMax} (${scoreData.total_scored
         } ${scoreData.total_scored === 1 ? "item" : "items"})`,
       color: "#D1D5DB",
       padding: { bottom: 10 },
       font: { size: 14 },
     };
+    scoreChartOptions.plugins.scoreScaleMax = scoreScaleMax;
 
     // Ensure tooltip is properly configured for score chart
     scoreChartOptions.plugins.tooltip = {
