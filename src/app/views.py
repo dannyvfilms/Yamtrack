@@ -488,6 +488,8 @@ def media_list(request, media_type):
     source_filter = (request.GET.get("source") or "").strip()
     language_filter = (request.GET.get("language") or "").strip()
     country_filter = (request.GET.get("country") or "").strip()
+    platform_filter = (request.GET.get("platform") or "").strip()
+    origin_filter = (request.GET.get("origin") or "").strip()
     
     search_query = request.GET.get("search", "")
     try:
@@ -551,6 +553,50 @@ def media_list(request, media_type):
     def _normalize_filter_value(value):
         return str(value or "").strip().lower()
 
+    _metadata_cache = {}
+
+    def _cached_metadata_for_item(item):
+        if not item:
+            return None
+        cache_key = f"{item.source}_{item.media_type}_{item.media_id}"
+        if cache_key in _metadata_cache:
+            return _metadata_cache[cache_key]
+        cached = cache.get(cache_key)
+        _metadata_cache[cache_key] = cached
+        return cached
+
+    def _extract_cached_languages(item):
+        cached = _cached_metadata_for_item(item)
+        if not isinstance(cached, dict):
+            return []
+        details = cached.get("details") if isinstance(cached.get("details"), dict) else {}
+        languages = details.get("languages") or cached.get("languages") or details.get("language")
+        if not languages:
+            return []
+        if isinstance(languages, list):
+            return [str(lang).strip() for lang in languages if str(lang).strip()]
+        return [str(languages).strip()] if str(languages).strip() else []
+
+    def _extract_cached_country(item):
+        cached = _cached_metadata_for_item(item)
+        if not isinstance(cached, dict):
+            return ""
+        details = cached.get("details") if isinstance(cached.get("details"), dict) else {}
+        country = details.get("country") or cached.get("country")
+        return str(country).strip() if country else ""
+
+    def _extract_cached_platforms(item):
+        cached = _cached_metadata_for_item(item)
+        if not isinstance(cached, dict):
+            return []
+        details = cached.get("details") if isinstance(cached.get("details"), dict) else {}
+        platforms = details.get("platforms") or cached.get("platforms")
+        if not platforms:
+            return []
+        if isinstance(platforms, list):
+            return [str(platform).strip() for platform in platforms if str(platform).strip()]
+        return [str(platforms).strip()] if str(platforms).strip() else []
+
     def apply_genre_filter(media_items, filter_value):
         if not filter_value:
             return media_items
@@ -594,12 +640,57 @@ def media_list(request, media_type):
             if getattr(getattr(media, "item", None), "source", None) == target
         ]
 
+    def apply_language_filter(media_items, filter_value):
+        if not filter_value:
+            return media_items
+        target = _normalize_filter_value(filter_value)
+        filtered_items = []
+        for media in media_items:
+            item = getattr(media, "item", None)
+            if not item:
+                continue
+            languages = _extract_cached_languages(item)
+            if any(_normalize_filter_value(language) == target for language in languages):
+                filtered_items.append(media)
+        return filtered_items
+
+    def apply_country_filter(media_items, filter_value):
+        if not filter_value:
+            return media_items
+        target = _normalize_filter_value(filter_value)
+        filtered_items = []
+        for media in media_items:
+            item = getattr(media, "item", None)
+            if not item:
+                continue
+            country = _extract_cached_country(item)
+            if country and _normalize_filter_value(country) == target:
+                filtered_items.append(media)
+        return filtered_items
+
+    def apply_platform_filter(media_items, filter_value):
+        if not filter_value:
+            return media_items
+        target = _normalize_filter_value(filter_value)
+        filtered_items = []
+        for media in media_items:
+            item = getattr(media, "item", None)
+            if not item:
+                continue
+            platforms = _extract_cached_platforms(item)
+            if any(_normalize_filter_value(platform) == target for platform in platforms):
+                filtered_items.append(media)
+        return filtered_items
+
     def build_filter_data_from_items(media_items):
         from app.models import Sources
 
         genres_set = set()
         years_set = set()
         sources_set = set()
+        languages_set = set()
+        countries_set = set()
+        platforms_set = set()
         has_unknown_year = False
         for media in media_items:
             item = getattr(media, "item", None)
@@ -616,6 +707,15 @@ def media_list(request, media_type):
                 has_unknown_year = True
             if getattr(item, "source", None):
                 sources_set.add(item.source)
+            cached_languages = _extract_cached_languages(item)
+            if cached_languages:
+                languages_set.update(cached_languages)
+            country_value = _extract_cached_country(item)
+            if country_value:
+                countries_set.add(country_value)
+            platforms = _extract_cached_platforms(item)
+            if platforms:
+                platforms_set.update(platforms)
 
         genres = sorted(genres_set, key=lambda value: value.lower())
         years = [
@@ -630,12 +730,36 @@ def media_list(request, media_type):
             {"value": source, "label": source_labels.get(source, source)}
             for source in sorted(sources_set)
         ]
+        languages = [
+            {
+                "value": value,
+                "label": value.upper() if len(value) <= 3 else value,
+            }
+            for value in sorted(languages_set)
+        ]
+        countries = [
+            {
+                "value": value,
+                "label": value.upper() if len(value) <= 3 else value,
+            }
+            for value in sorted(countries_set)
+        ]
+        platforms = [
+            {"value": value, "label": value}
+            for value in sorted(platforms_set, key=lambda val: val.lower())
+        ]
         return {
             "genres": genres,
             "years": years,
             "sources": sources,
-            "languages": [],
-            "countries": [],
+            "languages": languages,
+            "countries": countries,
+            "platforms": platforms,
+            "origins": [],
+            "show_languages": False,
+            "show_countries": False,
+            "show_platforms": False,
+            "show_origins": False,
         }
 
     # Get media list with filters applied
@@ -651,17 +775,34 @@ def media_list(request, media_type):
     # Convert to list for filtering (rating and collection filters work on lists)
     media_list = list(media_queryset)
     filter_data = build_filter_data_from_items(media_list)
+    filter_data["show_languages"] = media_type in (
+        MediaTypes.TV.value,
+        MediaTypes.MOVIE.value,
+        MediaTypes.ANIME.value,
+        MediaTypes.PODCAST.value,
+    )
+    filter_data["show_countries"] = media_type in (
+        MediaTypes.TV.value,
+        MediaTypes.MOVIE.value,
+        MediaTypes.ANIME.value,
+        MediaTypes.PODCAST.value,
+    )
+    filter_data["show_platforms"] = media_type == MediaTypes.GAME.value
+    filter_data["show_origins"] = media_type == MediaTypes.MUSIC.value
     media_list = apply_rating_filter(media_list, rating_filter)
     media_list = apply_collection_filter(media_list, collection_filter, request.user, media_type)
     media_list = apply_genre_filter(media_list, genre_filter)
     media_list = apply_year_filter(media_list, year_filter)
     media_list = apply_source_filter(media_list, source_filter)
+    if media_type in (MediaTypes.TV.value, MediaTypes.MOVIE.value, MediaTypes.ANIME.value):
+        media_list = apply_language_filter(media_list, language_filter)
+        media_list = apply_country_filter(media_list, country_filter)
+    if media_type == MediaTypes.GAME.value:
+        media_list = apply_platform_filter(media_list, platform_filter)
 
     # Handle time_left sorting for TV shows
     if sort_filter == "time_left" and media_type == MediaTypes.TV.value:
         import logging
-
-        from django.core.cache import cache
 
         logger = logging.getLogger(__name__)
 
@@ -677,6 +818,10 @@ def media_list(request, media_type):
             genre_filter,
             year_filter,
             source_filter,
+            language_filter,
+            country_filter,
+            platform_filter,
+            origin_filter,
         )
         cached_results = cache.get(cache_key)
 
@@ -747,6 +892,8 @@ def media_list(request, media_type):
         "current_source": source_filter,
         "current_language": language_filter,
         "current_country": country_filter,
+        "current_platform": platform_filter,
+        "current_origin": origin_filter,
         "sort_choices": MediaSortChoices.choices,
         "status_choices": MediaStatusChoices.choices,
         "rating_choices": MEDIA_RATING_CHOICES,
@@ -822,6 +969,12 @@ def media_list(request, media_type):
                 "sources": [],
                 "languages": languages,
                 "countries": [],
+                "platforms": [],
+                "origins": [],
+                "show_languages": True,
+                "show_countries": True,
+                "show_platforms": False,
+                "show_origins": False,
             }
 
         filter_data = _build_podcast_filter_data(show_trackers_list)
@@ -904,6 +1057,8 @@ def media_list(request, media_type):
             "current_source": source_filter,
             "current_language": language_filter,
             "current_country": country_filter,
+            "current_platform": platform_filter,
+            "current_origin": origin_filter,
             "sort_choices": MediaSortChoices.choices,
             "status_choices": MediaStatusChoices.choices,
             "rating_choices": MEDIA_RATING_CHOICES,
@@ -1005,28 +1160,41 @@ def media_list(request, media_type):
 
         def _build_music_filter_data(trackers):
             genres_set = set()
-            countries_set = set()
+            origins_set = set()
             for tracker in trackers:
                 artist = tracker.artist
                 for genre in (artist.genres or []):
                     genre_value = str(genre).strip()
                     if genre_value:
                         genres_set.add(genre_value)
-                country_value = (artist.country or "").strip()
-                if country_value:
-                    countries_set.add(country_value)
+                origin_value = (artist.country or "").strip()
+                if origin_value:
+                    origins_set.add(origin_value)
 
             genres = sorted(genres_set, key=lambda value: value.lower())
-            countries = [
-                {"value": value, "label": value.upper() if len(value) <= 3 else value}
-                for value in sorted(countries_set)
-            ]
+            origins = []
+            for value in sorted(origins_set):
+                label = value.upper() if len(value) <= 3 else value
+                try:
+                    if len(value) <= 3:
+                        country_name = stats._country_name_from_code(value.upper())
+                        if country_name:
+                            label = country_name
+                except Exception:  # pragma: no cover - defensive
+                    pass
+                origins.append({"value": value, "label": label})
             return {
                 "genres": genres,
                 "years": [],
                 "sources": [],
                 "languages": [],
-                "countries": countries,
+                "countries": [],
+                "platforms": [],
+                "origins": origins,
+                "show_languages": False,
+                "show_countries": False,
+                "show_platforms": False,
+                "show_origins": True,
             }
 
         filter_data = _build_music_filter_data(artist_trackers_list)
@@ -1042,8 +1210,8 @@ def media_list(request, media_type):
                 )
             ]
 
-        if country_filter:
-            target_country = _normalize_filter_value(country_filter)
+        if origin_filter:
+            target_country = _normalize_filter_value(origin_filter)
             artist_trackers_list = [
                 tracker
                 for tracker in artist_trackers_list

@@ -9,7 +9,7 @@
 {% block content %}
   <h1 class="text-3xl font-bold mb-6">{{ media_type|media_type_readable_plural }}</h1>
 
-  <div x-data="{ sort: '{{ current_sort }}', direction: '{{ current_direction }}', status: '{{ current_status }}', rating: '{{ current_rating }}', collection: '{{ current_collection }}', genre: '{{ current_genre|default:'' }}', year: '{{ current_year|default:'' }}', source: '{{ current_source|default:'' }}', language: '{{ current_language|default:'' }}', country: '{{ current_country|default:'' }}', layout: '{{ current_layout }}', search: '{{ request.GET.search|default:'' }}', statusLabels: {
+  <div x-data="{ sort: '{{ current_sort }}', direction: '{{ current_direction }}', status: '{{ current_status }}', rating: '{{ current_rating }}', collection: '{{ current_collection }}', genre: '{{ current_genre|default:'' }}', year: '{{ current_year|default:'' }}', source: '{{ current_source|default:'' }}', language: '{{ current_language|default:'' }}', country: '{{ current_country|default:'' }}', platform: '{{ current_platform|default:'' }}', origin: '{{ current_origin|default:'' }}', layout: '{{ current_layout }}', search: '{{ request.GET.search|default:'' }}', showLanguages: {{ filter_data.show_languages|yesno:'true,false' }}, showCountries: {{ filter_data.show_countries|yesno:'true,false' }}, showPlatforms: {{ filter_data.show_platforms|yesno:'true,false' }}, showOrigins: {{ filter_data.show_origins|yesno:'true,false' }}, statusLabels: {
     {% for value, label in status_choices %}
       '{{ value }}': '{{ label }}'
       {% if not forloop.last %},{% endif %}
@@ -29,7 +29,7 @@
       {% if not forloop.last %},{% endif %}
 
     {% endfor %}
-    }, defaultDirection(value) { return ['start_date', 'title', 'time_left'].includes(value) ? 'asc' : 'desc' }, toggleSort(value) { this.direction = (this.sort === value) ? (this.direction === 'asc' ? 'desc' : 'asc') : this.defaultDirection(value); this.sort = value; }, toggleRating() { if (this.rating === 'all') { this.rating = 'rated'; } else if (this.rating === 'rated') { this.rating = 'not_rated'; } else { this.rating = 'all'; } }, toggleCollection() { if (this.collection === 'all') { this.collection = 'collected'; } else if (this.collection === 'collected') { this.collection = 'not_collected'; } else { this.collection = 'all'; } }, filterLabel() { const labels = []; if (this.rating && this.rating !== 'all') { labels.push(this.ratingLabels[this.rating] || 'Rated'); } if (this.collection && this.collection !== 'all') { labels.push(this.collectionLabels[this.collection] || 'Collected'); } if (this.genre) { labels.push(this.genre); } if (this.year) { labels.push(this.year === 'unknown' ? 'Unknown Year' : this.year); } if (this.source) { labels.push(this.source.toUpperCase()); } if (this.language) { labels.push(this.language.toUpperCase()); } if (this.country) { labels.push(this.country.toUpperCase()); } if (labels.length === 0) { return 'All'; } if (labels.length === 1) { return labels[0]; } return `${labels[0]} +${labels.length - 1}`; }, clearFilters() { this.rating = 'all'; this.collection = 'all'; this.genre = ''; this.year = ''; this.source = ''; this.language = ''; this.country = ''; } }">
+    }, defaultDirection(value) { return ['start_date', 'title', 'time_left'].includes(value) ? 'asc' : 'desc' }, toggleSort(value) { this.direction = (this.sort === value) ? (this.direction === 'asc' ? 'desc' : 'asc') : this.defaultDirection(value); this.sort = value; }, toggleRating() { if (this.rating === 'all') { this.rating = 'rated'; } else if (this.rating === 'rated') { this.rating = 'not_rated'; } else { this.rating = 'all'; } }, toggleCollection() { if (this.collection === 'all') { this.collection = 'collected'; } else if (this.collection === 'collected') { this.collection = 'not_collected'; } else { this.collection = 'all'; } }, filterLabel() { const labels = []; if (this.rating && this.rating !== 'all') { labels.push(this.ratingLabels[this.rating] || 'Rated'); } if (this.collection && this.collection !== 'all') { labels.push(this.collectionLabels[this.collection] || 'Collected'); } if (this.genre) { labels.push(this.genre); } if (this.year) { labels.push(this.year === 'unknown' ? 'Unknown Year' : this.year); } if (this.source) { labels.push(this.source.toUpperCase()); } if (this.showLanguages && this.language) { labels.push(this.language.length <= 3 ? this.language.toUpperCase() : this.language); } if (this.showCountries && this.country) { labels.push(this.country.length <= 3 ? this.country.toUpperCase() : this.country); } if (this.showPlatforms && this.platform) { labels.push(this.platform); } if (this.showOrigins && this.origin) { labels.push(this.origin.length <= 3 ? this.origin.toUpperCase() : this.origin); } if (labels.length === 0) { return 'All'; } if (labels.length === 1) { return labels[0]; } return `${labels[0]} +${labels.length - 1}`; }, clearFilters() { this.rating = 'all'; this.collection = 'all'; this.genre = ''; this.year = ''; this.source = ''; this.language = ''; this.country = ''; this.platform = ''; this.origin = ''; } }">
 
     <!-- Form to manage state -->
     <form id="filter-form" class="hidden">
@@ -43,6 +43,8 @@
       <input type="hidden" name="source" x-model="source">
       <input type="hidden" name="language" x-model="language">
       <input type="hidden" name="country" x-model="country">
+      <input type="hidden" name="platform" x-model="platform">
+      <input type="hidden" name="origin" x-model="origin">
       <input type="hidden" name="search" x-model="search">
       <input type="hidden" name="layout" x-model="layout">
     </form>
@@ -137,22 +139,42 @@
                 </button>
               {% endif %}
 
-              {% if filter_data.languages %}
+              {% if filter_data.show_languages %}
                 <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
                         @click="view = 'language'; resetSearch()"
                         type="button">
                   <span class="flex-shrink-0 mr-3">Language</span>
-                  <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]" x-text="language ? language.toUpperCase() : 'Any'"></span>
+                  <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]" x-text="language ? (language.length <= 3 ? language.toUpperCase() : language) : 'Any'"></span>
                   <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
                 </button>
               {% endif %}
 
-              {% if filter_data.countries %}
+              {% if filter_data.show_countries %}
                 <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
                         @click="view = 'country'; resetSearch()"
                         type="button">
                   <span class="flex-shrink-0 mr-3">Country</span>
-                  <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]" x-text="country ? country.toUpperCase() : 'Any'"></span>
+                  <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]" x-text="country ? (country.length <= 3 ? country.toUpperCase() : country) : 'Any'"></span>
+                  <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+                </button>
+              {% endif %}
+
+              {% if filter_data.show_platforms %}
+                <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                        @click="view = 'platform'; resetSearch()"
+                        type="button">
+                  <span class="flex-shrink-0 mr-3">Platform</span>
+                  <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]" x-text="platform ? platform : 'Any'"></span>
+                  <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+                </button>
+              {% endif %}
+
+              {% if filter_data.show_origins %}
+                <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                        @click="view = 'origin'; resetSearch()"
+                        type="button">
+                  <span class="flex-shrink-0 mr-3">Origin</span>
+                  <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]" x-text="origin ? (origin.length <= 3 ? origin.toUpperCase() : origin) : 'Any'"></span>
                   <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
                 </button>
               {% endif %}
@@ -480,6 +502,96 @@
                 </template>
               </div>
             </div>
+
+            <div x-show="view === 'platform'" x-cloak class="p-2">
+              <div class="flex items-center gap-2 px-2 py-1">
+                <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                        @click="view = 'root'"
+                        type="button">
+                  {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+                </button>
+                <div class="text-xs uppercase tracking-wide text-gray-300">Platform</div>
+              </div>
+              <div class="px-2 py-2">
+                <input type="text"
+                       x-model="platformSearch"
+                       placeholder="Filter Platform"
+                       class="w-full px-3 py-2 rounded-md bg-[#2a2f35] text-sm text-gray-200 placeholder-gray-500 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+              </div>
+              <div class="max-h-64 overflow-y-auto">
+                <button hx-get="{% url 'medialist' media_type %}"
+                        {% if media_list %} hx-target="{{ layout_class }}" {% else %} hx-target="#empty_list" {% endif %}
+                        hx-include="#filter-form"
+                        hx-indicator="#loading-indicator"
+                        class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                        @click="platform = ''; open = false; view = 'root'"
+                        type="button">
+                  <span>Any Platform</span>
+                  <span class="ml-auto" x-show="platform === ''">
+                    {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                  </span>
+                </button>
+                <template x-for="option in filteredPlatforms()" :key="option.value">
+                  <button hx-get="{% url 'medialist' media_type %}"
+                          {% if media_list %} hx-target="{{ layout_class }}" {% else %} hx-target="#empty_list" {% endif %}
+                          hx-include="#filter-form"
+                          hx-indicator="#loading-indicator"
+                          class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                          @click="platform = option.value; open = false; view = 'root'"
+                          type="button">
+                    <span class="block min-w-0 truncate max-w-[11rem]" x-text="option.label"></span>
+                    <span class="ml-auto" x-show="platform === option.value">
+                      {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                    </span>
+                  </button>
+                </template>
+              </div>
+            </div>
+
+            <div x-show="view === 'origin'" x-cloak class="p-2">
+              <div class="flex items-center gap-2 px-2 py-1">
+                <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                        @click="view = 'root'"
+                        type="button">
+                  {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+                </button>
+                <div class="text-xs uppercase tracking-wide text-gray-300">Origin</div>
+              </div>
+              <div class="px-2 py-2">
+                <input type="text"
+                       x-model="originSearch"
+                       placeholder="Filter Origin"
+                       class="w-full px-3 py-2 rounded-md bg-[#2a2f35] text-sm text-gray-200 placeholder-gray-500 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+              </div>
+              <div class="max-h-64 overflow-y-auto">
+                <button hx-get="{% url 'medialist' media_type %}"
+                        {% if media_list %} hx-target="{{ layout_class }}" {% else %} hx-target="#empty_list" {% endif %}
+                        hx-include="#filter-form"
+                        hx-indicator="#loading-indicator"
+                        class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                        @click="origin = ''; open = false; view = 'root'"
+                        type="button">
+                  <span>Any Origin</span>
+                  <span class="ml-auto" x-show="origin === ''">
+                    {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                  </span>
+                </button>
+                <template x-for="option in filteredOrigins()" :key="option.value">
+                  <button hx-get="{% url 'medialist' media_type %}"
+                          {% if media_list %} hx-target="{{ layout_class }}" {% else %} hx-target="#empty_list" {% endif %}
+                          hx-include="#filter-form"
+                          hx-indicator="#loading-indicator"
+                          class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                          @click="origin = option.value; open = false; view = 'root'"
+                          type="button">
+                    <span class="block min-w-0 truncate max-w-[11rem]" x-text="option.label"></span>
+                    <span class="ml-auto" x-show="origin === option.value">
+                      {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                    </span>
+                  </button>
+                </template>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -579,14 +691,14 @@
 
         <!-- Layout Toggle -->
         <div class="ml-auto flex rounded-md overflow-hidden border border-gray-700 layout-toggle shrink-0">
-          <a :href="`{% url 'medialist' media_type %}?${search ? 'search=' + search + '&' : ''}${status && status !== 'all' && status !== 'All' ? 'status=' + status + '&' : ''}${rating !== 'all' ? 'rating=' + rating + '&' : ''}${collection !== 'all' ? 'collection=' + collection + '&' : ''}${genre ? 'genre=' + genre + '&' : ''}${year ? 'year=' + year + '&' : ''}${source ? 'source=' + source + '&' : ''}${language ? 'language=' + language + '&' : ''}${country ? 'country=' + country + '&' : ''}${direction ? 'direction=' + direction + '&' : ''}${sort !== 'score' ? 'sort=' + sort + '&' : ''}layout=grid`"
+          <a :href="`{% url 'medialist' media_type %}?${search ? 'search=' + search + '&' : ''}${status && status !== 'all' && status !== 'All' ? 'status=' + status + '&' : ''}${rating !== 'all' ? 'rating=' + rating + '&' : ''}${collection !== 'all' ? 'collection=' + collection + '&' : ''}${genre ? 'genre=' + genre + '&' : ''}${year ? 'year=' + year + '&' : ''}${source ? 'source=' + source + '&' : ''}${showLanguages && language ? 'language=' + language + '&' : ''}${showCountries && country ? 'country=' + country + '&' : ''}${showPlatforms && platform ? 'platform=' + platform + '&' : ''}${showOrigins && origin ? 'origin=' + origin + '&' : ''}${direction ? 'direction=' + direction + '&' : ''}${sort !== 'score' ? 'sort=' + sort + '&' : ''}layout=grid`"
              class="p-2 cursor-pointer"
              :class="layout === 'grid' ? 'bg-indigo-600 text-white' : 'bg-[#39404b] hover:bg-[#454d5a]'"
              title="Grid View"
              @click="layout = 'grid'">
             {% include "app/icons/four-square.svg" with classes="w-5 h-5" %}
           </a>
-          <a :href="`{% url 'medialist' media_type %}?${search ? 'search=' + search + '&' : ''}${status && status !== 'all' && status !== 'All' ? 'status=' + status + '&' : ''}${rating !== 'all' ? 'rating=' + rating + '&' : ''}${collection !== 'all' ? 'collection=' + collection + '&' : ''}${genre ? 'genre=' + genre + '&' : ''}${year ? 'year=' + year + '&' : ''}${source ? 'source=' + source + '&' : ''}${language ? 'language=' + language + '&' : ''}${country ? 'country=' + country + '&' : ''}${direction ? 'direction=' + direction + '&' : ''}${sort !== 'score' ? 'sort=' + sort + '&' : ''}layout=table`"
+          <a :href="`{% url 'medialist' media_type %}?${search ? 'search=' + search + '&' : ''}${status && status !== 'all' && status !== 'All' ? 'status=' + status + '&' : ''}${rating !== 'all' ? 'rating=' + rating + '&' : ''}${collection !== 'all' ? 'collection=' + collection + '&' : ''}${genre ? 'genre=' + genre + '&' : ''}${year ? 'year=' + year + '&' : ''}${source ? 'source=' + source + '&' : ''}${showLanguages && language ? 'language=' + language + '&' : ''}${showCountries && country ? 'country=' + country + '&' : ''}${showPlatforms && platform ? 'platform=' + platform + '&' : ''}${showOrigins && origin ? 'origin=' + origin + '&' : ''}${direction ? 'direction=' + direction + '&' : ''}${sort !== 'score' ? 'sort=' + sort + '&' : ''}layout=table`"
              class="p-2 cursor-pointer"
              :class="layout === 'table' ? 'bg-indigo-600 text-white' : 'bg-[#39404b] hover:bg-[#454d5a]'"
              title="Table View"
@@ -651,17 +763,23 @@
         sourceSearch: '',
         languageSearch: '',
         countrySearch: '',
+        platformSearch: '',
+        originSearch: '',
         genres: data.genres || [],
         years: data.years || [],
         sources: data.sources || [],
         languages: data.languages || [],
         countries: data.countries || [],
+        platforms: data.platforms || [],
+        origins: data.origins || [],
         resetSearch() {
           this.genreSearch = '';
           this.yearSearch = '';
           this.sourceSearch = '';
           this.languageSearch = '';
           this.countrySearch = '';
+          this.platformSearch = '';
+          this.originSearch = '';
         },
         filteredGenres() {
           const term = this.genreSearch.toLowerCase();
@@ -697,6 +815,20 @@
             return this.countries;
           }
           return this.countries.filter(option => option.label.toLowerCase().includes(term));
+        },
+        filteredPlatforms() {
+          const term = this.platformSearch.toLowerCase();
+          if (!term) {
+            return this.platforms;
+          }
+          return this.platforms.filter(option => option.label.toLowerCase().includes(term));
+        },
+        filteredOrigins() {
+          const term = this.originSearch.toLowerCase();
+          if (!term) {
+            return this.origins;
+          }
+          return this.origins.filter(option => option.label.toLowerCase().includes(term));
         },
       };
     }
