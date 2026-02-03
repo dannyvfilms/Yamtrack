@@ -451,6 +451,53 @@ class BaseWebhookProcessor:
         """Queue collection metadata update for TV show (not episode-specific)."""
         self._queue_collection_metadata_update(payload, user, tv_item)
 
+    def _build_fallback_episode_metadata(self, payload, episode_number, tv_metadata):
+        """Build minimal episode metadata from payload when TMDB season data is missing."""
+        metadata = payload.get("Metadata", {}) or {}
+
+        duration_ms = metadata.get("duration") or metadata.get("Duration")
+        runtime = None
+        try:
+            runtime_minutes = int(duration_ms) // 60000 if duration_ms else None
+            runtime = runtime_minutes if runtime_minutes and runtime_minutes > 0 else None
+        except (TypeError, ValueError):
+            runtime = None
+
+        air_date = (
+            metadata.get("originallyAvailableAt")
+            or metadata.get("originally_available_at")
+        )
+
+        return {
+            "episode_number": int(episode_number),
+            "runtime": runtime,
+            "air_date": air_date,
+            "image": tv_metadata.get("image"),
+        }
+
+    def _build_fallback_season_metadata(
+        self,
+        payload,
+        season_number,
+        episode_number,
+        tv_metadata,
+    ):
+        """Build minimal season metadata for missing TMDB seasons."""
+        try:
+            fallback_episode = self._build_fallback_episode_metadata(
+                payload,
+                episode_number,
+                tv_metadata,
+            )
+        except (TypeError, ValueError):
+            return None
+
+        return {
+            "season_number": season_number,
+            "image": tv_metadata.get("image"),
+            "episodes": [fallback_episode],
+        }
+
     def _handle_tv_episode(
         self,
         media_id,
@@ -461,8 +508,6 @@ class BaseWebhookProcessor:
     ):
         """Handle TV episode playback event."""
         tv_metadata = app.providers.tmdb.tv_with_seasons(media_id, [season_number])
-        season_metadata = tv_metadata[f"season/{season_number}"]
-
         tv_item, _ = app.models.Item.objects.get_or_create(
             media_id=media_id,
             source=Sources.TMDB.value,
@@ -489,6 +534,31 @@ class BaseWebhookProcessor:
                 Status.IN_PROGRESS.value,
                 tv_metadata["title"],
             )
+
+        season_key = f"season/{season_number}"
+        season_metadata = tv_metadata.get(season_key)
+        if not season_metadata:
+            logger.warning(
+                "Season %s metadata missing for TMDB ID %s; using payload fallback",
+                season_number,
+                media_id,
+            )
+            season_metadata = self._build_fallback_season_metadata(
+                payload,
+                season_number,
+                episode_number,
+                tv_metadata,
+            )
+
+        if not season_metadata:
+            logger.warning(
+                "Failed to build fallback season metadata for TMDB ID %s season %s",
+                media_id,
+                season_number,
+            )
+            # Queue collection metadata update for TV show (not episode-specific)
+            self._queue_collection_metadata_update_for_tv(payload, user, tv_item)
+            return
 
         # Use season poster if available, otherwise fallback to TV show poster
         season_image = season_metadata.get("image") or tv_metadata.get("image")
