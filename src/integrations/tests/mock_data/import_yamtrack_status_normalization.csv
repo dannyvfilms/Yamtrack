@@ -1,0 +1,4 @@
+"media_id","source","media_type","title","image","season_number","episode_number","score","progress","status","start_date","end_date","notes","progressed_at"
+"test1","manual","tv","Status Show","https://example.com/test.jpg","","","8.0","6","completed","2024-01-01","2024-01-02","","2024-01-02T00:00:00Z"
+"test1","manual","season","Status Show","https://example.com/test-season.jpg","1","","","6","In Progress","2024-01-01","2024-01-02","","2024-01-02T00:00:00Z"
+"test1","manual","episode","Status Show","https://example.com/test-episode.jpg","1","1","","","","","2024-01-02","","2024-01-02T00:00:00Z"

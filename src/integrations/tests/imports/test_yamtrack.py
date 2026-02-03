@@ -12,6 +12,7 @@ from app.models import (
     Manga,
     Movie,
     Season,
+    Status,
 )
 from lists.models import CustomList, CustomListItem
 from integrations.imports import (
@@ -191,3 +192,23 @@ class ImportYamtrackLists(TestCase):
         """List items should not create tracked media entries."""
         self.assertEqual(Book.objects.filter(user=self.user).count(), 0)
 
+
+class ImportYamtrackStatusNormalization(TestCase):
+    """Test status normalization during Yamtrack import."""
+
+    def setUp(self):
+        """Create user for the tests."""
+        self.credentials = {"username": "test", "password": "12345"}
+        self.user = get_user_model().objects.create_user(**self.credentials)
+        with Path(mock_path / "import_yamtrack_status_normalization.csv").open("rb") as file:
+            self.import_results = yamtrack.importer(file, self.user, "new")
+
+    def test_status_values_are_normalized(self):
+        """Ensure status values are normalized to Status choices."""
+        tv = TV.objects.filter(user=self.user).first()
+        season = Season.objects.filter(user=self.user).first()
+
+        self.assertIsNotNone(tv)
+        self.assertIsNotNone(season)
+        self.assertEqual(tv.status, Status.COMPLETED.value)
+        self.assertEqual(season.status, Status.IN_PROGRESS.value)

@@ -9,7 +9,7 @@ from django.utils.dateparse import parse_datetime
 
 import app
 from app import config
-from app.models import MediaTypes, Sources
+from app.models import MediaTypes, Sources, Status
 from app.providers import services
 from app.templatetags import app_tags
 from integrations.imports import helpers
@@ -39,6 +39,39 @@ def _parse_tags(value):
     except json.JSONDecodeError:
         pass
     return [tag.strip() for tag in str(value).split(",") if tag.strip()]
+
+
+def _normalize_status(value):
+    """Normalize status strings to match Status choices."""
+    if value is None:
+        return None
+    raw = str(value).strip()
+    if raw == "":
+        return ""
+    lowered = raw.lower()
+
+    for status in Status:
+        if lowered in (status.value.lower(), status.label.lower()):
+            return status.value
+
+    aliases = {
+        "inprogress": Status.IN_PROGRESS.value,
+        "in-progress": Status.IN_PROGRESS.value,
+        "on hold": Status.PAUSED.value,
+        "hold": Status.PAUSED.value,
+        "paused": Status.PAUSED.value,
+        "plan": Status.PLANNING.value,
+        "planned": Status.PLANNING.value,
+        "plan to watch": Status.PLANNING.value,
+        "plan to read": Status.PLANNING.value,
+        "want to watch": Status.PLANNING.value,
+        "watchlist": Status.PLANNING.value,
+        "complete": Status.COMPLETED.value,
+        "finished": Status.COMPLETED.value,
+        "done": Status.COMPLETED.value,
+        "abandoned": Status.DROPPED.value,
+    }
+    return aliases.get(lowered, raw)
 
 
 def importer(file, user, mode):
@@ -72,6 +105,10 @@ class YamtrackImporter:
         # Track bulk creation lists for each media type
         self.bulk_media = defaultdict(list)
         self.list_map = {}
+        self.status_overrides = {
+            MediaTypes.TV.value: {},
+            MediaTypes.SEASON.value: {},
+        }
 
         logger.info(
             "Initialized Yamtrack CSV importer for user %s with mode %s",
@@ -105,6 +142,7 @@ class YamtrackImporter:
 
         helpers.cleanup_existing_media(self.to_delete, self.user)
         helpers.bulk_create_media(self.bulk_media, self.user)
+        self._apply_status_overrides()
 
         imported_counts = {
             media_type: len(media_list)
@@ -113,6 +151,29 @@ class YamtrackImporter:
 
         deduplicated_messages = "\n".join(dict.fromkeys(self.warnings))
         return imported_counts, deduplicated_messages
+
+    def _apply_status_overrides(self):
+        """Apply explicit TV/Season status values from the CSV after import."""
+        tv_overrides = self.status_overrides.get(MediaTypes.TV.value, {})
+        for (source, media_id), status in tv_overrides.items():
+            if not status:
+                continue
+            app.models.TV.objects.filter(
+                user=self.user,
+                item__source=source,
+                item__media_id=media_id,
+            ).exclude(status=status).update(status=status)
+
+        season_overrides = self.status_overrides.get(MediaTypes.SEASON.value, {})
+        for (source, media_id, season_number), status in season_overrides.items():
+            if not status:
+                continue
+            app.models.Season.objects.filter(
+                user=self.user,
+                item__source=source,
+                item__media_id=media_id,
+                item__season_number=season_number,
+            ).exclude(status=status).update(status=status)
 
     def _process_row(self, row):
         """Process a single row from the CSV file."""
@@ -131,7 +192,12 @@ class YamtrackImporter:
 
     def _process_media_row(self, row):
         """Process a single media row from the CSV file."""
-        media_type = row["media_type"]
+        media_type = (row.get("media_type") or "").strip().lower()
+        row["media_type"] = media_type
+        row["source"] = (row.get("source") or "").strip().lower()
+        normalized_status = _normalize_status(row.get("status"))
+        if normalized_status is not None:
+            row["status"] = normalized_status
 
         season_number = (
             int(row["season_number"]) if row["season_number"] != "" else None
@@ -197,6 +263,17 @@ class YamtrackImporter:
             progressed_at = row.get("progressed_at")
             if progressed_at:
                 form.instance._history_date = parse_datetime(progressed_at)
+            if media_type in (MediaTypes.TV.value, MediaTypes.SEASON.value):
+                status_value = row.get("status")
+                if status_value:
+                    if media_type == MediaTypes.TV.value:
+                        self.status_overrides[media_type][
+                            (row["source"], row["media_id"])
+                        ] = status_value
+                    else:
+                        self.status_overrides[media_type][
+                            (row["source"], row["media_id"], season_number)
+                        ] = status_value
             self.bulk_media[media_type].append(form.instance)
         else:
             error_msg = f"{row['title']} ({media_type}): {form.errors.as_json()}"
