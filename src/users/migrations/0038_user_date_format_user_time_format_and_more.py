@@ -5,6 +5,14 @@ from django.db import connection
 import logging
 
 
+def drop_home_sort_constraint_if_exists(apps, schema_editor):
+    if schema_editor.connection.vendor != "postgresql":
+        return
+    schema_editor.execute(
+        "ALTER TABLE users_user DROP CONSTRAINT IF EXISTS home_sort_valid;",
+    )
+
+
 def check_constraint_values(apps, schema_editor):
     """Check all constraint-related field values before migration to identify invalid data."""
     logger = logging.getLogger(__name__)
@@ -281,9 +289,9 @@ class Migration(migrations.Migration):
                 max_length=20,
             ),
         ),
-        migrations.RunSQL(
-            sql="",
-            reverse_sql=migrations.RunSQL.noop,
+        migrations.RunPython(
+            drop_home_sort_constraint_if_exists,
+            migrations.RunPython.noop,
         ),
         # Fix data again AFTER fields are added but BEFORE re-adding constraints
         # SQLite will recreate the table when adding constraints, so we need valid data

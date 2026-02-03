@@ -3,6 +3,14 @@
 from django.db import migrations, models
 
 
+def drop_home_sort_constraint_if_exists(apps, schema_editor):
+    if schema_editor.connection.vendor != "postgresql":
+        return
+    schema_editor.execute(
+        "ALTER TABLE users_user DROP CONSTRAINT IF EXISTS home_sort_valid;",
+    )
+
+
 class Migration(migrations.Migration):
     dependencies = [
         ("app", "0052_add_runtime_minutes_field"),
@@ -182,9 +190,9 @@ class Migration(migrations.Migration):
                 max_length=20,
             ),
         ),
-        migrations.RunSQL(
-            sql="",
-            reverse_sql=migrations.RunSQL.noop,
+        migrations.RunPython(
+            drop_home_sort_constraint_if_exists,
+            migrations.RunPython.noop,
         ),
         migrations.AddConstraint(
             model_name="user",
