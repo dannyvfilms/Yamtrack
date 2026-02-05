@@ -195,9 +195,17 @@ WSGI_APPLICATION = "config.wsgi.application"
 Path(BASE_DIR / "db").mkdir(parents=True, exist_ok=True)
 
 if config("DB_HOST", default=None):
+    DB_POOL_ENABLED = config("DB_POOL_ENABLED", default=False, cast=bool)
     DB_POOL_MIN = config("DB_POOL_MIN", default=0, cast=int)
     DB_POOL_MAX = config("DB_POOL_MAX", default=2, cast=int)
     DB_POOL_TIMEOUT = config("DB_POOL_TIMEOUT", default=30, cast=int)
+    db_options = {}
+    if DB_POOL_ENABLED:
+        db_options["pool"] = {
+            "min_size": DB_POOL_MIN,
+            "max_size": DB_POOL_MAX,
+            "timeout": DB_POOL_TIMEOUT,
+        }
 
     DATABASES = {
         "default": {
@@ -207,13 +215,7 @@ if config("DB_HOST", default=None):
             "USER": config("DB_USER", default=secret("DB_USER_FILE")),
             "PASSWORD": config("DB_PASSWORD", default=secret("DB_PASSWORD_FILE")),
             "PORT": config("DB_PORT"),
-            "OPTIONS": {
-                "pool": {
-                    "min_size": DB_POOL_MIN,
-                    "max_size": DB_POOL_MAX,
-                    "timeout": DB_POOL_TIMEOUT,
-                },
-            },
+            "OPTIONS": db_options,
         },
     }
 
