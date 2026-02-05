@@ -2329,6 +2329,106 @@ def media_details(
     return render(request, "app/media_details.html", context)
 
 
+def _build_missing_season_metadata(
+    tv_metadata,
+    media_id,
+    source,
+    season_number,
+    episodes_in_db,
+):
+    """Build minimal season metadata from local items when provider data is missing."""
+    tv_metadata = tv_metadata or {}
+    episodes_by_number = defaultdict(list)
+
+    for episode in episodes_in_db:
+        item = getattr(episode, "item", None)
+        episode_number = getattr(item, "episode_number", None)
+        if episode_number is None:
+            continue
+        episodes_by_number[episode_number].append(episode)
+
+    episode_numbers = sorted(episodes_by_number)
+    fallback_episodes = []
+    tv_image = tv_metadata.get("image") or settings.IMG_NONE
+    show_title = tv_metadata.get("title", "")
+
+    for episode_number in episode_numbers:
+        history_entries = episodes_by_number[episode_number]
+        episode_item = next(
+            (entry.item for entry in history_entries if entry.item),
+            None,
+        )
+        episode_image = tv_image
+        air_date = None
+        runtime = None
+        title = f"Episode {episode_number}"
+
+        if episode_item:
+            if episode_item.image and episode_item.image != settings.IMG_NONE:
+                episode_image = episode_item.image
+            if episode_item.release_datetime:
+                air_date = episode_item.release_datetime
+            if (
+                episode_item.runtime_minutes
+                and episode_item.runtime_minutes < 999998
+            ):
+                runtime = tmdb.get_readable_duration(episode_item.runtime_minutes)
+            if episode_item.title and episode_item.title != show_title:
+                title = episode_item.title
+
+        fallback_episodes.append(
+            {
+                "media_id": media_id,
+                "media_type": MediaTypes.EPISODE.value,
+                "source": source,
+                "season_number": season_number,
+                "episode_number": episode_number,
+                "air_date": air_date,
+                "image": episode_image,
+                "title": title,
+                "overview": "",
+                "history": history_entries,
+                "runtime": runtime,
+                "item": episode_item,
+            },
+        )
+
+    max_episode_number = max(episode_numbers) if episode_numbers else None
+    details = {}
+    if max_episode_number:
+        details["episodes"] = max_episode_number
+
+    air_dates = [ep["air_date"] for ep in fallback_episodes if ep.get("air_date")]
+    if air_dates:
+        details["first_air_date"] = min(air_dates)
+        details["last_air_date"] = max(air_dates)
+
+    source_url = tv_metadata.get("source_url") or ""
+    if source == Sources.TMDB.value:
+        source_url = f"https://www.themoviedb.org/tv/{media_id}/season/{season_number}"
+
+    return {
+        "media_id": media_id,
+        "source": source,
+        "media_type": MediaTypes.SEASON.value,
+        "title": tv_metadata.get("title", ""),
+        "season_title": f"Season {season_number}",
+        "image": tv_image,
+        "season_number": season_number,
+        "synopsis": tv_metadata.get("synopsis") or "No synopsis available.",
+        "genres": tv_metadata.get("genres") or [],
+        "max_progress": max_episode_number,
+        "score": None,
+        "score_count": None,
+        "details": details,
+        "episodes": fallback_episodes,
+        "related": {},
+        "source_url": source_url,
+        "tvdb_id": tv_metadata.get("tvdb_id"),
+        "external_links": tv_metadata.get("external_links"),
+    }
+
+
 @login_not_required
 @require_GET
 def season_details(
@@ -2369,7 +2469,8 @@ def season_details(
         source,
         [season_number],
     )
-    season_metadata = tv_with_seasons_metadata[f"season/{season_number}"]
+    season_key = f"season/{season_number}"
+    season_metadata = tv_with_seasons_metadata.get(season_key)
 
     # For public views, we don't need user media data
     if public_view:
@@ -2384,6 +2485,23 @@ def season_details(
             season_number=season_number,
         )
         current_instance = user_medias[0] if user_medias else None
+
+    episodes_in_db = current_instance.episodes.all() if current_instance else []
+
+    season_metadata_missing = season_metadata is None
+    if season_metadata_missing:
+        season_metadata = _build_missing_season_metadata(
+            tv_with_seasons_metadata,
+            media_id,
+            source,
+            season_number,
+            episodes_in_db,
+        )
+        if not public_view:
+            messages.warning(
+                request,
+                "Season metadata was not found for this show. Showing local activity only.",
+            )
 
     # Apply the same rating aggregation logic as in the media list
     if user_medias and len(user_medias) > 1:
@@ -2411,11 +2529,13 @@ def season_details(
         if latest_rating is not None:
             current_instance.score = latest_rating
 
-    episodes_in_db = current_instance.episodes.all() if current_instance else []
-
     # Save episode runtimes from raw metadata before processing for display
     # This ensures runtime data is persisted when viewing the season page
-    if source != Sources.MANUAL.value and season_metadata.get("episodes"):
+    if (
+        not season_metadata_missing
+        and source != Sources.MANUAL.value
+        and season_metadata.get("episodes")
+    ):
         from datetime import datetime
         
         raw_episodes = season_metadata["episodes"]
@@ -2474,16 +2594,17 @@ def season_details(
             for user_id in tracking_users:
                 clear_time_left_cache_for_user(user_id)
 
-    if source == Sources.MANUAL.value:
-        season_metadata["episodes"] = manual.process_episodes(
-            season_metadata,
-            episodes_in_db,
-        )
-    else:
-        season_metadata["episodes"] = tmdb.process_episodes(
-            season_metadata,
-            episodes_in_db,
-        )
+    if not season_metadata_missing:
+        if source == Sources.MANUAL.value:
+            season_metadata["episodes"] = manual.process_episodes(
+                season_metadata,
+                episodes_in_db,
+            )
+        else:
+            season_metadata["episodes"] = tmdb.process_episodes(
+                season_metadata,
+                episodes_in_db,
+            )
 
     # Add collection_entry data to each episode (if not public view)
     if not public_view and season_metadata.get("episodes"):
