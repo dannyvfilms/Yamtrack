@@ -249,6 +249,36 @@ class PlexWebhookTests(TestCase):
         self.assertEqual(movie.status, Status.COMPLETED.value)
         self.assertEqual(movie.progress, 1)
 
+    def test_movie_rating_webhook_uses_plex_user_rating_scale(self):
+        """Ratings from Plex userRating should stay on a 0-10 scale."""
+        payload = {
+            "event": "media.rate",
+            "Account": {
+                "title": "testuser",
+            },
+            "Metadata": {
+                "type": "movie",
+                "title": "The Matrix",
+                "userRating": 5,
+                "Guid": [
+                    {
+                        "id": "tmdb://603",
+                    },
+                ],
+            },
+        }
+
+        response = self.client.post(
+            self.url,
+            data={"payload": json.dumps(payload)},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        movie = Movie.objects.get(item__media_id="603", user=self.user)
+        self.assertEqual(movie.score, 5)
+
     def test_anime_movie_mark_played(self):
         """Test webhook handles movie mark played event."""
         payload = {

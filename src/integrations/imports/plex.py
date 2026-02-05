@@ -1000,9 +1000,7 @@ class PlexHistoryImporter:
             )
             return None
 
-        if rating <= 5:
-            rating *= 2
-        elif rating <= 10:
+        if rating <= 10:
             rating = rating
         elif rating <= 100:
             rating /= 10

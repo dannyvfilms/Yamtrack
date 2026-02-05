@@ -272,17 +272,27 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
         logger.debug("Full rating payload: %s", json.dumps(payload, indent=2))
         
         metadata = payload.get("Metadata", {})
-        # Try different possible field names for user rating
-        user_rating = (
-            metadata.get("userRating") or 
-            metadata.get("user_rating") or 
-            metadata.get("rating") or
-            payload.get("rating") or
-            payload.get("userRating")
-        )
+        # Try different possible field names for user rating (preserve 0 values)
+        user_rating = None
+        rating_source = None
+        rating_fields = [
+            ("userRating", metadata.get("userRating")),
+            ("user_rating", metadata.get("user_rating")),
+            ("rating", metadata.get("rating")),
+            ("payload_rating", payload.get("rating")),
+            ("payload_userRating", payload.get("userRating")),
+        ]
+        for source, value in rating_fields:
+            if value is not None:
+                user_rating = value
+                rating_source = source
+                break
         
         logger.debug("Rating payload metadata keys: %s", list(metadata.keys()))
-        logger.debug("userRating value: %s (tried: userRating, user_rating, rating)", user_rating)
+        logger.debug(
+            "userRating value: %s (sources checked: userRating, user_rating, rating, payload.rating, payload.userRating)",
+            user_rating,
+        )
         
         if user_rating is None:
             logger.warning(
@@ -299,6 +309,7 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
                 if user_rating is None:
                     logger.warning("Could not fetch rating from Plex API either")
                     return None
+                rating_source = "userRating"
             else:
                 logger.warning("No ratingKey found in payload, cannot fetch rating from API")
                 return None
@@ -330,7 +341,11 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
             pass
 
         # Normalize rating
-        normalized_rating = self._normalize_rating(user_rating, title)
+        normalized_rating = self._normalize_rating(
+            user_rating,
+            title,
+            rating_source=rating_source,
+        )
         if normalized_rating is None:
             logger.warning("Invalid rating value '%s' for %s - skipped", user_rating, title)
             return None
@@ -591,13 +606,16 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
 
         return None
 
-    def _normalize_rating(self, rating_value, title: str | None = None) -> float | None:
+    def _normalize_rating(
+        self,
+        rating_value,
+        title: str | None = None,
+        rating_source: str | None = None,
+    ) -> float | None:
         """Normalize Plex rating values onto a 0-10 scale.
         
-        Plex ratings can be on different scales:
-        - 0-5 scale: multiply by 2
-        - 1-10 scale: use directly
-        - 0-100 scale: divide by 10
+        Plex userRating values are typically on a 0-10 scale (even for 5-star UI).
+        Some metadata sources may report 0-100, which we normalize down.
         """
         if rating_value in (None, ""):
             return None
@@ -614,7 +632,20 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
             logger.warning("Invalid Plex rating '%s' for %s (negative) - skipped", rating_value, entry_title)
             return None
 
-        if rating <= 5:
+        if rating_source in {"userRating", "user_rating", "payload_userRating"}:
+            if rating <= 10:
+                rating = rating
+            elif rating <= 100:
+                rating /= 10
+            else:
+                entry_title = title or "Unknown title"
+                logger.warning(
+                    "Invalid Plex rating '%s' for %s (out of range) - skipped",
+                    rating_value,
+                    entry_title,
+                )
+                return None
+        elif rating <= 5:
             rating *= 2
         elif rating <= 10:
             rating = rating
