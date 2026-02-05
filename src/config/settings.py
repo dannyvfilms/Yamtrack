@@ -195,6 +195,10 @@ WSGI_APPLICATION = "config.wsgi.application"
 Path(BASE_DIR / "db").mkdir(parents=True, exist_ok=True)
 
 if config("DB_HOST", default=None):
+    DB_POOL_MIN = config("DB_POOL_MIN", default=0, cast=int)
+    DB_POOL_MAX = config("DB_POOL_MAX", default=2, cast=int)
+    DB_POOL_TIMEOUT = config("DB_POOL_TIMEOUT", default=30, cast=int)
+
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",
@@ -204,7 +208,11 @@ if config("DB_HOST", default=None):
             "PASSWORD": config("DB_PASSWORD", default=secret("DB_PASSWORD_FILE")),
             "PORT": config("DB_PORT"),
             "OPTIONS": {
-                "pool": True,
+                "pool": {
+                    "min_size": DB_POOL_MIN,
+                    "max_size": DB_POOL_MAX,
+                    "timeout": DB_POOL_TIMEOUT,
+                },
             },
         },
     }
