@@ -21,6 +21,7 @@ from app.models import (
     Episode,
     Game,
     Item,
+    ItemPersonCredit,
     MediaTypes,
     Movie,
     Music,
@@ -614,10 +615,32 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
     if filters.get('season'):
         episodes = episodes.filter(related_season_id=filters['season'])
     if person_source_filter and person_id_filter:
-        episodes = episodes.filter(
-            related_season__related_tv__item__person_credits__person__source=person_source_filter,
-            related_season__related_tv__item__person_credits__person__source_person_id=person_id_filter,
-        ).distinct()
+        episode_person_credits = ItemPersonCredit.objects.filter(
+            item_id=models.OuterRef("item_id"),
+        )
+        episode_person_matches = episode_person_credits.filter(
+            person__source=person_source_filter,
+            person__source_person_id=person_id_filter,
+        )
+        show_person_matches = ItemPersonCredit.objects.filter(
+            item_id=models.OuterRef("related_season__related_tv__item_id"),
+            person__source=person_source_filter,
+            person__source_person_id=person_id_filter,
+        )
+        episodes = episodes.annotate(
+            has_episode_people=models.Exists(episode_person_credits),
+            has_episode_person=models.Exists(episode_person_matches),
+            has_show_person=models.Exists(show_person_matches),
+        ).filter(
+            (
+                models.Q(has_episode_people=True)
+                & models.Q(has_episode_person=True)
+            )
+            | (
+                models.Q(has_episode_people=False)
+                & models.Q(has_show_person=True)
+            ),
+        )
     if target_media_id and target_source and (
         media_type_filter == MediaTypes.TV.value
         or filters.get('tv')
