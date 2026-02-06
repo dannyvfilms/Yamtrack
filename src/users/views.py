@@ -30,6 +30,7 @@ from users.models import (
     PlannedHomeDisplayChoices,
     QuickWatchDateChoices,
     RatingScaleChoices,
+    TopTalentSortChoices,
     TimeFormatChoices,
 )
 
@@ -372,12 +373,14 @@ def preferences(request):
         game_logging_style = request.POST.get("game_logging_style")
         mobile_grid_layout = request.POST.get("mobile_grid_layout")
         media_card_subtitle_display = request.POST.get("media_card_subtitle_display")
+        top_talent_sort_by = request.POST.get("top_talent_sort_by")
         rating_scale = request.POST.get("rating_scale")
         quick_season_update_mobile = request.POST.get("quick_season_update_mobile") == "1"
         book_comic_manga_progress_percentage = request.POST.get("book_comic_manga_progress_percentage") == "1"
 
         fields_to_update = []
         rating_scale_changed = False
+        top_talent_sort_changed = False
 
         if date_format and date_format in [choice[0] for choice in DateFormatChoices.choices]:
             if request.user.date_format != date_format:
@@ -424,6 +427,15 @@ def preferences(request):
                 request.user.media_card_subtitle_display = media_card_subtitle_display
                 fields_to_update.append("media_card_subtitle_display")
 
+        if (
+            top_talent_sort_by
+            and top_talent_sort_by in [choice[0] for choice in TopTalentSortChoices.choices]
+        ):
+            if request.user.top_talent_sort_by != top_talent_sort_by:
+                request.user.top_talent_sort_by = top_talent_sort_by
+                fields_to_update.append("top_talent_sort_by")
+                top_talent_sort_changed = True
+
         if rating_scale and rating_scale in [choice[0] for choice in RatingScaleChoices.choices]:
             if request.user.rating_scale != rating_scale:
                 request.user.rating_scale = rating_scale
@@ -466,6 +478,7 @@ def preferences(request):
                     force=True,
                     logging_styles=("sessions", "repeats"),
                 )
+            if rating_scale_changed or top_talent_sort_changed:
                 statistics_cache.invalidate_statistics_cache(request.user.id)
                 statistics_cache.schedule_all_ranges_refresh(
                     request.user.id,

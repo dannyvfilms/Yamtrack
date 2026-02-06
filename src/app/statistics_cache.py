@@ -435,6 +435,7 @@ def _get_empty_statistics_data():
         "top_rated_by_type": {},
         "top_played": [],
         "top_talent": {
+            "sort_by": "plays",
             "top_actors": [],
             "top_actresses": [],
             "top_directors": [],
@@ -2018,6 +2019,10 @@ def _is_writer_credit(credit) -> bool:
 def _aggregate_top_talent(user, start_date, end_date, limit=20):
     """Aggregate top cast/crew/studio rollups from watched movie and TV plays."""
     item_play_counts = Counter()
+    item_watch_minutes = Counter()
+    sort_by = getattr(user, "top_talent_sort_by", "plays")
+    if sort_by not in {"plays", "time", "titles"}:
+        sort_by = "plays"
 
     # TV plays: count watched episodes and map each play to the parent TV item.
     episodes_qs = Episode.objects.filter(
@@ -2028,9 +2033,13 @@ def _aggregate_top_talent(user, start_date, end_date, limit=20):
         episodes_qs = episodes_qs.filter(end_date__gte=start_date)
     if end_date:
         episodes_qs = episodes_qs.filter(end_date__lte=end_date)
-    for item_id in episodes_qs.values_list("related_season__related_tv__item_id", flat=True).iterator():
+    for item_id, runtime_minutes in episodes_qs.values_list(
+        "related_season__related_tv__item_id",
+        "item__runtime_minutes",
+    ).iterator():
         if item_id:
             item_play_counts[item_id] += 1
+            item_watch_minutes[item_id] += _safe_runtime_minutes(runtime_minutes)
 
     # Movie plays: count completed/dated movie entries.
     movies_qs = Movie.objects.filter(
@@ -2048,12 +2057,14 @@ def _aggregate_top_talent(user, start_date, end_date, limit=20):
             Q(end_date__lte=end_date)
             | (Q(end_date__isnull=True) & Q(start_date__lte=end_date)),
         )
-    for item_id in movies_qs.values_list("item_id", flat=True).iterator():
+    for item_id, runtime_minutes in movies_qs.values_list("item_id", "item__runtime_minutes").iterator():
         if item_id:
             item_play_counts[item_id] += 1
+            item_watch_minutes[item_id] += _safe_runtime_minutes(runtime_minutes)
 
     if not item_play_counts:
         return {
+            "sort_by": sort_by,
             "top_actors": [],
             "top_actresses": [],
             "top_directors": [],
@@ -2132,10 +2143,15 @@ def _aggregate_top_talent(user, start_date, end_date, limit=20):
             )
 
     actor_counts = Counter()
+    actor_minutes = Counter()
     actress_counts = Counter()
+    actress_minutes = Counter()
     director_counts = Counter()
+    director_minutes = Counter()
     writer_counts = Counter()
+    writer_minutes = Counter()
     studio_counts = Counter()
+    studio_minutes = Counter()
     actor_movie_items = defaultdict(set)
     actor_show_items = defaultdict(set)
     actress_movie_items = defaultdict(set)
@@ -2150,50 +2166,89 @@ def _aggregate_top_talent(user, start_date, end_date, limit=20):
     for item_id, plays in item_play_counts.items():
         if plays <= 0:
             continue
+        watched_minutes = int(item_watch_minutes.get(item_id, 0))
         media_type = item_media_types.get(item_id)
         is_movie = media_type == MediaTypes.MOVIE.value
         is_show = media_type == MediaTypes.TV.value
         for person_id in cast_actor_ids_by_item.get(item_id, ()):
             actor_counts[person_id] += plays
+            actor_minutes[person_id] += watched_minutes
             if is_movie:
                 actor_movie_items[person_id].add(item_id)
             elif is_show:
                 actor_show_items[person_id].add(item_id)
         for person_id in cast_actress_ids_by_item.get(item_id, ()):
             actress_counts[person_id] += plays
+            actress_minutes[person_id] += watched_minutes
             if is_movie:
                 actress_movie_items[person_id].add(item_id)
             elif is_show:
                 actress_show_items[person_id].add(item_id)
         for person_id in director_ids_by_item.get(item_id, ()):
             director_counts[person_id] += plays
+            director_minutes[person_id] += watched_minutes
             if is_movie:
                 director_movie_items[person_id].add(item_id)
             elif is_show:
                 director_show_items[person_id].add(item_id)
         for person_id in writer_ids_by_item.get(item_id, ()):
             writer_counts[person_id] += plays
+            writer_minutes[person_id] += watched_minutes
             if is_movie:
                 writer_movie_items[person_id].add(item_id)
             elif is_show:
                 writer_show_items[person_id].add(item_id)
         for studio_id in studio_ids_by_item.get(item_id, ()):
             studio_counts[studio_id] += plays
+            studio_minutes[studio_id] += watched_minutes
             if is_movie:
                 studio_movie_items[studio_id].add(item_id)
             elif is_show:
                 studio_show_items[studio_id].add(item_id)
 
-    def _sorted_people(counter_obj, movie_items_by_person, show_items_by_person):
+    def _person_sort_key(person_id, plays, minutes, movie_items_by_person, show_items_by_person):
+        unique_movies = len(movie_items_by_person.get(person_id, set()))
+        unique_shows = len(show_items_by_person.get(person_id, set()))
+        unique_titles = unique_movies + unique_shows
+        person = people_by_id.get(person_id)
+        name_key = person.name.lower() if person else ""
+        if sort_by == "time":
+            return (-minutes, -plays, -unique_titles, name_key)
+        if sort_by == "titles":
+            return (-unique_titles, -plays, -minutes, name_key)
+        return (-plays, -minutes, -unique_titles, name_key)
+
+    def _studio_sort_key(studio_id, plays, minutes, movie_items_by_studio, show_items_by_studio):
+        unique_movies = len(movie_items_by_studio.get(studio_id, set()))
+        unique_shows = len(show_items_by_studio.get(studio_id, set()))
+        unique_titles = unique_movies + unique_shows
+        studio = studios_by_id.get(studio_id)
+        name_key = studio.name.lower() if studio else ""
+        if sort_by == "time":
+            return (-minutes, -plays, -unique_titles, name_key)
+        if sort_by == "titles":
+            return (-unique_titles, -plays, -minutes, name_key)
+        return (-plays, -minutes, -unique_titles, name_key)
+
+    def _sorted_people(counter_obj, minute_counter, movie_items_by_person, show_items_by_person):
         ranked = sorted(
             counter_obj.items(),
-            key=lambda row: (-row[1], (people_by_id.get(row[0]).name.lower() if people_by_id.get(row[0]) else "")),
+            key=lambda row: _person_sort_key(
+                row[0],
+                row[1],
+                int(minute_counter.get(row[0], 0)),
+                movie_items_by_person,
+                show_items_by_person,
+            ),
         )[:limit]
         payload = []
         for person_id, plays in ranked:
             person = people_by_id.get(person_id)
             if not person:
                 continue
+            watched_minutes = int(minute_counter.get(person_id, 0))
+            unique_movies = len(movie_items_by_person.get(person_id, set()))
+            unique_shows = len(show_items_by_person.get(person_id, set()))
             payload.append(
                 {
                     "name": person.name,
@@ -2201,22 +2256,34 @@ def _aggregate_top_talent(user, start_date, end_date, limit=20):
                     "source": person.source,
                     "person_id": person.source_person_id,
                     "plays": int(plays),
-                    "unique_movies": len(movie_items_by_person.get(person_id, set())),
-                    "unique_shows": len(show_items_by_person.get(person_id, set())),
+                    "watched_minutes": watched_minutes,
+                    "watched_time": stats._format_hours_minutes(watched_minutes),
+                    "unique_movies": unique_movies,
+                    "unique_shows": unique_shows,
+                    "unique_titles": unique_movies + unique_shows,
                 },
             )
         return payload
 
-    def _sorted_studios(counter_obj, movie_items_by_studio, show_items_by_studio):
+    def _sorted_studios(counter_obj, minute_counter, movie_items_by_studio, show_items_by_studio):
         ranked = sorted(
             counter_obj.items(),
-            key=lambda row: (-row[1], (studios_by_id.get(row[0]).name.lower() if studios_by_id.get(row[0]) else "")),
+            key=lambda row: _studio_sort_key(
+                row[0],
+                row[1],
+                int(minute_counter.get(row[0], 0)),
+                movie_items_by_studio,
+                show_items_by_studio,
+            ),
         )[:limit]
         payload = []
         for studio_id, plays in ranked:
             studio = studios_by_id.get(studio_id)
             if not studio:
                 continue
+            watched_minutes = int(minute_counter.get(studio_id, 0))
+            unique_movies = len(movie_items_by_studio.get(studio_id, set()))
+            unique_shows = len(show_items_by_studio.get(studio_id, set()))
             payload.append(
                 {
                     "name": studio.name,
@@ -2224,18 +2291,47 @@ def _aggregate_top_talent(user, start_date, end_date, limit=20):
                     "source": studio.source,
                     "studio_id": studio.source_studio_id,
                     "plays": int(plays),
-                    "unique_movies": len(movie_items_by_studio.get(studio_id, set())),
-                    "unique_shows": len(show_items_by_studio.get(studio_id, set())),
+                    "watched_minutes": watched_minutes,
+                    "watched_time": stats._format_hours_minutes(watched_minutes),
+                    "unique_movies": unique_movies,
+                    "unique_shows": unique_shows,
+                    "unique_titles": unique_movies + unique_shows,
                 },
             )
         return payload
 
     return {
-        "top_actors": _sorted_people(actor_counts, actor_movie_items, actor_show_items),
-        "top_actresses": _sorted_people(actress_counts, actress_movie_items, actress_show_items),
-        "top_directors": _sorted_people(director_counts, director_movie_items, director_show_items),
-        "top_writers": _sorted_people(writer_counts, writer_movie_items, writer_show_items),
-        "top_studios": _sorted_studios(studio_counts, studio_movie_items, studio_show_items),
+        "sort_by": sort_by,
+        "top_actors": _sorted_people(
+            actor_counts,
+            actor_minutes,
+            actor_movie_items,
+            actor_show_items,
+        ),
+        "top_actresses": _sorted_people(
+            actress_counts,
+            actress_minutes,
+            actress_movie_items,
+            actress_show_items,
+        ),
+        "top_directors": _sorted_people(
+            director_counts,
+            director_minutes,
+            director_movie_items,
+            director_show_items,
+        ),
+        "top_writers": _sorted_people(
+            writer_counts,
+            writer_minutes,
+            writer_movie_items,
+            writer_show_items,
+        ),
+        "top_studios": _sorted_studios(
+            studio_counts,
+            studio_minutes,
+            studio_movie_items,
+            studio_show_items,
+        ),
     }
 
 

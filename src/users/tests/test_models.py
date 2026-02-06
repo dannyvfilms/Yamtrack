@@ -166,6 +166,28 @@ class UserUpdatePreferenceTests(TestCase):
         self.user.refresh_from_db()
         self.assertEqual(self.user.release_notifications_enabled, False)
 
+    def test_update_preference_top_talent_sort_by_valid(self):
+        """Test update_preference with top_talent_sort_by and valid value."""
+        self.user.top_talent_sort_by = "plays"
+        self.user.save()
+
+        result = self.user.update_preference("top_talent_sort_by", "time")
+
+        self.assertEqual(result, "time")
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.top_talent_sort_by, "time")
+
+    def test_update_preference_top_talent_sort_by_invalid(self):
+        """Test update_preference with top_talent_sort_by and invalid value."""
+        self.user.top_talent_sort_by = "plays"
+        self.user.save()
+
+        result = self.user.update_preference("top_talent_sort_by", "invalid_mode")
+
+        self.assertEqual(result, "plays")
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.top_talent_sort_by, "plays")
+
 
 class UserGetImportTasksTests(TestCase):
     """Tests for the User.get_import_tasks method."""

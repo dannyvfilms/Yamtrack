@@ -1,3 +1,4 @@
+from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -178,6 +179,125 @@ class StatisticsViewTests(TestCase):
         self.assertEqual(actor_entry.get("unique_shows"), 0)
         self.assertEqual(studio_entry.get("unique_movies"), 1)
         self.assertEqual(studio_entry.get("unique_shows"), 0)
+
+    def test_statistics_top_talent_sort_modes_affect_rank_and_subtitle(self):
+        """Top talent cards should sort and display subtitle metric by preference."""
+        watched_at = timezone.now()
+        titles_actor = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="201",
+            name="Titles Leader",
+            gender=PersonGender.MALE.value,
+        )
+        plays_actor = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="202",
+            name="Plays Leader",
+            gender=PersonGender.MALE.value,
+        )
+
+        titles_movie_1 = Item.objects.create(
+            media_id="2001",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Titles Movie One",
+            runtime_minutes=100,
+            image="http://example.com/titles1.jpg",
+        )
+        titles_movie_2 = Item.objects.create(
+            media_id="2002",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Titles Movie Two",
+            runtime_minutes=100,
+            image="http://example.com/titles2.jpg",
+        )
+        plays_movie = Item.objects.create(
+            media_id="2003",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Plays Movie",
+            runtime_minutes=30,
+            image="http://example.com/plays.jpg",
+        )
+
+        ItemPersonCredit.objects.create(
+            item=titles_movie_1,
+            person=titles_actor,
+            role_type=CreditRoleType.CAST.value,
+            role="Lead",
+        )
+        ItemPersonCredit.objects.create(
+            item=titles_movie_2,
+            person=titles_actor,
+            role_type=CreditRoleType.CAST.value,
+            role="Lead",
+        )
+        ItemPersonCredit.objects.create(
+            item=plays_movie,
+            person=plays_actor,
+            role_type=CreditRoleType.CAST.value,
+            role="Lead",
+        )
+
+        Movie.objects.create(
+            item=titles_movie_1,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            start_date=watched_at,
+            end_date=watched_at,
+        )
+        Movie.objects.create(
+            item=titles_movie_2,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            start_date=watched_at + timedelta(minutes=1),
+            end_date=watched_at + timedelta(minutes=1),
+        )
+        for offset in range(3):
+            Movie.objects.create(
+                item=plays_movie,
+                user=self.user,
+                status=Status.COMPLETED.value,
+                progress=1,
+                start_date=watched_at + timedelta(minutes=10 + offset),
+                end_date=watched_at + timedelta(minutes=10 + offset),
+            )
+
+        self.user.top_talent_sort_by = "plays"
+        self.user.save(update_fields=["top_talent_sort_by"])
+        statistics_cache.invalidate_statistics_cache(self.user.id)
+        response = self.client.get(reverse("statistics") + "?start-date=all&end-date=all")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context["top_talent"]["top_actors"][0]["name"],
+            "Plays Leader",
+        )
+        self.assertContains(response, "3 Plays")
+
+        self.user.top_talent_sort_by = "time"
+        self.user.save(update_fields=["top_talent_sort_by"])
+        statistics_cache.invalidate_statistics_cache(self.user.id)
+        response = self.client.get(reverse("statistics") + "?start-date=all&end-date=all")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context["top_talent"]["top_actors"][0]["name"],
+            "Titles Leader",
+        )
+        self.assertContains(response, "3h 20min")
+
+        self.user.top_talent_sort_by = "titles"
+        self.user.save(update_fields=["top_talent_sort_by"])
+        statistics_cache.invalidate_statistics_cache(self.user.id)
+        response = self.client.get(reverse("statistics") + "?start-date=all&end-date=all")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context["top_talent"]["top_actors"][0]["name"],
+            "Titles Leader",
+        )
+        self.assertContains(response, "2 Titles")
 
     @patch("app.providers.services.get_media_metadata")
     @patch("app.tasks.enqueue_credits_backfill_items")

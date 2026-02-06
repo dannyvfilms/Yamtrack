@@ -149,6 +149,14 @@ class StatisticsRangeChoices(models.TextChoices):
     ALL_TIME = "All Time", "All Time"
 
 
+class TopTalentSortChoices(models.TextChoices):
+    """Choices for sorting top cast/crew/studio cards on statistics."""
+
+    PLAYS = "plays", "Plays"
+    TIME = "time", "Time"
+    TITLES = "titles", "Titles"
+
+
 class GameLoggingStyleChoices(models.TextChoices):
     """Choices for how game history entries are displayed."""
 
@@ -644,6 +652,12 @@ class User(AbstractUser):
         choices=StatisticsRangeChoices.choices,
         help_text="Default predefined range for the Statistics page",
     )
+    top_talent_sort_by = models.CharField(
+        max_length=20,
+        default=TopTalentSortChoices.PLAYS,
+        choices=TopTalentSortChoices.choices,
+        help_text="Sort metric for top cast/crew/studio cards on the Statistics page",
+    )
 
     activity_history_view = models.CharField(
         max_length=20,
@@ -817,6 +831,10 @@ class User(AbstractUser):
             models.CheckConstraint(
                 name="statistics_default_range_valid",
                 condition=models.Q(statistics_default_range__in=StatisticsRangeChoices.values),
+            ),
+            models.CheckConstraint(
+                name="top_talent_sort_by_valid",
+                condition=models.Q(top_talent_sort_by__in=TopTalentSortChoices.values),
             ),
             models.CheckConstraint(
                 name="list_detail_sort_valid",

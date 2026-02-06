@@ -1003,6 +1003,7 @@
       </div>
 
       {% with talent=top_talent %}
+      {% with talent_sort=talent.sort_by|default:request.user.top_talent_sort_by|default:'plays' %}
       {% if talent.top_actors or talent.top_actresses or talent.top_directors or talent.top_writers or talent.top_studios %}
       <section class="bg-[#2a2f35] rounded-lg p-6 mobile-tight-section stat-scroll-safe mb-4 sm:mb-8 space-y-8">
         <div class="flex flex-col space-y-1">
@@ -1032,6 +1033,13 @@
                       <p class="text-xs text-gray-500">
                         {{ entry.unique_movies }} Movie{{ entry.unique_movies|pluralize }} &bull;
                         {{ entry.unique_shows }} Show{{ entry.unique_shows|pluralize }}
+                        {% if talent_sort == 'plays' %}
+                          &bull; {{ entry.plays|default:0 }} Play{{ entry.plays|default:0|pluralize }}
+                        {% elif talent_sort == 'time' %}
+                          &bull; {{ entry.watched_time|default:"0h 0min" }}
+                        {% elif talent_sort == 'titles' %}
+                          &bull; {{ entry.unique_titles|default:0 }} Title{{ entry.unique_titles|default:0|pluralize }}
+                        {% endif %}
                       </p>
                     </div>
                   </a>
@@ -1060,6 +1068,13 @@
                       <p class="text-xs text-gray-500">
                         {{ entry.unique_movies }} Movie{{ entry.unique_movies|pluralize }} &bull;
                         {{ entry.unique_shows }} Show{{ entry.unique_shows|pluralize }}
+                        {% if talent_sort == 'plays' %}
+                          &bull; {{ entry.plays|default:0 }} Play{{ entry.plays|default:0|pluralize }}
+                        {% elif talent_sort == 'time' %}
+                          &bull; {{ entry.watched_time|default:"0h 0min" }}
+                        {% elif talent_sort == 'titles' %}
+                          &bull; {{ entry.unique_titles|default:0 }} Title{{ entry.unique_titles|default:0|pluralize }}
+                        {% endif %}
                       </p>
                     </div>
                   </a>
@@ -1088,6 +1103,13 @@
                       <p class="text-xs text-gray-500">
                         {{ entry.unique_movies }} Movie{{ entry.unique_movies|pluralize }} &bull;
                         {{ entry.unique_shows }} Show{{ entry.unique_shows|pluralize }}
+                        {% if talent_sort == 'plays' %}
+                          &bull; {{ entry.plays|default:0 }} Play{{ entry.plays|default:0|pluralize }}
+                        {% elif talent_sort == 'time' %}
+                          &bull; {{ entry.watched_time|default:"0h 0min" }}
+                        {% elif talent_sort == 'titles' %}
+                          &bull; {{ entry.unique_titles|default:0 }} Title{{ entry.unique_titles|default:0|pluralize }}
+                        {% endif %}
                       </p>
                     </div>
                   </a>
@@ -1116,6 +1138,13 @@
                       <p class="text-xs text-gray-500">
                         {{ entry.unique_movies }} Movie{{ entry.unique_movies|pluralize }} &bull;
                         {{ entry.unique_shows }} Show{{ entry.unique_shows|pluralize }}
+                        {% if talent_sort == 'plays' %}
+                          &bull; {{ entry.plays|default:0 }} Play{{ entry.plays|default:0|pluralize }}
+                        {% elif talent_sort == 'time' %}
+                          &bull; {{ entry.watched_time|default:"0h 0min" }}
+                        {% elif talent_sort == 'titles' %}
+                          &bull; {{ entry.unique_titles|default:0 }} Title{{ entry.unique_titles|default:0|pluralize }}
+                        {% endif %}
                       </p>
                     </div>
                   </a>
@@ -1143,6 +1172,13 @@
                       <p class="text-xs text-gray-500">
                         {{ entry.unique_movies }} Movie{{ entry.unique_movies|pluralize }} &bull;
                         {{ entry.unique_shows }} Show{{ entry.unique_shows|pluralize }}
+                        {% if talent_sort == 'plays' %}
+                          &bull; {{ entry.plays|default:0 }} Play{{ entry.plays|default:0|pluralize }}
+                        {% elif talent_sort == 'time' %}
+                          &bull; {{ entry.watched_time|default:"0h 0min" }}
+                        {% elif talent_sort == 'titles' %}
+                          &bull; {{ entry.unique_titles|default:0 }} Title{{ entry.unique_titles|default:0|pluralize }}
+                        {% endif %}
                       </p>
                     </div>
                   </div>
@@ -1153,6 +1189,7 @@
         </div>
       </section>
       {% endif %}
+      {% endwith %}
       {% endwith %}
 
       <!-- TV Shows Consumption Section -->
