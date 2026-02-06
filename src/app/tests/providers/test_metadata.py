@@ -173,8 +173,12 @@ class Metadata(TestCase):
         self.assertFalse(result[2]["history"], [])
 
     @patch("app.providers.tmdb.tv_with_seasons")
-    def test_tmdb_episode(self, mock_tv_with_seasons):
+    @patch("app.providers.tmdb.services.api_request")
+    def test_tmdb_episode(self, mock_api_request, mock_tv_with_seasons):
         """Test the episode method for TMDB episodes."""
+        cache_key = f"{Sources.TMDB.value}_{MediaTypes.EPISODE.value}_1396_1_1"
+        tmdb.cache.delete(cache_key)
+
         mock_tv_with_seasons.return_value = {
             "title": "Breaking Bad",
             "season/1": {
@@ -194,6 +198,29 @@ class Metadata(TestCase):
                 ],
             },
         }
+        def _mock_episode_request(_source, _method, url, params=None):  # noqa: ARG001
+            if url.endswith("/episode/1"):
+                return {
+                    "name": "Pilot",
+                    "still_path": "/path/to/still1.jpg",
+                    "credits": {"cast": [], "crew": []},
+                    "guest_stars": [],
+                    "crew": [],
+                }
+            if url.endswith("/episode/3"):
+                mock_response = MagicMock()
+                mock_response.status_code = 404
+                mock_response.text = "Episode not found"
+                mock_response.json.return_value = {
+                    "status_code": 34,
+                    "status_message": "The resource you requested could not be found.",
+                }
+                error = requests.exceptions.HTTPError("404 Not Found")
+                error.response = mock_response
+                raise error
+            raise AssertionError(f"Unexpected episode URL called in test: {url}")
+
+        mock_api_request.side_effect = _mock_episode_request
 
         result = tmdb.episode("1396", "1", "1")
 
@@ -205,10 +232,66 @@ class Metadata(TestCase):
         with self.assertRaises(services.ProviderAPIError) as cm:
             tmdb.episode("1396", "1", "3")
 
-        self.assertIn("Episode 3 not found in season 1", str(cm.exception))
-        self.assertIn("The Movie Database with ID 1396", str(cm.exception))
+        self.assertIn("The Movie Database API (HTTP 404)", str(cm.exception))
 
         mock_tv_with_seasons.assert_called_with("1396", ["1"])
+
+    @patch("app.providers.tmdb.tv_with_seasons")
+    @patch("app.providers.tmdb.services.api_request")
+    def test_tmdb_episode_prefers_guest_stars_when_present(
+        self,
+        mock_api_request,
+        mock_tv_with_seasons,
+    ):
+        """Episode cast should prefer guest stars over regular cast when both exist."""
+        media_id = "episode-cast-priority"
+        season_number = "1"
+        episode_number = "1"
+        cache_key = (
+            f"{Sources.TMDB.value}_{MediaTypes.EPISODE.value}_{media_id}_{season_number}_{episode_number}"
+        )
+        tmdb.cache.delete(cache_key)
+
+        mock_tv_with_seasons.return_value = {
+            "title": "Sample Show",
+            "season/1": {
+                "title": "Sample Show",
+                "season_title": "Season 1",
+            },
+        }
+        mock_api_request.return_value = {
+            "name": "Sample Episode",
+            "still_path": "/sample.jpg",
+            "credits": {
+                "cast": [
+                    {
+                        "id": 11,
+                        "name": "Regular Cast",
+                        "character": "Lead",
+                        "order": 0,
+                        "known_for_department": "Acting",
+                        "gender": 2,
+                    },
+                ],
+                "crew": [],
+            },
+            "guest_stars": [
+                {
+                    "id": 22,
+                    "name": "Guest Star",
+                    "character": "Guest Role",
+                    "order": 500,
+                    "known_for_department": "Acting",
+                    "gender": 1,
+                },
+            ],
+            "crew": [],
+        }
+
+        result = tmdb.episode(media_id, season_number, episode_number)
+        cast_names = [row["name"] for row in result["cast"]]
+
+        self.assertEqual(cast_names, ["Guest Star"])
 
     def test_tmdb_find_next_episode(self):
         """Test the find_next_episode function."""
@@ -631,5 +714,3 @@ class Metadata(TestCase):
             hardcover.handle_error(error)
 
         self.assertEqual(cm.exception.provider, Sources.HARDCOVER.value)
-
-

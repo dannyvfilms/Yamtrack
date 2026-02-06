@@ -250,6 +250,9 @@ class MetadataBackfillField(models.TextChoices):
     CREDITS = "credits", "Credits"
 
 
+CREDITS_BACKFILL_VERSION = 2
+
+
 class MetadataBackfillState(models.Model):
     """Track metadata backfill attempts to avoid endless retries."""
 
@@ -263,6 +266,7 @@ class MetadataBackfillState(models.Model):
         choices=MetadataBackfillField.choices,
     )
     fail_count = models.PositiveIntegerField(default=0)
+    strategy_version = models.PositiveIntegerField(default=1)
     last_attempt_at = models.DateTimeField(null=True, blank=True)
     next_retry_at = models.DateTimeField(null=True, blank=True)
     last_success_at = models.DateTimeField(null=True, blank=True)

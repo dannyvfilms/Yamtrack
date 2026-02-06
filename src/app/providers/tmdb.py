@@ -1038,9 +1038,12 @@ def episode(media_id, season_number, episode_number):
         tv_metadata = tv_with_seasons(media_id, [season_number])
         season_metadata = tv_metadata.get(f"season/{season_number}", {})
 
-        cast_rows = response.get("credits", {}).get("cast", [])
+        # TMDB episode payload exposes both regular cast and guest stars.
+        # Prefer guest stars for episode-level crediting to avoid attributing
+        # season-regular cast to every episode when episode-specific guests exist.
+        cast_rows = response.get("guest_stars", []) or []
         if not cast_rows:
-            cast_rows = response.get("guest_stars", []) or []
+            cast_rows = response.get("credits", {}).get("cast", []) or []
 
         crew_rows = response.get("credits", {}).get("crew", [])
         if not crew_rows:

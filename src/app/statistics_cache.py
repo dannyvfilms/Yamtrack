@@ -25,12 +25,15 @@ from app import config, helpers
 from app import statistics as stats
 from app import history_cache
 from app.models import (
+    CREDITS_BACKFILL_VERSION,
     CreditRoleType,
     Episode,
     Item,
     ItemPersonCredit,
     ItemStudioCredit,
     MediaTypes,
+    MetadataBackfillField,
+    MetadataBackfillState,
     Movie,
     PersonGender,
     Sources,
@@ -830,6 +833,74 @@ def _safe_runtime_minutes(value):
     return minutes
 
 
+def _resolve_missing_credit_item_ids(item_ids):
+    """Return TMDB movie/show/episode item IDs that still need credits backfill."""
+    normalized_ids = []
+    for item_id in item_ids or []:
+        try:
+            parsed = int(item_id)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            normalized_ids.append(parsed)
+    normalized_ids = sorted(set(normalized_ids))
+    if not normalized_ids:
+        return []
+
+    candidate_items = list(
+        Item.objects.filter(
+            id__in=normalized_ids,
+            source=Sources.TMDB.value,
+            media_type__in=[
+                MediaTypes.MOVIE.value,
+                MediaTypes.TV.value,
+                MediaTypes.EPISODE.value,
+            ],
+        ).values("id", "media_type"),
+    )
+    if not candidate_items:
+        return []
+
+    candidate_ids = {row["id"] for row in candidate_items}
+    media_type_by_id = {row["id"]: row["media_type"] for row in candidate_items}
+    episode_item_ids = [
+        item_id
+        for item_id, media_type in media_type_by_id.items()
+        if media_type == MediaTypes.EPISODE.value
+    ]
+    credits_version_by_item_id = {}
+    if episode_item_ids:
+        credits_version_by_item_id = {
+            row["item_id"]: int(row.get("strategy_version") or 0)
+            for row in MetadataBackfillState.objects.filter(
+                field=MetadataBackfillField.CREDITS,
+                item_id__in=episode_item_ids,
+            ).values("item_id", "strategy_version")
+        }
+    person_credit_ids = set(
+        ItemPersonCredit.objects.filter(item_id__in=candidate_ids).values_list("item_id", flat=True),
+    )
+    studio_credit_ids = set(
+        ItemStudioCredit.objects.filter(item_id__in=candidate_ids).values_list("item_id", flat=True),
+    )
+
+    missing_ids = []
+    for item_id in sorted(candidate_ids):
+        media_type = media_type_by_id.get(item_id)
+        has_people = item_id in person_credit_ids
+        has_studios = item_id in studio_credit_ids
+        if media_type == MediaTypes.EPISODE.value:
+            has_current_episode_attempt = (
+                credits_version_by_item_id.get(item_id, 0) >= CREDITS_BACKFILL_VERSION
+            )
+            if not has_people or not has_current_episode_attempt:
+                missing_ids.append(item_id)
+            continue
+        if not has_people or not has_studios:
+            missing_ids.append(item_id)
+    return missing_ids
+
+
 def build_stats_for_day(user_id: int, day_value):
     """Build a per-day statistics payload for a single user."""
     user_model = get_user_model()
@@ -878,6 +949,7 @@ def build_stats_for_day(user_id: int, day_value):
     missing_runtime_item_ids = set()
     missing_genre_item_ids = set()
     missing_episode_runtime_keys = set()
+    missing_credit_candidate_item_ids = set()
 
     def _update_item_meta(media_type: str, item_id: int, media_id: int | None, status, score, activity_dt):
         if not item_id:
@@ -963,6 +1035,7 @@ def build_stats_for_day(user_id: int, day_value):
                 end_date__lt=day_end,
             )
             .values(
+                "item_id",
                 "end_date",
                 "item__runtime_minutes",
                 "item__media_id",
@@ -1029,6 +1102,12 @@ def build_stats_for_day(user_id: int, day_value):
                     missing_genres += 1
                     if tv_item_id:
                         missing_genre_item_ids.add(tv_item_id)
+            if row.get("item__source") == Sources.TMDB.value:
+                episode_item_id = row.get("item_id")
+                if episode_item_id:
+                    missing_credit_candidate_item_ids.add(episode_item_id)
+                if tv_item_id:
+                    missing_credit_candidate_item_ids.add(tv_item_id)
 
             season_item_id = row.get("related_season__item_id")
             if season_item_id:
@@ -1055,6 +1134,7 @@ def build_stats_for_day(user_id: int, day_value):
                 "status",
                 "score",
                 "item_id",
+                "item__source",
                 "item__runtime_minutes",
                 "item__genres",
             )
@@ -1085,6 +1165,10 @@ def build_stats_for_day(user_id: int, day_value):
                     item_id = row.get("item_id")
                     if item_id:
                         missing_runtime_item_ids.add(item_id)
+                if row.get("item__source") == Sources.TMDB.value:
+                    item_id = row.get("item_id")
+                    if item_id:
+                        missing_credit_candidate_item_ids.add(item_id)
 
             play_end = row.get("end_date")
             if play_end and day_start <= play_end < day_end:
@@ -1755,10 +1839,19 @@ def build_stats_for_day(user_id: int, day_value):
             "activity_dt": payload["activity_dt"].isoformat() if payload.get("activity_dt") else None,
         }
     day_stats["game"]["by_game"] = game_payload
+    missing_credit_item_ids = _resolve_missing_credit_item_ids(missing_credit_candidate_item_ids)
+    missing_credits = len(missing_credit_item_ids)
+    scheduled_credit_backfills = 0
 
-    if missing_runtime_item_ids or missing_genre_item_ids or missing_episode_runtime_keys:
+    if (
+        missing_runtime_item_ids
+        or missing_genre_item_ids
+        or missing_episode_runtime_keys
+        or missing_credit_item_ids
+    ):
         try:
             from app.tasks import (
+                enqueue_credits_backfill_items,
                 enqueue_episode_runtime_backfill,
                 enqueue_genre_backfill_items,
                 enqueue_runtime_backfill_items,
@@ -1770,6 +1863,13 @@ def build_stats_for_day(user_id: int, day_value):
                 enqueue_genre_backfill_items(sorted(missing_genre_item_ids))
             if missing_episode_runtime_keys:
                 enqueue_episode_runtime_backfill(sorted(missing_episode_runtime_keys))
+            if missing_credit_item_ids:
+                queued_credits = enqueue_credits_backfill_items(
+                    missing_credit_item_ids,
+                    countdown=3,
+                )
+                if isinstance(queued_credits, int) and queued_credits > 0:
+                    scheduled_credit_backfills = queued_credits
         except Exception as exc:  # pragma: no cover - best-effort scheduling
             logger.debug(
                 "stats_backfill_schedule_failed user_id=%s day=%s error=%s",
@@ -1777,25 +1877,39 @@ def build_stats_for_day(user_id: int, day_value):
                 day.isoformat(),
                 exc,
             )
+    day_stats["backfill"] = {
+        "missing_credits": missing_credits,
+        "scheduled_credits": scheduled_credit_backfills,
+    }
 
     cache.set(_day_cache_key(user_id, day), day_stats, timeout=STATISTICS_DAY_CACHE_TIMEOUT)
-    if play_count or missing_runtime:
+    if play_count or missing_runtime or missing_credits:
         logger.info(
-            "stats_day_summary user_id=%s day=%s plays=%s missing_runtime=%s missing_genres=%s",
+            (
+                "stats_day_summary user_id=%s day=%s plays=%s missing_runtime=%s "
+                "missing_genres=%s missing_credits=%s scheduled_credits=%s"
+            ),
             user_id,
             day.isoformat(),
             play_count,
             missing_runtime,
             missing_genres,
+            missing_credits,
+            scheduled_credit_backfills,
         )
     else:
         logger.debug(
-            "stats_day_summary user_id=%s day=%s plays=%s missing_runtime=%s missing_genres=%s",
+            (
+                "stats_day_summary user_id=%s day=%s plays=%s missing_runtime=%s "
+                "missing_genres=%s missing_credits=%s scheduled_credits=%s"
+            ),
             user_id,
             day.isoformat(),
             play_count,
             missing_runtime,
             missing_genres,
+            missing_credits,
+            scheduled_credit_backfills,
         )
     return day_stats
 
@@ -2026,7 +2140,7 @@ def _is_writer_credit(credit) -> bool:
     return any(keyword in role for keyword in ("writer", "screenplay", "story", "teleplay", "script"))
 
 
-def _aggregate_top_talent(user, start_date, end_date, limit=20):
+def _aggregate_top_talent(user, start_date, end_date, limit=20, schedule_missing_backfill=True):
     """Aggregate top cast/crew/studio rollups from watched movie and TV plays."""
     movie_play_counts = Counter()
     movie_watch_minutes = Counter()
@@ -2147,19 +2261,32 @@ def _aggregate_top_talent(user, start_date, end_date, limit=20):
             ],
         ).values_list("id", "media_type"),
     )
+    episode_ids = [item_id for item_id, media_type in tmdb_items if media_type == MediaTypes.EPISODE.value]
+    credits_version_by_item_id = {}
+    if episode_ids:
+        credits_version_by_item_id = {
+            row["item_id"]: int(row.get("strategy_version") or 0)
+            for row in MetadataBackfillState.objects.filter(
+                field=MetadataBackfillField.CREDITS,
+                item_id__in=episode_ids,
+            ).values("item_id", "strategy_version")
+        }
     missing_credit_item_ids = []
     for item_id, media_type in tmdb_items:
         has_people = item_id in items_with_people
         has_studios = item_id in items_with_studios
         if media_type == MediaTypes.EPISODE.value:
-            if not has_people:
+            has_current_episode_attempt = (
+                credits_version_by_item_id.get(item_id, 0) >= CREDITS_BACKFILL_VERSION
+            )
+            if not has_people or not has_current_episode_attempt:
                 missing_credit_item_ids.append(item_id)
             continue
         if not has_people or not has_studios:
             missing_credit_item_ids.append(item_id)
     missing_credit_item_ids = sorted(set(missing_credit_item_ids))
 
-    if missing_credit_item_ids:
+    if missing_credit_item_ids and schedule_missing_backfill:
         try:
             from app.tasks import enqueue_credits_backfill_items
 
@@ -2383,7 +2510,14 @@ def _aggregate_top_talent(user, start_date, end_date, limit=20):
     }
 
 
-def _aggregate_statistics_from_days(user, day_list, start_date, end_date, build_missing=False):
+def _aggregate_statistics_from_days(
+    user,
+    day_list,
+    start_date,
+    end_date,
+    build_missing=False,
+    credit_backfill_hints: int = 0,
+):
     items_by_type = defaultdict(dict)
     top_played_by_type = defaultdict(dict)
     minutes_by_type = defaultdict(float)
@@ -2408,6 +2542,10 @@ def _aggregate_statistics_from_days(user, day_list, start_date, end_date, build_
     }
     game_rollups = {}
     activity_counts = {}
+    try:
+        credit_backfill_hints = int(credit_backfill_hints or 0)
+    except (TypeError, ValueError):
+        credit_backfill_hints = 0
     non_play_activity_types = {
         MediaTypes.ANIME.value,
         MediaTypes.GAME.value,
@@ -2427,6 +2565,10 @@ def _aggregate_statistics_from_days(user, day_list, start_date, end_date, build_
             day_stats = cached.get(cache_key)
             if not day_stats and build_missing:
                 day_stats = build_stats_for_day(user.id, day)
+                if day_stats:
+                    credit_backfill_hints += int(
+                        day_stats.get("backfill", {}).get("missing_credits") or 0,
+                    )
             if not day_stats:
                 continue
 
@@ -3049,7 +3191,12 @@ def _aggregate_statistics_from_days(user, day_list, start_date, end_date, build_
         "today_month": today.month,
         "today_day": today.day,
     }
-    top_talent = _aggregate_top_talent(user, start_date, end_date)
+    top_talent = _aggregate_top_talent(
+        user,
+        start_date,
+        end_date,
+        schedule_missing_backfill=credit_backfill_hints <= 0,
+    )
 
     return {
         "media_count": media_count,
@@ -3464,6 +3611,7 @@ def refresh_statistics_cache(user_id: int, range_name: str):
 
         refreshed_days = 0
         nonempty_days = 0
+        credit_backfill_hints = 0
         build_started = time.perf_counter()
         for day in sorted(days_to_refresh):
             if not day:
@@ -3471,13 +3619,23 @@ def refresh_statistics_cache(user_id: int, range_name: str):
             day_stats = build_stats_for_day(user_id, day)
             refreshed_days += 1
             if day_stats:
+                credit_backfill_hints += int(
+                    day_stats.get("backfill", {}).get("missing_credits") or 0,
+                )
                 plays_total = sum(day_stats.get("totals", {}).get("plays_by_type", {}).values())
                 minutes_total = sum(day_stats.get("totals", {}).get("minutes_by_type", {}).values())
                 daily_minutes_total = sum(day_stats.get("daily_minutes_by_type", {}).values())
                 if plays_total or minutes_total or daily_minutes_total:
                     nonempty_days += 1
 
-        stats_data = _aggregate_statistics_from_days(user, day_list, start_date, end_date, build_missing=True)
+        stats_data = _aggregate_statistics_from_days(
+            user,
+            day_list,
+            start_date,
+            end_date,
+            build_missing=True,
+            credit_backfill_hints=credit_backfill_hints,
+        )
         history_version = _get_history_version(user_id)
         cache_statistics_data(user_id, range_name, stats_data, history_version=history_version)
 

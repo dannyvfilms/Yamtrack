@@ -14,6 +14,7 @@ from django.utils import timezone
 
 from app import history_cache
 from app.models import (
+    CREDITS_BACKFILL_VERSION,
     Item,
     ItemPersonCredit,
     ItemStudioCredit,
@@ -105,7 +106,11 @@ def _record_backfill_failure(item: Item, field: str, error_message: str | None =
     return state.give_up
 
 
-def _record_backfill_success(item: Item, field: str) -> None:
+def _record_backfill_success(
+    item: Item,
+    field: str,
+    strategy_version: int | None = None,
+) -> None:
     now = timezone.now()
     state, _ = MetadataBackfillState.objects.get_or_create(item=item, field=field)
     state.fail_count = 0
@@ -114,14 +119,18 @@ def _record_backfill_success(item: Item, field: str) -> None:
     state.last_success_at = now
     state.last_error = ""
     state.give_up = False
-    state.save(update_fields=[
+    update_fields = [
         "fail_count",
         "last_attempt_at",
         "next_retry_at",
         "last_success_at",
         "last_error",
         "give_up",
-    ])
+    ]
+    if strategy_version is not None:
+        state.strategy_version = int(strategy_version)
+        update_fields.append("strategy_version")
+    state.save(update_fields=update_fields)
 
 
 def _filter_backfill_item_ids(item_ids, field: str):
@@ -141,6 +150,7 @@ def _filter_backfill_item_ids(item_ids, field: str):
                 give_up=False,
                 fail_count=0,
                 last_success_at__isnull=False,
+                strategy_version__gte=CREDITS_BACKFILL_VERSION,
             ).values_list("item_id", flat=True),
         )
     return [item_id for item_id in item_ids if item_id not in blocked_ids]
@@ -328,6 +338,20 @@ def _missing_credits_item_ids(item_ids):
         return []
     candidate_ids = {item["id"] for item in candidate_items}
     media_type_by_id = {item["id"]: item["media_type"] for item in candidate_items}
+    episode_item_ids = [
+        item_id
+        for item_id, media_type in media_type_by_id.items()
+        if media_type == MediaTypes.EPISODE.value
+    ]
+    credits_version_by_item_id = {}
+    if episode_item_ids:
+        credits_version_by_item_id = {
+            row["item_id"]: int(row.get("strategy_version") or 0)
+            for row in MetadataBackfillState.objects.filter(
+                field=MetadataBackfillField.CREDITS,
+                item_id__in=episode_item_ids,
+            ).values("item_id", "strategy_version")
+        }
     person_credit_ids = set(
         ItemPersonCredit.objects.filter(item_id__in=candidate_ids).values_list("item_id", flat=True),
     )
@@ -340,7 +364,10 @@ def _missing_credits_item_ids(item_ids):
         has_people = item_id in person_credit_ids
         has_studios = item_id in studio_credit_ids
         if media_type == MediaTypes.EPISODE.value:
-            if not has_people:
+            has_current_episode_attempt = (
+                credits_version_by_item_id.get(item_id, 0) >= CREDITS_BACKFILL_VERSION
+            )
+            if not has_people or not has_current_episode_attempt:
                 missing_ids.append(item_id)
             continue
         if not has_people or not has_studios:
@@ -601,7 +628,11 @@ def _populate_credits_for_items(items, delay_seconds):
                 continue
 
             credits.sync_item_credits_from_metadata(item, metadata)
-            _record_backfill_success(item, MetadataBackfillField.CREDITS)
+            _record_backfill_success(
+                item,
+                MetadataBackfillField.CREDITS,
+                strategy_version=CREDITS_BACKFILL_VERSION,
+            )
             updated_count += 1
             updated_items.append(item)
 

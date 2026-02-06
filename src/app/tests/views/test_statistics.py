@@ -8,12 +8,15 @@ from django.utils import timezone
 
 from app import statistics_cache
 from app.models import (
+    CREDITS_BACKFILL_VERSION,
     CreditRoleType,
     Episode,
     Item,
     ItemPersonCredit,
     ItemStudioCredit,
     MediaTypes,
+    MetadataBackfillField,
+    MetadataBackfillState,
     Movie,
     Person,
     PersonGender,
@@ -427,6 +430,12 @@ class StatisticsViewTests(TestCase):
             role_type=CreditRoleType.CAST.value,
             role="Guest",
         )
+        MetadataBackfillState.objects.create(
+            item=episode_item_one,
+            field=MetadataBackfillField.CREDITS,
+            last_success_at=timezone.now(),
+            strategy_version=CREDITS_BACKFILL_VERSION,
+        )
 
         mock_enqueue.reset_mock()
         statistics_cache.invalidate_statistics_cache(self.user.id)
@@ -474,3 +483,68 @@ class StatisticsViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         mock_enqueue.assert_called_once_with([item.id], countdown=3)
+
+    @patch("app.providers.services.get_media_metadata")
+    @patch("app.statistics_cache.schedule_all_ranges_refresh")
+    @patch("app.tasks.enqueue_credits_backfill_items")
+    def test_refresh_statistics_schedules_credit_backfill_once_per_refresh_cycle(
+        self,
+        mock_enqueue,
+        _mock_schedule_all_ranges_refresh,
+        mock_get_metadata,
+    ):
+        """Day refresh should schedule missing credits without duplicate enqueue in top-talent aggregate."""
+        mock_get_metadata.return_value = {"max_progress": 1}
+        watched_at = timezone.now()
+        item = Item.objects.create(
+            media_id="9042",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Refresh Missing Credits",
+            image="http://example.com/missing-refresh.jpg",
+            runtime_minutes=120,
+            genres=["Drama"],
+        )
+        Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            start_date=watched_at,
+            end_date=watched_at,
+        )
+        mock_enqueue.reset_mock()
+        mock_enqueue.return_value = 1
+
+        statistics_cache.invalidate_statistics_cache(self.user.id)
+        statistics_cache.refresh_statistics_cache(self.user.id, "All Time")
+
+        mock_enqueue.assert_called_once_with([item.id], countdown=3)
+
+    @patch("app.tasks.enqueue_credits_backfill_items")
+    def test_build_stats_for_day_backfill_payload_ignores_non_int_scheduled_count(self, mock_enqueue):
+        """Cache payload should keep scheduled_credits numeric when enqueue helper is mocked."""
+        watched_at = timezone.now()
+        item = Item.objects.create(
+            media_id="9043",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Day Missing Credits",
+            image="http://example.com/missing-day.jpg",
+            runtime_minutes=100,
+            genres=["Drama"],
+        )
+        Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            start_date=watched_at,
+            end_date=watched_at,
+        )
+        mock_enqueue.return_value = object()
+
+        day_stats = statistics_cache.build_stats_for_day(self.user.id, watched_at.date())
+
+        self.assertEqual(day_stats["backfill"]["missing_credits"], 1)
+        self.assertEqual(day_stats["backfill"]["scheduled_credits"], 0)
