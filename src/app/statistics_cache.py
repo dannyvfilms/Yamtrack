@@ -2349,28 +2349,46 @@ def _aggregate_top_talent(user, start_date, end_date, limit=20, schedule_missing
         if not tv_item_id:
             continue
 
-        actor_ids = cast_actor_ids_by_item.get(episode_item_id) or cast_actor_ids_by_item.get(tv_item_id, ())
+        # Only fall back to show-level credits when an episode has no credits at all.
+        # If episode-level people exist, treat episode credits as authoritative even
+        # when a specific role bucket is empty (e.g. no female cast on that episode).
+        has_episode_people = episode_item_id in items_with_people
+
+        actor_ids = (
+            cast_actor_ids_by_item.get(episode_item_id, ())
+            if has_episode_people
+            else cast_actor_ids_by_item.get(tv_item_id, ())
+        )
         for person_id in actor_ids:
             actor_counts[person_id] += 1
             actor_minutes[person_id] += watched_minutes
             actor_show_items[person_id].add(tv_item_id)
 
         actress_ids = (
-            cast_actress_ids_by_item.get(episode_item_id)
-            or cast_actress_ids_by_item.get(tv_item_id, ())
+            cast_actress_ids_by_item.get(episode_item_id, ())
+            if has_episode_people
+            else cast_actress_ids_by_item.get(tv_item_id, ())
         )
         for person_id in actress_ids:
             actress_counts[person_id] += 1
             actress_minutes[person_id] += watched_minutes
             actress_show_items[person_id].add(tv_item_id)
 
-        director_ids = director_ids_by_item.get(episode_item_id) or director_ids_by_item.get(tv_item_id, ())
+        director_ids = (
+            director_ids_by_item.get(episode_item_id, ())
+            if has_episode_people
+            else director_ids_by_item.get(tv_item_id, ())
+        )
         for person_id in director_ids:
             director_counts[person_id] += 1
             director_minutes[person_id] += watched_minutes
             director_show_items[person_id].add(tv_item_id)
 
-        writer_ids = writer_ids_by_item.get(episode_item_id) or writer_ids_by_item.get(tv_item_id, ())
+        writer_ids = (
+            writer_ids_by_item.get(episode_item_id, ())
+            if has_episode_people
+            else writer_ids_by_item.get(tv_item_id, ())
+        )
         for person_id in writer_ids:
             writer_counts[person_id] += 1
             writer_minutes[person_id] += watched_minutes

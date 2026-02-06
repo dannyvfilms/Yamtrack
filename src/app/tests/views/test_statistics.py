@@ -453,6 +453,97 @@ class StatisticsViewTests(TestCase):
         self.assertEqual(by_name["Episode Specific Actor"]["plays"], 1)
         self.assertEqual(by_name["Show Fallback Actor"]["plays"], 1)
 
+    @patch("app.tasks.enqueue_credits_backfill_items")
+    def test_statistics_top_talent_does_not_use_show_fallback_when_episode_has_people(self, _mock_enqueue):
+        """Episode plays should not use show-level fallback when episode credits exist."""
+        watched_at = timezone.now()
+        show_item = Item.objects.create(
+            media_id="4100",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="No Category Fallback Show",
+            image="http://example.com/no-fallback-show.jpg",
+        )
+        tv = TV.objects.create(
+            item=show_item,
+            user=self.user,
+            status=Status.PLANNING.value,
+        )
+        season_item, _ = Item.objects.get_or_create(
+            media_id="4100",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            defaults={
+                "title": "No Category Fallback Show",
+                "image": "http://example.com/no-fallback-season.jpg",
+            },
+        )
+        season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=tv,
+            status=Status.PLANNING.value,
+        )
+        episode_item, _ = Item.objects.get_or_create(
+            media_id="4100",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=1,
+            defaults={
+                "title": "No Category Fallback Show",
+                "image": "http://example.com/no-fallback-e1.jpg",
+                "runtime_minutes": 42,
+            },
+        )
+        Episode.objects.create(
+            item=episode_item,
+            related_season=season,
+            end_date=watched_at,
+        )
+
+        show_actress = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="4110",
+            name="Show-Level Actress",
+            gender=PersonGender.FEMALE.value,
+        )
+        episode_actor = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="4111",
+            name="Episode-Level Actor",
+            gender=PersonGender.MALE.value,
+        )
+        ItemPersonCredit.objects.create(
+            item=show_item,
+            person=show_actress,
+            role_type=CreditRoleType.CAST.value,
+            role="Lead",
+        )
+        ItemPersonCredit.objects.create(
+            item=episode_item,
+            person=episode_actor,
+            role_type=CreditRoleType.CAST.value,
+            role="Guest",
+        )
+        MetadataBackfillState.objects.create(
+            item=episode_item,
+            field=MetadataBackfillField.CREDITS,
+            last_success_at=timezone.now(),
+            strategy_version=CREDITS_BACKFILL_VERSION,
+        )
+
+        statistics_cache.invalidate_statistics_cache(self.user.id)
+        response = self.client.get(reverse("statistics") + "?start-date=all&end-date=all")
+
+        self.assertEqual(response.status_code, 200)
+        top_talent = response.context["top_talent"]
+        actress_names = {entry["name"] for entry in top_talent["top_actresses"]}
+        actor_names = {entry["name"] for entry in top_talent["top_actors"]}
+        self.assertNotIn("Show-Level Actress", actress_names)
+        self.assertIn("Episode-Level Actor", actor_names)
+
     @patch("app.providers.services.get_media_metadata")
     @patch("app.tasks.enqueue_credits_backfill_items")
     def test_statistics_view_queues_credit_backfill_for_missing_tmdb_item(self, mock_enqueue, mock_get_metadata):
