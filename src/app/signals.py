@@ -129,16 +129,23 @@ def refresh_history_cache_on_movie_change(sender, instance, **kwargs):  # noqa: 
 def _schedule_credits_backfill_if_needed(item_id):
     if not item_id:
         return
-    eligible = Item.objects.filter(
+    item_row = Item.objects.filter(
         id=item_id,
         source=Sources.TMDB.value,
-        media_type__in=[MediaTypes.MOVIE.value, MediaTypes.TV.value],
-    ).exists()
-    if not eligible:
+        media_type__in=[
+            MediaTypes.MOVIE.value,
+            MediaTypes.TV.value,
+            MediaTypes.EPISODE.value,
+        ],
+    ).values("media_type").first()
+    if not item_row:
         return
+    media_type = item_row["media_type"]
+
     has_people = ItemPersonCredit.objects.filter(item_id=item_id).exists()
     has_studios = ItemStudioCredit.objects.filter(item_id=item_id).exists()
-    if has_people and has_studios:
+    needs_studios = media_type != MediaTypes.EPISODE.value
+    if has_people and (has_studios or not needs_studios):
         MetadataBackfillState.objects.filter(
             item_id=item_id,
             field=MetadataBackfillField.CREDITS,
@@ -151,9 +158,11 @@ def _schedule_credits_backfill_if_needed(item_id):
 
 @receiver(post_save, sender=Episode)
 def schedule_credits_backfill_on_episode_play(sender, instance, **kwargs):  # noqa: ARG001
-    """Queue credits backfill for the related TMDB show when an episode play is saved."""
+    """Queue credits backfill for episode and related show when an episode play is saved."""
     if not getattr(instance, "end_date", None):
         return
+    episode_item_id = getattr(instance, "item_id", None)
+    _schedule_credits_backfill_if_needed(episode_item_id)
     related_season = getattr(instance, "related_season", None)
     related_tv = getattr(related_season, "related_tv", None)
     tv_item_id = getattr(related_tv, "item_id", None)

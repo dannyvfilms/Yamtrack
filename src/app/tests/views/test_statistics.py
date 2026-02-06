@@ -9,6 +9,7 @@ from django.utils import timezone
 from app import statistics_cache
 from app.models import (
     CreditRoleType,
+    Episode,
     Item,
     ItemPersonCredit,
     ItemStudioCredit,
@@ -16,9 +17,11 @@ from app.models import (
     Movie,
     Person,
     PersonGender,
+    Season,
     Sources,
     Status,
     Studio,
+    TV,
 )
 
 
@@ -85,6 +88,35 @@ class StatisticsViewTests(TestCase):
         )
 
         self.assertTrue(date_is_none)
+
+    @patch("app.statistics_cache._aggregate_top_talent")
+    def test_statistics_all_time_uses_aware_boundaries_for_top_talent(self, mock_top_talent):
+        """All-time aggregation should pass aware datetime boundaries to top talent."""
+        mock_top_talent.return_value = {
+            "sort_by": "plays",
+            "top_actors": [],
+            "top_actresses": [],
+            "top_directors": [],
+            "top_writers": [],
+            "top_studios": [],
+        }
+
+        day_list = [
+            timezone.localdate() - timedelta(days=7),
+            timezone.localdate(),
+        ]
+        statistics_cache._aggregate_statistics_from_days(
+            self.user,
+            day_list,
+            start_date=None,
+            end_date=None,
+            build_missing=False,
+        )
+
+        self.assertTrue(mock_top_talent.called)
+        _, start_date, end_date = mock_top_talent.call_args.args[:3]
+        self.assertTrue(timezone.is_aware(start_date))
+        self.assertTrue(timezone.is_aware(end_date))
 
     def test_statistics_view_includes_top_talent_sections(self):
         """Top cast/crew and studio sections should be present in context."""
@@ -298,6 +330,119 @@ class StatisticsViewTests(TestCase):
             "Titles Leader",
         )
         self.assertContains(response, "2 Titles")
+
+    @patch("app.tasks.enqueue_credits_backfill_items")
+    def test_statistics_top_talent_uses_episode_credits_with_show_fallback(self, mock_enqueue):
+        """Episode plays should use episode credits when present, otherwise fallback to show credits."""
+        watched_at = timezone.now()
+        show_item = Item.objects.create(
+            media_id="3001",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Fallback Show",
+            image="http://example.com/show.jpg",
+        )
+        tv = TV.objects.create(
+            item=show_item,
+            user=self.user,
+            status=Status.PLANNING.value,
+        )
+        season_item, _ = Item.objects.get_or_create(
+            media_id="3001",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            defaults={
+                "title": "Fallback Show",
+                "image": "http://example.com/season.jpg",
+            },
+        )
+        season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=tv,
+            status=Status.PLANNING.value,
+        )
+        episode_item_one, _ = Item.objects.get_or_create(
+            media_id="3001",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=1,
+            defaults={
+                "title": "Fallback Show",
+                "image": "http://example.com/e1.jpg",
+                "runtime_minutes": 50,
+            },
+        )
+        episode_item_two, _ = Item.objects.get_or_create(
+            media_id="3001",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=2,
+            defaults={
+                "title": "Fallback Show",
+                "image": "http://example.com/e2.jpg",
+                "runtime_minutes": 50,
+            },
+        )
+
+        Episode.objects.bulk_create(
+            [
+                Episode(
+                    item=episode_item_one,
+                    related_season=season,
+                    end_date=watched_at,
+                ),
+                Episode(
+                    item=episode_item_two,
+                    related_season=season,
+                    end_date=watched_at + timedelta(minutes=1),
+                ),
+            ],
+        )
+
+        show_actor = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="301",
+            name="Show Fallback Actor",
+            gender=PersonGender.MALE.value,
+        )
+        episode_actor = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="302",
+            name="Episode Specific Actor",
+            gender=PersonGender.MALE.value,
+        )
+        ItemPersonCredit.objects.create(
+            item=show_item,
+            person=show_actor,
+            role_type=CreditRoleType.CAST.value,
+            role="Lead",
+        )
+        ItemPersonCredit.objects.create(
+            item=episode_item_one,
+            person=episode_actor,
+            role_type=CreditRoleType.CAST.value,
+            role="Guest",
+        )
+
+        mock_enqueue.reset_mock()
+        statistics_cache.invalidate_statistics_cache(self.user.id)
+        response = self.client.get(reverse("statistics") + "?start-date=all&end-date=all")
+
+        self.assertEqual(response.status_code, 200)
+        mock_enqueue.assert_called_once_with(
+            sorted([show_item.id, episode_item_two.id]),
+            countdown=3,
+        )
+        top_actors = response.context["top_talent"]["top_actors"]
+        by_name = {entry["name"]: entry for entry in top_actors}
+        self.assertIn("Episode Specific Actor", by_name)
+        self.assertIn("Show Fallback Actor", by_name)
+        self.assertEqual(by_name["Episode Specific Actor"]["plays"], 1)
+        self.assertEqual(by_name["Show Fallback Actor"]["plays"], 1)
 
     @patch("app.providers.services.get_media_metadata")
     @patch("app.tasks.enqueue_credits_backfill_items")

@@ -1014,30 +1014,46 @@ def find_next_episode(episode_number, episodes_metadata):
 
 def episode(media_id, season_number, episode_number):
     """Return the metadata for the selected episode from The Movie Database."""
-    tv_metadata = tv_with_seasons(media_id, [season_number])
-    season_metadata = tv_metadata[f"season/{season_number}"]
-
-    for episode in season_metadata["episodes"]:
-        if episode["episode_number"] == int(episode_number):
-            return {
-                "title": season_metadata["title"],
-                "season_title": season_metadata["season_title"],
-                "episode_title": episode["name"],
-                "image": get_image_url(episode["still_path"]),
-            }
-
-    # Episode not found - throw ProviderAPIError
-    msg = (
-        f"Episode {episode_number} not found in season {season_number} "
-        f"for {Sources.TMDB.label} with ID {media_id}"
+    cache_key = (
+        f"{Sources.TMDB.value}_{MediaTypes.EPISODE.value}_{media_id}_{season_number}_{episode_number}"
     )
-    # Create a new response object with 404 status
-    not_found_response = requests.Response()
-    not_found_response.status_code = 404
-    # Set the error attribute to match what ProviderAPIError expects
-    not_found_error = type("Error", (), {"response": not_found_response})
-    raise services.ProviderAPIError(
-        Sources.TMDB.value,
-        error=not_found_error,
-        details=msg,
-    )
+    data = cache.get(cache_key)
+
+    if data is None:
+        url = f"{base_url}/tv/{media_id}/season/{season_number}/episode/{episode_number}"
+        params = {
+            **base_params,
+            "append_to_response": "credits",
+        }
+        try:
+            response = services.api_request(
+                Sources.TMDB.value,
+                "GET",
+                url,
+                params=params,
+            )
+        except requests.exceptions.HTTPError as error:
+            handle_error(error)
+
+        tv_metadata = tv_with_seasons(media_id, [season_number])
+        season_metadata = tv_metadata.get(f"season/{season_number}", {})
+
+        cast_rows = response.get("credits", {}).get("cast", [])
+        if not cast_rows:
+            cast_rows = response.get("guest_stars", []) or []
+
+        crew_rows = response.get("credits", {}).get("crew", [])
+        if not crew_rows:
+            crew_rows = response.get("crew", []) or []
+
+        data = {
+            "title": season_metadata.get("title") or tv_metadata.get("title") or "",
+            "season_title": season_metadata.get("season_title") or f"Season {season_number}",
+            "episode_title": response.get("name") or f"Episode {episode_number}",
+            "image": get_image_url(response.get("still_path")),
+            "cast": get_cast_credits({"cast": cast_rows}),
+            "crew": get_crew_credits({"crew": crew_rows}),
+        }
+        cache.set(cache_key, data)
+
+    return data
