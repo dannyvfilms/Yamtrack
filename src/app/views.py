@@ -5190,6 +5190,9 @@ def person_detail(request, source, person_id, name):
     history_filter_url = (
         f"{reverse('history')}?person_source={source}&person_id={person_id}"
     )
+    source_url = None
+    if source == Sources.TMDB.value:
+        source_url = f"https://www.themoviedb.org/person/{person_id_str}"
     tracked_plays_count = None
     tracked_hours_count = None
     if request.user.is_authenticated:
@@ -5228,6 +5231,7 @@ def person_detail(request, source, person_id, name):
         "tracked_plays_count": tracked_plays_count,
         "tracked_hours_count": tracked_hours_count,
         "source": source,
+        "source_url": source_url,
     }
     return render(request, "app/person_detail.html", context)
 

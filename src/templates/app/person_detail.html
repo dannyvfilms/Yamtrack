@@ -94,7 +94,19 @@
         {% endif %}
         <div class="bg-[#2a2f35] rounded-lg p-3">
           <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wide">Source</h3>
-          <p class="text-sm text-gray-200 mt-1">{{ source|source_readable }}</p>
+          <p class="text-sm mt-1">
+            {% if source_url %}
+              <a
+                href="{{ source_url }}"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="text-gray-200 hover:text-indigo-500 transition-colors duration-200">
+                {{ source|source_readable }}
+              </a>
+            {% else %}
+              <span class="text-gray-200">{{ source|source_readable }}</span>
+            {% endif %}
+          </p>
         </div>
       </div>
     </div>

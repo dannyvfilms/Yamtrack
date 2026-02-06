@@ -2002,6 +2002,9 @@
   .underline {
     text-decoration-line: underline;
   }
+  .underline-offset-2 {
+    text-underline-offset: 2px;
+  }
   .placeholder-gray-500 {
     &::placeholder {
       color: var(--color-gray-500);
