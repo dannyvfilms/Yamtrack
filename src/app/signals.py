@@ -19,6 +19,8 @@ from app.models import (
     Episode,
     Game,
     Item,
+    ItemPersonCredit,
+    ItemStudioCredit,
     Manga,
     MediaTypes,
     MetadataBackfillField,
@@ -27,6 +29,7 @@ from app.models import (
     Music,
     Podcast,
     Season,
+    Sources,
 )
 
 logger = logging.getLogger(__name__)
@@ -121,6 +124,48 @@ def refresh_history_cache_on_movie_change(sender, instance, **kwargs):  # noqa: 
         # Schedule statistics cache refresh but don't delete cache immediately
         # This allows users to see old data with notification while refresh happens
         statistics_cache.schedule_all_ranges_refresh(user_id)
+
+
+def _schedule_credits_backfill_if_needed(item_id):
+    if not item_id:
+        return
+    eligible = Item.objects.filter(
+        id=item_id,
+        source=Sources.TMDB.value,
+        media_type__in=[MediaTypes.MOVIE.value, MediaTypes.TV.value],
+    ).exists()
+    if not eligible:
+        return
+    has_people = ItemPersonCredit.objects.filter(item_id=item_id).exists()
+    has_studios = ItemStudioCredit.objects.filter(item_id=item_id).exists()
+    if has_people and has_studios:
+        MetadataBackfillState.objects.filter(
+            item_id=item_id,
+            field=MetadataBackfillField.CREDITS,
+        ).delete()
+        return
+    from app.tasks import enqueue_credits_backfill_items
+
+    enqueue_credits_backfill_items([item_id], countdown=3)
+
+
+@receiver(post_save, sender=Episode)
+def schedule_credits_backfill_on_episode_play(sender, instance, **kwargs):  # noqa: ARG001
+    """Queue credits backfill for the related TMDB show when an episode play is saved."""
+    if not getattr(instance, "end_date", None):
+        return
+    related_season = getattr(instance, "related_season", None)
+    related_tv = getattr(related_season, "related_tv", None)
+    tv_item_id = getattr(related_tv, "item_id", None)
+    _schedule_credits_backfill_if_needed(tv_item_id)
+
+
+@receiver(post_save, sender=Movie)
+def schedule_credits_backfill_on_movie_play(sender, instance, **kwargs):  # noqa: ARG001
+    """Queue credits backfill for TMDB movies when a play is saved."""
+    if not (getattr(instance, "end_date", None) or getattr(instance, "start_date", None)):
+        return
+    _schedule_credits_backfill_if_needed(getattr(instance, "item_id", None))
 
 
 @receiver([post_save, post_delete], sender=Music)
@@ -343,7 +388,7 @@ def schedule_runtime_backfill_on_item_save(
     update_fields=None,
     **kwargs,
 ):  # noqa: ARG001
-    """Queue runtime/genre backfills for newly created or missing metadata items.
+    """Queue runtime/genre/credits backfills for newly created or missing metadata items.
     
     Also invalidates time_left cache when episode runtime changes.
     """
@@ -382,6 +427,19 @@ def schedule_runtime_backfill_on_item_save(
             item=instance,
             field=MetadataBackfillField.GENRES,
         ).delete()
+    has_people = False
+    has_studios = False
+    if instance.source == Sources.TMDB.value and instance.media_type in (
+        MediaTypes.MOVIE.value,
+        MediaTypes.TV.value,
+    ):
+        has_people = ItemPersonCredit.objects.filter(item=instance).exists()
+        has_studios = ItemStudioCredit.objects.filter(item=instance).exists()
+        if has_people and has_studios:
+            MetadataBackfillState.objects.filter(
+                item=instance,
+                field=MetadataBackfillField.CREDITS,
+            ).delete()
 
     relevant_fields = {"runtime_minutes", "genres", "media_id", "source", "media_type"}
     if not created and update_fields is not None and not relevant_fields.intersection(update_fields):
@@ -421,3 +479,12 @@ def schedule_runtime_backfill_on_item_save(
         from app.tasks import enqueue_genre_backfill_items
 
         enqueue_genre_backfill_items([instance.id])
+
+    if (
+        instance.source == Sources.TMDB.value
+        and instance.media_type in (MediaTypes.MOVIE.value, MediaTypes.TV.value)
+        and (not has_people or not has_studios)
+    ):
+        from app.tasks import enqueue_credits_backfill_items
+
+        enqueue_credits_backfill_items([instance.id])

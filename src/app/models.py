@@ -247,6 +247,7 @@ class MetadataBackfillField(models.TextChoices):
 
     RUNTIME = "runtime", "Runtime"
     GENRES = "genres", "Genres"
+    CREDITS = "credits", "Credits"
 
 
 class MetadataBackfillState(models.Model):

@@ -110,7 +110,21 @@ class PersonDetailViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "app/person_detail.html")
         self.assertEqual(response.context["tracked_plays_count"], 1)
+        self.assertEqual(response.context["watched_movie_count"], 1)
+        self.assertEqual(response.context["watched_show_count"], 0)
+        self.assertEqual(len(response.context["watched_filmography"]), 1)
+        self.assertEqual(
+            response.context["watched_filmography"][0]["title"],
+            "Tracked Movie",
+        )
         self.assertEqual(len(response.context["filmography"]), 2)
+        content = response.content.decode()
+        self.assertLess(content.index("Watched Content"), content.index("Filmography"))
+        self.assertLess(content.index("1 movie"), content.index("1 tracked play"))
+        self.assertLess(content.index("0 shows"), content.index("1 tracked play"))
+        self.assertContains(response, "1 movie")
+        self.assertContains(response, "0 shows")
+        self.assertContains(response, "Watched")
         self.assertContains(response, "Tracked Movie")
         self.assertContains(response, "Other Show")
         self.assertContains(response, "?person_source=tmdb&amp;person_id=123")

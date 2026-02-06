@@ -27,6 +27,7 @@ from app import history_cache
 from app.models import (
     CreditRoleType,
     Episode,
+    Item,
     ItemPersonCredit,
     ItemStudioCredit,
     MediaTypes,
@@ -2061,6 +2062,10 @@ def _aggregate_top_talent(user, start_date, end_date, limit=20):
         }
 
     item_ids = list(item_play_counts.keys())
+    item_media_types = {
+        item_id: media_type
+        for item_id, media_type in Item.objects.filter(id__in=item_ids).values_list("id", "media_type")
+    }
     cast_actor_ids_by_item = defaultdict(set)
     cast_actress_ids_by_item = defaultdict(set)
     director_ids_by_item = defaultdict(set)
@@ -2068,12 +2073,15 @@ def _aggregate_top_talent(user, start_date, end_date, limit=20):
     studio_ids_by_item = defaultdict(set)
     people_by_id = {}
     studios_by_id = {}
+    items_with_people = set()
+    items_with_studios = set()
 
     person_credits = ItemPersonCredit.objects.filter(item_id__in=item_ids).select_related("person")
     for credit in person_credits:
         person = credit.person
         if not person:
             continue
+        items_with_people.add(credit.item_id)
         people_by_id[person.id] = person
 
         if credit.role_type == CreditRoleType.CAST.value:
@@ -2094,30 +2102,89 @@ def _aggregate_top_talent(user, start_date, end_date, limit=20):
         studio = credit.studio
         if not studio:
             continue
+        items_with_studios.add(credit.item_id)
         studios_by_id[studio.id] = studio
         studio_ids_by_item[credit.item_id].add(studio.id)
+
+    tmdb_item_ids = set(
+        Item.objects.filter(
+            id__in=item_ids,
+            source=Sources.TMDB.value,
+            media_type__in=[MediaTypes.MOVIE.value, MediaTypes.TV.value],
+        ).values_list("id", flat=True),
+    )
+    missing_credit_item_ids = sorted(
+        item_id
+        for item_id in tmdb_item_ids
+        if item_id not in items_with_people or item_id not in items_with_studios
+    )
+    if missing_credit_item_ids:
+        try:
+            from app.tasks import enqueue_credits_backfill_items
+
+            enqueue_credits_backfill_items(missing_credit_item_ids, countdown=3)
+        except Exception as exc:  # pragma: no cover - best effort scheduling
+            logger.debug(
+                "top_talent_credits_backfill_schedule_failed user_id=%s items=%s error=%s",
+                user.id,
+                len(missing_credit_item_ids),
+                exc,
+            )
 
     actor_counts = Counter()
     actress_counts = Counter()
     director_counts = Counter()
     writer_counts = Counter()
     studio_counts = Counter()
+    actor_movie_items = defaultdict(set)
+    actor_show_items = defaultdict(set)
+    actress_movie_items = defaultdict(set)
+    actress_show_items = defaultdict(set)
+    director_movie_items = defaultdict(set)
+    director_show_items = defaultdict(set)
+    writer_movie_items = defaultdict(set)
+    writer_show_items = defaultdict(set)
+    studio_movie_items = defaultdict(set)
+    studio_show_items = defaultdict(set)
 
     for item_id, plays in item_play_counts.items():
         if plays <= 0:
             continue
+        media_type = item_media_types.get(item_id)
+        is_movie = media_type == MediaTypes.MOVIE.value
+        is_show = media_type == MediaTypes.TV.value
         for person_id in cast_actor_ids_by_item.get(item_id, ()):
             actor_counts[person_id] += plays
+            if is_movie:
+                actor_movie_items[person_id].add(item_id)
+            elif is_show:
+                actor_show_items[person_id].add(item_id)
         for person_id in cast_actress_ids_by_item.get(item_id, ()):
             actress_counts[person_id] += plays
+            if is_movie:
+                actress_movie_items[person_id].add(item_id)
+            elif is_show:
+                actress_show_items[person_id].add(item_id)
         for person_id in director_ids_by_item.get(item_id, ()):
             director_counts[person_id] += plays
+            if is_movie:
+                director_movie_items[person_id].add(item_id)
+            elif is_show:
+                director_show_items[person_id].add(item_id)
         for person_id in writer_ids_by_item.get(item_id, ()):
             writer_counts[person_id] += plays
+            if is_movie:
+                writer_movie_items[person_id].add(item_id)
+            elif is_show:
+                writer_show_items[person_id].add(item_id)
         for studio_id in studio_ids_by_item.get(item_id, ()):
             studio_counts[studio_id] += plays
+            if is_movie:
+                studio_movie_items[studio_id].add(item_id)
+            elif is_show:
+                studio_show_items[studio_id].add(item_id)
 
-    def _sorted_people(counter_obj):
+    def _sorted_people(counter_obj, movie_items_by_person, show_items_by_person):
         ranked = sorted(
             counter_obj.items(),
             key=lambda row: (-row[1], (people_by_id.get(row[0]).name.lower() if people_by_id.get(row[0]) else "")),
@@ -2134,11 +2201,13 @@ def _aggregate_top_talent(user, start_date, end_date, limit=20):
                     "source": person.source,
                     "person_id": person.source_person_id,
                     "plays": int(plays),
+                    "unique_movies": len(movie_items_by_person.get(person_id, set())),
+                    "unique_shows": len(show_items_by_person.get(person_id, set())),
                 },
             )
         return payload
 
-    def _sorted_studios(counter_obj):
+    def _sorted_studios(counter_obj, movie_items_by_studio, show_items_by_studio):
         ranked = sorted(
             counter_obj.items(),
             key=lambda row: (-row[1], (studios_by_id.get(row[0]).name.lower() if studios_by_id.get(row[0]) else "")),
@@ -2155,16 +2224,18 @@ def _aggregate_top_talent(user, start_date, end_date, limit=20):
                     "source": studio.source,
                     "studio_id": studio.source_studio_id,
                     "plays": int(plays),
+                    "unique_movies": len(movie_items_by_studio.get(studio_id, set())),
+                    "unique_shows": len(show_items_by_studio.get(studio_id, set())),
                 },
             )
         return payload
 
     return {
-        "top_actors": _sorted_people(actor_counts),
-        "top_actresses": _sorted_people(actress_counts),
-        "top_directors": _sorted_people(director_counts),
-        "top_writers": _sorted_people(writer_counts),
-        "top_studios": _sorted_studios(studio_counts),
+        "top_actors": _sorted_people(actor_counts, actor_movie_items, actor_show_items),
+        "top_actresses": _sorted_people(actress_counts, actress_movie_items, actress_show_items),
+        "top_directors": _sorted_people(director_counts, director_movie_items, director_show_items),
+        "top_writers": _sorted_people(writer_counts, writer_movie_items, writer_show_items),
+        "top_studios": _sorted_studios(studio_counts, studio_movie_items, studio_show_items),
     }
 
 

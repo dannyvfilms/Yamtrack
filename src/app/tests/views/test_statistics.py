@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
@@ -170,3 +172,40 @@ class StatisticsViewTests(TestCase):
         self.assertTrue(any(entry["name"] == "Director Person" for entry in top_talent.get("top_directors", [])))
         self.assertTrue(any(entry["name"] == "Writer Person" for entry in top_talent.get("top_writers", [])))
         self.assertTrue(any(entry["name"] == "Studio Person" for entry in top_talent.get("top_studios", [])))
+        actor_entry = next(entry for entry in top_talent.get("top_actors", []) if entry["name"] == "Actor Person")
+        studio_entry = next(entry for entry in top_talent.get("top_studios", []) if entry["name"] == "Studio Person")
+        self.assertEqual(actor_entry.get("unique_movies"), 1)
+        self.assertEqual(actor_entry.get("unique_shows"), 0)
+        self.assertEqual(studio_entry.get("unique_movies"), 1)
+        self.assertEqual(studio_entry.get("unique_shows"), 0)
+
+    @patch("app.providers.services.get_media_metadata")
+    @patch("app.tasks.enqueue_credits_backfill_items")
+    def test_statistics_view_queues_credit_backfill_for_missing_tmdb_item(self, mock_enqueue, mock_get_metadata):
+        """Statistics should queue credit backfill for played TMDB items missing credits."""
+        mock_get_metadata.return_value = {"max_progress": 1}
+        watched_at = timezone.now()
+        item = Item.objects.create(
+            media_id="42",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Missing Credits Movie",
+            image="http://example.com/missing.jpg",
+            runtime_minutes=120,
+            genres=["Drama"],
+        )
+        Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            start_date=watched_at,
+            end_date=watched_at,
+        )
+        mock_enqueue.reset_mock()
+
+        statistics_cache.invalidate_statistics_cache(self.user.id)
+        response = self.client.get(reverse("statistics"))
+
+        self.assertEqual(response.status_code, 200)
+        mock_enqueue.assert_called_once_with([item.id], countdown=3)

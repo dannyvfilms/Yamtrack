@@ -1029,7 +1029,10 @@
                     {% endif %}
                     <div class="flex-1 min-w-0">
                       <p class="text-sm font-medium text-white truncate">{{ entry.name }}</p>
-                      <p class="text-xs text-gray-500">{{ entry.plays }} play{{ entry.plays|pluralize }}</p>
+                      <p class="text-xs text-gray-500">
+                        {{ entry.unique_movies }} Movie{{ entry.unique_movies|pluralize }} &bull;
+                        {{ entry.unique_shows }} Show{{ entry.unique_shows|pluralize }}
+                      </p>
                     </div>
                   </a>
                 {% endfor %}
@@ -1054,7 +1057,10 @@
                     {% endif %}
                     <div class="flex-1 min-w-0">
                       <p class="text-sm font-medium text-white truncate">{{ entry.name }}</p>
-                      <p class="text-xs text-gray-500">{{ entry.plays }} play{{ entry.plays|pluralize }}</p>
+                      <p class="text-xs text-gray-500">
+                        {{ entry.unique_movies }} Movie{{ entry.unique_movies|pluralize }} &bull;
+                        {{ entry.unique_shows }} Show{{ entry.unique_shows|pluralize }}
+                      </p>
                     </div>
                   </a>
                 {% endfor %}
@@ -1079,7 +1085,10 @@
                     {% endif %}
                     <div class="flex-1 min-w-0">
                       <p class="text-sm font-medium text-white truncate">{{ entry.name }}</p>
-                      <p class="text-xs text-gray-500">{{ entry.plays }} play{{ entry.plays|pluralize }}</p>
+                      <p class="text-xs text-gray-500">
+                        {{ entry.unique_movies }} Movie{{ entry.unique_movies|pluralize }} &bull;
+                        {{ entry.unique_shows }} Show{{ entry.unique_shows|pluralize }}
+                      </p>
                     </div>
                   </a>
                 {% endfor %}
@@ -1104,7 +1113,10 @@
                     {% endif %}
                     <div class="flex-1 min-w-0">
                       <p class="text-sm font-medium text-white truncate">{{ entry.name }}</p>
-                      <p class="text-xs text-gray-500">{{ entry.plays }} play{{ entry.plays|pluralize }}</p>
+                      <p class="text-xs text-gray-500">
+                        {{ entry.unique_movies }} Movie{{ entry.unique_movies|pluralize }} &bull;
+                        {{ entry.unique_shows }} Show{{ entry.unique_shows|pluralize }}
+                      </p>
                     </div>
                   </a>
                 {% endfor %}
@@ -1128,7 +1140,10 @@
                     {% endif %}
                     <div class="flex-1 min-w-0">
                       <p class="text-sm font-medium text-white truncate">{{ entry.name }}</p>
-                      <p class="text-xs text-gray-500">{{ entry.plays }} play{{ entry.plays|pluralize }}</p>
+                      <p class="text-xs text-gray-500">
+                        {{ entry.unique_movies }} Movie{{ entry.unique_movies|pluralize }} &bull;
+                        {{ entry.unique_shows }} Show{{ entry.unique_shows|pluralize }}
+                      </p>
                     </div>
                   </div>
                 {% endfor %}

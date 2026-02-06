@@ -5100,10 +5100,71 @@ def person_detail(request, source, person_id, name):
         for item in tracked_items
     }
 
+    watched_media_keys = set()
+    if request.user.is_authenticated and filmography_media_ids:
+        watched_movie_media_ids = {
+            str(entry.get("media_id"))
+            for entry in filmography
+            if entry.get("media_type") == MediaTypes.MOVIE.value
+            and entry.get("media_id") is not None
+        }
+        watched_tv_media_ids = {
+            str(entry.get("media_id"))
+            for entry in filmography
+            if entry.get("media_type") == MediaTypes.TV.value
+            and entry.get("media_id") is not None
+        }
+
+        if watched_movie_media_ids:
+            watched_movies = Movie.objects.filter(
+                user=request.user,
+                item__source=source,
+                item__media_type=MediaTypes.MOVIE.value,
+                item__media_id__in=watched_movie_media_ids,
+            ).exclude(start_date__isnull=True, end_date__isnull=True)
+            watched_media_keys.update(
+                (media_type, str(media_id))
+                for media_type, media_id in watched_movies.values_list(
+                    "item__media_type",
+                    "item__media_id",
+                ).distinct()
+            )
+
+        if watched_tv_media_ids:
+            watched_tv = Episode.objects.filter(
+                related_season__user=request.user,
+                end_date__isnull=False,
+                related_season__related_tv__item__source=source,
+                related_season__related_tv__item__media_type=MediaTypes.TV.value,
+                related_season__related_tv__item__media_id__in=watched_tv_media_ids,
+            )
+            watched_media_keys.update(
+                (media_type, str(media_id))
+                for media_type, media_id in watched_tv.values_list(
+                    "related_season__related_tv__item__media_type",
+                    "related_season__related_tv__item__media_id",
+                ).distinct()
+            )
+
     for entry in filmography:
-        entry["tracked_item"] = tracked_item_map.get(
-            (entry.get("media_type"), str(entry.get("media_id"))),
-        )
+        media_key = (entry.get("media_type"), str(entry.get("media_id")))
+        entry["tracked_item"] = tracked_item_map.get(media_key)
+        entry["is_watched"] = media_key in watched_media_keys
+
+    watched_filmography = []
+    if watched_media_keys:
+        seen_watched_media = set()
+        for entry in filmography:
+            media_key = (entry.get("media_type"), str(entry.get("media_id")))
+            if media_key in watched_media_keys and media_key not in seen_watched_media:
+                watched_filmography.append(entry)
+                seen_watched_media.add(media_key)
+    watched_movie_count = sum(
+        1 for media_type, _ in watched_media_keys if media_type == MediaTypes.MOVIE.value
+    )
+    watched_show_count = sum(
+        1 for media_type, _ in watched_media_keys if media_type == MediaTypes.TV.value
+    )
 
     history_filter_url = (
         f"{reverse('history')}?person_source={source}&person_id={person_id}"
@@ -5135,6 +5196,9 @@ def person_detail(request, source, person_id, name):
     context = {
         "user": request.user,
         "person": person_data,
+        "watched_filmography": watched_filmography,
+        "watched_movie_count": watched_movie_count,
+        "watched_show_count": watched_show_count,
         "filmography": filmography,
         "history_filter_url": history_filter_url,
         "tracked_plays_count": tracked_plays_count,
