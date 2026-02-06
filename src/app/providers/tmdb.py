@@ -629,11 +629,20 @@ def get_companies(companies):
     return None
 
 
-def get_profile_image_url(path):
+def get_profile_image_url(path, size="w185"):
     """Return a profile image URL for cast/crew members."""
     if path:
-        return f"https://image.tmdb.org/t/p/w185{path}"
+        return f"https://image.tmdb.org/t/p/{size}{path}"
     return settings.IMG_NONE
+
+
+def _upgrade_person_image_url(url):
+    """Upgrade legacy person profile URLs to a higher-resolution size."""
+    if not url:
+        return url
+    if "/t/p/w185/" in url:
+        return url.replace("/t/p/w185/", "/t/p/h632/")
+    return url
 
 
 def get_gender(value):
@@ -908,39 +917,48 @@ def person(person_id):
     cache_key = f"{Sources.TMDB.value}_person_{person_id}"
     data = cache.get(cache_key)
 
-    if data is None:
-        url = f"{base_url}/person/{person_id}"
-        params = {
-            **base_params,
-            "append_to_response": "combined_credits,external_ids",
-        }
-        try:
-            response = services.api_request(
-                Sources.TMDB.value,
-                "GET",
-                url,
-                params=params,
-            )
-        except requests.exceptions.HTTPError as error:
-            handle_error(error)
+    if data is not None:
+        upgraded_image = _upgrade_person_image_url(data.get("image"))
+        if upgraded_image != data.get("image"):
+            data = {**data, "image": upgraded_image}
+            cache.set(cache_key, data)
+        return data
 
-        data = {
-            "person_id": str(response.get("id")),
-            "source": Sources.TMDB.value,
-            "name": response.get("name", ""),
-            "image": get_profile_image_url(response.get("profile_path")),
-            "biography": response.get("biography") or "",
-            "known_for_department": response.get("known_for_department") or "",
-            "gender": get_gender(response.get("gender")),
-            "birth_date": response.get("birthday"),
-            "death_date": response.get("deathday"),
-            "place_of_birth": response.get("place_of_birth") or "",
-            "filmography": _person_filmography_entries(
-                response.get("combined_credits", {}),
-            ),
-        }
+    url = f"{base_url}/person/{person_id}"
+    params = {
+        **base_params,
+        "append_to_response": "combined_credits,external_ids",
+    }
+    try:
+        response = services.api_request(
+            Sources.TMDB.value,
+            "GET",
+            url,
+            params=params,
+        )
+    except requests.exceptions.HTTPError as error:
+        handle_error(error)
 
-        cache.set(cache_key, data)
+    data = {
+        "person_id": str(response.get("id")),
+        "source": Sources.TMDB.value,
+        "name": response.get("name", ""),
+        "image": get_profile_image_url(
+            response.get("profile_path"),
+            size="h632",
+        ),
+        "biography": response.get("biography") or "",
+        "known_for_department": response.get("known_for_department") or "",
+        "gender": get_gender(response.get("gender")),
+        "birth_date": response.get("birthday"),
+        "death_date": response.get("deathday"),
+        "place_of_birth": response.get("place_of_birth") or "",
+        "filmography": _person_filmography_entries(
+            response.get("combined_credits", {}),
+        ),
+    }
+
+    cache.set(cache_key, data)
 
     return data
 
