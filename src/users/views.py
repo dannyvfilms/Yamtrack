@@ -487,7 +487,21 @@ def preferences(request):
 @require_GET
 def integrations(request):
     """Render the integrations settings page."""
-    return render(request, "users/integrations.html", {"user": request.user})
+    user = request.user
+    last_received = user.plex_webhook_last_received_at
+    rotated_at = user.plex_webhook_token_rotated_at
+    plex_webhook_needs_update = False
+    if rotated_at:
+        plex_webhook_needs_update = not last_received or last_received < rotated_at
+
+    return render(
+        request,
+        "users/integrations.html",
+        {
+            "user": user,
+            "plex_webhook_needs_update": plex_webhook_needs_update,
+        },
+    )
 
 
 @require_GET

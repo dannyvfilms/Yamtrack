@@ -998,14 +998,30 @@ def plex_webhook(request, token):
     data = request.POST.get("payload")
     if not data:
         logger.warning("Missing payload in Plex webhook request")
+        user.mark_plex_webhook_error("Missing payload in Plex webhook request")
         return HttpResponse("Missing payload", status=400)
 
-    payload = json.loads(data)
+    try:
+        payload = json.loads(data)
+    except json.JSONDecodeError:
+        logger.warning("Invalid JSON payload in Plex webhook request")
+        user.mark_plex_webhook_error("Invalid JSON payload in Plex webhook request")
+        return HttpResponse("Invalid payload", status=400)
+
     event_type = payload.get("event")
     logger.info("Received Plex webhook request - Event: %s, User: %s", event_type, user.username)
     
     processor = plex_webhooks.PlexWebhookProcessor()
-    processor.process_payload(payload, user)
+    try:
+        processor.process_payload(payload, user)
+    except Exception:  # pragma: no cover - defensive
+        logger.exception("Error processing Plex webhook payload")
+        user.mark_plex_webhook_error(
+            "Plex webhook processing failed. Check server logs for details.",
+        )
+        return HttpResponse("Webhook processing failed", status=500)
+
+    user.mark_plex_webhook_received()
     return HttpResponse(status=200)
 
 

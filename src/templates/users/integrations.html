@@ -205,6 +205,53 @@
             </div>
           </form>
         </div>
+        <div class="bg-[#262a2f] p-4 rounded-md mb-4">
+          <h4 class="text-sm font-medium mb-3">Webhook Status</h4>
+          {% if plex_webhook_needs_update %}
+            <div class="flex items-start gap-2">
+              {% include "app/icons/warning.svg" with classes="w-4 h-4 mt-0.5 text-amber-300 shrink-0" %}
+              <div class="text-sm text-gray-300">
+                <p class="font-medium text-amber-300">Webhook URL needs updating</p>
+                <p class="text-gray-400 mt-1">
+                  You regenerated your API token on {{ user.plex_webhook_token_rotated_at|datetime_format:user }}.
+                  Plex webhooks using the old token will be rejected with a 401.
+                  Update the Plex webhook URL to the one shown below.
+                </p>
+              </div>
+            </div>
+          {% elif user.plex_webhook_last_error %}
+            <div class="flex items-start gap-2">
+              {% include "app/icons/warning.svg" with classes="w-4 h-4 mt-0.5 text-red-300 shrink-0" %}
+              <div class="text-sm text-gray-300">
+                <p class="font-medium text-red-300">Last webhook error</p>
+                <p class="text-gray-400 mt-1">
+                  {{ user.plex_webhook_last_error }}
+                  {% if user.plex_webhook_last_error_at %}
+                    ({{ user.plex_webhook_last_error_at|datetime_format:user }})
+                  {% endif %}
+                </p>
+              </div>
+            </div>
+          {% elif user.plex_webhook_last_received_at %}
+            <div class="flex items-center gap-2">
+              {% include "app/icons/states/completed.svg" with classes="w-4 h-4 text-emerald-300 shrink-0" %}
+              <p class="text-sm text-gray-300">
+                Last webhook received {{ user.plex_webhook_last_received_at|datetime_format:user }}.
+              </p>
+            </div>
+          {% else %}
+            <div class="flex items-start gap-2">
+              {% include "app/icons/warning.svg" with classes="w-4 h-4 mt-0.5 text-amber-300 shrink-0" %}
+              <div class="text-sm text-gray-300">
+                <p class="font-medium text-amber-300">No Plex webhooks received yet</p>
+                <p class="text-gray-400 mt-1">
+                  If you expect automatic logging, confirm webhooks are enabled in Plex and that the
+                  URL includes your current API token.
+                </p>
+              </div>
+            </div>
+          {% endif %}
+        </div>
         <div class="bg-[#262a2f] p-4 rounded-md">
           <h4 class="text-sm font-medium mb-3">Setup Instructions</h4>
           <ol class="list-decimal list-inside space-y-2 text-sm text-gray-300">

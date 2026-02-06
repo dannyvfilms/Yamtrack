@@ -3,6 +3,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+from django.utils import timezone
 from django_celery_beat.models import PeriodicTask
 from django_celery_results.models import TaskResult
 
@@ -571,6 +572,26 @@ class User(AbstractUser):
     plex_usernames = models.TextField(
         blank=True,
         help_text="Comma-separated list of Plex usernames for webhook matching",
+    )
+    plex_webhook_last_received_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        help_text="Timestamp of the last Plex webhook received",
+    )
+    plex_webhook_last_error = models.TextField(
+        blank=True,
+        default="",
+        help_text="Last Plex webhook error message",
+    )
+    plex_webhook_last_error_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        help_text="Timestamp of the last Plex webhook error",
+    )
+    plex_webhook_token_rotated_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        help_text="When the API token was regenerated (update webhook URLs)",
     )
 
     jellyseerr_enabled = models.BooleanField(
@@ -1168,4 +1189,33 @@ class User(AbstractUser):
     def regenerate_token(self):
         """Regenerate the user's token."""
         self.token = generate_token()
-        self.save(update_fields=["token"])
+        self.plex_webhook_token_rotated_at = timezone.now()
+        self.save(update_fields=["token", "plex_webhook_token_rotated_at"])
+
+    def mark_plex_webhook_received(self, when=None):
+        """Record a successful Plex webhook delivery."""
+        when = when or timezone.now()
+        self.plex_webhook_last_received_at = when
+        self.plex_webhook_last_error = ""
+        self.plex_webhook_last_error_at = None
+        self.plex_webhook_token_rotated_at = None
+        self.save(
+            update_fields=[
+                "plex_webhook_last_received_at",
+                "plex_webhook_last_error",
+                "plex_webhook_last_error_at",
+                "plex_webhook_token_rotated_at",
+            ],
+        )
+
+    def mark_plex_webhook_error(self, message, when=None):
+        """Record a Plex webhook error for UI visibility."""
+        when = when or timezone.now()
+        self.plex_webhook_last_error = message
+        self.plex_webhook_last_error_at = when
+        self.save(
+            update_fields=[
+                "plex_webhook_last_error",
+                "plex_webhook_last_error_at",
+            ],
+        )
