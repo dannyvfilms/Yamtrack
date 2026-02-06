@@ -24,7 +24,17 @@ from django.utils import timezone
 from app import config, helpers
 from app import statistics as stats
 from app import history_cache
-from app.models import MediaTypes, Sources, Status
+from app.models import (
+    CreditRoleType,
+    Episode,
+    ItemPersonCredit,
+    ItemStudioCredit,
+    MediaTypes,
+    Movie,
+    PersonGender,
+    Sources,
+    Status,
+)
 from app.templatetags import app_tags
 
 logger = logging.getLogger(__name__)
@@ -336,6 +346,7 @@ def build_statistics_data(user, start_date, end_date):
         status_distribution,
     )
     top_played = stats.get_top_played_media(user_media, start_date, end_date)
+    top_talent = _aggregate_top_talent(user, start_date, end_date)
 
     # Calculate hours and detailed consumption summaries
     hours_per_media_type = stats.get_hours_per_media_type(
@@ -395,6 +406,7 @@ def build_statistics_data(user, start_date, end_date):
         "top_rated": top_rated,
         "top_rated_by_type": top_rated_by_type,
         "top_played": top_played,
+        "top_talent": top_talent,
         "status_distribution": status_distribution,
         "status_pie_chart_data": status_pie_chart_data,
         "hours_per_media_type": hours_per_media_type,
@@ -421,6 +433,13 @@ def _get_empty_statistics_data():
         "top_rated": [],
         "top_rated_by_type": {},
         "top_played": [],
+        "top_talent": {
+            "top_actors": [],
+            "top_actresses": [],
+            "top_directors": [],
+            "top_writers": [],
+            "top_studios": [],
+        },
         "status_distribution": {},
         "status_pie_chart_data": {},
         "hours_per_media_type": {},
@@ -1979,6 +1998,176 @@ def _fetch_media_objects(media_refs):
     return media_objects
 
 
+def _is_director_credit(credit) -> bool:
+    department = (credit.department or "").strip().lower()
+    role = (credit.role or "").strip().lower()
+    if department == "directing":
+        return True
+    return "director" in role
+
+
+def _is_writer_credit(credit) -> bool:
+    department = (credit.department or "").strip().lower()
+    role = (credit.role or "").strip().lower()
+    if department == "writing":
+        return True
+    return any(keyword in role for keyword in ("writer", "screenplay", "story", "teleplay", "script"))
+
+
+def _aggregate_top_talent(user, start_date, end_date, limit=20):
+    """Aggregate top cast/crew/studio rollups from watched movie and TV plays."""
+    item_play_counts = Counter()
+
+    # TV plays: count watched episodes and map each play to the parent TV item.
+    episodes_qs = Episode.objects.filter(
+        related_season__user=user,
+        end_date__isnull=False,
+    )
+    if start_date:
+        episodes_qs = episodes_qs.filter(end_date__gte=start_date)
+    if end_date:
+        episodes_qs = episodes_qs.filter(end_date__lte=end_date)
+    for item_id in episodes_qs.values_list("related_season__related_tv__item_id", flat=True).iterator():
+        if item_id:
+            item_play_counts[item_id] += 1
+
+    # Movie plays: count completed/dated movie entries.
+    movies_qs = Movie.objects.filter(
+        user=user,
+    ).filter(
+        Q(end_date__isnull=False) | Q(start_date__isnull=False),
+    )
+    if start_date:
+        movies_qs = movies_qs.filter(
+            Q(end_date__gte=start_date)
+            | (Q(end_date__isnull=True) & Q(start_date__gte=start_date)),
+        )
+    if end_date:
+        movies_qs = movies_qs.filter(
+            Q(end_date__lte=end_date)
+            | (Q(end_date__isnull=True) & Q(start_date__lte=end_date)),
+        )
+    for item_id in movies_qs.values_list("item_id", flat=True).iterator():
+        if item_id:
+            item_play_counts[item_id] += 1
+
+    if not item_play_counts:
+        return {
+            "top_actors": [],
+            "top_actresses": [],
+            "top_directors": [],
+            "top_writers": [],
+            "top_studios": [],
+        }
+
+    item_ids = list(item_play_counts.keys())
+    cast_actor_ids_by_item = defaultdict(set)
+    cast_actress_ids_by_item = defaultdict(set)
+    director_ids_by_item = defaultdict(set)
+    writer_ids_by_item = defaultdict(set)
+    studio_ids_by_item = defaultdict(set)
+    people_by_id = {}
+    studios_by_id = {}
+
+    person_credits = ItemPersonCredit.objects.filter(item_id__in=item_ids).select_related("person")
+    for credit in person_credits:
+        person = credit.person
+        if not person:
+            continue
+        people_by_id[person.id] = person
+
+        if credit.role_type == CreditRoleType.CAST.value:
+            if person.gender == PersonGender.MALE.value:
+                cast_actor_ids_by_item[credit.item_id].add(person.id)
+            elif person.gender == PersonGender.FEMALE.value:
+                cast_actress_ids_by_item[credit.item_id].add(person.id)
+            continue
+
+        if credit.role_type == CreditRoleType.CREW.value:
+            if _is_director_credit(credit):
+                director_ids_by_item[credit.item_id].add(person.id)
+            if _is_writer_credit(credit):
+                writer_ids_by_item[credit.item_id].add(person.id)
+
+    studio_credits = ItemStudioCredit.objects.filter(item_id__in=item_ids).select_related("studio")
+    for credit in studio_credits:
+        studio = credit.studio
+        if not studio:
+            continue
+        studios_by_id[studio.id] = studio
+        studio_ids_by_item[credit.item_id].add(studio.id)
+
+    actor_counts = Counter()
+    actress_counts = Counter()
+    director_counts = Counter()
+    writer_counts = Counter()
+    studio_counts = Counter()
+
+    for item_id, plays in item_play_counts.items():
+        if plays <= 0:
+            continue
+        for person_id in cast_actor_ids_by_item.get(item_id, ()):
+            actor_counts[person_id] += plays
+        for person_id in cast_actress_ids_by_item.get(item_id, ()):
+            actress_counts[person_id] += plays
+        for person_id in director_ids_by_item.get(item_id, ()):
+            director_counts[person_id] += plays
+        for person_id in writer_ids_by_item.get(item_id, ()):
+            writer_counts[person_id] += plays
+        for studio_id in studio_ids_by_item.get(item_id, ()):
+            studio_counts[studio_id] += plays
+
+    def _sorted_people(counter_obj):
+        ranked = sorted(
+            counter_obj.items(),
+            key=lambda row: (-row[1], (people_by_id.get(row[0]).name.lower() if people_by_id.get(row[0]) else "")),
+        )[:limit]
+        payload = []
+        for person_id, plays in ranked:
+            person = people_by_id.get(person_id)
+            if not person:
+                continue
+            payload.append(
+                {
+                    "name": person.name,
+                    "image": person.image or settings.IMG_NONE,
+                    "source": person.source,
+                    "person_id": person.source_person_id,
+                    "plays": int(plays),
+                },
+            )
+        return payload
+
+    def _sorted_studios(counter_obj):
+        ranked = sorted(
+            counter_obj.items(),
+            key=lambda row: (-row[1], (studios_by_id.get(row[0]).name.lower() if studios_by_id.get(row[0]) else "")),
+        )[:limit]
+        payload = []
+        for studio_id, plays in ranked:
+            studio = studios_by_id.get(studio_id)
+            if not studio:
+                continue
+            payload.append(
+                {
+                    "name": studio.name,
+                    "logo": studio.logo or settings.IMG_NONE,
+                    "source": studio.source,
+                    "studio_id": studio.source_studio_id,
+                    "plays": int(plays),
+                },
+            )
+        return payload
+
+    return {
+        "top_actors": _sorted_people(actor_counts),
+        "top_actresses": _sorted_people(actress_counts),
+        "top_directors": _sorted_people(director_counts),
+        "top_writers": _sorted_people(writer_counts),
+        "top_studios": _sorted_studios(studio_counts),
+    }
+
+
 def _aggregate_statistics_from_days(user, day_list, start_date, end_date, build_missing=False):
     items_by_type = defaultdict(dict)
     top_played_by_type = defaultdict(dict)
@@ -2645,6 +2834,7 @@ def _aggregate_statistics_from_days(user, day_list, start_date, end_date, build_
         "today_month": today.month,
         "today_day": today.day,
     }
+    top_talent = _aggregate_top_talent(user, start_date, end_date)
 
     return {
         "media_count": media_count,
@@ -2654,6 +2844,7 @@ def _aggregate_statistics_from_days(user, day_list, start_date, end_date, build_
         "top_rated": top_rated_media,
         "top_rated_by_type": top_rated_by_type_media,
         "top_played": top_played,
+        "top_talent": top_talent,
         "status_distribution": status_distribution_payload,
         "status_pie_chart_data": status_pie_chart_data,
         "hours_per_media_type": hours_per_media_type,

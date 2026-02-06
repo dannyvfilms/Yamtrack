@@ -20,7 +20,7 @@ from django.db.models import prefetch_related_objects
 from django.db.models.functions import ExtractDay, ExtractMonth
 from django.db.utils import OperationalError
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
-from django.shortcuts import redirect, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import formats, timezone
 from django.utils.dateparse import parse_date
@@ -30,6 +30,7 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 
 from app import (
     cache_utils,
+    credits,
     config,
     helpers,
     history_cache,
@@ -53,9 +54,12 @@ from app.models import (
     Artist,
     BasicMedia,
     CollectionEntry,
+    Episode,
     Item,
     MediaTypes,
+    Movie,
     Music,
+    Person,
     Season,
     Sources,
     Status,
@@ -1810,7 +1814,6 @@ def media_details(
 
             # Build episode items - create Item objects for enrichment
             # Initially load first 20 episodes, rest will be loaded via infinite scroll
-            from app.models import Item
             episode_items_data = []
             episode_items_map = {}  # Map media_id to Item object
             initial_limit = 20
@@ -2079,11 +2082,32 @@ def media_details(
 
     media_metadata = services.get_media_metadata(media_type, media_id, source)
 
+    if isinstance(media_metadata, dict):
+        media_metadata.setdefault("cast", [])
+        media_metadata.setdefault("crew", [])
+        media_metadata.setdefault("studios_full", [])
+
     # For podcasts, ensure source is in metadata dict (fixes KeyError in template)
     if media_type == MediaTypes.PODCAST.value and isinstance(media_metadata, dict):
         media_metadata["source"] = source
         media_metadata["media_type"] = media_type
         media_metadata["media_id"] = media_id
+
+    if (
+        source == Sources.TMDB.value
+        and media_type in (MediaTypes.MOVIE.value, MediaTypes.TV.value)
+        and isinstance(media_metadata, dict)
+    ):
+        detail_item = Item.objects.filter(
+            media_id=media_id,
+            source=source,
+            media_type=media_type,
+        ).first()
+        if detail_item:
+            missing_people = not detail_item.person_credits.exists()
+            missing_studios = not detail_item.studio_credits.exists()
+            if missing_people or missing_studios:
+                credits.sync_item_credits_from_metadata(detail_item, media_metadata)
 
     # For TV shows, apply fallback for seasons without posters (handles cached metadata)
     if media_type == MediaTypes.TV.value and isinstance(media_metadata, dict):
@@ -2279,7 +2303,6 @@ def media_details(
     item_id_for_polling = None
     
     if not public_view and media_type != MediaTypes.PODCAST.value:
-        from app.models import Item
         from app.helpers import is_item_collected, get_tv_show_collection_stats
         
         try:
@@ -2959,6 +2982,10 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
         if media_type == MediaTypes.BOOK.value and not item.number_of_pages and number_of_pages:
             item.number_of_pages = number_of_pages
             item.save(update_fields=["number_of_pages"])
+
+        if source == Sources.TMDB.value and media_type in (MediaTypes.MOVIE.value, MediaTypes.TV.value):
+            credits.sync_item_credits_from_metadata(item, metadata)
+
         title = metadata["title"]
         if season_number:
             title += f" - Season {season_number}"
@@ -3774,6 +3801,10 @@ def media_save(request):
             needs_save = True
         if needs_save:
             item.save()
+
+        if source == Sources.TMDB.value and media_type in (MediaTypes.MOVIE.value, MediaTypes.TV.value):
+            credits.sync_item_credits_from_metadata(item, metadata)
+
         model = apps.get_model(app_label="app", model_name=media_type)
         instance = model(item=item, user=request.user)
 
@@ -4739,7 +4770,14 @@ def history(request):
         # Extract filter parameters from query string
         filters = {}
         int_params = ["album", "artist", "tv", "season", "season_number", "podcast_show"]
-        str_params = ["genre", "media_type", "media_id", "source"]
+        str_params = [
+            "genre",
+            "media_type",
+            "media_id",
+            "source",
+            "person_source",
+            "person_id",
+        ]
         for param in int_params:
             value = request.GET.get(param)
             if value:
@@ -5010,6 +5048,99 @@ def history(request):
             "history_refreshing": False,
         }
         return render(request, "app/history.html", context)
+
+
+@login_not_required
+@require_GET
+def person_detail(request, source, person_id, name):
+    """Render a cast/crew person bio page."""
+    del name  # URL slug is cosmetic; person_id is canonical.
+
+    if source != Sources.TMDB.value:
+        return HttpResponseBadRequest("Person pages are only available for TMDB metadata.")
+
+    person_metadata = tmdb.person(person_id)
+    person = credits.upsert_person_profile(source, person_id, person_metadata)
+
+    person_data = {
+        "source": source,
+        "person_id": str(person_id),
+        "name": person_metadata.get("name")
+        or (person.name if person else "Unknown Person"),
+        "image": person_metadata.get("image")
+        or (person.image if person else settings.IMG_NONE),
+        "biography": person_metadata.get("biography")
+        or (person.biography if person else ""),
+        "known_for_department": person_metadata.get("known_for_department")
+        or (person.known_for_department if person else ""),
+        "birth_date": person_metadata.get("birth_date")
+        or (person.birth_date.isoformat() if person and person.birth_date else None),
+        "death_date": person_metadata.get("death_date")
+        or (person.death_date.isoformat() if person and person.death_date else None),
+        "place_of_birth": person_metadata.get("place_of_birth")
+        or (person.place_of_birth if person else ""),
+    }
+
+    filmography = [dict(entry) for entry in person_metadata.get("filmography", [])]
+    filmography_media_ids = {
+        str(entry.get("media_id"))
+        for entry in filmography
+        if entry.get("media_id") is not None
+    }
+
+    tracked_items = Item.objects.none()
+    if filmography_media_ids:
+        tracked_items = Item.objects.filter(
+            source=source,
+            media_type__in=(MediaTypes.MOVIE.value, MediaTypes.TV.value),
+            media_id__in=filmography_media_ids,
+        )
+    tracked_item_map = {
+        (item.media_type, str(item.media_id)): item
+        for item in tracked_items
+    }
+
+    for entry in filmography:
+        entry["tracked_item"] = tracked_item_map.get(
+            (entry.get("media_type"), str(entry.get("media_id"))),
+        )
+
+    history_filter_url = (
+        f"{reverse('history')}?person_source={source}&person_id={person_id}"
+    )
+    tracked_plays_count = None
+    if request.user.is_authenticated:
+        episode_plays = (
+            Episode.objects.filter(
+                related_season__user=request.user,
+                end_date__isnull=False,
+                related_season__related_tv__item__person_credits__person__source=source,
+                related_season__related_tv__item__person_credits__person__source_person_id=str(person_id),
+            )
+            .distinct()
+            .count()
+        )
+        movie_plays = (
+            Movie.objects.filter(
+                user=request.user,
+                item__person_credits__person__source=source,
+                item__person_credits__person__source_person_id=str(person_id),
+            )
+            .exclude(start_date__isnull=True, end_date__isnull=True)
+            .distinct()
+            .count()
+        )
+        tracked_plays_count = episode_plays + movie_plays
+
+    context = {
+        "user": request.user,
+        "person": person_data,
+        "filmography": filmography,
+        "history_filter_url": history_filter_url,
+        "tracked_plays_count": tracked_plays_count,
+        "source": source,
+    }
+    return render(request, "app/person_detail.html", context)
 
 
 @require_GET
@@ -7004,6 +7135,7 @@ def statistics(request):
             "top_rated_movie": top_rated_movie,
             "top_rated_tv": top_rated_tv,
             "top_played": statistics_data["top_played"],
+            "top_talent": statistics_data.get("top_talent", {}),
             "status_distribution": statistics_data["status_distribution"],
             "status_pie_chart_data": statistics_data["status_pie_chart_data"],
             "hours_per_media_type": statistics_data["hours_per_media_type"],
@@ -7050,6 +7182,7 @@ def statistics(request):
             "score_distribution": {},
             "top_rated": [],
             "top_played": [],
+            "top_talent": {},
             "status_distribution": {},
             "status_pie_chart_data": {},
             "hours_per_media_type": {},
@@ -7072,6 +7205,7 @@ def statistics(request):
             "score_distribution": empty_statistics_data["score_distribution"],
             "top_rated": empty_statistics_data["top_rated"],
             "top_played": empty_statistics_data["top_played"],
+            "top_talent": empty_statistics_data["top_talent"],
             "status_distribution": empty_statistics_data["status_distribution"],
             "status_pie_chart_data": empty_statistics_data["status_pie_chart_data"],
             "hours_per_media_type": empty_statistics_data["hours_per_media_type"],

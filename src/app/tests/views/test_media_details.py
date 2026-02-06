@@ -162,3 +162,65 @@ class MediaDetailsViewTests(TestCase):
         self.assertIsNone(response.context["item_id_for_polling"])
         mock_fetch_delay.assert_not_called()
 
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_renders_cast_and_crew_links(self, mock_get_metadata):
+        """Movie details should render cast/crew links to person pages."""
+        mock_get_metadata.return_value = {
+            "media_id": "238",
+            "title": "Test Movie",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "source_url": "https://www.themoviedb.org/movie/238",
+            "image": "http://example.com/image.jpg",
+            "synopsis": "Test synopsis",
+            "details": {"format": "Movie"},
+            "cast": [
+                {
+                    "person_id": "10",
+                    "name": "John Actor",
+                    "role": "Hero",
+                },
+            ],
+            "crew": [
+                {
+                    "person_id": "11",
+                    "name": "Jane Director",
+                    "role": "Director",
+                    "department": "Directing",
+                },
+            ],
+            "studios_full": [
+                {
+                    "studio_id": "20",
+                    "name": "Studio One",
+                },
+            ],
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "238",
+                    "title": "test-movie",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "John Actor")
+        self.assertContains(response, "Jane Director")
+        self.assertContains(response, "Studio One")
+        self.assertContains(
+            response,
+            reverse(
+                "person_detail",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "person_id": "10",
+                    "name": "john-actor",
+                },
+            ),
+        )

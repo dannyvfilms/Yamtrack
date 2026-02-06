@@ -738,6 +738,17 @@
         {% endif %}
       </div>
 
+      {% if media.source == Sources.TMDB.value and media_type != MediaTypes.PODCAST.value and media.studios_full %}
+        <h2 class="text-xl font-bold mb-4 mt-6">Studios</h2>
+        <div class="bg-[#2a2f35] p-4 rounded-lg text-center md:text-start">
+          {% for studio in media.studios_full|slice:":12" %}
+            <p class="text-gray-200">{{ studio.name|default:"Unknown Studio" }}</p>
+          {% empty %}
+            <p class="text-gray-500">No studio metadata available.</p>
+          {% endfor %}
+        </div>
+      {% endif %}
+
       {# Collection #}
       {% if not public_view and media_type != MediaTypes.PODCAST.value %}
         <div class="flex items-center justify-between mb-4 mt-6">
@@ -873,27 +884,187 @@
     </div>
 
     {# Related Media #}
-    {% if media.related and media_type != MediaTypes.PODCAST.value %}
-      <div class="w-full md:w-3/4">
-        {% for name, related_items in media.related.items %}
-          {% if related_items %}
-            <section class="{% if not forloop.last %}mb-8{% endif %}">
-              <h2 class="text-xl font-bold mb-4">{{ name|no_underscore|title }}</h2>
-              <div class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
-                {% for result in related_items %}
-                  {% if media_type != MediaTypes.TV.value and media_type != MediaTypes.SEASON.value %}
-                    {# Set active to highlight the current movie in a collection. Avoid TV media, since seasons have same ID as the parent show #}
-                    {% include "app/components/media_card.html" with item=result.item title=result.item.season_title|default:result.item.title media=result.media user=user active=media.media_id|str_equals:result.item.media_id from_grid=True %}
-                  {% else %}
-                    {# Seasons: hide progress chip (shown in hover subtitle) but keep time left chip #}
-                    {% include "app/components/media_card.html" with item=result.item title=result.item.season_title|default:result.item.title media=result.media user=user from_grid=True show_progress_chip=False show_release_year_placeholder=True %}
-                  {% endif %}
-                {% endfor %}
-              </div>
-            </section>
-          {% endif %}
-        {% endfor %}
-      </div>
+    {% if media_type != MediaTypes.PODCAST.value %}
+      {% if media.related or media.cast or media.crew %}
+        <div class="w-full md:w-3/4">
+        {% if media.related %}
+          {% for name, related_items in media.related.items %}
+            {% if name != "seasons" and name != "recommendations" and related_items %}
+              <section class="mb-8">
+                <h2 class="text-xl font-bold mb-4">{{ name|no_underscore|title }}</h2>
+                <div class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
+                  {% for result in related_items %}
+                    {% if media_type != MediaTypes.TV.value and media_type != MediaTypes.SEASON.value %}
+                      {% include "app/components/media_card.html" with item=result.item title=result.item.season_title|default:result.item.title media=result.media user=user active=media.media_id|str_equals:result.item.media_id from_grid=True %}
+                    {% else %}
+                      {% include "app/components/media_card.html" with item=result.item title=result.item.season_title|default:result.item.title media=result.media user=user from_grid=True show_progress_chip=False show_release_year_placeholder=True %}
+                    {% endif %}
+                  {% endfor %}
+                </div>
+              </section>
+            {% endif %}
+          {% endfor %}
+        {% endif %}
+
+        {% if media.related.seasons %}
+          <section class="mb-8">
+            <h2 class="text-xl font-bold mb-4">Seasons</h2>
+            <div class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
+              {% for result in media.related.seasons %}
+                {% include "app/components/media_card.html" with item=result.item title=result.item.season_title|default:result.item.title media=result.media user=user from_grid=True show_progress_chip=False show_release_year_placeholder=True %}
+              {% endfor %}
+            </div>
+          </section>
+        {% endif %}
+
+        {% if media.source == Sources.TMDB.value and media.cast %}
+          <section class="mb-8" x-data="{ castOpen: true }">
+            <div class="flex items-center justify-between mb-4">
+              <h2 class="text-xl font-bold">Cast</h2>
+              <button type="button"
+                      class="flex items-center justify-center p-2 rounded-md text-gray-300 hover:text-white hover:bg-gray-700 transition-colors duration-200 cursor-pointer"
+                      @click="castOpen = !castOpen"
+                      :aria-expanded="castOpen.toString()"
+                      aria-label="Toggle cast section">
+                <div class="w-4 h-4 transition-transform duration-200" :class="{ 'rotate-180': castOpen }">
+                  {% include "app/icons/chevron-down.svg" %}
+                </div>
+              </button>
+            </div>
+            <div x-show="castOpen"
+                 x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 transform -translate-y-1"
+                 x-transition:enter-end="opacity-100 transform translate-y-0"
+                 x-transition:leave="transition ease-in duration-150"
+                 x-transition:leave-start="opacity-100 transform translate-y-0"
+                 x-transition:leave-end="opacity-0 transform -translate-y-1"
+                 class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
+              {% for person in media.cast|slice:":20" %}
+                <div class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative search-result-card group{% if user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %}">
+                  <div class="relative">
+                    {% if person.person_id and person.name %}
+                      <a href="{% url 'person_detail' source=media.source person_id=person.person_id name=person.name|slug %}">
+                    {% endif %}
+                    <img alt="{{ person.name|default:'Unknown Person' }}"
+                         class="media-card-poster lazyload w-full aspect-[2/3] aspect-2/3 bg-[#3e454d] {% if person.image and person.image != IMG_NONE %}object-cover{% endif %}"
+                         data-src="{{ person.image|default:IMG_NONE }}"
+                         src="{{ IMG_NONE }}">
+                    {% if person.person_id and person.name %}
+                      </a>
+                    {% endif %}
+                  </div>
+                  <div class="media-card-body p-3 bg-card-body">
+                    <div class="flex items-center gap-2 min-w-0">
+                      {% if person.person_id and person.name %}
+                        <a href="{% url 'person_detail' source=media.source person_id=person.person_id name=person.name|slug %}"
+                           class="media-card-title text-sm font-semibold text-white hover:text-indigo-400 transition duration-300 line-clamp-1 min-w-0"
+                           title="{{ person.name }}">
+                          {{ person.name }}
+                        </a>
+                      {% else %}
+                        <p class="media-card-title text-sm font-semibold text-white line-clamp-1 min-w-0">
+                          {{ person.name|default:"Unknown Person" }}
+                        </p>
+                      {% endif %}
+                    </div>
+                    <p class="media-card-year text-xs text-gray-400 mt-1 line-clamp-2">
+                      {% if person.role %}
+                        {{ person.role }}
+                      {% elif person.department %}
+                        {{ person.department }}
+                      {% else %}
+                        Cast
+                      {% endif %}
+                    </p>
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          </section>
+        {% endif %}
+
+        {% if media.source == Sources.TMDB.value and media.crew %}
+          <section class="mb-8" x-data="{ crewOpen: true }">
+            <div class="flex items-center justify-between mb-4">
+              <h2 class="text-xl font-bold">Crew</h2>
+              <button type="button"
+                      class="flex items-center justify-center p-2 rounded-md text-gray-300 hover:text-white hover:bg-gray-700 transition-colors duration-200 cursor-pointer"
+                      @click="crewOpen = !crewOpen"
+                      :aria-expanded="crewOpen.toString()"
+                      aria-label="Toggle crew section">
+                <div class="w-4 h-4 transition-transform duration-200" :class="{ 'rotate-180': crewOpen }">
+                  {% include "app/icons/chevron-down.svg" %}
+                </div>
+              </button>
+            </div>
+            <div x-show="crewOpen"
+                 x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 transform -translate-y-1"
+                 x-transition:enter-end="opacity-100 transform translate-y-0"
+                 x-transition:leave="transition ease-in duration-150"
+                 x-transition:leave-start="opacity-100 transform translate-y-0"
+                 x-transition:leave-end="opacity-0 transform -translate-y-1"
+                 class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
+              {% for person in media.crew|slice:":20" %}
+                <div class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative search-result-card group{% if user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %}">
+                  <div class="relative">
+                    {% if person.person_id and person.name %}
+                      <a href="{% url 'person_detail' source=media.source person_id=person.person_id name=person.name|slug %}">
+                    {% endif %}
+                    <img alt="{{ person.name|default:'Unknown Person' }}"
+                         class="media-card-poster lazyload w-full aspect-[2/3] aspect-2/3 bg-[#3e454d] {% if person.image and person.image != IMG_NONE %}object-cover{% endif %}"
+                         data-src="{{ person.image|default:IMG_NONE }}"
+                         src="{{ IMG_NONE }}">
+                    {% if person.person_id and person.name %}
+                      </a>
+                    {% endif %}
+                  </div>
+                  <div class="media-card-body p-3 bg-card-body">
+                    <div class="flex items-center gap-2 min-w-0">
+                      {% if person.person_id and person.name %}
+                        <a href="{% url 'person_detail' source=media.source person_id=person.person_id name=person.name|slug %}"
+                           class="media-card-title text-sm font-semibold text-white hover:text-indigo-400 transition duration-300 line-clamp-1 min-w-0"
+                           title="{{ person.name }}">
+                          {{ person.name }}
+                        </a>
+                      {% else %}
+                        <p class="media-card-title text-sm font-semibold text-white line-clamp-1 min-w-0">
+                          {{ person.name|default:"Unknown Person" }}
+                        </p>
+                      {% endif %}
+                    </div>
+                    <p class="media-card-year text-xs text-gray-400 mt-1 line-clamp-2">
+                      {% if person.role %}
+                        {{ person.role }}
+                      {% elif person.department %}
+                        {{ person.department }}
+                      {% else %}
+                        Crew
+                      {% endif %}
+                    </p>
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          </section>
+        {% endif %}
+
+        {% if media.related.recommendations %}
+          <section class="mb-8">
+            <h2 class="text-xl font-bold mb-4">Recommendations</h2>
+            <div class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
+              {% for result in media.related.recommendations %}
+                {% if media_type != MediaTypes.TV.value and media_type != MediaTypes.SEASON.value %}
+                  {% include "app/components/media_card.html" with item=result.item title=result.item.season_title|default:result.item.title media=result.media user=user active=media.media_id|str_equals:result.item.media_id from_grid=True %}
+                {% else %}
+                  {% include "app/components/media_card.html" with item=result.item title=result.item.season_title|default:result.item.title media=result.media user=user from_grid=True show_progress_chip=False show_release_year_placeholder=True %}
+                {% endif %}
+              {% endfor %}
+            </div>
+          </section>
+        {% endif %}
+        </div>
+      {% endif %}
     {% endif %}
 
     {# Episodes List #}

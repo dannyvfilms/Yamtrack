@@ -83,6 +83,10 @@ SpecialModels = [
     "AlbumTracker",
     "PodcastShow",
     "PodcastEpisode",
+    "Person",
+    "Studio",
+    "ItemPersonCredit",
+    "ItemStudioCredit",
     "MetadataBackfillState",
     "CollectionEntry",
 ]

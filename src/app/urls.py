@@ -83,6 +83,11 @@ urlpatterns = [
     path("statistics", views.statistics, name="statistics"),
     path("statistics/refresh", views.refresh_statistics, name="refresh_statistics"),
     path("history", views.history, name="history"),
+    path(
+        "person/<source:source>/<str:person_id>/<slug:name>",
+        views.person_detail,
+        name="person_detail",
+    ),
     path("api/cache-status/", views.cache_status, name="cache_status"),
     path("serviceworker.js", views.service_worker, name="service_worker"),
     # Music hierarchy navigation

@@ -1,7 +1,22 @@
-
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
+
+from app import statistics_cache
+from app.models import (
+    CreditRoleType,
+    Item,
+    ItemPersonCredit,
+    ItemStudioCredit,
+    MediaTypes,
+    Movie,
+    Person,
+    PersonGender,
+    Sources,
+    Status,
+    Studio,
+)
 
 
 class StatisticsViewTests(TestCase):
@@ -27,7 +42,7 @@ class StatisticsViewTests(TestCase):
         self.assertIn("score_distribution", response.context)
         self.assertIn("status_distribution", response.context)
         self.assertIn("status_pie_chart_data", response.context)
-        self.assertIn("timeline", response.context)
+        self.assertIn("daily_hours_by_media_type", response.context)
 
     def test_statistics_view_custom_date_range(self):
         """Test the statistics view with custom date range."""
@@ -47,7 +62,7 @@ class StatisticsViewTests(TestCase):
         self.assertIn("score_distribution", response.context)
         self.assertIn("status_distribution", response.context)
         self.assertIn("status_pie_chart_data", response.context)
-        self.assertIn("timeline", response.context)
+        self.assertIn("daily_hours_by_media_type", response.context)
 
     def test_statistics_view_invalid_date_format(self):
         """Test the statistics view with invalid date format."""
@@ -68,4 +83,90 @@ class StatisticsViewTests(TestCase):
 
         self.assertTrue(date_is_none)
 
+    def test_statistics_view_includes_top_talent_sections(self):
+        """Top cast/crew and studio sections should be present in context."""
+        watched_at = timezone.now()
+        item = Item.objects.create(
+            media_id="1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Talent Movie",
+            image="http://example.com/talent.jpg",
+        )
+        Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            start_date=watched_at,
+            end_date=watched_at,
+        )
 
+        actor = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="100",
+            name="Actor Person",
+            gender=PersonGender.MALE.value,
+        )
+        actress = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="101",
+            name="Actress Person",
+            gender=PersonGender.FEMALE.value,
+        )
+        director = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="102",
+            name="Director Person",
+            gender=PersonGender.UNKNOWN.value,
+        )
+        writer = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="103",
+            name="Writer Person",
+            gender=PersonGender.UNKNOWN.value,
+        )
+        studio = Studio.objects.create(
+            source=Sources.TMDB.value,
+            source_studio_id="500",
+            name="Studio Person",
+        )
+
+        ItemPersonCredit.objects.create(
+            item=item,
+            person=actor,
+            role_type=CreditRoleType.CAST.value,
+            role="Lead",
+        )
+        ItemPersonCredit.objects.create(
+            item=item,
+            person=actress,
+            role_type=CreditRoleType.CAST.value,
+            role="Co-Lead",
+        )
+        ItemPersonCredit.objects.create(
+            item=item,
+            person=director,
+            role_type=CreditRoleType.CREW.value,
+            role="Director",
+            department="Directing",
+        )
+        ItemPersonCredit.objects.create(
+            item=item,
+            person=writer,
+            role_type=CreditRoleType.CREW.value,
+            role="Writer",
+            department="Writing",
+        )
+        ItemStudioCredit.objects.create(item=item, studio=studio)
+
+        statistics_cache.invalidate_statistics_cache(self.user.id)
+        response = self.client.get(reverse("statistics"))
+
+        self.assertEqual(response.status_code, 200)
+        top_talent = response.context.get("top_talent", {})
+        self.assertTrue(any(entry["name"] == "Actor Person" for entry in top_talent.get("top_actors", [])))
+        self.assertTrue(any(entry["name"] == "Actress Person" for entry in top_talent.get("top_actresses", [])))
+        self.assertTrue(any(entry["name"] == "Director Person" for entry in top_talent.get("top_directors", [])))
+        self.assertTrue(any(entry["name"] == "Writer Person" for entry in top_talent.get("top_writers", [])))
+        self.assertTrue(any(entry["name"] == "Studio Person" for entry in top_talent.get("top_studios", [])))

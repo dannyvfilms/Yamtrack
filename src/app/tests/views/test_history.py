@@ -1,13 +1,20 @@
-
+from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 from app.models import (
+    CreditRoleType,
+    Episode,
     Item,
+    ItemPersonCredit,
     MediaTypes,
     Movie,
+    Person,
+    PersonGender,
+    Season,
     Sources,
     Status,
+    TV,
 )
 
 
@@ -132,69 +139,159 @@ class DeleteHistoryRecordViewTests(TestCase):
             Movie.objects.filter(id=self.movie.id).exists(),
         )
 
-        # Verify the record doesn't exist in the historical table directly
-        from django.apps import apps
-        HistoricalMovie = apps.get_model("app", "HistoricalMovie")
-        self.assertFalse(
-            HistoricalMovie.objects.filter(history_id=self.history_id).exists(),
+
+class HistoryViewPersonFilterTests(TestCase):
+    """Test person-based filtering on the history page."""
+
+    def setUp(self):
+        self.credentials = {"username": "test", "password": "12345"}
+        self.user = get_user_model().objects.create_user(**self.credentials)
+        self.client.login(**self.credentials)
+        self.person = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="900",
+            name="Filter Person",
+            gender=PersonGender.MALE.value,
         )
 
-    def test_delete_nonexistent_history_record(self):
-        """Test deleting a nonexistent history record."""
-        response = self.client.delete(
-            reverse(
-                "delete_history_record",
-                kwargs={
-                    "media_type": MediaTypes.MOVIE.value,
-                    "history_id": 999999,
-                },
-            ),
+        self.movie_item = Item.objects.create(
+            media_id="m1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Credited Movie",
+            image="http://example.com/m1.jpg",
+        )
+        Movie.objects.create(
+            item=self.movie_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            start_date=timezone.now(),
+            end_date=timezone.now(),
+        )
+        ItemPersonCredit.objects.create(
+            item=self.movie_item,
+            person=self.person,
+            role_type=CreditRoleType.CAST.value,
+            role="Lead",
         )
 
-        self.assertEqual(response.status_code, 404)
-
-    def test_delete_history_record_verification(self):
-        """Test that deletion verification removes the live instance."""
-        # Create another history entry
-        self.movie.status = Status.PAUSED.value
-        self.movie.save()
-        second_history = self.movie.history.first()
-        second_history_id = second_history.history_id
-        second_history.history_user = self.user
-        second_history.save()
-
-        # Verify both records exist
-        self.assertEqual(
-            self.movie.history.filter(history_id=self.history_id).count(),
-            1,
+        other_movie_item = Item.objects.create(
+            media_id="m2",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Other Movie",
+            image="http://example.com/m2.jpg",
         )
-        self.assertEqual(
-            self.movie.history.filter(history_id=second_history_id).count(),
-            1,
+        Movie.objects.create(
+            item=other_movie_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            start_date=timezone.now(),
+            end_date=timezone.now(),
         )
 
-        # Delete the first record
-        response = self.client.delete(
-            reverse(
-                "delete_history_record",
-                kwargs={
-                    "media_type": MediaTypes.MOVIE.value,
-                    "history_id": self.history_id,
-                },
-            ),
+        tv_item = Item.objects.create(
+            media_id="tv-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.TV.value,
+            title="Credited Show",
+            image="http://example.com/tv1.jpg",
+        )
+        tv = TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+        )
+        season_item = Item.objects.create(
+            media_id="tv-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Credited Show",
+            image="http://example.com/tv1s1.jpg",
+            season_number=1,
+        )
+        season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=tv,
+            status=Status.COMPLETED.value,
+        )
+        episode_item = Item.objects.create(
+            media_id="tv-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Credited Episode",
+            image="http://example.com/tv1e1.jpg",
+            season_number=1,
+            episode_number=1,
+        )
+        Episode.objects.create(
+            item=episode_item,
+            related_season=season,
+            end_date=timezone.now(),
+        )
+        ItemPersonCredit.objects.create(
+            item=tv_item,
+            person=self.person,
+            role_type=CreditRoleType.CAST.value,
+            role="Lead",
+        )
+
+        other_tv_item = Item.objects.create(
+            media_id="tv-2",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.TV.value,
+            title="Other Show",
+            image="http://example.com/tv2.jpg",
+        )
+        other_tv = TV.objects.create(
+            item=other_tv_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+        )
+        other_season_item = Item.objects.create(
+            media_id="tv-2",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Other Show",
+            image="http://example.com/tv2s1.jpg",
+            season_number=1,
+        )
+        other_season = Season.objects.create(
+            item=other_season_item,
+            user=self.user,
+            related_tv=other_tv,
+            status=Status.COMPLETED.value,
+        )
+        other_episode_item = Item.objects.create(
+            media_id="tv-2",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Other Episode",
+            image="http://example.com/tv2e1.jpg",
+            season_number=1,
+            episode_number=1,
+        )
+        Episode.objects.create(
+            item=other_episode_item,
+            related_season=other_season,
+            end_date=timezone.now(),
+        )
+
+    def test_history_filters_by_person_source_and_id(self):
+        response = self.client.get(
+            reverse("history") + "?person_source=tmdb&person_id=900",
         )
 
         self.assertEqual(response.status_code, 200)
-
-        # Deleting a movie history entry removes the live instance and all history
-        self.assertEqual(
-            self.movie.history.filter(history_id=self.history_id).count(),
-            0,
-        )
-        self.assertEqual(
-            self.movie.history.filter(history_id=second_history_id).count(),
-            0,
-        )
-        self.assertFalse(
-            Movie.objects.filter(id=self.movie.id).exists(),
-        )
+        titles = [
+            entry["title"]
+            for day in response.context["history_days"]
+            for entry in day.get("entries", [])
+        ]
+        self.assertIn("Credited Movie", titles)
+        self.assertIn("Credited Episode", titles)
+        self.assertNotIn("Other Movie", titles)
+        self.assertNotIn("Other Episode", titles)

@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% load app_tags %}
+{% load user_tags %}
+
+{% block title %}
+  {{ person.name }} - Yamtrack
+{% endblock title %}
+
+{% block content %}
+  <div class="flex flex-col md:flex-row gap-8 md:gap-10 mb-10 md:mb-8">
+    <div class="w-full md:w-1/4 max-w-[250px] mx-auto md:mx-0">
+      <img
+        src="{{ person.image|default:IMG_NONE }}"
+        alt="{{ person.name }}"
+        class="w-full rounded-lg shadow-lg bg-[#2a2f35] object-cover">
+
+      <div class="mt-4 p-3 bg-[#2a2f35] rounded-lg">
+        <a
+          href="{{ history_filter_url }}"
+          class="w-full inline-flex items-center justify-center rounded-md bg-amber-600 px-3 py-2 text-sm text-white transition-colors hover:bg-amber-700">
+          View Plays in History
+        </a>
+      </div>
+    </div>
+
+    <div class="w-full md:w-3/4">
+      <h1 class="text-3xl font-bold mb-4 text-center md:text-start">{{ person.name }}</h1>
+
+      <div class="flex flex-wrap gap-2 mb-4">
+        {% if person.known_for_department %}
+          <span class="px-3 py-1 bg-indigo-600 text-white rounded-full text-sm">
+            {{ person.known_for_department }}
+          </span>
+        {% endif %}
+        {% if tracked_plays_count is not None %}
+          <span class="px-3 py-1 bg-[#2a2f35] text-gray-200 rounded-full text-sm">
+            {{ tracked_plays_count }} tracked play{{ tracked_plays_count|pluralize }}
+          </span>
+        {% endif %}
+      </div>
+
+      <div class="bg-[#2a2f35] p-4 rounded-lg mb-6">
+        {% if person.biography %}
+          <div
+            x-data="{ isExpanded: false, isClamped: false, checkClamp() { const element = this.$refs.bioText; this.isClamped = element.scrollHeight > element.clientHeight; } }"
+            x-init="$nextTick(() => checkClamp())">
+            <p
+              x-ref="bioText"
+              :class="isExpanded ? '' : 'line-clamp-5'"
+              class="text-gray-300 text-pretty">
+              {{ person.biography|linebreaksbr|safe }}
+            </p>
+            <button
+              x-show="isClamped"
+              @click="isExpanded = !isExpanded"
+              class="text-indigo-400 hover:text-indigo-300 text-sm mt-2 focus:outline-none transition-colors cursor-pointer">
+              <span x-text="isExpanded ? 'Show less' : 'Show more'"></span>
+            </button>
+          </div>
+        {% else %}
+          <p class="text-gray-500">No biography available.</p>
+        {% endif %}
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        {% if person.birth_date %}
+          <div class="bg-[#2a2f35] rounded-lg p-3">
+            <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wide">Born</h3>
+            <p class="text-sm text-gray-200 mt-1">{{ person.birth_date }}</p>
+          </div>
+        {% endif %}
+        {% if person.death_date %}
+          <div class="bg-[#2a2f35] rounded-lg p-3">
+            <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wide">Died</h3>
+            <p class="text-sm text-gray-200 mt-1">{{ person.death_date }}</p>
+          </div>
+        {% endif %}
+        {% if person.place_of_birth %}
+          <div class="bg-[#2a2f35] rounded-lg p-3">
+            <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wide">Place of Birth</h3>
+            <p class="text-sm text-gray-200 mt-1 line-clamp-2">{{ person.place_of_birth }}</p>
+          </div>
+        {% endif %}
+        <div class="bg-[#2a2f35] rounded-lg p-3">
+          <h3 class="text-xs font-semibold text-gray-400 uppercase tracking-wide">Source</h3>
+          <p class="text-sm text-gray-200 mt-1">{{ source|source_readable }}</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <section>
+    <h2 class="text-xl font-bold mb-4">Filmography</h2>
+    {% if filmography %}
+      <div class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
+        {% for entry in filmography %}
+          <div class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative search-result-card group{% if user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %}">
+            <div class="relative">
+              {% if entry.tracked_item %}
+                <a href="{{ entry.tracked_item|media_url }}">
+              {% else %}
+                <a href="{% url 'media_details' source=entry.source media_type=entry.media_type media_id=entry.media_id title=entry.title|slug %}">
+              {% endif %}
+                  <img
+                    alt="{{ entry.title }}"
+                    class="media-card-poster lazyload w-full aspect-[2/3] aspect-2/3 bg-[#3e454d] {% if entry.image and entry.image != IMG_NONE %}object-cover{% endif %}"
+                    data-src="{{ entry.image|default:IMG_NONE }}"
+                    src="{{ IMG_NONE }}">
+                </a>
+            </div>
+            <div class="media-card-body p-3 bg-card-body">
+              <div class="flex items-center gap-2 min-w-0">
+                {% if entry.tracked_item %}
+                  <a
+                    href="{{ entry.tracked_item|media_url }}"
+                    class="media-card-title text-sm font-semibold text-white hover:text-indigo-400 transition duration-300 line-clamp-1 min-w-0"
+                    title="{{ entry.title }}">
+                    {{ entry.title }}
+                  </a>
+                {% else %}
+                  <a
+                    href="{% url 'media_details' source=entry.source media_type=entry.media_type media_id=entry.media_id title=entry.title|slug %}"
+                    class="media-card-title text-sm font-semibold text-white hover:text-indigo-400 transition duration-300 line-clamp-1 min-w-0"
+                    title="{{ entry.title }}">
+                    {{ entry.title }}
+                  </a>
+                {% endif %}
+                {% if entry.tracked_item %}
+                  <span class="shrink-0 rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-300">
+                    Tracked
+                  </span>
+                {% endif %}
+              </div>
+              <p class="media-card-year text-xs text-gray-400 mt-1 line-clamp-1">
+                {% if entry.year %}{{ entry.year }}{% else %}Unknown Year{% endif %}
+                {% if entry.media_type %} • {{ entry.media_type|media_type_readable }}{% endif %}
+              </p>
+              <p class="text-xs text-indigo-400 mt-1 line-clamp-2">
+                {{ entry.role|default:entry.department|default:entry.credit_type|default:"Credit"|title }}
+              </p>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="bg-[#2a2f35] p-6 rounded-lg text-center">
+        <p class="text-gray-400">No filmography available.</p>
+      </div>
+    {% endif %}
+  </section>
+{% endblock content %}
