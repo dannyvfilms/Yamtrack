@@ -42,6 +42,11 @@
           <span class="px-3 py-1 bg-[#2a2f35] text-gray-200 rounded-full text-sm">
             {{ tracked_plays_count }} tracked play{{ tracked_plays_count|pluralize }}
           </span>
+          {% if tracked_hours_count %}
+            <span class="px-3 py-1 bg-[#2a2f35] text-gray-200 rounded-full text-sm">
+              {{ tracked_hours_count }}
+            </span>
+          {% endif %}
         {% endif %}
       </div>
 
@@ -105,7 +110,7 @@
     {% if watched_filmography %}
       <div class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
         {% for entry in watched_filmography %}
-          {% include "app/components/person_filmography_card.html" with entry=entry source=source user=user IMG_NONE=IMG_NONE only %}
+          {% include "app/components/person_filmography_card.html" with entry=entry source=source user=user IMG_NONE=IMG_NONE show_watched_runtime_chip=True only %}
         {% endfor %}
       </div>
     {% else %}
@@ -123,7 +128,7 @@
     {% if filmography %}
       <div class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
         {% for entry in filmography %}
-          {% include "app/components/person_filmography_card.html" with entry=entry source=source user=user IMG_NONE=IMG_NONE only %}
+          {% include "app/components/person_filmography_card.html" with entry=entry source=source user=user IMG_NONE=IMG_NONE show_watched_runtime_chip=False only %}
         {% endfor %}
       </div>
     {% else %}

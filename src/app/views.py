@@ -5062,9 +5062,10 @@ def person_detail(request, source, person_id, name):
     person_metadata = tmdb.person(person_id)
     person = credits.upsert_person_profile(source, person_id, person_metadata)
 
+    person_id_str = str(person_id)
     person_data = {
         "source": source,
-        "person_id": str(person_id),
+        "person_id": person_id_str,
         "name": person_metadata.get("name")
         or (person.name if person else "Unknown Person"),
         "image": person_metadata.get("image")
@@ -5101,6 +5102,20 @@ def person_detail(request, source, person_id, name):
     }
 
     watched_media_keys = set()
+    watched_person_minutes_by_media_key = {}
+    person_talent_totals = None
+    if request.user.is_authenticated:
+        person_talent_totals = statistics_cache.get_person_talent_totals(
+            request.user,
+            source,
+            person_id_str,
+        )
+        watched_person_minutes_by_media_key = (
+            person_talent_totals.get("minutes_by_media_key", {})
+            if person_talent_totals
+            else {}
+        )
+
     if request.user.is_authenticated and filmography_media_ids:
         watched_movie_media_ids = {
             str(entry.get("media_id"))
@@ -5157,7 +5172,13 @@ def person_detail(request, source, person_id, name):
         for entry in filmography:
             media_key = (entry.get("media_type"), str(entry.get("media_id")))
             if media_key in watched_media_keys and media_key not in seen_watched_media:
-                watched_filmography.append(entry)
+                watched_entry = dict(entry)
+                watched_minutes = watched_person_minutes_by_media_key.get(media_key, 0)
+                if watched_minutes > 0:
+                    watched_entry["watched_person_runtime_display"] = (
+                        helpers.minutes_to_hhmm(watched_minutes)
+                    )
+                watched_filmography.append(watched_entry)
                 seen_watched_media.add(media_key)
     watched_movie_count = sum(
         1 for media_type, _ in watched_media_keys if media_type == MediaTypes.MOVIE.value
@@ -5170,13 +5191,14 @@ def person_detail(request, source, person_id, name):
         f"{reverse('history')}?person_source={source}&person_id={person_id}"
     )
     tracked_plays_count = None
+    tracked_hours_count = None
     if request.user.is_authenticated:
         episode_plays = (
             Episode.objects.filter(
                 related_season__user=request.user,
                 end_date__isnull=False,
                 related_season__related_tv__item__person_credits__person__source=source,
-                related_season__related_tv__item__person_credits__person__source_person_id=str(person_id),
+                related_season__related_tv__item__person_credits__person__source_person_id=person_id_str,
             )
             .distinct()
             .count()
@@ -5185,13 +5207,15 @@ def person_detail(request, source, person_id, name):
             Movie.objects.filter(
                 user=request.user,
                 item__person_credits__person__source=source,
-                item__person_credits__person__source_person_id=str(person_id),
+                item__person_credits__person__source_person_id=person_id_str,
             )
             .exclude(start_date__isnull=True, end_date__isnull=True)
             .distinct()
             .count()
         )
         tracked_plays_count = episode_plays + movie_plays
+        if person_talent_totals:
+            tracked_hours_count = person_talent_totals.get("watched_time")
 
     context = {
         "user": request.user,
@@ -5202,6 +5226,7 @@ def person_detail(request, source, person_id, name):
         "filmography": filmography,
         "history_filter_url": history_filter_url,
         "tracked_plays_count": tracked_plays_count,
+        "tracked_hours_count": tracked_hours_count,
         "source": source,
     }
     return render(request, "app/person_detail.html", context)

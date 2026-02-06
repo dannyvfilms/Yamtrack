@@ -35,6 +35,7 @@ from app.models import (
     MetadataBackfillField,
     MetadataBackfillState,
     Movie,
+    Person,
     PersonGender,
     Sources,
     Status,
@@ -2138,6 +2139,212 @@ def _is_writer_credit(credit) -> bool:
     if department == "writing":
         return True
     return any(keyword in role for keyword in ("writer", "screenplay", "story", "teleplay", "script"))
+
+
+def get_person_talent_totals(user, person_source, person_id, start_date=None, end_date=None):
+    """Return stats-style totals for a single person's primary talent bucket."""
+    if not user or not person_source or person_id is None:
+        return None
+
+    person = Person.objects.filter(
+        source=person_source,
+        source_person_id=str(person_id),
+    ).first()
+    if not person:
+        return None
+
+    movie_play_counts = Counter()
+    movie_watch_minutes = Counter()
+    episode_play_rows = []
+
+    episodes_qs = Episode.objects.filter(
+        related_season__user=user,
+        end_date__isnull=False,
+    )
+    if start_date:
+        episodes_qs = episodes_qs.filter(end_date__gte=start_date)
+    if end_date:
+        episodes_qs = episodes_qs.filter(end_date__lte=end_date)
+    for episode_item_id, tv_item_id, runtime_minutes in episodes_qs.values_list(
+        "item_id",
+        "related_season__related_tv__item_id",
+        "item__runtime_minutes",
+    ).iterator():
+        if not tv_item_id:
+            continue
+        episode_play_rows.append(
+            (
+                episode_item_id,
+                tv_item_id,
+                _safe_runtime_minutes(runtime_minutes),
+            ),
+        )
+
+    movies_qs = Movie.objects.filter(
+        user=user,
+    ).filter(
+        Q(end_date__isnull=False) | Q(start_date__isnull=False),
+    )
+    if start_date:
+        movies_qs = movies_qs.filter(
+            Q(end_date__gte=start_date)
+            | (Q(end_date__isnull=True) & Q(start_date__gte=start_date)),
+        )
+    if end_date:
+        movies_qs = movies_qs.filter(
+            Q(end_date__lte=end_date)
+            | (Q(end_date__isnull=True) & Q(start_date__lte=end_date)),
+        )
+    for item_id, runtime_minutes in movies_qs.values_list("item_id", "item__runtime_minutes").iterator():
+        if item_id:
+            movie_play_counts[item_id] += 1
+            movie_watch_minutes[item_id] += _safe_runtime_minutes(runtime_minutes)
+
+    if not movie_play_counts and not episode_play_rows:
+        return None
+
+    movie_item_ids = set(movie_play_counts.keys())
+    show_item_ids = {tv_item_id for _, tv_item_id, _ in episode_play_rows if tv_item_id}
+    episode_item_ids = {episode_item_id for episode_item_id, _, _ in episode_play_rows if episode_item_id}
+    played_item_ids = movie_item_ids | show_item_ids | episode_item_ids
+    if not played_item_ids:
+        return None
+    movie_and_show_item_ids = movie_item_ids | show_item_ids
+    item_media_key_by_id = {
+        item_id: (media_type, str(media_id))
+        for item_id, media_type, media_id in Item.objects.filter(
+            id__in=movie_and_show_item_ids,
+        ).values_list("id", "media_type", "media_id")
+    }
+
+    actor_credit_item_ids = set()
+    actress_credit_item_ids = set()
+    director_credit_item_ids = set()
+    writer_credit_item_ids = set()
+
+    person_credits = ItemPersonCredit.objects.filter(
+        item_id__in=played_item_ids,
+        person_id=person.id,
+    )
+    for credit in person_credits:
+        if credit.role_type == CreditRoleType.CAST.value:
+            if person.gender == PersonGender.MALE.value:
+                actor_credit_item_ids.add(credit.item_id)
+            elif person.gender == PersonGender.FEMALE.value:
+                actress_credit_item_ids.add(credit.item_id)
+            continue
+
+        if credit.role_type == CreditRoleType.CREW.value:
+            if _is_director_credit(credit):
+                director_credit_item_ids.add(credit.item_id)
+            if _is_writer_credit(credit):
+                writer_credit_item_ids.add(credit.item_id)
+
+    items_with_episode_people = set(
+        ItemPersonCredit.objects.filter(item_id__in=episode_item_ids).values_list("item_id", flat=True),
+    )
+
+    bucket_plays = Counter()
+    bucket_minutes = Counter()
+    bucket_movie_items = defaultdict(set)
+    bucket_show_items = defaultdict(set)
+    bucket_minutes_by_media_key = defaultdict(lambda: defaultdict(int))
+
+    role_sources = (
+        ("actor", actor_credit_item_ids),
+        ("actress", actress_credit_item_ids),
+        ("director", director_credit_item_ids),
+        ("writer", writer_credit_item_ids),
+    )
+
+    for item_id, plays in movie_play_counts.items():
+        if plays <= 0:
+            continue
+        watched_minutes = int(movie_watch_minutes.get(item_id, 0))
+        media_key = item_media_key_by_id.get(item_id)
+        for bucket, item_ids in role_sources:
+            if item_id not in item_ids:
+                continue
+            bucket_plays[bucket] += plays
+            bucket_minutes[bucket] += watched_minutes
+            bucket_movie_items[bucket].add(item_id)
+            if media_key:
+                bucket_minutes_by_media_key[bucket][media_key] += watched_minutes
+
+    for episode_item_id, tv_item_id, watched_minutes in episode_play_rows:
+        if not tv_item_id:
+            continue
+        has_episode_people = episode_item_id in items_with_episode_people
+        media_key = item_media_key_by_id.get(tv_item_id)
+        for bucket, item_ids in role_sources:
+            is_match = (
+                episode_item_id in item_ids
+                if has_episode_people
+                else tv_item_id in item_ids
+            )
+            if not is_match:
+                continue
+            bucket_plays[bucket] += 1
+            bucket_minutes[bucket] += watched_minutes
+            bucket_show_items[bucket].add(tv_item_id)
+            if media_key:
+                bucket_minutes_by_media_key[bucket][media_key] += watched_minutes
+
+    bucket_payloads = {}
+    for bucket, _ in role_sources:
+        unique_movies = len(bucket_movie_items.get(bucket, set()))
+        unique_shows = len(bucket_show_items.get(bucket, set()))
+        watched_minutes = int(bucket_minutes.get(bucket, 0))
+        bucket_payloads[bucket] = {
+            "bucket": bucket,
+            "plays": int(bucket_plays.get(bucket, 0)),
+            "watched_minutes": watched_minutes,
+            "watched_time": stats._format_hours_minutes(watched_minutes),
+            "unique_movies": unique_movies,
+            "unique_shows": unique_shows,
+            "unique_titles": unique_movies + unique_shows,
+            "minutes_by_media_key": dict(bucket_minutes_by_media_key.get(bucket, {})),
+        }
+
+    nonzero_buckets = [
+        bucket
+        for bucket, payload in bucket_payloads.items()
+        if payload["plays"] > 0 or payload["watched_minutes"] > 0
+    ]
+    if not nonzero_buckets:
+        return None
+
+    known_for_department = (person.known_for_department or "").strip().lower()
+    preferred_order = []
+    if known_for_department == "acting":
+        if person.gender == PersonGender.MALE.value:
+            preferred_order = ["actor"]
+        elif person.gender == PersonGender.FEMALE.value:
+            preferred_order = ["actress"]
+        else:
+            preferred_order = ["actor", "actress"]
+    elif known_for_department == "directing":
+        preferred_order = ["director"]
+    elif known_for_department == "writing":
+        preferred_order = ["writer"]
+
+    selected_bucket = None
+    for bucket in preferred_order:
+        if bucket in nonzero_buckets:
+            selected_bucket = bucket
+            break
+
+    if selected_bucket is None:
+        selected_bucket = max(
+            nonzero_buckets,
+            key=lambda bucket: (
+                bucket_payloads[bucket]["plays"],
+                bucket_payloads[bucket]["watched_minutes"],
+                bucket_payloads[bucket]["unique_titles"],
+            ),
+        )
+
+    return bucket_payloads.get(selected_bucket)
 
 
 def _aggregate_top_talent(user, start_date, end_date, limit=20, schedule_missing_backfill=True):
