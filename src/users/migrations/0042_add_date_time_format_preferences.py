@@ -3,6 +3,33 @@
 from django.db import migrations, models
 
 
+def _column_exists(schema_editor, table_name, column_name):
+    """Return True when a database column already exists."""
+    connection = schema_editor.connection
+    with connection.cursor() as cursor:
+        description = connection.introspection.get_table_description(cursor, table_name)
+    columns = {getattr(column, "name", column[0]) for column in description}
+    return column_name in columns
+
+
+class AddFieldIfNotExists(migrations.AddField):
+    """Add a field only when the backing column doesn't already exist."""
+
+    def database_forwards(self, app_label, schema_editor, from_state, to_state):
+        to_model = to_state.apps.get_model(app_label, self.model_name)
+        field = to_model._meta.get_field(self.name)
+        if _column_exists(schema_editor, to_model._meta.db_table, field.column):
+            return
+        super().database_forwards(app_label, schema_editor, from_state, to_state)
+
+    def database_backwards(self, app_label, schema_editor, from_state, to_state):
+        from_model = from_state.apps.get_model(app_label, self.model_name)
+        field = from_model._meta.get_field(self.name)
+        if not _column_exists(schema_editor, from_model._meta.db_table, field.column):
+            return
+        super().database_backwards(app_label, schema_editor, from_state, to_state)
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -10,12 +37,12 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
+        AddFieldIfNotExists(
             model_name='user',
             name='date_format',
             field=models.CharField(choices=[('Y-m-d', '2026-01-18 (ISO)'), ('d/m/Y', '18/01/2026 (EU)'), ('m/d/Y', '01/18/2026 (US)'), ('M j, Y', 'Jan 18, 2026')], default='Y-m-d', help_text='Preferred date display format', max_length=20),
         ),
-        migrations.AddField(
+        AddFieldIfNotExists(
             model_name='user',
             name='time_format',
             field=models.CharField(choices=[('H:i', '14:30 (24-hour)'), ('g:i A', '2:30 PM (12-hour)')], default='H:i', help_text='Preferred time display format', max_length=20),
