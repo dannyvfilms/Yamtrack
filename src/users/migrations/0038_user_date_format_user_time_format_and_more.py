@@ -12,6 +12,63 @@ def drop_home_sort_constraint_if_exists(apps, schema_editor):
     )
 
 
+def drop_all_constraints_if_exists(apps, schema_editor):
+    """Drop all CHECK constraints on Postgres to avoid DuplicateObject errors."""
+    if schema_editor.connection.vendor != "postgresql":
+        return
+    constraints = [
+        "last_search_type_valid",
+        "tv_sort_valid",
+        "season_sort_valid",
+        "movie_sort_valid",
+        "anime_sort_valid",
+        "manga_sort_valid",
+        "game_sort_valid",
+        "book_sort_valid",
+        "list_detail_sort_valid",
+        "home_sort_valid",
+    ]
+    with schema_editor.connection.cursor() as cursor:
+        for constraint in constraints:
+            cursor.execute(f"ALTER TABLE users_user DROP CONSTRAINT IF EXISTS {constraint};")
+
+
+def _column_exists(schema_editor, table_name, column_name):
+    """Return True when a database column already exists."""
+    connection = schema_editor.connection
+    with connection.cursor() as cursor:
+        if connection.vendor == "postgresql":
+            # Direct check for Postgres to avoid introspection issues
+            cursor.execute(
+                "SELECT 1 FROM information_schema.columns WHERE table_name = %s AND column_name = %s",
+                [table_name, column_name],
+            )
+            if cursor.fetchone():
+                return True
+        # Fallback/SQLite approach
+        description = connection.introspection.get_table_description(cursor, table_name)
+    columns = {getattr(column, "name", column[0]) for column in description}
+    return column_name in columns
+
+
+class AddFieldIfNotExists(migrations.AddField):
+    """Add a field only when the backing column doesn't already exist."""
+
+    def database_forwards(self, app_label, schema_editor, from_state, to_state):
+        to_model = to_state.apps.get_model(app_label, self.model_name)
+        field = to_model._meta.get_field(self.name)
+        if _column_exists(schema_editor, to_model._meta.db_table, field.column):
+            return
+        super().database_forwards(app_label, schema_editor, from_state, to_state)
+
+    def database_backwards(self, app_label, schema_editor, from_state, to_state):
+        from_model = from_state.apps.get_model(app_label, self.model_name)
+        field = from_model._meta.get_field(self.name)
+        if not _column_exists(schema_editor, from_model._meta.db_table, field.column):
+            return
+        super().database_backwards(app_label, schema_editor, from_state, to_state)
+
+
 def check_constraint_values(apps, schema_editor):
     """Check all constraint-related field values before migration to identify invalid data."""
     logger = logging.getLogger(__name__)
@@ -240,9 +297,9 @@ class Migration(migrations.Migration):
         # These constraints exist from previous migrations and will be re-added after fields are added
         migrations.SeparateDatabaseAndState(
             database_operations=[
-                migrations.RunSQL(
-                    sql=migrations.RunSQL.noop,  # Django will handle constraint removal during table recreation
-                    reverse_sql=migrations.RunSQL.noop,
+                migrations.RunPython(
+                    drop_all_constraints_if_exists,
+                    migrations.RunPython.noop,
                 ),
             ],
             state_operations=[
@@ -259,7 +316,7 @@ class Migration(migrations.Migration):
                 migrations.RemoveConstraint(model_name="user", name="list_detail_sort_valid"),
             ],
         ),
-        migrations.AddField(
+        AddFieldIfNotExists(
             model_name="user",
             name="date_format",
             field=models.CharField(
@@ -276,7 +333,7 @@ class Migration(migrations.Migration):
                 max_length=20,
             ),
         ),
-        migrations.AddField(
+        AddFieldIfNotExists(
             model_name="user",
             name="time_format",
             field=models.CharField(

@@ -7,6 +7,15 @@ def _column_exists(schema_editor, table_name, column_name):
     """Return True when a database column already exists."""
     connection = schema_editor.connection
     with connection.cursor() as cursor:
+        if connection.vendor == "postgresql":
+            # Direct check for Postgres to avoid introspection issues
+            cursor.execute(
+                "SELECT 1 FROM information_schema.columns WHERE table_name = %s AND column_name = %s",
+                [table_name, column_name],
+            )
+            if cursor.fetchone():
+                return True
+        # Fallback/SQLite approach
         description = connection.introspection.get_table_description(cursor, table_name)
     columns = {getattr(column, "name", column[0]) for column in description}
     return column_name in columns
