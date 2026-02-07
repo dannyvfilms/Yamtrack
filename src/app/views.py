@@ -84,6 +84,35 @@ RECENTLY_NOT_RATED_LABEL = "Recently Played - Not Rated"
 RECENTLY_NOT_RATED_DAYS = 7
 
 
+class _EmptyHistoryProxy:
+    """Minimal queryset-like history object for empty podcast wrappers."""
+
+    def all(self):
+        return []
+
+    def count(self):
+        return 0
+
+    def filter(self, **kwargs):
+        return self
+
+    def order_by(self, *args, **kwargs):
+        return self
+
+
+class _DummyPodcastWrapper:
+    """Template-compatible podcast wrapper when no plays exist yet."""
+
+    def __init__(self, item):
+        self.item = item
+        self.id = 0
+        self.history = _EmptyHistoryProxy()
+
+    @property
+    def completed_play_count(self):
+        return 0
+
+
 @require_GET
 def home(request):
     """Home page with media items in progress."""
@@ -2004,14 +2033,7 @@ def media_details(
 
                     podcast_wrapper = PodcastHistoryWrapper(all_podcasts, enriched["item"], all_history)
                 else:
-                    # Create a dummy Podcast object with item for template compatibility when podcast is None
-                    class DummyPodcast:
-                        def __init__(self, item):
-                            self.item = item
-                            self.id = 0
-                            self.history = type("History", (), {"count": lambda: 0, "all": list})()
-
-                    podcast_wrapper = DummyPodcast(enriched["item"])
+                    podcast_wrapper = _DummyPodcastWrapper(enriched["item"])
 
                 # Create episode dict compatible with TV episode format
                 # Include media_id, source, media_type for tracking modals
@@ -3514,19 +3536,7 @@ def track_modal(
 
                 podcast = PodcastHistoryWrapper(all_podcasts, item, all_history)
             else:
-                # Create a dummy Podcast object with item for template compatibility when podcast is None
-                class DummyPodcast:
-                    def __init__(self, item):
-                        self.item = item
-                        self.id = 0
-                        self.history = type("History", (), {"count": lambda: 0, "all": list})()
-
-                    @property
-                    def completed_play_count(self):
-                        """Return 0 for dummy podcast (no plays)."""
-                        return 0
-
-                podcast = DummyPodcast(item)
+                podcast = _DummyPodcastWrapper(item)
 
             return render(
                 request,
@@ -6262,12 +6272,7 @@ def podcast_episodes_api(request, show_id):
 
                 podcast_wrapper = PodcastHistoryWrapper(user_podcast, enriched["item"] if enriched else item, all_history)
             else:
-                class DummyPodcast:
-                    def __init__(self, item):
-                        self.item = item
-                        self.id = 0
-                        self.history = type("History", (), {"count": lambda: 0, "all": list})()
-                podcast_wrapper = DummyPodcast(enriched["item"] if enriched else item)
+                podcast_wrapper = _DummyPodcastWrapper(enriched["item"] if enriched else item)
 
             episode_list.append({
                 "title": episode_obj.title,
@@ -6945,12 +6950,7 @@ def podcast_save(request):
 
             podcast_wrapper = PodcastHistoryWrapper(user_podcast, item, all_history)
         else:
-            class DummyPodcast:
-                def __init__(self, item):
-                    self.item = item
-                    self.id = 0
-                    self.history = type("History", (), {"count": lambda: 0, "all": list})()
-            podcast_wrapper = DummyPodcast(item)
+            podcast_wrapper = _DummyPodcastWrapper(item)
 
         # Create adapter classes
         class PodcastEpisodeAdapter:
