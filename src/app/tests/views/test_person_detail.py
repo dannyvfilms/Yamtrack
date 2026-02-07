@@ -16,6 +16,7 @@ from app.models import (
     Sources,
     Status,
 )
+from users.models import DateFormatChoices
 
 
 class PersonDetailViewTests(TestCase):
@@ -130,6 +131,40 @@ class PersonDetailViewTests(TestCase):
         self.assertContains(response, "?person_source=tmdb&amp;person_id=123")
         self.assertContains(response, "media-card-subtitle-always")
         self.assertNotContains(response, "Tracked Titles")
+
+    @patch("app.providers.tmdb.person")
+    def test_person_detail_dates_respect_user_preference(self, mock_person):
+        self.user.date_format = DateFormatChoices.DD_MM_YYYY
+        self.user.save(update_fields=["date_format"])
+
+        mock_person.return_value = {
+            "person_id": "123",
+            "source": Sources.TMDB.value,
+            "name": "Jane Star",
+            "image": "http://example.com/jane.jpg",
+            "biography": "",
+            "known_for_department": "Acting",
+            "gender": "female",
+            "birth_date": "1990-01-01",
+            "death_date": None,
+            "place_of_birth": "Los Angeles",
+            "filmography": [],
+        }
+
+        response = self.client.get(
+            reverse(
+                "person_detail",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "person_id": "123",
+                    "name": "jane-star",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "01.01.1990")
+        self.assertNotContains(response, "1990-01-01")
 
     def test_person_detail_rejects_non_tmdb_source(self):
         response = self.client.get(
