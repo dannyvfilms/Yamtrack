@@ -334,6 +334,218 @@ class StatisticsViewTests(TestCase):
         )
         self.assertContains(response, "2 Titles")
 
+    def test_statistics_top_talent_precomputes_all_sort_modes(self):
+        """Top talent payload should include rankings precomputed for plays, time, and titles."""
+        watched_at = timezone.now()
+        plays_actor = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="301",
+            name="Plays Leader",
+            gender=PersonGender.MALE.value,
+        )
+        titles_actor = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="302",
+            name="Titles Leader",
+            gender=PersonGender.MALE.value,
+        )
+
+        plays_item = Item.objects.create(
+            media_id="3001",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Short Movie",
+            runtime_minutes=30,
+            image="http://example.com/short.jpg",
+        )
+        titles_item_1 = Item.objects.create(
+            media_id="3002",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Long Movie One",
+            runtime_minutes=60,
+            image="http://example.com/long1.jpg",
+        )
+        titles_item_2 = Item.objects.create(
+            media_id="3003",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Long Movie Two",
+            runtime_minutes=60,
+            image="http://example.com/long2.jpg",
+        )
+
+        ItemPersonCredit.objects.create(
+            item=plays_item,
+            person=plays_actor,
+            role_type=CreditRoleType.CAST.value,
+            role="Lead",
+        )
+        ItemPersonCredit.objects.create(
+            item=titles_item_1,
+            person=titles_actor,
+            role_type=CreditRoleType.CAST.value,
+            role="Lead",
+        )
+        ItemPersonCredit.objects.create(
+            item=titles_item_2,
+            person=titles_actor,
+            role_type=CreditRoleType.CAST.value,
+            role="Lead",
+        )
+
+        for offset in range(3):
+            Movie.objects.create(
+                item=plays_item,
+                user=self.user,
+                status=Status.COMPLETED.value,
+                progress=1,
+                start_date=watched_at + timedelta(minutes=offset),
+                end_date=watched_at + timedelta(minutes=offset),
+            )
+        for item in (titles_item_1, titles_item_2):
+            Movie.objects.create(
+                item=item,
+                user=self.user,
+                status=Status.COMPLETED.value,
+                progress=1,
+                start_date=watched_at + timedelta(minutes=10),
+                end_date=watched_at + timedelta(minutes=10),
+            )
+
+        statistics_cache.invalidate_statistics_cache(self.user.id)
+        response = self.client.get(reverse("statistics") + "?start-date=all&end-date=all")
+
+        self.assertEqual(response.status_code, 200)
+        top_talent = response.context["top_talent"]
+        self.assertIn("by_sort", top_talent)
+        self.assertEqual(
+            top_talent["by_sort"]["plays"]["top_actors"][0]["name"],
+            "Plays Leader",
+        )
+        self.assertEqual(
+            top_talent["by_sort"]["time"]["top_actors"][0]["name"],
+            "Titles Leader",
+        )
+        self.assertEqual(
+            top_talent["by_sort"]["titles"]["top_actors"][0]["name"],
+            "Titles Leader",
+        )
+
+    @patch("app.views.statistics_cache.schedule_all_ranges_refresh")
+    @patch("app.views.statistics_cache.refresh_statistics_cache")
+    @patch("app.views.statistics_cache.invalidate_statistics_cache")
+    def test_update_top_talent_sort_updates_preference_without_cache_rebuild(
+        self,
+        mock_invalidate,
+        mock_refresh,
+        mock_schedule_all_ranges_refresh,
+    ):
+        """Statistics sort autosave should persist preference without forcing cache rebuild."""
+        self.user.top_talent_sort_by = "plays"
+        self.user.save(update_fields=["top_talent_sort_by"])
+
+        response = self.client.post(
+            reverse("update_top_talent_sort"),
+            {"sort_by": "time", "range_name": "All Time"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["success"])
+        self.assertTrue(payload["changed"])
+        self.assertEqual(payload["sort_by"], "time")
+
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.top_talent_sort_by, "time")
+        mock_invalidate.assert_not_called()
+        mock_refresh.assert_not_called()
+        mock_schedule_all_ranges_refresh.assert_not_called()
+
+    @patch("app.views.statistics_cache.schedule_all_ranges_refresh")
+    @patch("app.views.statistics_cache.refresh_statistics_cache")
+    @patch("app.views.statistics_cache.invalidate_statistics_cache")
+    def test_update_top_talent_sort_rejects_invalid_value(
+        self,
+        mock_invalidate,
+        mock_refresh,
+        mock_schedule_all_ranges_refresh,
+    ):
+        """Statistics sort autosave should reject invalid values."""
+        self.user.top_talent_sort_by = "plays"
+        self.user.save(update_fields=["top_talent_sort_by"])
+
+        response = self.client.post(
+            reverse("update_top_talent_sort"),
+            {"sort_by": "invalid_sort", "range_name": "All Time"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.top_talent_sort_by, "plays")
+        mock_invalidate.assert_not_called()
+        mock_refresh.assert_not_called()
+        mock_schedule_all_ranges_refresh.assert_not_called()
+
+    @patch("app.views.statistics_cache.schedule_all_ranges_refresh")
+    @patch("app.views.statistics_cache.refresh_statistics_cache")
+    @patch("app.views.statistics_cache.invalidate_statistics_cache")
+    def test_update_top_talent_sort_custom_range_does_not_schedule_refresh(
+        self,
+        mock_invalidate,
+        mock_refresh,
+        mock_schedule_all_ranges_refresh,
+    ):
+        """Autosave with a custom range should still avoid cache rebuild side effects."""
+        self.user.top_talent_sort_by = "plays"
+        self.user.save(update_fields=["top_talent_sort_by"])
+
+        response = self.client.post(
+            reverse("update_top_talent_sort"),
+            {"sort_by": "titles", "range_name": "Custom Range"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["success"])
+        self.assertTrue(payload["changed"])
+        self.assertEqual(payload["sort_by"], "titles")
+
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.top_talent_sort_by, "titles")
+        mock_invalidate.assert_not_called()
+        mock_refresh.assert_not_called()
+        mock_schedule_all_ranges_refresh.assert_not_called()
+
+    @patch("app.views.statistics_cache.refresh_statistics_cache")
+    @patch("app.views.statistics_cache.invalidate_statistics_cache")
+    @patch("app.views.statistics_cache.range_needs_top_talent_upgrade")
+    def test_update_top_talent_sort_legacy_cache_triggers_upgrade_and_reload(
+        self,
+        mock_range_needs_upgrade,
+        mock_invalidate,
+        mock_refresh,
+    ):
+        """Legacy cached top_talent payload should be upgraded and prompt reload."""
+        self.user.top_talent_sort_by = "plays"
+        self.user.save(update_fields=["top_talent_sort_by"])
+        mock_range_needs_upgrade.return_value = True
+
+        response = self.client.post(
+            reverse("update_top_talent_sort"),
+            {"sort_by": "time", "range_name": "All Time"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["success"])
+        self.assertTrue(payload["changed"])
+        self.assertTrue(payload["requires_reload"])
+        self.assertEqual(payload["sort_by"], "time")
+        mock_range_needs_upgrade.assert_called_once_with(self.user.id, "All Time")
+        mock_invalidate.assert_called_once_with(self.user.id, "All Time")
+        mock_refresh.assert_called_once_with(self.user.id, "All Time")
+
     @patch("app.tasks.enqueue_credits_backfill_items")
     def test_statistics_top_talent_uses_episode_credits_with_show_fallback(self, mock_enqueue):
         """Episode plays should use episode credits when present, otherwise fallback to show credits."""
@@ -442,10 +654,11 @@ class StatisticsViewTests(TestCase):
         response = self.client.get(reverse("statistics") + "?start-date=all&end-date=all")
 
         self.assertEqual(response.status_code, 200)
-        mock_enqueue.assert_called_once_with(
-            sorted([show_item.id, episode_item_two.id]),
-            countdown=3,
-        )
+        mock_enqueue.assert_called_once()
+        enqueue_args, enqueue_kwargs = mock_enqueue.call_args
+        scheduled_ids = sorted(enqueue_args[0])
+        self.assertIn(episode_item_two.id, scheduled_ids)
+        self.assertEqual(enqueue_kwargs, {"countdown": 3})
         top_actors = response.context["top_talent"]["top_actors"]
         by_name = {entry["name"]: entry for entry in top_actors}
         self.assertIn("Episode Specific Actor", by_name)

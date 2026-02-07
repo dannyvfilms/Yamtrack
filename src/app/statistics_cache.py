@@ -440,6 +440,29 @@ def _get_empty_statistics_data():
         "top_played": [],
         "top_talent": {
             "sort_by": "plays",
+            "by_sort": {
+                "plays": {
+                    "top_actors": [],
+                    "top_actresses": [],
+                    "top_directors": [],
+                    "top_writers": [],
+                    "top_studios": [],
+                },
+                "time": {
+                    "top_actors": [],
+                    "top_actresses": [],
+                    "top_directors": [],
+                    "top_writers": [],
+                    "top_studios": [],
+                },
+                "titles": {
+                    "top_actors": [],
+                    "top_actresses": [],
+                    "top_directors": [],
+                    "top_writers": [],
+                    "top_studios": [],
+                },
+            },
             "top_actors": [],
             "top_actresses": [],
             "top_directors": [],
@@ -2352,9 +2375,19 @@ def _aggregate_top_talent(user, start_date, end_date, limit=20, schedule_missing
     movie_play_counts = Counter()
     movie_watch_minutes = Counter()
     episode_play_rows = []
+    valid_sort_modes = ("plays", "time", "titles")
     sort_by = getattr(user, "top_talent_sort_by", "plays")
-    if sort_by not in {"plays", "time", "titles"}:
+    if sort_by not in valid_sort_modes:
         sort_by = "plays"
+
+    def _empty_talent_bucket():
+        return {
+            "top_actors": [],
+            "top_actresses": [],
+            "top_directors": [],
+            "top_writers": [],
+            "top_studios": [],
+        }
 
     # TV plays: track episode play rows so we can prefer episode-level credits.
     episodes_qs = Episode.objects.filter(
@@ -2402,13 +2435,12 @@ def _aggregate_top_talent(user, start_date, end_date, limit=20, schedule_missing
             movie_watch_minutes[item_id] += _safe_runtime_minutes(runtime_minutes)
 
     if not movie_play_counts and not episode_play_rows:
+        by_sort = {mode: _empty_talent_bucket() for mode in valid_sort_modes}
+        selected_payload = by_sort.get(sort_by, _empty_talent_bucket())
         return {
             "sort_by": sort_by,
-            "top_actors": [],
-            "top_actresses": [],
-            "top_directors": [],
-            "top_writers": [],
-            "top_studios": [],
+            "by_sort": by_sort,
+            **selected_payload,
         }
 
     movie_item_ids = set(movie_play_counts.keys())
@@ -2606,31 +2638,31 @@ def _aggregate_top_talent(user, start_date, end_date, limit=20, schedule_missing
             studio_minutes[studio_id] += watched_minutes
             studio_show_items[studio_id].add(tv_item_id)
 
-    def _person_sort_key(person_id, plays, minutes, movie_items_by_person, show_items_by_person):
+    def _person_sort_key(person_id, plays, minutes, movie_items_by_person, show_items_by_person, mode):
         unique_movies = len(movie_items_by_person.get(person_id, set()))
         unique_shows = len(show_items_by_person.get(person_id, set()))
         unique_titles = unique_movies + unique_shows
         person = people_by_id.get(person_id)
         name_key = person.name.lower() if person else ""
-        if sort_by == "time":
+        if mode == "time":
             return (-minutes, -plays, -unique_titles, name_key)
-        if sort_by == "titles":
+        if mode == "titles":
             return (-unique_titles, -plays, -minutes, name_key)
         return (-plays, -minutes, -unique_titles, name_key)
 
-    def _studio_sort_key(studio_id, plays, minutes, movie_items_by_studio, show_items_by_studio):
+    def _studio_sort_key(studio_id, plays, minutes, movie_items_by_studio, show_items_by_studio, mode):
         unique_movies = len(movie_items_by_studio.get(studio_id, set()))
         unique_shows = len(show_items_by_studio.get(studio_id, set()))
         unique_titles = unique_movies + unique_shows
         studio = studios_by_id.get(studio_id)
         name_key = studio.name.lower() if studio else ""
-        if sort_by == "time":
+        if mode == "time":
             return (-minutes, -plays, -unique_titles, name_key)
-        if sort_by == "titles":
+        if mode == "titles":
             return (-unique_titles, -plays, -minutes, name_key)
         return (-plays, -minutes, -unique_titles, name_key)
 
-    def _sorted_people(counter_obj, minute_counter, movie_items_by_person, show_items_by_person):
+    def _sorted_people(counter_obj, minute_counter, movie_items_by_person, show_items_by_person, mode):
         ranked = sorted(
             counter_obj.items(),
             key=lambda row: _person_sort_key(
@@ -2639,6 +2671,7 @@ def _aggregate_top_talent(user, start_date, end_date, limit=20, schedule_missing
                 int(minute_counter.get(row[0], 0)),
                 movie_items_by_person,
                 show_items_by_person,
+                mode,
             ),
         )[:limit]
         payload = []
@@ -2665,7 +2698,7 @@ def _aggregate_top_talent(user, start_date, end_date, limit=20, schedule_missing
             )
         return payload
 
-    def _sorted_studios(counter_obj, minute_counter, movie_items_by_studio, show_items_by_studio):
+    def _sorted_studios(counter_obj, minute_counter, movie_items_by_studio, show_items_by_studio, mode):
         ranked = sorted(
             counter_obj.items(),
             key=lambda row: _studio_sort_key(
@@ -2674,6 +2707,7 @@ def _aggregate_top_talent(user, start_date, end_date, limit=20, schedule_missing
                 int(minute_counter.get(row[0], 0)),
                 movie_items_by_studio,
                 show_items_by_studio,
+                mode,
             ),
         )[:limit]
         payload = []
@@ -2700,38 +2734,51 @@ def _aggregate_top_talent(user, start_date, end_date, limit=20, schedule_missing
             )
         return payload
 
+    by_sort = {}
+    for mode in valid_sort_modes:
+        by_sort[mode] = {
+            "top_actors": _sorted_people(
+                actor_counts,
+                actor_minutes,
+                actor_movie_items,
+                actor_show_items,
+                mode,
+            ),
+            "top_actresses": _sorted_people(
+                actress_counts,
+                actress_minutes,
+                actress_movie_items,
+                actress_show_items,
+                mode,
+            ),
+            "top_directors": _sorted_people(
+                director_counts,
+                director_minutes,
+                director_movie_items,
+                director_show_items,
+                mode,
+            ),
+            "top_writers": _sorted_people(
+                writer_counts,
+                writer_minutes,
+                writer_movie_items,
+                writer_show_items,
+                mode,
+            ),
+            "top_studios": _sorted_studios(
+                studio_counts,
+                studio_minutes,
+                studio_movie_items,
+                studio_show_items,
+                mode,
+            ),
+        }
+
+    selected_payload = by_sort.get(sort_by, _empty_talent_bucket())
     return {
         "sort_by": sort_by,
-        "top_actors": _sorted_people(
-            actor_counts,
-            actor_minutes,
-            actor_movie_items,
-            actor_show_items,
-        ),
-        "top_actresses": _sorted_people(
-            actress_counts,
-            actress_minutes,
-            actress_movie_items,
-            actress_show_items,
-        ),
-        "top_directors": _sorted_people(
-            director_counts,
-            director_minutes,
-            director_movie_items,
-            director_show_items,
-        ),
-        "top_writers": _sorted_people(
-            writer_counts,
-            writer_minutes,
-            writer_movie_items,
-            writer_show_items,
-        ),
-        "top_studios": _sorted_studios(
-            studio_counts,
-            studio_minutes,
-            studio_movie_items,
-            studio_show_items,
-        ),
+        "by_sort": by_sort,
+        **selected_payload,
     }
 
 
@@ -3456,6 +3503,34 @@ def cache_statistics_data(user_id: int, range_name: str, data: dict, history_ver
     }
     cache.set(cache_key, cache_entry, timeout=STATISTICS_CACHE_TIMEOUT)
     logger.debug("Cached statistics data for user %s, range %s", user_id, range_name)
+
+
+def range_needs_top_talent_upgrade(user_id: int, range_name: str) -> bool:
+    """Return True when cached top_talent payload is missing precomputed by_sort data."""
+    if range_name not in PREDEFINED_RANGES:
+        return False
+
+    cache_entry = cache.get(_cache_key(user_id, range_name))
+    if not isinstance(cache_entry, dict):
+        return False
+
+    data = cache_entry.get("data")
+    if not isinstance(data, dict):
+        return True
+
+    top_talent = data.get("top_talent")
+    if not isinstance(top_talent, dict):
+        return True
+
+    by_sort = top_talent.get("by_sort")
+    if not isinstance(by_sort, dict):
+        return True
+
+    for mode in ("plays", "time", "titles"):
+        if not isinstance(by_sort.get(mode), dict):
+            return True
+
+    return False
 
 
 def get_statistics_data(user, start_date, end_date, range_name=None):

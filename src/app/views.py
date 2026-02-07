@@ -70,6 +70,7 @@ from app.services import music as sync_services
 from app.templatetags import app_tags
 from lists.models import CustomList
 from users.models import HomeSortChoices, MediaSortChoices, MediaStatusChoices
+from users.models import TopTalentSortChoices
 
 logger = logging.getLogger(__name__)
 
@@ -7339,6 +7340,51 @@ def refresh_statistics(request):
     )
     
     return JsonResponse({"success": True, "message": "Statistics refresh scheduled"})
+
+
+@require_POST
+def update_top_talent_sort(request):
+    """Autosave top talent sort preference from statistics page controls."""
+    sort_by = request.POST.get("sort_by")
+    range_name = request.POST.get("range_name")
+
+    valid_sort_values = list(TopTalentSortChoices.values)
+    if sort_by not in valid_sort_values:
+        return JsonResponse(
+            {
+                "error": "Invalid sort_by",
+                "valid_values": valid_sort_values,
+            },
+            status=400,
+        )
+
+    previous_sort = request.user.top_talent_sort_by
+    updated_sort = request.user.update_preference("top_talent_sort_by", sort_by)
+    changed = previous_sort != updated_sort
+    requires_reload = False
+
+    if range_name in statistics_cache.PREDEFINED_RANGES:
+        try:
+            if statistics_cache.range_needs_top_talent_upgrade(request.user.id, range_name):
+                statistics_cache.invalidate_statistics_cache(request.user.id, range_name)
+                statistics_cache.refresh_statistics_cache(request.user.id, range_name)
+                requires_reload = True
+        except Exception as exc:  # pragma: no cover - best effort compatibility upgrade
+            logger.debug(
+                "top_talent_sort_upgrade_failed user_id=%s range=%s error=%s",
+                request.user.id,
+                range_name,
+                exc,
+            )
+
+    return JsonResponse(
+        {
+            "success": True,
+            "sort_by": updated_sort,
+            "changed": changed,
+            "requires_reload": requires_reload,
+        },
+    )
 
 
 @require_GET

@@ -82,6 +82,11 @@ urlpatterns = [
     ),
     path("statistics", views.statistics, name="statistics"),
     path("statistics/refresh", views.refresh_statistics, name="refresh_statistics"),
+    path(
+        "statistics/top-talent-sort",
+        views.update_top_talent_sort,
+        name="update_top_talent_sort",
+    ),
     path("history", views.history, name="history"),
     path(
         "person/<source:source>/<str:person_id>/<slug:name>",

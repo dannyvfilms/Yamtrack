@@ -1003,190 +1003,121 @@
       </div>
 
       {% with talent=top_talent %}
-      {% with talent_sort=talent.sort_by|default:request.user.top_talent_sort_by|default:'plays' %}
+      {% with talent_sort=request.user.top_talent_sort_by|default:talent.sort_by|default:'plays' %}
       {% if talent.top_actors or talent.top_actresses or talent.top_directors or talent.top_writers or talent.top_studios %}
-      <section class="bg-[#2a2f35] rounded-lg p-6 mobile-tight-section stat-scroll-safe mb-4 sm:mb-8 space-y-8">
-        <div class="flex flex-col space-y-1">
-          <span class="text-sm uppercase tracking-widest text-gray-400">Cast &amp; Crew</span>
-          <h2 class="text-2xl font-semibold text-white">Top Talent &amp; Studios</h2>
-          <span class="text-sm text-gray-500" x-text="selectedRange"></span>
+      <section class="bg-[#2a2f35] rounded-lg p-6 mobile-tight-section stat-scroll-safe mb-4 sm:mb-8 space-y-8"
+               x-data="{
+                 open: false,
+                 selectedSort: '{{ talent_sort|escapejs }}',
+                 currentRangeName: '{{ selected_range_name|default:""|escapejs }}',
+                 selectedLabel: '',
+                 init() {
+                   this.selectedLabel = this.selectedSort === 'time' ? 'Time' : (this.selectedSort === 'titles' ? 'Titles' : 'Plays');
+                 },
+                 async setSort(sortBy, label) {
+                   if (this.selectedSort === sortBy) {
+                     this.open = false;
+                     return;
+                   }
+                   this.selectedSort = sortBy;
+                   this.selectedLabel = label;
+                   this.open = false;
+                   try {
+                     const body = new URLSearchParams();
+                     body.set('sort_by', sortBy);
+                     if (this.currentRangeName) {
+                       body.set('range_name', this.currentRangeName);
+                     }
+                     const response = await fetch('{% url 'update_top_talent_sort' %}', {
+                       method: 'POST',
+                       headers: {
+                         'Content-Type': 'application/x-www-form-urlencoded',
+                         'X-CSRFToken': '{{ csrf_token }}',
+                         'X-Requested-With': 'XMLHttpRequest'
+                       },
+                       body: body.toString()
+                     });
+                     const data = await response.json();
+                     if (!response.ok || !data.success) {
+                       throw new Error(data.error || 'Failed to save top talent sort');
+                     }
+                     if (data.requires_reload) {
+                       window.location.reload();
+                     }
+                   } catch (error) {
+                     console.error('Failed to save top talent sort:', error);
+                   }
+                 }
+               }">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div class="flex flex-col space-y-1">
+            <span class="text-sm uppercase tracking-widest text-gray-400">Cast &amp; Crew</span>
+            <h2 class="text-2xl font-semibold text-white">Top Talent &amp; Studios</h2>
+            <span class="text-sm text-gray-500" x-text="selectedRange"></span>
+          </div>
+
+          <div class="w-full sm:w-auto">
+            <label class="text-xs uppercase tracking-wide text-gray-400">Sort By</label>
+            <div class="relative mt-1">
+              <button type="button"
+                      @click="open = !open"
+                      @click.outside="open = false"
+                      class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
+                <span x-text="selectedLabel"></span>
+                <svg xmlns="http://www.w3.org/2000/svg"
+                     width="24"
+                     height="24"
+                     viewBox="0 0 24 24"
+                     fill="none"
+                     stroke="currentColor"
+                     stroke-width="2"
+                     stroke-linecap="round"
+                     stroke-linejoin="round"
+                     class="w-4 h-4 text-gray-400">
+                  <path d="m6 9 6 6 6-6"></path>
+                </svg>
+              </button>
+              <div x-show="open"
+                   x-transition:enter="transition ease-out duration-100"
+                   x-transition:enter-start="transform opacity-0 scale-95"
+                   x-transition:enter-end="transform opacity-100 scale-100"
+                   x-transition:leave="transition ease-in duration-75"
+                   x-transition:leave-start="transform opacity-100 scale-100"
+                   x-transition:leave-end="transform opacity-0 scale-95"
+                   class="absolute left-0 right-0 mt-2 py-1 bg-[#272c31] rounded-md shadow-lg overflow-hidden z-10 border border-gray-600">
+                <button type="button"
+                        @click="setSort('plays', 'Plays')"
+                        class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                  Plays
+                </button>
+                <button type="button"
+                        @click="setSort('time', 'Time')"
+                        class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                  Time
+                </button>
+                <button type="button"
+                        @click="setSort('titles', 'Titles')"
+                        class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                  Titles
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
-          {% if talent.top_actors %}
-            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
-              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top Actors</h3>
-              <div class="overflow-y-auto pr-1 statistics-card-scroll">
-                {% for entry in talent.top_actors|slice:":20" %}
-                  <a href="{% url 'person_detail' source=entry.source person_id=entry.person_id name=entry.name|slug %}"
-                     class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
-                    <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
-                    {% if entry.image and entry.image != IMG_NONE %}
-                      <img src="{{ entry.image }}" alt="{{ entry.name }}" class="w-10 h-10 rounded object-cover">
-                    {% else %}
-                      <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
-                        {% include "app/icons/person.svg" with classes="w-5 h-5 text-gray-500" %}
-                      </div>
-                    {% endif %}
-                    <div class="flex-1 min-w-0">
-                      <p class="text-sm font-medium text-white truncate">{{ entry.name }}</p>
-                      <p class="text-xs text-gray-500">
-                        {{ entry.unique_movies }} Movie{{ entry.unique_movies|pluralize }} &bull;
-                        {{ entry.unique_shows }} Show{{ entry.unique_shows|pluralize }}
-                        {% if talent_sort == 'plays' %}
-                          &bull; {{ entry.plays|default:0 }} Play{{ entry.plays|default:0|pluralize }}
-                        {% elif talent_sort == 'time' %}
-                          &bull; {{ entry.watched_time|default:"0h 0min" }}
-                        {% elif talent_sort == 'titles' %}
-                          &bull; {{ entry.unique_titles|default:0 }} Title{{ entry.unique_titles|default:0|pluralize }}
-                        {% endif %}
-                      </p>
-                    </div>
-                  </a>
-                {% endfor %}
-              </div>
-            </div>
-          {% endif %}
-
-          {% if talent.top_actresses %}
-            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
-              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top Actresses</h3>
-              <div class="overflow-y-auto pr-1 statistics-card-scroll">
-                {% for entry in talent.top_actresses|slice:":20" %}
-                  <a href="{% url 'person_detail' source=entry.source person_id=entry.person_id name=entry.name|slug %}"
-                     class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
-                    <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
-                    {% if entry.image and entry.image != IMG_NONE %}
-                      <img src="{{ entry.image }}" alt="{{ entry.name }}" class="w-10 h-10 rounded object-cover">
-                    {% else %}
-                      <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
-                        {% include "app/icons/person.svg" with classes="w-5 h-5 text-gray-500" %}
-                      </div>
-                    {% endif %}
-                    <div class="flex-1 min-w-0">
-                      <p class="text-sm font-medium text-white truncate">{{ entry.name }}</p>
-                      <p class="text-xs text-gray-500">
-                        {{ entry.unique_movies }} Movie{{ entry.unique_movies|pluralize }} &bull;
-                        {{ entry.unique_shows }} Show{{ entry.unique_shows|pluralize }}
-                        {% if talent_sort == 'plays' %}
-                          &bull; {{ entry.plays|default:0 }} Play{{ entry.plays|default:0|pluralize }}
-                        {% elif talent_sort == 'time' %}
-                          &bull; {{ entry.watched_time|default:"0h 0min" }}
-                        {% elif talent_sort == 'titles' %}
-                          &bull; {{ entry.unique_titles|default:0 }} Title{{ entry.unique_titles|default:0|pluralize }}
-                        {% endif %}
-                      </p>
-                    </div>
-                  </a>
-                {% endfor %}
-              </div>
-            </div>
-          {% endif %}
-
-          {% if talent.top_directors %}
-            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
-              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top Directors</h3>
-              <div class="overflow-y-auto pr-1 statistics-card-scroll">
-                {% for entry in talent.top_directors|slice:":20" %}
-                  <a href="{% url 'person_detail' source=entry.source person_id=entry.person_id name=entry.name|slug %}"
-                     class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
-                    <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
-                    {% if entry.image and entry.image != IMG_NONE %}
-                      <img src="{{ entry.image }}" alt="{{ entry.name }}" class="w-10 h-10 rounded object-cover">
-                    {% else %}
-                      <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
-                        {% include "app/icons/person.svg" with classes="w-5 h-5 text-gray-500" %}
-                      </div>
-                    {% endif %}
-                    <div class="flex-1 min-w-0">
-                      <p class="text-sm font-medium text-white truncate">{{ entry.name }}</p>
-                      <p class="text-xs text-gray-500">
-                        {{ entry.unique_movies }} Movie{{ entry.unique_movies|pluralize }} &bull;
-                        {{ entry.unique_shows }} Show{{ entry.unique_shows|pluralize }}
-                        {% if talent_sort == 'plays' %}
-                          &bull; {{ entry.plays|default:0 }} Play{{ entry.plays|default:0|pluralize }}
-                        {% elif talent_sort == 'time' %}
-                          &bull; {{ entry.watched_time|default:"0h 0min" }}
-                        {% elif talent_sort == 'titles' %}
-                          &bull; {{ entry.unique_titles|default:0 }} Title{{ entry.unique_titles|default:0|pluralize }}
-                        {% endif %}
-                      </p>
-                    </div>
-                  </a>
-                {% endfor %}
-              </div>
-            </div>
-          {% endif %}
-
-          {% if talent.top_writers %}
-            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
-              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top Writers</h3>
-              <div class="overflow-y-auto pr-1 statistics-card-scroll">
-                {% for entry in talent.top_writers|slice:":20" %}
-                  <a href="{% url 'person_detail' source=entry.source person_id=entry.person_id name=entry.name|slug %}"
-                     class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
-                    <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
-                    {% if entry.image and entry.image != IMG_NONE %}
-                      <img src="{{ entry.image }}" alt="{{ entry.name }}" class="w-10 h-10 rounded object-cover">
-                    {% else %}
-                      <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
-                        {% include "app/icons/person.svg" with classes="w-5 h-5 text-gray-500" %}
-                      </div>
-                    {% endif %}
-                    <div class="flex-1 min-w-0">
-                      <p class="text-sm font-medium text-white truncate">{{ entry.name }}</p>
-                      <p class="text-xs text-gray-500">
-                        {{ entry.unique_movies }} Movie{{ entry.unique_movies|pluralize }} &bull;
-                        {{ entry.unique_shows }} Show{{ entry.unique_shows|pluralize }}
-                        {% if talent_sort == 'plays' %}
-                          &bull; {{ entry.plays|default:0 }} Play{{ entry.plays|default:0|pluralize }}
-                        {% elif talent_sort == 'time' %}
-                          &bull; {{ entry.watched_time|default:"0h 0min" }}
-                        {% elif talent_sort == 'titles' %}
-                          &bull; {{ entry.unique_titles|default:0 }} Title{{ entry.unique_titles|default:0|pluralize }}
-                        {% endif %}
-                      </p>
-                    </div>
-                  </a>
-                {% endfor %}
-              </div>
-            </div>
-          {% endif %}
-
-          {% if talent.top_studios %}
-            <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
-              <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top Studios</h3>
-              <div class="overflow-y-auto pr-1 statistics-card-scroll">
-                {% for entry in talent.top_studios|slice:":20" %}
-                  <div class="flex items-center space-x-3">
-                    <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
-                    {% if entry.logo and entry.logo != IMG_NONE %}
-                      <img src="{{ entry.logo }}" alt="{{ entry.name }}" class="w-10 h-10 rounded bg-[#2a2f35] p-1 object-contain">
-                    {% else %}
-                      <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
-                        {% include "app/icons/cube.svg" with classes="w-5 h-5 text-gray-500" %}
-                      </div>
-                    {% endif %}
-                    <div class="flex-1 min-w-0">
-                      <p class="text-sm font-medium text-white truncate">{{ entry.name }}</p>
-                      <p class="text-xs text-gray-500">
-                        {{ entry.unique_movies }} Movie{{ entry.unique_movies|pluralize }} &bull;
-                        {{ entry.unique_shows }} Show{{ entry.unique_shows|pluralize }}
-                        {% if talent_sort == 'plays' %}
-                          &bull; {{ entry.plays|default:0 }} Play{{ entry.plays|default:0|pluralize }}
-                        {% elif talent_sort == 'time' %}
-                          &bull; {{ entry.watched_time|default:"0h 0min" }}
-                        {% elif talent_sort == 'titles' %}
-                          &bull; {{ entry.unique_titles|default:0 }} Title{{ entry.unique_titles|default:0|pluralize }}
-                        {% endif %}
-                      </p>
-                    </div>
-                  </div>
-                {% endfor %}
-              </div>
-            </div>
-          {% endif %}
-        </div>
+        {% if talent.by_sort %}
+          <div x-show="selectedSort === 'plays'" x-cloak>
+            {% include "app/components/top_talent_grid.html" with talent=talent.by_sort.plays talent_sort='plays' %}
+          </div>
+          <div x-show="selectedSort === 'time'" x-cloak>
+            {% include "app/components/top_talent_grid.html" with talent=talent.by_sort.time talent_sort='time' %}
+          </div>
+          <div x-show="selectedSort === 'titles'" x-cloak>
+            {% include "app/components/top_talent_grid.html" with talent=talent.by_sort.titles talent_sort='titles' %}
+          </div>
+        {% else %}
+          {% include "app/components/top_talent_grid.html" with talent=talent talent_sort=talent_sort %}
+        {% endif %}
       </section>
       {% endif %}
       {% endwith %}

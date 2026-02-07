@@ -1,0 +1,177 @@
+{% load app_tags %}
+
+<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-4">
+  {% if talent.top_actors %}
+    <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+      <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top Actors</h3>
+      <div class="overflow-y-auto pr-1 statistics-card-scroll">
+        {% for entry in talent.top_actors|slice:":20" %}
+          <a href="{% url 'person_detail' source=entry.source person_id=entry.person_id name=entry.name|slug %}"
+             class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
+            <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
+            {% if entry.image and entry.image != IMG_NONE %}
+              <img src="{{ entry.image }}" alt="{{ entry.name }}" class="w-10 h-10 rounded object-cover">
+            {% else %}
+              <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
+                {% include "app/icons/person.svg" with classes="w-5 h-5 text-gray-500" %}
+              </div>
+            {% endif %}
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-medium text-white truncate">{{ entry.name }}</p>
+              <p class="text-xs text-gray-500">
+                {{ entry.unique_movies }} Movie{{ entry.unique_movies|pluralize }} &bull;
+                {{ entry.unique_shows }} Show{{ entry.unique_shows|pluralize }}
+                {% if talent_sort == 'plays' %}
+                  &bull; {{ entry.plays|default:0 }} Play{{ entry.plays|default:0|pluralize }}
+                {% elif talent_sort == 'time' %}
+                  &bull; {{ entry.watched_time|default:"0h 0min" }}
+                {% elif talent_sort == 'titles' %}
+                  &bull; {{ entry.unique_titles|default:0 }} Title{{ entry.unique_titles|default:0|pluralize }}
+                {% endif %}
+              </p>
+            </div>
+          </a>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+  {% if talent.top_actresses %}
+    <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+      <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top Actresses</h3>
+      <div class="overflow-y-auto pr-1 statistics-card-scroll">
+        {% for entry in talent.top_actresses|slice:":20" %}
+          <a href="{% url 'person_detail' source=entry.source person_id=entry.person_id name=entry.name|slug %}"
+             class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
+            <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
+            {% if entry.image and entry.image != IMG_NONE %}
+              <img src="{{ entry.image }}" alt="{{ entry.name }}" class="w-10 h-10 rounded object-cover">
+            {% else %}
+              <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
+                {% include "app/icons/person.svg" with classes="w-5 h-5 text-gray-500" %}
+              </div>
+            {% endif %}
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-medium text-white truncate">{{ entry.name }}</p>
+              <p class="text-xs text-gray-500">
+                {{ entry.unique_movies }} Movie{{ entry.unique_movies|pluralize }} &bull;
+                {{ entry.unique_shows }} Show{{ entry.unique_shows|pluralize }}
+                {% if talent_sort == 'plays' %}
+                  &bull; {{ entry.plays|default:0 }} Play{{ entry.plays|default:0|pluralize }}
+                {% elif talent_sort == 'time' %}
+                  &bull; {{ entry.watched_time|default:"0h 0min" }}
+                {% elif talent_sort == 'titles' %}
+                  &bull; {{ entry.unique_titles|default:0 }} Title{{ entry.unique_titles|default:0|pluralize }}
+                {% endif %}
+              </p>
+            </div>
+          </a>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+  {% if talent.top_directors %}
+    <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+      <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top Directors</h3>
+      <div class="overflow-y-auto pr-1 statistics-card-scroll">
+        {% for entry in talent.top_directors|slice:":20" %}
+          <a href="{% url 'person_detail' source=entry.source person_id=entry.person_id name=entry.name|slug %}"
+             class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
+            <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
+            {% if entry.image and entry.image != IMG_NONE %}
+              <img src="{{ entry.image }}" alt="{{ entry.name }}" class="w-10 h-10 rounded object-cover">
+            {% else %}
+              <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
+                {% include "app/icons/person.svg" with classes="w-5 h-5 text-gray-500" %}
+              </div>
+            {% endif %}
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-medium text-white truncate">{{ entry.name }}</p>
+              <p class="text-xs text-gray-500">
+                {{ entry.unique_movies }} Movie{{ entry.unique_movies|pluralize }} &bull;
+                {{ entry.unique_shows }} Show{{ entry.unique_shows|pluralize }}
+                {% if talent_sort == 'plays' %}
+                  &bull; {{ entry.plays|default:0 }} Play{{ entry.plays|default:0|pluralize }}
+                {% elif talent_sort == 'time' %}
+                  &bull; {{ entry.watched_time|default:"0h 0min" }}
+                {% elif talent_sort == 'titles' %}
+                  &bull; {{ entry.unique_titles|default:0 }} Title{{ entry.unique_titles|default:0|pluralize }}
+                {% endif %}
+              </p>
+            </div>
+          </a>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+  {% if talent.top_writers %}
+    <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+      <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top Writers</h3>
+      <div class="overflow-y-auto pr-1 statistics-card-scroll">
+        {% for entry in talent.top_writers|slice:":20" %}
+          <a href="{% url 'person_detail' source=entry.source person_id=entry.person_id name=entry.name|slug %}"
+             class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
+            <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
+            {% if entry.image and entry.image != IMG_NONE %}
+              <img src="{{ entry.image }}" alt="{{ entry.name }}" class="w-10 h-10 rounded object-cover">
+            {% else %}
+              <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
+                {% include "app/icons/person.svg" with classes="w-5 h-5 text-gray-500" %}
+              </div>
+            {% endif %}
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-medium text-white truncate">{{ entry.name }}</p>
+              <p class="text-xs text-gray-500">
+                {{ entry.unique_movies }} Movie{{ entry.unique_movies|pluralize }} &bull;
+                {{ entry.unique_shows }} Show{{ entry.unique_shows|pluralize }}
+                {% if talent_sort == 'plays' %}
+                  &bull; {{ entry.plays|default:0 }} Play{{ entry.plays|default:0|pluralize }}
+                {% elif talent_sort == 'time' %}
+                  &bull; {{ entry.watched_time|default:"0h 0min" }}
+                {% elif talent_sort == 'titles' %}
+                  &bull; {{ entry.unique_titles|default:0 }} Title{{ entry.unique_titles|default:0|pluralize }}
+                {% endif %}
+              </p>
+            </div>
+          </a>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+  {% if talent.top_studios %}
+    <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+      <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top Studios</h3>
+      <div class="overflow-y-auto pr-1 statistics-card-scroll">
+        {% for entry in talent.top_studios|slice:":20" %}
+          <div class="flex items-center space-x-3">
+            <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
+            {% if entry.logo and entry.logo != IMG_NONE %}
+              <img src="{{ entry.logo }}" alt="{{ entry.name }}" class="w-10 h-10 rounded bg-[#2a2f35] p-1 object-contain">
+            {% else %}
+              <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
+                {% include "app/icons/cube.svg" with classes="w-5 h-5 text-gray-500" %}
+              </div>
+            {% endif %}
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-medium text-white truncate">{{ entry.name }}</p>
+              <p class="text-xs text-gray-500">
+                {{ entry.unique_movies }} Movie{{ entry.unique_movies|pluralize }} &bull;
+                {{ entry.unique_shows }} Show{{ entry.unique_shows|pluralize }}
+                {% if talent_sort == 'plays' %}
+                  &bull; {{ entry.plays|default:0 }} Play{{ entry.plays|default:0|pluralize }}
+                {% elif talent_sort == 'time' %}
+                  &bull; {{ entry.watched_time|default:"0h 0min" }}
+                {% elif talent_sort == 'titles' %}
+                  &bull; {{ entry.unique_titles|default:0 }} Title{{ entry.unique_titles|default:0|pluralize }}
+                {% endif %}
+              </p>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+</div>
