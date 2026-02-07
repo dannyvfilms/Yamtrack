@@ -1056,13 +1056,13 @@
             <span class="text-sm text-gray-500" x-text="selectedRange"></span>
           </div>
 
-          <div class="w-full sm:w-auto">
-            <label class="text-xs uppercase tracking-wide text-gray-400">Sort By</label>
+          <div class="w-full sm:w-auto sm:ml-auto text-right">
+            <label class="block text-xs uppercase tracking-wide text-gray-400">Sort By</label>
             <div class="relative mt-1">
               <button type="button"
                       @click="open = !open"
                       @click.outside="open = false"
-                      class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
+                      class="flex items-center justify-between w-full gap-2 px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
                 <span x-text="selectedLabel"></span>
                 <svg xmlns="http://www.w3.org/2000/svg"
                      width="24"
@@ -1073,7 +1073,7 @@
                      stroke-width="2"
                      stroke-linecap="round"
                      stroke-linejoin="round"
-                     class="w-4 h-4 text-gray-400">
+                     class="w-4 h-4 ml-1 text-gray-400">
                   <path d="m6 9 6 6 6-6"></path>
                 </svg>
               </button>
