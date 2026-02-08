@@ -269,7 +269,7 @@
               {% elif release_year %}
                 {% with aggregated_progress=media|safe_attr:"aggregated_progress" %}
                   <p class="media-card-year text-xs text-gray-400 mt-1">
-                    {{ release_year }}
+                    {{ release_year }}{% if item.series_position %} · Book {{ item.series_position|floatformat }}{% endif %}
                     {% if resolved_media_type == MediaTypes.GAME.value %}
                       {% if aggregated_progress %}
                         <span class="ml-1 text-gray-400">• {{ media.formatted_aggregated_progress }}</span>
@@ -327,6 +327,11 @@
                     {% endif %}
                   </p>
                 {% endwith %}
+              {% elif item.series_position %}
+                {# Books in series without release date - show "Planned" #}
+                <p class="media-card-year text-xs text-gray-400 mt-1">
+                  Planned · Book {{ item.series_position|floatformat }}
+                </p>
               {% elif show_release_year_placeholder and item.id %}
                 {% with aggregated_progress=media|safe_attr:"aggregated_progress" %}
                   <p class="media-card-year text-xs text-gray-400 mt-1 release-year-placeholder"

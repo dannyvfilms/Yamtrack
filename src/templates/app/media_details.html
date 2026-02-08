@@ -212,7 +212,13 @@
           </h2>
         {% endif %}
 
-        <h1 class="text-3xl font-bold mb-4 text-center md:text-start">{{ media.title }}</h1>
+        <h1 class="text-3xl font-bold mb-1 text-center md:text-start">{{ media.title }}</h1>
+        {% if media.media_type == MediaTypes.BOOK.value and media.series_name %}
+          <p class="text-indigo-400 font-medium mb-4 text-center md:text-start">
+            {{ media.series_name }}
+            {% if media.series_position %}<span class="text-gray-400 ml-1">#{{ media.series_position|floatformat:"-2" }}</span>{% endif %}
+          </p>
+        {% endif %}
 
         {% if media_type == MediaTypes.MUSIC.value and music_album %}
           <p class="text-gray-400 mb-4 text-center md:text-start">

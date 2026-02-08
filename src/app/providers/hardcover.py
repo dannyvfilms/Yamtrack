@@ -132,9 +132,10 @@ def book(media_id):
               isbn_13
               isbn_10
               release_date
-              publisher {
-                name
-              }
+            }
+            featured_book_series {
+              position
+              series_id
             }
           }
         }
@@ -178,6 +179,13 @@ def book(media_id):
             )
 
         edition_details = get_edition_details(book_data.get("default_cover_edition"))
+        series_data = process_series_data(book_data.get("featured_book_series"))
+
+        related = {}
+        if series_data.get("books"):
+            # Use specific series name if available, otherwise default to "Series"
+            series_title = series_data.get("name") or "Series"
+            related[series_title] = series_data["books"]
 
         data = {
             "media_id": book_data["id"],
@@ -191,6 +199,8 @@ def book(media_id):
             "genres": get_tags(book_data.get("cached_tags")),
             "score": get_ratings(book_data.get("rating")),
             "score_count": book_data.get("ratings_count", 0),
+            "series_name": series_data.get("name"),
+            "series_position": series_data.get("position"),
             "details": {
                 "format": edition_details.get("format"),
                 "number_of_pages": book_data.get("pages"),
@@ -200,6 +210,7 @@ def book(media_id):
                 "publisher": edition_details.get("publisher"),
                 "isbn": edition_details.get("isbn"),
             },
+            "related": related,
         }
 
         cache.set(cache_key, data)
@@ -260,3 +271,122 @@ def get_image_url(response):
     if response.get("image") and response["image"].get("url"):
         return response["image"]["url"]
     return settings.IMG_NONE
+
+
+def get_series_details(series_id):
+    """Fetch series details including all books in the series."""
+    series_query = """
+    query GetSeriesBooks($series_id: Int!) {
+      book_series(where: {series_id: {_eq: $series_id}, featured: {_eq: true}}, order_by: {position: asc}) {
+        position
+        book {
+          id
+          title
+          slug
+          rating
+          ratings_count
+          pages
+          release_date
+          compilation
+          book_category_id
+          cached_image(path: "url")
+        }
+      }
+    }
+    """
+
+    variables = {"series_id": series_id}
+
+    try:
+        response = services.api_request(
+            Sources.HARDCOVER.value,
+            "POST",
+            base_url,
+            params={"query": series_query, "variables": variables},
+            headers={"Authorization": settings.HARDCOVER_API},
+        )
+    except requests.exceptions.HTTPError as error:
+        logger.warning("Failed to fetch series details: %s", error)
+        return None
+
+    if "errors" in response:
+        logger.warning("GraphQL errors fetching series: %s", response["errors"])
+        return None
+
+    return response.get("data", {}).get("book_series", [])
+
+
+def process_series_data(featured_series):
+    """Process series data from Hardcover API."""
+    if not featured_series:
+        return {}
+
+    series_id = featured_series.get("series_id")
+    series_name = None
+    series_books = []
+
+    if series_id:
+        series_items = get_series_details(series_id)
+        
+        if series_items:
+            # Note: The Hardcover API currently doesn't expose the Series object directly via GraphQL
+            # for the series_id returned in featured_book_series, nor does book_series link to it.
+            # So we cannot get the series name easily. We default to None, which will result in "Series" as the label.
+
+            # Deduplicate by position, picking the one with highest ratings_count
+            best_by_position = {}
+            for item in series_items:
+                pos = item.get("position")
+                if pos is None:
+                    continue
+                
+                book_data = item.get("book")
+                if not book_data:
+                    continue
+
+                # Filter out placeholders, bonus chapters, and bundles
+                title = book_data.get("title", "") or ""
+                if "untitled" in title.lower():
+                    continue
+                if "bonus chapter" in title.lower():
+                    continue
+                if book_data.get("compilation") or book_data.get("book_category_id") == 8:
+                    continue
+
+                # Use ratings_count as a proxy for "most representative" edition
+                ratings = book_data.get("ratings_count", 0) or 0
+                
+                if pos not in best_by_position:
+                    best_by_position[pos] = item
+                else:
+                    existing_ratings = best_by_position[pos].get("book", {}).get("ratings_count", 0) or 0
+                    if ratings > existing_ratings:
+                        best_by_position[pos] = item
+
+            # Sort by position
+            sorted_positions = sorted(best_by_position.keys())
+
+            # Process books in the series
+            limit_books = 25  # Limit number of books to show in collection
+            for pos in sorted_positions[:limit_books]:
+                item = best_by_position[pos]
+                book_data = item.get("book")
+                
+                series_books.append(
+                    {
+                        "media_id": book_data["id"],
+                        "source": Sources.HARDCOVER.value,
+                        "media_type": MediaTypes.BOOK.value,
+                        "title": book_data["title"],
+                        "image": book_data.get("cached_image") or "https://assets.hardcover.app/static/covers/cover4.webp",
+                        "year": get_year(book_data.get("release_date")),
+                        "series_position": pos,
+                    }
+                )
+
+    # Return available position info
+    return {
+        "name": series_name,
+        "position": featured_series.get("position"),
+        "books": series_books,
+    }

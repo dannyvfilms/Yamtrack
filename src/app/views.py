@@ -2105,6 +2105,27 @@ def media_details(
 
     media_metadata = services.get_media_metadata(media_type, media_id, source)
 
+    # Persist series info for books if available
+    if media_type == MediaTypes.BOOK.value and isinstance(media_metadata, dict):
+        try:
+            item = Item.objects.get(
+                media_id=media_id,
+                source=source,
+                media_type=media_type,
+            )
+            update_fields = []
+            if media_metadata.get("series_name") and item.series_name != media_metadata["series_name"]:
+                item.series_name = media_metadata["series_name"]
+                update_fields.append("series_name")
+            if media_metadata.get("series_position") is not None and item.series_position != media_metadata["series_position"]:
+                item.series_position = media_metadata["series_position"]
+                update_fields.append("series_position")
+            
+            if update_fields:
+                item.save(update_fields=update_fields)
+        except Item.DoesNotExist:
+            pass
+
     if isinstance(media_metadata, dict):
         media_metadata.setdefault("cast", [])
         media_metadata.setdefault("crew", [])

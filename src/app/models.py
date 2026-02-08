@@ -91,6 +91,8 @@ class Item(CalendarTriggerMixin, models.Model):
     number_of_pages = models.PositiveIntegerField(null=True, blank=True, help_text="Number of pages for books")
     release_datetime = models.DateTimeField(null=True, blank=True)
     genres = models.JSONField(default=list, blank=True)
+    series_name = models.TextField(null=True, blank=True)
+    series_position = models.FloatField(null=True, blank=True)
 
     class Meta:
         """Meta options for the model."""
