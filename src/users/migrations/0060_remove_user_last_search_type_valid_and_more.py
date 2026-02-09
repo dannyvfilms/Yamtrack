@@ -26,6 +26,16 @@ class AddConstraintIfNotExists(migrations.AddConstraint):
         super().database_forwards(app_label, schema_editor, from_state, to_state)
 
 
+class RemoveConstraintIfExists(migrations.RemoveConstraint):
+    """Remove a constraint only when it exists."""
+
+    def database_forwards(self, app_label, schema_editor, from_state, to_state):
+        from_model = from_state.apps.get_model(app_label, self.model_name)
+        if not _constraint_exists(schema_editor, from_model._meta.db_table, self.name):
+            return
+        super().database_forwards(app_label, schema_editor, from_state, to_state)
+
+
 class Migration(migrations.Migration):
     dependencies = [
         ("app", "0075_remove_item_app_item_source_valid_and_more"),
@@ -34,7 +44,7 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RemoveConstraint(
+        RemoveConstraintIfExists(
             model_name="user",
             name="last_search_type_valid",
         ),

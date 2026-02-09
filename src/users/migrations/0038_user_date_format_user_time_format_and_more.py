@@ -38,17 +38,16 @@ def _column_exists(schema_editor, table_name, column_name):
     connection = schema_editor.connection
     with connection.cursor() as cursor:
         if connection.vendor == "postgresql":
-            # Direct check for Postgres to avoid introspection issues
             cursor.execute(
-                "SELECT 1 FROM information_schema.columns WHERE table_name = %s AND column_name = %s",
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_schema = current_schema() "
+                "AND table_name = %s AND column_name = %s",
                 [table_name, column_name],
             )
-            if cursor.fetchone():
-                return True
-        # Fallback/SQLite approach
+            return cursor.fetchone() is not None
         description = connection.introspection.get_table_description(cursor, table_name)
-    columns = {getattr(column, "name", column[0]) for column in description}
-    return column_name in columns
+        columns = {getattr(column, "name", column[0]) for column in description}
+        return column_name in columns
 
 
 class AddFieldIfNotExists(migrations.AddField):
