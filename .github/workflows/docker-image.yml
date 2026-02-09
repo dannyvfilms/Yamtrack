@@ -50,12 +50,13 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch
+            type=ref,event=branch,enable=${{ github.ref != 'refs/heads/release' }}
             type=ref,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/release' }}
+            type=raw,value=release,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
 
       # Determine if we should push the image
       - name: Set push flag
