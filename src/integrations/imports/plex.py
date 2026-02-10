@@ -751,6 +751,7 @@ class PlexHistoryImporter:
         """Store a normalized movie history record for bulk import."""
         tmdb_id = self._resolve_movie_tmdb_id(ids)
         logger.debug("Recording movie entry: tmdb_id=%s, ids=%s", tmdb_id, ids)
+        imdb_id = ids.get("imdb_id")
         if not tmdb_id:
             # Try title search fallback for movies if TMDB ID is missing
             title = self._get_entry_title(metadata)
@@ -794,6 +795,7 @@ class PlexHistoryImporter:
         self._movie_records.append(
             {
                 "tmdb_id": tmdb_id,
+                "imdb_id": imdb_id,
                 "watched_at": watched_at,
                 "rating": rating,
                 "title": metadata.get("title") or self._get_entry_title(metadata),
@@ -1126,8 +1128,8 @@ class PlexHistoryImporter:
             else:
                 # Try to get rating from library items
                 rating = self._library_ratings.get(("tmdb", actual_tmdb_id))
-                if rating is None and item.source == Sources.IMDB.value:
-                    rating = self._library_ratings.get(("imdb", item.media_id))
+                if rating is None and record.get("imdb_id"):
+                    rating = self._library_ratings.get(("imdb", record["imdb_id"]))
                 if rating is not None:
                     movie_obj.score = rating
 
