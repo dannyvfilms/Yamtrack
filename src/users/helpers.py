@@ -114,3 +114,43 @@ def get_next_run_info(periodic_task):
         "frequency": frequency,
         "mode": mode,
     }
+
+
+def get_export_next_run_info(periodic_task):
+    """Calculate next run time and frequency for a periodic export task."""
+    if not periodic_task.crontab:
+        return None
+
+    try:
+        kwargs = json.loads(periodic_task.kwargs)
+        media_types = kwargs.get("media_types")
+        include_lists = kwargs.get("include_lists", True)
+    except json.JSONDecodeError:
+        media_types = None
+        include_lists = True
+
+    cron = periodic_task.crontab
+    tz = zoneinfo.ZoneInfo(str(cron.timezone))
+    now = timezone.now().astimezone(tz)
+
+    cron_expr = (
+        f"{cron.minute} {cron.hour} {cron.day_of_month} "
+        f"{cron.month_of_year} {cron.day_of_week}"
+    )
+    cron_iter = croniter.croniter(cron_expr, now)
+    next_run = cron_iter.get_next(datetime)
+
+    # Determine frequency
+    if cron.day_of_week == "*/2":
+        frequency = "Every 2 Days"
+    elif cron.day_of_month == "*/7" or cron.day_of_week in ("0", "1", "2", "3", "4", "5", "6"):
+        frequency = "Weekly"
+    else:
+        frequency = "Daily"
+
+    return {
+        "next_run": next_run,
+        "frequency": frequency,
+        "media_types": media_types,
+        "include_lists": include_lists,
+    }

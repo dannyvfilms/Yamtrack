@@ -2052,3 +2052,14 @@ def update_collection_metadata_from_plex(library, user_id):
         "errors": error_count,
         "message": f"Updated collection metadata for {updated_count} items",
     }
+
+
+@shared_task(name="Scheduled backup export")
+def scheduled_backup_export(user_id, media_types=None, include_lists=True):
+    """Celery task for exporting a CSV backup to the backup directory."""
+    from integrations import exports
+
+    User = get_user_model()
+    user = User.objects.get(id=user_id)
+    filepath = exports.write_backup(user, media_types=media_types, include_lists=include_lists)
+    return f"Backup saved to {filepath}"

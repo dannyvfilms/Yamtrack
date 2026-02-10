@@ -1204,6 +1204,58 @@ class User(AbstractUser):
             "schedules": schedules,
         }
 
+    def get_export_tasks(self):
+        """Return export backup task history and schedules for the user."""
+        export_task_name = "Scheduled backup export"
+
+        # Get task results for this user
+        task_result_filter_text = f"'user_id': {self.id},"
+        task_results = TaskResult.objects.filter(
+            task_kwargs__contains=task_result_filter_text,
+            task_name=export_task_name,
+        ).order_by("-date_done")
+
+        results = []
+        for task in task_results:
+            processed_task = helpers.process_task_result(task)
+            results.append(
+                {
+                    "task": processed_task,
+                    "date": task.date_done,
+                    "status": task.status,
+                    "summary": processed_task.summary,
+                    "errors": processed_task.errors,
+                },
+            )
+
+        # Get periodic export schedules
+        periodic_tasks_filter_text = f'"user_id": {self.id}'
+        periodic_tasks = PeriodicTask.objects.filter(
+            task=export_task_name,
+            kwargs__contains=periodic_tasks_filter_text,
+            enabled=True,
+        ).select_related("crontab")
+
+        schedules = []
+        for periodic_task in periodic_tasks:
+            schedule_info = helpers.get_export_next_run_info(periodic_task)
+            if schedule_info:
+                schedules.append(
+                    {
+                        "task": periodic_task,
+                        "last_run": periodic_task.last_run_at,
+                        "next_run": schedule_info["next_run"],
+                        "schedule": schedule_info["frequency"],
+                        "media_types": schedule_info["media_types"],
+                        "include_lists": schedule_info["include_lists"],
+                    },
+                )
+
+        return {
+            "results": results,
+            "schedules": schedules,
+        }
+
     def regenerate_token(self):
         """Regenerate the user's token."""
         self.token = generate_token()

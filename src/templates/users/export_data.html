@@ -1,22 +1,257 @@
 {% extends "users/base.html" %}
+{% load user_tags %}
+{% load app_tags %}
 
 {% block title %}
   Export - Yamtrack
 {% endblock title %}
 
 {% block settings_content %}
-  <div class="bg-[#2a2f35] rounded-lg p-6">
-    <div class="flex items-center mb-4">
-      {% include "app/icons/export.svg" with classes="w-6 h-6 text-indigo-400 mr-3" %}
-      <h2 class="text-xl font-semibold">Export Data</h2>
+  <div class="space-y-6"
+       x-data="{ backupFrequency: 'once', backupTime: '03:00' }">
+
+    {# Export Data + Scheduled Backup #}
+    <div class="bg-[#2a2f35] rounded-lg p-6">
+      <div class="flex items-center mb-4">
+        {% include "app/icons/export.svg" with classes="w-6 h-6 text-indigo-400 mr-3" %}
+        <h2 class="text-xl font-semibold">Export Data</h2>
+      </div>
+      <p class="text-gray-400 mb-5 text-sm">
+        Export a CSV now, or create a recurring export schedule and download the initial CSV immediately.
+        Scheduled exports are saved to: <code class="text-gray-300 bg-[#39404b] px-1.5 py-0.5 rounded text-xs">{{ backup_dir }}</code>
+      </p>
+
+      <form method="post" action="{% url 'create_export_schedule' %}" id="exportForm">
+        {% csrf_token %}
+        <div class="bg-[#39404b] p-5 rounded-lg mb-5">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {# Export Frequency #}
+            <div>
+              <label class="block text-sm text-gray-400 mb-2">Export Frequency</label>
+              <div class="relative"
+                   x-data="{ open: false, selectedValue: 'once', selectedLabel: 'Export Once' }">
+                <button type="button"
+                        @click="open = !open"
+                        @click.outside="open = false"
+                        class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
+                  <span x-text="selectedLabel"></span>
+                  <svg xmlns="http://www.w3.org/2000/svg"
+                       width="24"
+                       height="24"
+                       viewBox="0 0 24 24"
+                       fill="none"
+                       stroke="currentColor"
+                       stroke-width="2"
+                       stroke-linecap="round"
+                       stroke-linejoin="round"
+                       class="w-4 h-4 text-gray-400">
+                    <path d="m6 9 6 6 6-6"></path>
+                  </svg>
+                </button>
+                <div x-show="open"
+                     x-transition:enter="transition ease-out duration-100"
+                     x-transition:enter-start="transform opacity-0 scale-95"
+                     x-transition:enter-end="transform opacity-100 scale-100"
+                     x-transition:leave="transition ease-in duration-75"
+                     x-transition:leave-start="transform opacity-100 scale-100"
+                     x-transition:leave-end="transform opacity-0 scale-95"
+                     class="absolute left-0 right-0 mt-2 py-1 bg-[#272c31] rounded-md shadow-lg overflow-hidden z-10 border border-gray-600">
+                  <button type="button"
+                          @click="selectedValue = 'once'; selectedLabel = 'Export Once'; backupFrequency = 'once'; open = false"
+                          class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                    Export Once
+                  </button>
+                  <button type="button"
+                          @click="selectedValue = 'daily'; selectedLabel = 'Every Day'; backupFrequency = 'daily'; open = false"
+                          class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                    Every Day
+                  </button>
+                  <button type="button"
+                          @click="selectedValue = '2days'; selectedLabel = 'Every 2 Days'; backupFrequency = '2days'; open = false"
+                          class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                    Every 2 Days
+                  </button>
+                  <button type="button"
+                          @click="selectedValue = 'weekly'; selectedLabel = 'Weekly'; backupFrequency = 'weekly'; open = false"
+                          class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                    Weekly
+                  </button>
+                </div>
+                <input type="hidden" name="frequency" x-bind:value="selectedValue">
+              </div>
+            </div>
+
+            {# Export Time #}
+            <div>
+              <label class="block text-sm text-gray-400 mb-2">Export Time</label>
+              <input x-model="backupTime"
+                     name="time"
+                     x-bind:disabled="backupFrequency === 'once'"
+                     x-bind:class="backupFrequency === 'once' ? 'opacity-60 cursor-not-allowed' : ''"
+                     class="w-full py-2 px-3 bg-[#272c31] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 scheme-dark disabled:border-gray-700 disabled:text-gray-400 disabled:bg-[#2f343a]"
+                     type="time">
+            </div>
+          </div>
+        </div>
+
+        {# Media Types Selection #}
+        <div class="mb-5">
+          <div class="flex items-center mb-4">
+            {% include "app/icons/four-square.svg" with classes="w-5 h-5 text-indigo-400 mr-2" %}
+            <h3 class="text-lg font-semibold">Export Content</h3>
+          </div>
+          <p class="text-gray-400 mb-4 text-sm">
+            Select which media types to include in the export. If none are selected, all types will be exported.
+          </p>
+
+          <div class="grid gap-3 md:grid-cols-3">
+            {% for media_type in media_types %}
+              <div class="flex items-center justify-between p-3 bg-[#39404b] rounded-md">
+                <div class="flex items-center text-gray-400">
+                  {% icon media_type is_active=False %}
+                  <span class="text-gray-200 text-sm ml-2">{{ media_type|media_type_readable_plural }}</span>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                  <input class="sr-only peer"
+                         type="checkbox"
+                         name="media_types"
+                         value="{{ media_type }}"
+                         checked>
+                  <div class="w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-px after:left-0.5 after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4.5 after:w-4.5 after:transition-all peer-checked:bg-indigo-600">
+                  </div>
+                </label>
+              </div>
+            {% endfor %}
+
+            <div class="flex items-center justify-between p-3 bg-[#39404b] rounded-md">
+              <div class="flex items-center text-gray-400">
+                {% include "app/icons/list.svg" with classes="w-5 h-5" %}
+                <span class="text-gray-200 text-sm ml-2">Custom Lists</span>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input class="sr-only peer"
+                       type="checkbox"
+                       name="include_lists"
+                       value="on"
+                       checked>
+                <div class="w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-px after:left-0.5 after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4.5 after:w-4.5 after:transition-all peer-checked:bg-indigo-600">
+                </div>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <button type="submit"
+                class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors text-sm cursor-pointer">
+          <span x-show="backupFrequency === 'once'">Export as CSV</span>
+          <span x-show="backupFrequency !== 'once'">Export as CSV and Save Schedule</span>
+        </button>
+      </form>
     </div>
-    <p class="text-gray-400 mb-5 text-sm">Back up your data or export it for use with other services.</p>
-    <p class="text-sm text-gray-400 mb-4">Your export will include all your media items and lists.</p>
-    <form method="get" action="{% url 'export_csv' %}">
-      {% csrf_token %}
-      <button class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors text-sm cursor-pointer">
-        Export as CSV
-      </button>
-    </form>
+
+    {# Active Scheduled Backups #}
+    <div class="bg-[#2a2f35] rounded-lg p-6">
+      <div class="flex items-center mb-4">
+        {% include "app/icons/repeat.svg" with classes="w-6 h-6 text-indigo-400 mr-3" %}
+        <h2 class="text-xl font-semibold">Active Scheduled Exports</h2>
+      </div>
+      <p class="text-gray-400 mb-5 text-sm">
+        Automated exports that run on a schedule. These will continue until disabled.
+      </p>
+      <div class="space-y-3">
+        {% for scheduled_backup in export_tasks.schedules %}
+          <div class="bg-[#39404b] rounded-lg p-4">
+            <div class="flex items-center justify-between mb-2">
+              <div class="flex items-center gap-3">
+                {% include "app/icons/download.svg" with classes="w-5 h-5 text-indigo-400" %}
+                <span class="text-sm font-medium text-gray-200">CSV Export</span>
+                <span class="text-sm text-gray-400">{{ scheduled_backup.schedule }}</span>
+              </div>
+              <form action="{% url 'delete_export_schedule' %}" method="post">
+                {% csrf_token %}
+                <input type="hidden"
+                       name="task_name"
+                       value="{{ scheduled_backup.task.name }}">
+                <button class="text-red-400 hover:text-white p-2 rounded-md transition-all duration-200 hover:bg-red-500 cursor-pointer">
+                  {% include "app/icons/trashcan.svg" with classes="w-4 h-4" %}
+                </button>
+              </form>
+            </div>
+            <div class="text-sm text-gray-400 space-y-1">
+              {% if scheduled_backup.media_types %}
+                <div>Media Types: {{ scheduled_backup.media_types|join:", " }}</div>
+              {% else %}
+                <div>Media Types: All</div>
+              {% endif %}
+              <div>Lists: {% if scheduled_backup.include_lists %}Included{% else %}Excluded{% endif %}</div>
+              <div>Last Backup: {% if scheduled_backup.last_run %}{{ scheduled_backup.last_run|user_datetime_format:user }}{% else %}Never{% endif %}</div>
+              <div>Next Backup: {{ scheduled_backup.next_run|user_datetime_format:user }}</div>
+            </div>
+          </div>
+        {% empty %}
+          <div class="bg-[#39404b] rounded-lg p-6 text-center">
+            <p class="text-gray-400 text-sm">No scheduled exports configured</p>
+            <p class="text-gray-500 text-xs mt-1">Set up a schedule above to automatically export your data</p>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    {# Backup History #}
+    <div class="bg-[#2a2f35] rounded-lg p-6">
+      <div class="flex items-center mb-4">
+        {% include "app/icons/clock-reversing.svg" with classes="w-6 h-6 text-indigo-400 mr-3" %}
+        <h2 class="text-xl font-semibold">Export History</h2>
+      </div>
+
+      <p class="text-gray-400 mb-5 text-sm">Showing export activity from the last 7 days.</p>
+
+      <div class="space-y-3">
+        {% for result in export_tasks.results %}
+          <div class="bg-[#39404b] rounded-lg p-4">
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
+              <div class="flex items-center gap-3">
+                {% if result.status == "SUCCESS" %}
+                  <span class="px-2 py-1 rounded text-xs font-medium text-green-400 bg-green-400/10">Success</span>
+                {% elif result.status == "STARTED" %}
+                  <span class="px-2 py-1 rounded text-xs font-medium text-blue-400 bg-blue-400/10">Started</span>
+                {% elif result.status == "FAILURE" %}
+                  <span class="px-2 py-1 rounded text-xs font-medium text-red-400 bg-red-400/10">Failed</span>
+                {% else %}
+                  <span class="px-2 py-1 rounded text-xs font-medium text-yellow-400 bg-yellow-400/10">Pending</span>
+                {% endif %}
+                {% include "app/icons/download.svg" with classes="w-4 h-4 text-gray-400" %}
+                <span class="text-sm text-gray-200">CSV Export</span>
+              </div>
+              <span class="text-xs text-gray-400">{{ result.date|user_datetime_format:user }}</span>
+            </div>
+
+            {% if result.status %}
+              {% if result.summary %}<div class="text-sm text-gray-200">{{ result.summary }}</div>{% endif %}
+
+              <div class="mt-2" x-data="{ showDetails: false }" x-cloak>
+                {% if result.errors %}
+                  <button @click="showDetails = !showDetails"
+                          class="text-xs text-indigo-400 hover:text-indigo-300 transition-colors cursor-pointer"
+                          x-text="showDetails ? 'Hide details' : 'Show details'">Show details</button>
+
+                  <div class="mt-2 space-y-1 text-sm bg-[#2a2f35] p-3 rounded"
+                       x-show="showDetails">
+                    <div class="text-xs space-y-1 text-red-400">
+                      {% for error in result.errors.splitlines %}<div>{{ error }}</div>{% endfor %}
+                    </div>
+                  </div>
+                {% endif %}
+              </div>
+            {% endif %}
+          </div>
+        {% empty %}
+          <div class="bg-[#39404b] rounded-lg p-6 text-center">
+            <p class="text-gray-400 text-sm">No exports in the last 7 days</p>
+            <p class="text-gray-500 text-xs mt-1">Set up a schedule to see the history here</p>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
   </div>
 {% endblock settings_content %}

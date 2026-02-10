@@ -519,6 +519,8 @@ ADMIN_ENABLED = config("ADMIN_ENABLED", default=False, cast=bool)
 
 TRACK_TIME = config("TRACK_TIME", default=True, cast=bool)
 
+BACKUP_DIR = config("BACKUP_DIR", default=str(BASE_DIR / "backups"))
+
 # Runtime population settings
 RUNTIME_POPULATION_DISABLED = config("RUNTIME_POPULATION_DISABLED", default=False, cast=bool)
 RUNTIME_POPULATION_ON_STARTUP = config("RUNTIME_POPULATION_ON_STARTUP", default=False, cast=bool)
