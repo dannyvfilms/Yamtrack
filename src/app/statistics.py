@@ -2082,6 +2082,304 @@ def get_movie_consumption_stats(user_media, start_date, end_date, minutes_per_ty
     }
 
 
+def _reading_entry_in_range(entry, start_date, end_date):
+    """Return True if a reading entry overlaps the requested date range."""
+    if not (start_date and end_date):
+        return True
+
+    filter_start = start_date.date() if hasattr(start_date, "date") else start_date
+    filter_end = end_date.date() if hasattr(end_date, "date") else end_date
+
+    entry_start = entry.start_date.date() if entry.start_date else None
+    entry_end = entry.end_date.date() if entry.end_date else None
+
+    if entry_start and entry_end:
+        return not (entry_end < filter_start or entry_start > filter_end)
+    if entry_end:
+        return filter_start <= entry_end <= filter_end
+    if entry_start:
+        return filter_start <= entry_start <= filter_end
+
+    activity_datetime = _get_activity_datetime(entry)
+    if activity_datetime is None:
+        return False
+    activity_date = _localize_datetime(activity_datetime).date()
+    return filter_start <= activity_date <= filter_end
+
+
+def _format_reading_unit(value, unit_name):
+    numeric = int(round(value or 0))
+    unit_lower = (unit_name or "Unit").lower()
+    if numeric == 1:
+        return f"{numeric} {unit_lower}"
+    return f"{numeric} {unit_lower}s"
+
+
+def _build_weighted_media_charts(weighted_datetimes, color, dataset_label):
+    """Build grouped chart datasets where each datetime contributes weighted value."""
+    empty_chart = {"labels": [], "datasets": []}
+    if not weighted_datetimes:
+        return {
+            "by_year": empty_chart,
+            "by_month": empty_chart,
+            "by_weekday": empty_chart,
+            "by_time_of_day": empty_chart,
+        }
+
+    year_totals = Counter()
+    month_totals = Counter()
+    weekday_totals = Counter()
+    hour_totals = Counter()
+
+    for dt, value in weighted_datetimes:
+        numeric_value = float(value or 0)
+        if numeric_value <= 0:
+            continue
+        year_totals[dt.year] += numeric_value
+        month_totals[dt.month] += numeric_value
+        weekday_totals[dt.weekday()] += numeric_value
+        hour_totals[dt.hour] += numeric_value
+
+    sorted_years = sorted(year_totals.keys())
+    year_labels = [str(year) for year in sorted_years]
+    year_values = [year_totals[year] for year in sorted_years]
+
+    month_labels = [calendar.month_abbr[i] for i in range(1, 13)]
+    month_values = [month_totals.get(i, 0) for i in range(1, 13)]
+
+    weekday_map = {
+        0: "Mon",
+        1: "Tue",
+        2: "Wed",
+        3: "Thu",
+        4: "Fri",
+        5: "Sat",
+        6: "Sun",
+    }
+    weekday_order = [6, 0, 1, 2, 3, 4, 5]
+    weekday_labels = [weekday_map[index] for index in weekday_order]
+    weekday_values = [weekday_totals.get(index, 0) for index in weekday_order]
+
+    hour_labels = [_format_hour_label(hour) for hour in range(24)]
+    hour_values = [hour_totals.get(hour, 0) for hour in range(24)]
+
+    return {
+        "by_year": _build_single_series_chart(year_labels, year_values, color, dataset_label),
+        "by_month": _build_single_series_chart(month_labels, month_values, color, dataset_label),
+        "by_weekday": _build_single_series_chart(weekday_labels, weekday_values, color, dataset_label),
+        "by_time_of_day": _build_single_series_chart(hour_labels, hour_values, color, dataset_label),
+    }
+
+
+def get_reading_consumption_stats(user_media, start_date, end_date, media_type):
+    """Return aggregate metrics and chart/top-list data for book/comic/manga activity."""
+    queryset = (user_media or {}).get(media_type)
+    if queryset is None:
+        queryset = []
+
+    unit_name = config.get_unit(media_type, short=False) or "Unit"
+    media_label_map = {
+        MediaTypes.BOOK.value: "Books Finished",
+        MediaTypes.COMIC.value: "Comics Finished",
+        MediaTypes.MANGA.value: "Manga Finished",
+    }
+    completion_label = media_label_map.get(media_type, "Items Finished")
+    release_label_map = {
+        MediaTypes.BOOK.value: "Books Released",
+        MediaTypes.COMIC.value: "Comics Released",
+        MediaTypes.MANGA.value: "Manga Released",
+    }
+    release_label = release_label_map.get(media_type, "Items Released")
+    chart_label = f"{unit_name}s Read"
+    color = config.get_stats_color(media_type)
+
+    grouped_entries = defaultdict(list)
+    units_by_day = defaultdict(float)
+    release_datetimes = []
+    release_item_ids = set()
+    for entry in list(queryset):
+        if not getattr(entry, "item", None):
+            continue
+        if not _reading_entry_in_range(entry, start_date, end_date):
+            continue
+        grouped_entries[entry.item.id].append(entry)
+
+        release_dt = getattr(entry.item, "release_datetime", None)
+        if release_dt and entry.item.id not in release_item_ids:
+            release_item_ids.add(entry.item.id)
+            release_datetimes.append(release_dt)
+
+        total_units = entry.progress or 0
+        if total_units <= 0:
+            continue
+
+        activity_dt = _get_activity_datetime(entry) or entry.created_at
+        start_dt = entry.start_date
+        end_dt = entry.end_date
+        start_local = _localize_datetime(start_dt).date() if start_dt else None
+        end_local = _localize_datetime(end_dt).date() if end_dt else None
+        filter_start = start_date.date() if start_date else None
+        filter_end = end_date.date() if end_date else None
+
+        if start_local and end_local and start_local <= end_local:
+            span_start = start_local
+            span_end = end_local
+            if filter_start and span_start < filter_start:
+                span_start = filter_start
+            if filter_end and span_end > filter_end:
+                span_end = filter_end
+            total_days = (span_end - span_start).days + 1
+            per_day = total_units / total_days if total_days else total_units
+            for offset in range(total_days):
+                day = span_start + datetime.timedelta(days=offset)
+                units_by_day[day.isoformat()] += per_day
+        else:
+            activity_local = _localize_datetime(activity_dt)
+            if activity_local:
+                activity_day = activity_local.date()
+                if filter_start and activity_day < filter_start:
+                    continue
+                if filter_end and activity_day > filter_end:
+                    continue
+                units_by_day[activity_day.isoformat()] += total_units
+
+    weighted_datetimes = []
+    weighted_datetimes_only = []
+    completed_datetimes = []
+    completed_lengths = []
+    top_items = []
+    genre_stats = defaultdict(lambda: {"units": 0, "title_ids": set(), "name": ""})
+    item_lengths = []
+    scored_items = []
+    longest_item = None
+    shortest_item = None
+    total_units = 0
+
+    for item_id, entries in grouped_entries.items():
+        total_item_units = sum((entry.progress or 0) for entry in entries)
+        if total_item_units <= 0:
+            total_item_units = 0
+
+        latest_entry = max(
+            entries,
+            key=lambda entry: _get_activity_datetime(entry) or entry.created_at,
+        )
+        latest_activity = _get_activity_datetime(latest_entry) or latest_entry.created_at
+        localized_activity = _localize_datetime(latest_activity)
+
+        if total_item_units > 0:
+            weighted_datetimes.append((localized_activity, total_item_units))
+            weighted_datetimes_only.append(localized_activity)
+            total_units += total_item_units
+
+            top_items.append(
+                {
+                    "media": latest_entry,
+                    "units": total_item_units,
+                    "entry_count": len(entries),
+                    "formatted_units": _format_reading_unit(total_item_units, unit_name),
+                }
+            )
+
+            for genre in _coerce_genre_list(getattr(latest_entry.item, "genres", [])):
+                key = str(genre).title()
+                genre_stats[key]["units"] += total_item_units
+                genre_stats[key]["name"] = key
+                genre_stats[key]["title_ids"].add(item_id)
+
+        completed_candidates = [
+            entry
+            for entry in entries
+            if entry.status == Status.COMPLETED.value
+        ]
+        if completed_candidates:
+            latest_completed = max(
+                completed_candidates,
+                key=lambda entry: _get_activity_datetime(entry) or entry.created_at,
+            )
+            completed_dt = _get_activity_datetime(latest_completed) or latest_completed.created_at
+            completed_datetimes.append(_localize_datetime(completed_dt))
+            completed_length = latest_completed.progress or getattr(latest_completed.item, "number_of_pages", 0) or 0
+            if completed_length > 0:
+                completed_lengths.append(completed_length)
+
+        pages_value = getattr(latest_entry.item, "number_of_pages", None)
+        if pages_value and pages_value > 0:
+            item_lengths.append(pages_value)
+            if longest_item is None or pages_value > longest_item["value"]:
+                longest_item = {"media": latest_entry, "value": pages_value}
+            if shortest_item is None or pages_value < shortest_item["value"]:
+                shortest_item = {"media": latest_entry, "value": pages_value}
+
+        score_value = getattr(latest_entry, "aggregated_score", None)
+        if score_value is None:
+            score_value = latest_entry.score
+        if score_value is not None:
+            scored_items.append(float(score_value))
+
+    top_items = sorted(top_items, key=lambda item: item["units"], reverse=True)[:20]
+
+    top_genres = []
+    for payload in sorted(
+        genre_stats.values(),
+        key=lambda item: (item["units"], len(item["title_ids"])),
+        reverse=True,
+    )[:20]:
+        top_genres.append(
+            {
+                "name": payload["name"],
+                "units": payload["units"],
+                "titles": len(payload["title_ids"]),
+                "formatted_units": _format_reading_unit(payload["units"], unit_name),
+            }
+        )
+
+    avg_length = round(sum(item_lengths) / len(item_lengths), 1) if item_lengths else 0
+    avg_rating = round(sum(scored_items) / len(scored_items), 2) if scored_items else None
+
+    charts = _build_weighted_media_charts(weighted_datetimes, color, chart_label)
+    completion_charts = _build_media_charts(completed_datetimes, color, completion_label)
+    completed_length_chart = _build_completed_length_distribution_chart(completed_lengths, unit_name, color)
+    release_chart = _build_release_year_chart(release_datetimes, color, release_label)
+
+    units_breakdown = _compute_metric_breakdown(
+        total_units,
+        weighted_datetimes_only,
+        start_date,
+        end_date,
+    )
+    completion_breakdown = _compute_metric_breakdown(
+        len(completed_datetimes),
+        completed_datetimes,
+        start_date,
+        end_date,
+    )
+
+    return {
+        "units": units_breakdown,
+        "completions": completion_breakdown,
+        "charts": charts,
+        "completion_charts": {
+            "by_year": completion_charts["by_year"],
+            "by_month": completion_charts["by_month"],
+        },
+        "completed_length_chart": completed_length_chart,
+        "release_chart": release_chart,
+        "has_data": total_units > 0 or len(completed_datetimes) > 0,
+        "unit_name": unit_name,
+        "unit_label": chart_label,
+        "completion_label": completion_label,
+        "top_items": top_items,
+        "top_genres": top_genres,
+        "highlights": {
+            "longest_item": longest_item,
+            "shortest_item": shortest_item,
+            "average_length": avg_length,
+            "average_rating": avg_rating,
+        },
+    }
+
+
 def _game_entry_in_range(game, start_date, end_date):
     """Return True if a game entry overlaps the requested date range."""
     if not (start_date and end_date):
@@ -2420,6 +2718,70 @@ def _build_daily_average_distribution_chart(game_data, color, dataset_label):
 
     # Build chart
     return _build_single_series_chart(labels, band_counts, color, dataset_label)
+
+
+def _build_completed_length_distribution_chart(values, unit_name, color):
+    """Build chart showing distribution of completed item lengths."""
+    empty_chart = {"labels": [], "datasets": []}
+    if not values:
+        return empty_chart
+
+    values = [value for value in values if value and value > 0]
+    if not values:
+        return empty_chart
+
+    # Define unit bands (completed length).
+    bands = [
+        (0, 50, "1-50"),
+        (50, 100, "51-100"),
+        (100, 200, "101-200"),
+        (200, 300, "201-300"),
+        (300, 500, "301-500"),
+        (500, 800, "501-800"),
+        (800, 1200, "801-1200"),
+        (1200, float("inf"), "1200+"),
+    ]
+
+    band_counts = [0] * len(bands)
+    for value in values:
+        for i, (min_units, max_units, _) in enumerate(bands):
+            if min_units < value <= max_units:
+                band_counts[i] += 1
+                break
+        else:
+            if value > bands[-1][0]:
+                band_counts[-1] += 1
+
+    labels = [label for _, _, label in bands]
+    dataset_label = f"Completed {unit_name}s"
+    return _build_single_series_chart(labels, band_counts, color, dataset_label)
+
+
+def _build_release_year_chart(release_datetimes, color, dataset_label):
+    """Build chart for items released per year."""
+    empty_chart = {"labels": [], "datasets": []}
+    if not release_datetimes:
+        return empty_chart
+
+    year_totals = defaultdict(int)
+    for release_dt in release_datetimes:
+        if not release_dt:
+            continue
+        if isinstance(release_dt, datetime.datetime):
+            year_totals[release_dt.year] += 1
+        else:
+            try:
+                year_totals[release_dt.year] += 1
+            except AttributeError:
+                continue
+
+    if not year_totals:
+        return empty_chart
+
+    sorted_years = sorted(year_totals.keys())
+    year_labels = [str(year) for year in sorted_years]
+    year_values = [year_totals[year] for year in sorted_years]
+    return _build_single_series_chart(year_labels, year_values, color, dataset_label)
 
 
 def _compute_game_top_genres(play_details, limit=20):

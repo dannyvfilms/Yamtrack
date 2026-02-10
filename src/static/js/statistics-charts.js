@@ -778,6 +778,42 @@ document.addEventListener("DOMContentLoaded", function () {
     "movie_plays_by_time"
   );
   initializeSingleSeriesBarChart(
+    "bookFinishedByYearChart",
+    "book_finished_by_year"
+  );
+  initializeSingleSeriesBarChart(
+    "bookReleasedByYearChart",
+    "book_released_by_year"
+  );
+  initializeSingleSeriesBarChart(
+    "bookCompletedLengthChart",
+    "book_completed_length"
+  );
+  initializeSingleSeriesBarChart(
+    "comicFinishedByYearChart",
+    "comic_finished_by_year"
+  );
+  initializeSingleSeriesBarChart(
+    "comicReleasedByYearChart",
+    "comic_released_by_year"
+  );
+  initializeSingleSeriesBarChart(
+    "comicCompletedLengthChart",
+    "comic_completed_length"
+  );
+  initializeSingleSeriesBarChart(
+    "mangaFinishedByYearChart",
+    "manga_finished_by_year"
+  );
+  initializeSingleSeriesBarChart(
+    "mangaReleasedByYearChart",
+    "manga_released_by_year"
+  );
+  initializeSingleSeriesBarChart(
+    "mangaCompletedLengthChart",
+    "manga_completed_length"
+  );
+  initializeSingleSeriesBarChart(
     "gameHoursByYearChart",
     "game_hours_by_year"
   );

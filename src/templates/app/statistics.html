@@ -1856,6 +1856,18 @@
       </section>
       {% endif %}
 
+      {% if user.book_enabled and book_consumption.has_data %}
+        {% include "app/components/reading_consumption_section.html" with media_name="Books" consumption=book_consumption media_type_slug='book' chart_prefix='book' top_rated_list=top_rated_book %}
+      {% endif %}
+
+      {% if user.comic_enabled and comic_consumption.has_data %}
+        {% include "app/components/reading_consumption_section.html" with media_name="Comics" consumption=comic_consumption media_type_slug='comic' chart_prefix='comic' top_rated_list=top_rated_comic %}
+      {% endif %}
+
+      {% if user.manga_enabled and manga_consumption.has_data %}
+        {% include "app/components/reading_consumption_section.html" with media_name="Manga" consumption=manga_consumption media_type_slug='manga' chart_prefix='manga' top_rated_list=top_rated_manga %}
+      {% endif %}
+
       <!-- Music Consumption Section -->
       {% if user.music_enabled and music_consumption.has_data %}
       <section class="bg-[#2a2f35] rounded-lg p-6 mobile-tight-section stat-scroll-safe mb-4 sm:mb-8 space-y-4 sm:space-y-6">
@@ -3076,6 +3088,27 @@
   {{ movie_consumption.charts.by_month|json_script:"movie_plays_by_month" }}
   {{ movie_consumption.charts.by_weekday|json_script:"movie_plays_by_weekday" }}
   {{ movie_consumption.charts.by_time_of_day|json_script:"movie_plays_by_time" }}
+  {% if user.book_enabled and book_consumption.has_data %}
+    {% if show_year_charts %}
+      {{ book_consumption.completion_charts.by_year|json_script:"book_finished_by_year" }}
+    {% endif %}
+    {{ book_consumption.release_chart|json_script:"book_released_by_year" }}
+    {{ book_consumption.completed_length_chart|json_script:"book_completed_length" }}
+  {% endif %}
+  {% if user.comic_enabled and comic_consumption.has_data %}
+    {% if show_year_charts %}
+      {{ comic_consumption.completion_charts.by_year|json_script:"comic_finished_by_year" }}
+    {% endif %}
+    {{ comic_consumption.release_chart|json_script:"comic_released_by_year" }}
+    {{ comic_consumption.completed_length_chart|json_script:"comic_completed_length" }}
+  {% endif %}
+  {% if user.manga_enabled and manga_consumption.has_data %}
+    {% if show_year_charts %}
+      {{ manga_consumption.completion_charts.by_year|json_script:"manga_finished_by_year" }}
+    {% endif %}
+    {{ manga_consumption.release_chart|json_script:"manga_released_by_year" }}
+    {{ manga_consumption.completed_length_chart|json_script:"manga_completed_length" }}
+  {% endif %}
   {% if show_year_charts %}
     {{ game_consumption.charts.by_year|json_script:"game_hours_by_year" }}
   {% endif %}

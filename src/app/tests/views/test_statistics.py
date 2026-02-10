@@ -2,12 +2,15 @@ from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
 from app import statistics_cache
 from app.models import (
+    Book,
+    Comic,
     CREDITS_BACKFILL_VERSION,
     CreditRoleType,
     Episode,
@@ -18,6 +21,7 @@ from app.models import (
     MetadataBackfillField,
     MetadataBackfillState,
     Movie,
+    Manga,
     Person,
     PersonGender,
     Season,
@@ -91,6 +95,143 @@ class StatisticsViewTests(TestCase):
         )
 
         self.assertTrue(date_is_none)
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_statistics_view_passes_reading_top_genres_for_book_comic_manga(self, mock_get_metadata):
+        """Book/comic/manga genre rollups should be exposed in consumption context."""
+        mock_get_metadata.return_value = {"max_progress": 2000}
+        cache.clear()
+        self.client.login(**self.credentials)
+        now = timezone.now()
+
+        book_item = Item.objects.create(
+            media_id="book-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Book Genre Test",
+            image="http://example.com/book.jpg",
+            genres=["Fantasy", "Adventure"],
+        )
+        comic_item = Item.objects.create(
+            media_id="comic-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.COMIC.value,
+            title="Comic Genre Test",
+            image="http://example.com/comic.jpg",
+            genres=["Sci-Fi"],
+        )
+        manga_item = Item.objects.create(
+            media_id="manga-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MANGA.value,
+            title="Manga Genre Test",
+            image="http://example.com/manga.jpg",
+            genres=["Shonen"],
+        )
+
+        Book.objects.create(
+            user=self.user,
+            item=book_item,
+            status=Status.IN_PROGRESS.value,
+            progress=320,
+            start_date=now - timedelta(days=3),
+            end_date=now,
+        )
+        Comic.objects.create(
+            user=self.user,
+            item=comic_item,
+            status=Status.IN_PROGRESS.value,
+            progress=120,
+            start_date=now - timedelta(days=2),
+            end_date=now,
+        )
+        Manga.objects.create(
+            user=self.user,
+            item=manga_item,
+            status=Status.IN_PROGRESS.value,
+            progress=85,
+            start_date=now - timedelta(days=1),
+            end_date=now,
+        )
+
+        statistics_cache.invalidate_statistics_cache(self.user.id)
+        response = self.client.get(reverse("statistics") + "?start-date=all&end-date=all")
+
+        self.assertEqual(response.status_code, 200)
+        book_genres = [genre["name"] for genre in response.context["book_consumption"]["top_genres"]]
+        comic_genres = [genre["name"] for genre in response.context["comic_consumption"]["top_genres"]]
+        manga_genres = [genre["name"] for genre in response.context["manga_consumption"]["top_genres"]]
+
+        self.assertIn("Fantasy", book_genres)
+        self.assertIn("Adventure", book_genres)
+        self.assertIn("Sci-Fi", comic_genres)
+        self.assertIn("Shonen", manga_genres)
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_statistics_view_returns_empty_reading_top_genres_when_items_have_no_genres(self, mock_get_metadata):
+        """Reading top genres should be empty when source items have no genre metadata."""
+        mock_get_metadata.return_value = {"max_progress": 2000}
+        cache.clear()
+        self.client.login(**self.credentials)
+        now = timezone.now()
+
+        book_item = Item.objects.create(
+            media_id="book-2",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Book Without Genre",
+            image="http://example.com/book-no-genre.jpg",
+            genres=[],
+        )
+        comic_item = Item.objects.create(
+            media_id="comic-2",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.COMIC.value,
+            title="Comic Without Genre",
+            image="http://example.com/comic-no-genre.jpg",
+            genres=[],
+        )
+        manga_item = Item.objects.create(
+            media_id="manga-2",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MANGA.value,
+            title="Manga Without Genre",
+            image="http://example.com/manga-no-genre.jpg",
+            genres=[],
+        )
+
+        Book.objects.create(
+            user=self.user,
+            item=book_item,
+            status=Status.IN_PROGRESS.value,
+            progress=300,
+            start_date=now - timedelta(days=3),
+            end_date=now,
+        )
+        Comic.objects.create(
+            user=self.user,
+            item=comic_item,
+            status=Status.IN_PROGRESS.value,
+            progress=110,
+            start_date=now - timedelta(days=2),
+            end_date=now,
+        )
+        Manga.objects.create(
+            user=self.user,
+            item=manga_item,
+            status=Status.IN_PROGRESS.value,
+            progress=90,
+            start_date=now - timedelta(days=1),
+            end_date=now,
+        )
+
+        statistics_cache.invalidate_statistics_cache(self.user.id)
+        response = self.client.get(reverse("statistics") + "?start-date=all&end-date=all")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["book_consumption"]["top_genres"], [])
+        self.assertEqual(response.context["comic_consumption"]["top_genres"], [])
+        self.assertEqual(response.context["manga_consumption"]["top_genres"], [])
 
     @patch("app.statistics_cache._aggregate_top_talent")
     def test_statistics_all_time_uses_aware_boundaries_for_top_talent(self, mock_top_talent):

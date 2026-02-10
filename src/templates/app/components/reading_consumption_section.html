@@ -1,0 +1,203 @@
+{% load app_tags %}
+
+<section class="bg-[#2a2f35] rounded-lg p-6 mobile-tight-section stat-scroll-safe mb-4 sm:mb-8 space-y-4 sm:space-y-6">
+  <div class="flex flex-col space-y-1">
+    <span class="text-sm uppercase tracking-widest text-gray-400">{{ media_name }}</span>
+    <h2 class="text-2xl font-semibold text-white">Activity Overview</h2>
+    <span class="text-sm text-gray-500" x-text="selectedRange"></span>
+  </div>
+
+  <div class="space-y-4 sm:space-y-6">
+    <div class="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+      <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+        <p class="text-xs uppercase tracking-widest text-gray-400">{{ consumption.unit_label }}</p>
+        <p class="text-3xl font-bold mt-2">{{ consumption.units.total|floatformat:0 }}</p>
+        <p class="text-xs text-gray-500 mt-1">Total</p>
+      </div>
+      <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+        <p class="text-xs uppercase tracking-widest text-gray-400">Per Year</p>
+        <p class="text-3xl font-bold mt-2">{{ consumption.units.per_year|floatformat:1 }}</p>
+        <p class="text-xs text-gray-500 mt-1">{{ consumption.unit_name }}s</p>
+      </div>
+      <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+        <p class="text-xs uppercase tracking-widest text-gray-400">Per Month</p>
+        <p class="text-3xl font-bold mt-2">{{ consumption.units.per_month|floatformat:1 }}</p>
+        <p class="text-xs text-gray-500 mt-1">{{ consumption.unit_name }}s</p>
+      </div>
+      <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+        <p class="text-xs uppercase tracking-widest text-gray-400">Per Day</p>
+        <p class="text-3xl font-bold mt-2">{{ consumption.units.per_day|floatformat:2 }}</p>
+        <p class="text-xs text-gray-500 mt-1">{{ consumption.unit_name }}s</p>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+      <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+        <p class="text-xs uppercase tracking-widest text-gray-400">{{ consumption.completion_label }}</p>
+        <p class="text-3xl font-bold mt-2">{{ consumption.completions.total|floatformat:0 }}</p>
+        <p class="text-xs text-gray-500 mt-1">Total</p>
+      </div>
+      <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+        <p class="text-xs uppercase tracking-widest text-gray-400">Per Year</p>
+        <p class="text-3xl font-bold mt-2">{{ consumption.completions.per_year|floatformat:1 }}</p>
+        <p class="text-xs text-gray-500 mt-1">{{ media_name }}</p>
+      </div>
+      <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+        <p class="text-xs uppercase tracking-widest text-gray-400">Per Month</p>
+        <p class="text-3xl font-bold mt-2">{{ consumption.completions.per_month|floatformat:1 }}</p>
+        <p class="text-xs text-gray-500 mt-1">{{ media_name }}</p>
+      </div>
+      <div class="bg-[#39404b] rounded-lg p-3 sm:p-4 text-center">
+        <p class="text-xs uppercase tracking-widest text-gray-400">Per Day</p>
+        <p class="text-3xl font-bold mt-2">{{ consumption.completions.per_day|floatformat:2 }}</p>
+        <p class="text-xs text-gray-500 mt-1">{{ media_name }}</p>
+      </div>
+    </div>
+
+    {% if show_year_charts %}
+    <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+      <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">{{ consumption.completion_label }} by Year</h3>
+      {% if consumption.completion_charts.by_year.labels %}
+        <div class="h-64">
+          <canvas id="{{ chart_prefix }}FinishedByYearChart"></canvas>
+        </div>
+      {% else %}
+        <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+          <p class="text-sm">No yearly completion data available.</p>
+        </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
+      <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+        <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">{{ media_name }} Released by Year</h3>
+        {% if consumption.release_chart.labels %}
+          <div class="h-64">
+            <canvas id="{{ chart_prefix }}ReleasedByYearChart"></canvas>
+          </div>
+        {% else %}
+          <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+            <p class="text-sm">No release data available.</p>
+          </div>
+        {% endif %}
+      </div>
+      <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+        <div class="flex items-center gap-2 mb-4">
+          <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300">Completed {{ consumption.unit_name }}s</h3>
+          <div class="relative" x-data="{ tooltipOpen: false }">
+            <button @mouseenter="tooltipOpen = true" @mouseleave="tooltipOpen = false" @click="tooltipOpen = !tooltipOpen" @click.outside="tooltipOpen = false" class="text-gray-400 hover:text-gray-300 transition-colors cursor-pointer" type="button" aria-label="Show information">
+              {% include "app/icons/info.svg" with classes="w-4 h-4" %}
+            </button>
+            <div x-show="tooltipOpen" 
+                 x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 scale-95"
+                 x-transition:enter-end="opacity-100 scale-100"
+                 x-transition:leave="transition ease-in duration-150"
+                 x-transition:leave-start="opacity-100 scale-100"
+                 x-transition:leave-end="opacity-0 scale-95"
+                 class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-64 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10"
+                 style="display: none; background: rgba(0, 0, 0, 0.85); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);">
+              <p>Completed {{ consumption.unit_name|lower }}s grouped by length for this range.</p>
+              <div class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent" style="border-top-color: rgba(0, 0, 0, 0.85);"></div>
+            </div>
+          </div>
+        </div>
+        {% if consumption.completed_length_chart.labels %}
+          <div class="h-64">
+            <canvas id="{{ chart_prefix }}CompletedLengthChart"></canvas>
+          </div>
+        {% else %}
+          <div class="flex flex-col items-center justify-center py-12 text-gray-400">
+            <p class="text-sm">No completion length data available.</p>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4">
+      <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+        <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Most Read</h3>
+        {% if consumption.top_items %}
+          <div class="overflow-y-auto pr-1 statistics-card-scroll">
+            {% for item in consumption.top_items %}
+            <a href="{{ item.media.item|media_url }}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
+              <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
+              {% if item.media.item.image and item.media.item.image != IMG_NONE %}
+              <img src="{{ item.media.item.image }}" alt="{{ item.media.item.title }}" class="w-10 h-10 rounded object-cover">
+              {% else %}
+              <div class="w-10 h-10 rounded bg-[#2a2f35]"></div>
+              {% endif %}
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium text-white truncate">{{ item.media.item.title }}</p>
+                <p class="text-xs text-gray-500">{{ item.formatted_units }}</p>
+              </div>
+            </a>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="flex flex-col items-center justify-center py-8 text-gray-400">
+            <p class="text-sm">No reading data available.</p>
+          </div>
+        {% endif %}
+      </div>
+
+      <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+        <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top Genres</h3>
+        {% if consumption.top_genres %}
+          <div class="overflow-y-auto pr-1 statistics-card-scroll">
+            {% for genre in consumption.top_genres %}
+            <a href="{% url 'history' %}?genre={{ genre.name|urlencode }}&media_type={{ media_type_slug }}{% if start_date_str and start_date_str != 'all' %}&start-date={{ start_date_str }}{% endif %}{% if end_date_str and end_date_str != 'all' %}&end-date={{ end_date_str }}{% endif %}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
+              <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
+              <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center text-gray-300 text-sm font-semibold uppercase">
+                {{ genre.name|slice:":2" }}
+              </div>
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium text-white truncate">{{ genre.name }}</p>
+                <p class="text-xs text-gray-500 truncate">{{ genre.formatted_units }}</p>
+              </div>
+            </a>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="flex flex-col items-center justify-center py-8 text-gray-400">
+            <p class="text-sm">No genre data available.</p>
+          </div>
+        {% endif %}
+      </div>
+
+      <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+        <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top Rated</h3>
+        {% if top_rated_list %}
+          <div class="overflow-y-auto pr-1 statistics-card-scroll">
+            {% for media in top_rated_list %}
+            <a href="{{ media.item|media_url }}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
+              <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
+              {% if media.item.image and media.item.image != IMG_NONE %}
+              <img src="{{ media.item.image }}" alt="{{ media.item.title }}" class="w-10 h-10 rounded object-cover">
+              {% else %}
+              <div class="w-10 h-10 rounded bg-[#2a2f35]"></div>
+              {% endif %}
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium text-white truncate">{{ media.item.title }}</p>
+                <p class="text-xs text-gray-500">
+                  {% if media.aggregated_score is not None %}
+                    {{ media.aggregated_score|score_display:user }}
+                  {% else %}
+                    {{ media.score|score_display:user }}
+                  {% endif %}
+                </p>
+              </div>
+            </a>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="flex flex-col items-center justify-center py-8 text-gray-400">
+            <p class="text-sm">No ratings yet.</p>
+          </div>
+        {% endif %}
+      </div>
+
+    </div>
+  </div>
+</section>

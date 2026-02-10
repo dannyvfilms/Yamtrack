@@ -2022,6 +2022,9 @@
   .opacity-50 {
     opacity: 50%;
   }
+  .opacity-60 {
+    opacity: 60%;
+  }
   .opacity-70 {
     opacity: 70%;
   }
@@ -2698,6 +2701,21 @@
   .disabled\:cursor-not-allowed {
     &:disabled {
       cursor: not-allowed;
+    }
+  }
+  .disabled\:border-gray-700 {
+    &:disabled {
+      border-color: var(--color-gray-700);
+    }
+  }
+  .disabled\:bg-\[\#2f343a\] {
+    &:disabled {
+      background-color: #2f343a;
+    }
+  }
+  .disabled\:text-gray-400 {
+    &:disabled {
+      color: var(--color-gray-400);
     }
   }
   .disabled\:opacity-50 {

@@ -7230,6 +7230,9 @@ def statistics(request):
         top_rated_by_type = statistics_data.get("top_rated_by_type", {})
         top_rated_movie = top_rated_by_type.get("movie", [])
         top_rated_tv = top_rated_by_type.get("tv", [])
+        top_rated_book = top_rated_by_type.get("book", [])
+        top_rated_comic = top_rated_by_type.get("comic", [])
+        top_rated_manga = top_rated_by_type.get("manga", [])
 
         # Format dates as strings for URL parameters
         start_date_str_for_url = start_date_str if start_date_str else ""
@@ -7249,6 +7252,9 @@ def statistics(request):
             "top_rated": statistics_data["top_rated"],
             "top_rated_movie": top_rated_movie,
             "top_rated_tv": top_rated_tv,
+            "top_rated_book": top_rated_book,
+            "top_rated_comic": top_rated_comic,
+            "top_rated_manga": top_rated_manga,
             "top_played": statistics_data["top_played"],
             "top_talent": statistics_data.get("top_talent", {}),
             "status_distribution": statistics_data["status_distribution"],
@@ -7259,6 +7265,9 @@ def statistics(request):
             "music_consumption": statistics_data["music_consumption"],
             "podcast_consumption": statistics_data["podcast_consumption"],
             "game_consumption": statistics_data["game_consumption"],
+            "book_consumption": statistics_data.get("book_consumption", {}),
+            "comic_consumption": statistics_data.get("comic_consumption", {}),
+            "manga_consumption": statistics_data.get("manga_consumption", {}),
             "daily_hours_by_media_type": statistics_data["daily_hours_by_media_type"],
             "history_highlights": statistics_data.get("history_highlights", {}),
             "show_year_charts": show_year_charts,
@@ -7306,6 +7315,9 @@ def statistics(request):
             "music_consumption": {},
             "podcast_consumption": {},
             "game_consumption": {},
+            "book_consumption": {},
+            "comic_consumption": {},
+            "manga_consumption": {},
             "daily_hours_by_media_type": {},
             "history_highlights": {},
         }
@@ -7319,6 +7331,11 @@ def statistics(request):
             "media_type_distribution": empty_statistics_data["media_type_distribution"],
             "score_distribution": empty_statistics_data["score_distribution"],
             "top_rated": empty_statistics_data["top_rated"],
+            "top_rated_movie": [],
+            "top_rated_tv": [],
+            "top_rated_book": [],
+            "top_rated_comic": [],
+            "top_rated_manga": [],
             "top_played": empty_statistics_data["top_played"],
             "top_talent": empty_statistics_data["top_talent"],
             "status_distribution": empty_statistics_data["status_distribution"],
@@ -7329,6 +7346,9 @@ def statistics(request):
             "music_consumption": empty_statistics_data["music_consumption"],
             "podcast_consumption": empty_statistics_data["podcast_consumption"],
             "game_consumption": empty_statistics_data["game_consumption"],
+            "book_consumption": empty_statistics_data["book_consumption"],
+            "comic_consumption": empty_statistics_data["comic_consumption"],
+            "manga_consumption": empty_statistics_data["manga_consumption"],
             "daily_hours_by_media_type": empty_statistics_data["daily_hours_by_media_type"],
             "history_highlights": empty_statistics_data["history_highlights"],
             "media_type_colors": empty_statistics_data["media_type_colors"],
