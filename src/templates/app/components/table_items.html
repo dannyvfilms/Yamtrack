@@ -1,0 +1,27 @@
+{% load app_tags %}
+{% load user_tags %}
+
+{% if not is_pagination %}
+  <thead class="text-left text-gray-400 text-sm">
+    <tr>
+      {% for col in resolved_columns %}
+        <th class="{{ col.th_classes }}">{{ col.label }}</th>
+      {% endfor %}
+    </tr>
+  </thead>
+  <tbody id="media-table-body">
+{% endif %}
+{% for media in media_list %}
+  <tr class="hover:bg-[#39404b] transition-colors cursor-pointer hover-tap{% if forloop.last and media_list.has_next %} pagination-trigger{% endif %}"
+      x-data="{ trackOpen: false }"
+      {% if forloop.last and media_list.has_next %} hx-get="{% url 'medialist' media_type %}?page={{ media_list.next_page_number }}" hx-trigger="revealed threshold:150px once" hx-swap="beforeend" hx-target="#media-table-body" hx-include="#filter-form" hx-indicator="#loading-indicator" data-page="{{ media_list.next_page_number }}" {% endif %}>
+    {% for col in resolved_columns %}
+      <td class="{{ col.td_classes }}">
+        {% include col.cell_template with media=media user=user %}
+      </td>
+    {% endfor %}
+  </tr>
+{% endfor %}
+{% if not is_pagination %}
+  </tbody>
+{% endif %}

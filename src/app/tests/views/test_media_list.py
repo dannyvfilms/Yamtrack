@@ -1,3 +1,5 @@
+import json
+import re
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -24,26 +26,43 @@ class MediaListViewTests(TestCase):
 
         movies_id = ["278", "238", "129", "424", "680"]
         num_completed = 3
-        for i in range(1, 6):
-            item = Item.objects.create(
-                media_id=movies_id[i - 1],
+        Item.objects.bulk_create(
+            [
+                Item(
+                    media_id=movies_id[i - 1],
+                    source=Sources.TMDB.value,
+                    media_type=MediaTypes.MOVIE.value,
+                    title=f"Test Movie {i}",
+                    image="http://example.com/image.jpg",
+                )
+                for i in range(1, 6)
+            ],
+        )
+        created_items = {
+            item.media_id: item
+            for item in Item.objects.filter(
+                media_id__in=movies_id,
                 source=Sources.TMDB.value,
                 media_type=MediaTypes.MOVIE.value,
-                title=f"Test Movie {i}",
-                image="http://example.com/image.jpg",
             )
-            status = (
-                Status.COMPLETED.value
-                if i < num_completed
-                else Status.IN_PROGRESS.value
-            )
-            Movie.objects.create(
-                item=item,
-                user=self.user,
-                status=status,
-                progress=1 if i < num_completed else 0,
-                score=i,
-            )
+        }
+
+        Movie.objects.bulk_create(
+            [
+                Movie(
+                    item=created_items[movies_id[i - 1]],
+                    user=self.user,
+                    status=(
+                        Status.COMPLETED.value
+                        if i < num_completed
+                        else Status.IN_PROGRESS.value
+                    ),
+                    progress=1 if i < num_completed else 0,
+                    score=i,
+                )
+                for i in range(1, 6)
+            ],
+        )
 
     def test_media_list_view(self):
         """Test the media list view displays media items."""
@@ -102,6 +121,169 @@ class MediaListViewTests(TestCase):
             **headers,
         )
         self.assertEqual(response.status_code, 200)
-        self.assertTemplateUsed(response, "app/components/media_table_items.html")
+        self.assertTemplateUsed(response, "app/components/table_items.html")
 
+    def test_table_column_refresh_wiring_is_present(self):
+        """Table layout should render deterministic column refresh wiring."""
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.MOVIE.value]) + "?layout=table",
+        )
 
+        self.assertContains(response, 'id="column-pref-form"')
+        self.assertContains(response, "elt.id !== 'column-pref-form'")
+        self.assertContains(response, "htmx.ajax('GET'")
+        self.assertContains(response, "refresh_dispatch source=afterRequest")
+        self.assertNotContains(response, 'id="column-refresh-runner"')
+        self.assertNotContains(response, 'hx-trigger="runColumnRefresh"')
+
+    def test_table_header_and_row_cells_match_for_pagination(self):
+        """Table pagination rows should always match header column count."""
+        extra_ids = [f"extra-{i}" for i in range(6, 41)]
+        Item.objects.bulk_create(
+            [
+                Item(
+                    media_id=media_id,
+                    source=Sources.TMDB.value,
+                    media_type=MediaTypes.MOVIE.value,
+                    title=f"Extra Movie {media_id}",
+                    image="http://example.com/image.jpg",
+                )
+                for media_id in extra_ids
+            ],
+        )
+        extra_items = {
+            item.media_id: item
+            for item in Item.objects.filter(
+                media_id__in=extra_ids,
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.MOVIE.value,
+            )
+        }
+        Movie.objects.bulk_create(
+            [
+                Movie(
+                    item=extra_items[media_id],
+                    user=self.user,
+                    status=Status.IN_PROGRESS.value,
+                    progress=0,
+                    score=5,
+                )
+                for media_id in extra_ids
+            ],
+        )
+
+        headers = {"HTTP_HX_REQUEST": "true"}
+        first_page = self.client.get(
+            reverse("medialist", args=[MediaTypes.MOVIE.value]) + "?layout=table&page=1",
+            **headers,
+        )
+        first_html = first_page.content.decode()
+        header_count = first_html.count("<th ")
+        self.assertGreater(header_count, 0)
+
+        first_rows = re.findall(r"<tr[^>]*>(.*?)</tr>", first_html, flags=re.S)
+        self.assertGreater(len(first_rows), 0)
+        for row_html in first_rows:
+            if "<td " not in row_html:
+                continue
+            self.assertEqual(row_html.count("<td "), header_count)
+
+        second_page = self.client.get(
+            reverse("medialist", args=[MediaTypes.MOVIE.value]) + "?layout=table&page=2",
+            **headers,
+        )
+        second_html = second_page.content.decode()
+        self.assertNotIn("<thead", second_html)
+
+        second_rows = re.findall(r"<tr[^>]*>(.*?)</tr>", second_html, flags=re.S)
+        self.assertGreater(len(second_rows), 0)
+        for row_html in second_rows:
+            self.assertEqual(row_html.count("<td "), header_count)
+
+    def test_column_preferences_endpoint_updates_user_prefs(self):
+        """Column preference updates should persist and trigger table refresh."""
+        response = self.client.post(
+            reverse("medialist_columns", args=[MediaTypes.MOVIE.value]),
+            {
+                "table_type": "media",
+                "sort": "score",
+                "order": json.dumps(["status"]),
+                "hidden": json.dumps(["status"]),
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 204)
+        self.assertIn("HX-Trigger", response)
+        self.assertIn("refreshTableColumns", response["HX-Trigger"])
+
+        self.user.refresh_from_db()
+        self.assertEqual(
+            self.user.table_column_prefs[MediaTypes.MOVIE.value],
+            {
+                "order": ["status", "score", "start_date", "end_date"],
+                "hidden": ["status"],
+            },
+        )
+
+    def test_table_columns_keep_fixed_columns_at_front_after_save(self):
+        """Saving prefs without fixed columns in order keeps them anchored first."""
+        self.client.post(
+            reverse("medialist_columns", args=[MediaTypes.MOVIE.value]),
+            {
+                "table_type": "media",
+                "sort": "score",
+                "order": json.dumps(["end_date", "status"]),
+                "hidden": json.dumps([]),
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.MOVIE.value]) + "?layout=table",
+        )
+        column_keys = [column.key for column in response.context["resolved_columns"]]
+        self.assertEqual(column_keys[:2], ["image", "title"])
+        self.assertEqual(column_keys[2:4], ["end_date", "status"])
+
+    def test_column_preferences_second_save_wins(self):
+        """Consecutive saves should persist and render the latest submitted order."""
+        url = reverse("medialist_columns", args=[MediaTypes.MOVIE.value])
+        first = self.client.post(
+            url,
+            {
+                "table_type": "media",
+                "sort": "score",
+                "order": json.dumps(["status", "end_date"]),
+                "hidden": json.dumps([]),
+            },
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(first.status_code, 204)
+
+        second = self.client.post(
+            url,
+            {
+                "table_type": "media",
+                "sort": "score",
+                "order": json.dumps(["score", "start_date"]),
+                "hidden": json.dumps([]),
+            },
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(second.status_code, 204)
+
+        self.user.refresh_from_db()
+        self.assertEqual(
+            self.user.table_column_prefs[MediaTypes.MOVIE.value]["order"],
+            ["score", "start_date", "status", "end_date"],
+        )
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.MOVIE.value]) + "?layout=table",
+        )
+        column_keys = [column.key for column in response.context["resolved_columns"]]
+        self.assertEqual(
+            column_keys,
+            ["image", "title", "score", "start_date", "status", "end_date"],
+        )

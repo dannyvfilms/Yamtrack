@@ -37,6 +37,12 @@ from app import (
     history_processor,
     statistics_cache,
 )
+from app.columns import (
+    resolve_column_config,
+    resolve_columns,
+    resolve_default_column_config,
+    sanitize_column_prefs,
+)
 
 # history_cache is imported above
 from app import (
@@ -837,10 +843,6 @@ def media_list(request, media_type):
 
     # Handle time_left sorting for TV shows
     if sort_filter == "time_left" and media_type == MediaTypes.TV.value:
-        import logging
-
-        logger = logging.getLogger(__name__)
-
         # Cache sorted results for 5 minutes to avoid expensive re-sorts
         cache_key = cache_utils.build_time_left_cache_key(
             request.user.id,
@@ -933,14 +935,13 @@ def media_list(request, media_type):
         "status_choices": MediaStatusChoices.choices,
         "rating_choices": MEDIA_RATING_CHOICES,
         "filter_data": filter_data,
+        "is_artist_list": False,
     }
 
     # For music, show tracked artists instead of individual tracks
     # For podcasts, show tracked shows instead of individual episodes
     # This parallels TV which shows TV shows, not seasons/episodes
     if media_type == MediaTypes.PODCAST.value:
-        from django.conf import settings
-
         from app.models import Item, PodcastShowTracker
 
         show_trackers = (
@@ -1099,60 +1100,10 @@ def media_list(request, media_type):
             "rating_choices": MEDIA_RATING_CHOICES,
             "search_query": search_query,
             "filter_data": filter_data,
+            "is_artist_list": False,
         }
 
-        # Handle HTMX requests for partial updates
-        if request.headers.get("HX-Request"):
-            is_artist_list = context.get("is_artist_list", False)
-
-            # Changing from empty list to a status with items
-            if request.headers.get("HX-Target") == "empty_list":
-                response = HttpResponse()
-                response["HX-Redirect"] = reverse("medialist", args=[media_type])
-                return response
-
-            # Check if this is a pagination request (has page parameter and is not the first page)
-            is_pagination = request.GET.get("page") and int(request.GET.get("page", 1)) > 1
-            context["is_pagination"] = bool(is_pagination)
-
-            if layout == "grid":
-                template_name = (
-                    "app/components/artist_grid_items.html"
-                    if is_artist_list
-                    else "app/components/media_grid_items.html"
-                )
-            else:
-                template_name = (
-                    "app/components/artist_table_items.html"
-                    if is_artist_list
-                    else "app/components/media_table_items.html"
-                )
-
-            # --- Result-count update via HX-Trigger (keeps toolbar count in sync) ---
-            from django.template.loader import render_to_string
-
-            html = render_to_string(template_name, context, request=request)
-
-            media_page = context.get("media_list")
-            if media_page is not None and getattr(media_page, "paginator", None) is not None:
-                total_count = media_page.paginator.count
-            else:
-                try:
-                    total_count = len(media_page) if media_page is not None else 0
-                except TypeError:
-                    total_count = 0
-
-            response = HttpResponse(html)
-            response["HX-Trigger"] = json.dumps({"resultCountUpdated": {"count": total_count}})
-            return response
-
-        # Non-HTMX full render
-        context["is_pagination"] = False
-        return render(request, "app/media_list.html", context)
-
     if media_type == MediaTypes.MUSIC.value:
-        from django.conf import settings
-
         from app.models import Artist, ArtistTracker
         from app.services.music import get_artist_hero_image
 
@@ -1369,6 +1320,48 @@ def media_list(request, media_type):
         context["is_artist_list"] = True
         context["filter_data"] = filter_data
 
+    table_type = "artist" if context.get("is_artist_list", False) else "media"
+    context["table_type"] = table_type
+    if layout == "table":
+        context["resolved_columns"] = resolve_columns(
+            media_type,
+            sort_filter,
+            request.user,
+            table_type,
+        )
+        context["column_config"] = resolve_column_config(
+            media_type,
+            sort_filter,
+            request.user,
+            table_type,
+        )
+        context["default_column_config"] = resolve_default_column_config(
+            media_type,
+            sort_filter,
+            table_type,
+        )
+        if settings.DEBUG:
+            prefs = (request.user.table_column_prefs or {}).get(media_type, {})
+            pref_order = prefs.get("order", []) if isinstance(prefs, dict) else []
+            pref_hidden = prefs.get("hidden", []) if isinstance(prefs, dict) else []
+            resolved_keys = [column.key for column in context["resolved_columns"]]
+            logger.info(
+                (
+                    "[COLUMN_DEBUG] media_list_resolved user=%s media_type=%s "
+                    "table_type=%s sort=%s page=%s hx=%s pref_order=%s "
+                    "pref_hidden=%s resolved_keys=%s"
+                ),
+                request.user.id,
+                media_type,
+                table_type,
+                sort_filter,
+                page,
+                bool(request.headers.get("HX-Request")),
+                pref_order,
+                pref_hidden,
+                resolved_keys,
+            )
+
     # Handle HTMX requests for partial updates
     if request.headers.get("HX-Request"):
         is_artist_list = context.get("is_artist_list", False)
@@ -1389,11 +1382,7 @@ def media_list(request, media_type):
                 else "app/components/media_grid_items.html"
             )
         else:
-            template_name = (
-                "app/components/artist_table_items.html"
-                if is_artist_list
-                else "app/components/media_table_items.html"
-            )
+            template_name = "app/components/table_items.html"
 
         from django.template.loader import render_to_string
 
@@ -1416,6 +1405,128 @@ def media_list(request, media_type):
     template_name = "app/media_list.html"
 
     return render(request, template_name, context)
+
+
+@require_POST
+def update_table_columns(request, media_type):
+    """Persist table column order/visibility and trigger table refresh."""
+    if not request.user.is_authenticated:
+        return HttpResponseBadRequest("Authentication required")
+
+    table_type = request.POST.get("table_type", "media")
+    if table_type not in {"media", "artist"}:
+        table_type = "media"
+    if media_type != MediaTypes.MUSIC.value:
+        table_type = "media"
+
+    raw_order = request.POST.get("order", "[]")
+    raw_hidden = request.POST.get("hidden", "[]")
+
+    previous_prefs = (request.user.table_column_prefs or {}).get(media_type, {})
+    previous_order = previous_prefs.get("order", []) if isinstance(previous_prefs, dict) else []
+    previous_hidden = previous_prefs.get("hidden", []) if isinstance(previous_prefs, dict) else []
+
+    try:
+        parsed_order = json.loads(raw_order)
+    except json.JSONDecodeError:
+        parsed_order = []
+    try:
+        parsed_hidden = json.loads(raw_hidden)
+    except json.JSONDecodeError:
+        parsed_hidden = []
+
+    order = [value for value in parsed_order if isinstance(value, str)] if isinstance(parsed_order, list) else []
+    hidden = [value for value in parsed_hidden if isinstance(value, str)] if isinstance(parsed_hidden, list) else []
+
+    current_sort = request.POST.get("sort") or getattr(request.user, f"{media_type}_sort", MediaSortChoices.SCORE)
+    if current_sort == "time_left" and media_type != MediaTypes.TV.value:
+        current_sort = "title"
+
+    if settings.DEBUG:
+        logger.info(
+            (
+                "[COLUMN_DEBUG] update_request user=%s media_type=%s table_type=%s "
+                "sort=%s previous_order=%s previous_hidden=%s requested_order=%s "
+                "requested_hidden=%s raw_order=%s raw_hidden=%s"
+            ),
+            request.user.id,
+            media_type,
+            table_type,
+            current_sort,
+            previous_order,
+            previous_hidden,
+            order,
+            hidden,
+            raw_order,
+            raw_hidden,
+        )
+
+    clean_order, clean_hidden = sanitize_column_prefs(
+        media_type=media_type,
+        current_sort=current_sort,
+        user=request.user,
+        table_type=table_type,
+        order=order,
+        hidden=hidden,
+    )
+
+    request.user.update_column_prefs(
+        media_type=media_type,
+        table_type=table_type,
+        order=clean_order,
+        hidden=clean_hidden,
+    )
+
+    if settings.DEBUG:
+        logger.info(
+            (
+                "[COLUMN_DEBUG] update_sanitized user=%s media_type=%s table_type=%s "
+                "sanitized_order=%s sanitized_hidden=%s"
+            ),
+            request.user.id,
+            media_type,
+            table_type,
+            clean_order,
+            clean_hidden,
+        )
+
+        poll_results = []
+        for attempt in range(1, 4):
+            request.user.refresh_from_db(fields=["table_column_prefs"])
+            polled_prefs = (request.user.table_column_prefs or {}).get(media_type, {})
+            polled_order = polled_prefs.get("order", []) if isinstance(polled_prefs, dict) else []
+            polled_hidden = polled_prefs.get("hidden", []) if isinstance(polled_prefs, dict) else []
+            resolved_keys = [
+                column.key
+                for column in resolve_columns(
+                    media_type,
+                    current_sort,
+                    request.user,
+                    table_type,
+                )
+            ]
+            poll_results.append(
+                {
+                    "attempt": attempt,
+                    "order": polled_order,
+                    "hidden": polled_hidden,
+                    "resolved": resolved_keys,
+                },
+            )
+            if attempt < 3:
+                time.sleep(0.05)
+
+        logger.info(
+            "[COLUMN_DEBUG] update_poll user=%s media_type=%s table_type=%s polls=%s",
+            request.user.id,
+            media_type,
+            table_type,
+            poll_results,
+        )
+
+    response = HttpResponse(status=204)
+    response["HX-Trigger"] = json.dumps({"refreshTableColumns": True})
+    return response
 
 
 @require_GET

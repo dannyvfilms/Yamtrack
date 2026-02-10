@@ -1,0 +1,28 @@
+{% if media.artist.image and media.artist.image != IMG_NONE %}
+  <img alt="{{ media.artist.name }}"
+       class="lazyload min-w-10 w-10 h-10 object-cover rounded-md parent-hover-tap:hidden"
+       data-src="{{ media.artist.image }}"
+       src="{{ IMG_NONE }}">
+{% else %}
+  <div class="min-w-10 w-10 h-10 bg-[#3e454d] rounded-md flex items-center justify-center parent-hover-tap:hidden">
+    {% include "app/icons/person.svg" with classes="w-5 h-5 text-gray-600" %}
+  </div>
+{% endif %}
+<button class="w-10 h-10 bg-indigo-600 hover:bg-indigo-500 text-white rounded-md transition-colors items-center justify-center hidden cursor-pointer parent-hover-tap:flex"
+        hx-get="{% url 'artist_track_modal' media.artist.id %}"
+        hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
+        hx-target="#artist-track-modal-{{ media.artist.id }}"
+        hx-trigger="click once"
+        @click="trackOpen = true">
+  {% include "app/icons/edit.svg" with classes="w-4 h-4" %}
+</button>
+
+{# Track Modal #}
+<div x-show="trackOpen"
+     @keydown.escape.window="trackOpen = false"
+     class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+  <div class="w-152 modal-max-height overflow-y-auto px-4 md:px-0 relative z-60"
+       @click.outside="trackOpen = false">
+    <div id="artist-track-modal-{{ media.artist.id }}"></div>
+  </div>
+</div>

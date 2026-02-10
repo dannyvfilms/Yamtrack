@@ -690,6 +690,11 @@ class User(AbstractUser):
         blank=True,
         help_text="Auto-pause rules with per-library week thresholds",
     )
+    table_column_prefs = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Per-library table column order and hidden keys",
+    )
     book_comic_manga_progress_percentage = models.BooleanField(
         default=False,
         help_text="Track book, comic, and manga progress as percentage instead of pages/issues/chapters",
@@ -952,6 +957,29 @@ class User(AbstractUser):
             self.save(update_fields=[field_name])
 
         return new_value
+
+    def update_column_prefs(self, media_type, table_type, order, hidden):
+        """Persist sanitized table prefs where order/hidden represent flexible columns."""
+        prefs = dict(self.table_column_prefs or {})
+        existing = prefs.get(media_type, {})
+
+        # Preserve shape compatibility with future table-type scoped prefs.
+        if isinstance(existing, dict) and ("order" in existing or "hidden" in existing):
+            media_prefs = dict(existing)
+            media_prefs["order"] = list(order)
+            media_prefs["hidden"] = list(hidden)
+            prefs[media_type] = media_prefs
+        else:
+            prefs[media_type] = {
+                "order": list(order),
+                "hidden": list(hidden),
+            }
+
+        if prefs != self.table_column_prefs:
+            self.table_column_prefs = prefs
+            self.save(update_fields=["table_column_prefs"])
+
+        return prefs[media_type]
 
     @property
     def rating_scale_max(self):

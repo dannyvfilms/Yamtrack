@@ -951,6 +951,9 @@
   .animate-spin {
     animation: var(--animate-spin);
   }
+  .cursor-grab {
+    cursor: grab;
+  }
   .cursor-not-allowed {
     cursor: not-allowed;
   }
@@ -1348,6 +1351,12 @@
     border-color: color-mix(in srgb, oklch(37.3% 0.034 259.733) 50%, transparent);
     @supports (color: color-mix(in lab, red, red)) {
       border-color: color-mix(in oklab, var(--color-gray-700) 50%, transparent);
+    }
+  }
+  .border-gray-700\/60 {
+    border-color: color-mix(in srgb, oklch(37.3% 0.034 259.733) 60%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      border-color: color-mix(in oklab, var(--color-gray-700) 60%, transparent);
     }
   }
   .border-indigo-500 {
@@ -2260,6 +2269,12 @@
     &:last-child {
       border-style: var(--tw-border-style);
       border-width: 0px;
+    }
+  }
+  .last\:border-b-0 {
+    &:last-child {
+      border-bottom-style: var(--tw-border-style);
+      border-bottom-width: 0px;
     }
   }
   .hover\:scale-110 {

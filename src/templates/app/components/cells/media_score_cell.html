@@ -1,0 +1,34 @@
+{% load app_tags %}
+{% if media.aggregated_score is not None %}
+  <div class="flex items-center justify-center">
+    <svg xmlns="http://www.w3.org/2000/svg"
+         width="24"
+         height="24"
+         viewBox="0 0 24 24"
+         fill="none"
+         stroke="currentColor"
+         stroke-width="2"
+         stroke-linecap="round"
+         stroke-linejoin="round"
+         class="w-4 h-4 text-yellow-400 mr-1 fill-current">
+      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+    </svg>
+    <span class="text-white -mt-[3px]">{{ media.aggregated_score|score_display:user }}</span>
+  </div>
+  {% if media.repeats > 1 %}
+    {% if media.item.media_type != MediaTypes.GAME.value and media.item.media_type != MediaTypes.BOARDGAME.value or user.game_logging_style != 'sessions' %}
+      <div class="text-xs text-gray-400 mt-1">
+        <span class="text-indigo-400">Latest</span>
+      </div>
+    {% endif %}
+  {% endif %}
+{% elif media.score is not None %}
+  <div class="flex items-center justify-center">
+    {% include "app/icons/star.svg" with classes="w-4 h-4 text-yellow-400 mr-1 fill-current" %}
+    <span class="text-white -mt-[3px]">{{ media.score|score_display:user }}</span>
+  </div>
+{% else %}
+  <div class="flex items-center justify-center">
+    {% include "app/icons/star.svg" with classes="w-4 h-4 text-gray-400 mr-1 fill-current" %}
+  </div>
+{% endif %}

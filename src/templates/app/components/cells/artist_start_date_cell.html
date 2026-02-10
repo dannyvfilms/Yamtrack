@@ -1,0 +1,6 @@
+{% load user_tags %}
+{% if media.start_date %}
+  {{ media.start_date|user_date_format:user }}
+{% else %}
+  <span class="text-gray-500">-</span>
+{% endif %}

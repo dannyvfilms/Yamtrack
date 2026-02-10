@@ -1,0 +1,16 @@
+{% load app_tags %}
+<div class="flex justify-between items-center">
+  <a href="{{ media.item|media_url }}"
+     class="hover:text-indigo-400 transition-colors line-clamp-1">{{ media.item }}</a>
+
+  {% if media.repeats > 1 %}
+    {% if media.item.media_type != MediaTypes.GAME.value and media.item.media_type != MediaTypes.BOARDGAME.value or user.game_logging_style != 'sessions' %}
+      <div class="flex items-center">
+        {% include "app/icons/repeat.svg" with classes="w-4 h-4 text-slate-200 mr-1" %}
+        <span class="text-sm text-white">{{ media.repeats }}</span>
+      </div>
+    {% endif %}
+  {% endif %}
+</div>
+
+{# Removed date range display to reduce clutter #}

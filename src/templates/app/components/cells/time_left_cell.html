@@ -1,0 +1,9 @@
+{% load app_tags %}
+<div class="font-medium">{{ media.time_left_display|default:"-" }}</div>
+{% if media.repeats > 1 %}
+  {% if media.item.media_type != MediaTypes.GAME.value and media.item.media_type != MediaTypes.BOARDGAME.value or user.game_logging_style != 'sessions' %}
+    <div class="text-xs text-indigo-400 mt-1">
+      <span>Total</span>
+    </div>
+  {% endif %}
+{% endif %}

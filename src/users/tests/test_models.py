@@ -189,6 +189,53 @@ class UserUpdatePreferenceTests(TestCase):
         self.assertEqual(self.user.top_talent_sort_by, "plays")
 
 
+class UserColumnPrefsTests(TestCase):
+    """Tests for per-library table column preferences."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="columnprefs",
+            password="12345",
+        )
+
+    def test_update_column_prefs_sets_order_and_hidden(self):
+        self.user.update_column_prefs(
+            media_type=MediaTypes.TV.value,
+            table_type="media",
+            order=["status", "progress"],
+            hidden=["status"],
+        )
+
+        self.user.refresh_from_db()
+        self.assertEqual(
+            self.user.table_column_prefs[MediaTypes.TV.value]["order"],
+            ["status", "progress"],
+        )
+        self.assertEqual(
+            self.user.table_column_prefs[MediaTypes.TV.value]["hidden"],
+            ["status"],
+        )
+
+    def test_update_column_prefs_overwrites_existing_values(self):
+        self.user.table_column_prefs = {
+            MediaTypes.TV.value: {"order": ["score"], "hidden": ["status"]},
+        }
+        self.user.save(update_fields=["table_column_prefs"])
+
+        self.user.update_column_prefs(
+            media_type=MediaTypes.TV.value,
+            table_type="media",
+            order=["progress", "score"],
+            hidden=[],
+        )
+
+        self.user.refresh_from_db()
+        self.assertEqual(
+            self.user.table_column_prefs[MediaTypes.TV.value],
+            {"order": ["progress", "score"], "hidden": []},
+        )
+
+
 class UserGetImportTasksTests(TestCase):
     """Tests for the User.get_import_tasks method."""
 

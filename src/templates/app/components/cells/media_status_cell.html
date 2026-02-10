@@ -1,0 +1,13 @@
+{% load app_tags %}
+{% if media.aggregated_status %}
+  <div class="font-medium">{{ media.aggregated_status|media_status_readable }}</div>
+  {% if media.repeats > 1 %}
+    {% if media.item.media_type != MediaTypes.GAME.value and media.item.media_type != MediaTypes.BOARDGAME.value or user.game_logging_style != 'sessions' %}
+      <div class="text-xs text-indigo-400 mt-1">
+        <span>Latest</span>
+      </div>
+    {% endif %}
+  {% endif %}
+{% else %}
+  {{ media.status|media_status_readable }}
+{% endif %}

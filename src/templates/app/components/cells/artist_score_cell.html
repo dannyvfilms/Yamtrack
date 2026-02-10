@@ -1,0 +1,11 @@
+{% load app_tags %}
+{% if media.score %}
+  <div class="flex items-center justify-center">
+    {% include "app/icons/star.svg" with classes="w-4 h-4 text-yellow-400 mr-1 fill-current" %}
+    <span class="text-white -mt-[3px]">{{ media.score|score_display:user|floatformat:1 }}</span>
+  </div>
+{% else %}
+  <div class="flex items-center justify-center">
+    {% include "app/icons/star.svg" with classes="w-4 h-4 text-gray-400 mr-1 fill-current" %}
+  </div>
+{% endif %}
