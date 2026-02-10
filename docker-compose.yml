@@ -1,8 +1,9 @@
 services:
   yamtrack:
     container_name: yamtrack
-    # Image defaults to :latest tag (points to stable release branch)
-    # You can also explicitly use :latest, :release, or :dev
+    # Image defaults to :latest tag (latest commit on the latest branch)
+    # Use :release or :vX.X.X for stable builds tied to a GitHub Release
+    # Use :dev for the development branch
     image: ghcr.io/dannyvfilms/yamtrack:latest
     restart: unless-stopped
     depends_on:
