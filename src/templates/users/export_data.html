@@ -8,94 +8,28 @@
 
 {% block settings_content %}
   <div class="space-y-6"
-       x-data="{ backupFrequency: 'daily', backupTime: '03:00' }">
+       x-data="{ backupFrequency: 'once', backupTime: '03:00' }">
 
-    {# Export Data (manual) #}
+    {# Export Data + Scheduled Backup #}
     <div class="bg-[#2a2f35] rounded-lg p-6">
       <div class="flex items-center mb-4">
         {% include "app/icons/export.svg" with classes="w-6 h-6 text-indigo-400 mr-3" %}
         <h2 class="text-xl font-semibold">Export Data</h2>
       </div>
-      <p class="text-gray-400 mb-5 text-sm">Back up your data or export it for use with other services.</p>
-
-      <form method="get" action="{% url 'export_csv' %}" id="exportForm">
-        {# Media Types Selection #}
-        <div class="mb-5">
-          <div class="flex items-center mb-4">
-            {% include "app/icons/four-square.svg" with classes="w-5 h-5 text-indigo-400 mr-2" %}
-            <h3 class="text-lg font-semibold">Media Types</h3>
-          </div>
-          <p class="text-gray-400 mb-4 text-sm">
-            Select which media types to include in the export. If none are selected, all types will be exported.
-          </p>
-
-          <div class="grid gap-3 md:grid-cols-3">
-            {% for media_type in media_types %}
-              <div class="flex items-center justify-between p-3 bg-[#39404b] rounded-md">
-                <div class="flex items-center text-gray-400">
-                  {% icon media_type is_active=False %}
-                  <span class="text-gray-200 text-sm ml-2">{{ media_type|media_type_readable_plural }}</span>
-                </div>
-                <label class="relative inline-flex items-center cursor-pointer">
-                  <input class="sr-only peer"
-                         type="checkbox"
-                         name="media_types"
-                         value="{{ media_type }}"
-                         checked>
-                  <div class="w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-px after:left-0.5 after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4.5 after:w-4.5 after:transition-all peer-checked:bg-indigo-600">
-                  </div>
-                </label>
-              </div>
-            {% endfor %}
-          </div>
-        </div>
-
-        {# Lists Toggle #}
-        <div class="mb-5">
-          <div class="flex items-center justify-between p-3 bg-[#39404b] rounded-md">
-            <div class="flex items-center text-gray-400">
-              {% include "app/icons/list.svg" with classes="w-5 h-5" %}
-              <span class="text-gray-200 text-sm ml-2">Custom Lists</span>
-            </div>
-            <label class="relative inline-flex items-center cursor-pointer">
-              <input class="sr-only peer"
-                     type="checkbox"
-                     name="include_lists"
-                     value="on"
-                     checked>
-              <div class="w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-px after:left-0.5 after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4.5 after:w-4.5 after:transition-all peer-checked:bg-indigo-600">
-              </div>
-            </label>
-          </div>
-        </div>
-
-        <button type="submit"
-                class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors text-sm cursor-pointer">
-          Export as CSV
-        </button>
-      </form>
-    </div>
-
-    {# Scheduled Backup #}
-    <div class="bg-[#2a2f35] rounded-lg p-6">
-      <div class="flex items-center mb-4">
-        {% include "app/icons/clock.svg" with classes="w-6 h-6 text-indigo-400 mr-3" %}
-        <h2 class="text-xl font-semibold">Scheduled Backup</h2>
-      </div>
       <p class="text-gray-400 mb-5 text-sm">
-        Set up automatic backups that export your data to a CSV file on a recurring schedule.
-        Backups are saved to: <code class="text-gray-300 bg-[#39404b] px-1.5 py-0.5 rounded text-xs">{{ backup_dir }}</code>
+        Export a CSV now, or create a recurring export schedule and download the initial CSV immediately.
+        Scheduled exports are saved to: <code class="text-gray-300 bg-[#39404b] px-1.5 py-0.5 rounded text-xs">{{ backup_dir }}</code>
       </p>
 
-      <form method="post" action="{% url 'create_export_schedule' %}">
+      <form method="post" action="{% url 'create_export_schedule' %}" id="exportForm">
         {% csrf_token %}
         <div class="bg-[#39404b] p-5 rounded-lg mb-5">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {# Backup Frequency #}
+            {# Export Frequency #}
             <div>
-              <label class="block text-sm text-gray-400 mb-2">Backup Frequency</label>
+              <label class="block text-sm text-gray-400 mb-2">Export Frequency</label>
               <div class="relative"
-                   x-data="{ open: false, selectedValue: 'daily', selectedLabel: 'Every Day' }">
+                   x-data="{ open: false, selectedValue: 'once', selectedLabel: 'Export Once' }">
                 <button type="button"
                         @click="open = !open"
                         @click.outside="open = false"
@@ -123,6 +57,11 @@
                      x-transition:leave-end="transform opacity-0 scale-95"
                      class="absolute left-0 right-0 mt-2 py-1 bg-[#272c31] rounded-md shadow-lg overflow-hidden z-10 border border-gray-600">
                   <button type="button"
+                          @click="selectedValue = 'once'; selectedLabel = 'Export Once'; backupFrequency = 'once'; open = false"
+                          class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                    Export Once
+                  </button>
+                  <button type="button"
                           @click="selectedValue = 'daily'; selectedLabel = 'Every Day'; backupFrequency = 'daily'; open = false"
                           class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
                     Every Day
@@ -142,25 +81,27 @@
               </div>
             </div>
 
-            {# Backup Time #}
+            {# Export Time #}
             <div>
-              <label class="block text-sm text-gray-400 mb-2">Backup Time</label>
+              <label class="block text-sm text-gray-400 mb-2">Export Time</label>
               <input x-model="backupTime"
                      name="time"
-                     class="w-full py-2 px-3 bg-[#272c31] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 scheme-dark"
+                     x-bind:disabled="backupFrequency === 'once'"
+                     x-bind:class="backupFrequency === 'once' ? 'opacity-60 cursor-not-allowed' : ''"
+                     class="w-full py-2 px-3 bg-[#272c31] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 scheme-dark disabled:border-gray-700 disabled:text-gray-400 disabled:bg-[#2f343a]"
                      type="time">
             </div>
           </div>
         </div>
 
-        {# Media Types for Backup #}
+        {# Media Types Selection #}
         <div class="mb-5">
           <div class="flex items-center mb-4">
             {% include "app/icons/four-square.svg" with classes="w-5 h-5 text-indigo-400 mr-2" %}
-            <h3 class="text-lg font-semibold">Backup Content</h3>
+            <h3 class="text-lg font-semibold">Export Content</h3>
           </div>
           <p class="text-gray-400 mb-4 text-sm">
-            Select which media types to include in the scheduled backup.
+            Select which media types to include in the export. If none are selected, all types will be exported.
           </p>
 
           <div class="grid gap-3 md:grid-cols-3">
@@ -173,7 +114,7 @@
                 <label class="relative inline-flex items-center cursor-pointer">
                   <input class="sr-only peer"
                          type="checkbox"
-                         name="media_types_checkboxes"
+                         name="media_types"
                          value="{{ media_type }}"
                          checked>
                   <div class="w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-px after:left-0.5 after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4.5 after:w-4.5 after:transition-all peer-checked:bg-indigo-600">
@@ -181,10 +122,7 @@
                 </label>
               </div>
             {% endfor %}
-          </div>
 
-          {# Lists Toggle for Backup #}
-          <div class="mt-3">
             <div class="flex items-center justify-between p-3 bg-[#39404b] rounded-md">
               <div class="flex items-center text-gray-400">
                 {% include "app/icons/list.svg" with classes="w-5 h-5" %}
@@ -204,9 +142,9 @@
         </div>
 
         <button type="submit"
-                class="flex items-center px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors text-sm cursor-pointer">
-          {% include "app/icons/clock.svg" with classes="w-4 h-4 mr-2" %}
-          Create Backup Schedule
+                class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors text-sm cursor-pointer">
+          <span x-show="backupFrequency === 'once'">Export as CSV</span>
+          <span x-show="backupFrequency !== 'once'">Export as CSV and Save Schedule</span>
         </button>
       </form>
     </div>
@@ -215,10 +153,10 @@
     <div class="bg-[#2a2f35] rounded-lg p-6">
       <div class="flex items-center mb-4">
         {% include "app/icons/repeat.svg" with classes="w-6 h-6 text-indigo-400 mr-3" %}
-        <h2 class="text-xl font-semibold">Active Scheduled Backups</h2>
+        <h2 class="text-xl font-semibold">Active Scheduled Exports</h2>
       </div>
       <p class="text-gray-400 mb-5 text-sm">
-        Automated backups that run on a schedule. These will continue to export your data until disabled.
+        Automated exports that run on a schedule. These will continue until disabled.
       </p>
       <div class="space-y-3">
         {% for scheduled_backup in export_tasks.schedules %}
@@ -226,7 +164,7 @@
             <div class="flex items-center justify-between mb-2">
               <div class="flex items-center gap-3">
                 {% include "app/icons/download.svg" with classes="w-5 h-5 text-indigo-400" %}
-                <span class="text-sm font-medium text-gray-200">CSV Backup</span>
+                <span class="text-sm font-medium text-gray-200">CSV Export</span>
                 <span class="text-sm text-gray-400">{{ scheduled_backup.schedule }}</span>
               </div>
               <form action="{% url 'delete_export_schedule' %}" method="post">
@@ -252,8 +190,8 @@
           </div>
         {% empty %}
           <div class="bg-[#39404b] rounded-lg p-6 text-center">
-            <p class="text-gray-400 text-sm">No scheduled backups configured</p>
-            <p class="text-gray-500 text-xs mt-1">Set up a backup schedule above to automatically export your data</p>
+            <p class="text-gray-400 text-sm">No scheduled exports configured</p>
+            <p class="text-gray-500 text-xs mt-1">Set up a schedule above to automatically export your data</p>
           </div>
         {% endfor %}
       </div>
@@ -263,10 +201,10 @@
     <div class="bg-[#2a2f35] rounded-lg p-6">
       <div class="flex items-center mb-4">
         {% include "app/icons/clock-reversing.svg" with classes="w-6 h-6 text-indigo-400 mr-3" %}
-        <h2 class="text-xl font-semibold">Backup History</h2>
+        <h2 class="text-xl font-semibold">Export History</h2>
       </div>
 
-      <p class="text-gray-400 mb-5 text-sm">Showing backup activity from the last 7 days.</p>
+      <p class="text-gray-400 mb-5 text-sm">Showing export activity from the last 7 days.</p>
 
       <div class="space-y-3">
         {% for result in export_tasks.results %}
@@ -283,7 +221,7 @@
                   <span class="px-2 py-1 rounded text-xs font-medium text-yellow-400 bg-yellow-400/10">Pending</span>
                 {% endif %}
                 {% include "app/icons/download.svg" with classes="w-4 h-4 text-gray-400" %}
-                <span class="text-sm text-gray-200">CSV Backup</span>
+                <span class="text-sm text-gray-200">CSV Export</span>
               </div>
               <span class="text-xs text-gray-400">{{ result.date|user_datetime_format:user }}</span>
             </div>
@@ -309,8 +247,8 @@
           </div>
         {% empty %}
           <div class="bg-[#39404b] rounded-lg p-6 text-center">
-            <p class="text-gray-400 text-sm">No backups in the last 7 days</p>
-            <p class="text-gray-500 text-xs mt-1">Set up a backup schedule to see the history here</p>
+            <p class="text-gray-400 text-sm">No exports in the last 7 days</p>
+            <p class="text-gray-500 text-xs mt-1">Set up a schedule to see the history here</p>
           </div>
         {% endfor %}
       </div>

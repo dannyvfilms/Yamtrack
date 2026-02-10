@@ -9,6 +9,7 @@ from django.contrib.auth.decorators import login_required
 from django.core.cache import cache
 from django.db import IntegrityError
 from django.db.models import Q
+from django.http import StreamingHttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.defaultfilters import pluralize
 from django.utils import timezone
@@ -18,6 +19,7 @@ from django_celery_beat.models import PeriodicTask
 from app import history_cache, statistics_cache
 from app.models import Item, MediaTypes, Status
 from app.templatetags import app_tags
+from integrations import exports
 from integrations import plex
 from integrations.models import PlexAccount
 from users.forms import NotificationSettingsForm, PasswordChangeForm, UserUpdateForm
@@ -646,28 +648,40 @@ def delete_import_schedule(request):
 
 @require_POST
 def create_export_schedule(request):
-    """Create a scheduled backup export."""
+    """Create a one-time export or a recurring scheduled export."""
     import datetime as dt
 
     from django_celery_beat.models import CrontabSchedule
-
-    from integrations import tasks as integration_tasks  # noqa: F811
 
     if request.user.is_demo:
         messages.error(request, "This section is view-only for demo accounts.")
         return redirect("export_data")
 
-    frequency = request.POST.get("frequency", "daily")
+    frequency = request.POST.get("frequency", "once")
     export_time = request.POST.get("time", "03:00")
-    selected_media_types = request.POST.getlist("media_types_checkboxes")
+    selected_media_types = request.POST.getlist("media_types") or request.POST.getlist("media_types_checkboxes")
     include_lists = request.POST.get("include_lists") == "on"
 
-    try:
-        parsed_time = (
-            dt.datetime.strptime(export_time, "%H:%M")
-            .astimezone(timezone.get_default_timezone())
-            .time()
+    media_types = selected_media_types if selected_media_types else None
+
+    def build_export_response():
+        now = timezone.localtime()
+        return StreamingHttpResponse(
+            streaming_content=exports.generate_rows(
+                request.user,
+                media_types=media_types,
+                include_lists=include_lists,
+            ),
+            content_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="yamtrack_{now}.csv"'},
         )
+
+    if frequency == "once":
+        logger.info("User %s started one-time CSV export", request.user.username)
+        return build_export_response()
+
+    try:
+        parsed_time = dt.datetime.strptime(export_time, "%H:%M").time()
     except ValueError:
         messages.error(request, "Invalid export time.")
         return redirect("export_data")
@@ -689,7 +703,7 @@ def create_export_schedule(request):
     elif frequency == "weekly":
         day_of_week = "0"  # Sunday
     else:
-        messages.error(request, "Invalid backup frequency.")
+        messages.error(request, "Invalid export frequency.")
         return redirect("export_data")
 
     crontab, _ = CrontabSchedule.objects.get_or_create(
@@ -716,8 +730,12 @@ def create_export_schedule(request):
         enabled=True,
     )
 
-    messages.success(request, "Backup schedule created successfully.")
-    return redirect("export_data")
+    logger.info(
+        "User %s created recurring export schedule (%s) and started CSV export",
+        request.user.username,
+        frequency,
+    )
+    return build_export_response()
 
 
 @require_POST
