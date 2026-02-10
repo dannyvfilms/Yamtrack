@@ -30,6 +30,16 @@ urlpatterns = [
         views.delete_import_schedule,
         name="delete_import_schedule",
     ),
+    path(
+        "create_export_schedule",
+        views.create_export_schedule,
+        name="create_export_schedule",
+    ),
+    path(
+        "delete_export_schedule",
+        views.delete_export_schedule,
+        name="delete_export_schedule",
+    ),
     path("regenerate_token", views.regenerate_token, name="regenerate_token"),
     path("clear_search_cache", views.clear_search_cache, name="clear_search_cache"),
     path(

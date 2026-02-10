@@ -597,7 +597,15 @@ def import_data(request):
 @require_GET
 def export_data(request):
     """Render the export data settings page."""
-    return render(request, "users/export_data.html", {"user": request.user})
+    media_types = [mt.value for mt in MediaTypes if mt.value not in (MediaTypes.EPISODE.value, MediaTypes.SEASON.value)]
+    export_tasks = request.user.get_export_tasks()
+    context = {
+        "user": request.user,
+        "media_types": media_types,
+        "export_tasks": export_tasks,
+        "backup_dir": settings.BACKUP_DIR,
+    }
+    return render(request, "users/export_data.html", context)
 
 
 @require_GET
@@ -634,6 +642,98 @@ def delete_import_schedule(request):
     except PeriodicTask.DoesNotExist:
         messages.error(request, "Import schedule not found.")
     return redirect("import_data")
+
+
+@require_POST
+def create_export_schedule(request):
+    """Create a scheduled backup export."""
+    import datetime as dt
+
+    from django_celery_beat.models import CrontabSchedule
+
+    from integrations import tasks as integration_tasks  # noqa: F811
+
+    if request.user.is_demo:
+        messages.error(request, "This section is view-only for demo accounts.")
+        return redirect("export_data")
+
+    frequency = request.POST.get("frequency", "daily")
+    export_time = request.POST.get("time", "03:00")
+    selected_media_types = request.POST.getlist("media_types_checkboxes")
+    include_lists = request.POST.get("include_lists") == "on"
+
+    try:
+        parsed_time = (
+            dt.datetime.strptime(export_time, "%H:%M")
+            .astimezone(timezone.get_default_timezone())
+            .time()
+        )
+    except ValueError:
+        messages.error(request, "Invalid export time.")
+        return redirect("export_data")
+
+    # Check for existing schedule
+    existing = PeriodicTask.objects.filter(
+        task="Scheduled backup export",
+        kwargs__contains=f'"user_id": {request.user.id}',
+        enabled=True,
+    ).first()
+    if existing:
+        messages.error(request, "A backup schedule already exists. Delete it first to create a new one.")
+        return redirect("export_data")
+
+    if frequency == "daily":
+        day_of_week = "*"
+    elif frequency == "2days":
+        day_of_week = "*/2"
+    elif frequency == "weekly":
+        day_of_week = "0"  # Sunday
+    else:
+        messages.error(request, "Invalid backup frequency.")
+        return redirect("export_data")
+
+    crontab, _ = CrontabSchedule.objects.get_or_create(
+        hour=parsed_time.hour,
+        minute=parsed_time.minute,
+        day_of_week=day_of_week,
+        timezone=timezone.get_default_timezone(),
+    )
+
+    task_kwargs = {
+        "user_id": request.user.id,
+        "include_lists": include_lists,
+    }
+    if selected_media_types:
+        task_kwargs["media_types"] = selected_media_types
+
+    task_name = f"Backup export for {request.user.username} at {parsed_time} {frequency}"
+    PeriodicTask.objects.create(
+        name=task_name,
+        task="Scheduled backup export",
+        crontab=crontab,
+        kwargs=json.dumps(task_kwargs),
+        start_time=timezone.now(),
+        enabled=True,
+    )
+
+    messages.success(request, "Backup schedule created successfully.")
+    return redirect("export_data")
+
+
+@require_POST
+def delete_export_schedule(request):
+    """Delete a scheduled backup export."""
+    task_name = request.POST.get("task_name")
+    try:
+        task = PeriodicTask.objects.get(
+            name=task_name,
+            kwargs__contains=f'"user_id": {request.user.id}',
+        )
+        task.delete()
+        messages.success(request, "Backup schedule deleted.")
+    except PeriodicTask.DoesNotExist:
+        messages.error(request, "Backup schedule not found.")
+    return redirect("export_data")
 
 
 @require_POST

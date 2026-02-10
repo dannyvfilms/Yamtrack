@@ -936,9 +936,16 @@ def import_hardcover(request):
 @require_GET
 def export_csv(request):
     """View for exporting all media data to a CSV file."""
+    selected_media_types = request.GET.getlist("media_types")
+    include_lists = request.GET.get("include_lists", "on") == "on"
+
+    media_types = selected_media_types if selected_media_types else None
+
     now = timezone.localtime()
     response = StreamingHttpResponse(
-        streaming_content=exports.generate_rows(request.user),
+        streaming_content=exports.generate_rows(
+            request.user, media_types=media_types, include_lists=include_lists,
+        ),
         content_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="yamtrack_{now}.csv"'},
     )

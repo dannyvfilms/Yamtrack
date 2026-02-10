@@ -20,8 +20,40 @@ class Echo:
         return value
 
 
-def generate_rows(user):
-    """Generate CSV rows."""
+def _get_media_types_to_export(media_types=None):
+    """Return the list of media type values to export.
+
+    If *media_types* is ``None`` every type is included (original behaviour).
+    Otherwise only the explicitly requested types **plus** their implicit
+    children (season → episode, tv → season+episode) are returned.
+    """
+    if media_types is None:
+        return list(MediaTypes.values)
+
+    out = list(media_types)
+    # If TV is selected, ensure season & episode are included
+    if MediaTypes.TV.value in out:
+        for child in (MediaTypes.SEASON.value, MediaTypes.EPISODE.value):
+            if child not in out:
+                out.append(child)
+    # If season is selected, ensure episode is included
+    if MediaTypes.SEASON.value in out and MediaTypes.EPISODE.value not in out:
+        out.append(MediaTypes.EPISODE.value)
+    return out
+
+
+def generate_rows(user, media_types=None, include_lists=True):
+    """Generate CSV rows.
+
+    Parameters
+    ----------
+    user : User
+        The user whose data is being exported.
+    media_types : list[str] | None
+        Restrict export to these media types.  ``None`` means *all*.
+    include_lists : bool
+        Whether to include custom lists in the export.
+    """
     pseudo_buffer = Echo()
     writer = csv.writer(pseudo_buffer, quoting=csv.QUOTE_ALL)
 
@@ -51,8 +83,13 @@ def generate_rows(user):
         ),
     }
 
+    types_to_export = _get_media_types_to_export(media_types)
+
     # Yield data rows
     for media_type in MediaTypes.values:
+        if media_type not in types_to_export:
+            continue
+
         model = apps.get_model("app", media_type)
 
         filter_kwargs = (
@@ -86,6 +123,9 @@ def generate_rows(user):
             yield writer.writerow(row)
 
         logger.debug("Finished streaming %ss to CSV", media_type)
+
+    if not include_lists:
+        return
 
     # Export custom lists owned by the user
     custom_lists = (
@@ -132,6 +172,31 @@ def generate_rows(user):
                 ]
             )
             yield writer.writerow(list_item_row)
+
+
+def write_backup(user, media_types=None, include_lists=True):
+    """Write a CSV backup to the configured backup directory.
+
+    Returns the path to the created file.
+    """
+    from pathlib import Path
+
+    from django.conf import settings
+    from django.utils import timezone
+
+    backup_dir = Path(settings.BACKUP_DIR) / str(user.username)
+    backup_dir.mkdir(parents=True, exist_ok=True)
+
+    now = timezone.localtime()
+    filename = f"yamtrack_{now.strftime('%Y-%m-%d_%H%M%S')}.csv"
+    filepath = backup_dir / filename
+
+    with open(filepath, "w", newline="", encoding="utf-8") as f:
+        for row_data in generate_rows(user, media_types=media_types, include_lists=include_lists):
+            f.write(row_data)
+
+    logger.info("Backup written to %s for user %s", filepath, user.username)
+    return str(filepath)
 
 
 def get_model_fields(model):
