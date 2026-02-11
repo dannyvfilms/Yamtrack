@@ -2366,3 +2366,141 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
         "errors": error_count,
         "message": f"Processed {len(processed_seasons)} seasons, updated {updated_count} episodes.",
     }
+
+
+@shared_task(name="Backfill item metadata")
+def backfill_item_metadata_task(batch_size: int = 10):
+    """Backfill metadata for items that have never been fetched.
+
+    This task processes items where metadata_fetched_at is NULL, indicating
+    we've never attempted to fetch metadata for them. This distinguishes between
+    "never fetched" and "fetched but no data available".
+
+    Args:
+        batch_size: Number of items to process in this batch (default: 10)
+
+    Returns:
+        dict: Results including success_count, error_count, and message
+    """
+    from app.providers import services
+
+    # Get items that have never had metadata fetched
+    items = Item.objects.filter(metadata_fetched_at__isnull=True).order_by('id')[:batch_size]
+
+    if not items:
+        return {
+            "success_count": 0,
+            "error_count": 0,
+            "message": "No items need metadata backfill"
+        }
+
+    success_count = 0
+    error_count = 0
+
+    for item in items:
+        try:
+            # Fetch metadata from provider
+            metadata = services.get_media_metadata(
+                item.media_type,
+                item.media_id,
+                item.source
+            )
+
+            details = metadata.get("details", {})
+
+            # Extract all metadata fields (same logic as media_save)
+            country = details.get("country") or ""
+
+            languages = details.get("languages") or []
+            if not isinstance(languages, list):
+                languages = [languages] if languages else []
+
+            platforms = details.get("platforms") or []
+            if not isinstance(platforms, list):
+                platforms = []
+
+            format_type = details.get("format") or ""
+            status = details.get("status") or ""
+
+            studios = details.get("studios") or []
+            if not isinstance(studios, list):
+                studios = []
+
+            themes = details.get("themes") or []
+            if not isinstance(themes, list):
+                themes = []
+
+            authors = details.get("authors") or details.get("author") or []
+            if isinstance(authors, str):
+                authors = [authors] if authors else []
+            elif not isinstance(authors, list):
+                authors = []
+
+            publishers = details.get("publishers") or details.get("publisher") or ""
+            if isinstance(publishers, list):
+                publishers = publishers[0] if publishers else ""
+
+            isbn = details.get("isbn") or []
+            if not isinstance(isbn, list):
+                isbn = []
+
+            source_material = details.get("source") or ""
+
+            creators = details.get("people") or []
+            if not isinstance(creators, list):
+                creators = []
+
+            runtime = details.get("runtime") or ""
+
+            # Update item with metadata
+            item.country = country
+            item.languages = languages
+            item.platforms = platforms
+            item.format = format_type
+            item.status = status
+            item.studios = studios
+            item.themes = themes
+            item.authors = authors
+            item.publishers = publishers
+            item.isbn = isbn
+            item.source_material = source_material
+            item.creators = creators
+            item.runtime = runtime
+            item.metadata_fetched_at = timezone.now()
+
+            item.save(update_fields=[
+                'country', 'languages', 'platforms', 'format', 'status',
+                'studios', 'themes', 'authors', 'publishers', 'isbn',
+                'source_material', 'creators', 'runtime', 'metadata_fetched_at'
+            ])
+
+            success_count += 1
+            logger.info(
+                "metadata_backfill_success item_id=%s media_type=%s country=%s format=%s",
+                item.id,
+                item.media_type,
+                country,
+                format_type
+            )
+
+        except Exception as e:
+            error_count += 1
+            # Still mark as fetched even if there was an error, to avoid retrying infinitely
+            item.metadata_fetched_at = timezone.now()
+            item.save(update_fields=['metadata_fetched_at'])
+
+            logger.error(
+                "metadata_backfill_error item_id=%s media_type=%s error=%s",
+                item.id,
+                item.media_type,
+                str(e)
+            )
+
+    remaining = Item.objects.filter(metadata_fetched_at__isnull=True).count()
+
+    return {
+        "success_count": success_count,
+        "error_count": error_count,
+        "remaining": remaining,
+        "message": f"Processed {success_count + error_count} items, {remaining} remaining"
+    }

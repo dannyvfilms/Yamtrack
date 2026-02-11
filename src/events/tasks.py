@@ -29,6 +29,36 @@ def reload_calendar(user=None, items_to_process=None):
         except Exception as e:
             logger.error("Failed to refresh podcast episodes during calendar reload: %s", e)
 
+        # Backfill metadata for items that have never been fetched
+        # Use aggressive batch size to complete initial backfill quickly
+        try:
+            from app.tasks import backfill_item_metadata_task
+            from app.models import Item
+
+            # Check if this is initial backfill (many items remaining)
+            remaining_count = Item.objects.filter(metadata_fetched_at__isnull=True).count()
+
+            # Use larger batch for initial backfill, smaller for maintenance
+            if remaining_count > 1000:
+                batch_size = 5000  # Aggressive initial backfill
+                logger.info("Initial metadata backfill: processing %s items (batch of 5000)", remaining_count)
+            elif remaining_count > 0:
+                batch_size = 1000  # Cleanup mode
+                logger.info("Metadata backfill cleanup: processing remaining %s items", remaining_count)
+            else:
+                batch_size = 0  # Skip if nothing to do
+
+            if batch_size > 0:
+                backfill_result = backfill_item_metadata_task(batch_size=batch_size)
+                logger.info(
+                    "Metadata backfill completed: %s successful, %s errors, %s remaining",
+                    backfill_result.get("success_count", 0),
+                    backfill_result.get("error_count", 0),
+                    backfill_result.get("remaining", 0)
+                )
+        except Exception as e:
+            logger.error("Failed to backfill metadata during calendar reload: %s", e)
+
     return result
 
 

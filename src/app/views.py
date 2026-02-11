@@ -607,6 +607,14 @@ def media_list(request, media_type):
         return cached
 
     def _extract_cached_languages(item):
+        """Extract languages from database or cached metadata."""
+        # First try database (authoritative source)
+        if item and hasattr(item, 'languages') and item.languages:
+            if isinstance(item.languages, list):
+                return [str(lang).strip() for lang in item.languages if str(lang).strip()]
+            return [str(item.languages).strip()] if str(item.languages).strip() else []
+
+        # Fall back to cache for backwards compatibility
         cached = _cached_metadata_for_item(item)
         if not isinstance(cached, dict):
             return []
@@ -619,6 +627,12 @@ def media_list(request, media_type):
         return [str(languages).strip()] if str(languages).strip() else []
 
     def _extract_cached_country(item):
+        """Extract country from database or cached metadata."""
+        # First try database (authoritative source)
+        if item and hasattr(item, 'country') and item.country:
+            return item.country.strip()
+
+        # Fall back to cache for backwards compatibility
         cached = _cached_metadata_for_item(item)
         if not isinstance(cached, dict):
             return ""
@@ -627,6 +641,14 @@ def media_list(request, media_type):
         return str(country).strip() if country else ""
 
     def _extract_cached_platforms(item):
+        """Extract platforms from database or cached metadata."""
+        # First try database (authoritative source)
+        if item and hasattr(item, 'platforms') and item.platforms:
+            if isinstance(item.platforms, list):
+                return [str(platform).strip() for platform in item.platforms if str(platform).strip()]
+            return [str(item.platforms).strip()] if str(item.platforms).strip() else []
+
+        # Fall back to cache for backwards compatibility
         cached = _cached_metadata_for_item(item)
         if not isinstance(cached, dict):
             return []
@@ -3914,6 +3936,33 @@ def media_save(request):
         if media_type == MediaTypes.GAME.value:
             metadata_genres = stats._coerce_genre_list(metadata.get("genres"))
 
+        # Extract all metadata fields from details
+        details = metadata.get("details", {})
+
+        country = details.get("country", "")
+        languages = details.get("languages", [])
+        if not isinstance(languages, list):
+            languages = [languages] if languages else []
+
+        platforms = details.get("platforms", [])
+        format_type = details.get("format", "")
+        status = details.get("status", "")
+        studios = details.get("studios", [])
+        themes = details.get("themes", [])
+
+        authors = details.get("authors", []) or details.get("author", [])
+        if isinstance(authors, str):
+            authors = [authors]
+
+        publishers = details.get("publishers", "") or details.get("publisher", "")
+        if isinstance(publishers, list):
+            publishers = publishers[0] if publishers else ""
+
+        isbn = details.get("isbn", [])
+        source_material = details.get("source", "")
+        creators = details.get("people", [])
+        runtime = details.get("runtime", "")
+
         item, created = Item.objects.get_or_create(
             media_id=media_id,
             source=source,
@@ -3925,11 +3974,32 @@ def media_save(request):
                 "runtime_minutes": runtime_minutes,
                 "number_of_pages": number_of_pages,
                 "genres": metadata_genres,
+                # Add all new metadata fields
+                "country": country,
+                "languages": languages,
+                "platforms": platforms,
+                "format": format_type,
+                "status": status,
+                "studios": studios,
+                "themes": themes,
+                "authors": authors,
+                "publishers": publishers,
+                "isbn": isbn,
+                "source_material": source_material,
+                "creators": creators,
+                "runtime": runtime,
+                "metadata_fetched_at": timezone.now(),
             },
         )
 
         # Update image, runtime, and number_of_pages if they're not set and we have them now
         needs_save = False
+
+        # Always update metadata_fetched_at timestamp
+        if not created:
+            from django.utils import timezone
+            item.metadata_fetched_at = timezone.now()
+            needs_save = True
         if item.image == settings.IMG_NONE and metadata.get("image"):
             item.image = metadata["image"]
             needs_save = True
@@ -3942,6 +4012,48 @@ def media_save(request):
         if metadata_genres and metadata_genres != item.genres:
             item.genres = metadata_genres
             needs_save = True
+
+        # Update metadata fields if they're not set and we have them now
+        if not item.country and country:
+            item.country = country
+            needs_save = True
+        if not item.languages and languages:
+            item.languages = languages
+            needs_save = True
+        if not item.platforms and platforms:
+            item.platforms = platforms
+            needs_save = True
+        if not item.format and format_type:
+            item.format = format_type
+            needs_save = True
+        if not item.status and status:
+            item.status = status
+            needs_save = True
+        if not item.studios and studios:
+            item.studios = studios
+            needs_save = True
+        if not item.themes and themes:
+            item.themes = themes
+            needs_save = True
+        if not item.authors and authors:
+            item.authors = authors
+            needs_save = True
+        if not item.publishers and publishers:
+            item.publishers = publishers
+            needs_save = True
+        if not item.isbn and isbn:
+            item.isbn = isbn
+            needs_save = True
+        if not item.source_material and source_material:
+            item.source_material = source_material
+            needs_save = True
+        if not item.creators and creators:
+            item.creators = creators
+            needs_save = True
+        if not item.runtime and runtime:
+            item.runtime = runtime
+            needs_save = True
+
         if needs_save:
             item.save()
 

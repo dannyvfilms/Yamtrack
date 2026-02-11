@@ -751,6 +751,11 @@ CELERY_BEAT_SCHEDULE = {
         "task": "Send daily digest",
         "schedule": crontab(hour=DAILY_DIGEST_HOUR, minute=0),
     },
+    "backfill_item_metadata": {
+        "task": "Backfill item metadata",
+        "schedule": crontab(hour=3, minute=0),  # every day at 3 AM
+        "kwargs": {"batch_size": 1000},  # Process 1000 items per run (cleanup mode)
+    },
 }
 # Allauth settings
 if CSRF_TRUSTED_ORIGINS:
