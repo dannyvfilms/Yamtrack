@@ -3,6 +3,45 @@
 from django.db import migrations, models
 
 
+def _column_exists(schema_editor, table_name, column_name):
+    """Return True when a database column already exists."""
+    connection = schema_editor.connection
+    with connection.cursor() as cursor:
+        if connection.vendor == "postgresql":
+            cursor.execute(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_schema = current_schema() "
+                "AND table_name = %s AND column_name = %s",
+                [table_name, column_name],
+            )
+            return cursor.fetchone() is not None
+        description = connection.introspection.get_table_description(cursor, table_name)
+        columns = {getattr(column, "name", column[0]) for column in description}
+        return column_name in columns
+
+
+class AddFieldIfNotExists(migrations.AddField):
+    """Add a field only when the backing column doesn't already exist."""
+
+    def database_forwards(self, app_label, schema_editor, from_state, to_state):
+        to_model = to_state.apps.get_model(app_label, self.model_name)
+        field = to_model._meta.get_field(self.name)
+        if _column_exists(schema_editor, to_model._meta.db_table, field.column):
+            return
+        super().database_forwards(app_label, schema_editor, from_state, to_state)
+
+
+class RemoveFieldIfExists(migrations.RemoveField):
+    """Remove a field only when the backing column exists."""
+
+    def database_forwards(self, app_label, schema_editor, from_state, to_state):
+        from_model = from_state.apps.get_model(app_label, self.model_name)
+        field = from_model._meta.get_field(self.name)
+        if not _column_exists(schema_editor, from_model._meta.db_table, field.column):
+            return
+        super().database_forwards(app_label, schema_editor, from_state, to_state)
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -10,11 +49,11 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RemoveField(
+        RemoveFieldIfExists(
             model_name='user',
             name='hide_from_search',
         ),
-        migrations.AddField(
+        AddFieldIfNotExists(
             model_name='user',
             name='clickable_media_cards',
             field=models.BooleanField(default=False, help_text='Hide hover overlay on touch devices'),

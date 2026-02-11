@@ -31,6 +31,39 @@ def _column_exists(schema_editor, table_name: str, column_name: str) -> bool:
     return column_name in columns
 
 
+def _constraint_exists(schema_editor, table_name, constraint_name):
+    """Return True when a database constraint already exists."""
+    connection = schema_editor.connection
+    if connection.vendor != "postgresql":
+        return False
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT 1 FROM pg_constraint WHERE conname = %s",
+            [constraint_name],
+        )
+        return cursor.fetchone() is not None
+
+
+class AddConstraintIfNotExists(migrations.AddConstraint):
+    """Add a constraint only when it doesn't already exist."""
+
+    def database_forwards(self, app_label, schema_editor, from_state, to_state):
+        to_model = to_state.apps.get_model(app_label, self.model_name)
+        if _constraint_exists(schema_editor, to_model._meta.db_table, self.constraint.name):
+            return
+        super().database_forwards(app_label, schema_editor, from_state, to_state)
+
+
+class RemoveConstraintIfExists(migrations.RemoveConstraint):
+    """Remove a constraint only when it exists."""
+
+    def database_forwards(self, app_label, schema_editor, from_state, to_state):
+        from_model = from_state.apps.get_model(app_label, self.model_name)
+        if not _constraint_exists(schema_editor, from_model._meta.db_table, self.name):
+            return
+        super().database_forwards(app_label, schema_editor, from_state, to_state)
+
+
 class CreateModelIfNotExists(migrations.CreateModel):
     """CreateModel that skips if the table already exists."""
 
@@ -106,11 +139,11 @@ class Migration(migrations.Migration):
             },
             bases=(simple_history.models.HistoricalChanges, models.Model),
         ),
-        migrations.RemoveConstraint(
+        RemoveConstraintIfExists(
             model_name='item',
             name='app_item_media_type_valid',
         ),
-        migrations.RemoveConstraint(
+        RemoveConstraintIfExists(
             model_name='item',
             name='app_item_source_valid',
         ),
@@ -124,11 +157,11 @@ class Migration(migrations.Migration):
             name='source',
             field=models.CharField(choices=[('tmdb', 'The Movie Database'), ('mal', 'MyAnimeList'), ('mangaupdates', 'MangaUpdates'), ('igdb', 'Internet Game Database'), ('openlibrary', 'Open Library'), ('hardcover', 'Hardcover'), ('comicvine', 'Comic Vine'), ('bgg', 'BoardGameGeek'), ('musicbrainz', 'MusicBrainz'), ('pocketcasts', 'Pocket Casts'), ('manual', 'Manual')], max_length=20),
         ),
-        migrations.AddConstraint(
+        AddConstraintIfNotExists(
             model_name='item',
             constraint=models.CheckConstraint(condition=models.Q(('source__in', ['tmdb', 'mal', 'mangaupdates', 'igdb', 'openlibrary', 'hardcover', 'comicvine', 'bgg', 'musicbrainz', 'pocketcasts', 'manual'])), name='app_item_source_valid'),
         ),
-        migrations.AddConstraint(
+        AddConstraintIfNotExists(
             model_name='item',
             constraint=models.CheckConstraint(condition=models.Q(('media_type__in', ['tv', 'season', 'episode', 'movie', 'anime', 'manga', 'game', 'book', 'comic', 'boardgame', 'music', 'podcast'])), name='app_item_media_type_valid'),
         ),
