@@ -2262,16 +2262,8 @@ class Season(Media):
         have been watched at least that many times. Otherwise uses max episode number
         to ignore errant repeats.
         """
-        episodes = self.episodes.all()
-        if not episodes:
-            return 0
-
-        # Calculate repeat counts for each episode number
-        episode_counts = {}
-        for ep in episodes:
-            ep_num = ep.item.episode_number
-            episode_counts[ep_num] = episode_counts.get(ep_num, 0) + 1
-
+        stats = self._get_episode_stats()
+        episode_counts = stats["episode_counts"]
         if not episode_counts:
             return 0
 
@@ -2279,11 +2271,10 @@ class Season(Media):
             # Check for systematic rewatching: only consider it a rewatch if ALL episodes
             # up to that point have been watched at least that many times.
             # This prevents errant repeats (single episode watched twice) from skewing progress.
-            
             sorted_episode_nums = sorted(episode_counts.keys())
             max_rewatch_level = 0
             max_rewatch_progress = 0
-            
+
             # Check each possible rewatch level (2, 3, ...)
             # Level 1 is just normal watching, so we start at 2
             for rewatch_level in range(2, max(episode_counts.values()) + 1):
@@ -2295,18 +2286,51 @@ class Season(Media):
                     else:
                         # Can't be a consistent rewatch beyond this point
                         break
-                
+
                 if consistent_up_to > max_rewatch_progress:
                     max_rewatch_level = rewatch_level
                     max_rewatch_progress = consistent_up_to
-            
+
             # If we found a consistent rewatch pattern, use it
             if max_rewatch_level > 1 and max_rewatch_progress > 0:
                 return max_rewatch_progress
-        
+
         # Otherwise, use the maximum episode number watched (at least once)
         # This handles normal watching and errant repeats
-        return max(episode_counts.keys())
+        return stats["max_episode_number"]
+
+    @property
+    def completed_episode_count(self):
+        """Return the number of unique episodes with a completed play."""
+        stats = self._get_episode_stats()
+        return len(stats["completed_episode_numbers"])
+
+    def _get_episode_stats(self):
+        """Return cached episode stats for this season."""
+        cached = getattr(self, "_episode_stats_cache", None)
+        if cached is not None:
+            return cached
+
+        episodes = list(self.episodes.all())
+        episode_counts = {}
+        completed_episode_numbers = set()
+        max_episode_number = 0
+
+        for ep in episodes:
+            ep_num = ep.item.episode_number
+            episode_counts[ep_num] = episode_counts.get(ep_num, 0) + 1
+            if ep_num and ep_num > max_episode_number:
+                max_episode_number = ep_num
+            if ep.end_date is not None:
+                completed_episode_numbers.add(ep_num)
+
+        cached = {
+            "episode_counts": episode_counts,
+            "completed_episode_numbers": completed_episode_numbers,
+            "max_episode_number": max_episode_number,
+        }
+        self._episode_stats_cache = cached
+        return cached
 
     @property
     def progressed_at(self):

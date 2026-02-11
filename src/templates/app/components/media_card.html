@@ -295,7 +295,11 @@
                       {% with progress_value=aggregated_progress|default_if_none:media.progress %}
                         {% if progress_value or resolved_media_type == MediaTypes.SEASON.value %}
                           <span class="ml-1 text-gray-400">
-                            {% if user.book_comic_manga_progress_percentage and resolved_media_type == MediaTypes.COMIC.value %}
+                            {% if resolved_media_type == MediaTypes.SEASON.value %}
+                              {% with season_progress=media.completed_episode_count|default_if_none:0 %}
+                                • {{ season_progress }} / {{ media.max_progress }} episode{{ media.max_progress|pluralize }}
+                              {% endwith %}
+                            {% elif user.book_comic_manga_progress_percentage and resolved_media_type == MediaTypes.COMIC.value %}
                               {% widthratio progress_value|default_if_none:0 media.max_progress 100 as percentage %}
                               • {{ percentage }}%
                             {% elif user.book_comic_manga_progress_percentage and resolved_media_type == MediaTypes.MANGA.value %}
@@ -349,10 +353,14 @@
                        {% endif %}
                      {% elif resolved_media_type == MediaTypes.BOOK.value and media.max_progress %}
                        data-progress-text="{{ media.max_progress }} page{{ media.max_progress|pluralize }}"
-                     {% elif media.max_progress and resolved_media_type != MediaTypes.MOVIE.value %}
+                    {% elif media.max_progress and resolved_media_type != MediaTypes.MOVIE.value %}
                        {% with progress_value=aggregated_progress|default_if_none:media.progress %}
                          {% if progress_value or resolved_media_type == MediaTypes.SEASON.value %}
-                           {% if user.book_comic_manga_progress_percentage and resolved_media_type == MediaTypes.COMIC.value %}
+                           {% if resolved_media_type == MediaTypes.SEASON.value %}
+                             {% with season_progress=media.completed_episode_count|default_if_none:0 %}
+                               data-progress-text="{{ season_progress }} / {{ media.max_progress }} episode{{ media.max_progress|pluralize }}"
+                             {% endwith %}
+                           {% elif user.book_comic_manga_progress_percentage and resolved_media_type == MediaTypes.COMIC.value %}
                              {% widthratio progress_value|default_if_none:0 media.max_progress 100 as percentage %}
                              data-progress-text="{{ percentage }}%"
                            {% elif user.book_comic_manga_progress_percentage and resolved_media_type == MediaTypes.MANGA.value %}

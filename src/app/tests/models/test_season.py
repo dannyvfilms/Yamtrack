@@ -77,6 +77,39 @@ class SeasonModel(TestCase):
         """Test the progress property of the Season model."""
         self.assertEqual(self.season.progress, 2)
 
+    def test_completed_episode_count(self):
+        """Test completed episode count ignores duplicates and incomplete plays."""
+        item_ep2 = Item.objects.get(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=2,
+        )
+        Episode.objects.create(
+            item=item_ep2,
+            related_season=self.season,
+            end_date=datetime(2023, 6, 3, 0, 0, tzinfo=UTC),
+        )
+
+        item_ep3 = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Friends",
+            image="http://example.com/image.jpg",
+            season_number=1,
+            episode_number=3,
+        )
+        Episode.objects.create(
+            item=item_ep3,
+            related_season=self.season,
+            end_date=None,
+        )
+
+        self.assertEqual(self.season.completed_episode_count, 2)
+        self.assertEqual(self.season.progress, 3)
+
     def test_season_start_date(self):
         """Test the start_date property of the Season model."""
         self.assertEqual(

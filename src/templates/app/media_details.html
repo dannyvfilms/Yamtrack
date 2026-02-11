@@ -500,7 +500,11 @@
                 <div class="flex @max-[210px]:flex-col justify-between text-sm">
                   <span class="text-gray-400">Progress:</span>
                   <span class="text-gray-200">
-                    {{ current_instance.formatted_progress }}
+                    {% if media_type == MediaTypes.SEASON.value %}
+                      {{ current_instance.completed_episode_count }}
+                    {% else %}
+                      {{ current_instance.formatted_progress }}
+                    {% endif %}
                     {% if media.max_progress %}/ {{ media.max_progress }}{% endif %}
                   </span>
                 </div>
@@ -561,9 +565,13 @@
 
                       {% if media.media_type != MediaTypes.MOVIE.value %}
                         <div class="text-xs text-gray-400">
-                          Progress: {{ user_media.formatted_progress }}
-                          {% if media.media_type != MediaTypes.GAME.value %}
-                            {{ media_type|long_unit|lower }}{{ user_media.progress|pluralize }}
+                          {% if media_type == MediaTypes.SEASON.value %}
+                            Progress: {{ user_media.completed_episode_count }}{% if media.max_progress %} / {{ media.max_progress }}{% endif %}
+                          {% else %}
+                            Progress: {{ user_media.formatted_progress }}
+                            {% if media.media_type != MediaTypes.GAME.value %}
+                              {{ media_type|long_unit|lower }}{{ user_media.progress|pluralize }}
+                            {% endif %}
                           {% endif %}
                         </div>
                       {% endif %}
