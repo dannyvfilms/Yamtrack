@@ -5,45 +5,95 @@ from django.db import migrations, models
 
 def ensure_auto_pause_columns(apps, schema_editor):
     """Ensure auto-pause columns exist with valid JSON before table rebuilds."""
-    if schema_editor.connection.vendor != "sqlite":
-        return
-
-    from django.db import connection
+    connection = schema_editor.connection
+    vendor = connection.vendor
 
     with connection.cursor() as cursor:
-        cursor.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='users_user'"
-        )
-        if not cursor.fetchone():
+        column_types = {}
+
+        if vendor == "sqlite":
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='users_user'"
+            )
+            if not cursor.fetchone():
+                return
+
+            cursor.execute("PRAGMA table_info(users_user)")
+            for row in cursor.fetchall():
+                column_types[row[1]] = row[2]
+
+        elif vendor == "postgresql":
+            cursor.execute(
+                "SELECT column_name, data_type FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND table_name = %s",
+                ["users_user"],
+            )
+            for column_name, data_type in cursor.fetchall():
+                column_types[column_name] = data_type
+            if not column_types:
+                return
+
+        else:
             return
 
-        cursor.execute("PRAGMA table_info(users_user)")
-        columns = {row[1] for row in cursor.fetchall()}
+        if "auto_pause_in_progress_enabled" not in column_types:
+            if vendor == "postgresql":
+                cursor.execute(
+                    "ALTER TABLE users_user "
+                    "ADD COLUMN auto_pause_in_progress_enabled boolean NOT NULL DEFAULT false"
+                )
+            else:
+                cursor.execute(
+                    "ALTER TABLE users_user "
+                    "ADD COLUMN auto_pause_in_progress_enabled bool NOT NULL DEFAULT 0"
+                )
 
-        if "auto_pause_in_progress_enabled" not in columns:
-            cursor.execute(
-                "ALTER TABLE users_user "
-                "ADD COLUMN auto_pause_in_progress_enabled bool NOT NULL DEFAULT 0"
-            )
+        rules_type = column_types.get("auto_pause_rules")
+        if rules_type is None:
+            if vendor == "postgresql":
+                cursor.execute(
+                    "ALTER TABLE users_user "
+                    "ADD COLUMN auto_pause_rules jsonb NOT NULL DEFAULT '[]'::jsonb"
+                )
+                rules_type = "jsonb"
+            else:
+                cursor.execute(
+                    "ALTER TABLE users_user "
+                    "ADD COLUMN auto_pause_rules TEXT NOT NULL DEFAULT '[]'"
+                )
+                rules_type = "text"
 
-        if "auto_pause_rules" not in columns:
-            cursor.execute(
-                "ALTER TABLE users_user "
-                "ADD COLUMN auto_pause_rules TEXT NOT NULL DEFAULT '[]'"
-            )
-
-        try:
-            cursor.execute(
-                "UPDATE users_user SET auto_pause_rules = '[]' "
-                "WHERE auto_pause_rules IS NULL OR JSON_VALID(auto_pause_rules) = 0"
-            )
-        except Exception:
-            cursor.execute(
-                "UPDATE users_user SET auto_pause_rules = '[]' "
-                "WHERE auto_pause_rules IS NULL "
-                "OR auto_pause_rules = '' "
-                "OR auto_pause_rules = 'auto_pause_rules'"
-            )
+        if vendor == "sqlite":
+            try:
+                cursor.execute(
+                    "UPDATE users_user SET auto_pause_rules = '[]' "
+                    "WHERE auto_pause_rules IS NULL OR JSON_VALID(auto_pause_rules) = 0"
+                )
+            except Exception:
+                cursor.execute(
+                    "UPDATE users_user SET auto_pause_rules = '[]' "
+                    "WHERE auto_pause_rules IS NULL "
+                    "OR auto_pause_rules = '' "
+                    "OR auto_pause_rules = 'auto_pause_rules'"
+                )
+        elif vendor == "postgresql":
+            if rules_type == "json":
+                cursor.execute(
+                    "UPDATE users_user SET auto_pause_rules = '[]'::json "
+                    "WHERE auto_pause_rules IS NULL"
+                )
+            elif rules_type == "jsonb":
+                cursor.execute(
+                    "UPDATE users_user SET auto_pause_rules = '[]'::jsonb "
+                    "WHERE auto_pause_rules IS NULL"
+                )
+            else:
+                cursor.execute(
+                    "UPDATE users_user SET auto_pause_rules = '[]' "
+                    "WHERE auto_pause_rules IS NULL "
+                    "OR auto_pause_rules = '' "
+                    "OR auto_pause_rules = 'auto_pause_rules'"
+                )
 
 
 def _column_exists(schema_editor, table_name, column_name):
