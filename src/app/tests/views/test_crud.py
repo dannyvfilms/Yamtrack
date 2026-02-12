@@ -1,4 +1,5 @@
 import datetime
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
@@ -74,6 +75,42 @@ class CreateMedia(TestCase):
         self.assertEqual(
             TV.objects.filter(item__media_id="5895", user=self.user).exists(),
             True,
+        )
+
+    @patch("app.views.services.get_media_metadata")
+    def test_create_tv_with_null_runtime_metadata(self, metadata_mock):
+        """Creating TV media should handle provider runtime=None values."""
+        metadata_mock.return_value = {
+            "title": "Clevatess",
+            "original_title": "Clevatess",
+            "localized_title": "Clevatess",
+            "image": "http://example.com/image.jpg",
+            "details": {
+                "runtime": None,
+            },
+        }
+
+        self.client.post(
+            reverse("media_save"),
+            {
+                "media_id": "258348",
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.TV.value,
+                "status": Status.PLANNING.value,
+            },
+        )
+
+        self.assertEqual(
+            TV.objects.filter(item__media_id="258348", user=self.user).exists(),
+            True,
+        )
+        self.assertEqual(
+            Item.objects.get(
+                media_id="258348",
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.TV.value,
+            ).runtime,
+            "",
         )
 
     def test_create_season(self):
@@ -250,5 +287,4 @@ class DeleteMedia(TestCase):
             Episode.objects.filter(related_season__user=self.user).count(),
             0,
         )
-
 

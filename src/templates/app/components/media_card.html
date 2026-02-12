@@ -267,6 +267,11 @@
             {% endwith %}
           {% endwith %}
           {% with release_year=item|release_year:media %}
+            {% if matched_title and matched_title != resolved_item_title|default:title and not use_podcast_show|default:False %}
+              <p class="media-card-year text-xs text-gray-400 mt-1 line-clamp-1" title="Matched on {{ matched_title }}">
+                Matched: {{ matched_title }}
+              </p>
+            {% endif %}
             {% if from_grid %}
               {% if show_played_chip|default:False and media and media.last_played_at %}
                 <p class="media-card-year text-xs text-gray-400 mt-1">

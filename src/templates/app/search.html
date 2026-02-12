@@ -45,12 +45,12 @@
       <div {% if layout == 'grid' %}
         class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
         {% for result in local_results %}
-          {% include "app/components/media_card.html" with item=result.item title=result.item.title media=result.media user=user from_grid=True %}
+          {% include "app/components/media_card.html" with item=result.item title=result.item.title media=result.media user=user from_grid=True matched_title=result.matched_title %}
         {% endfor %}
       {% else %}
         class="grid grid-cols-1 gap-4">
         {% for result in local_results %}
-          {% include "app/components/media_card_list.html" with item=result.item title=result.item.title media=result.media user=user %}
+          {% include "app/components/media_card_list.html" with item=result.item title=result.item.title media=result.media user=user matched_title=result.matched_title %}
         {% endfor %}
       {% endif %}
     </div>
@@ -62,12 +62,12 @@
       <div {% if layout == 'grid' %}
         class="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4">
         {% for result in data.results %}
-          {% include "app/components/media_card.html" with item=result.item title=result.item.title media=result.media user=user from_grid=True %}
+          {% include "app/components/media_card.html" with item=result.item title=result.item.title media=result.media user=user from_grid=True matched_title=result.matched_title %}
         {% endfor %}
       {% else %}
         class="grid grid-cols-1 gap-4">
         {% for result in data.results %}
-          {% include "app/components/media_card_list.html" with item=result.item title=result.item.title media=result.media user=user %}
+          {% include "app/components/media_card_list.html" with item=result.item title=result.item.title media=result.media user=user matched_title=result.matched_title %}
         {% endfor %}
       {% endif %}
     </div>
