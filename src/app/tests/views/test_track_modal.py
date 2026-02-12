@@ -8,6 +8,9 @@ from app.models import (
     Item,
     MediaTypes,
     Movie,
+    Podcast,
+    PodcastEpisode,
+    PodcastShow,
     Sources,
     Status,
 )
@@ -93,3 +96,61 @@ class TrackModalViewTests(TestCase):
         )
 
 
+class PodcastTrackModalViewTests(TestCase):
+    """Podcast-specific track modal behavior."""
+
+    def setUp(self):
+        """Create a user and log in."""
+        self.credentials = {"username": "test", "password": "12345"}
+        self.user = get_user_model().objects.create_user(**self.credentials)
+        self.client.login(**self.credentials)
+
+    def test_podcast_track_modal_shows_delete_for_in_progress_play(self):
+        """Podcast episode modal should allow deleting an in-progress play."""
+        show = PodcastShow.objects.create(
+            podcast_uuid="show-uuid-1",
+            title="Show Title",
+            image="http://example.com/show.jpg",
+        )
+        episode = PodcastEpisode.objects.create(
+            show=show,
+            episode_uuid="episode-uuid-1",
+            title="Episode Title",
+            duration=1577,
+        )
+        item = Item.objects.create(
+            media_id=episode.episode_uuid,
+            source=Sources.POCKETCASTS.value,
+            media_type=MediaTypes.PODCAST.value,
+            title=episode.title,
+            image=show.image,
+        )
+        podcast = Podcast.objects.create(
+            item=item,
+            user=self.user,
+            show=show,
+            episode=episode,
+            status=Status.IN_PROGRESS.value,
+            progress=10,
+        )
+
+        response = self.client.get(
+            reverse(
+                "track_modal",
+                kwargs={
+                    "source": Sources.POCKETCASTS.value,
+                    "media_type": MediaTypes.PODCAST.value,
+                    "media_id": episode.episode_uuid,
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "app/components/fill_track_song.html")
+        self.assertContains(response, "In-Progress Play")
+        self.assertContains(
+            response,
+            f'name="instance_id" value="{podcast.id}"',
+            html=False,
+        )
+        self.assertContains(response, 'name="media_type" value="podcast"', html=False)

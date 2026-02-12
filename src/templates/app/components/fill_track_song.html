@@ -94,6 +94,28 @@
 
         {% if music %}
           {% if music.item and music.item.media_type == 'podcast' %}
+            {% if music.has_in_progress_entry and music.in_progress_instance_id %}
+              <div>
+                <label class="block text-sm font-medium text-gray-300 mb-3">
+                  In-Progress Play
+                </label>
+                <div class="flex items-center justify-between bg-[#343a40] rounded-md p-3 border border-gray-600">
+                  <div class="text-sm text-white">In progress</div>
+                  <form method="post"
+                        action="{% url 'media_delete' %}?next={{ return_url|default:request.path }}">
+                    {% csrf_token %}
+                    <input type="hidden" name="instance_id" value="{{ music.in_progress_instance_id }}">
+                    <input type="hidden" name="media_type" value="podcast">
+                    <button class="text-red-400 hover:text-red-300 transition-colors text-sm px-2 py-1 hover:bg-red-600/20 rounded-md cursor-pointer">
+                      Delete
+                    </button>
+                  </form>
+                </div>
+              </div>
+
+              <div class="border-t border-gray-600 my-6"></div>
+            {% endif %}
+
             {# For podcasts, check completed_play_count to exclude in-progress plays #}
             {% if music.completed_play_count > 0 %}
               <div>
@@ -229,4 +251,3 @@
     </div>
   </div>
 </div>
-

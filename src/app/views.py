@@ -112,11 +112,16 @@ class _DummyPodcastWrapper:
     def __init__(self, item):
         self.item = item
         self.id = 0
+        self.in_progress_instance_id = None
         self.history = _EmptyHistoryProxy()
 
     @property
     def completed_play_count(self):
         return 0
+
+    @property
+    def has_in_progress_entry(self):
+        return False
 
 
 @require_GET
@@ -2193,6 +2198,13 @@ def media_details(
                             self.id = podcasts[0].id if podcasts else 0
                             self._podcasts = podcasts
                             self._history_list = history_list
+                            in_progress_entry = next(
+                                (entry for entry in podcasts if not entry.end_date),
+                                None,
+                            )
+                            self.in_progress_instance_id = (
+                                in_progress_entry.id if in_progress_entry else None
+                            )
 
                         @property
                         def completed_play_count(self):
@@ -2200,6 +2212,10 @@ def media_details(
                             # Since we already filtered all_history to only include records with end_date,
                             # we can just count the length of the filtered history_list
                             return len(self._history_list)
+
+                        @property
+                        def has_in_progress_entry(self):
+                            return bool(self.in_progress_instance_id)
 
                         @property
                         def history(self):
@@ -3760,6 +3776,13 @@ def track_modal(
                         self.id = podcasts[0].id if podcasts else 0
                         self._podcasts = podcasts
                         self._history_list = history_list
+                        in_progress_entry = next(
+                            (entry for entry in podcasts if not entry.end_date),
+                            None,
+                        )
+                        self.in_progress_instance_id = (
+                            in_progress_entry.id if in_progress_entry else None
+                        )
 
                     @property
                     def completed_play_count(self):
@@ -3767,6 +3790,10 @@ def track_modal(
                         # Since we already filtered all_history to only include records with end_date,
                         # we can just count the length of the filtered history_list
                         return len(self._history_list)
+
+                    @property
+                    def has_in_progress_entry(self):
+                        return bool(self.in_progress_instance_id)
 
                     @property
                     def history(self):
@@ -6638,6 +6665,7 @@ def podcast_episodes_api(request, show_id):
                         self.item = item
                         self.id = podcast.id
                         self._history_list = history_list
+                        self.in_progress_instance_id = podcast.id if not podcast.end_date else None
 
                     @property
                     def completed_play_count(self):
@@ -6645,6 +6673,10 @@ def podcast_episodes_api(request, show_id):
                         # Since we already filtered all_history to only include records with end_date,
                         # we can just count the length of the filtered history_list
                         return len(self._history_list)
+
+                    @property
+                    def has_in_progress_entry(self):
+                        return bool(self.in_progress_instance_id)
 
                     @property
                     def history(self):
@@ -7323,17 +7355,29 @@ def podcast_save(request):
                     self.item = item
                     self.id = podcast.id
                     self._history_list = history_list
+                    self.in_progress_instance_id = podcast.id if not podcast.end_date else None
+
+                @property
+                def completed_play_count(self):
+                    return len(self._history_list)
 
                 @property
                 def history(self):
                     class HistoryProxy:
                         def __init__(self, history_list):
                             self._history = history_list
+
                         def all(self):
                             return self._history
+
                         def count(self):
                             return len(self._history)
+
                     return HistoryProxy(self._history_list)
+
+                @property
+                def has_in_progress_entry(self):
+                    return bool(self.in_progress_instance_id)
 
             podcast_wrapper = PodcastHistoryWrapper(user_podcast, item, all_history)
         else:
