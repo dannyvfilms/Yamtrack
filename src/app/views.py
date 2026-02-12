@@ -2238,6 +2238,45 @@ def media_details(
 
     media_metadata = services.get_media_metadata(media_type, media_id, source)
 
+    detail_item = Item.objects.filter(
+        media_id=media_id,
+        source=source,
+        media_type=media_type,
+    ).first()
+
+    # When the user prefers original titles, aggressively refresh stale TMDB cache
+    # if we don't yet have an original title. This lets details-page opens backfill
+    # better title variants that can then propagate across the UI.
+    should_refresh_tmdb_titles = (
+        request.user.is_authenticated
+        and source == Sources.TMDB.value
+        and media_type in (MediaTypes.MOVIE.value, MediaTypes.TV.value)
+        and getattr(request.user, "title_display_preference", "localized") == "original"
+        and isinstance(media_metadata, dict)
+        and not media_metadata.get("original_title")
+    )
+    if should_refresh_tmdb_titles:
+        cache.delete(f"{Sources.TMDB.value}_{media_type}_{media_id}")
+        media_metadata = services.get_media_metadata(media_type, media_id, source)
+
+    if detail_item and isinstance(media_metadata, dict):
+        title_fields = Item.title_fields_from_metadata(
+            media_metadata,
+            fallback_title=detail_item.title,
+        )
+        update_fields = []
+        if not detail_item.original_title and title_fields["original_title"]:
+            detail_item.original_title = title_fields["original_title"]
+            update_fields.append("original_title")
+        if not detail_item.localized_title and title_fields["localized_title"]:
+            detail_item.localized_title = title_fields["localized_title"]
+            update_fields.append("localized_title")
+        if not detail_item.title and title_fields["title"]:
+            detail_item.title = title_fields["title"]
+            update_fields.append("title")
+        if update_fields:
+            detail_item.save(update_fields=update_fields)
+
     # Persist series info for books if available
     if media_type == MediaTypes.BOOK.value and isinstance(media_metadata, dict):
         try:
@@ -2275,11 +2314,6 @@ def media_details(
         and media_type in (MediaTypes.MOVIE.value, MediaTypes.TV.value)
         and isinstance(media_metadata, dict)
     ):
-        detail_item = Item.objects.filter(
-            media_id=media_id,
-            source=source,
-            media_type=media_type,
-        ).first()
         if detail_item:
             missing_people = not detail_item.person_credits.exists()
             missing_studios = not detail_item.studio_credits.exists()

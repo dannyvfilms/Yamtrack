@@ -154,7 +154,7 @@ def movie(media_id):
         url = f"{base_url}/movie/{media_id}"
         params = {
             **base_params,
-            "append_to_response": "recommendations,external_ids,credits",
+            "append_to_response": "recommendations,external_ids,credits,alternative_titles",
         }
 
         try:
@@ -269,7 +269,7 @@ def enrich_season_with_tv_data(season_data, tv_data, media_id, season_number):
 def fetch_and_cache_seasons(media_id, season_numbers, tv_data):
     """Fetch uncached seasons from API and cache them."""
     url = f"{base_url}/tv/{media_id}"
-    base_append = "recommendations,external_ids,aggregate_credits"
+    base_append = "recommendations,external_ids,aggregate_credits,alternative_titles"
     max_seasons_per_request = 18
     fetched_tv_data = tv_data
     result_data = {}
@@ -365,7 +365,7 @@ def tv(media_id):
         url = f"{base_url}/tv/{media_id}"
         params = {
             **base_params,
-            "append_to_response": "recommendations,external_ids,aggregate_credits",
+            "append_to_response": "recommendations,external_ids,aggregate_credits,alternative_titles",
         }
 
         try:
@@ -508,12 +508,49 @@ def get_title(response):
 
 def get_original_title(response):
     """Return the original title/name for the media."""
-    return response.get("original_title") or response.get("original_name")
+    original_title = response.get("original_title") or response.get("original_name")
+    localized_title = get_localized_title(response)
+
+    if original_title and original_title != localized_title:
+        return original_title
+
+    alternative_title = get_preferred_alternative_title(response, localized_title)
+    if alternative_title:
+        return alternative_title
+
+    return original_title
 
 
 def get_localized_title(response):
     """Return the localized title/name for the media."""
     return response.get("title") or response.get("name")
+
+
+def get_preferred_alternative_title(response, current_title=None):
+    """Pick a useful alternate TMDB title when primary/original are missing."""
+    preferred_regions = {"JP", "KR", "CN", "TW"}
+    candidates = []
+
+    alternative_titles = response.get("alternative_titles") or {}
+    entries = alternative_titles.get("results") or alternative_titles.get("titles") or []
+
+    current_norm = str(current_title).strip().casefold() if current_title else None
+    for entry in entries:
+        alt_title = str(entry.get("title") or "").strip()
+        if not alt_title:
+            continue
+        if current_norm and alt_title.casefold() == current_norm:
+            continue
+        region = str(entry.get("iso_3166_1") or "").upper()
+        # Prioritize regions that frequently contain original/anime-native titles.
+        score = 0 if region in preferred_regions else 1
+        candidates.append((score, alt_title))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda row: (row[0], row[1]))
+    return candidates[0][1]
 
 
 def get_title_fields(response):

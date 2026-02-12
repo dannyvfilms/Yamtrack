@@ -4,7 +4,7 @@
 {% load humanize %}
 
 {% block title %}
-  {{ media.title }}
+  {{ media|display_title:user }}
   {% if media.media_type == MediaTypes.SEASON.value %}S{{ media.season_number }}{% endif %}
   - Yamtrack
 {% endblock title %}
@@ -82,7 +82,7 @@
   {# Top section #}
   <div class="flex flex-col md:flex-row gap-8 md:gap-10 mb-12 md:mb-8">
     <div class="w-full md:w-1/4 max-w-[250px] mx-auto md:mx-0">
-      <img alt="{{ media.title }}"
+      <img alt="{{ media|display_title:user }}"
            class="w-full rounded-lg shadow-lg bg-[#2a2f35] object-cover"
            src="{{ media.image }}">
 
@@ -160,7 +160,7 @@
     <div class="md:w-3/4">
       {% if media.media_type == MediaTypes.SEASON.value %}
         <h2 class="text-xl font-semibold cursor-pointer hover:text-indigo-500 transition-colors duration-200 mb-2 text-gray-400 text-center md:text-start">
-          <a href="{% url 'media_details' source=media.source media_type=MediaTypes.TV.value media_id=media.media_id title=media.title|slug %}">{{ media.title }}</a>
+          <a href="{% url 'media_details' source=media.source media_type=MediaTypes.TV.value media_id=media.media_id title=media.title|slug %}">{{ media|display_title:user }}</a>
         </h2>
 
         <div class="flex flex-col md:flex-row gap-y-4 md:gap-y-0 items-center justify-between mb-6">
@@ -212,7 +212,37 @@
           </h2>
         {% endif %}
 
-        <h1 class="text-3xl font-bold mb-1 text-center md:text-start">{{ media.title }}</h1>
+        {% with media|alternative_title:user as detail_alt_title %}
+          <div class="mb-1 text-center md:text-start">
+            <div class="inline-flex items-center gap-2 md:flex md:gap-2">
+              <h1 class="text-3xl font-bold">{{ media|display_title:user }}</h1>
+              {% if detail_alt_title %}
+                <div class="relative shrink-0" x-data="{ tooltipOpen: false }">
+                  <button @mouseenter="tooltipOpen = true"
+                          @mouseleave="tooltipOpen = false"
+                          @click="tooltipOpen = !tooltipOpen"
+                          @click.outside="tooltipOpen = false"
+                          class="text-gray-500 hover:text-gray-400 transition-colors cursor-pointer inline-flex items-center"
+                          type="button"
+                          aria-label="Show alternative title">
+                    {% include "app/icons/info.svg" with classes="w-4 h-4" %}
+                  </button>
+                  <div x-show="tooltipOpen"
+                       x-transition:enter="transition ease-out duration-200"
+                       x-transition:enter-start="opacity-0 scale-95"
+                       x-transition:enter-end="opacity-100 scale-100"
+                       x-transition:leave="transition ease-in duration-150"
+                       x-transition:leave-start="opacity-100 scale-100"
+                       x-transition:leave-end="opacity-0 scale-95"
+                       class="absolute right-0 bottom-full mb-2 w-56 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10"
+                       style="display: none; background: rgba(0, 0, 0, 0.85); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);">
+                    <p>{{ detail_alt_title }}</p>
+                  </div>
+                </div>
+              {% endif %}
+            </div>
+          </div>
+        {% endwith %}
         {% if media.media_type == MediaTypes.BOOK.value and media.series_name %}
           <p class="text-indigo-400 font-medium mb-4 text-center md:text-start">
             {{ media.series_name }}
