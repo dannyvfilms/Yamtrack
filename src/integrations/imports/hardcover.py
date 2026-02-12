@@ -182,7 +182,10 @@ class HardcoverImporter:
             source=Sources.HARDCOVER.value,
             media_type=media_type,
             defaults={
-                "title": book["title"],
+                **app.models.Item.title_fields_from_metadata(
+                    book,
+                    fallback_title=book["title"],
+                ),
                 "image": book["image"],
             },
         )

@@ -14,6 +14,8 @@ def metadata(media_id, media_type):
         "source": Sources.MANUAL.value,
         "media_type": item.media_type,
         "title": item.title,
+        "original_title": item.original_title,
+        "localized_title": item.localized_title or item.title,
         "max_progress": None,
         "image": item.image,
         "synopsis": "No synopsis available.",

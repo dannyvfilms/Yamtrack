@@ -94,6 +94,8 @@ def search(media_type, query, page):
                 "source": Sources.TMDB.value,
                 "media_type": media_type,
                 "title": get_title(media),
+                "original_title": get_original_title(media),
+                "localized_title": get_localized_title(media),
                 "image": get_image_url(media["poster_path"]),
                 "year": get_year(media),
             }
@@ -188,7 +190,7 @@ def movie(media_id):
             "source": Sources.TMDB.value,
             "source_url": f"https://www.themoviedb.org/movie/{media_id}",
             "media_type": MediaTypes.MOVIE.value,
-            "title": response["title"],
+            **get_title_fields(response),
             "max_progress": 1,
             "image": get_image_url(response["poster_path"]),
             "synopsis": get_synopsis(response["overview"]),
@@ -249,6 +251,8 @@ def enrich_season_with_tv_data(season_data, tv_data, media_id, season_number):
         f"https://www.themoviedb.org/tv/{media_id}/season/{season_number}"
     )
     season_data["title"] = tv_data["title"]
+    season_data["original_title"] = tv_data.get("original_title")
+    season_data["localized_title"] = tv_data.get("localized_title")
     season_data["tvdb_id"] = tv_data["tvdb_id"]
     season_data["external_links"] = tv_data["external_links"]
     season_data["genres"] = tv_data["genres"]
@@ -390,7 +394,7 @@ def process_tv(response):
         "source": Sources.TMDB.value,
         "source_url": f"https://www.themoviedb.org/tv/{response['id']}",
         "media_type": MediaTypes.TV.value,
-        "title": response["name"],
+        **get_title_fields(response),
         "max_progress": num_episodes,
         "image": get_image_url(response["poster_path"]),
         "synopsis": get_synopsis(response["overview"]),
@@ -500,6 +504,28 @@ def get_title(response):
         return response["title"]
     except KeyError:
         return response["name"]
+
+
+def get_original_title(response):
+    """Return the original title/name for the media."""
+    return response.get("original_title") or response.get("original_name")
+
+
+def get_localized_title(response):
+    """Return the localized title/name for the media."""
+    return response.get("title") or response.get("name")
+
+
+def get_title_fields(response):
+    """Return normalized title fields for TMDB metadata."""
+    original_title = get_original_title(response)
+    localized_title = get_localized_title(response) or original_title
+
+    return {
+        "title": localized_title or original_title or "",
+        "original_title": original_title,
+        "localized_title": localized_title,
+    }
 
 
 def get_year(media):
@@ -799,7 +825,9 @@ def get_related(related_medias, media_type, parent_response=None):
         }
         if media_type == MediaTypes.SEASON.value:
             data["media_id"] = parent_response["id"]
-            data["title"] = parent_response["name"]
+            data["title"] = get_title(parent_response)
+            data["original_title"] = get_original_title(parent_response)
+            data["localized_title"] = get_localized_title(parent_response)
             data["season_number"] = media["season_number"]
             data["season_title"] = media["name"]
             # Use the same date processing logic as process_season for consistency
@@ -811,6 +839,8 @@ def get_related(related_medias, media_type, parent_response=None):
         else:
             data["media_id"] = media["id"]
             data["title"] = get_title(media)
+            data["original_title"] = get_original_title(media)
+            data["localized_title"] = get_localized_title(media)
             data["year"] = get_year(media)
         related.append(data)
     return related
@@ -834,6 +864,8 @@ def get_collection(collection_response):
             "image": get_image_url(media["poster_path"]),
             "media_id": media["id"],
             "title": get_title(media),
+            "original_title": get_original_title(media),
+            "localized_title": get_localized_title(media),
             "year": get_year(media),
         }
         for media in parts
@@ -856,6 +888,8 @@ def _person_filmography_entries(combined_credits):
                 "source": Sources.TMDB.value,
                 "media_type": media_type,
                 "title": get_title(media),
+                "original_title": get_original_title(media),
+                "localized_title": get_localized_title(media),
                 "image": get_image_url(media.get("poster_path")),
                 "year": get_year(media),
                 "release_date": get_start_date(
@@ -877,6 +911,8 @@ def _person_filmography_entries(combined_credits):
                 "source": Sources.TMDB.value,
                 "media_type": media_type,
                 "title": get_title(media),
+                "original_title": get_original_title(media),
+                "localized_title": get_localized_title(media),
                 "image": get_image_url(media.get("poster_path")),
                 "year": get_year(media),
                 "release_date": get_start_date(
@@ -1069,6 +1105,14 @@ def episode(media_id, season_number, episode_number):
 
         data = {
             "title": season_metadata.get("title") or tv_metadata.get("title") or "",
+            "original_title": (
+                season_metadata.get("original_title")
+                or tv_metadata.get("original_title")
+            ),
+            "localized_title": (
+                season_metadata.get("localized_title")
+                or tv_metadata.get("localized_title")
+            ),
             "season_title": season_metadata.get("season_title") or f"Season {season_number}",
             "episode_title": response.get("name") or f"Episode {episode_number}",
             "image": get_image_url(response.get("still_path")),

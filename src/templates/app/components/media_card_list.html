@@ -2,10 +2,12 @@
 
 <div class="bg-[#2a2f35] rounded-lg overflow-hidden hover:bg-[#39404b] transition-colors duration-200"
      x-data="{ trackOpen: false, listsOpen: false }">
+  {% with item|display_title:user as resolved_item_title %}
+    {% with item|alternative_title:user as resolved_alt_title %}
   <div class="flex items-center p-4 gap-4">
     <div class="shrink-0 relative">
       <a href="{{ item|media_url }}">
-        <img alt="{{ title }}"
+        <img alt="{{ resolved_item_title|default:title }}"
              class="lazyload w-16 h-24 object-cover rounded shadow-md bg-[#3e454d]"
              data-src="{{ item.image }}"
              src="{{ IMG_NONE }}">
@@ -17,7 +19,31 @@
         <div class="flex-1 min-w-0">
           <h3 class="text-lg font-semibold text-white mb-2 line-clamp-2">
             <a href="{{ item|media_url }}"
-               class="hover:text-indigo-400 transition-colors">{{ title }}</a>
+               class="hover:text-indigo-400 transition-colors">{{ resolved_item_title|default:title }}</a>
+            {% if resolved_alt_title %}
+              <span class="inline-flex items-center ml-1 align-middle relative" x-data="{ tooltipOpen: false }">
+                <button @mouseenter="tooltipOpen = true"
+                        @mouseleave="tooltipOpen = false"
+                        @click="tooltipOpen = !tooltipOpen"
+                        @click.outside="tooltipOpen = false"
+                        class="text-gray-500 hover:text-gray-400 transition-colors cursor-pointer inline-flex items-center"
+                        type="button"
+                        aria-label="Show alternative title">
+                  {% include "app/icons/info.svg" with classes="w-3.5 h-3.5" %}
+                </button>
+                <span x-show="tooltipOpen"
+                      x-transition:enter="transition ease-out duration-200"
+                      x-transition:enter-start="opacity-0 scale-95"
+                      x-transition:enter-end="opacity-100 scale-100"
+                      x-transition:leave="transition ease-in duration-150"
+                      x-transition:leave-start="opacity-100 scale-100"
+                      x-transition:leave-end="opacity-0 scale-95"
+                      class="absolute left-0 bottom-full mb-2 w-56 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10"
+                      style="display: none; background: rgba(0, 0, 0, 0.85); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);">
+                  {{ resolved_alt_title }}
+                </span>
+              </span>
+            {% endif %}
           </h3>
 
           <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-400">
@@ -64,7 +90,7 @@
   </div>
 
   {% if item.media_type == MediaTypes.EPISODE.value %}
-    {% include "app/components/fill_track_episode.html" with request=request media=item episode=item episode_title=title csrf_token=csrf_token TRACK_TIME=TRACK_TIME user=user only %}
+    {% include "app/components/fill_track_episode.html" with request=request media=item episode=item episode_title=resolved_item_title|default:title csrf_token=csrf_token TRACK_TIME=TRACK_TIME user=user only %}
   {% else %}
     {# Track Modal #}
     <div x-show="trackOpen"
@@ -86,5 +112,7 @@
       <div id="{% component_id 'lists' item %}"></div>
     </div>
   </div>
+    {% endwith %}
+  {% endwith %}
 
 </div>

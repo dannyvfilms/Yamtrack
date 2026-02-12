@@ -182,6 +182,8 @@ def _serialize_item(item):
         "media_id": str(getattr(item, "media_id", "")) if getattr(item, "media_id", None) is not None else None,
         "source": getattr(item, "source", None),
         "title": getattr(item, "title", "") or "",
+        "original_title": getattr(item, "original_title", None),
+        "localized_title": getattr(item, "localized_title", None),
     }
     season_number = getattr(item, "season_number", None)
     if season_number is not None:

@@ -178,6 +178,14 @@ class MediaCardSubtitleDisplayChoices(models.TextChoices):
     ALWAYS = "always", "Always visible"
 
 
+class TitleDisplayPreferenceChoices(models.TextChoices):
+    """Choices for how item titles are displayed across the app."""
+
+    LOCALIZED = "localized", "Show Localized Titles"
+    ORIGINAL = "original", "Show Original Titles"
+    AUTO = "auto", "Auto (if available)"
+
+
 class PlannedHomeDisplayChoices(models.TextChoices):
     """Choices for how planned items are displayed on home page."""
 
@@ -499,6 +507,12 @@ class User(AbstractUser):
         default=MediaCardSubtitleDisplayChoices.HOVER,
         choices=MediaCardSubtitleDisplayChoices.choices,
         help_text="Control when media card subtitles are visible",
+    )
+    title_display_preference = models.CharField(
+        max_length=20,
+        default=TitleDisplayPreferenceChoices.LOCALIZED,
+        choices=TitleDisplayPreferenceChoices.choices,
+        help_text="Preferred title variant to display in the UI",
     )
 
     # Tracking settings
@@ -832,6 +846,10 @@ class User(AbstractUser):
             models.CheckConstraint(
                 name="media_card_subtitle_display_valid",
                 condition=models.Q(media_card_subtitle_display__in=MediaCardSubtitleDisplayChoices.values),
+            ),
+            models.CheckConstraint(
+                name="title_display_preference_valid",
+                condition=models.Q(title_display_preference__in=TitleDisplayPreferenceChoices.values),
             ),
             models.CheckConstraint(
                 name="statistics_default_range_valid",

@@ -282,7 +282,13 @@ class AniListImporter:
             source=Sources.MAL.value,
             media_type=media_type,
             defaults={
-                "title": content["media"]["title"]["userPreferred"],
+                **app.models.Item.title_fields_from_metadata(
+                    {
+                        "title": content["media"]["title"]["userPreferred"],
+                        "localized_title": content["media"]["title"]["userPreferred"],
+                        "original_title": None,
+                    },
+                ),
                 "image": content["media"]["coverImage"]["large"],
             },
         )

@@ -224,6 +224,79 @@ def safe_attr(obj, attr):
     return getattr(obj, attr, None)
 
 
+def _normalize_title_value(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _resolve_title_pair(item, preference):
+    """Resolve display/alternate titles for dicts and model-like objects."""
+    if isinstance(item, dict):
+        title = item.get("title")
+        original_title = item.get("original_title")
+        localized_title = item.get("localized_title")
+    else:
+        title = getattr(item, "title", None)
+        original_title = getattr(item, "original_title", None)
+        localized_title = getattr(item, "localized_title", None)
+
+    original_title = _normalize_title_value(original_title)
+    localized_title = (
+        _normalize_title_value(localized_title)
+        or _normalize_title_value(title)
+    )
+    fallback_title = (
+        _normalize_title_value(title)
+        or localized_title
+        or original_title
+        or ""
+    )
+
+    preference = (preference or "localized").lower()
+    if preference == "original":
+        display_title = original_title or localized_title or fallback_title
+        alternative_title = (
+            localized_title if localized_title and localized_title != display_title else None
+        )
+        return display_title, alternative_title
+
+    display_title = localized_title or original_title or fallback_title
+    alternative_title = (
+        original_title if original_title and original_title != display_title else None
+    )
+    return display_title, alternative_title
+
+
+@register.filter
+def display_title(item, user):
+    """Return the preferred display title for an item."""
+    if not item:
+        return ""
+
+    if hasattr(item, "get_display_title"):
+        return item.get_display_title(user=user)
+
+    preference = getattr(user, "title_display_preference", "localized")
+    display, _ = _resolve_title_pair(item, preference)
+    return display
+
+
+@register.filter
+def alternative_title(item, user):
+    """Return the alternate title (opposite of display title) for tooltip use."""
+    if not item:
+        return None
+
+    if hasattr(item, "get_alternative_title"):
+        return item.get_alternative_title(user=user)
+
+    preference = getattr(user, "title_display_preference", "localized")
+    _, alternative = _resolve_title_pair(item, preference)
+    return alternative
+
+
 @register.filter
 def release_year(item, media=None):
     """Return a best-effort release year from dicts or model instances."""

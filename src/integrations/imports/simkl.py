@@ -223,7 +223,7 @@ class SimklImporter:
                     source=Sources.TMDB.value,
                     media_type=MediaTypes.TV.value,
                     defaults={
-                        "title": metadata["title"],
+                        **app.models.Item.title_fields_from_metadata(metadata),
                         "image": metadata["image"],
                     },
                 )
@@ -270,7 +270,7 @@ class SimklImporter:
                 media_type=MediaTypes.SEASON.value,
                 season_number=season_number,
                 defaults={
-                    "title": metadata["title"],
+                    **app.models.Item.title_fields_from_metadata(metadata),
                     "image": season_image,
                 },
             )
@@ -299,7 +299,7 @@ class SimklImporter:
                     season_number=season_number,
                     episode_number=episode["number"],
                     defaults={
-                        "title": metadata["title"],
+                        **app.models.Item.title_fields_from_metadata(metadata),
                         "image": ep_img,
                     },
                 )
@@ -377,7 +377,7 @@ class SimklImporter:
                     source=Sources.TMDB.value,
                     media_type=MediaTypes.MOVIE.value,
                     defaults={
-                        "title": metadata["title"],
+                        **app.models.Item.title_fields_from_metadata(metadata),
                         "image": metadata["image"],
                     },
                 )
@@ -452,7 +452,7 @@ class SimklImporter:
                     source=Sources.MAL.value,
                     media_type=MediaTypes.ANIME.value,
                     defaults={
-                        "title": metadata["title"],
+                        **app.models.Item.title_fields_from_metadata(metadata),
                         "image": metadata["image"],
                     },
                 )

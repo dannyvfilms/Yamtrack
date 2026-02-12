@@ -3149,7 +3149,7 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
             media_type=media_type,
             season_number=season_number,
             defaults={
-                "title": metadata["title"],
+                **Item.title_fields_from_metadata(metadata),
                 "image": metadata["image"],
                 "number_of_pages": number_of_pages,
             },
@@ -3200,7 +3200,10 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
                 episode_number = episode_data["episode_number"]
                 if episode_number in existing_episodes:
                     episode_item = existing_episodes[episode_number]
-                    episode_item.title = metadata["title"]
+                    title_fields = Item.title_fields_from_metadata(metadata)
+                    episode_item.title = title_fields["title"]
+                    episode_item.original_title = title_fields["original_title"]
+                    episode_item.localized_title = title_fields["localized_title"]
                     episode_item.image = episode_data["image"]
                     
                     # Extract and update release_datetime from TMDB air_date
@@ -3218,7 +3221,6 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
                     # Extract and update runtime_minutes from raw episode data
                     raw_episode = raw_episode_map.get(episode_number)
                     if raw_episode and raw_episode.get("runtime") is not None:
-                        from app.statistics import parse_runtime_to_minutes
                         # Raw episode runtime is an integer (minutes) from TMDB
                         runtime_minutes = int(raw_episode["runtime"])
                         if runtime_minutes > 0:
@@ -3236,7 +3238,14 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
             if episodes_to_update:
                 updated_count = Item.objects.bulk_update(
                     episodes_to_update,
-                    ["title", "image", "release_datetime", "runtime_minutes"],
+                    [
+                        "title",
+                        "original_title",
+                        "localized_title",
+                        "image",
+                        "release_datetime",
+                        "runtime_minutes",
+                    ],
                     batch_size=100,
                 )
                 logger.info(
@@ -3819,6 +3828,23 @@ def track_modal(
     return response
 
 
+def _parse_release_date_str(release_date_value):
+    """Parse provider release dates into a date object for Album.release_date."""
+    if not release_date_value:
+        return None
+
+    if isinstance(release_date_value, date):
+        return release_date_value
+
+    if hasattr(release_date_value, "date"):
+        return release_date_value.date()
+
+    if isinstance(release_date_value, str):
+        return parse_date(release_date_value[:10])
+
+    return None
+
+
 @require_POST
 def media_save(request):
     """Save or update media data to the database."""
@@ -3864,7 +3890,7 @@ def media_save(request):
                     media_type=media_type,
                     season_number=season_number,
                     defaults={
-                        "title": metadata["title"],
+                        **Item.title_fields_from_metadata(metadata),
                         "image": metadata["image"],
                         "number_of_pages": number_of_pages,
                     },
@@ -3969,7 +3995,7 @@ def media_save(request):
             media_type=media_type,
             season_number=season_number,
             defaults={
-                "title": metadata["title"],
+                **Item.title_fields_from_metadata(metadata),
                 "image": metadata["image"],
                 "runtime_minutes": runtime_minutes,
                 "number_of_pages": number_of_pages,
@@ -3997,7 +4023,6 @@ def media_save(request):
 
         # Always update metadata_fetched_at timestamp
         if not created:
-            from django.utils import timezone
             item.metadata_fetched_at = timezone.now()
             needs_save = True
         if item.image == settings.IMG_NONE and metadata.get("image"):
@@ -4052,6 +4077,13 @@ def media_save(request):
             needs_save = True
         if not item.runtime and runtime:
             item.runtime = runtime
+            needs_save = True
+        title_fields = Item.title_fields_from_metadata(metadata)
+        if not item.original_title and title_fields["original_title"]:
+            item.original_title = title_fields["original_title"]
+            needs_save = True
+        if not item.localized_title and title_fields["localized_title"]:
+            item.localized_title = title_fields["localized_title"]
             needs_save = True
 
         if needs_save:
@@ -4221,7 +4253,7 @@ def episode_save(request):
             media_type=MediaTypes.SEASON.value,
             season_number=season_number,
             defaults={
-                "title": tv_with_seasons_metadata["title"],
+                **Item.title_fields_from_metadata(tv_with_seasons_metadata),
                 "image": season_image,
             },
         )
@@ -8461,16 +8493,16 @@ def collection_modal(request, source, media_type, media_id):
 
     if not item:
         item_defaults = {
-            "title": "",
+            **Item.title_fields_from_metadata(metadata or {}),
             "image": settings.IMG_NONE,
         }
         try:
-            item_defaults["title"] = (
-                (metadata or {}).get("title")
-                or (metadata or {}).get("season_title")
-                or (metadata or {}).get("name")
-                or ""
-            )
+            if not item_defaults.get("title"):
+                item_defaults["title"] = (
+                    (metadata or {}).get("season_title")
+                    or (metadata or {}).get("name")
+                    or ""
+                )
             item_defaults["image"] = (metadata or {}).get("image") or settings.IMG_NONE
 
             if media_type == MediaTypes.BOOK.value:

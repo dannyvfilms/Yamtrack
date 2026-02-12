@@ -84,6 +84,8 @@ class Item(CalendarTriggerMixin, models.Model):
         default=MediaTypes.MOVIE.value,
     )
     title = models.TextField()
+    original_title = models.TextField(null=True, blank=True)
+    localized_title = models.TextField(null=True, blank=True)
     image = models.URLField()  # if add default, custom media entry will show the value
     season_number = models.PositiveIntegerField(null=True, blank=True)
     episode_number = models.PositiveIntegerField(null=True, blank=True)
@@ -194,6 +196,83 @@ class Item(CalendarTriggerMixin, models.Model):
                 name += f"E{self.episode_number}"
         return name
 
+    @staticmethod
+    def _normalize_title_value(value):
+        """Normalize title values to non-empty strings or None."""
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    @classmethod
+    def title_fields_from_metadata(cls, metadata, fallback_title=""):
+        """Build item title fields from provider metadata."""
+        metadata = metadata or {}
+        title = cls._normalize_title_value(metadata.get("title"))
+        original_title = cls._normalize_title_value(metadata.get("original_title"))
+        localized_title = cls._normalize_title_value(metadata.get("localized_title"))
+
+        if not localized_title and title:
+            localized_title = title
+
+        if not title:
+            title = (
+                localized_title
+                or original_title
+                or cls._normalize_title_value(fallback_title)
+                or ""
+            )
+
+        return {
+            "title": title,
+            "original_title": original_title,
+            "localized_title": localized_title,
+        }
+
+    def get_display_and_alternative_title(self, user=None):
+        """Return display and alternate titles based on user preference."""
+        preference = getattr(user, "title_display_preference", "localized")
+        return self.resolve_title_preference(preference)
+
+    def resolve_title_preference(self, preference):
+        """Resolve display and alternative titles for a preference value."""
+        preference = (preference or "localized").lower()
+        original_title = self._normalize_title_value(self.original_title)
+        localized_title = (
+            self._normalize_title_value(self.localized_title)
+            or self._normalize_title_value(self.title)
+        )
+        fallback_title = (
+            self._normalize_title_value(self.title)
+            or localized_title
+            or original_title
+            or ""
+        )
+
+        if preference == "original":
+            display_title = original_title or localized_title or fallback_title
+            alternative_title = (
+                localized_title if localized_title and localized_title != display_title else None
+            )
+            return display_title, alternative_title
+
+        # Auto currently prefers localized titles when available.
+        display_title = localized_title or original_title or fallback_title
+        alternative_title = (
+            original_title if original_title and original_title != display_title else None
+        )
+        return display_title, alternative_title
+
+    def get_display_title(self, user=None):
+        """Return the preferred title to render for this item."""
+        display_title, _ = self.get_display_and_alternative_title(user=user)
+        return display_title
+
+    def get_alternative_title(self, user=None):
+        """Return the opposite title variant for tooltip display."""
+        _, alternative_title = self.get_display_and_alternative_title(user=user)
+        return alternative_title
+
     @classmethod
     def generate_manual_id(cls, media_type):
         """Generate a new ID for manual items."""
@@ -242,7 +321,7 @@ class Item(CalendarTriggerMixin, models.Model):
                     media_id=self.media_id,
                     source=self.source,
                     media_type=MediaTypes.TV.value,
-                    title=tv_metadata["title"],
+                    **Item.title_fields_from_metadata(tv_metadata),
                     image=tv_metadata["image"],
                     runtime_minutes=runtime_minutes,
                 )
@@ -2077,7 +2156,10 @@ class TV(Media):
                 media_type=MediaTypes.SEASON.value,
                 season_number=season_number,
                 defaults={
-                    "title": self.item.title,
+                    **Item.title_fields_from_metadata(
+                        season_metadata,
+                        fallback_title=self.item.title,
+                    ),
                     "image": season_image,
                 },
             )
@@ -2165,7 +2247,10 @@ class TV(Media):
                         media_type=MediaTypes.SEASON.value,
                         season_number=season_data["season_number"],
                         defaults={
-                            "title": self.item.title,
+                            **Item.title_fields_from_metadata(
+                                season_data,
+                                fallback_title=self.item.title,
+                            ),
                             "image": season_image,
                         },
                     )
@@ -2555,7 +2640,7 @@ class Season(Media):
                 source=Sources.TMDB.value,
                 media_type=MediaTypes.TV.value,
                 defaults={
-                    "title": tv_metadata["title"],
+                    **Item.title_fields_from_metadata(tv_metadata),
                     "image": tv_metadata["image"],
                 },
             )
@@ -2666,7 +2751,7 @@ class Season(Media):
             season_number=self.item.season_number,
             episode_number=episode_number,
             defaults={
-                "title": self.item.title,
+                **Item.title_fields_from_metadata({"title": self.item.title}),
                 "image": image,
                 "runtime_minutes": runtime_minutes,
                 "release_datetime": release_datetime,

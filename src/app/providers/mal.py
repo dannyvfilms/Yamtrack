@@ -12,7 +12,10 @@ from app.providers import services
 
 logger = logging.getLogger(__name__)
 base_url = "https://api.myanimelist.net/v2"
-base_fields = "title,main_picture,media_type,start_date,end_date,synopsis,status,genres,mean,num_scoring_users,recommendations"  # noqa: E501
+base_fields = (
+    "title,main_picture,media_type,start_date,end_date,synopsis,status,genres,"
+    "mean,num_scoring_users,recommendations,alternative_titles"
+)
 
 
 def handle_error(error):
@@ -49,7 +52,7 @@ def search(media_type, query, page):
         url = f"{base_url}/{media_type}"
         params = {
             "q": query,
-            "fields": "media_type,start_date",
+            "fields": "media_type,start_date,alternative_titles",
             "limit": settings.PER_PAGE,
         }
         if settings.MAL_NSFW:
@@ -72,7 +75,9 @@ def search(media_type, query, page):
                 "media_id": media["node"]["id"],
                 "source": Sources.MAL.value,
                 "media_type": media_type,
-                "title": media["node"]["title"],
+                "title": get_localized_title(media["node"]) or media["node"]["title"],
+                "original_title": media["node"]["title"],
+                "localized_title": get_localized_title(media["node"]) or media["node"]["title"],
                 "image": get_image_url(media["node"]),
                 "year": get_start_year(media["node"]),
             }
@@ -120,7 +125,7 @@ def anime(media_id):
             "source": Sources.MAL.value,
             "source_url": f"https://myanimelist.net/anime/{media_id}",
             "media_type": MediaTypes.ANIME.value,
-            "title": response["title"],
+            **get_title_fields(response),
             "max_progress": num_episodes,
             "image": get_image_url(response),
             "synopsis": get_synopsis(response),
@@ -185,7 +190,7 @@ def manga(media_id):
             "source": Sources.MAL.value,
             "source_url": f"https://myanimelist.net/manga/{media_id}",
             "media_type": MediaTypes.MANGA.value,
-            "title": response["title"],
+            **get_title_fields(response),
             "image": get_image_url(response),
             "synopsis": get_synopsis(response),
             "max_progress": num_chapters,
@@ -236,6 +241,35 @@ def get_image_url(response):
         return response["main_picture"]["large"]
     except KeyError:
         return settings.IMG_NONE
+
+
+def get_localized_title(response):
+    """Return an English/localized MAL title when available."""
+    alternative_titles = response.get("alternative_titles") or {}
+    english_title = alternative_titles.get("en")
+
+    if isinstance(english_title, list):
+        english_title = next(
+            (title for title in english_title if isinstance(title, str) and title.strip()),
+            None,
+        )
+
+    if isinstance(english_title, str):
+        english_title = english_title.strip()
+
+    return english_title or None
+
+
+def get_title_fields(response):
+    """Return normalized title fields for MAL metadata."""
+    original_title = response.get("title")
+    localized_title = get_localized_title(response) or original_title
+
+    return {
+        "title": localized_title or original_title or "",
+        "original_title": original_title,
+        "localized_title": localized_title,
+    }
 
 
 def get_start_year(response):

@@ -320,6 +320,61 @@
           </div>
         </div>
 
+        <!-- Title Display Preference -->
+        <div class="p-3 bg-[#39404b] rounded-md mt-4">
+          <div class="flex items-center justify-between mb-2">
+            <label class="text-gray-200 text-sm font-medium">Title Display Preference</label>
+            <span class="text-gray-400 text-xs">Choose whether cards show localized titles, original titles, or automatic fallback.</span>
+          </div>
+          <div class="relative"
+               x-data="{ open: false, selectedValue: '{{ user.title_display_preference|default:'localized' }}', selectedLabel: '' }"
+               x-init="selectedLabel = selectedValue === 'original' ? 'Show Original Titles' : (selectedValue === 'auto' ? 'Auto (if available)' : 'Show Localized Titles')">
+            <button type="button"
+                    @click="open = !open"
+                    @click.outside="open = false"
+                    class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
+              <span x-text="selectedLabel"></span>
+              <svg xmlns="http://www.w3.org/2000/svg"
+                   width="24"
+                   height="24"
+                   viewBox="0 0 24 24"
+                   fill="none"
+                   stroke="currentColor"
+                   stroke-width="2"
+                   stroke-linecap="round"
+                   stroke-linejoin="round"
+                   class="w-4 h-4 text-gray-400">
+                <path d="m6 9 6 6 6-6"></path>
+              </svg>
+            </button>
+            <div x-show="open"
+                 x-transition:enter="transition ease-out duration-100"
+                 x-transition:enter-start="transform opacity-0 scale-95"
+                 x-transition:enter-end="transform opacity-100 scale-100"
+                 x-transition:leave="transition ease-in duration-75"
+                 x-transition:leave-start="transform opacity-100 scale-100"
+                 x-transition:leave-end="transform opacity-0 scale-95"
+                 class="absolute left-0 right-0 mt-2 py-1 bg-[#272c31] rounded-md shadow-lg overflow-hidden z-10 border border-gray-600">
+              <button type="button"
+                      @click="selectedValue = 'localized'; selectedLabel = 'Show Localized Titles'; open = false"
+                      class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                Show Localized Titles
+              </button>
+              <button type="button"
+                      @click="selectedValue = 'original'; selectedLabel = 'Show Original Titles'; open = false"
+                      class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                Show Original Titles
+              </button>
+              <button type="button"
+                      @click="selectedValue = 'auto'; selectedLabel = 'Auto (if available)'; open = false"
+                      class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white">
+                Auto (if available)
+              </button>
+            </div>
+            <input type="hidden" name="title_display_preference" x-bind:value="selectedValue">
+          </div>
+        </div>
+
         <!-- Top Talent Sort -->
         <div class="p-3 bg-[#39404b] rounded-md mt-4">
           <div class="flex items-center justify-between mb-2">

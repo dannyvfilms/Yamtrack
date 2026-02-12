@@ -1242,6 +1242,8 @@ class PlexHistoryImporter:
                     actual_tmdb_id,
                     {
                         "title": tv_metadata["title"],
+                        "original_title": tv_metadata.get("original_title"),
+                        "localized_title": tv_metadata.get("localized_title"),
                         "image": season_image,
                     },
                     season_number=record["season_number"],
@@ -1269,6 +1271,8 @@ class PlexHistoryImporter:
                 record["tmdb_id"],
                 {
                     "title": tv_metadata["title"],
+                    "original_title": tv_metadata.get("original_title"),
+                    "localized_title": tv_metadata.get("localized_title"),
                     "image": episode_image,
                 },
                 season_number=record["season_number"],
@@ -1503,7 +1507,7 @@ class PlexHistoryImporter:
             item_kwargs["episode_number"] = episode_number
 
         defaults = {
-            "title": metadata["title"],
+            **app.models.Item.title_fields_from_metadata(metadata),
             "image": metadata["image"],
         }
 

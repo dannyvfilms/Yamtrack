@@ -175,6 +175,27 @@ def api_request(provider, method, url, params=None, data=None, headers=None):
         raise error from None
 
 
+def _ensure_title_fields(metadata):
+    """Normalize metadata title fields across providers."""
+    if not isinstance(metadata, dict):
+        return metadata
+
+    metadata.setdefault("original_title", None)
+    metadata.setdefault("localized_title", None)
+
+    if not metadata.get("title"):
+        metadata["title"] = (
+            metadata.get("localized_title")
+            or metadata.get("original_title")
+            or ""
+        )
+
+    if not metadata.get("localized_title") and metadata.get("title"):
+        metadata["localized_title"] = metadata["title"]
+
+    return metadata
+
+
 def get_media_metadata(
     media_type,
     media_id,
@@ -184,22 +205,24 @@ def get_media_metadata(
 ):
     """Return the metadata for the selected media."""
     if media_type == MediaTypes.MUSIC.value and source == Sources.MANUAL.value:
-        return {
-            "max_progress": None,
-            "title": "",
-            "image": "",
-            "related": {},
-            "details": {},
-        }
+        return _ensure_title_fields(
+            {
+                "max_progress": None,
+                "title": "",
+                "image": "",
+                "related": {},
+                "details": {},
+            },
+        )
 
     if source == Sources.MANUAL.value:
         if media_type == MediaTypes.SEASON.value:
-            return manual.season(media_id, season_numbers[0])
+            return _ensure_title_fields(manual.season(media_id, season_numbers[0]))
         if media_type == MediaTypes.EPISODE.value:
-            return manual.episode(media_id, season_numbers[0], episode_number)
+            return _ensure_title_fields(manual.episode(media_id, season_numbers[0], episode_number))
         if media_type == "tv_with_seasons":
             media_type = MediaTypes.TV.value
-        return manual.metadata(media_id, media_type)
+        return _ensure_title_fields(manual.metadata(media_id, media_type))
 
     def tmdb_season_metadata():
         """Return TMDB season metadata or raise a not-found error."""
@@ -235,36 +258,41 @@ def get_media_metadata(
         MediaTypes.BOARDGAME.value: lambda: bgg.metadata(media_id),
         MediaTypes.MUSIC.value: lambda: musicbrainz.recording(media_id),
         MediaTypes.PODCAST.value: lambda s=source: {
-            "max_progress": None,  # Podcasts use runtime_minutes from Item, not external metadata
+            "max_progress": None,
             "title": "",
             "image": "",
             "related": {},
             "details": {},
+            # Podcasts use runtime_minutes from Item, not external metadata.
             "source": s,  # Add source to fix KeyError in template tag
         },
     }
     if media_type == MediaTypes.MUSIC.value:
         if not media_id or len(str(media_id)) < 30:
-            return {
-                "max_progress": None,
-                "title": "",
-                "image": "",
-                "related": {},
-                "details": {},
-            }
+            return _ensure_title_fields(
+                {
+                    "max_progress": None,
+                    "title": "",
+                    "image": "",
+                    "related": {},
+                    "details": {},
+                },
+            )
         try:
-            return metadata_retrievers[media_type]()
+            return _ensure_title_fields(metadata_retrievers[media_type]())
         except Exception as exc:  # pragma: no cover - defensive guard for bad IDs
             logger.debug("Music metadata lookup failed for %s: %s", media_id, exc)
-            return {
-                "max_progress": None,
-                "title": "",
-                "image": "",
-                "related": {},
-                "details": {},
-            }
+            return _ensure_title_fields(
+                {
+                    "max_progress": None,
+                    "title": "",
+                    "image": "",
+                    "related": {},
+                    "details": {},
+                },
+            )
 
-    return metadata_retrievers[media_type]()
+    return _ensure_title_fields(metadata_retrievers[media_type]())
 
 
 def search(media_type, query, page, source=None):

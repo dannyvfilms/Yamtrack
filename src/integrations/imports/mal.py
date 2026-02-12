@@ -75,7 +75,7 @@ class MyAnimeListImporter:
         logger.info("Fetching %s from MyAnimeList", media_type)
         params = {
             "fields": (
-                "num_episodes,num_chapters,"
+                "num_episodes,num_chapters,alternative_titles,"
                 "list_status{comments,num_times_rewatched,num_times_reread}"
             ),
             "nsfw": "true",
@@ -150,7 +150,7 @@ class MyAnimeListImporter:
             source=Sources.MAL.value,
             media_type=media_type,
             defaults={
-                "title": content["node"]["title"],
+                **app.models.Item.title_fields_from_metadata(content["node"]),
                 "image": image_url,
             },
         )

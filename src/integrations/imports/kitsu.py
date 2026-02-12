@@ -325,7 +325,13 @@ class KitsuImporter:
             source=source,
             media_type=media_type,
             defaults={
-                "title": kitsu_metadata["attributes"]["canonicalTitle"],
+                **app.models.Item.title_fields_from_metadata(
+                    {
+                        "title": kitsu_metadata["attributes"]["canonicalTitle"],
+                        "localized_title": kitsu_metadata["attributes"]["canonicalTitle"],
+                        "original_title": None,
+                    },
+                ),
                 "image": image_url,
             },
         )
