@@ -215,6 +215,15 @@
               {% endfor %}
             </div>
           </div>
+
+          {% if custom_list.can_recommend and items_count %}
+            <a href="{% url 'recommend_item' custom_list.id %}"
+               class="h-10 inline-flex items-center gap-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md transition-colors cursor-pointer">
+              {% include "app/icons/list-add.svg" with classes="w-4 h-4" %}
+              <span class="text-sm">Recommend Item</span>
+            </a>
+          {% endif %}
+
           {% if can_edit %}
             <div class="layout-toggle ml-auto flex items-center gap-2">
               <div class="relative" x-data="{ tooltipOpen: false }">
@@ -279,15 +288,11 @@
             <h3 class="text-xl font-semibold mb-2">No results found</h3>
             <p class="text-gray-400 text-center max-w-md mb-8">
               {% if request.GET.q %}
-                We couldn't find any matches for "{{ request.GET.q }}". Try a different search or recommend something new.
+                We couldn't find any matches for "{{ request.GET.q }}". Try a different search or adjust your filters.
               {% else %}
-                We couldn't find any matches with the current filters. Try adjusting them or recommend something new.
+                We couldn't find any matches with the current filters. Try adjusting them to see more items.
               {% endif %}
             </p>
-            {% if custom_list.can_recommend %}
-              <a href="{% url 'recommend_item' custom_list.id %}"
-                 class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md transition-colors">Recommend Item</a>
-            {% endif %}
           </div>
         {% else %}
           <div class="flex flex-col items-center justify-center py-16 bg-[#2a2f35] rounded-lg">
