@@ -1,6 +1,7 @@
 import datetime
 import logging
 import secrets
+from urllib.parse import urlencode
 
 from django.apps import apps
 from django.contrib import messages
@@ -11,6 +12,7 @@ from django.db.models import Count, Exists, F, OuterRef, Prefetch, Q, Subquery
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_POST
 
@@ -935,6 +937,18 @@ def recommend_item_page(request, list_id):
     else:
         enabled_media_types = MediaTypes.values
 
+    initial_query = request.GET.get("q", "").strip()
+    initial_media_type = request.GET.get("media_type") or enabled_media_types[0]
+    if initial_media_type not in enabled_media_types:
+        initial_media_type = enabled_media_types[0]
+
+    try:
+        initial_page = int(request.GET.get("page", 1))
+    except (TypeError, ValueError):
+        initial_page = 1
+    if initial_page < 1:
+        initial_page = 1
+
     context = {
         "custom_list": custom_list,
         "media_types": enabled_media_types,
@@ -943,6 +957,9 @@ def recommend_item_page(request, list_id):
         "base_template": "base_public.html"
         if not request.user.is_authenticated
         else "base.html",
+        "initial_query": initial_query,
+        "initial_media_type": initial_media_type,
+        "initial_page": initial_page,
     }
 
     return render(request, "lists/recommend_item.html", context)
@@ -995,6 +1012,22 @@ def recommend_search(request, list_id):
                 item=item,
             ).exists()
 
+        query = request.GET.get("q", "").strip()
+        search_media_type = request.GET.get("search_media_type")
+        page = request.GET.get("page", "1")
+
+        next_params = {}
+        if query:
+            next_params["q"] = query
+        if search_media_type:
+            next_params["media_type"] = search_media_type
+        if page:
+            next_params["page"] = page
+
+        next_url = reverse("recommend_item", kwargs={"list_id": custom_list.id})
+        if next_params:
+            next_url = f"{next_url}?{urlencode(next_params)}"
+
         context = {
             "custom_list": custom_list,
             "media": media_metadata,
@@ -1004,6 +1037,7 @@ def recommend_search(request, list_id):
             "is_authenticated": request.user.is_authenticated,
             "already_in_list": already_in_list,
             "already_recommended": already_recommended,
+            "next_url": next_url,
         }
         return render(request, "lists/components/recommend_preview_modal.html", context)
 
@@ -1098,6 +1132,13 @@ def submit_recommendation(request, list_id):
         messages.error(request, "Recommendations are not enabled for this list.")
         return redirect("list_detail", list_id=list_id)
 
+    next_url = request.POST.get("next")
+
+    def _redirect_after_submit(fallback):
+        if next_url and url_has_allowed_host_and_scheme(next_url, allowed_hosts=None):
+            return redirect(next_url)
+        return fallback
+
     # Get item details from the form
     media_id = request.POST.get("media_id")
     media_type = request.POST.get("media_type")
@@ -1141,12 +1182,12 @@ def submit_recommendation(request, list_id):
     # Check if item is already in the list
     if custom_list.items.filter(id=item.id).exists():
         messages.info(request, f'"{item.title}" is already in this list.')
-        return redirect("recommend_item", list_id=list_id)
+        return _redirect_after_submit(redirect("recommend_item", list_id=list_id))
 
     # Check if already recommended
     if ListRecommendation.objects.filter(custom_list=custom_list, item=item).exists():
         messages.info(request, f'"{item.title}" has already been recommended.')
-        return redirect("recommend_item", list_id=list_id)
+        return _redirect_after_submit(redirect("recommend_item", list_id=list_id))
 
     # Create the recommendation
     recommended_by = request.user if request.user.is_authenticated else None
@@ -1170,7 +1211,7 @@ def submit_recommendation(request, list_id):
         f'Your recommendation for "{item.title}" has been submitted!',
     )
 
-    return redirect("list_detail", list_id=list_id)
+    return _redirect_after_submit(redirect("list_detail", list_id=list_id))
 
 
 @require_GET

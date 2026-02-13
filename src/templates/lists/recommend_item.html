@@ -21,7 +21,7 @@
 
     <div class="bg-[#2a2f35] rounded-lg p-6"
          x-data="{
-           selectedType: { display: '{{ media_types.0|media_type_readable }}', value: '{{ media_types.0 }}' },
+           selectedType: { display: '{{ initial_media_type|media_type_readable }}', value: '{{ initial_media_type }}' },
            mediaTypes: [{% for media_type in media_types %}{ display: '{{ media_type|media_type_readable }}', value: '{{ media_type }}' }{% if not forloop.last %},{% endif %}{% endfor %}],
            isOpen: false,
            getPlaceholder() { return 'Search ' + this.selectedType.display.toLowerCase() + '...'; }
@@ -40,6 +40,7 @@
             <input type="search"
                    id="recommend-search-input"
                    name="q"
+                   value="{{ initial_query }}"
                    :placeholder="getPlaceholder()"
                    class="w-full py-3 pl-10 pr-4 text-gray-300 bg-[#39404b] rounded-l-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-inset placeholder-gray-500"
                    autocomplete="off"
@@ -51,6 +52,7 @@
           </div>
 
           <input type="hidden" name="media_type" :value="selectedType.value">
+          <input type="hidden" name="page" value="{{ initial_page }}">
 
           {# Media type dropdown #}
           <div class="relative">
@@ -93,7 +95,18 @@
     </div>
   </div>
 
-  {# Modal container for media preview #}
+  
+  {% if initial_query %}
+    <script>
+      document.addEventListener('DOMContentLoaded', () => {
+        const form = document.getElementById('recommend-search-form');
+        if (form) {
+          htmx.trigger(form, 'submit');
+        }
+      });
+    </script>
+  {% endif %}
+{# Modal container for media preview #}
   <div id="recommend-modal-container"></div>
 {% endblock content %}
 {# djlint:on #}

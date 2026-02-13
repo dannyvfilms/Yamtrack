@@ -1229,3 +1229,56 @@ class ListJsonExportTests(TestCase):
         self.assertEqual(response.status_code, 400)
         data = response.json()
         self.assertIn("error", data)
+
+
+class RecommendationRedirectTests(TestCase):
+    """Tests for recommendation flow redirect behavior."""
+
+    def setUp(self):
+        self.client = Client()
+        self.custom_list = CustomList.objects.create(
+            name="Public Recs",
+            owner=get_user_model().objects.create_user("owner", "owner@example.com", "pw"),
+            visibility="public",
+            allow_recommendations=True,
+        )
+        self.item = Item.objects.create(
+            media_id="100",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Recommendation Target",
+            image="https://example.com/poster.jpg",
+        )
+
+    def test_submit_recommendation_redirects_to_next_search_page(self):
+        """Recommendation submit should preserve recommendation search page via next."""
+        next_url = f"{reverse('recommend_item', args=[self.custom_list.id])}?q=dark&media_type=movie&page=2"
+        response = self.client.post(
+            reverse("submit_recommendation", args=[self.custom_list.id]),
+            {
+                "media_id": self.item.media_id,
+                "media_type": self.item.media_type,
+                "source": self.item.source,
+                "next": next_url,
+            },
+        )
+
+        self.assertRedirects(response, next_url, fetch_redirect_response=False)
+
+    def test_submit_recommendation_ignores_external_next_url(self):
+        """External next URLs should be rejected for security."""
+        response = self.client.post(
+            reverse("submit_recommendation", args=[self.custom_list.id]),
+            {
+                "media_id": self.item.media_id,
+                "media_type": self.item.media_type,
+                "source": self.item.source,
+                "next": "https://evil.example/path",
+            },
+        )
+
+        self.assertRedirects(
+            response,
+            reverse("list_detail", args=[self.custom_list.id]),
+            fetch_redirect_response=False,
+        )

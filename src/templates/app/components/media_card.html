@@ -8,7 +8,7 @@
         {% with item|alternative_title:user as resolved_alt_title %}
       <div class="media-card {% if secondary_color %}bg-[#39404b]{% else %}bg-[#2a2f35]{% endif %} rounded-lg overflow-hidden shadow-lg relative {% if active %}ring-2 ring-indigo-700{% endif %} {% if from_grid %}hover:ring-2 hover:ring-indigo-500 transition-all {% if resolved_media_type == 'podcast' or resolved_media_type == 'music' %}search-result-card-square{% else %}search-result-card{% endif %}{% endif %} {% if user.media_card_subtitle_display == 'always' %}media-card-subtitle-always{% endif %} {% if recommend_mode %}cursor-pointer{% endif %} group"
            data-media-type="{{ item.media_type }}"
-           {% if recommend_mode %}hx-get="{% url 'recommend_search' recommend_list_id %}?show_preview=true&media_id={{ item.media_id }}&media_type={{ item.media_type }}&source={{ item.source }}&title={{ resolved_item_title|default:title|urlencode }}&image={{ item.image|urlencode }}" hx-target="#recommend-modal-container" hx-swap="innerHTML"{% endif %}
+           {% if recommend_mode %}hx-get="{% url 'recommend_search' recommend_list_id %}?show_preview=true&media_id={{ item.media_id }}&media_type={{ item.media_type }}&source={{ item.source }}&title={{ resolved_item_title|default:title|urlencode }}&image={{ item.image|urlencode }}&q={{ query|urlencode }}&search_media_type={{ media_type|urlencode }}&page={{ page }}" hx-target="#recommend-modal-container" hx-swap="innerHTML"{% endif %}
            x-data="{ trackOpen: false, listsOpen: false }">
         <div class="relative">
           {% if recommend_mode %}
