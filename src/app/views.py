@@ -22,6 +22,7 @@ from django.db.utils import OperationalError
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils import formats, timezone
 from django.utils.dateparse import parse_date
 from django.utils.timezone import datetime
@@ -8487,6 +8488,18 @@ def collection_list(request, media_type=None):
     )
 
 
+def _collection_redirect(request):
+    """Redirect to a safe next URL when present, otherwise collection list."""
+    next_url = request.GET.get("next") or request.POST.get("next")
+    if next_url and url_has_allowed_host_and_scheme(
+        url=next_url,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        return redirect(next_url)
+    return redirect("collection_list")
+
+
 @require_POST
 def collection_add(request):
     """Add item to collection (with optional metadata)."""
@@ -8495,7 +8508,7 @@ def collection_add(request):
         if request.headers.get("HX-Request"):
             return HttpResponseBadRequest("Item ID is required")
         messages.error(request, "Item ID is required")
-        return redirect("collection_list")
+        return _collection_redirect(request)
 
     try:
         item = Item.objects.get(id=item_id)
@@ -8503,7 +8516,7 @@ def collection_add(request):
         if request.headers.get("HX-Request"):
             return HttpResponseBadRequest("Item not found")
         messages.error(request, "Item not found")
-        return redirect("collection_list")
+        return _collection_redirect(request)
 
     # Check if entry already exists
     existing_entry = helpers.is_item_collected(request.user, item)
@@ -8537,12 +8550,13 @@ def collection_add(request):
             CollectionEntry.objects.filter(id=entry.id).update(collected_at=collected_at)
             entry.collected_at = collected_at
         messages.success(request, f"Added {item.title} to collection")
+        if request.headers.get("HX-Request"):
+            return JsonResponse({"success": True, "message": f"Added {item.title} to collection"})
     else:
         helpers.form_error_messages(form, request)
-
-    if request.headers.get("HX-Request"):
-        return JsonResponse({"success": True, "message": f"Added {item.title} to collection"})
-    return redirect("collection_list")
+        if request.headers.get("HX-Request"):
+            return JsonResponse({"success": False, "errors": form.errors}, status=400)
+    return _collection_redirect(request)
 
 
 @require_POST
@@ -8567,12 +8581,13 @@ def collection_update(request, entry_id):
             CollectionEntry.objects.filter(id=entry.id).update(collected_at=collected_at)
             entry.collected_at = collected_at
         messages.success(request, f"Updated collection entry for {entry.item.title}")
+        if request.headers.get("HX-Request"):
+            return JsonResponse({"success": True, "message": f"Updated collection entry"})
     else:
         helpers.form_error_messages(form, request)
-
-    if request.headers.get("HX-Request"):
-        return JsonResponse({"success": True, "message": f"Updated collection entry"})
-    return redirect("collection_list")
+        if request.headers.get("HX-Request"):
+            return JsonResponse({"success": False, "errors": form.errors}, status=400)
+    return _collection_redirect(request)
 
 
 @require_POST
@@ -8590,7 +8605,7 @@ def collection_remove(request, entry_id):
 
     if request.headers.get("HX-Request"):
         return JsonResponse({"success": True, "message": f"Removed {item_title} from collection"})
-    return redirect("collection_list")
+    return _collection_redirect(request)
 
 
 @never_cache

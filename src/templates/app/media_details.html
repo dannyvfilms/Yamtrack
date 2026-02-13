@@ -868,7 +868,7 @@
             {% if collection_entry.media_type %}
               <div class="mb-4">
                 <h3 class="text-sm font-semibold text-gray-400">MEDIA TYPE</h3>
-                <p class="text-gray-200">{{ collection_entry.media_type|title }}</p>
+                <p class="text-gray-200">{{ collection_entry.media_type|title_preserve_acronyms }}</p>
               </div>
             {% endif %}
             

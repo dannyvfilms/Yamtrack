@@ -168,6 +168,47 @@ class CollectionAddViewTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["content-type"], "application/json")
 
+    def test_collection_add_allows_long_game_platform_names(self):
+        """Test game platform values longer than 20 chars are accepted."""
+        self.client.login(**self.credentials)
+        game_item = Item.objects.create(
+            media_id="game-1234",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Test Game",
+            image="http://example.com/game.jpg",
+        )
+        long_platform = "Sega Mega Drive/Genesis"
+
+        response = self.client.post(
+            reverse("collection_add"),
+            {
+                "item_id": game_item.id,
+                "media_type": "ROM",
+                "resolution": long_platform,
+                "hdr": "Standard",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        entry = CollectionEntry.objects.get(user=self.user, item=game_item)
+        self.assertEqual(entry.resolution, long_platform)
+
+    def test_collection_add_redirects_to_next_on_form_error(self):
+        """Test invalid submits redirect back to next URL when provided."""
+        self.client.login(**self.credentials)
+        next_url = "/search?q=clevatess&media_type=game"
+
+        response = self.client.post(
+            reverse("collection_add"),
+            {
+                "next": next_url,
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, next_url)
+
 
 class CollectionUpdateViewTest(TestCase):
     """Test collection update view."""
@@ -314,6 +355,19 @@ class CollectionRemoveViewTest(TestCase):
         self.assertEqual(response.status_code, 404)
         # Entry should still exist
         self.assertTrue(CollectionEntry.objects.filter(id=other_entry.id).exists())
+
+    def test_collection_remove_redirects_to_next_when_provided(self):
+        """Test remove submits redirect back to the provided next URL."""
+        self.client.login(**self.credentials)
+        next_url = "/details/tmdb/game/1234/test-game"
+
+        response = self.client.post(
+            reverse("collection_remove", kwargs={"entry_id": self.entry.id}),
+            {"next": next_url},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, next_url)
 
 
 class CollectionModalViewTest(TestCase):

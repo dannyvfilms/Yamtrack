@@ -46,6 +46,22 @@ def no_underscore(arg1):
 
 
 @register.filter
+def title_preserve_acronyms(value):
+    """Title-case text while preserving all-uppercase acronyms."""
+    if not isinstance(value, str):
+        return value
+
+    normalized = value.strip()
+    if not normalized:
+        return normalized
+
+    if normalized.isupper():
+        return normalized
+
+    return normalized.title()
+
+
+@register.filter
 def slug(arg1):
     """Return the slug of the string.
 

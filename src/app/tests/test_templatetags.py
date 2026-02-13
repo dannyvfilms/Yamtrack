@@ -103,6 +103,15 @@ class AppTagsTests(TestCase):
         self.assertEqual(app_tags.slug("[Oshi no Ko]"), "oshi-no-ko")
         self.assertEqual(app_tags.slug("_____"), "_____")
 
+    def test_title_preserve_acronyms(self):
+        """Test acronym-preserving title casing."""
+        self.assertEqual(app_tags.title_preserve_acronyms("rom"), "Rom")
+        self.assertEqual(app_tags.title_preserve_acronyms("ROM"), "ROM")
+        self.assertEqual(
+            app_tags.title_preserve_acronyms("digital deluxe"),
+            "Digital Deluxe",
+        )
+
     def test_media_type_readable(self):
         """Test the media_type_readable filter."""
         # Test all media types from the MediaTypes class

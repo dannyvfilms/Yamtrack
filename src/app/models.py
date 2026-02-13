@@ -3527,7 +3527,7 @@ class CollectionEntry(models.Model):
 
     # Video metadata
     resolution = models.CharField(
-        max_length=20,
+        max_length=100,
         blank=True,
         default="",
         help_text="Resolution: 720p, 1080p, 4k, etc.",
