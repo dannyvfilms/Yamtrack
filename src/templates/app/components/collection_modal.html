@@ -43,12 +43,17 @@
                       {% include "app/icons/chevron-down.svg" with classes="w-3.5 h-3.5" %}
                     </button>
                   </div>
-                {% elif field.field.widget.input_type == 'select' %}
-                    <div class="relative z-30 overflow-visible"
+                  {% elif field.field.widget.input_type == 'select' %}
+                    <div class="relative overflow-visible"
+                         @click.outside="open = false"
+                         @keydown.escape.window="open = false"
+                         x-bind:style="{ zIndex: open ? 80 : 30 }"
                          x-data="{
                           open: false,
+                          openUp: false,
                           selectedValue: '{{ field.value|default_if_none:''|escapejs }}',
                           selectedLabel: '',
+                          dropdownMaxHeight: 240,
                           options: [],
                           init() {
                             this.options = Array.from(this.$el.querySelectorAll('[data-choice]')).map((optionEl) => ({
@@ -59,15 +64,60 @@
                             const match = this.options.find(option => String(option.value) === current);
                             this.selectedLabel = match ? match.label : (this.options[0]?.label ?? '');
                           },
+                          toggle() {
+                            this.open = !this.open;
+                            if (this.open) {
+                              this.$nextTick(() => this.positionDropdown());
+                            }
+                          },
+                          getBoundsRect() {
+                            let node = this.$el.parentElement;
+
+                            while (node) {
+                              const style = window.getComputedStyle(node);
+                              const overflowY = style.overflowY;
+                              const overflow = style.overflow;
+                              const clipsChildren = ['auto', 'scroll', 'hidden', 'clip'].includes(overflowY)
+                                || ['auto', 'scroll', 'hidden', 'clip'].includes(overflow);
+
+                              if (clipsChildren) {
+                                return node.getBoundingClientRect();
+                              }
+
+                              node = node.parentElement;
+                            }
+
+                            const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+                            return { top: 0, bottom: viewportHeight };
+                          },
+                          positionDropdown() {
+                            const trigger = this.$refs.trigger;
+                            if (!trigger) {
+                              return;
+                            }
+
+                            const rect = trigger.getBoundingClientRect();
+                            const viewportPadding = 16;
+                            const preferredHeight = 240;
+                            const boundsRect = this.getBoundsRect();
+                            const spaceBelow = Math.max(0, boundsRect.bottom - rect.bottom - viewportPadding);
+                            const spaceAbove = Math.max(0, rect.top - boundsRect.top - viewportPadding);
+                            const shouldOpenUp = spaceAbove > spaceBelow;
+
+                            this.openUp = shouldOpenUp;
+                            const availableSpace = shouldOpenUp ? spaceAbove : spaceBelow;
+                            this.dropdownMaxHeight = Math.min(preferredHeight, availableSpace);
+                          },
                           choose(value, label) {
                             this.selectedValue = String(value ?? '');
                             this.selectedLabel = label;
                             this.open = false;
                           }
-                         }">
+                         }"
+                         @resize.window="open && positionDropdown()">
                     <button type="button"
-                            @click="open = !open"
-                            @click.outside="open = false"
+                            @click="toggle()"
+                            x-ref="trigger"
                             id="{{ field.id_for_label }}"
                             :aria-expanded="open"
                             class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
@@ -81,7 +131,9 @@
                          x-transition:leave="transition ease-in duration-75"
                          x-transition:leave-start="transform opacity-100 scale-100"
                          x-transition:leave-end="transform opacity-0 scale-95"
-                         class="absolute left-0 right-0 mt-2 py-1 bg-[#272c31] rounded-md shadow-lg overflow-hidden z-50 border border-gray-600">
+                         :class="openUp ? 'bottom-full mb-2' : 'top-full mt-2'"
+                         :style="{ maxHeight: `${dropdownMaxHeight}px` }"
+                         class="absolute left-0 right-0 py-1 bg-[#272c31] rounded-md shadow-lg overflow-y-auto z-50 border border-gray-600">
                       {% for value, label in field.field.widget.choices %}
                         <button type="button"
                                 data-choice
