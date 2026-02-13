@@ -465,6 +465,25 @@ def _parse_repo_owner(value):
         return None
     return repo_path.split("/", 1)[0]
 
+
+def _parse_repo_slug(value):
+    if not value:
+        return None
+    value = value.strip()
+    if value.startswith("git@") and ":" in value:
+        value = value.split(":", 1)[1]
+    parsed = urlparse(value)
+    repo_path = parsed.path if parsed.netloc else value
+    repo_path = repo_path.strip("/")
+    if repo_path.endswith(".git"):
+        repo_path = repo_path[:-4]
+    if "/" not in repo_path:
+        return None
+    owner, repo = repo_path.split("/", 1)
+    if not owner or not repo:
+        return None
+    return f"{owner}/{repo}"
+
 def _read_fork_owner_file():
     file_paths = []
     configured_path = config("FORK_OWNER_FILE", default=None)
@@ -510,10 +529,42 @@ def _get_fork_owner():
         return None
 
 
+def _get_fork_repository():
+    for value in (
+        config("FORK_REPOSITORY", default=None),
+        config("GITHUB_REPOSITORY", default=None),
+    ):
+        repository = _parse_repo_slug(value)
+        if repository:
+            return repository
+
+    file_owner = _read_fork_owner_file()
+    repository = _parse_repo_slug(file_owner)
+    if repository:
+        return repository
+
+    try:
+        git_remote = subprocess.run(
+            ["git", "config", "--get", "remote.origin.url"],
+            cwd=BASE_DIR,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ).stdout.strip()
+        return _parse_repo_slug(git_remote)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
 FORK_OWNER_NAME = _get_fork_owner()
 FORK_OWNER_URL = config("FORK_OWNER_URL", default=None)
-if FORK_OWNER_NAME and not FORK_OWNER_URL:
-    FORK_OWNER_URL = f"https://github.com/{FORK_OWNER_NAME}"
+if not FORK_OWNER_URL:
+    fork_repository = _get_fork_repository()
+    if fork_repository:
+        FORK_OWNER_URL = f"https://github.com/{fork_repository}"
+    elif FORK_OWNER_NAME:
+        FORK_OWNER_URL = f"https://github.com/{FORK_OWNER_NAME}"
 
 ADMIN_ENABLED = config("ADMIN_ENABLED", default=False, cast=bool)
 
