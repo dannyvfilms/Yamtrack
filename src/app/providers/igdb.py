@@ -1,6 +1,7 @@
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import IntEnum
+from urllib.parse import quote_plus, urlparse
 
 import requests
 from django.conf import settings
@@ -284,7 +285,8 @@ def game(media_id):
             "expansions.name,expansions.cover.image_id,"
             "standalone_expansions.name,standalone_expansions.cover.image_id,"
             "expanded_games.name,expanded_games.cover.image_id,"
-            "similar_games.name,similar_games.cover.image_id;"
+            "similar_games.name,similar_games.cover.image_id,"
+            "external_games.url,websites.url;"
             f"where id = {media_id};"
         )
         headers = {
@@ -351,6 +353,17 @@ def game(media_id):
                 "recommendations": get_related(response.get("similar_games")),
             },
         }
+        external_links = {}
+        hltb_url = get_hltb_url(response)
+        if hltb_url:
+            external_links["HowLongToBeat"] = hltb_url
+        else:
+            hltb_search_url = get_hltb_search_url(response.get("name"))
+            if hltb_search_url:
+                external_links["HowLongToBeat"] = hltb_search_url
+
+        if external_links:
+            data["external_links"] = external_links
         cache.set(cache_key, data)
     return data
 
@@ -401,7 +414,7 @@ def get_release_year(media):
         return None
 
     try:
-        return datetime.utcfromtimestamp(date_value).year
+        return datetime.fromtimestamp(date_value, tz=UTC).year
     except (TypeError, ValueError, OSError, OverflowError):
         return None
 
@@ -449,6 +462,54 @@ def get_score(response):
         return round(score / 10, 1)
     except KeyError:
         return None
+
+
+def get_hltb_url(response):
+    """Return a normalized HowLongToBeat URL when IGDB metadata includes one."""
+    for section in ("external_games", "websites"):
+        for entry in response.get(section) or []:
+            normalized_url = _normalize_url(entry.get("url"))
+            if normalized_url and _is_hltb_url(normalized_url):
+                return normalized_url
+    return None
+
+
+def _normalize_url(url):
+    """Return a normalized URL with scheme or None if invalid."""
+    if not isinstance(url, str):
+        return None
+
+    normalized_url = url.strip()
+    if not normalized_url:
+        return None
+
+    if normalized_url.startswith("//"):
+        normalized_url = f"https:{normalized_url}"
+    elif not normalized_url.startswith(("http://", "https://")):
+        normalized_url = f"https://{normalized_url.lstrip('/')}"
+
+    if not urlparse(normalized_url).netloc:
+        return None
+
+    return normalized_url
+
+
+def _is_hltb_url(url):
+    """Return whether the URL points to HowLongToBeat."""
+    hostname = (urlparse(url).hostname or "").lower()
+    return hostname == "howlongtobeat.com" or hostname.endswith(".howlongtobeat.com")
+
+
+def get_hltb_search_url(title):
+    """Return a HowLongToBeat search URL for a game title."""
+    if not isinstance(title, str):
+        return None
+
+    query = title.strip()
+    if not query:
+        return None
+
+    return f"https://howlongtobeat.com/?q={quote_plus(query)}"
 
 
 def get_parent(parent_game):

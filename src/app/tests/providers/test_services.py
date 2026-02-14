@@ -150,6 +150,103 @@ class ServicesTests(TestCase):
 
         self.assertEqual(cm.exception.provider, Sources.MAL.value)
 
+    def test_igdb_game_adds_hltb_external_link_when_resolvable(self):
+        """IGDB game metadata should expose resolvable HowLongToBeat links."""
+        with (
+            patch("app.providers.igdb.cache.get", return_value=None),
+            patch("app.providers.igdb.get_access_token", return_value="token"),
+            patch("app.providers.igdb.cache.set"),
+            patch("app.providers.igdb.services.api_request") as mock_api_request,
+        ):
+            mock_api_request.return_value = [
+                {
+                    "id": 1942,
+                    "name": "The Witcher 3: Wild Hunt",
+                    "url": "https://www.igdb.com/games/the-witcher-3-wild-hunt",
+                    "game_type": 0,
+                    "external_games": [{"url": "www.howlongtobeat.com/game/10270"}],
+                },
+            ]
+
+            response = igdb.game("1942")
+
+        self.assertEqual(
+            response["external_links"]["HowLongToBeat"],
+            "https://www.howlongtobeat.com/game/10270",
+        )
+
+    def test_igdb_game_falls_back_to_hltb_search_link_when_unresolvable(self):
+        """IGDB game metadata should add HLTB search link when direct URL is missing."""
+        with (
+            patch("app.providers.igdb.cache.get", return_value=None),
+            patch("app.providers.igdb.get_access_token", return_value="token"),
+            patch("app.providers.igdb.cache.set"),
+            patch("app.providers.igdb.services.api_request") as mock_api_request,
+        ):
+            mock_api_request.return_value = [
+                {
+                    "id": 1942,
+                    "name": "The Witcher 3: Wild Hunt",
+                    "url": "https://www.igdb.com/games/the-witcher-3-wild-hunt",
+                    "game_type": 0,
+                    "external_games": [{"url": "https://store.steampowered.com/app/292030"}],
+                },
+            ]
+
+            response = igdb.game("1942")
+
+        self.assertEqual(
+            response["external_links"]["HowLongToBeat"],
+            "https://howlongtobeat.com/?q=The+Witcher+3%3A+Wild+Hunt",
+        )
+
+    def test_igdb_game_adds_hltb_external_link_from_websites(self):
+        """IGDB game metadata should resolve HLTB links from websites data too."""
+        with (
+            patch("app.providers.igdb.cache.get", return_value=None),
+            patch("app.providers.igdb.get_access_token", return_value="token"),
+            patch("app.providers.igdb.cache.set"),
+            patch("app.providers.igdb.services.api_request") as mock_api_request,
+        ):
+            mock_api_request.return_value = [
+                {
+                    "id": 1942,
+                    "name": "The Witcher 3: Wild Hunt",
+                    "url": "https://www.igdb.com/games/the-witcher-3-wild-hunt",
+                    "game_type": 0,
+                    "websites": [{"url": "https://howlongtobeat.com/game/10270"}],
+                },
+            ]
+
+            response = igdb.game("1942")
+
+        self.assertEqual(
+            response["external_links"]["HowLongToBeat"],
+            "https://howlongtobeat.com/game/10270",
+        )
+
+    def test_igdb_game_omits_hltb_links_without_url_or_title(self):
+        """IGDB game metadata should skip HLTB links when URL and title are missing."""
+        with (
+            patch("app.providers.igdb.cache.get", return_value=None),
+            patch("app.providers.igdb.get_access_token", return_value="token"),
+            patch("app.providers.igdb.cache.set"),
+            patch("app.providers.igdb.services.api_request") as mock_api_request,
+        ):
+            mock_api_request.return_value = [
+                {
+                    "id": 1942,
+                    "name": "",
+                    "url": "https://www.igdb.com/games/the-witcher-3-wild-hunt",
+                    "game_type": 0,
+                    "external_games": [{"url": "https://store.steampowered.com/app/292030"}],
+                },
+            ]
+
+            response = igdb.game("1942")
+
+        self.assertNotIn("external_links", response)
+
     @patch("app.providers.mal.anime")
     def test_get_media_metadata_anime(self, mock_anime):
         """Test the get_media_metadata function for anime."""
