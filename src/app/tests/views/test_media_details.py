@@ -111,6 +111,13 @@ class MediaDetailsViewTests(TestCase):
         self.assertIn("media", response.context)
         self.assertEqual(response.context["media"]["title"], "Season 1")
         self.assertEqual(len(response.context["media"]["episodes"]), 1)
+        self.assertContains(
+            response,
+            reverse(
+                "lists_modal",
+                args=[Sources.TMDB.value, MediaTypes.EPISODE.value, "1668", 1, 1],
+            ),
+        )
 
         mock_get_metadata.assert_called_once_with(
             "tv_with_seasons",
@@ -121,7 +128,11 @@ class MediaDetailsViewTests(TestCase):
 
     @patch("integrations.tasks.fetch_collection_metadata_for_item.delay")
     @patch("app.providers.services.get_media_metadata")
-    def test_game_details_skips_collection_autofetch(self, mock_get_metadata, mock_fetch_delay):
+    def test_game_details_skips_collection_autofetch(
+        self,
+        mock_get_metadata,
+        mock_fetch_delay,
+    ):
         """Game details should not trigger collection auto-fetch."""
         mock_get_metadata.return_value = {
             "media_id": "game-123",

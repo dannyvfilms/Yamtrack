@@ -1130,13 +1130,12 @@
                         {% endif %}
 
                         {# Lists #}
-                        {% if episode.item %}
                         <div x-data="{ listsOpen: false }">
                           <button class="p-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full transition duration-300 cursor-pointer"
                                   title="Add to custom lists"
-                                    hx-get="{% media_view_url 'lists_modal' episode.item %}"
+                                    hx-get="{% media_view_url 'lists_modal' episode %}"
                                   hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
-                                    hx-target="#{% component_id 'lists' episode.item %}"
+                                    hx-target="#{% component_id 'lists' episode %}"
                                   hx-trigger="click once"
                                   @click="listsOpen = true">
                             {% include "app/icons/list-add.svg" with classes="w-4 h-4" %}
@@ -1147,31 +1146,32 @@
                                class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
                             <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
                                  @click.outside="listsOpen = false">
-                                <div id="{% component_id 'lists' episode.item %}"></div>
+                                <div id="{% component_id 'lists' episode %}"></div>
                             </div>
                           </div>
                         </div>
 
                         {# History #}
-                        <div x-data="{ historyOpen: false }">
-                          <button class="p-2 bg-amber-600 hover:bg-amber-700 text-white rounded-full transition duration-300 cursor-pointer"
-                                  title="View your activity history"
-                                    hx-get="{% media_view_url 'history_modal' episode.item %}"
-                                  hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
-                                    hx-target="#{% component_id 'history' episode.item %}"
-                                  hx-trigger="click once"
-                                  @click="historyOpen = true">
-                            {% include "app/icons/history.svg" with classes="w-4 h-4" %}
-                          </button>
-                          <div x-show="historyOpen"
-                               @keydown.escape.window="historyOpen = false"
-                               class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                            <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
-                                 @click.outside="historyOpen = false">
-                                <div id="{% component_id 'history' episode.item %}"></div>
+                        {% if episode.item %}
+                          <div x-data="{ historyOpen: false }">
+                            <button class="p-2 bg-amber-600 hover:bg-amber-700 text-white rounded-full transition duration-300 cursor-pointer"
+                                    title="View your activity history"
+                                      hx-get="{% media_view_url 'history_modal' episode.item %}"
+                                    hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
+                                      hx-target="#{% component_id 'history' episode.item %}"
+                                    hx-trigger="click once"
+                                    @click="historyOpen = true">
+                              {% include "app/icons/history.svg" with classes="w-4 h-4" %}
+                            </button>
+                            <div x-show="historyOpen"
+                                 @keydown.escape.window="historyOpen = false"
+                                 class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                              <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
+                                   @click.outside="historyOpen = false">
+                                  <div id="{% component_id 'history' episode.item %}"></div>
+                                </div>
                               </div>
                             </div>
-                          </div>
                         {% endif %}
                       </div>
                       {% endif %}
