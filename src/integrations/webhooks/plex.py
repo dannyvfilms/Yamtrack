@@ -213,10 +213,17 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
         if tmdb_id:
             return str(tmdb_id), None, None
 
+        # 2. If TMDB ID is unavailable, resolve from TVDB/IMDB via TMDB find API.
+        # This is used by _process_tv fallback when Plex supplied an episode-level
+        # TMDB ID that failed against /tv/{id}.
+        media_id, season_number, episode_number = super()._find_tv_media_id(ids)
+        if media_id:
+            return media_id, season_number, episode_number
+
         if not allow_title_fallback or not series_title:
             return None, None, None
 
-        # 2. Try title search
+        # 3. Try title search
         logger.debug("TV ID missing; attempting title search for '%s'", series_title)
         try:
             search_results = services.search(

@@ -205,6 +205,90 @@ class PlexWebhookTests(TestCase):
         )
         self.assertIsNotNone(episode.end_date)
 
+    @patch("app.providers.tmdb.search", return_value={"results": []})
+    @patch("app.providers.tmdb.find")
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_tv_episode_tmdb_episode_id_falls_back_to_find_lookup(
+        self,
+        mock_tv_with_seasons,
+        mock_find,
+        mock_tmdb_search,
+    ):
+        """Episode-level TMDB IDs should recover via TVDB/IMDB find lookup."""
+
+        def fake_tv_with_seasons(media_id, season_numbers):
+            if str(media_id) == "1515183":
+                raise Exception("TMDB 404")
+            if str(media_id) == "73586":
+                return {
+                    "tvdb_id": "361315",
+                    "title": "Yellowstone",
+                    "image": "",
+                    "season/1": {
+                        "image": "",
+                        "episodes": [{"episode_number": 4, "runtime": 42}],
+                    },
+                    "related": {"seasons": [{"season_number": 1}]},
+                }
+            raise AssertionError(f"Unexpected TMDB ID requested: {media_id}")
+
+        mock_tv_with_seasons.side_effect = fake_tv_with_seasons
+
+        def fake_find(external_id, external_source):
+            if external_source in {"tvdb_id", "imdb_id"}:
+                return {
+                    "tv_episode_results": [
+                        {
+                            "show_id": 73586,
+                            "season_number": 1,
+                            "episode_number": 4,
+                        },
+                    ],
+                    "tv_results": [],
+                }
+            raise AssertionError(
+                f"Unexpected find lookup: {external_source}={external_id}",
+            )
+
+        mock_find.side_effect = fake_find
+
+        payload = {
+            "event": "media.scrobble",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "Yellowstone (2018)",
+                "title": "The Long Black Train",
+                "index": 4,
+                "parentIndex": 1,
+                "Guid": [
+                    {"id": "imdb://tt8075162"},
+                    {"id": "tmdb://1515183"},
+                    {"id": "tvdb://6725919"},
+                ],
+            },
+        }
+
+        response = self.client.post(
+            self.url,
+            data={"payload": json.dumps(payload)},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        episode = Episode.objects.get(
+            item__media_id="73586",
+            item__season_number=1,
+            item__episode_number=4,
+        )
+        self.assertIsNotNone(episode.end_date)
+
+        self.assertEqual(str(mock_tv_with_seasons.call_args_list[0].args[0]), "1515183")
+        self.assertEqual(str(mock_tv_with_seasons.call_args_list[1].args[0]), "73586")
+        mock_find.assert_called()
+        mock_tmdb_search.assert_not_called()
+
     def test_movie_mark_played(self):
         """Test webhook handles movie mark played event."""
         payload = {
