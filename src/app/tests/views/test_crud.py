@@ -4,6 +4,7 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from app.models import (
     TV,
@@ -112,6 +113,37 @@ class CreateMedia(TestCase):
             ).runtime,
             "",
         )
+
+    @patch("app.views.services.get_media_metadata")
+    def test_create_movie_sets_release_datetime_from_metadata(self, metadata_mock):
+        metadata_mock.return_value = {
+            "title": "The Matrix",
+            "original_title": "The Matrix",
+            "localized_title": "The Matrix",
+            "image": "http://example.com/image.jpg",
+            "max_progress": 1,
+            "details": {
+                "release_date": "1999-03-31",
+            },
+        }
+
+        self.client.post(
+            reverse("media_save"),
+            {
+                "media_id": "603",
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.MOVIE.value,
+                "status": Status.PLANNING.value,
+            },
+        )
+
+        item = Item.objects.get(
+            media_id="603",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+        )
+        self.assertIsNotNone(item.release_datetime)
+        self.assertEqual(item.release_datetime.date(), timezone.datetime(1999, 3, 31).date())
 
     def test_create_season(self):
         """Test the creation of a Season through views."""
@@ -287,4 +319,3 @@ class DeleteMedia(TestCase):
             Episode.objects.filter(related_season__user=self.user).count(),
             0,
         )
-

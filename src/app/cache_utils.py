@@ -21,6 +21,7 @@ def build_time_left_cache_key(
     collection_filter: str = "",
     genre_filter: str = "",
     year_filter: str = "",
+    release_filter: str = "",
     source_filter: str = "",
     language_filter: str = "",
     country_filter: str = "",
@@ -35,6 +36,7 @@ def build_time_left_cache_key(
     normalized_collection = collection_filter or ""
     normalized_genre = genre_filter or ""
     normalized_year = year_filter or ""
+    normalized_release = release_filter or ""
     normalized_source = source_filter or ""
     normalized_language = language_filter or ""
     normalized_country = country_filter or ""
@@ -43,7 +45,7 @@ def build_time_left_cache_key(
     return (
         f"{TIME_LEFT_CACHE_PREFIX}_{user_id}_{media_type}_{normalized_status}_"
         f"{normalized_query}_{normalized_direction}_{normalized_rating}_{normalized_collection}_"
-        f"{normalized_genre}_{normalized_year}_{normalized_source}_"
+        f"{normalized_genre}_{normalized_year}_{normalized_release}_{normalized_source}_"
         f"{normalized_language}_{normalized_country}_{normalized_platform}_{normalized_origin}"
     )
 

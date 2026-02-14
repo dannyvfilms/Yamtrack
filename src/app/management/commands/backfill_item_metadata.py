@@ -1,6 +1,7 @@
 """Management command to backfill metadata fields for existing Items."""
 from django.core.management.base import BaseCommand
 from django.utils import timezone
+from app import helpers
 from app.models import Item
 from app.providers import services
 
@@ -106,6 +107,7 @@ class Command(BaseCommand):
                     creators = []
 
                 runtime = details.get("runtime") or ""
+                release_datetime = helpers.extract_release_datetime(metadata)
 
                 # Update item
                 item.country = country
@@ -121,12 +123,14 @@ class Command(BaseCommand):
                 item.source_material = source_material
                 item.creators = creators
                 item.runtime = runtime
+                if release_datetime:
+                    item.release_datetime = release_datetime
                 item.metadata_fetched_at = timezone.now()
 
                 item.save(update_fields=[
                     'country', 'languages', 'platforms', 'format', 'status',
                     'studios', 'themes', 'authors', 'publishers', 'isbn',
-                    'source_material', 'creators', 'runtime', 'metadata_fetched_at'
+                    'source_material', 'creators', 'runtime', 'release_datetime', 'metadata_fetched_at'
                 ])
 
                 success_count += 1

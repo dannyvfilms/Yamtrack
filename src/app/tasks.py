@@ -12,7 +12,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from app import history_cache
+from app import helpers, history_cache
 from app.models import (
     CREDITS_BACKFILL_VERSION,
     Item,
@@ -43,6 +43,29 @@ CREDITS_BACKFILL_SOURCES = (Sources.TMDB.value,)
 CREDITS_BACKFILL_QUEUE_TTL = 60 * 60  # 1 hour
 CREDITS_BACKFILL_ITEMS_QUEUE_KEY = "credits_backfill_items_queue"
 CREDITS_BACKFILL_ITEMS_SCHEDULED_KEY = "credits_backfill_items_scheduled"
+RELEASE_BACKFILL_SOURCES = (
+    Sources.TMDB.value,
+    Sources.MAL.value,
+    Sources.MANGAUPDATES.value,
+    Sources.IGDB.value,
+    Sources.OPENLIBRARY.value,
+    Sources.HARDCOVER.value,
+    Sources.COMICVINE.value,
+    Sources.BGG.value,
+    Sources.MUSICBRAINZ.value,
+)
+RELEASE_BACKFILL_MEDIA_TYPES = (
+    MediaTypes.MOVIE.value,
+    MediaTypes.TV.value,
+    MediaTypes.SEASON.value,
+    MediaTypes.ANIME.value,
+    MediaTypes.MANGA.value,
+    MediaTypes.GAME.value,
+    MediaTypes.BOOK.value,
+    MediaTypes.COMIC.value,
+    MediaTypes.BOARDGAME.value,
+    MediaTypes.MUSIC.value,
+)
 METADATA_BACKFILL_BASE_DELAY_SECONDS = 60 * 60  # 1 hour
 METADATA_BACKFILL_MAX_DELAY_SECONDS = 60 * 60 * 24  # 1 day
 METADATA_BACKFILL_MAX_ATTEMPTS = 6
@@ -306,6 +329,81 @@ def _genre_items_queryset():
         source__in=GENRE_BACKFILL_SOURCES,
     )
     return _apply_backfill_state_filters(queryset, MetadataBackfillField.GENRES)
+
+
+def _release_items_queryset():
+    return Item.objects.filter(
+        release_datetime__isnull=True,
+        media_type__in=RELEASE_BACKFILL_MEDIA_TYPES,
+        source__in=RELEASE_BACKFILL_SOURCES,
+    )
+
+
+def count_release_backfill_items() -> int:
+    return _release_items_queryset().count()
+
+
+def _metadata_cache_keys_for_item(item: Item):
+    keys = {
+        f"{item.source}_{item.media_type}_{item.media_id}",
+    }
+    if item.source == Sources.TMDB.value and item.media_type == MediaTypes.SEASON.value and item.season_number:
+        keys.add(f"{item.source}_{item.media_type}_{item.media_id}_{item.season_number}")
+    if (
+        item.source == Sources.TMDB.value
+        and item.media_type == MediaTypes.EPISODE.value
+        and item.season_number
+        and item.episode_number
+    ):
+        keys.add(
+            f"{item.source}_{item.media_type}_{item.media_id}_{item.season_number}_{item.episode_number}",
+        )
+    if item.source == Sources.BGG.value and item.media_type == MediaTypes.BOARDGAME.value:
+        keys.add(f"bgg_metadata_{item.media_id}")
+    if item.source == Sources.MUSICBRAINZ.value and item.media_type == MediaTypes.MUSIC.value:
+        keys.add(f"musicbrainz_recording_{item.media_id}")
+    return [key for key in keys if key]
+
+
+def _clear_item_metadata_cache(item: Item):
+    keys = _metadata_cache_keys_for_item(item)
+    if not keys:
+        return
+    try:
+        cache.delete_many(keys)
+    except Exception:  # pragma: no cover - cache backends may not support delete_many
+        for key in keys:
+            try:
+                cache.delete(key)
+            except Exception:
+                continue
+
+
+def _fetch_item_metadata(item: Item):
+    if item.media_type == MediaTypes.SEASON.value:
+        if item.season_number is None:
+            raise ValueError("season item missing season_number")
+        return services.get_media_metadata(
+            item.media_type,
+            item.media_id,
+            item.source,
+            [item.season_number],
+        )
+    if item.media_type == MediaTypes.EPISODE.value:
+        if item.season_number is None or item.episode_number is None:
+            raise ValueError("episode item missing season_number or episode_number")
+        return services.get_media_metadata(
+            item.media_type,
+            item.media_id,
+            item.source,
+            [item.season_number],
+            item.episode_number,
+        )
+    return services.get_media_metadata(
+        item.media_type,
+        item.media_id,
+        item.source,
+    )
 
 
 def _normalize_item_ids(item_ids):
@@ -2370,11 +2468,7 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
 
 @shared_task(name="Backfill item metadata")
 def backfill_item_metadata_task(batch_size: int = 10):
-    """Backfill metadata for items that have never been fetched.
-
-    This task processes items where metadata_fetched_at is NULL, indicating
-    we've never attempted to fetch metadata for them. This distinguishes between
-    "never fetched" and "fetched but no data available".
+    """Backfill metadata fields and missing release dates.
 
     Args:
         batch_size: Number of items to process in this batch (default: 10)
@@ -2382,31 +2476,46 @@ def backfill_item_metadata_task(batch_size: int = 10):
     Returns:
         dict: Results including success_count, error_count, and message
     """
-    from app.providers import services
+    initial_items = list(
+        Item.objects.filter(metadata_fetched_at__isnull=True).order_by("id")[:batch_size],
+    )
+    initial_item_ids = [item.id for item in initial_items]
+    remaining_slots = max(batch_size - len(initial_items), 0)
+    release_backfill_items = []
 
-    # Get items that have never had metadata fetched
-    items = Item.objects.filter(metadata_fetched_at__isnull=True).order_by('id')[:batch_size]
+    if remaining_slots > 0:
+        release_backfill_items = list(
+            _release_items_queryset()
+            .filter(metadata_fetched_at__isnull=False)
+            .exclude(id__in=initial_item_ids)
+            .order_by("metadata_fetched_at", "id")[:remaining_slots],
+        )
 
+    items = initial_items + release_backfill_items
     if not items:
         return {
             "success_count": 0,
             "error_count": 0,
-            "message": "No items need metadata backfill"
+            "remaining_metadata": 0,
+            "remaining_release": 0,
+            "message": "No items need metadata or release-date backfill",
         }
 
     success_count = 0
     error_count = 0
+    release_updated_count = 0
 
     for item in items:
+        initial_metadata_backfill = item.metadata_fetched_at is None
         try:
-            # Fetch metadata from provider
-            metadata = services.get_media_metadata(
-                item.media_type,
-                item.media_id,
-                item.source
-            )
+            if item.release_datetime is None:
+                _clear_item_metadata_cache(item)
 
-            details = metadata.get("details", {})
+            metadata = _fetch_item_metadata(item)
+            details = metadata.get("details", {}) if isinstance(metadata, dict) else {}
+            if not isinstance(details, dict):
+                details = {}
+            release_datetime = helpers.extract_release_datetime(metadata or {})
 
             # Extract all metadata fields (same logic as media_save)
             country = details.get("country") or ""
@@ -2452,55 +2561,88 @@ def backfill_item_metadata_task(batch_size: int = 10):
 
             runtime = details.get("runtime") or ""
 
-            # Update item with metadata
-            item.country = country
-            item.languages = languages
-            item.platforms = platforms
-            item.format = format_type
-            item.status = status
-            item.studios = studios
-            item.themes = themes
-            item.authors = authors
-            item.publishers = publishers
-            item.isbn = isbn
-            item.source_material = source_material
-            item.creators = creators
-            item.runtime = runtime
-            item.metadata_fetched_at = timezone.now()
+            update_fields = []
 
-            item.save(update_fields=[
-                'country', 'languages', 'platforms', 'format', 'status',
-                'studios', 'themes', 'authors', 'publishers', 'isbn',
-                'source_material', 'creators', 'runtime', 'metadata_fetched_at'
-            ])
+            if initial_metadata_backfill:
+                item.country = country
+                item.languages = languages
+                item.platforms = platforms
+                item.format = format_type
+                item.status = status
+                item.studios = studios
+                item.themes = themes
+                item.authors = authors
+                item.publishers = publishers
+                item.isbn = isbn
+                item.source_material = source_material
+                item.creators = creators
+                item.runtime = runtime
+                update_fields.extend([
+                    "country",
+                    "languages",
+                    "platforms",
+                    "format",
+                    "status",
+                    "studios",
+                    "themes",
+                    "authors",
+                    "publishers",
+                    "isbn",
+                    "source_material",
+                    "creators",
+                    "runtime",
+                ])
+
+            if release_datetime and item.release_datetime != release_datetime:
+                item.release_datetime = release_datetime
+                update_fields.append("release_datetime")
+                release_updated_count += 1
+
+            item.metadata_fetched_at = timezone.now()
+            update_fields.append("metadata_fetched_at")
+
+            item.save(update_fields=update_fields)
 
             success_count += 1
             logger.info(
-                "metadata_backfill_success item_id=%s media_type=%s country=%s format=%s",
+                (
+                    "metadata_backfill_success item_id=%s media_type=%s "
+                    "country=%s format=%s release_datetime=%s initial=%s"
+                ),
                 item.id,
                 item.media_type,
                 country,
-                format_type
+                format_type,
+                item.release_datetime.isoformat() if item.release_datetime else None,
+                initial_metadata_backfill,
             )
 
         except Exception as e:
             error_count += 1
             # Still mark as fetched even if there was an error, to avoid retrying infinitely
             item.metadata_fetched_at = timezone.now()
-            item.save(update_fields=['metadata_fetched_at'])
+            item.save(update_fields=["metadata_fetched_at"])
 
             logger.error(
                 "metadata_backfill_error item_id=%s media_type=%s error=%s",
                 item.id,
                 item.media_type,
-                str(e)
+                str(e),
             )
 
-    remaining = Item.objects.filter(metadata_fetched_at__isnull=True).count()
+    remaining_metadata = Item.objects.filter(metadata_fetched_at__isnull=True).count()
+    remaining_release = count_release_backfill_items()
 
     return {
         "success_count": success_count,
+        "release_updated_count": release_updated_count,
         "error_count": error_count,
-        "remaining": remaining,
-        "message": f"Processed {success_count + error_count} items, {remaining} remaining"
+        "remaining_metadata": remaining_metadata,
+        "remaining_release": remaining_release,
+        "remaining": remaining_metadata,
+        "message": (
+            f"Processed {success_count + error_count} items, "
+            f"{remaining_metadata} metadata items remaining, "
+            f"{remaining_release} release items remaining"
+        ),
     }

@@ -2,7 +2,9 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.utils import timezone
 
+from app.models import Item, MediaTypes, Sources
 from events.tasks import reload_calendar
 
 
@@ -37,3 +39,36 @@ class ReloadCalendarTaskTests(TestCase):
         mock_fetch.assert_called_once_with(user=self.user, items_to_process=None)
         mock_auto_pause.assert_not_called()
 
+    @patch("app.tasks.backfill_item_metadata_task")
+    @patch("events.tasks.auto_pause.auto_pause_stale_items")
+    @patch("events.tasks.calendar.fetch_releases")
+    def test_release_backfill_runs_on_global_refresh_when_release_dates_missing(
+        self,
+        mock_fetch,
+        mock_auto_pause,
+        mock_backfill_task,
+    ):
+        mock_fetch.return_value = "ok"
+        mock_backfill_task.return_value = {
+            "success_count": 1,
+            "release_updated_count": 1,
+            "error_count": 0,
+            "remaining_metadata": 0,
+            "remaining_release": 0,
+        }
+        Item.objects.create(
+            media_id="262712",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Ananta",
+            image="https://example.com/ananta.jpg",
+            metadata_fetched_at=timezone.now(),
+            release_datetime=None,
+        )
+
+        result = reload_calendar()
+
+        self.assertEqual(result, "ok")
+        mock_fetch.assert_called_once_with(user=None, items_to_process=None)
+        mock_auto_pause.assert_called_once_with()
+        mock_backfill_task.assert_called_once_with(batch_size=1000)

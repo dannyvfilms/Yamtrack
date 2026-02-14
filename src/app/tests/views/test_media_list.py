@@ -1,9 +1,11 @@
 import json
 import re
+from datetime import timedelta
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 
 from app.models import (
     Item,
@@ -104,6 +106,55 @@ class MediaListViewTests(TestCase):
         self.assertEqual(self.user.movie_status, Status.COMPLETED.value)
         self.assertEqual(self.user.movie_sort, "score")
         self.assertEqual(self.user.movie_layout, "table")
+
+    def test_media_list_with_release_filters(self):
+        """Release filter should split tracked media by today."""
+        now = timezone.now()
+        released_item = (
+            Item.objects.filter(
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.MOVIE.value,
+                title="Test Movie 1",
+            )
+            .only("id")
+            .first()
+        )
+        upcoming_item = (
+            Item.objects.filter(
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.MOVIE.value,
+                title="Test Movie 2",
+            )
+            .only("id")
+            .first()
+        )
+        self.assertIsNotNone(released_item)
+        self.assertIsNotNone(upcoming_item)
+        Item.objects.filter(id=released_item.id).update(
+            release_datetime=now - timedelta(days=30),
+        )
+        Item.objects.filter(id=upcoming_item.id).update(
+            release_datetime=now + timedelta(days=30),
+        )
+
+        url = reverse("medialist", args=[MediaTypes.MOVIE.value])
+
+        released_response = self.client.get(f"{url}?release=released")
+        self.assertEqual(released_response.status_code, 200)
+        self.assertEqual(released_response.context["current_release"], "released")
+        self.assertEqual(released_response.context["media_list"].paginator.count, 1)
+        self.assertContains(released_response, "Test Movie 1")
+        self.assertNotContains(released_response, "Test Movie 2")
+
+        not_released_response = self.client.get(f"{url}?release=not_released")
+        self.assertEqual(not_released_response.status_code, 200)
+        self.assertEqual(
+            not_released_response.context["current_release"],
+            "not_released",
+        )
+        self.assertEqual(not_released_response.context["media_list"].paginator.count, 4)
+        self.assertContains(not_released_response, "Test Movie 2")
+        self.assertNotContains(not_released_response, "Test Movie 1")
 
     def test_media_list_htmx_request(self):
         """Test the media list view with HTMX request."""

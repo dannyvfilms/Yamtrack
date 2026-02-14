@@ -18,7 +18,7 @@
     </div>
   </div>
 
-  <div x-data="{ sort: '{{ current_sort }}', direction: '{{ current_direction }}', status: '{{ current_status }}', rating: '{{ current_rating }}', collection: '{{ current_collection }}', genre: '{{ current_genre|default:'' }}', year: '{{ current_year|default:'' }}', source: '{{ current_source|default:'' }}', language: '{{ current_language|default:'' }}', country: '{{ current_country|default:'' }}', platform: '{{ current_platform|default:'' }}', origin: '{{ current_origin|default:'' }}', layout: '{{ current_layout }}', search: '{{ request.GET.search|default:'' }}', showLanguages: {{ filter_data.show_languages|yesno:'true,false' }}, showCountries: {{ filter_data.show_countries|yesno:'true,false' }}, showPlatforms: {{ filter_data.show_platforms|yesno:'true,false' }}, showOrigins: {{ filter_data.show_origins|yesno:'true,false' }}, statusLabels: {
+  <div x-data="{ sort: '{{ current_sort }}', direction: '{{ current_direction }}', status: '{{ current_status }}', rating: '{{ current_rating }}', collection: '{{ current_collection }}', genre: '{{ current_genre|default:'' }}', year: '{{ current_year|default:'' }}', release: '{{ current_release|default:'all' }}', source: '{{ current_source|default:'' }}', language: '{{ current_language|default:'' }}', country: '{{ current_country|default:'' }}', platform: '{{ current_platform|default:'' }}', origin: '{{ current_origin|default:'' }}', layout: '{{ current_layout }}', search: '{{ request.GET.search|default:'' }}', showLanguages: {{ filter_data.show_languages|yesno:'true,false' }}, showCountries: {{ filter_data.show_countries|yesno:'true,false' }}, showPlatforms: {{ filter_data.show_platforms|yesno:'true,false' }}, showOrigins: {{ filter_data.show_origins|yesno:'true,false' }}, statusLabels: {
     {% for value, label in status_choices %}
       '{{ value }}': '{{ label }}'
       {% if not forloop.last %},{% endif %}
@@ -32,13 +32,17 @@
       'all': 'All',
       'collected': 'Collected',
       'not_collected': 'Not Collected'
+    }, releaseLabels: {
+      'all': 'Any',
+      'released': 'Released',
+      'not_released': 'Not Released'
     }, sortLabels: {
     {% for value, label in sort_choices %}
       '{{ value }}': '{{ label }}'
       {% if not forloop.last %},{% endif %}
 
     {% endfor %}
-    }, defaultDirection(value) { return ['start_date', 'title', 'time_left'].includes(value) ? 'asc' : 'desc' }, toggleSort(value) { this.direction = (this.sort === value) ? (this.direction === 'asc' ? 'desc' : 'asc') : this.defaultDirection(value); this.sort = value; }, toggleRating() { if (this.rating === 'all') { this.rating = 'rated'; } else if (this.rating === 'rated') { this.rating = 'not_rated'; } else { this.rating = 'all'; } }, toggleCollection() { if (this.collection === 'all') { this.collection = 'collected'; } else if (this.collection === 'collected') { this.collection = 'not_collected'; } else { this.collection = 'all'; } }, filterLabel() { const labels = []; if (this.rating && this.rating !== 'all') { labels.push(this.ratingLabels[this.rating] || 'Rated'); } if (this.collection && this.collection !== 'all') { labels.push(this.collectionLabels[this.collection] || 'Collected'); } if (this.genre) { labels.push(this.genre); } if (this.year) { labels.push(this.year === 'unknown' ? 'Unknown Year' : this.year); } if (this.source) { labels.push(this.source.toUpperCase()); } if (this.showLanguages && this.language) { labels.push(this.language.length <= 3 ? this.language.toUpperCase() : this.language); } if (this.showCountries && this.country) { labels.push(this.country.length <= 3 ? this.country.toUpperCase() : this.country); } if (this.showPlatforms && this.platform) { labels.push(this.platform); } if (this.showOrigins && this.origin) { labels.push(this.origin.length <= 3 ? this.origin.toUpperCase() : this.origin); } if (labels.length === 0) { return 'All'; } if (labels.length === 1) { return labels[0]; } return `${labels[0]} +${labels.length - 1}`; }, clearFilters() { this.rating = 'all'; this.collection = 'all'; this.genre = ''; this.year = ''; this.source = ''; this.language = ''; this.country = ''; this.platform = ''; this.origin = ''; } }">
+    }, defaultDirection(value) { return ['start_date', 'title', 'time_left'].includes(value) ? 'asc' : 'desc' }, toggleSort(value) { this.direction = (this.sort === value) ? (this.direction === 'asc' ? 'desc' : 'asc') : this.defaultDirection(value); this.sort = value; }, toggleRating() { if (this.rating === 'all') { this.rating = 'rated'; } else if (this.rating === 'rated') { this.rating = 'not_rated'; } else { this.rating = 'all'; } }, toggleCollection() { if (this.collection === 'all') { this.collection = 'collected'; } else if (this.collection === 'collected') { this.collection = 'not_collected'; } else { this.collection = 'all'; } }, filterLabel() { const labels = []; if (this.rating && this.rating !== 'all') { labels.push(this.ratingLabels[this.rating] || 'Rated'); } if (this.collection && this.collection !== 'all') { labels.push(this.collectionLabels[this.collection] || 'Collected'); } if (this.genre) { labels.push(this.genre); } if (this.year) { labels.push(this.year === 'unknown' ? 'Unknown Year' : this.year); } if (this.release && this.release !== 'all') { labels.push(this.releaseLabels[this.release] || 'Released'); } if (this.source) { labels.push(this.source.toUpperCase()); } if (this.showLanguages && this.language) { labels.push(this.language.length <= 3 ? this.language.toUpperCase() : this.language); } if (this.showCountries && this.country) { labels.push(this.country.length <= 3 ? this.country.toUpperCase() : this.country); } if (this.showPlatforms && this.platform) { labels.push(this.platform); } if (this.showOrigins && this.origin) { labels.push(this.origin.length <= 3 ? this.origin.toUpperCase() : this.origin); } if (labels.length === 0) { return 'All'; } if (labels.length === 1) { return labels[0]; } return `${labels[0]} +${labels.length - 1}`; }, clearFilters() { this.rating = 'all'; this.collection = 'all'; this.genre = ''; this.year = ''; this.release = 'all'; this.source = ''; this.language = ''; this.country = ''; this.platform = ''; this.origin = ''; } }">
 
     <!-- Form to manage state -->
     <form id="filter-form" class="hidden">
@@ -49,6 +53,7 @@
       <input type="hidden" name="collection" x-model="collection">
       <input type="hidden" name="genre" x-model="genre">
       <input type="hidden" name="year" x-model="year">
+      <input type="hidden" name="release" x-model="release">
       <input type="hidden" name="source" x-model="source">
       <input type="hidden" name="language" x-model="language">
       <input type="hidden" name="country" x-model="country">
@@ -141,6 +146,14 @@
                   <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
                 </button>
               {% endif %}
+              <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                      @click="view = 'release'"
+                      type="button">
+                <span class="flex-shrink-0 mr-3">Released</span>
+                <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]"
+                      x-text="releaseLabels[release] || 'Any'"></span>
+                <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+              </button>
 
               {% if filter_data.sources %}
                 <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
@@ -378,6 +391,55 @@
                     </span>
                   </button>
                 </template>
+              </div>
+            </div>
+
+            <div x-show="view === 'release'" x-cloak class="p-2">
+              <div class="flex items-center gap-2 px-2 py-1">
+                <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                        @click="view = 'root'"
+                        type="button">
+                  {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+                </button>
+                <div class="text-xs uppercase tracking-wide text-gray-300">Released</div>
+              </div>
+              <div class="max-h-64 overflow-y-auto">
+                <button hx-get="{% url 'medialist' media_type %}"
+                        {% if media_list %} hx-target="{{ layout_class }}" {% else %} hx-target="#empty_list" {% endif %}
+                        hx-include="#filter-form"
+                        hx-indicator="#loading-indicator"
+                        class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                        @click="release = 'all'; open = false; view = 'root'"
+                        type="button">
+                  <span>Any Release State</span>
+                  <span class="ml-auto" x-show="release === 'all'">
+                    {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                  </span>
+                </button>
+                <button hx-get="{% url 'medialist' media_type %}"
+                        {% if media_list %} hx-target="{{ layout_class }}" {% else %} hx-target="#empty_list" {% endif %}
+                        hx-include="#filter-form"
+                        hx-indicator="#loading-indicator"
+                        class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                        @click="release = 'released'; open = false; view = 'root'"
+                        type="button">
+                  <span>Released</span>
+                  <span class="ml-auto" x-show="release === 'released'">
+                    {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                  </span>
+                </button>
+                <button hx-get="{% url 'medialist' media_type %}"
+                        {% if media_list %} hx-target="{{ layout_class }}" {% else %} hx-target="#empty_list" {% endif %}
+                        hx-include="#filter-form"
+                        hx-indicator="#loading-indicator"
+                        class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                        @click="release = 'not_released'; open = false; view = 'root'"
+                        type="button">
+                  <span>Not Released</span>
+                  <span class="ml-auto" x-show="release === 'not_released'">
+                    {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                  </span>
+                </button>
               </div>
             </div>
 
@@ -772,14 +834,14 @@
 
           <!-- Layout Toggle -->
           <div class="flex rounded-md overflow-hidden border border-gray-700 layout-toggle">
-            <a :href="`{% url 'medialist' media_type %}?${search ? 'search=' + search + '&' : ''}${status && status !== 'all' && status !== 'All' ? 'status=' + status + '&' : ''}${rating !== 'all' ? 'rating=' + rating + '&' : ''}${collection !== 'all' ? 'collection=' + collection + '&' : ''}${genre ? 'genre=' + genre + '&' : ''}${year ? 'year=' + year + '&' : ''}${source ? 'source=' + source + '&' : ''}${showLanguages && language ? 'language=' + language + '&' : ''}${showCountries && country ? 'country=' + country + '&' : ''}${showPlatforms && platform ? 'platform=' + platform + '&' : ''}${showOrigins && origin ? 'origin=' + origin + '&' : ''}${direction ? 'direction=' + direction + '&' : ''}${sort !== 'score' ? 'sort=' + sort + '&' : ''}layout=grid`"
+            <a :href="`{% url 'medialist' media_type %}?${search ? 'search=' + search + '&' : ''}${status && status !== 'all' && status !== 'All' ? 'status=' + status + '&' : ''}${rating !== 'all' ? 'rating=' + rating + '&' : ''}${collection !== 'all' ? 'collection=' + collection + '&' : ''}${genre ? 'genre=' + genre + '&' : ''}${year ? 'year=' + year + '&' : ''}${release !== 'all' ? 'release=' + release + '&' : ''}${source ? 'source=' + source + '&' : ''}${showLanguages && language ? 'language=' + language + '&' : ''}${showCountries && country ? 'country=' + country + '&' : ''}${showPlatforms && platform ? 'platform=' + platform + '&' : ''}${showOrigins && origin ? 'origin=' + origin + '&' : ''}${direction ? 'direction=' + direction + '&' : ''}${sort !== 'score' ? 'sort=' + sort + '&' : ''}layout=grid`"
                class="p-2 cursor-pointer"
                :class="layout === 'grid' ? 'bg-indigo-600 text-white' : 'bg-[#39404b] hover:bg-[#454d5a]'"
                title="Grid View"
                @click="layout = 'grid'">
               {% include "app/icons/four-square.svg" with classes="w-5 h-5" %}
             </a>
-            <a :href="`{% url 'medialist' media_type %}?${search ? 'search=' + search + '&' : ''}${status && status !== 'all' && status !== 'All' ? 'status=' + status + '&' : ''}${rating !== 'all' ? 'rating=' + rating + '&' : ''}${collection !== 'all' ? 'collection=' + collection + '&' : ''}${genre ? 'genre=' + genre + '&' : ''}${year ? 'year=' + year + '&' : ''}${source ? 'source=' + source + '&' : ''}${showLanguages && language ? 'language=' + language + '&' : ''}${showCountries && country ? 'country=' + country + '&' : ''}${showPlatforms && platform ? 'platform=' + platform + '&' : ''}${showOrigins && origin ? 'origin=' + origin + '&' : ''}${direction ? 'direction=' + direction + '&' : ''}${sort !== 'score' ? 'sort=' + sort + '&' : ''}layout=table`"
+            <a :href="`{% url 'medialist' media_type %}?${search ? 'search=' + search + '&' : ''}${status && status !== 'all' && status !== 'All' ? 'status=' + status + '&' : ''}${rating !== 'all' ? 'rating=' + rating + '&' : ''}${collection !== 'all' ? 'collection=' + collection + '&' : ''}${genre ? 'genre=' + genre + '&' : ''}${year ? 'year=' + year + '&' : ''}${release !== 'all' ? 'release=' + release + '&' : ''}${source ? 'source=' + source + '&' : ''}${showLanguages && language ? 'language=' + language + '&' : ''}${showCountries && country ? 'country=' + country + '&' : ''}${showPlatforms && platform ? 'platform=' + platform + '&' : ''}${showOrigins && origin ? 'origin=' + origin + '&' : ''}${direction ? 'direction=' + direction + '&' : ''}${sort !== 'score' ? 'sort=' + sort + '&' : ''}layout=table`"
                class="p-2 cursor-pointer"
                :class="layout === 'table' ? 'bg-indigo-600 text-white' : 'bg-[#39404b] hover:bg-[#454d5a]'"
                title="Table View"

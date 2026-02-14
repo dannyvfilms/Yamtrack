@@ -344,6 +344,7 @@ class MetadataBackfillField(models.TextChoices):
     RUNTIME = "runtime", "Runtime"
     GENRES = "genres", "Genres"
     CREDITS = "credits", "Credits"
+    RELEASE = "release", "Release Date"
 
 
 CREDITS_BACKFILL_VERSION = 2
