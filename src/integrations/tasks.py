@@ -554,12 +554,22 @@ def update_collection_metadata_from_plex_webhook(
         {k: v for k, v in collection_metadata.items() if v},
     )
 
-    # Get or create collection entry
-    entry, created = CollectionEntry.objects.get_or_create(
-        user=user,
-        item=item,
-        defaults=collection_metadata,
+    # Update the most recent entry for this item, or create a new one if none exists.
+    entry = (
+        CollectionEntry.objects.filter(
+            user=user,
+            item=item,
+        )
+        .order_by("-updated_at", "-collected_at", "-id")
+        .first()
     )
+    created = entry is None
+    if created:
+        entry = CollectionEntry(
+            user=user,
+            item=item,
+            **collection_metadata,
+        )
 
     # Store rating key and URI for future bulk imports (cache for faster lookups)
     rating_key_updated = False
@@ -589,9 +599,9 @@ def update_collection_metadata_from_plex_webhook(
         else:
             logger.debug("No changes to collection entry")
     else:
-        # New entry - save to store rating key
+        # New entry - save initial metadata and rating key cache.
+        entry.save()
         if rating_key_updated:
-            entry.save()
             logger.debug("Stored cached rating key for new entry: %s (uri=%s)", rating_key, plex_uri)
 
     logger.info(
@@ -645,12 +655,23 @@ def update_collection_metadata_from_plex_webhook(
                         },
                     )
                     
-                    # Create or update collection entry for this episode
-                    episode_entry, episode_entry_created = CollectionEntry.objects.get_or_create(
-                        user=user,
-                        item=episode_item,
-                        defaults=episode_collection_metadata,
+                    # Update the most recent episode entry, or create one if needed.
+                    episode_entry = (
+                        CollectionEntry.objects.filter(
+                            user=user,
+                            item=episode_item,
+                        )
+                        .order_by("-updated_at", "-collected_at", "-id")
+                        .first()
                     )
+                    episode_entry_created = episode_entry is None
+                    if episode_entry_created:
+                        episode_entry = CollectionEntry(
+                            user=user,
+                            item=episode_item,
+                            **episode_collection_metadata,
+                        )
+                        episode_entry.save()
                     
                     # Store rating key and URI for episode (if we can get it from episode metadata)
                     # Note: We'd need to fetch individual episode metadata to get episode rating keys
@@ -669,7 +690,6 @@ def update_collection_metadata_from_plex_webhook(
                                     setattr(episode_entry, key, value)
                                     updated = True
                         if updated:
-                            episode_entry.updated_at = timezone.now()
                             episode_entry.save()
                             episode_entries_updated += 1
                             logger.debug("Updated collection entry for episode S%02dE%02d of %s", season_number, episode_number, item.title)

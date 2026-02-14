@@ -216,6 +216,14 @@ def get_user_collection(user, media_type=None):
     return queryset
 
 
+def get_item_collection_entries(user, item):
+    """Return all collection entries for a specific user/item pair."""
+    return CollectionEntry.objects.filter(
+        user=user,
+        item=item,
+    ).order_by("-collected_at", "-id")
+
+
 def is_item_collected(user, item):
     """Check if a specific item is in user's collection.
 
@@ -224,12 +232,9 @@ def is_item_collected(user, item):
         item: Item object to check
 
     Returns:
-        CollectionEntry object if found, None otherwise
+        Most recently collected CollectionEntry object if found, None otherwise
     """
-    try:
-        return CollectionEntry.objects.get(user=user, item=item)
-    except CollectionEntry.DoesNotExist:
-        return None
+    return get_item_collection_entries(user, item).first()
 
 
 def get_album_collection_metadata(user, album):

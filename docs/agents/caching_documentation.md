@@ -173,8 +173,8 @@
 - `list_detail.html` disables HTMX history caching on `#items-grid` (`hx-history="false"`) to prevent stale list grids from being restored.
 - `custom_lists.html` sets `htmx.config.getCacheBusterParam = true` so HTMX GETs append `org.htmx.cache-buster`, which avoids Safari reusing cached list HTML.
 - `list_detail.html` sets `htmx.config.getCacheBusterParam = true` so HTMX GETs append `org.htmx.cache-buster`, which avoids Safari reusing cached list HTML.
-- `media_details.html` sets `htmx.config.getCacheBusterParam = true` for HTMX GET requests (including track modal requests). This prevents stale track modal HTML on previously visited pages. The configuration is set immediately and also on DOMContentLoaded as a fallback to ensure it's applied before any HTMX requests.
-- `base.html` adds a global HTMX `htmx:configRequest` hook to append a `cache_bust` param for `track_modal` requests. This is a targeted safety valve when HTMX cache busting + response headers are still not enough (e.g., Safari reusing modal HTML).
+- `media_details.html` sets `htmx.config.getCacheBusterParam = true` for HTMX GET requests (including track and collection modal requests). This prevents stale modal HTML on previously visited pages. The configuration is set immediately and also on DOMContentLoaded as a fallback to ensure it's applied before any HTMX requests.
+- `base.html` adds a global HTMX `htmx:configRequest` hook to append a `cache_bust` param for `track_modal` and `collection/modal` requests. This is a targeted safety valve when HTMX cache busting + response headers are still not enough (e.g., Safari reusing modal HTML).
 - `custom_lists.html` includes meta tags (`cache-control`, `pragma`, `expires`) in the `<head>` to provide additional cache-busting hints to browsers.
 - Podcast episode list fragment sets `Cache-Control: no-cache, no-store, must-revalidate`, plus `Pragma`/`Expires`.
 - `sync_metadata()` uses `cache.ttl()` to prevent immediate re-sync, and deletes provider cache keys when allowed.

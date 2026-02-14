@@ -802,7 +802,6 @@
                     hx-get="{% media_view_url 'collection_modal' media %}"
                     hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}", "season_number": "{{ media.season_number|default:'' }}", "episode_number": "{{ media.episode_number|default:'' }}"}'
                     hx-target="#{% component_id 'collection' media %}"
-                    hx-trigger="click once"
                     @click="collectionOpen = true"
                     title="Add collection data">{% include "app/icons/plus.svg" with classes="w-4 h-4" %}</button>
 
@@ -822,7 +821,7 @@
           {% if collection_stats %}
             {% if media_type == MediaTypes.SEASON.value %}
               {# For seasons, only show episode stats #}
-              <div class="{% if collection_entry %}mb-4{% endif %}">
+              <div class="{% if has_collection_data %}mb-4{% endif %}">
                 <h3 class="text-sm font-semibold text-gray-400">COLLECTED EPISODES</h3>
                 <p class="text-gray-200">
                   {{ collection_stats.collected_episodes }}/{{ collection_stats.total_episodes }}
@@ -833,7 +832,7 @@
                   {% endif %}
                 </p>
               </div>
-              {% if collection_entry %}<hr class="border-gray-700 mb-4 mt-4">{% endif %}
+              {% if has_collection_data %}<hr class="border-gray-700 mb-4 mt-4">{% endif %}
             {% else %}
               {# For TV shows/Anime, show season and episode stats #}
               <div class="mb-4">
@@ -848,7 +847,7 @@
                 </p>
               </div>
               
-              <div class="{% if collection_entry %}mb-4{% endif %}">
+              <div class="{% if has_collection_data %}mb-4{% endif %}">
                 <h3 class="text-sm font-semibold text-gray-400">COLLECTED EPISODES</h3>
                 <p class="text-gray-200">
                   {{ collection_stats.collected_episodes }}/{{ collection_stats.total_episodes }}
@@ -859,67 +858,24 @@
                   {% endif %}
                 </p>
               </div>
-              {% if collection_entry %}<hr class="border-gray-700 mb-4 mt-4">{% endif %}
+              {% if has_collection_data %}<hr class="border-gray-700 mb-4 mt-4">{% endif %}
             {% endif %}
           {% endif %}
           
           {# Collection metadata details #}
-          {% if collection_entry %}
-            {% if collection_entry.media_type %}
-              <div class="mb-4">
-                <h3 class="text-sm font-semibold text-gray-400">MEDIA TYPE</h3>
-                <p class="text-gray-200">{{ collection_entry.media_type|title_preserve_acronyms }}</p>
-              </div>
-            {% endif %}
-            
-            {% if collection_entry.resolution %}
-              <div class="mb-4">
-                <h3 class="text-sm font-semibold text-gray-400">RESOLUTION</h3>
-                <p class="text-gray-200">{{ collection_entry.resolution }}</p>
-              </div>
-            {% endif %}
-            
-            {% if collection_entry.hdr %}
-              <div class="mb-4">
-                <h3 class="text-sm font-semibold text-gray-400">HDR</h3>
-                <p class="text-gray-200">{{ collection_entry.hdr }}</p>
-              </div>
-            {% endif %}
-            
-            {% if collection_entry.is_3d %}
-              <div class="mb-4">
-                <h3 class="text-sm font-semibold text-gray-400">3D</h3>
-                <p class="text-gray-200">Yes</p>
-              </div>
-            {% endif %}
-            
-            {% if collection_entry.audio_codec %}
-              <div class="mb-4">
-                <h3 class="text-sm font-semibold text-gray-400">AUDIO CODEC</h3>
-                <p class="text-gray-200">{{ collection_entry.audio_codec }}</p>
-              </div>
-            {% endif %}
-            
-            {% if collection_entry.audio_channels %}
-              <div class="mb-4">
-                <h3 class="text-sm font-semibold text-gray-400">AUDIO CHANNELS</h3>
-                <p class="text-gray-200">{{ collection_entry.audio_channels }}</p>
-              </div>
-            {% endif %}
-            
-            {% if collection_entry.bitrate %}
-              <div class="mb-4">
-                <h3 class="text-sm font-semibold text-gray-400">BITRATE</h3>
-                <p class="text-gray-200">{{ collection_entry.bitrate }} kbps</p>
-              </div>
-            {% endif %}
-            
-            {% if collection_entry.collected_at %}
-              <div>
-                <h3 class="text-sm font-semibold text-gray-400">COLLECTED AT</h3>
-                <p class="text-gray-200">{{ collection_entry.collected_at|user_date_format:user }}</p>
-              </div>
-            {% endif %}
+          {% if collection_entries %}
+            <div>
+              {% for owned_entry in collection_entries %}
+                {% include "app/components/collection_entry_summary.html" with collection_entry=owned_entry media_type=media_type user=user source_style_game_meta=True flat_list=True is_last=forloop.last %}
+              {% endfor %}
+            </div>
+          {% elif collection_entry %}
+            <div>
+              {% if media_type == MediaTypes.SEASON.value %}
+                <p class="text-xs uppercase tracking-wide text-gray-400">Aggregated Episode Metadata</p>
+              {% endif %}
+              {% include "app/components/collection_entry_summary.html" with collection_entry=collection_entry media_type=media_type user=user source_style_game_meta=True flat_list=True is_last=True %}
+            </div>
           {% elif not collection_stats %}
             <p class="text-gray-400 text-sm">No collection data available</p>
           {% endif %}

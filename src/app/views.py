@@ -2601,14 +2601,15 @@ def media_details(
                     notes_entry = entry
                     break
 
-    # Get collection entry for this item (if not public view and not podcast)
+    # Get collection entries for this item (if not public view and not podcast)
     collection_entry = None
+    collection_entries = []
     collection_stats = None
     fetching_collection_data = False
     item_id_for_polling = None
     
     if not public_view and media_type != MediaTypes.PODCAST.value:
-        from app.helpers import is_item_collected, get_tv_show_collection_stats
+        from app.helpers import get_item_collection_entries, get_tv_show_collection_stats
         
         try:
             item = Item.objects.get(
@@ -2616,7 +2617,8 @@ def media_details(
                 source=source,
                 media_type=media_type,
             )
-            collection_entry = is_item_collected(request.user, item)
+            collection_entries = list(get_item_collection_entries(request.user, item))
+            collection_entry = collection_entries[0] if collection_entries else None
             
             # For TV shows, also get collection statistics (episodes/seasons)
             if media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
@@ -2638,6 +2640,8 @@ def media_details(
         except Item.DoesNotExist:
             pass
 
+    has_collection_data = bool(collection_entries) or collection_entry is not None
+
     context = {
         "user": request.user,
         "media": media_metadata,
@@ -2650,7 +2654,9 @@ def media_details(
         "play_stats": play_stats,
         "notes_entry": notes_entry,
         "collection_entry": collection_entry,
+        "collection_entries": collection_entries,
         "collection_stats": collection_stats,
+        "has_collection_data": has_collection_data,
         "fetching_collection_data": fetching_collection_data if not public_view else False,
         "item_id_for_polling": item_id_for_polling if not public_view else None,
     }
@@ -2952,14 +2958,19 @@ def season_details(
         episode_item_ids = list(episode_items.values_list('id', flat=True))
         collection_entries = {}
         if episode_item_ids:
-            collection_entries_qs = CollectionEntry.objects.filter(
-                user=request.user,
-                item_id__in=episode_item_ids,
+            collection_entries_qs = (
+                CollectionEntry.objects.filter(
+                    user=request.user,
+                    item_id__in=episode_item_ids,
+                )
+                .select_related("item")
+                .order_by("-collected_at", "-id")
             )
             # Map by (season_number, episode_number) for quick lookup
             for entry in collection_entries_qs:
-                if entry.item.episode_number is not None:
-                    collection_entries[entry.item.episode_number] = entry
+                episode_number = entry.item.episode_number
+                if episode_number is not None and episode_number not in collection_entries:
+                    collection_entries[episode_number] = entry
         
         # Add collection_entry to each episode
         for episode in season_metadata["episodes"]:
@@ -2981,11 +2992,12 @@ def season_details(
 
     # Get collection entry, stats, and metadata for this season (if not public view)
     collection_entry = None
+    collection_entries = []
     season_collection_stats = None
     fetching_collection_data = False
     item_id_for_polling = None
     if not public_view:
-        from app.helpers import is_item_collected, get_season_collection_stats, get_season_collection_metadata
+        from app.helpers import get_item_collection_entries, get_season_collection_stats, get_season_collection_metadata
         from app.models import Item as ItemModel  # Use alias to avoid any potential shadowing
         
         # Get the season item
@@ -3005,7 +3017,7 @@ def season_details(
                     source=source,
                     media_type__in=(MediaTypes.TV.value, MediaTypes.ANIME.value),
                 )
-                show_collection_entry = is_item_collected(request.user, show_item)
+                show_collection_entry = get_item_collection_entries(request.user, show_item).first()
                 
                 logger.info("Season page: Checking show %s (item_id=%s) - collection entry exists: %s", 
                            show_item.title, show_item.id, show_collection_entry is not None)
@@ -3035,7 +3047,8 @@ def season_details(
                 logger.error("Error checking show collection entry in season_details: %s", exc, exc_info=True)
             
             # Get collection entry for the season item itself (if it exists)
-            season_collection_entry = is_item_collected(request.user, season_item)
+            collection_entries = list(get_item_collection_entries(request.user, season_item))
+            season_collection_entry = collection_entries[0] if collection_entries else None
             
             # Get aggregated collection metadata from episodes (or season/show-level entry)
             season_collection_metadata = get_season_collection_metadata(request.user, season_item)
@@ -3075,6 +3088,8 @@ def season_details(
         except ItemModel.DoesNotExist:
             pass
 
+    has_collection_data = bool(collection_entries) or collection_entry is not None
+
     context = {
         "user": request.user,
         "media": season_metadata,
@@ -3084,7 +3099,9 @@ def season_details(
         "current_instance": current_instance,
         "public_view": public_view,
         "collection_entry": collection_entry,
+        "collection_entries": collection_entries,
         "collection_stats": season_collection_stats,  # For season, this is episode stats
+        "has_collection_data": has_collection_data,
         "fetching_collection_data": fetching_collection_data if not public_view else False,
         "item_id_for_polling": item_id_for_polling if not public_view else None,
     }
@@ -6190,7 +6207,6 @@ def album_detail(request, album_id):
     total_duration_ms = 0
     
     # Get collection entries for all tracks in one query (if user is authenticated)
-    from app.helpers import is_item_collected
     from app.models import CollectionEntry
     
     collection_entries_by_item_id = {}
@@ -6202,8 +6218,9 @@ def album_detail(request, album_id):
             collection_entries = CollectionEntry.objects.filter(
                 user=request.user,
                 item_id__in=music_item_ids,
-            )
-            collection_entries_by_item_id = {ce.item_id: ce for ce in collection_entries}
+            ).order_by("-collected_at", "-id")
+            for collection_entry in collection_entries:
+                collection_entries_by_item_id.setdefault(collection_entry.item_id, collection_entry)
     
     for track in all_tracks:
         # Look up user's Music entry for this track
@@ -8502,7 +8519,7 @@ def _collection_redirect(request):
 
 @require_POST
 def collection_add(request):
-    """Add item to collection (with optional metadata)."""
+    """Add a new owned copy to collection (with optional metadata)."""
     item_id = request.POST.get("item_id")
     if not item_id:
         if request.headers.get("HX-Request"):
@@ -8518,27 +8535,15 @@ def collection_add(request):
         messages.error(request, "Item not found")
         return _collection_redirect(request)
 
-    # Check if entry already exists
-    existing_entry = helpers.is_item_collected(request.user, item)
-    
     # Create mutable POST data and add item
     post_data = request.POST.copy()
     post_data["item"] = item.id
-    
-    if existing_entry:
-        # Update instead of creating duplicate
-        form = CollectionEntryForm(
-            post_data,
-            instance=existing_entry,
-            user=request.user,
-            collection_media_type=item.media_type,
-        )
-    else:
-        form = CollectionEntryForm(
-            post_data,
-            user=request.user,
-            collection_media_type=item.media_type,
-        )
+
+    form = CollectionEntryForm(
+        post_data,
+        user=request.user,
+        collection_media_type=item.media_type,
+    )
 
     if form.is_valid():
         entry = form.save(commit=False)
@@ -8611,7 +8616,7 @@ def collection_remove(request, entry_id):
 @never_cache
 @require_GET
 def collection_modal(request, source, media_type, media_id):
-    """Return modal HTML for adding/editing collection entry."""
+    """Return modal HTML for adding and managing collection entries."""
     def _parse_optional_int(value):
         if value in (None, "", "null"):
             return None
@@ -8701,9 +8706,9 @@ def collection_modal(request, source, media_type, media_id):
         if platforms:
             platform_choices = platforms
 
-    existing_entry = helpers.is_item_collected(request.user, item)
+    existing_entries = helpers.get_item_collection_entries(request.user, item)
+    existing_entry = existing_entries.first()
     form = CollectionEntryForm(
-        instance=existing_entry,
         user=request.user,
         collection_media_type=item.media_type,
         collection_choices_override={"resolution": platform_choices} if platform_choices else None,
@@ -8719,6 +8724,7 @@ def collection_modal(request, source, media_type, media_id):
         {
             "item": item,
             "entry": existing_entry,
+            "existing_entries": existing_entries,
             "form": form,
             "return_url": return_url,
             "collection_fields": collection_fields,

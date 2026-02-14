@@ -1,6 +1,4 @@
 from django.contrib.auth import get_user_model
-from django.core.exceptions import ValidationError
-from django.db import IntegrityError
 from django.test import TestCase
 from django.utils import timezone
 
@@ -80,19 +78,22 @@ class CollectionEntryModelTest(TestCase):
         )
         self.assertEqual(str(entry), f"{self.user.username} - {self.item.title}")
 
-    def test_collection_entry_uniqueness_constraint(self):
-        """Test that uniqueness constraint prevents duplicate entries."""
-        CollectionEntry.objects.create(
+    def test_collection_entry_allows_multiple_entries_per_item(self):
+        """Test that multiple owned copies can be stored for the same item."""
+        first_entry = CollectionEntry.objects.create(
             user=self.user,
             item=self.item,
+            media_type="dvd",
         )
 
-        # Try to create duplicate entry
-        with self.assertRaises(IntegrityError):
-            CollectionEntry.objects.create(
-                user=self.user,
-                item=self.item,
-            )
+        second_entry = CollectionEntry.objects.create(
+            user=self.user,
+            item=self.item,
+            media_type="bluray",
+        )
+
+        self.assertNotEqual(first_entry.id, second_entry.id)
+        self.assertEqual(CollectionEntry.objects.filter(user=self.user, item=self.item).count(), 2)
 
     def test_collection_entry_field_defaults(self):
         """Test that all metadata fields have correct defaults."""

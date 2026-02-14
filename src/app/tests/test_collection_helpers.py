@@ -53,6 +53,23 @@ class CollectionHelpersTest(TestCase):
         result = is_item_collected(self.user, self.movie_item)
         self.assertEqual(result, entry)
 
+    def test_is_item_collected_returns_latest_when_multiple_exist(self):
+        """Test is_item_collected returns most recent copy for an item."""
+        first_entry = CollectionEntry.objects.create(
+            user=self.user,
+            item=self.movie_item,
+            media_type="dvd",
+        )
+        latest_entry = CollectionEntry.objects.create(
+            user=self.user,
+            item=self.movie_item,
+            media_type="bluray",
+        )
+
+        result = is_item_collected(self.user, self.movie_item)
+        self.assertNotEqual(result, first_entry)
+        self.assertEqual(result, latest_entry)
+
     def test_is_item_collected_not_found(self):
         """Test is_item_collected returns None when not found."""
         result = is_item_collected(self.user, self.movie_item)

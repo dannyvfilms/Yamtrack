@@ -42,7 +42,13 @@
 
           document.body.addEventListener("htmx:configRequest", function(event) {
             const path = event.detail && event.detail.path ? event.detail.path : "";
-            if (!path.includes("track_modal")) {
+            const needsModalCacheBust = (
+              path.includes("track_modal")
+              || path.includes("collection/modal")
+              || path.includes("collection_modal")
+            );
+
+            if (!needsModalCacheBust) {
               return;
             }
 

@@ -11,173 +11,175 @@
     </button>
   </div>
 
-  <form method="post">
-    {% csrf_token %}
-    <input type="hidden" name="item_id" value="{{ item.id }}">
-    {{ form.item }}
+  <div class="space-y-6">
+    {% if existing_entries %}
+      <div>
+        <h3 class="text-sm font-semibold uppercase tracking-wide text-gray-400 mb-3">Existing Entries</h3>
+        <div class="space-y-3 max-h-52 overflow-y-auto pr-1">
+          {% for existing_entry in existing_entries %}
+            {% url 'collection_remove' existing_entry.id as remove_url %}
+            {% include "app/components/collection_entry_summary.html" with collection_entry=existing_entry media_type=item.media_type user=request.user show_delete=True delete_url=remove_url return_url=return_url show_date=False format_with_subtitle=True show_format_header=False %}
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
 
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4">
-      {% for field in form %}
-        {% if field.name != 'item' %}
-          {% if not collection_fields or field.name in collection_fields %}
-            <div class="mb-5 {% if field.name == 'media_type' %}sm:col-span-2{% endif %}">
-              <label class="block text-sm font-medium mb-1 text-gray-300"
-                     for="{{ field.id_for_label }}">{{ field.label }}</label>
-              <div class="relative">
-                {% if field.field.widget.input_type == 'checkbox' %}
-                  <label class="flex items-center gap-2 text-gray-200">
-                    {{ field|add_class:"h-4 w-4 rounded border-gray-600 bg-[#39404b] text-indigo-500 focus:ring-[#4a9eff]" }}
-                    <span>Yes</span>
-                  </label>
-                {% elif field.field.widget.input_type == 'number' %}
-                  {{ field|add_class:"w-full p-2 pr-12 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" }}
-                  <div class="absolute inset-y-0 right-0 flex flex-col border-l border-gray-600">
-                    <button type="button"
-                            class="flex-1 px-2 hover:bg-gray-700 transition-colors rounded-tr-md border-t border-r border-gray-600"
-                            onclick="this.parentElement.previousElementSibling.stepUp()">
-                      {% include "app/icons/chevron-up.svg" with classes="w-3.5 h-3.5" %}
-                    </button>
-                    <button type="button"
-                            class="flex-1 px-2 hover:bg-gray-700 transition-colors rounded-br-md border-b border-r border-gray-600"
-                            onclick="this.parentElement.previousElementSibling.stepDown()">
-                      {% include "app/icons/chevron-down.svg" with classes="w-3.5 h-3.5" %}
-                    </button>
-                  </div>
-                  {% elif field.field.widget.input_type == 'select' %}
-                    <div class="relative overflow-visible"
-                         @click.outside="open = false"
-                         @keydown.escape.window="open = false"
-                         x-bind:style="{ zIndex: open ? 80 : 30 }"
-                         x-data="{
-                          open: false,
-                          openUp: false,
-                          selectedValue: '{{ field.value|default_if_none:''|escapejs }}',
-                          selectedLabel: '',
-                          dropdownMaxHeight: 240,
-                          options: [],
-                          init() {
-                            this.options = Array.from(this.$el.querySelectorAll('[data-choice]')).map((optionEl) => ({
-                              value: optionEl.dataset.choiceValue ?? '',
-                              label: optionEl.dataset.choiceLabel ?? optionEl.textContent.trim(),
-                            }));
-                            const current = String(this.selectedValue ?? '');
-                            const match = this.options.find(option => String(option.value) === current);
-                            this.selectedLabel = match ? match.label : (this.options[0]?.label ?? '');
-                          },
-                          toggle() {
-                            this.open = !this.open;
-                            if (this.open) {
-                              this.$nextTick(() => this.positionDropdown());
-                            }
-                          },
-                          getBoundsRect() {
-                            let node = this.$el.parentElement;
+    <form method="post" action="{% url 'collection_add' %}?next={{ return_url }}">
+      {% csrf_token %}
+      <input type="hidden" name="item_id" value="{{ item.id }}">
+      {{ form.item }}
 
-                            while (node) {
-                              const style = window.getComputedStyle(node);
-                              const overflowY = style.overflowY;
-                              const overflow = style.overflow;
-                              const clipsChildren = ['auto', 'scroll', 'hidden', 'clip'].includes(overflowY)
-                                || ['auto', 'scroll', 'hidden', 'clip'].includes(overflow);
+      <h3 class="text-sm font-semibold uppercase tracking-wide text-gray-400 mb-3">
+        {% if existing_entries %}Add Another Copy{% else %}Add Copy{% endif %}
+      </h3>
 
-                              if (clipsChildren) {
-                                return node.getBoundingClientRect();
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4">
+        {% for field in form %}
+          {% if field.name != 'item' %}
+            {% if not collection_fields or field.name in collection_fields %}
+              <div class="mb-5 {% if field.name == 'media_type' %}sm:col-span-2{% endif %}">
+                <label class="block text-sm font-medium mb-1 text-gray-300"
+                       for="{{ field.id_for_label }}">{{ field.label }}</label>
+                <div class="relative">
+                  {% if field.field.widget.input_type == 'checkbox' %}
+                    <label class="flex items-center gap-2 text-gray-200">
+                      {{ field|add_class:"h-4 w-4 rounded border-gray-600 bg-[#39404b] text-indigo-500 focus:ring-[#4a9eff]" }}
+                      <span>Yes</span>
+                    </label>
+                  {% elif field.field.widget.input_type == 'number' %}
+                    {{ field|add_class:"w-full p-2 pr-12 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" }}
+                    <div class="absolute inset-y-0 right-0 flex flex-col border-l border-gray-600">
+                      <button type="button"
+                              class="flex-1 px-2 hover:bg-gray-700 transition-colors rounded-tr-md border-t border-r border-gray-600"
+                              onclick="this.parentElement.previousElementSibling.stepUp()">
+                        {% include "app/icons/chevron-up.svg" with classes="w-3.5 h-3.5" %}
+                      </button>
+                      <button type="button"
+                              class="flex-1 px-2 hover:bg-gray-700 transition-colors rounded-br-md border-b border-r border-gray-600"
+                              onclick="this.parentElement.previousElementSibling.stepDown()">
+                        {% include "app/icons/chevron-down.svg" with classes="w-3.5 h-3.5" %}
+                      </button>
+                    </div>
+                    {% elif field.field.widget.input_type == 'select' %}
+                      <div class="relative overflow-visible"
+                           @click.outside="open = false"
+                           @keydown.escape.window="open = false"
+                           x-bind:style="{ zIndex: open ? 80 : 30 }"
+                           x-data="{
+                            open: false,
+                            openUp: false,
+                            selectedValue: '{{ field.value|default_if_none:''|escapejs }}',
+                            selectedLabel: '',
+                            dropdownMaxHeight: 240,
+                            options: [],
+                            init() {
+                              this.options = Array.from(this.$el.querySelectorAll('[data-choice]')).map((optionEl) => ({
+                                value: optionEl.dataset.choiceValue ?? '',
+                                label: optionEl.dataset.choiceLabel ?? optionEl.textContent.trim(),
+                              }));
+                              const current = String(this.selectedValue ?? '');
+                              const match = this.options.find(option => String(option.value) === current);
+                              this.selectedLabel = match ? match.label : (this.options[0]?.label ?? '');
+                            },
+                            toggle() {
+                              this.open = !this.open;
+                              if (this.open) {
+                                this.$nextTick(() => this.positionDropdown());
+                              }
+                            },
+                            getBoundsRect() {
+                              let node = this.$el.parentElement;
+
+                              while (node) {
+                                const style = window.getComputedStyle(node);
+                                const overflowY = style.overflowY;
+                                const overflow = style.overflow;
+                                const clipsChildren = ['auto', 'scroll', 'hidden', 'clip'].includes(overflowY)
+                                  || ['auto', 'scroll', 'hidden', 'clip'].includes(overflow);
+
+                                if (clipsChildren) {
+                                  return node.getBoundingClientRect();
+                                }
+
+                                node = node.parentElement;
                               }
 
-                              node = node.parentElement;
+                              const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+                              return { top: 0, bottom: viewportHeight };
+                            },
+                            positionDropdown() {
+                              const trigger = this.$refs.trigger;
+                              if (!trigger) {
+                                return;
+                              }
+
+                              const rect = trigger.getBoundingClientRect();
+                              const viewportPadding = 16;
+                              const preferredHeight = 240;
+                              const boundsRect = this.getBoundsRect();
+                              const spaceBelow = Math.max(0, boundsRect.bottom - rect.bottom - viewportPadding);
+                              const spaceAbove = Math.max(0, rect.top - boundsRect.top - viewportPadding);
+                              const shouldOpenUp = spaceAbove > spaceBelow;
+
+                              this.openUp = shouldOpenUp;
+                              const availableSpace = shouldOpenUp ? spaceAbove : spaceBelow;
+                              this.dropdownMaxHeight = Math.min(preferredHeight, availableSpace);
+                            },
+                            choose(value, label) {
+                              this.selectedValue = String(value ?? '');
+                              this.selectedLabel = label;
+                              this.open = false;
                             }
-
-                            const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
-                            return { top: 0, bottom: viewportHeight };
-                          },
-                          positionDropdown() {
-                            const trigger = this.$refs.trigger;
-                            if (!trigger) {
-                              return;
-                            }
-
-                            const rect = trigger.getBoundingClientRect();
-                            const viewportPadding = 16;
-                            const preferredHeight = 240;
-                            const boundsRect = this.getBoundsRect();
-                            const spaceBelow = Math.max(0, boundsRect.bottom - rect.bottom - viewportPadding);
-                            const spaceAbove = Math.max(0, rect.top - boundsRect.top - viewportPadding);
-                            const shouldOpenUp = spaceAbove > spaceBelow;
-
-                            this.openUp = shouldOpenUp;
-                            const availableSpace = shouldOpenUp ? spaceAbove : spaceBelow;
-                            this.dropdownMaxHeight = Math.min(preferredHeight, availableSpace);
-                          },
-                          choose(value, label) {
-                            this.selectedValue = String(value ?? '');
-                            this.selectedLabel = label;
-                            this.open = false;
-                          }
-                         }"
-                         @resize.window="open && positionDropdown()">
-                    <button type="button"
-                            @click="toggle()"
-                            x-ref="trigger"
-                            id="{{ field.id_for_label }}"
-                            :aria-expanded="open"
-                            class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
-                      <span x-text="selectedLabel" :class="selectedValue === '' ? 'text-gray-500' : ''"></span>
-                      {% include "app/icons/chevron-down.svg" with classes="w-4 h-4 text-gray-400" %}
-                    </button>
-                    <div x-show="open"
-                         x-transition:enter="transition ease-out duration-100"
-                         x-transition:enter-start="transform opacity-0 scale-95"
-                         x-transition:enter-end="transform opacity-100 scale-100"
-                         x-transition:leave="transition ease-in duration-75"
-                         x-transition:leave-start="transform opacity-100 scale-100"
-                         x-transition:leave-end="transform opacity-0 scale-95"
-                         :class="openUp ? 'bottom-full mb-2' : 'top-full mt-2'"
-                         :style="{ maxHeight: `${dropdownMaxHeight}px` }"
-                         class="absolute left-0 right-0 py-1 bg-[#272c31] rounded-md shadow-lg overflow-y-auto z-50 border border-gray-600">
-                      {% for value, label in field.field.widget.choices %}
-                        <button type="button"
-                                data-choice
-                                data-choice-value="{{ value|default_if_none:'' }}"
-                                data-choice-label="{{ label }}"
-                                @click="choose('{{ value|default_if_none:''|escapejs }}', '{{ label|escapejs }}')"
-                                class="block w-full px-3 py-2 text-left text-sm transition-colors {% if value == '' %}text-gray-500{% else %}text-gray-300 hover:bg-[#39404b] hover:text-white{% endif %}">
-                          {{ label }}
-                        </button>
-                      {% endfor %}
+                           }"
+                           @resize.window="open && positionDropdown()">
+                      <button type="button"
+                              @click="toggle()"
+                              x-ref="trigger"
+                              id="{{ field.id_for_label }}"
+                              :aria-expanded="open"
+                              class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
+                        <span x-text="selectedLabel" :class="selectedValue === '' ? 'text-gray-500' : ''"></span>
+                        {% include "app/icons/chevron-down.svg" with classes="w-4 h-4 text-gray-400" %}
+                      </button>
+                      <div x-show="open"
+                           x-transition:enter="transition ease-out duration-100"
+                           x-transition:enter-start="transform opacity-0 scale-95"
+                           x-transition:enter-end="transform opacity-100 scale-100"
+                           x-transition:leave="transition ease-in duration-75"
+                           x-transition:leave-start="transform opacity-100 scale-100"
+                           x-transition:leave-end="transform opacity-0 scale-95"
+                           :class="openUp ? 'bottom-full mb-2' : 'top-full mt-2'"
+                           :style="{ maxHeight: `${dropdownMaxHeight}px` }"
+                           class="absolute left-0 right-0 py-1 bg-[#272c31] rounded-md shadow-lg overflow-y-auto z-50 border border-gray-600">
+                        {% for value, label in field.field.widget.choices %}
+                          <button type="button"
+                                  data-choice
+                                  data-choice-value="{{ value|default_if_none:'' }}"
+                                  data-choice-label="{{ label }}"
+                                  @click="choose('{{ value|default_if_none:''|escapejs }}', '{{ label|escapejs }}')"
+                                  class="block w-full px-3 py-2 text-left text-sm transition-colors {% if value == '' %}text-gray-500{% else %}text-gray-300 hover:bg-[#39404b] hover:text-white{% endif %}">
+                            {{ label }}
+                          </button>
+                        {% endfor %}
+                      </div>
+                      <input type="hidden" name="{{ field.name }}" x-model="selectedValue">
                     </div>
-                    <input type="hidden" name="{{ field.name }}" x-model="selectedValue">
-                  </div>
-                {% else %}
-                  {{ field|add_class:"w-full p-2 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff]" }}
-                {% endif %}
+                  {% else %}
+                    {{ field|add_class:"w-full p-2 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff]" }}
+                  {% endif %}
+                </div>
               </div>
-            </div>
+            {% endif %}
           {% endif %}
-        {% endif %}
-      {% endfor %}
-    </div>
+        {% endfor %}
+      </div>
 
-    <div class="flex flex-row-reverse justify-between mt-6">
-      <button type="submit"
-              formaction="{% url 'collection_add' %}?next={{ return_url }}"
-              class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 cursor-pointer">
-        {% if entry %}
-          Update
-        {% else %}
-          Add
-        {% endif %}
-      </button>
-      {% if entry %}
+      <div class="flex justify-end mt-6">
         <button type="submit"
-                formaction="{% url 'collection_remove' entry.id %}?next={{ return_url }}"
-                class="px-4 py-2 rounded-md transition duration-300 bg-red-700 text-white hover:bg-red-800 cursor-pointer">
-          Remove
+                class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 cursor-pointer">
+          Add Copy
         </button>
-      {% else %}
-        <button type="button"
-                class="px-4 py-2 rounded-md transition duration-300 bg-gray-600 text-gray-300 cursor-not-allowed"
-                disabled>Remove</button>
-      {% endif %}
-    </div>
-  </form>
+      </div>
+    </form>
+  </div>
 </div>

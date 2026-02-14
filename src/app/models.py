@@ -3502,7 +3502,7 @@ class PodcastShowTracker(models.Model):
 
 
 class CollectionEntry(models.Model):
-    """Model to store user's collected media items with optional A/V metadata."""
+    """Model to store user-owned copies of media items with optional A/V metadata."""
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     item = models.ForeignKey(Item, on_delete=models.CASCADE)
@@ -3583,12 +3583,6 @@ class CollectionEntry(models.Model):
     )
 
     class Meta:
-        constraints = [
-            models.UniqueConstraint(
-                fields=["user", "item"],
-                name="unique_user_collection_item",
-            ),
-        ]
         ordering = ["-collected_at"]
         indexes = [
             models.Index(fields=["user", "-collected_at"]),

@@ -2,7 +2,6 @@ from django.contrib.auth import get_user_model
 from django.test import Client, TestCase
 from django.urls import reverse
 
-from app.helpers import is_item_collected
 from app.models import CollectionEntry, Item, MediaTypes, Sources
 
 
@@ -110,8 +109,8 @@ class CollectionAddViewTest(TestCase):
         self.assertIn(response.status_code, [200, 302])
         self.assertTrue(CollectionEntry.objects.filter(user=self.user, item=self.item).exists())
 
-    def test_collection_add_existing_entry_updates(self):
-        """Test POST with existing entry updates instead of creating duplicate."""
+    def test_collection_add_existing_entry_creates_additional_copy(self):
+        """Test POST with existing entry creates another collection copy."""
         self.client.login(**self.credentials)
 
         # Create existing entry
@@ -131,13 +130,17 @@ class CollectionAddViewTest(TestCase):
             },
         )
 
-        # Should update existing entry
+        # Existing entry should remain unchanged
         entry.refresh_from_db()
-        self.assertEqual(entry.media_type, "bluray")
-        self.assertEqual(entry.resolution, "1080p")
+        self.assertEqual(entry.media_type, "dvd")
+        self.assertEqual(entry.resolution, "")
 
-        # Should still only have one entry
-        self.assertEqual(CollectionEntry.objects.filter(user=self.user, item=self.item).count(), 1)
+        # A second entry should be created for the new copy
+        self.assertEqual(CollectionEntry.objects.filter(user=self.user, item=self.item).count(), 2)
+        new_entry = CollectionEntry.objects.filter(user=self.user, item=self.item).exclude(id=entry.id).first()
+        self.assertIsNotNone(new_entry)
+        self.assertEqual(new_entry.media_type, "bluray")
+        self.assertEqual(new_entry.resolution, "1080p")
 
     def test_collection_add_invalid_item_id(self):
         """Test validation errors for invalid item_id."""
@@ -403,9 +406,10 @@ class CollectionModalViewTest(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIsNone(response.context["entry"])
+        self.assertEqual(response.context["existing_entries"].count(), 0)
 
     def test_collection_modal_existing_entry(self):
-        """Test modal for existing entry (pre-populated form)."""
+        """Test modal for existing entry list."""
         self.client.login(**self.credentials)
 
         entry = CollectionEntry.objects.create(
@@ -428,4 +432,42 @@ class CollectionModalViewTest(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["entry"], entry)
-        self.assertEqual(response.context["form"].instance, entry)
+        self.assertEqual(response.context["existing_entries"].count(), 1)
+        self.assertFalse(response.context["form"].instance.pk)
+
+    def test_collection_modal_existing_entries_multiple(self):
+        """Test modal renders all existing entries for the same item."""
+        self.client.login(**self.credentials)
+
+        first_entry = CollectionEntry.objects.create(
+            user=self.user,
+            item=self.item,
+            media_type="physical",
+            resolution="Super Nintendo Entertainment System",
+            hdr="Deluxe",
+        )
+        second_entry = CollectionEntry.objects.create(
+            user=self.user,
+            item=self.item,
+            media_type="rom",
+            resolution="Sega Mega Drive/Genesis",
+            hdr="Standard",
+        )
+
+        response = self.client.get(
+            reverse(
+                "collection_modal",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "1234",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["existing_entries"].count(), 2)
+        self.assertEqual(response.context["entry"], second_entry)
+        self.assertContains(response, "Super Nintendo Entertainment System")
+        self.assertContains(response, "Sega Mega Drive/Genesis")
+        self.assertTrue(CollectionEntry.objects.filter(id=first_entry.id).exists())

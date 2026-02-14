@@ -1,0 +1,145 @@
+{% load app_tags %}
+{% load user_tags %}
+
+<div class="{% if flat_list %}{% if not is_last %}pb-3 mb-3 border-b border-gray-700{% endif %}{% else %}rounded-md border border-gray-700 bg-[#343a40] p-3{% endif %} {% if show_delete and delete_url and show_date == False %}relative{% endif %}">
+  <div class="flex items-start justify-between gap-3">
+    <div class="min-w-0 flex-1 {% if show_delete and delete_url and show_date == False %}pr-20{% endif %}">
+      {% if show_date != False and not show_delete and collection_entry.collected_at %}
+        <div class="flex items-start justify-between gap-3">
+          {% if show_format_header != False %}
+            <p class="text-xs tracking-wide text-gray-400">
+              {% if collection_entry.media_type %}
+                Format: {{ collection_entry.media_type|title_preserve_acronyms }}
+              {% else %}
+                Collected
+              {% endif %}
+            </p>
+          {% endif %}
+          <p class="text-xs text-gray-400 whitespace-nowrap">{{ collection_entry.collected_at|user_date_format:user }}</p>
+        </div>
+      {% elif show_format_header != False %}
+        <p class="text-xs tracking-wide text-gray-400">
+          {% if collection_entry.media_type %}
+            Format: {{ collection_entry.media_type|title_preserve_acronyms }}
+          {% else %}
+            Collected
+          {% endif %}
+        </p>
+      {% endif %}
+
+      {% if media_type == "game" %}
+        {% if source_style_game_meta %}
+          <p class="{% if show_format_header != False %}mt-1 {% endif %}text-gray-200 leading-tight break-words">
+            {% if collection_entry.resolution %}
+              {{ collection_entry.resolution }}
+            {% elif collection_entry.media_type %}
+              {{ collection_entry.media_type|title_preserve_acronyms }}
+            {% elif collection_entry.hdr %}
+              {{ collection_entry.hdr }}
+            {% else %}
+              Collection Entry
+            {% endif %}
+          </p>
+        {% else %}
+          <p class="{% if show_format_header != False %}mt-1 {% endif %}text-base font-semibold leading-tight text-gray-100 break-words">
+            {% if collection_entry.resolution %}
+              {{ collection_entry.resolution }}
+            {% elif collection_entry.media_type %}
+              {{ collection_entry.media_type|title_preserve_acronyms }}
+            {% elif collection_entry.hdr %}
+              {{ collection_entry.hdr }}
+            {% else %}
+              Collection Entry
+            {% endif %}
+          </p>
+        {% endif %}
+        {% if format_with_subtitle and collection_entry.media_type %}
+          <p class="mt-0.5 text-sm text-gray-400 leading-tight">
+            Format: {{ collection_entry.media_type|title_preserve_acronyms }}{% if collection_entry.hdr %} • {{ collection_entry.hdr }}{% if "edition" not in collection_entry.hdr|lower %} Edition{% endif %}{% endif %}
+          </p>
+        {% elif collection_entry.hdr %}
+          {% if source_style_game_meta %}
+            <p class="mt-1 text-sm leading-tight text-gray-200 whitespace-nowrap">
+              <span class="font-semibold text-gray-400">{{ collection_entry.hdr }}{% if "edition" not in collection_entry.hdr|lower %} Edition{% endif %}</span>
+            </p>
+          {% else %}
+            <p class="mt-0.5 text-sm text-gray-400 leading-tight">
+              {{ collection_entry.hdr }}{% if "edition" not in collection_entry.hdr|lower %} Edition{% endif %}
+            </p>
+          {% endif %}
+        {% endif %}
+      {% else %}
+        <p class="mt-1 text-base font-semibold leading-tight text-gray-100 break-words">
+          {% if collection_entry.media_type %}
+            {{ collection_entry.media_type|title_preserve_acronyms }}
+          {% elif collection_entry.resolution %}
+            {{ collection_entry.resolution }}
+          {% elif collection_entry.audio_codec %}
+            {{ collection_entry.audio_codec }}
+          {% else %}
+            Collection Entry
+          {% endif %}
+        </p>
+        {% if collection_entry.resolution or collection_entry.hdr %}
+          <p class="mt-0.5 text-sm text-gray-400 leading-tight">
+            {% if collection_entry.resolution %}{{ collection_entry.resolution }}{% endif %}
+            {% if collection_entry.resolution and collection_entry.hdr %} • {% endif %}
+            {% if collection_entry.hdr %}{{ collection_entry.hdr }}{% endif %}
+          </p>
+        {% endif %}
+      {% endif %}
+
+      {% if collection_entry.audio_codec or collection_entry.audio_channels or collection_entry.bitrate or collection_entry.is_3d %}
+        <p class="mt-2 text-sm text-gray-300">
+          {% if collection_entry.audio_codec %}{{ collection_entry.audio_codec }}{% endif %}
+          {% if collection_entry.audio_codec and collection_entry.audio_channels %} • {% endif %}
+          {% if collection_entry.audio_channels %}{{ collection_entry.audio_channels }}{% endif %}
+          {% if collection_entry.bitrate and collection_entry.audio_codec %}
+            •
+          {% elif collection_entry.bitrate and collection_entry.audio_channels %}
+            •
+          {% endif %}
+          {% if collection_entry.bitrate %}{{ collection_entry.bitrate }} kbps{% endif %}
+          {% if collection_entry.is_3d and collection_entry.audio_codec %}
+            •
+          {% elif collection_entry.is_3d and collection_entry.audio_channels %}
+            •
+          {% elif collection_entry.is_3d and collection_entry.bitrate %}
+            •
+          {% endif %}
+          {% if collection_entry.is_3d %}3D{% endif %}
+        </p>
+      {% endif %}
+    </div>
+
+    {% if show_date != False and show_delete %}
+      <div class="shrink-0 flex flex-col items-end {% if collection_entry.collected_at %}gap-2{% endif %}">
+        {% if collection_entry.collected_at %}
+          <p class="text-xs text-gray-400 whitespace-nowrap">{{ collection_entry.collected_at|user_date_format:user }}</p>
+        {% endif %}
+
+        {% if show_delete and delete_url %}
+          <form method="post" action="{{ delete_url }}{% if return_url %}?next={{ return_url }}{% endif %}">
+            {% csrf_token %}
+            <button type="submit"
+                    class="text-sm text-red-400 hover:text-red-300 transition-colors cursor-pointer">
+              Delete
+            </button>
+          </form>
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+
+  {% if show_delete and delete_url and show_date == False %}
+    <form method="post"
+          action="{{ delete_url }}{% if return_url %}?next={{ return_url }}{% endif %}"
+          class="absolute inset-y-0 right-3 flex items-center">
+      {% csrf_token %}
+      <button type="submit"
+              class="text-sm text-red-400 hover:text-red-300 transition-colors cursor-pointer">
+        Delete
+      </button>
+    </form>
+  {% endif %}
+</div>
