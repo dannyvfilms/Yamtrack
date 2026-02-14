@@ -84,6 +84,56 @@ class MediaListViewTests(TestCase):
             app_tags.media_type_readable_plural(MediaTypes.MOVIE.value).lower(),
         )
 
+    def test_movie_grid_aggregates_duplicate_completed_plays(self):
+        """Grid cards should show total plays across duplicate completed movie entries."""
+        item = Item.objects.get(
+            title="Test Movie 1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+        )
+        existing_play = Movie.objects.get(item=item, user=self.user)
+        existing_play.score = 9
+        existing_play.save(update_fields=["score"])
+
+        second_date = timezone.now() - timedelta(days=7)
+        third_date = timezone.now() - timedelta(days=1)
+        Movie.objects.bulk_create(
+            [
+                Movie(
+                    item=item,
+                    user=self.user,
+                    status=Status.COMPLETED.value,
+                    progress=1,
+                    score=None,
+                    start_date=second_date,
+                    end_date=second_date,
+                ),
+                Movie(
+                    item=item,
+                    user=self.user,
+                    status=Status.COMPLETED.value,
+                    progress=1,
+                    score=9,
+                    start_date=third_date,
+                    end_date=third_date,
+                ),
+            ],
+        )
+
+        latest = Movie.objects.filter(item=item, user=self.user).order_by("-id").first()
+        latest.score = 10
+        latest.save(update_fields=["score"])
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.MOVIE.value])
+            + "?layout=grid&search=Test+Movie+1&sort=title&direction=asc",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["media_list"].paginator.count, 1)
+        self.assertContains(response, "Test Movie 1")
+        self.assertContains(response, "3 plays")
+
     def test_media_list_with_filters(self):
         """Test the media list view with filters."""
         response = self.client.get(

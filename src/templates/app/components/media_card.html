@@ -348,7 +348,9 @@
                         {% endif %}
                       {% endwith %}
                     {% elif resolved_media_type == MediaTypes.MOVIE.value %}
-                      {% if media.progress %}
+                      {% if aggregated_progress %}
+                        <span class="ml-1 text-gray-400">• {{ aggregated_progress }} play{{ aggregated_progress|pluralize }}</span>
+                      {% elif media.progress %}
                         <span class="ml-1 text-gray-400">• {{ media.progress }} play{{ media.progress|pluralize }}</span>
                       {% elif media|safe_attr:"repeats" %}
                         <span class="ml-1 text-gray-400">• {{ media.repeats }} play{{ media.repeats|pluralize }}</span>
@@ -402,6 +404,8 @@
                            {% endif %}
                          {% endif %}
                        {% endwith %}
+                     {% elif resolved_media_type == MediaTypes.MOVIE.value and aggregated_progress %}
+                       data-progress-text="{{ aggregated_progress }} play{{ aggregated_progress|pluralize }}"
                      {% elif resolved_media_type == MediaTypes.MOVIE.value and media.progress %}
                        data-progress-text="{{ media.progress }} play{{ media.progress|pluralize }}"
                      {% elif resolved_media_type == MediaTypes.MOVIE.value and media|safe_attr:"repeats" %}

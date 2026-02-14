@@ -623,14 +623,23 @@ class MediaManager(models.Manager):
         queryset = queryset.select_related("item")
         queryset = self._apply_prefetch_related(queryset, media_type)
 
-        # Aggregate data from duplicate entries FIRST
-        queryset = self._aggregate_duplicate_data(queryset, user, media_type)
+        requires_presort_aggregation = (
+            sort_filter == "progress"
+            and media_type not in (MediaTypes.TV.value, MediaTypes.SEASON.value)
+        )
+
+        # Generic progress sorting uses Python and reads aggregated_progress, so
+        # duplicates must be aggregated before sorting in that specific path.
+        if requires_presort_aggregation:
+            queryset = self._aggregate_duplicate_data(queryset, user, media_type)
 
         # Apply sorting AFTER aggregation
         if sort_filter:
             queryset = self._sort_media_list(queryset, sort_filter, media_type, direction)
 
-        return queryset
+        # Re-apply duplicate aggregation because SQL queryset operations in sorting
+        # can materialize fresh model instances and drop dynamic aggregated attrs.
+        return self._aggregate_duplicate_data(queryset, user, media_type)
 
     def _aggregate_duplicate_data(self, queryset, user, media_type):
         """Aggregate data from duplicate entries for each item."""
