@@ -330,9 +330,7 @@
              x-show="sourceSupports(['music'])"
              x-transition.opacity.duration.150ms>
           <div class="flex items-center justify-between">
-            <div class="flex items-center">
-              <span class="text-lg font-semibold text-white mr-2">Last.fm</span>
-            </div>
+            <div class="flex items-center">{% source_display "lastfm" %}</div>
             {% if lastfm_account and lastfm_account.is_connected %}
               <form method="post" action="{% url 'lastfm_disconnect' %}">
                 {% csrf_token %}
