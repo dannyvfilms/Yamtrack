@@ -8,7 +8,25 @@
 
 {% block settings_content %}
   <div class="space-y-6"
-       x-data="{ importFrequency: 'once', importTime: '{% now "H:i" %}', importMode: 'new' }">
+       x-data="{
+         importFrequency: 'once',
+         importTime: '{% now "H:i" %}',
+         importMode: 'new',
+         activeMediaTag: 'all',
+         mediaTagLabels: {
+           all: 'All Sources',
+           screen: 'Movies & TV',
+           anime_manga: 'Anime & Manga',
+           reading: 'Books & Comics',
+           games: 'Games',
+           podcasts: 'Podcasts',
+           music: 'Music',
+           backup: 'Backups'
+         },
+         sourceSupports(tags) {
+           return this.activeMediaTag === 'all' || tags.includes(this.activeMediaTag);
+         }
+       }">
 
     {# Import settings #}
     <div class="bg-[#2a2f35] rounded-lg p-6">
@@ -65,10 +83,76 @@
            target="_blank"
            class="text-indigo-400 hover:text-indigo-300 underline">import configuration guide</a>.
       </p>
+      <div class="bg-[#39404b] rounded-lg p-4 mb-5">
+        <p class="text-sm text-gray-300 mb-3">Browse by media type:</p>
+        <div class="flex flex-wrap gap-2">
+          <button type="button"
+                  @click="activeMediaTag = 'all'"
+                  :aria-pressed="activeMediaTag === 'all'"
+                  class="px-3 py-1.5 text-xs rounded-md border transition-colors cursor-pointer"
+                  :class="activeMediaTag === 'all' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-[#2a2f35] text-gray-300 border-gray-600 hover:border-indigo-500 hover:text-white'">
+            All Sources
+          </button>
+          <button type="button"
+                  @click="activeMediaTag = 'screen'"
+                  :aria-pressed="activeMediaTag === 'screen'"
+                  class="px-3 py-1.5 text-xs rounded-md border transition-colors cursor-pointer"
+                  :class="activeMediaTag === 'screen' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-[#2a2f35] text-gray-300 border-gray-600 hover:border-indigo-500 hover:text-white'">
+            Movies & TV
+          </button>
+          <button type="button"
+                  @click="activeMediaTag = 'anime_manga'"
+                  :aria-pressed="activeMediaTag === 'anime_manga'"
+                  class="px-3 py-1.5 text-xs rounded-md border transition-colors cursor-pointer"
+                  :class="activeMediaTag === 'anime_manga' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-[#2a2f35] text-gray-300 border-gray-600 hover:border-indigo-500 hover:text-white'">
+            Anime & Manga
+          </button>
+          <button type="button"
+                  @click="activeMediaTag = 'reading'"
+                  :aria-pressed="activeMediaTag === 'reading'"
+                  class="px-3 py-1.5 text-xs rounded-md border transition-colors cursor-pointer"
+                  :class="activeMediaTag === 'reading' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-[#2a2f35] text-gray-300 border-gray-600 hover:border-indigo-500 hover:text-white'">
+            Books & Comics
+          </button>
+          <button type="button"
+                  @click="activeMediaTag = 'games'"
+                  :aria-pressed="activeMediaTag === 'games'"
+                  class="px-3 py-1.5 text-xs rounded-md border transition-colors cursor-pointer"
+                  :class="activeMediaTag === 'games' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-[#2a2f35] text-gray-300 border-gray-600 hover:border-indigo-500 hover:text-white'">
+            Games
+          </button>
+          <button type="button"
+                  @click="activeMediaTag = 'podcasts'"
+                  :aria-pressed="activeMediaTag === 'podcasts'"
+                  class="px-3 py-1.5 text-xs rounded-md border transition-colors cursor-pointer"
+                  :class="activeMediaTag === 'podcasts' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-[#2a2f35] text-gray-300 border-gray-600 hover:border-indigo-500 hover:text-white'">
+            Podcasts
+          </button>
+          <button type="button"
+                  @click="activeMediaTag = 'music'"
+                  :aria-pressed="activeMediaTag === 'music'"
+                  class="px-3 py-1.5 text-xs rounded-md border transition-colors cursor-pointer"
+                  :class="activeMediaTag === 'music' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-[#2a2f35] text-gray-300 border-gray-600 hover:border-indigo-500 hover:text-white'">
+            Music
+          </button>
+          <button type="button"
+                  @click="activeMediaTag = 'backup'"
+                  :aria-pressed="activeMediaTag === 'backup'"
+                  class="px-3 py-1.5 text-xs rounded-md border transition-colors cursor-pointer"
+                  :class="activeMediaTag === 'backup' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-[#2a2f35] text-gray-300 border-gray-600 hover:border-indigo-500 hover:text-white'">
+            Backups
+          </button>
+        </div>
+        <p class="text-xs text-gray-400 mt-3"
+           x-text="'Showing ' + mediaTagLabels[activeMediaTag] + '.'">
+        </p>
+      </div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
 
         {# Plex #}
-        <div class="bg-[#39404b] p-4 rounded-lg space-y-3">
+        <div class="bg-[#39404b] p-4 rounded-lg space-y-3"
+             x-show="sourceSupports(['screen', 'music'])"
+             x-transition.opacity.duration.150ms>
           <div class="flex items-center justify-between">
             <div class="flex items-center">{% source_display "plex" %}</div>
             {% if plex_account %}
@@ -83,7 +167,6 @@
               <span class="px-2 py-1 text-xs rounded bg-gray-500/20 text-gray-300 border border-gray-600/50">Disconnected</span>
             {% endif %}
           </div>
-
           {% if plex_account %}
             <p class="text-sm text-gray-400">Import Plex watch/listen history. Comma-separate username(s) to filter events sent to your webhook.</p>
 
@@ -153,7 +236,9 @@
         </div>
 
         {# Pocket Casts #}
-        <div class="bg-[#39404b] p-4 rounded-lg space-y-3">
+        <div class="bg-[#39404b] p-4 rounded-lg space-y-3"
+             x-show="sourceSupports(['podcasts'])"
+             x-transition.opacity.duration.150ms>
           <div class="flex items-center justify-between">
             <div class="flex items-center">{% source_display "pocketcasts" %}</div>
             {% if pocketcasts_account and pocketcasts_account.is_connected %}
@@ -168,7 +253,6 @@
               <span class="px-2 py-1 text-xs rounded bg-gray-500/20 text-gray-300 border border-gray-600/50">Disconnected</span>
             {% endif %}
           </div>
-
           {% if pocketcasts_account %}
             <p class="text-sm text-gray-400">Import podcasts every 2 hours (to estimate completion time)</p>
 
@@ -242,7 +326,9 @@
         </div>
 
         {# Last.fm #}
-        <div class="bg-[#39404b] p-4 rounded-lg space-y-3">
+        <div class="bg-[#39404b] p-4 rounded-lg space-y-3"
+             x-show="sourceSupports(['music'])"
+             x-transition.opacity.duration.150ms>
           <div class="flex items-center justify-between">
             <div class="flex items-center">
               <span class="text-lg font-semibold text-white mr-2">Last.fm</span>
@@ -259,7 +345,6 @@
               <span class="px-2 py-1 text-xs rounded bg-gray-500/20 text-gray-300 border border-gray-600/50">Disconnected</span>
             {% endif %}
           </div>
-
           {% if lastfm_account %}
             <p class="text-sm text-gray-400">Import your Last.fm listening history automatically every {{ lastfm_poll_interval }} minutes.</p>
 
@@ -329,7 +414,9 @@
 
         {# Trakt #}
         <div class="bg-[#39404b] p-4 rounded-lg"
-             x-data="{ usePrivateImport: false }">
+             x-data="{ usePrivateImport: false }"
+             x-show="sourceSupports(['screen'])"
+             x-transition.opacity.duration.150ms>
           <div class="flex items-center mb-3">{% source_display "trakt" %}</div>
           <p class="text-sm text-gray-400 mb-3">Import TV shows and movies</p>
 
@@ -385,7 +472,9 @@
         </div>
 
         {# Simkl #}
-        <div class="bg-[#39404b] p-4 rounded-lg">
+        <div class="bg-[#39404b] p-4 rounded-lg"
+             x-show="sourceSupports(['screen', 'anime_manga'])"
+             x-transition.opacity.duration.150ms>
           <div class="flex items-center mb-3">{% source_display "simkl" %}</div>
           <p class="text-sm text-gray-400 mb-3">Import TV shows, movies and anime</p>
           <form method="post" action="{% url 'simkl_oauth' %}">
@@ -403,7 +492,9 @@
         </div>
 
         {# MyAnimeList #}
-        <div class="bg-[#39404b] p-4 rounded-lg">
+        <div class="bg-[#39404b] p-4 rounded-lg"
+             x-show="sourceSupports(['anime_manga'])"
+             x-transition.opacity.duration.150ms>
           <div class="flex items-center mb-3">{% source_display "myanimelist" %}</div>
           <p class="text-sm text-gray-400 mb-3">Import anime and manga</p>
           <form class="flex items-center"
@@ -430,7 +521,9 @@
 
         {# AniList #}
         <div class="bg-[#39404b] p-4 rounded-lg"
-             x-data="{ usePrivateImport: false }">
+             x-data="{ usePrivateImport: false }"
+             x-show="sourceSupports(['anime_manga'])"
+             x-transition.opacity.duration.150ms>
           <div class="flex items-center mb-3">{% source_display "anilist" %}</div>
           <p class="text-sm text-gray-400 mb-3">Import anime and manga</p>
 
@@ -486,7 +579,9 @@
         </div>
 
         {# Kitsu #}
-        <div class="bg-[#39404b] p-4 rounded-lg">
+        <div class="bg-[#39404b] p-4 rounded-lg"
+             x-show="sourceSupports(['anime_manga'])"
+             x-transition.opacity.duration.150ms>
           <div class="flex items-center mb-3">{% source_display "kitsu" %}</div>
           <p class="text-sm text-gray-400 mb-3">Import anime and manga</p>
           <form class="flex items-center"
@@ -520,7 +615,9 @@
         </div>
 
         {# Yamtrack #}
-        <div class="bg-[#39404b] p-4 rounded-lg">
+        <div class="bg-[#39404b] p-4 rounded-lg"
+             x-show="sourceSupports(['backup', 'screen', 'anime_manga', 'reading', 'games', 'podcasts', 'music'])"
+             x-transition.opacity.duration.150ms>
           <div class="flex items-center justify-between mb-3">
             <div class="flex items-center">{% source_display "yamtrack" %}</div>
             <a href="https://github.com/dannyvfilms/Yamtrack/wiki/Media-Import-Configuration#yamtrack-csv-format"
@@ -553,7 +650,9 @@
         </div>
 
         {# HowLongToBeat #}
-        <div class="bg-[#39404b] p-4 rounded-lg">
+        <div class="bg-[#39404b] p-4 rounded-lg"
+             x-show="sourceSupports(['games'])"
+             x-transition.opacity.duration.150ms>
           <div class="flex items-center mb-3">{% source_display "hltb" %}</div>
           <p class="text-sm text-gray-400 mb-3"
              x-text="importFrequency === 'once' ? 'Import games' : 'File uploads are not available for periodic imports'">
@@ -580,7 +679,9 @@
         </div>
 
         {# Steam #}
-        <div class="bg-[#39404b] p-4 rounded-lg">
+        <div class="bg-[#39404b] p-4 rounded-lg"
+             x-show="sourceSupports(['games'])"
+             x-transition.opacity.duration.150ms>
           <div class="flex items-center mb-3">{% source_display "steam" %}</div>
           <p class="text-sm text-gray-400 mb-3">Import games from your Steam library</p>
           <form class="flex items-center"
@@ -615,7 +716,9 @@
         </div>
 
         {# IMDB #}
-        <div class="bg-[#39404b] p-4 rounded-lg">
+        <div class="bg-[#39404b] p-4 rounded-lg"
+             x-show="sourceSupports(['screen'])"
+             x-transition.opacity.duration.150ms>
           <div class="flex items-center justify-between mb-3">
             <div class="flex items-center">{% source_display "imdb" %}</div>
           </div>
@@ -644,7 +747,9 @@
         </div>
 
         {# GoodReads #}
-        <div class="bg-[#39404b] p-4 rounded-lg">
+        <div class="bg-[#39404b] p-4 rounded-lg"
+             x-show="sourceSupports(['reading'])"
+             x-transition.opacity.duration.150ms>
           <div class="flex items-center mb-3">{% source_display "goodreads" %}</div>
           <p class="text-sm text-gray-400 mb-3"
              x-text="importFrequency === 'once' ? 'Import from GoodReads backup' : 'File uploads are not available for periodic imports'">
@@ -671,7 +776,9 @@
         </div>
 
         {# Hardcover #}
-        <div class="bg-[#39404b] p-4 rounded-lg">
+        <div class="bg-[#39404b] p-4 rounded-lg"
+             x-show="sourceSupports(['reading'])"
+             x-transition.opacity.duration.150ms>
           <div class="flex items-center mb-3">{% source_display "hardcover" %}</div>
           <p class="text-sm text-gray-400 mb-3"
              x-text="importFrequency === 'once' ? 'Import from Hardcover export (Account -> Export Data)' : 'File uploads are not available for periodic imports'">
