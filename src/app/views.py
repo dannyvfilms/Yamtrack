@@ -16,7 +16,7 @@ from django.core.cache import cache
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.paginator import EmptyPage, Paginator
 from django.db import IntegrityError
-from django.db.models import prefetch_related_objects
+from django.db.models import Min, prefetch_related_objects
 from django.db.models.functions import ExtractDay, ExtractMonth
 from django.db.utils import OperationalError
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
@@ -533,6 +533,10 @@ def media_list(request, media_type):
 
     genre_filter = (request.GET.get("genre") or "").strip()
     year_filter = (request.GET.get("year") or "").strip()
+    release_filter = (request.GET.get("release") or "all").strip().lower()
+    valid_release_filters = {"all", "released", "not_released"}
+    if release_filter not in valid_release_filters:
+        release_filter = "all"
     source_filter = (request.GET.get("source") or "").strip()
     language_filter = (request.GET.get("language") or "").strip()
     country_filter = (request.GET.get("country") or "").strip()
@@ -600,6 +604,35 @@ def media_list(request, media_type):
 
     def _normalize_filter_value(value):
         return str(value or "").strip().lower()
+
+    def _release_date_from_value(value):
+        if value is None:
+            return None
+        if isinstance(value, date) and not hasattr(value, "hour"):
+            return value
+        if hasattr(value, "date"):
+            try:
+                if hasattr(value, "utcoffset") and timezone.is_aware(value):
+                    return timezone.localtime(value).date()
+            except Exception:
+                pass
+            try:
+                return value.date()
+            except Exception:
+                return None
+        return None
+
+    def _matches_release_filter_value(release_value, filter_value, today):
+        if filter_value == "all":
+            return True
+        release_date = _release_date_from_value(release_value)
+        if not release_date:
+            return filter_value == "not_released"
+        if filter_value == "released":
+            return release_date <= today
+        if filter_value == "not_released":
+            return release_date > today
+        return True
 
     _metadata_cache = {}
 
@@ -708,6 +741,20 @@ def media_list(request, media_type):
             media
             for media in media_items
             if getattr(getattr(media, "item", None), "source", None) == target
+        ]
+
+    def apply_release_filter(media_items, filter_value):
+        if filter_value == "all":
+            return media_items
+        today = timezone.localdate()
+        return [
+            media
+            for media in media_items
+            if _matches_release_filter_value(
+                getattr(getattr(media, "item", None), "release_datetime", None),
+                filter_value,
+                today,
+            )
         ]
 
     def apply_language_filter(media_items, filter_value):
@@ -863,6 +910,7 @@ def media_list(request, media_type):
     media_list = apply_collection_filter(media_list, collection_filter, request.user, media_type)
     media_list = apply_genre_filter(media_list, genre_filter)
     media_list = apply_year_filter(media_list, year_filter)
+    media_list = apply_release_filter(media_list, release_filter)
     media_list = apply_source_filter(media_list, source_filter)
     if media_type in (MediaTypes.TV.value, MediaTypes.MOVIE.value, MediaTypes.ANIME.value):
         media_list = apply_language_filter(media_list, language_filter)
@@ -883,6 +931,7 @@ def media_list(request, media_type):
             collection_filter,
             genre_filter,
             year_filter,
+            release_filter,
             source_filter,
             language_filter,
             country_filter,
@@ -955,6 +1004,7 @@ def media_list(request, media_type):
         "current_collection": collection_filter,
         "current_genre": genre_filter,
         "current_year": year_filter,
+        "current_release": release_filter,
         "current_source": source_filter,
         "current_language": language_filter,
         "current_country": country_filter,
@@ -994,6 +1044,9 @@ def media_list(request, media_type):
         elif rating_filter == "not_rated":
             show_trackers = show_trackers.filter(score__isnull=True)
 
+        if release_filter != "all":
+            show_trackers = show_trackers.annotate(first_published=Min("show__episodes__published"))
+
         # Apply sorting
         if sort_filter == "title":
             order = "show__title" if direction == "asc" else "-show__title"
@@ -1009,6 +1062,18 @@ def media_list(request, media_type):
             show_trackers = show_trackers.order_by("-updated_at")
 
         show_trackers_list = list(show_trackers)
+
+        if release_filter != "all":
+            today = timezone.localdate()
+            show_trackers_list = [
+                tracker
+                for tracker in show_trackers_list
+                if _matches_release_filter_value(
+                    getattr(tracker, "first_published", None),
+                    release_filter,
+                    today,
+                )
+            ]
 
         def _build_podcast_filter_data(trackers):
             genres_set = set()
@@ -1119,6 +1184,7 @@ def media_list(request, media_type):
             "current_collection": collection_filter,
             "current_genre": genre_filter,
             "current_year": year_filter,
+            "current_release": release_filter,
             "current_source": source_filter,
             "current_language": language_filter,
             "current_country": country_filter,
@@ -1157,6 +1223,9 @@ def media_list(request, media_type):
         elif rating_filter == "not_rated":
             artist_trackers = artist_trackers.filter(score__isnull=True)
 
+        if release_filter != "all":
+            artist_trackers = artist_trackers.annotate(first_release_date=Min("artist__albums__release_date"))
+
         # Apply sorting (limited to what makes sense for artists)
         if sort_filter == "title":
             order = "artist__name" if direction == "asc" else "-artist__name"
@@ -1172,6 +1241,18 @@ def media_list(request, media_type):
             artist_trackers = artist_trackers.order_by("-updated_at")
 
         artist_trackers_list = list(artist_trackers)
+
+        if release_filter != "all":
+            today = timezone.localdate()
+            artist_trackers_list = [
+                tracker
+                for tracker in artist_trackers_list
+                if _matches_release_filter_value(
+                    getattr(tracker, "first_release_date", None),
+                    release_filter,
+                    today,
+                )
+            ]
 
         def _build_music_filter_data(trackers):
             genres_set = set()
@@ -1634,6 +1715,10 @@ def media_search(request):
     local_results_total = 0
     local_results_limit = 24
     local_results_kind = "media"
+    local_music_artists = []
+    local_music_artists_total = 0
+    local_music_albums = []
+    local_music_albums_total = 0
     if request.user.is_authenticated and query and page == 1:
         try:
             if media_type == MediaTypes.PODCAST.value:
@@ -1689,7 +1774,9 @@ def media_search(request):
                     for media in adapted_media
                 ]
             elif media_type == MediaTypes.MUSIC.value:
-                from app.models import ArtistTracker
+                from django.db.models import Q
+
+                from app.models import AlbumTracker, ArtistTracker
 
                 artist_trackers = (
                     ArtistTracker.objects.filter(user=request.user)
@@ -1698,9 +1785,24 @@ def media_search(request):
                     .filter(artist__name__icontains=query)
                     .select_related("artist")
                 )
-                local_results_total = artist_trackers.count()
-                local_results = list(artist_trackers.order_by("artist__name")[:local_results_limit])
-                local_results_kind = "artists"
+                local_music_artists_total = artist_trackers.count()
+                local_music_artists = list(artist_trackers.order_by("artist__name")[:local_results_limit])
+
+                album_trackers = (
+                    AlbumTracker.objects.filter(user=request.user)
+                    .exclude(album__title__isnull=True)
+                    .exclude(album__title__exact="")
+                    .filter(
+                        Q(album__title__icontains=query)
+                        | Q(album__artist__name__icontains=query),
+                    )
+                    .select_related("album", "album__artist")
+                )
+                local_music_albums_total = album_trackers.count()
+                local_music_albums = list(album_trackers.order_by("album__title")[:local_results_limit])
+
+                local_results_total = local_music_artists_total + local_music_albums_total
+                local_results_kind = "music"
             else:
                 local_queryset = BasicMedia.objects.get_media_list(
                     request.user,
@@ -1730,22 +1832,15 @@ def media_search(request):
         config.get_default_source_name(media_type).value,
     )
 
-    data = services.search(media_type, query, page, source)
+    search_page = 1 if media_type == MediaTypes.MUSIC.value else page
+    data = services.search(media_type, query, search_page, source)
 
-    # Handle music's combined search format
     if media_type == MediaTypes.MUSIC.value:
-        # Music returns {artists: [], releases: [], tracks: {...}}
-        track_data = data.get("tracks", {})
-        if track_data.get("results"):
-            track_data["results"] = helpers.enrich_items_with_user_data(
-                request, track_data["results"],
-            )
-
         context = {
             "user": request.user,
-            "data": track_data,  # Track results for pagination
-            "music_artists": data.get("artists", []),
-            "music_releases": data.get("releases", []),
+            "data": data,
+            "music_online_artists": data.get("artists", []),
+            "music_online_releases": data.get("releases", []),
             "source": source,
             "media_type": media_type,
             "layout": layout,
@@ -1753,8 +1848,12 @@ def media_search(request):
             "local_results_total": local_results_total,
             "local_results_limit": local_results_limit,
             "local_results_kind": local_results_kind,
+            "local_music_artists": local_music_artists,
+            "local_music_artists_total": local_music_artists_total,
+            "local_music_albums": local_music_albums,
+            "local_music_albums_total": local_music_albums_total,
         }
-        return render(request, "app/search_music.html", context)
+        return render(request, "app/search.html", context)
 
     # Enrich search results with user tracking data
     if data.get("results"):
@@ -4108,6 +4207,7 @@ def media_save(request):
         if metadata.get("details", {}).get("runtime"):
             from app.statistics import parse_runtime_to_minutes
             runtime_minutes = parse_runtime_to_minutes(metadata["details"]["runtime"])
+        release_datetime = helpers.extract_release_datetime(metadata)
 
         # Extract number_of_pages for books
         number_of_pages = None
@@ -4156,6 +4256,7 @@ def media_save(request):
                 "image": metadata["image"],
                 "runtime_minutes": runtime_minutes,
                 "number_of_pages": number_of_pages,
+                "release_datetime": release_datetime,
                 "genres": metadata_genres,
                 # Add all new metadata fields
                 "country": country,
@@ -4190,6 +4291,9 @@ def media_save(request):
             needs_save = True
         if not item.number_of_pages and number_of_pages:
             item.number_of_pages = number_of_pages
+            needs_save = True
+        if not item.release_datetime and release_datetime:
+            item.release_datetime = release_datetime
             needs_save = True
         if metadata_genres and metadata_genres != item.genres:
             item.genres = metadata_genres
