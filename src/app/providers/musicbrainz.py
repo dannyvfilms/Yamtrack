@@ -226,6 +226,13 @@ def _get_cover_art(release_id, release_group_id=None):
     return get_cover_art(release_id=release_id, release_group_id=release_group_id)
 
 
+def _cover_art_async_url(release_id):
+    """Return a direct Cover Art Archive image URL for client-side loading."""
+    if not release_id:
+        return settings.IMG_NONE
+    return f"{COVER_ART_BASE}/release/{release_id}/front-250"
+
+
 def search(query, page=1, skip_cover_art=False):
     """Search for music recordings on MusicBrainz.
     
@@ -1009,24 +1016,58 @@ def get_release(release_id, skip_cover_art: bool = False):
 def search_combined(query, page=1):
     """Combined search returning artists, albums, and tracks.
     
-    Cover art is skipped during search for speed - results use placeholders.
+    First page returns artists/albums while image files load client-side.
     """
     cache_key = f"musicbrainz_combined_search_{query.lower()}_p{page}"
     cached = cache.get(cache_key)
     if cached:
         return cached
 
-    # For first page, fetch artists, releases, and recordings
-    # For subsequent pages, only fetch recordings (tracks)
-    # Skip cover art for faster search results
+    # For first page, fetch artists, releases, and recordings.
+    # For subsequent pages, only fetch recordings (tracks).
     if page == 1:
         artist_results = search_artists(query, page=1)
         release_results = search_releases(query, page=1, skip_cover_art=True)
         track_results = search(query, page=1, skip_cover_art=True)
 
+        top_releases = []
+        release_art_by_artist_id = {}
+        release_art_by_artist_name = {}
+        for release in release_results.get("results", [])[:5]:
+            release_entry = dict(release)
+            release_image = release_entry.get("image")
+            if (
+                (not release_image or release_image == settings.IMG_NONE)
+                and release_entry.get("release_id")
+            ):
+                release_image = _cover_art_async_url(release_entry["release_id"])
+                release_entry["image"] = release_image
+
+            top_releases.append(release_entry)
+            if not release_image or release_image == settings.IMG_NONE:
+                continue
+
+            artist_id = release_entry.get("artist_id")
+            if artist_id and artist_id not in release_art_by_artist_id:
+                release_art_by_artist_id[artist_id] = release_image
+
+            artist_name = str(release_entry.get("artist_name") or "").strip().casefold()
+            if artist_name and artist_name not in release_art_by_artist_name:
+                release_art_by_artist_name[artist_name] = release_image
+
+        top_artists = []
+        for artist in artist_results.get("results", [])[:5]:
+            artist_entry = dict(artist)
+            artist_image = release_art_by_artist_id.get(artist_entry.get("artist_id"))
+            if not artist_image:
+                artist_name_key = str(artist_entry.get("name") or "").strip().casefold()
+                artist_image = release_art_by_artist_name.get(artist_name_key, settings.IMG_NONE)
+            artist_entry["image"] = artist_image
+            top_artists.append(artist_entry)
+
         data = {
-            "artists": artist_results.get("results", [])[:5],  # Top 5 artists
-            "releases": release_results.get("results", [])[:5],  # Top 5 albums
+            "artists": top_artists,  # Top 5 artists
+            "releases": top_releases,  # Top 5 albums
             "tracks": track_results,  # Full track results with pagination
         }
     else:

@@ -81,6 +81,7 @@ class MediaSearchViewTests(TestCase):
                     "type": "Group",
                     "begin_year": "2011",
                     "disambiguation": "",
+                    "image": "http://example.com/remote-artist.jpg",
                 },
             ],
             "releases": [
@@ -111,6 +112,8 @@ class MediaSearchViewTests(TestCase):
         self.assertContains(response, "Evergreen")
         self.assertContains(response, "A Pentatonix Christmas")
         self.assertContains(response, "Pentatonix")
+        self.assertContains(response, "http://example.com/remote-artist.jpg")
+        self.assertContains(response, "http://example.com/remote-album.jpg")
         self.assertNotIn("Tracks</h3>", response.content.decode())
 
         mock_search.assert_called_once_with(

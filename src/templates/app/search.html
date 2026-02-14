@@ -183,9 +183,17 @@
                   <a href="{% url 'create_artist_from_search' artist.artist_id %}"
                      class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative search-result-card hover:ring-2 hover:ring-indigo-500 transition-all group block{% if user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %}">
                     <div class="relative">
-                      <div class="w-full aspect-[2/3] bg-[#3e454d] flex items-center justify-center">
-                        {% include "app/icons/person.svg" with classes="w-16 h-16 text-gray-600" %}
-                      </div>
+                      {% if artist.image and artist.image != IMG_NONE %}
+                        <img alt="{{ artist.name }}"
+                             class="media-card-poster lazyload w-full aspect-[2/3] object-cover bg-[#3e454d]"
+                             data-src="{{ artist.image }}"
+                             onerror="this.onerror=null;this.src='{{ IMG_NONE }}';"
+                             src="{{ IMG_NONE }}">
+                      {% else %}
+                        <div class="w-full aspect-[2/3] bg-[#3e454d] flex items-center justify-center">
+                          {% include "app/icons/person.svg" with classes="w-16 h-16 text-gray-600" %}
+                        </div>
+                      {% endif %}
                     </div>
                     <div class="media-card-body p-3 bg-card-body">
                       <h4 class="media-card-title text-sm font-semibold text-white group-hover:text-indigo-400 transition duration-300 line-clamp-2">
@@ -206,9 +214,17 @@
                 {% else %}
                   <div class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative search-result-card{% if user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %}">
                     <div class="relative">
-                      <div class="w-full aspect-[2/3] bg-[#3e454d] flex items-center justify-center">
-                        {% include "app/icons/person.svg" with classes="w-16 h-16 text-gray-600" %}
-                      </div>
+                      {% if artist.image and artist.image != IMG_NONE %}
+                        <img alt="{{ artist.name }}"
+                             class="media-card-poster lazyload w-full aspect-[2/3] object-cover bg-[#3e454d]"
+                             data-src="{{ artist.image }}"
+                             onerror="this.onerror=null;this.src='{{ IMG_NONE }}';"
+                             src="{{ IMG_NONE }}">
+                      {% else %}
+                        <div class="w-full aspect-[2/3] bg-[#3e454d] flex items-center justify-center">
+                          {% include "app/icons/person.svg" with classes="w-16 h-16 text-gray-600" %}
+                        </div>
+                      {% endif %}
                     </div>
                     <div class="media-card-body p-3 bg-card-body">
                       <h4 class="media-card-title text-sm font-semibold text-white line-clamp-2">{{ artist.name }}</h4>
@@ -233,6 +249,7 @@
                         <img alt="{{ release.title }}"
                              class="media-card-poster lazyload w-full aspect-[1/1] object-cover bg-[#3e454d]"
                              data-src="{{ release.image }}"
+                             onerror="this.onerror=null;this.src='{{ IMG_NONE }}';"
                              src="{{ IMG_NONE }}">
                       {% else %}
                         <div class="w-full aspect-[1/1] bg-[#3e454d] flex items-center justify-center">
