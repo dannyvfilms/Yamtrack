@@ -62,6 +62,7 @@ from app.models import (
     BasicMedia,
     CollectionEntry,
     Episode,
+    Game,
     Item,
     MediaTypes,
     Movie,
@@ -8550,6 +8551,19 @@ def collection_add(request):
         entry.user = request.user
         entry.item = item
         entry.save()
+
+        # Collection-only games do not appear in the games media list.
+        # Ensure newly collected untracked games get a tracker row in Planning.
+        if item.media_type == MediaTypes.GAME.value:
+            game_exists = Game.objects.filter(user=request.user, item=item).exists()
+            if not game_exists:
+                Game.objects.create(
+                    user=request.user,
+                    item=item,
+                    status=Status.PLANNING.value,
+                    progress=0,
+                )
+
         collected_at = form.cleaned_data.get("collected_at")
         if collected_at:
             CollectionEntry.objects.filter(id=entry.id).update(collected_at=collected_at)

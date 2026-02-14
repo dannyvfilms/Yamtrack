@@ -2,7 +2,7 @@ from django.contrib.auth import get_user_model
 from django.test import Client, TestCase
 from django.urls import reverse
 
-from app.models import CollectionEntry, Item, MediaTypes, Sources
+from app.models import CollectionEntry, Game, Item, MediaTypes, Sources, Status
 
 
 class CollectionListViewTest(TestCase):
@@ -176,7 +176,7 @@ class CollectionAddViewTest(TestCase):
         self.client.login(**self.credentials)
         game_item = Item.objects.create(
             media_id="game-1234",
-            source=Sources.IGDB.value,
+            source=Sources.MANUAL.value,
             media_type=MediaTypes.GAME.value,
             title="Test Game",
             image="http://example.com/game.jpg",
@@ -196,6 +196,62 @@ class CollectionAddViewTest(TestCase):
         self.assertEqual(response.status_code, 302)
         entry = CollectionEntry.objects.get(user=self.user, item=game_item)
         self.assertEqual(entry.resolution, long_platform)
+
+    def test_collection_add_creates_planning_game_when_untracked(self):
+        """Adding collection metadata for an untracked game creates a Planning tracker row."""
+        self.client.login(**self.credentials)
+        game_item = Item.objects.create(
+            media_id="game-2000",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.GAME.value,
+            title="Untracked Game",
+            image="http://example.com/game2.jpg",
+        )
+
+        response = self.client.post(
+            reverse("collection_add"),
+            {
+                "item_id": game_item.id,
+                "media_type": "physical",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(CollectionEntry.objects.filter(user=self.user, item=game_item).exists())
+        game_tracker = Game.objects.get(user=self.user, item=game_item)
+        self.assertEqual(game_tracker.status, Status.PLANNING.value)
+        self.assertEqual(game_tracker.progress, 0)
+
+    def test_collection_add_does_not_change_existing_game_status(self):
+        """Adding collection metadata must not overwrite an existing tracked game state."""
+        self.client.login(**self.credentials)
+        game_item = Item.objects.create(
+            media_id="game-3000",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.GAME.value,
+            title="Tracked Game",
+            image="http://example.com/game3.jpg",
+        )
+        existing_game = Game.objects.create(
+            user=self.user,
+            item=game_item,
+            status=Status.COMPLETED.value,
+            progress=120,
+        )
+
+        response = self.client.post(
+            reverse("collection_add"),
+            {
+                "item_id": game_item.id,
+                "media_type": "rom",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(Game.objects.filter(user=self.user, item=game_item).count(), 1)
+        existing_game.refresh_from_db()
+        self.assertEqual(existing_game.status, Status.COMPLETED.value)
+        self.assertEqual(existing_game.progress, 120)
 
     def test_collection_add_redirects_to_next_on_form_error(self):
         """Test invalid submits redirect back to next URL when provided."""
