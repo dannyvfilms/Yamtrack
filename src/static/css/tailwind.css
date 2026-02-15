@@ -346,6 +346,9 @@
   .right-3 {
     right: calc(var(--spacing) * 3);
   }
+  .bottom-0 {
+    bottom: calc(var(--spacing) * 0);
+  }
   .bottom-full {
     bottom: 100%;
   }
@@ -637,6 +640,9 @@
   .h-0 {
     height: calc(var(--spacing) * 0);
   }
+  .h-1 {
+    height: calc(var(--spacing) * 1);
+  }
   .h-3 {
     height: calc(var(--spacing) * 3);
   }
@@ -663,9 +669,6 @@
   }
   .h-12 {
     height: calc(var(--spacing) * 12);
-  }
-  .h-14 {
-    height: calc(var(--spacing) * 14);
   }
   .h-16 {
     height: calc(var(--spacing) * 16);
@@ -774,9 +777,6 @@
   }
   .w-12 {
     width: calc(var(--spacing) * 12);
-  }
-  .w-14 {
-    width: calc(var(--spacing) * 14);
   }
   .w-15 {
     width: calc(var(--spacing) * 15);
@@ -1197,9 +1197,6 @@
       border-color: var(--color-gray-700);
     }
   }
-  .self-center {
-    align-self: center;
-  }
   .self-stretch {
     align-self: stretch;
   }
@@ -1351,12 +1348,6 @@
     border-color: color-mix(in srgb, oklch(44.6% 0.03 256.802) 50%, transparent);
     @supports (color: color-mix(in lab, red, red)) {
       border-color: color-mix(in oklab, var(--color-gray-600) 50%, transparent);
-    }
-  }
-  .border-gray-600\/70 {
-    border-color: color-mix(in srgb, oklch(44.6% 0.03 256.802) 70%, transparent);
-    @supports (color: color-mix(in lab, red, red)) {
-      border-color: color-mix(in oklab, var(--color-gray-600) 70%, transparent);
     }
   }
   .border-gray-700 {
@@ -1547,6 +1538,12 @@
   }
   .bg-gray-700 {
     background-color: var(--color-gray-700);
+  }
+  .bg-gray-700\/80 {
+    background-color: color-mix(in srgb, oklch(37.3% 0.034 259.733) 80%, transparent);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--color-gray-700) 80%, transparent);
+    }
   }
   .bg-gray-900\/90 {
     background-color: color-mix(in srgb, oklch(21% 0.034 264.665) 90%, transparent);
@@ -1836,6 +1833,9 @@
   .align-middle {
     vertical-align: middle;
   }
+  .align-text-bottom {
+    vertical-align: text-bottom;
+  }
   .font-mono {
     font-family: var(--font-mono);
   }
@@ -1870,9 +1870,6 @@
   .text-xs {
     font-size: var(--text-xs);
     line-height: var(--tw-leading, var(--text-xs--line-height));
-  }
-  .text-\[11px\] {
-    font-size: 11px;
   }
   .leading-none {
     --tw-leading: 1;
@@ -2116,6 +2113,11 @@
     transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
     transition-duration: var(--tw-duration, var(--default-transition-duration));
   }
+  .transition-\[width\] {
+    transition-property: width;
+    transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
+    transition-duration: var(--tw-duration, var(--default-transition-duration));
+  }
   .transition-all {
     transition-property: all;
     transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
@@ -2156,6 +2158,10 @@
     --tw-duration: 300ms;
     transition-duration: 300ms;
   }
+  .duration-1000 {
+    --tw-duration: 1000ms;
+    transition-duration: 1000ms;
+  }
   .ease-in {
     --tw-ease: var(--ease-in);
     transition-timing-function: var(--ease-in);
@@ -2163,6 +2169,10 @@
   .ease-in-out {
     --tw-ease: var(--ease-in-out);
     transition-timing-function: var(--ease-in-out);
+  }
+  .ease-linear {
+    --tw-ease: linear;
+    transition-timing-function: linear;
   }
   .ease-out {
     --tw-ease: var(--ease-out);
@@ -2183,13 +2193,6 @@
     &:is(:where(.group):hover *) {
       @media (hover: hover) {
         color: var(--color-indigo-400);
-      }
-    }
-  }
-  .group-hover\:text-rose-400 {
-    &:is(:where(.group):hover *) {
-      @media (hover: hover) {
-        color: var(--color-rose-400);
       }
     }
   }

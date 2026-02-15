@@ -262,14 +262,10 @@ def _format_clock(total_seconds: int) -> str:
 
 
 def _resolve_state_item(state: dict):
+    """Look up a DB Item matching the playback state."""
     media_id = str(state.get("media_id") or "").strip()
     source = state.get("source") or Sources.TMDB.value
     playback_media_type = state.get("media_type")
-
-    logger.debug(
-        "Playback resolve_state_item: media_id=%s, source=%s, type=%s",
-        media_id, source, playback_media_type,
-    )
 
     if not media_id:
         return None
@@ -294,7 +290,6 @@ def _resolve_state_item(state: dict):
                 episode_number=episode_number,
             ).first()
             if episode_item:
-                logger.debug("Playback resolve_state_item: found episode Item %s", episode_item.id)
                 return episode_item
 
         tv_item = Item.objects.filter(
@@ -303,21 +298,16 @@ def _resolve_state_item(state: dict):
             media_type=MediaTypes.TV.value,
         ).first()
         if tv_item:
-            logger.debug("Playback resolve_state_item: found TV Item %s", tv_item.id)
             return tv_item
 
         if season_number is not None:
-            season_item = Item.objects.filter(
+            return Item.objects.filter(
                 media_id=media_id,
                 source=source,
                 media_type=MediaTypes.SEASON.value,
                 season_number=season_number,
             ).first()
-            if season_item:
-                logger.debug("Playback resolve_state_item: found season Item %s", season_item.id)
-                return season_item
 
-    logger.debug("Playback resolve_state_item: no Item found")
     return None
 
 
@@ -397,69 +387,90 @@ def _resolve_progress(state, state_item):
     return duration, progress, display, percent
 
 
-def _resolve_landscape_image(state, state_item):  # noqa: C901
-    """Resolve a landscape (backdrop) image for the playback card.
+def _resolve_show_media_id(state, state_item, source):
+    """Resolve the TV show-level TMDB ID for backdrop fallback."""
+    state_media_id = str(state.get("media_id") or "").strip()
 
-    Prefers TMDB backdrop; falls back to the Item poster image.
-    For episodes/seasons, uses the DB Item's media_id (the TV show ID)
-    rather than the cache state's media_id (which may be an episode-level
-    TMDB ID from Plex that would 404 on the /tv/ endpoint).
+    if state_item:
+        return str(state_item.media_id or "").strip()
+
+    # state_item is None — try finding the TV show by series_title.
+    series_title = (state.get("series_title") or "").strip()
+    if series_title:
+        tv_item = Item.objects.filter(
+            title=series_title,
+            source=source,
+            media_type=MediaTypes.TV.value,
+        ).first()
+        if tv_item:
+            return str(tv_item.media_id or "").strip()
+
+    return state_media_id
+
+
+def _fetch_episode_still(show_id, season_number, episode_number):
+    """Fetch episode still image from TMDB episode API."""
+    try:
+        from app.providers import tmdb  # noqa: PLC0415
+
+        ep_data = tmdb.episode(show_id, season_number, episode_number)
+        image = ep_data.get("image")
+        if image and image != settings.IMG_NONE:
+            return image
+    except Exception:  # noqa: BLE001, S110
+        pass
+    return None
+
+
+def _resolve_landscape_image(state, state_item):  # noqa: C901
+    """Resolve a landscape image for the playback card.
+
+    For episodes: prefers the episode-specific still (the same image
+    shown on the media-details page) over the TV show backdrop.
+    For movies: uses the TMDB movie backdrop.
     """
     media_type = state.get("media_type")
     source = state.get("source") or Sources.TMDB.value
-    state_media_id = str(state.get("media_id") or "").strip()
 
-    # For episodes/seasons, prefer the DB Item's media_id (TV show ID)
-    # over the state's media_id (may be an episode-level TMDB ID).
+    # ── Episode: prefer the episode still ──────────────────────
     if (
-        state_item
+        media_type == MediaTypes.EPISODE.value
         and source == Sources.TMDB.value
-        and media_type in (
-            MediaTypes.EPISODE.value,
-            MediaTypes.SEASON.value,
-        )
     ):
-        media_id = str(state_item.media_id or "").strip()
-    elif (
-        not state_item
-        and source == Sources.TMDB.value
-        and media_type == MediaTypes.EPISODE.value
-    ):
-        # state_item is None — the state's media_id is likely an
-        # episode-level TMDB ID that doesn't match any DB Item.
-        # Try finding the TV show by series_title as a fallback.
-        series_title = (state.get("series_title") or "").strip()
-        if series_title:
-            tv_item = Item.objects.filter(
-                title=series_title,
-                source=source,
-                media_type=MediaTypes.TV.value,
-            ).first()
-            if tv_item:
-                media_id = str(tv_item.media_id or "").strip()
-                logger.debug(
-                    "Playback image: resolved show ID %s "
-                    "from title '%s'",
-                    media_id,
-                    series_title,
+        # 1. Episode Item already in DB → use its stored still
+        if (
+            state_item
+            and state_item.image
+            and state_item.image != settings.IMG_NONE
+        ):
+            return state_item.image
+
+        # 2. Fetch the episode still from TMDB episode API
+        show_id = _resolve_show_media_id(state, state_item, source)
+        season = _coerce_int(state.get("season_number"))
+        episode = _coerce_int(state.get("episode_number"))
+        if show_id and season is not None and episode is not None:
+            still = _fetch_episode_still(show_id, season, episode)
+            if still:
+                return still
+
+        # 3. Fall back to TV show backdrop
+        if show_id:
+            try:
+                from lists.models import CustomList  # noqa: PLC0415
+
+                backdrop = CustomList()._get_tmdb_backdrop(
+                    MediaTypes.TV.value, show_id,
                 )
-            else:
-                media_id = state_media_id
-        else:
-            media_id = state_media_id
-    else:
-        media_id = state_media_id
+                if backdrop and backdrop != settings.IMG_NONE:
+                    return backdrop
+            except Exception:  # noqa: BLE001, S110
+                pass
 
-    logger.debug(
-        "Playback image: media_type=%s, state.media_id=%s, "
-        "state_item=%s (media_id=%s), resolved media_id=%s",
-        media_type,
-        state_media_id,
-        state_item,
-        getattr(state_item, "media_id", None),
-        media_id,
-    )
+        return settings.IMG_NONE
 
+    # ── Movie / other: use backdrop ────────────────────────────
+    media_id = str(state.get("media_id") or "").strip()
     if media_id and source == Sources.TMDB.value:
         try:
             from lists.models import CustomList  # noqa: PLC0415
@@ -471,30 +482,15 @@ def _resolve_landscape_image(state, state_item):  # noqa: C901
             ):
                 lookup_type = MediaTypes.TV.value
 
-            logger.debug(
-                "Playback image: calling _get_tmdb_backdrop(%s, %s)",
-                lookup_type, media_id,
-            )
             backdrop = CustomList()._get_tmdb_backdrop(
                 lookup_type, media_id,
-            )
-            logger.debug(
-                "Playback image: backdrop result = %s",
-                backdrop,
             )
             if backdrop and backdrop != settings.IMG_NONE:
                 return backdrop
         except Exception:  # noqa: BLE001, S110
-            logger.debug(
-                "Playback image: backdrop fetch exception",
-                exc_info=True,
-            )
+            pass
 
     if state_item and state_item.image:
-        logger.debug(
-            "Playback image: falling back to item poster: %s",
-            state_item.image,
-        )
         return state_item.image
 
     return settings.IMG_NONE
