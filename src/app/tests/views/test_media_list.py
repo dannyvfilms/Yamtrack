@@ -134,6 +134,62 @@ class MediaListViewTests(TestCase):
         self.assertContains(response, "Test Movie 1")
         self.assertContains(response, "3 plays")
 
+    def test_movie_grid_counts_completed_plays_when_progress_is_zero(self):
+        """Completed movie duplicates should count as plays even when progress is zero."""
+        item = Item.objects.get(
+            title="Test Movie 1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+        )
+
+        first_play = Movie.objects.get(item=item, user=self.user)
+        first_play.status = Status.COMPLETED.value
+        first_play.progress = 1
+        first_play.end_date = timezone.now() - timedelta(days=220)
+        first_play.save()
+
+        second_date = timezone.now() - timedelta(days=126)
+        third_date = timezone.now() - timedelta(days=90)
+        fourth_date = timezone.now() - timedelta(days=9)
+        Movie.objects.bulk_create(
+            [
+                Movie(
+                    item=item,
+                    user=self.user,
+                    status=Status.COMPLETED.value,
+                    progress=1,
+                    end_date=second_date,
+                ),
+                # Simulate legacy/completed rows where progress was never normalized to 1.
+                Movie(
+                    item=item,
+                    user=self.user,
+                    status=Status.COMPLETED.value,
+                    progress=0,
+                    end_date=third_date,
+                    score=9,
+                ),
+                Movie(
+                    item=item,
+                    user=self.user,
+                    status=Status.COMPLETED.value,
+                    progress=0,
+                    end_date=fourth_date,
+                    score=10,
+                ),
+            ],
+        )
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.MOVIE.value])
+            + "?layout=grid&search=Test+Movie+1&sort=title&direction=asc",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["media_list"].paginator.count, 1)
+        self.assertContains(response, "Test Movie 1")
+        self.assertContains(response, "4 plays")
+
     def test_media_list_with_filters(self):
         """Test the media list view with filters."""
         response = self.client.get(

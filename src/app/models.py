@@ -669,8 +669,18 @@ class MediaManager(models.Manager):
         # Sort by created_at to get chronological order
         sorted_entries = sorted(all_media_entries, key=lambda x: x.created_at)
 
-        # Aggregate progress (sum all progress values)
-        total_progress = sum(entry.progress for entry in all_media_entries)
+        # Aggregate progress:
+        # - Movies: count completed entries as plays (legacy rows may have progress=0)
+        # - Other media: sum raw progress values
+        if getattr(display_media.item, "media_type", None) == MediaTypes.MOVIE.value:
+            completed_entries = [
+                entry
+                for entry in all_media_entries
+                if entry.end_date or entry.status == Status.COMPLETED.value
+            ]
+            total_progress = len(completed_entries)
+        else:
+            total_progress = sum(entry.progress for entry in all_media_entries)
         display_media.aggregated_progress = total_progress
 
         # Aggregate start date (earliest start date)
