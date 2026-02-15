@@ -98,6 +98,11 @@ urlpatterns = [
         views.person_detail,
         name="person_detail",
     ),
+    path(
+        "api/active-playback/",
+        views.active_playback_fragment,
+        name="active_playback_fragment",
+    ),
     path("api/cache-status/", views.cache_status, name="cache_status"),
     path("serviceworker.js", views.service_worker, name="service_worker"),
     # Music hierarchy navigation

@@ -40,6 +40,17 @@
     </div>
   </div>
   <div class="space-y-4 sm:space-y-8">
+    <div id="active-playback-container"
+         class="media-grid"
+         {% if not active_playback_card %}style="display:none"{% endif %}
+         hx-get="{% url 'active_playback_fragment' %}"
+         hx-trigger="load, every 10s"
+         hx-swap="innerHTML"
+         hx-on::after-swap="this.style.display=this.children.length?'':'none'">
+      {% if active_playback_card %}
+        {% include "app/components/active_playback_card.html" %}
+      {% endif %}
+    </div>
     {% for section_key, media_list in list_by_type.items %}
       <div>
         {% if media_list.section_title %}
@@ -123,6 +134,7 @@
     const pendingFetches = new Set();
     let fetchQueue = [];
     let isProcessing = false;
+    let activePlaybackTimer = null;
 
     function processQueue() {
       if (isProcessing || fetchQueue.length === 0) return;
@@ -184,14 +196,81 @@
       });
     }
 
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', loadVisibleReleaseYears);
-    } else {
+    function formatPlaybackClock(totalSeconds) {
+      const clamped = Math.max(0, Math.floor(totalSeconds || 0));
+      const hours = Math.floor(clamped / 3600);
+      const minutes = Math.floor((clamped % 3600) / 60);
+      const seconds = clamped % 60;
+
+      if (hours > 0) {
+        return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+      }
+      return `${minutes}:${String(seconds).padStart(2, '0')}`;
+    }
+
+    function updateActivePlaybackCard(card) {
+      const status = card.dataset.playbackStatus || 'playing';
+      const offset = Number.parseInt(card.dataset.playbackOffset || '0', 10);
+      const duration = Number.parseInt(card.dataset.playbackDuration || '0', 10);
+      const updatedAt = Number.parseInt(card.dataset.playbackUpdatedAt || '0', 10);
+
+      let currentSeconds = Number.isNaN(offset) ? 0 : offset;
+      if (status === 'playing' && !Number.isNaN(updatedAt) && updatedAt > 0) {
+        currentSeconds += Math.max(0, Math.floor(Date.now() / 1000) - updatedAt);
+      }
+
+      const durationSeconds = Number.isNaN(duration) ? 0 : Math.max(0, duration);
+      if (durationSeconds > 0) {
+        currentSeconds = Math.min(currentSeconds, durationSeconds);
+      }
+
+      const timeNode = card.querySelector('[data-playback-time]');
+      if (timeNode) {
+        timeNode.textContent = durationSeconds > 0
+          ? `${formatPlaybackClock(currentSeconds)} / ${formatPlaybackClock(durationSeconds)}`
+          : formatPlaybackClock(currentSeconds);
+      }
+
+      const progressBar = card.querySelector('[data-playback-bar]');
+      if (progressBar) {
+        const width = durationSeconds > 0
+          ? Math.min(100, (currentSeconds / durationSeconds) * 100)
+          : 0;
+        progressBar.style.width = `${width}%`;
+      }
+    }
+
+    function initActivePlaybackTicker() {
+      if (activePlaybackTimer) {
+        clearInterval(activePlaybackTimer);
+        activePlaybackTimer = null;
+      }
+
+      const tick = () => {
+        const cards = document.querySelectorAll('[data-active-playback-card]');
+        cards.forEach(updateActivePlaybackCard);
+      };
+
+      tick();
+      activePlaybackTimer = setInterval(tick, 1000);
+    }
+
+    function initHomePageEnhancements() {
       loadVisibleReleaseYears();
+      initActivePlaybackTicker();
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initHomePageEnhancements);
+    } else {
+      initHomePageEnhancements();
     }
 
     document.body.addEventListener('htmx:afterSwap', function() {
-      setTimeout(loadVisibleReleaseYears, 50);
+      setTimeout(() => {
+        loadVisibleReleaseYears();
+        initActivePlaybackTicker();
+      }, 50);
     });
   </script>
 {% endblock js %}

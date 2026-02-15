@@ -36,6 +36,7 @@ from app import (
     helpers,
     history_cache,
     history_processor,
+    live_playback,
     statistics_cache,
 )
 from app.columns import (
@@ -434,6 +435,7 @@ def home(request):
             "current_sort": sort_by,
             "sort_choices": HomeSortChoices.choices,
             "items_limit": items_limit,
+            "active_playback_card": live_playback.build_home_playback_card(request.user),
         }
         return render(request, "app/home.html", context)
     except OperationalError as error:
@@ -446,8 +448,19 @@ def home(request):
             "sort_choices": HomeSortChoices.choices,
             "items_limit": 14,
             "database_error": True,
+            "active_playback_card": None,
         }
         return render(request, "app/home.html", context)
+
+
+def active_playback_fragment(request):
+    """HTMX fragment: return the active playback card or empty response."""
+    card = live_playback.build_home_playback_card(request.user)
+    if not card:
+        return HttpResponse("")
+    return render(request, "app/components/active_playback_card.html", {
+        "active_playback_card": card,
+    })
 
 
 @require_POST

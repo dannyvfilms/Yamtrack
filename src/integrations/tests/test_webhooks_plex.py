@@ -5,6 +5,7 @@ from django.contrib.auth import get_user_model
 from django.test import Client, TestCase
 from django.urls import reverse
 
+from app import live_playback
 from app.models import (
     TV,
     Anime,
@@ -135,6 +136,7 @@ class PlexWebhookTests(TestCase):
         self.mal_anime_patcher.start()
 
     def tearDown(self):
+        live_playback.clear_user_playback_state(self.user.id)
         self.fetch_mapping_patcher.stop()
         self.tv_with_seasons_patcher.stop()
         self.movie_patcher.stop()
@@ -204,6 +206,133 @@ class PlexWebhookTests(TestCase):
             item__episode_number=1,
         )
         self.assertIsNotNone(episode.end_date)
+
+    def test_play_event_stores_live_playback_state(self):
+        """Play events should create live playback state for the home card."""
+        payload = {
+            "event": "media.play",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "Friends",
+                "title": "The One with the Sonogram at the End",
+                "index": 1,
+                "parentIndex": 1,
+                "ratingKey": "rk-episode-1",
+                "duration": 2666000,
+                "viewOffset": 1447000,
+                "Guid": [
+                    {"id": "imdb://tt0583459"},
+                    {"id": "tmdb://85987"},
+                    {"id": "tvdb://303821"},
+                ],
+            },
+        }
+
+        response = self.client.post(
+            self.url,
+            data={"payload": json.dumps(payload)},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        state = live_playback.get_user_playback_state(self.user.id)
+        self.assertIsNotNone(state)
+        self.assertEqual(state["media_type"], MediaTypes.EPISODE.value)
+        # media_id should be the TV *show* TMDB ID (resolved via TVDB/IMDB
+        # find API), not the episode-level tmdb_id from the Plex GUIDs.
+        self.assertEqual(state["media_id"], "1668")
+        self.assertEqual(state["status"], live_playback.PLAYBACK_STATUS_PLAYING)
+        self.assertEqual(state["season_number"], 1)
+        self.assertEqual(state["episode_number"], 1)
+        self.assertEqual(state["duration_seconds"], 2666)
+        self.assertEqual(state["view_offset_seconds"], 1447)
+
+    def test_pause_and_stop_events_update_live_playback_state(self):
+        """Pause should keep card state and stop should clear it."""
+        play_payload = {
+            "event": "media.play",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "Friends",
+                "title": "The One with the Sonogram at the End",
+                "index": 1,
+                "parentIndex": 1,
+                "ratingKey": "rk-episode-2",
+                "duration": 2666000,
+                "viewOffset": 600000,
+                "Guid": [
+                    {"id": "imdb://tt0583459"},
+                    {"id": "tmdb://85987"},
+                    {"id": "tvdb://303821"},
+                ],
+            },
+        }
+        pause_payload = {
+            "event": "media.pause",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "Friends",
+                "title": "The One with the Sonogram at the End",
+                "index": 1,
+                "parentIndex": 1,
+                "ratingKey": "rk-episode-2",
+                "duration": 2666000,
+                "viewOffset": 721000,
+                "Guid": [
+                    {"id": "imdb://tt0583459"},
+                    {"id": "tmdb://85987"},
+                    {"id": "tvdb://303821"},
+                ],
+            },
+        }
+        stop_payload = {
+            "event": "media.stop",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "Friends",
+                "title": "The One with the Sonogram at the End",
+                "index": 1,
+                "parentIndex": 1,
+                "ratingKey": "rk-episode-2",
+                "Guid": [
+                    {"id": "imdb://tt0583459"},
+                    {"id": "tmdb://85987"},
+                    {"id": "tvdb://303821"},
+                ],
+            },
+        }
+
+        play_response = self.client.post(
+            self.url,
+            data={"payload": json.dumps(play_payload)},
+            format="multipart",
+        )
+        self.assertEqual(play_response.status_code, 200)
+
+        pause_response = self.client.post(
+            self.url,
+            data={"payload": json.dumps(pause_payload)},
+            format="multipart",
+        )
+        self.assertEqual(pause_response.status_code, 200)
+
+        paused_state = live_playback.get_user_playback_state(self.user.id)
+        self.assertIsNotNone(paused_state)
+        self.assertEqual(paused_state["status"], live_playback.PLAYBACK_STATUS_PAUSED)
+        self.assertEqual(paused_state["view_offset_seconds"], 721)
+
+        stop_response = self.client.post(
+            self.url,
+            data={"payload": json.dumps(stop_payload)},
+            format="multipart",
+        )
+        self.assertEqual(stop_response.status_code, 200)
+        self.assertIsNone(live_playback.get_user_playback_state(self.user.id))
 
     @patch("app.providers.tmdb.search", return_value={"results": []})
     @patch("app.providers.tmdb.find")

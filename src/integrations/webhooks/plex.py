@@ -5,7 +5,8 @@ import re
 from django.utils import timezone
 
 import app
-from app.models import MediaTypes
+from app import live_playback
+from app.models import MediaTypes, Sources
 from app.providers import services
 from app.services import music_scrobble
 
@@ -42,6 +43,13 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
 
         media_type = self._get_media_type(payload)
         if media_type == MediaTypes.MUSIC.value:
+            if event_type not in ("media.play", "media.resume", "media.scrobble"):
+                logger.debug(
+                    "Ignoring Plex music webhook event type: %s",
+                    event_type,
+                )
+                return None
+
             if not getattr(user, "music_enabled", False):
                 logger.debug(
                     "Ignoring Plex music webhook for user %s: music disabled",
@@ -89,13 +97,102 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
         if event_type == "media.rate":
             return self._process_rating(payload, user)
 
-        ids = self.resolve_external_ids(payload)
+        ids = self.resolve_external_ids(
+            payload,
+            allow_title_search=event_type not in ("media.pause", "media.stop"),
+        )
         logger.info("Extracted IDs from payload: %s", ids)
+
+        playback_media_type = self._get_live_playback_media_type(payload)
+        self._update_live_playback_state(
+            payload,
+            user,
+            ids,
+            playback_media_type,
+        )
+
+        if event_type in ("media.pause", "media.stop"):
+            return None
+
         if not any(ids.get(key) for key in ("tmdb_id", "imdb_id", "tvdb_id")):
             logger.warning("Ignoring Plex webhook call because no ID was found.")
             return None
 
         self._process_media(payload, user, ids)
+        return None
+
+    def _get_live_playback_media_type(self, payload):
+        """Map raw Plex metadata type into a playback card media type."""
+        metadata_type = ((payload.get("Metadata", {}) or {}).get("type") or "").strip().lower()
+        if metadata_type == "episode":
+            return MediaTypes.EPISODE.value
+        if metadata_type == "movie":
+            return MediaTypes.MOVIE.value
+        return None
+
+    def _update_live_playback_state(
+        self,
+        payload,
+        user,
+        ids,
+        playback_media_type,
+    ):
+        """Update cache-backed live playback state for home-page UI."""
+        if playback_media_type not in (MediaTypes.MOVIE.value, MediaTypes.EPISODE.value):
+            return
+
+        event_type = payload.get("event")
+        media_id = None
+        season_number = None
+        episode_number = None
+
+        if playback_media_type == MediaTypes.MOVIE.value:
+            media_id = ids.get("tmdb_id")
+        else:
+            season_number, episode_number = self._extract_season_episode_from_payload(
+                payload,
+            )
+            resolve_media_id = event_type in (
+                "media.play", "media.resume", "media.scrobble",
+            )
+            if resolve_media_id:
+                # Prefer TVDB/IMDB resolution — they reliably return the
+                # show-level TMDB ID via the TMDB find API.  The raw
+                # tmdb_id from Plex GUIDs is often an episode-level ID
+                # that would 404 on /tv/{id}.
+                if ids.get("tvdb_id") or ids.get("imdb_id"):
+                    alt_ids = dict(ids)
+                    alt_ids["tmdb_id"] = None
+                    resolved_id, _, _ = super()._find_tv_media_id(alt_ids)
+                    if resolved_id:
+                        media_id = str(resolved_id)
+                        logger.debug(
+                            "Live playback: resolved show ID %s via TVDB/IMDB",
+                            media_id,
+                        )
+
+                # Fallback: title search then raw tmdb_id
+                if media_id is None:
+                    series_title = self._extract_series_title(payload)
+                    resolved_media_id, _, _ = self._find_tv_media_id(
+                        ids,
+                        series_title=series_title,
+                        allow_title_fallback=True,
+                    )
+                    if resolved_media_id:
+                        media_id = str(resolved_media_id)
+            if media_id is None:
+                media_id = ids.get("tmdb_id")
+
+        live_playback.apply_plex_event(
+            user_id=user.id,
+            payload=payload,
+            playback_media_type=playback_media_type,
+            media_id=media_id,
+            source=Sources.TMDB.value,
+            season_number=season_number,
+            episode_number=episode_number,
+        )
 
     def resolve_external_ids(self, payload, allow_title_search=True):
         """Extract external IDs, optionally allowing title search fallback."""
@@ -566,7 +663,14 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
             self._process_movie(payload, user, ids)
 
     def _is_supported_event(self, event_type):
-        return event_type in ("media.scrobble", "media.play", "media.rate")
+        return event_type in (
+            "media.scrobble",
+            "media.play",
+            "media.resume",
+            "media.pause",
+            "media.stop",
+            "media.rate",
+        )
 
     def _fetch_rating_from_plex_api(self, user, rating_key, payload):
         """Fetch user rating from Plex API as fallback if not in webhook payload."""
