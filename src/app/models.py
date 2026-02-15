@@ -624,7 +624,7 @@ class MediaManager(models.Manager):
         queryset = self._apply_prefetch_related(queryset, media_type)
 
         requires_presort_aggregation = (
-            sort_filter == "progress"
+            sort_filter in ("progress", "plays")
             and media_type not in (MediaTypes.TV.value, MediaTypes.SEASON.value)
         )
 
@@ -885,7 +885,7 @@ class MediaManager(models.Manager):
     def _sort_generic_media_list(self, queryset, sort_filter, direction):
         """Apply generic sorting logic for all media types."""
         # Handle progress sorting specially to use aggregated progress
-        if sort_filter == "progress":
+        if sort_filter in ("progress", "plays"):
             # Since we're now sorting after aggregation, we can use the aggregated_progress attribute
             # Convert to list for Python-based sorting since aggregated_progress is a Python attribute
             media_list = list(queryset)

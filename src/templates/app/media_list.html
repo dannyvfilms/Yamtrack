@@ -742,14 +742,16 @@
             {% for value, label in sort_choices %}
               {% if media_type != MediaTypes.MOVIE.value or value != 'progress' %}
                 {% if value != 'time_left' or media_type == MediaTypes.TV.value %}
-                  <button hx-get="{% url 'medialist' media_type %}"
-                          {% if media_list %} hx-target="{{ layout_class }}" {% else %} hx-target="#empty_list" {% endif %}
-                          hx-include="#filter-form"
-                          hx-indicator="#loading-indicator"
-                          class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
-                          :class="sort === '{{ value }}' ? 'bg-indigo-600 text-white font-medium' : 'text-gray-300 hover:bg-[#454d5a] hover:text-white'"
-                          @click="toggleSort('{{ value }}'); open = false"
-                          type="button">{{ label }}</button>
+                  {% if value != 'plays' or media_type == MediaTypes.MOVIE.value %}
+                    <button hx-get="{% url 'medialist' media_type %}"
+                            {% if media_list %} hx-target="{{ layout_class }}" {% else %} hx-target="#empty_list" {% endif %}
+                            hx-include="#filter-form"
+                            hx-indicator="#loading-indicator"
+                            class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
+                            :class="sort === '{{ value }}' ? 'bg-indigo-600 text-white font-medium' : 'text-gray-300 hover:bg-[#454d5a] hover:text-white'"
+                            @click="toggleSort('{{ value }}'); open = false"
+                            type="button">{{ label }}</button>
+                  {% endif %}
                 {% endif %}
               {% endif %}
             {% endfor %}

@@ -190,6 +190,62 @@ class MediaListViewTests(TestCase):
         self.assertContains(response, "Test Movie 1")
         self.assertContains(response, "4 plays")
 
+    def test_movie_sort_dropdown_includes_plays_option(self):
+        """Movie sort dropdown should include the plays sort option."""
+        response = self.client.get(reverse("medialist", args=[MediaTypes.MOVIE.value]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "toggleSort('plays')")
+
+    def test_non_movie_sort_hides_plays_option_and_falls_back(self):
+        """Non-movie media types should hide plays sort and fallback to title."""
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.ANIME.value]) + "?sort=plays",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "title")
+        self.assertNotContains(response, "toggleSort('plays')")
+
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.anime_sort, "title")
+
+    def test_movie_sort_by_plays_orders_by_aggregated_completed_plays(self):
+        """Movie plays sort should use aggregated completed play totals."""
+        item = Item.objects.get(
+            title="Test Movie 1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+        )
+        older = timezone.now() - timedelta(days=30)
+        newer = timezone.now() - timedelta(days=3)
+        Movie.objects.bulk_create(
+            [
+                Movie(
+                    item=item,
+                    user=self.user,
+                    status=Status.COMPLETED.value,
+                    progress=0,
+                    end_date=older,
+                ),
+                Movie(
+                    item=item,
+                    user=self.user,
+                    status=Status.COMPLETED.value,
+                    progress=1,
+                    end_date=newer,
+                ),
+            ],
+        )
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.MOVIE.value])
+            + "?sort=plays&direction=desc",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "plays")
+        self.assertEqual(response.context["media_list"].object_list[0].item.title, "Test Movie 1")
+
     def test_media_list_with_filters(self):
         """Test the media list view with filters."""
         response = self.client.get(

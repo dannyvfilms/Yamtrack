@@ -497,8 +497,14 @@ def media_list(request, media_type):
     direction_param = request.GET.get("direction")
     direction_field = f"{media_type}_direction"
 
-    # If time_left sort is selected for non-TV media types, fallback to default
+    # Enforce media-type-specific sort options.
     if sort_filter == "time_left" and media_type != MediaTypes.TV.value:
+        sort_filter = "title"  # Default fallback
+        # Update the user's preference to the fallback
+        request.user.update_preference(f"{media_type}_sort", "title")
+        # Reset direction to the default for the fallback sort
+        direction_param = None
+    elif sort_filter == "plays" and media_type != MediaTypes.MOVIE.value:
         sort_filter = "title"  # Default fallback
         # Update the user's preference to the fallback
         request.user.update_preference(f"{media_type}_sort", "title")
@@ -1550,6 +1556,8 @@ def update_table_columns(request, media_type):
 
     current_sort = request.POST.get("sort") or getattr(request.user, f"{media_type}_sort", MediaSortChoices.SCORE)
     if current_sort == "time_left" and media_type != MediaTypes.TV.value:
+        current_sort = "title"
+    elif current_sort == "plays" and media_type != MediaTypes.MOVIE.value:
         current_sort = "title"
 
     if settings.DEBUG:
