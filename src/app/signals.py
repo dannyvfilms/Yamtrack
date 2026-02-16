@@ -234,7 +234,7 @@ def refresh_history_cache_on_podcast_change(sender, instance, **kwargs):  # noqa
 @receiver([post_save, post_delete], sender=TV)
 def refresh_statistics_cache_on_tv_change(sender, instance, **kwargs):  # noqa: ARG001
     """Schedule statistics cache refresh when TV activity changes.
-    
+
     We schedule a refresh but don't delete the cache immediately,
     so users can see the old data with a notification while refresh happens.
     """
@@ -242,12 +242,26 @@ def refresh_statistics_cache_on_tv_change(sender, instance, **kwargs):  # noqa: 
     if user_id:
         # Schedule refresh but don't delete cache - old data will show with notification
         statistics_cache.schedule_all_ranges_refresh(user_id)
+
+
+@receiver(post_delete, sender=TV)
+def clear_time_left_cache_on_tv_delete(sender, instance, **kwargs):  # noqa: ARG001
+    """Clear time_left cache when TV show is deleted."""
+    user_id = getattr(instance, "user_id", None)
+    if user_id:
+        from app.cache_utils import clear_time_left_cache_for_user
+        clear_time_left_cache_for_user(user_id)
+        logger.debug(
+            "Cleared time_left cache for user %s after deleting TV show: %s",
+            user_id,
+            instance,
+        )
 
 
 @receiver([post_save, post_delete], sender=Season)
 def refresh_statistics_cache_on_season_change(sender, instance, **kwargs):  # noqa: ARG001
     """Schedule statistics cache refresh when season activity changes.
-    
+
     We schedule a refresh but don't delete the cache immediately,
     so users can see the old data with a notification while refresh happens.
     """
@@ -255,6 +269,20 @@ def refresh_statistics_cache_on_season_change(sender, instance, **kwargs):  # no
     if user_id:
         # Schedule refresh but don't delete cache - old data will show with notification
         statistics_cache.schedule_all_ranges_refresh(user_id)
+
+
+@receiver(post_delete, sender=Season)
+def clear_time_left_cache_on_season_delete(sender, instance, **kwargs):  # noqa: ARG001
+    """Clear time_left cache when Season is deleted."""
+    user_id = getattr(instance, "user_id", None)
+    if user_id:
+        from app.cache_utils import clear_time_left_cache_for_user
+        clear_time_left_cache_for_user(user_id)
+        logger.debug(
+            "Cleared time_left cache for user %s after deleting Season: %s",
+            user_id,
+            instance,
+        )
 
 
 @receiver([post_save, post_delete], sender=Anime)
