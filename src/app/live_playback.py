@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import logging
-from urllib.parse import urlencode
 
 from django.conf import settings
 from django.core.cache import cache
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.text import slugify
 
 from app.models import Item, MediaTypes, Sources
 
@@ -325,30 +325,63 @@ def _resolve_state_item(state: dict):
     return None
 
 
-def _build_history_url(state: dict) -> str:
+def _slugify_title(title: str, media_id: str | None = None) -> str:
+    """Slugify a title, matching the template ``slug`` filter behaviour."""
+    from unidecode import unidecode  # noqa: PLC0415
+    from urllib.parse import quote  # noqa: PLC0415
+
+    cleaned = slugify(title)
+    if not cleaned:
+        cleaned = slugify(quote(unidecode(title), safe=""))
+    if not cleaned:
+        fallback = str(media_id) if media_id else "item"
+        cleaned = slugify(fallback) or "item"
+    return cleaned
+
+
+def _build_details_url(state: dict) -> str:
+    """Build a URL to the media details page for the playing item."""
     media_id = state.get("media_id")
     source = state.get("source") or Sources.TMDB.value
     playback_media_type = state.get("media_type")
     if not media_id:
         return reverse("home")
 
+    title = (state.get("series_title") or state.get("title") or "").strip()
+    slug_title = _slugify_title(title, media_id)
+
     if playback_media_type == MediaTypes.EPISODE.value:
-        query = {
-            "media_type": MediaTypes.TV.value,
-            "media_id": media_id,
-            "source": source,
-        }
         season_number = _coerce_int(state.get("season_number"))
         if season_number is not None:
-            query["season_number"] = season_number
-    else:
-        query = {
-            "media_type": MediaTypes.MOVIE.value,
-            "media_id": media_id,
-            "source": source,
-        }
+            return reverse(
+                "season_details",
+                kwargs={
+                    "source": source,
+                    "media_id": media_id,
+                    "title": slug_title,
+                    "season_number": season_number,
+                },
+            )
+        # No season number — fall back to TV show details
+        return reverse(
+            "media_details",
+            kwargs={
+                "source": source,
+                "media_type": MediaTypes.TV.value,
+                "media_id": media_id,
+                "title": slug_title,
+            },
+        )
 
-    return f"{reverse('history')}?{urlencode(query)}"
+    return reverse(
+        "media_details",
+        kwargs={
+            "source": source,
+            "media_type": playback_media_type or MediaTypes.MOVIE.value,
+            "media_id": media_id,
+            "title": slug_title,
+        },
+    )
 
 
 def _resolve_card_title(state, state_item):
@@ -541,7 +574,7 @@ def build_home_playback_card(user) -> dict | None:
             if status in (PLAYBACK_STATUS_PAUSED, PLAYBACK_STATUS_STOPPED)
             else "Playing"
         ),
-        "history_url": _build_history_url(state),
+        "details_url": _build_details_url(state),
         "progress_display": progress_display,
         "progress_percent": progress_percent,
         "offset_seconds": max(0, _coerce_int(state.get("view_offset_seconds"), 0)),
