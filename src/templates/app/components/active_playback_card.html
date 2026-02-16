@@ -10,9 +10,8 @@
   <div class="relative">
     <a href="{{ active_playback_card.history_url }}">
       <img alt="{{ active_playback_card.title }}"
-           class="media-card-poster lazyload w-full aspect-[3/2] bg-[#3e454d]{% if active_playback_card.image != IMG_NONE %} object-cover{% endif %}"
-           data-src="{{ active_playback_card.image }}"
-           src="{{ IMG_NONE }}">
+           class="media-card-poster w-full aspect-[3/2] bg-[#3e454d]{% if active_playback_card.image != IMG_NONE %} object-cover{% endif %}"
+           src="{{ active_playback_card.image }}">
     </a>
 
     {# Progress bar overlay at bottom of poster #}
