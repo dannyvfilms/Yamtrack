@@ -250,7 +250,7 @@ class PlexWebhookTests(TestCase):
         self.assertEqual(state["view_offset_seconds"], 1447)
 
     def test_pause_and_stop_events_update_live_playback_state(self):
-        """Pause should keep card state and stop should clear it."""
+        """Pause should keep card state; stop should transition to stopped with grace period."""
         play_payload = {
             "event": "media.play",
             "Account": {"title": "testuser"},
@@ -332,7 +332,14 @@ class PlexWebhookTests(TestCase):
             format="multipart",
         )
         self.assertEqual(stop_response.status_code, 200)
-        self.assertIsNone(live_playback.get_user_playback_state(self.user.id))
+        # Stop now uses a grace period instead of immediate deletion,
+        # so the state should still exist with "stopped" status.
+        stopped_state = live_playback.get_user_playback_state(self.user.id)
+        self.assertIsNotNone(stopped_state)
+        self.assertEqual(
+            stopped_state["status"],
+            live_playback.PLAYBACK_STATUS_STOPPED,
+        )
 
     @patch("app.providers.tmdb.search", return_value={"results": []})
     @patch("app.providers.tmdb.find")

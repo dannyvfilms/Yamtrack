@@ -18,10 +18,12 @@ PLAYBACK_CACHE_PREFIX = "active_playback_v1"
 PLAYBACK_CACHE_TIMEOUT_SECONDS = 6 * 60 * 60
 PLAYBACK_HARD_STALE_SECONDS = 4 * 60 * 60
 PLAYBACK_PAUSE_STALE_SECONDS = 45 * 60
-PLAYBACK_SCROBBLE_GRACE_SECONDS = 12 * 60
+PLAYBACK_SCROBBLE_GRACE_SECONDS = 45 * 60
+PLAYBACK_STOP_GRACE_SECONDS = 5 * 60
 
 PLAYBACK_STATUS_PLAYING = "playing"
 PLAYBACK_STATUS_PAUSED = "paused"
+PLAYBACK_STATUS_STOPPED = "stopped"
 
 
 def _cache_key(user_id: int) -> str:
@@ -148,7 +150,13 @@ def apply_plex_event(  # noqa: C901
             media_id=media_id,
             playback_media_type=playback_media_type,
         ) or not rating_key):
-            cache.delete(key)
+            # Grace period instead of immediate deletion — keeps the
+            # card visible across auto-play transitions and brief gaps.
+            existing_state["status"] = PLAYBACK_STATUS_STOPPED
+            existing_state["stop_expires_at_ts"] = (
+                now_ts + PLAYBACK_STOP_GRACE_SECONDS
+            )
+            set_user_playback_state(user_id, existing_state)
         return
 
     if event_type not in ("media.play", "media.pause", "media.scrobble"):
@@ -237,6 +245,12 @@ def get_user_playback_state(user_id: int, now=None) -> dict | None:
     if state.get("status") == PLAYBACK_STATUS_PAUSED:
         pause_expires_at_ts = _coerce_int(state.get("pause_expires_at_ts"), 0)
         if pause_expires_at_ts and now_ts >= pause_expires_at_ts:
+            clear_user_playback_state(user_id)
+            return None
+
+    if state.get("status") == PLAYBACK_STATUS_STOPPED:
+        stop_expires_at_ts = _coerce_int(state.get("stop_expires_at_ts"), 0)
+        if stop_expires_at_ts and now_ts >= stop_expires_at_ts:
             clear_user_playback_state(user_id)
             return None
 
@@ -522,7 +536,11 @@ def build_home_playback_card(user) -> dict | None:
         "episode_title": episode_title,
         "image": image,
         "status": status,
-        "status_label": "Paused" if status == PLAYBACK_STATUS_PAUSED else "Playing",
+        "status_label": (
+            "Paused"
+            if status in (PLAYBACK_STATUS_PAUSED, PLAYBACK_STATUS_STOPPED)
+            else "Playing"
+        ),
         "history_url": _build_history_url(state),
         "progress_display": progress_display,
         "progress_percent": progress_percent,

@@ -44,7 +44,7 @@
          class="media-grid"
          {% if not active_playback_card %}style="display:none"{% endif %}
          hx-get="{% url 'active_playback_fragment' %}"
-         hx-trigger="load, every 10s"
+         hx-trigger="every 10s"
          hx-swap="innerHTML"
          hx-on::after-swap="this.style.display=this.children.length?'':'none'">
       {% if active_playback_card %}
