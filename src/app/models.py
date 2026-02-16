@@ -290,6 +290,26 @@ class Item(CalendarTriggerMixin, models.Model):
 
         return str(int(latest_item.media_id) + 1)
 
+    def save(self, *args, **kwargs):
+        """Save the item, ensuring JSONField arrays are never None."""
+        # Ensure all JSONField arrays are lists, never None
+        json_array_fields = [
+            "genres",
+            "languages",
+            "platforms",
+            "studios",
+            "themes",
+            "authors",
+            "isbn",
+            "creators",
+        ]
+        for field_name in json_array_fields:
+            value = getattr(self, field_name, None)
+            if value is None:
+                setattr(self, field_name, [])
+
+        super().save(*args, **kwargs)
+
     def fetch_releases(self, delay):
         """Fetch releases for the item."""
         if self._disable_calendar_triggers:

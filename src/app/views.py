@@ -4249,22 +4249,39 @@ def media_save(request):
             languages = [languages] if languages else []
 
         platforms = details.get("platforms", [])
+        if not isinstance(platforms, list):
+            platforms = [platforms] if platforms else []
+
         format_type = details.get("format", "")
         status = details.get("status", "")
+
         studios = details.get("studios", [])
+        if not isinstance(studios, list):
+            studios = [studios] if studios else []
+
         themes = details.get("themes", [])
+        if not isinstance(themes, list):
+            themes = [themes] if themes else []
 
         authors = details.get("authors", []) or details.get("author", [])
         if isinstance(authors, str):
             authors = [authors]
+        elif not isinstance(authors, list):
+            authors = []
 
         publishers = details.get("publishers", "") or details.get("publisher", "")
         if isinstance(publishers, list):
             publishers = publishers[0] if publishers else ""
 
         isbn = details.get("isbn", [])
+        if not isinstance(isbn, list):
+            isbn = []
+
         source_material = details.get("source", "")
+
         creators = details.get("people", [])
+        if not isinstance(creators, list):
+            creators = []
         runtime = details.get("runtime") or ""
 
         item, created = Item.objects.get_or_create(
