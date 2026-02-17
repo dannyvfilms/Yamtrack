@@ -1,6 +1,8 @@
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import RequestFactory, TestCase
 from django.urls import reverse
+
+from app import views
 
 
 class ServiceWorkerViewTests(TestCase):
@@ -12,6 +14,14 @@ class ServiceWorkerViewTests(TestCase):
             password="test-pass-123",
         )
         self.client.force_login(self.user)
+        self.factory = RequestFactory()
+
+    def test_service_worker_view_accepts_request_argument(self):
+        request = self.factory.get("/serviceworker.js")
+        response = views.service_worker(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/javascript")
 
     def test_service_worker_sets_no_cache_headers_and_static_only_policy(self):
         response = self.client.get(reverse("service_worker"))
