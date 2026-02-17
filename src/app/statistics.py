@@ -631,50 +631,51 @@ def get_timeline(user_media):
         # the TV queryset will still include prefetched seasons. Add
         # seasons from TV objects to the timeline so they appear here.
         if media_type == MediaTypes.TV.value:
-            for tv in queryset:
-                seasons_qs = getattr(tv, "seasons", None)
-                if seasons_qs is None:
-                    continue
-                for media in seasons_qs.all():
-                    # media here is a Season instance
-                    local_start_date = (
-                        timezone.localdate(media.start_date) if media.start_date else None
-                    )
-                    local_end_date = (
-                        timezone.localdate(media.end_date) if media.end_date else None
-                    )
+            if MediaTypes.SEASON.value not in user_media:
+                for tv in queryset:
+                    seasons_qs = getattr(tv, "seasons", None)
+                    if seasons_qs is None:
+                        continue
+                    for media in seasons_qs.all():
+                        # media here is a Season instance
+                        local_start_date = (
+                            timezone.localdate(media.start_date) if media.start_date else None
+                        )
+                        local_end_date = (
+                            timezone.localdate(media.end_date) if media.end_date else None
+                        )
 
-                    if media.start_date and media.end_date:
-                        # add media to all months between start and end
-                        current_date = local_start_date
-                        while current_date <= local_end_date:
-                            year = current_date.year
-                            month = current_date.month
+                        if media.start_date and media.end_date:
+                            # add media to all months between start and end
+                            current_date = local_start_date
+                            while current_date <= local_end_date:
+                                year = current_date.year
+                                month = current_date.month
+                                month_name = calendar.month_name[month]
+                                month_year = f"{month_name} {year}"
+
+                                timeline[month_year].append(media)
+
+                                # Move to next month
+                                current_date += relativedelta(months=1)
+                                current_date = current_date.replace(day=1)
+                        elif media.start_date:
+                            # If only start date, add to the start month
+                            year = local_start_date.year
+                            month = local_start_date.month
                             month_name = calendar.month_name[month]
                             month_year = f"{month_name} {year}"
 
                             timeline[month_year].append(media)
+                        elif media.end_date:
+                            # If only end date, add to the end month
+                            year = local_end_date.year
+                            month = local_end_date.month
+                            month_name = calendar.month_name[month]
+                            month_year = f"{month_name} {year}"
 
-                            # Move to next month
-                            current_date += relativedelta(months=1)
-                            current_date = current_date.replace(day=1)
-                    elif media.start_date:
-                        # If only start date, add to the start month
-                        year = local_start_date.year
-                        month = local_start_date.month
-                        month_name = calendar.month_name[month]
-                        month_year = f"{month_name} {year}"
-
-                        timeline[month_year].append(media)
-                    elif media.end_date:
-                        # If only end date, add to the end month
-                        year = local_end_date.year
-                        month = local_end_date.month
-                        month_name = calendar.month_name[month]
-                        month_year = f"{month_name} {year}"
-
-                        timeline[month_year].append(media)
-            # don't process TV objects themselves any further
+                            timeline[month_year].append(media)
+            # TV timeline activity is represented by seasons, not TV shells.
             continue
 
         for media in queryset:

@@ -1,8 +1,10 @@
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.http import HttpRequest
 from django.test import TestCase
+from django.utils import timezone
 
 from app.helpers import (
     enrich_items_with_user_data,
@@ -10,9 +12,6 @@ from app.helpers import (
     minutes_to_hhmm,
     redirect_back,
 )
-from datetime import timedelta
-
-from django.utils import timezone
 
 from app.models import Game, Item, MediaTypes, Movie, Sources, Status
 
@@ -246,3 +245,62 @@ class EnrichItemsWithUserDataTest(TestCase):
         media = enriched_items[0]["media"]
         self.assertIsNotNone(media)
         self.assertEqual(media.aggregated_progress, 105)
+
+    def test_hide_completed_recommendations_enabled(self):
+        """Completed recommendations should be hidden when preference is enabled."""
+        self.user.hide_completed_recommendations = True
+        self.user.save(update_fields=["hide_completed_recommendations"])
+
+        raw_items = [
+            {
+                "media_id": "238",
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.MOVIE.value,
+                "title": "Test Movie",
+                "image": "http://example.com/movie.jpg",
+            },
+            {
+                "media_id": "99999",
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.MOVIE.value,
+                "title": "Unknown Movie",
+                "image": "http://example.com/unknown.jpg",
+            },
+        ]
+
+        enriched_items = enrich_items_with_user_data(
+            self.request,
+            raw_items,
+            "recommendations",
+        )
+        self.assertEqual(len(enriched_items), 1)
+        self.assertEqual(enriched_items[0]["item"]["media_id"], "99999")
+
+    def test_hide_completed_recommendations_disabled(self):
+        """Recommendations should include completed items when preference is disabled."""
+        self.user.hide_completed_recommendations = False
+        self.user.save(update_fields=["hide_completed_recommendations"])
+
+        raw_items = [
+            {
+                "media_id": "238",
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.MOVIE.value,
+                "title": "Test Movie",
+                "image": "http://example.com/movie.jpg",
+            },
+            {
+                "media_id": "99999",
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.MOVIE.value,
+                "title": "Unknown Movie",
+                "image": "http://example.com/unknown.jpg",
+            },
+        ]
+
+        enriched_items = enrich_items_with_user_data(
+            self.request,
+            raw_items,
+            "recommendations",
+        )
+        self.assertEqual(len(enriched_items), 2)

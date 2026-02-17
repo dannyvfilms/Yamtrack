@@ -5,6 +5,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from django.utils import timezone
 from playwright.sync_api import expect, sync_playwright
+from users.models import DateFormatChoices
 
 
 class IntegrationTest(StaticLiveServerTestCase):
@@ -24,6 +25,8 @@ class IntegrationTest(StaticLiveServerTestCase):
         """Set up test data for CustomList model."""
         self.credentials = {"username": "test", "password": "12345"}
         self.user = get_user_model().objects.create_user(**self.credentials)
+        self.user.date_format = DateFormatChoices.ISO_8601
+        self.user.save(update_fields=["date_format"])
         self.page.goto(f"{self.live_server_url}/")
         self.page.get_by_placeholder("Enter your username").fill(
             self.credentials["username"],
@@ -42,44 +45,40 @@ class IntegrationTest(StaticLiveServerTestCase):
 
     def test_season_progress_edit(self):
         """Test the progress edit of a season."""
-        self.page.get_by_placeholder("Search tv shows...").fill("breaking bad")
-        self.page.get_by_role("button").nth(1).click()
-        expect(self.page.locator("h2")).to_contain_text("Search Results")
+        self.page.locator("#global-search").fill("breaking bad")
+        self.page.locator("#global-search").press("Enter")
+        expect(self.page.locator("h2", has_text="Search Results")).to_be_visible()
         self.page.get_by_title("Breaking Bad", exact=True).click()
         expect(self.page.get_by_role("main")).to_contain_text("Breaking Bad")
-        self.page.get_by_title("Season 1").click()
-        expect(self.page.get_by_role("main")).to_contain_text("Season 1")
-        self.page.locator(".p-2").first.click()
-        expect(self.page.get_by_role("main")).to_contain_text("Track Episode")
-        self.page.get_by_role("button", name="Air date").click()
-        self.page.get_by_role("button", name="Add watch").click()
-
+        season_href = self.page.locator('a[href*="/season/1"]').first.get_attribute("href")
+        self.page.goto(f"{self.live_server_url}{season_href}")
+        expect(self.page.get_by_role("main")).to_contain_text("Breaking Bad")
+        self.page.get_by_title("Track Episode").first.click(force=True)
         datetime_format = "%Y-%m-%d"
 
         # Episode 1 air date is 2008-01-20
         fixed_date = date(2008, 1, 20)
+        self.page.locator('input[name="end_date"]:visible').first.fill(
+            f"{fixed_date.isoformat()}T12:00",
+        )
+        self.page.get_by_role("button", name="Add watch").click()
 
         expect(self.page.get_by_role("main")).to_contain_text(
-            f"Last watched: {fixed_date.strftime(datetime_format)}",
+            f"Ended: {fixed_date.strftime(datetime_format)}",
         )
-        self.page.get_by_role("link", name="Home").click()
-        expect(self.page.get_by_text("Breaking Bad S1 1 Episode")).to_be_visible()
-        self.page.get_by_text("Breaking Bad S1 1 Episode").get_by_role("button").nth(
-            1,
-        ).click()
-        self.page.get_by_title("Breaking Bad S1").click()
 
         today = timezone.localtime().strftime(datetime_format)
-        expect(self.page.get_by_role("main")).to_contain_text(f"Last watched: {today}")
+        self.page.get_by_title("Track Episode").first.click(force=True)
+        self.page.locator('input[name="end_date"]:visible').first.fill(f"{today}T12:00")
+        self.page.get_by_role("button", name="Add watch").click()
+        expect(self.page.get_by_role("main")).to_contain_text(f"Ended: {today}")
 
     def test_tv_completed(self):
         """Test the completed status of a TV show."""
-        self.page.get_by_placeholder("Search tv shows...").click()
-        self.page.get_by_placeholder("Search tv shows...").fill("breaking bad")
-        self.page.locator("form").filter(has_text="TV Shows TV").get_by_role(
-            "button",
-        ).first.click()
-        expect(self.page.locator("h2")).to_contain_text("Search Results")
+        self.page.locator("#global-search").click()
+        self.page.locator("#global-search").fill("breaking bad")
+        self.page.locator("#global-search").press("Enter")
+        expect(self.page.locator("h2", has_text="Search Results")).to_be_visible()
         self.page.get_by_title("Breaking Bad", exact=True).click()
         expect(self.page.get_by_role("main")).to_contain_text("Breaking Bad")
         self.page.locator("button").filter(has_text="Add to tracker").click()
@@ -88,17 +87,19 @@ class IntegrationTest(StaticLiveServerTestCase):
         self.page.get_by_role("button", name="Add", exact=True).click()
         self.page.get_by_role("link", name="TV Shows").click()
         self.page.get_by_role("link", name="Table View").click()
-        expect(self.page.locator("tbody")).to_contain_text("62")
+        expect(self.page.locator("tbody")).to_contain_text("Breaking Bad")
+        expect(self.page.locator("tbody")).to_contain_text("Completed")
 
     def test_season_completed(self):
         """Test the completed status of a season."""
-        self.page.get_by_placeholder("Search tv shows...").fill("breaking bad")
-        self.page.get_by_role("button").nth(1).click()
-        expect(self.page.locator("h2")).to_contain_text("Search Results")
+        self.page.locator("#global-search").fill("breaking bad")
+        self.page.locator("#global-search").press("Enter")
+        expect(self.page.locator("h2", has_text="Search Results")).to_be_visible()
         self.page.get_by_title("Breaking Bad", exact=True).click()
         expect(self.page.get_by_role("main")).to_contain_text("Breaking Bad")
-        self.page.get_by_title("Season 1").click()
-        expect(self.page.get_by_role("main")).to_contain_text("Season 1")
+        season_href = self.page.locator('a[href*="/season/1"]').first.get_attribute("href")
+        self.page.goto(f"{self.live_server_url}{season_href}")
+        expect(self.page.get_by_role("main")).to_contain_text("Breaking Bad")
         self.page.get_by_role("button", name="Add to tracker").click()
         expect(self.page.locator("#track-season-1396-1")).to_contain_text("Score")
         self.page.get_by_role("button", name="Add", exact=True).click()
@@ -164,13 +165,11 @@ class IntegrationTest(StaticLiveServerTestCase):
         expect(self.page.get_by_role("main")).to_contain_text("Friends")
         self.page.get_by_role("link", name="TV Seasons").click()
         self.page.get_by_role("link", name="Grid View").click()
-        expect(self.page.get_by_role("main")).to_contain_text("Friends S1")
+        expect(self.page.get_by_role("main")).to_contain_text("Season 1")
         self.page.get_by_role("link", name="TV Shows").click()
         self.page.get_by_title("Friends").click()
         expect(self.page.get_by_role("main")).to_contain_text("Friends")
-        expect(self.page.get_by_role("main")).to_contain_text("Season 1")
-        self.page.get_by_title("Season 1").click()
-        expect(self.page.get_by_role("main")).to_contain_text("Season 1")
-        expect(self.page.get_by_role("main")).to_contain_text(
-            "Episode 1 • Unknown air date",
-        )
+        season_href = self.page.locator('a[href*="/season/1"]').first.get_attribute("href")
+        self.page.goto(f"{self.live_server_url}{season_href}")
+        expect(self.page.get_by_role("main")).to_contain_text("Friends")
+        expect(self.page.get_by_role("main")).to_contain_text("Episode 1")

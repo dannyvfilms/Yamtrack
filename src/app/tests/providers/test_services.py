@@ -18,6 +18,12 @@ mock_path = Path(__file__).resolve().parent.parent / "mock_data"
 class ServicesTests(TestCase):
     """Test the services module functions."""
 
+    def assert_metadata_title_payload(self, payload, expected_title):
+        """Assert merged metadata payload keeps canonical title fields."""
+        self.assertEqual(payload["title"], expected_title)
+        self.assertIn("original_title", payload)
+        self.assertIn("localized_title", payload)
+
     @patch("app.providers.services.session.get")
     def test_api_request_get(self, mock_get):
         """Test the api_request function with GET method."""
@@ -258,7 +264,7 @@ class ServicesTests(TestCase):
             Sources.MAL.value,
         )
 
-        self.assertEqual(result, {"title": "Test Anime"})
+        self.assert_metadata_title_payload(result, "Test Anime")
 
         mock_anime.assert_called_once_with("1")
 
@@ -273,7 +279,7 @@ class ServicesTests(TestCase):
             Sources.MANGAUPDATES.value,
         )
 
-        self.assertEqual(result, {"title": "Test Manga"})
+        self.assert_metadata_title_payload(result, "Test Manga")
 
         mock_manga.assert_called_once_with("1")
 
@@ -288,7 +294,7 @@ class ServicesTests(TestCase):
             Sources.MAL.value,
         )
 
-        self.assertEqual(result, {"title": "Test Manga"})
+        self.assert_metadata_title_payload(result, "Test Manga")
 
         mock_manga.assert_called_once_with("1")
 
@@ -303,7 +309,7 @@ class ServicesTests(TestCase):
             Sources.TMDB.value,
         )
 
-        self.assertEqual(result, {"title": "Test TV"})
+        self.assert_metadata_title_payload(result, "Test TV")
 
         mock_tv.assert_called_once_with("1")
 
@@ -319,7 +325,7 @@ class ServicesTests(TestCase):
             season_numbers=[1, 2],
         )
 
-        self.assertEqual(result, {"title": "Test TV with Seasons"})
+        self.assert_metadata_title_payload(result, "Test TV with Seasons")
 
         mock_tv_with_seasons.assert_called_once_with("1", [1, 2])
 
@@ -337,7 +343,7 @@ class ServicesTests(TestCase):
             season_numbers=[1],
         )
 
-        self.assertEqual(result, {"title": "Test Season"})
+        self.assert_metadata_title_payload(result, "Test Season")
 
         mock_tv_with_seasons.assert_called_once_with("1", [1])
 
@@ -354,7 +360,7 @@ class ServicesTests(TestCase):
             episode_number="2",
         )
 
-        self.assertEqual(result, {"title": "Test Episode"})
+        self.assert_metadata_title_payload(result, "Test Episode")
 
         mock_episode.assert_called_once_with("1", 1, "2")
 
@@ -369,7 +375,7 @@ class ServicesTests(TestCase):
             Sources.TMDB.value,
         )
 
-        self.assertEqual(result, {"title": "Test Movie"})
+        self.assert_metadata_title_payload(result, "Test Movie")
 
         mock_movie.assert_called_once_with("1")
 
@@ -384,7 +390,7 @@ class ServicesTests(TestCase):
             Sources.IGDB.value,
         )
 
-        self.assertEqual(result, {"title": "Test Game"})
+        self.assert_metadata_title_payload(result, "Test Game")
 
         mock_game.assert_called_once_with("1")
 
@@ -399,7 +405,7 @@ class ServicesTests(TestCase):
             Sources.COMICVINE.value,
         )
 
-        self.assertEqual(result, {"title": "Test Comic"})
+        self.assert_metadata_title_payload(result, "Test Comic")
 
         mock_comic.assert_called_once_with("1")
 
@@ -414,7 +420,7 @@ class ServicesTests(TestCase):
             Sources.OPENLIBRARY.value,
         )
 
-        self.assertEqual(result, {"title": "Test Book"})
+        self.assert_metadata_title_payload(result, "Test Book")
 
         mock_book.assert_called_once_with("1")
 
@@ -429,7 +435,7 @@ class ServicesTests(TestCase):
             Sources.MANUAL.value,
         )
 
-        self.assertEqual(result, {"title": "Test Manual"})
+        self.assert_metadata_title_payload(result, "Test Manual")
 
         mock_metadata.assert_called_once_with("1", MediaTypes.MOVIE.value)
 
@@ -445,7 +451,7 @@ class ServicesTests(TestCase):
             season_numbers=[1],
         )
 
-        self.assertEqual(result, {"title": "Test Manual Season"})
+        self.assert_metadata_title_payload(result, "Test Manual Season")
 
         mock_season.assert_called_once_with("1", 1)
 
@@ -462,7 +468,7 @@ class ServicesTests(TestCase):
             episode_number="2",
         )
 
-        self.assertEqual(result, {"title": "Test Manual Episode"})
+        self.assert_metadata_title_payload(result, "Test Manual Episode")
 
         mock_episode.assert_called_once_with("1", 1, "2")
 
@@ -470,7 +476,9 @@ class ServicesTests(TestCase):
     def test_get_media_metadata_tmdb_episode_not_found(self, mock_episode):
         """Test the get_media_metadata function for TMDB episodes that don't exist."""
         mock_response = type(
-            "Response", (), {"status_code": 404, "text": "Episode not found"},
+            "Response",
+            (),
+            {"status_code": 404, "text": "Episode not found"},
         )()
         mock_error = type("Error", (), {"response": mock_response})()
         mock_episode.side_effect = services.ProviderAPIError(
@@ -491,7 +499,6 @@ class ServicesTests(TestCase):
 
         mock_episode.assert_called_once_with("1396", 1, "3")
 
-
     @patch("app.providers.hardcover.book")
     def test_get_media_metadata_hardcover_book(self, mock_book):
         """Test the get_media_metadata function for books from Hardcover."""
@@ -503,7 +510,7 @@ class ServicesTests(TestCase):
             Sources.HARDCOVER.value,
         )
 
-        self.assertEqual(result, {"title": "Test Hardcover Book"})
+        self.assert_metadata_title_payload(result, "Test Hardcover Book")
 
         mock_book.assert_called_once_with("1")
 

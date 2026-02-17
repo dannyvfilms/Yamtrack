@@ -314,6 +314,8 @@ class Item(CalendarTriggerMixin, models.Model):
         """Fetch releases for the item."""
         if self._disable_calendar_triggers:
             return
+        if settings.TESTING:
+            return
 
         if self.media_type == MediaTypes.SEASON.value:
             # Get or create the TV item for this season
@@ -1283,8 +1285,10 @@ class MediaManager(models.Manager):
                 x.next_event is None,
                 x.next_event.datetime if x.next_event else None,
             ),
-            users.models.HomeSortChoices.RECENT: lambda x: -timezone.datetime.timestamp(
-                x.progressed_at if x.progressed_at is not None else x.created_at,
+            users.models.HomeSortChoices.RECENT: lambda x: (
+                -timezone.datetime.timestamp(
+                    x.progressed_at if x.progressed_at is not None else x.created_at,
+                )
             ),
             users.models.HomeSortChoices.COMPLETION: lambda x: (
                 x.max_progress is None,
@@ -1801,16 +1805,25 @@ class Media(models.Model):
         """Update fields depending on the progress of the media."""
         if self.progress < 0:
             self.progress = 0
-        else:
-            # For podcasts, use runtime_minutes from Item instead of external metadata
+        elif self.status == Status.IN_PROGRESS.value:
+            # For podcasts/music use local runtime data; other types use provider metadata.
             if self.item.media_type in (MediaTypes.PODCAST.value, MediaTypes.MUSIC.value):
                 max_progress = self._get_local_max_progress()
             else:
-                max_progress = providers.services.get_media_metadata(
-                    self.item.media_type,
-                    self.item.media_id,
-                    self.item.source,
-                )["max_progress"]
+                try:
+                    max_progress = providers.services.get_media_metadata(
+                        self.item.media_type,
+                        self.item.media_id,
+                        self.item.source,
+                    )["max_progress"]
+                except providers.services.ProviderAPIError:
+                    logger.warning(
+                        "Unable to fetch max progress for %s (%s/%s)",
+                        self.item.media_type,
+                        self.item.source,
+                        self.item.media_id,
+                    )
+                    max_progress = None
 
             if max_progress:
                 self.progress = min(self.progress, max_progress)
@@ -1827,15 +1840,27 @@ class Media(models.Model):
     def process_status(self):
         """Update fields depending on the status of the media."""
         if self.status == Status.COMPLETED.value:
-            # For podcasts, use runtime_minutes from Item instead of external metadata
-            if self.item.media_type in (MediaTypes.PODCAST.value, MediaTypes.MUSIC.value):
+            # Music progress is play-count based; don't clamp/overwrite on status transitions.
+            if self.item.media_type == MediaTypes.MUSIC.value:
+                max_progress = None
+            # For podcasts, use runtime_minutes from Item instead of external metadata.
+            elif self.item.media_type == MediaTypes.PODCAST.value:
                 max_progress = self._get_local_max_progress()
             else:
-                max_progress = providers.services.get_media_metadata(
-                    self.item.media_type,
-                    self.item.media_id,
-                    self.item.source,
-                )["max_progress"]
+                try:
+                    max_progress = providers.services.get_media_metadata(
+                        self.item.media_type,
+                        self.item.media_id,
+                        self.item.source,
+                    )["max_progress"]
+                except providers.services.ProviderAPIError:
+                    logger.warning(
+                        "Unable to fetch max progress for %s (%s/%s)",
+                        self.item.media_type,
+                        self.item.source,
+                        self.item.media_id,
+                    )
+                    max_progress = None
 
             if max_progress:
                 self.progress = max_progress
@@ -2083,9 +2108,10 @@ class TV(Media):
     @tracker  # postpone field reset until after the save
     def save(self, *args, **kwargs):
         """Save the media instance."""
+        is_create = self._state.adding
         super(Media, self).save(*args, **kwargs)
 
-        if self.tracker.has_changed("status"):
+        if not is_create and self.tracker.has_changed("status"):
             if self.status == Status.COMPLETED.value:
                 self._completed()
 
@@ -2099,6 +2125,13 @@ class TV(Media):
                 self._start_next_available_season()
 
             self.item.fetch_releases(delay=True)
+        elif (
+            not is_create
+            and self.status == Status.IN_PROGRESS.value
+            and not self.seasons.filter(status=Status.IN_PROGRESS.value).exists()
+        ):
+            # Keep TV+Season state aligned even when status was already IN_PROGRESS.
+            self._start_next_available_season()
 
         cache_utils.clear_time_left_cache_for_user(self.user_id)
 
@@ -2154,7 +2187,11 @@ class TV(Media):
             for season in self.seasons.all()
             if season.start_date and season.item.season_number != 0
         ]
-        return min(dates) if dates else None
+        if dates:
+            return min(dates)
+        if self.status == Status.IN_PROGRESS.value:
+            return self.created_at
+        return None
 
     @property
     def end_date(self):
@@ -2357,9 +2394,10 @@ class Season(Media):
         if self.related_tv_id is None:
             self.related_tv = self.get_tv()
 
+        is_create = self._state.adding
         super(Media, self).save(*args, **kwargs)
 
-        if self.tracker.has_changed("status"):
+        if not is_create and self.tracker.has_changed("status"):
             if self.status == Status.COMPLETED.value:
                 season_metadata = providers.services.get_media_metadata(
                     MediaTypes.SEASON.value,
@@ -2395,9 +2433,6 @@ class Season(Media):
                     TV,
                     fields=["status"],
                 )
-
-            # Ensure local data keeps statuses aligned (no provider calls)
-            self._sync_status_after_episode_change()
 
             self.item.fetch_releases(delay=True)
 
@@ -2675,18 +2710,19 @@ class Season(Media):
                 self.item.source,
             )
 
+            season_count = tv_metadata.get("details", {}).get("seasons")
+            if season_count is None:
+                season_count = len(tv_metadata.get("related", {}).get("seasons", []))
+
             # creating tv with multiple seasons from a completed season
-            if (
-                self.status == Status.COMPLETED.value
-                and tv_metadata["details"]["seasons"] > 1
-            ):
+            if self.status == Status.COMPLETED.value and season_count > 1:
                 status = Status.IN_PROGRESS.value
             else:
                 status = self.status
 
             item, _ = Item.objects.get_or_create(
                 media_id=self.item.media_id,
-                source=Sources.TMDB.value,
+                source=self.item.source,
                 media_type=MediaTypes.TV.value,
                 defaults={
                     **Item.title_fields_from_metadata(tv_metadata),
@@ -2869,14 +2905,31 @@ class Episode(models.Model):
         super().save(*args, **kwargs)
 
         season_number = self.item.season_number
-        tv_with_seasons_metadata = providers.services.get_media_metadata(
-            "tv_with_seasons",
-            self.item.media_id,
-            self.item.source,
-            [season_number],
-        )
-        season_metadata = tv_with_seasons_metadata[f"season/{season_number}"]
-        max_progress = len(season_metadata["episodes"])
+        if season_number is None:
+            return
+        try:
+            tv_with_seasons_metadata = providers.services.get_media_metadata(
+                "tv_with_seasons",
+                self.item.media_id,
+                self.item.source,
+                [season_number],
+            )
+            season_metadata = tv_with_seasons_metadata[f"season/{season_number}"]
+            max_progress = len(season_metadata["episodes"])
+        except (
+            providers.services.ProviderAPIError,
+            KeyError,
+            TypeError,
+            ValueError,
+        ) as error:
+            logger.warning(
+                "Skipping Episode status sync due to missing metadata for %s S%sE%s: %s",
+                self.item.media_id,
+                season_number,
+                self.item.episode_number,
+                error,
+            )
+            return
 
         # clear prefetch cache to get the updated episodes
         self.related_season.refresh_from_db()

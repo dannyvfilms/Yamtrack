@@ -9,12 +9,14 @@ from app.models import (
     CreditRoleType,
     Item,
     ItemPersonCredit,
+    ItemStudioCredit,
     MediaTypes,
     Movie,
     Person,
     PersonGender,
     Sources,
     Status,
+    Studio,
 )
 from users.models import DateFormatChoices
 
@@ -46,6 +48,12 @@ class PersonDetailViewTests(TestCase):
             role_type=CreditRoleType.CAST.value,
             role="Lead",
         )
+        studio = Studio.objects.create(
+            source=Sources.TMDB.value,
+            source_studio_id="1",
+            name="Test Studio",
+        )
+        ItemStudioCredit.objects.create(item=self.item, studio=studio)
         Movie.objects.create(
             item=self.item,
             user=self.user,

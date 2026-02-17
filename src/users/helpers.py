@@ -5,8 +5,6 @@ from datetime import datetime
 import croniter
 from django.utils import timezone
 
-import integrations
-
 
 def get_client_ip(request):
     """Return the client's IP address.
@@ -37,9 +35,11 @@ def process_task_result(task):
         task.summary = "This task is currently running."
         task.errors = None
     elif task.status == "SUCCESS":
+        import integrations.tasks as integration_tasks
+
         result_json = json.loads(task.result)
         # Split by the error indicator
-        parts = result_json.split(integrations.tasks.ERROR_TITLE.strip())
+        parts = result_json.split(integration_tasks.ERROR_TITLE.strip())
         if len(parts) > 1:
             # We have both summary and errors
             task.summary = parts[0].strip()

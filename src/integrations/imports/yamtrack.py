@@ -9,6 +9,7 @@ from django.utils.dateparse import parse_datetime
 
 import app
 from app import config
+from app import forms as app_forms
 from app.models import MediaTypes, Sources, Status
 from app.providers import services
 from app.templatetags import app_tags
@@ -254,7 +255,7 @@ class YamtrackImporter:
             instance.user = self.user
 
         row["item"] = item
-        form = app.forms.get_form_class(media_type)(
+        form = app_forms.get_form_class(media_type)(
             row,
             instance=instance,
         )

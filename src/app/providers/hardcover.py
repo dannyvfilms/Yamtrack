@@ -250,7 +250,7 @@ def get_edition_details(edition_data):
     return {
         "format": edition_data.get("edition_format") or "Unknown",
         "publisher": publisher_name,
-        "isbn": isbns if isbns else None,
+        "isbn": isbns or None,
         "release_date": edition_data.get("release_date"),
     }
 

@@ -167,12 +167,20 @@ def movie(media_id):
             if response.get("belongs_to_collection", {}) is not None and (
                 collection_id := response.get("belongs_to_collection", {}).get("id")
             ):
-                collection_response = services.api_request(
-                    Sources.TMDB.value,
-                    "GET",
-                    f"{base_url}/collection/{collection_id}",
-                    params={**base_params},
-                )
+                try:
+                    collection_response = services.api_request(
+                        Sources.TMDB.value,
+                        "GET",
+                        f"{base_url}/collection/{collection_id}",
+                        params={**base_params},
+                    )
+                except requests.exceptions.HTTPError as error:
+                    logger.warning(
+                        "Failed to fetch TMDB collection %s: %s",
+                        collection_id,
+                        error,
+                    )
+                    collection_response = {}
             else:
                 collection_response = {}
         except requests.exceptions.HTTPError as error:

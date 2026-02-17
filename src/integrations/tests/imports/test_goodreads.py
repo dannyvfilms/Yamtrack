@@ -45,5 +45,3 @@ class ImportGoodreads(TestCase):
         read_book = Book.objects.get(status=Status.IN_PROGRESS.value)
         self.assertEqual(read_book.status, Status.IN_PROGRESS.value)
         self.assertEqual(read_book.progress, 0)
-
-

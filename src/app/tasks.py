@@ -2421,48 +2421,12 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
                                 runtime_minutes,
                             )
                 else:
-                    try:
-                        episode_item = Item.objects.create(
-                            media_id=media_id,
-                            source=source,
-                            media_type=MediaTypes.EPISODE.value,
-                            season_number=season_number,
-                            episode_number=episode_number,
-                            title=title,
-                            image=image,
-                            runtime_minutes=runtime_minutes,
-                        )
-                        updated_count += 1
-                        updated_items.append(episode_item)
-                        _record_backfill_success(episode_item, MetadataBackfillField.RUNTIME)
-                        logger.info(
-                            "Updated runtime for %s S%sE%s: %s minutes",
-                            episode_item.title,
-                            season_number,
-                            episode_number,
-                            runtime_minutes,
-                        )
-                    except IntegrityError:
-                        existing_item = Item.objects.filter(
-                            media_id=media_id,
-                            source=source,
-                            media_type=MediaTypes.EPISODE.value,
-                            season_number=season_number,
-                            episode_number=episode_number,
-                        ).first()
-                        if existing_item and existing_item.runtime_minutes != runtime_minutes:
-                            existing_item.runtime_minutes = runtime_minutes
-                            existing_item.save(update_fields=["runtime_minutes"])
-                            updated_count += 1
-                            updated_items.append(existing_item)
-                            _record_backfill_success(existing_item, MetadataBackfillField.RUNTIME)
-                            logger.info(
-                                "Updated runtime for %s S%sE%s: %s minutes",
-                                existing_item.title,
-                                season_number,
-                                episode_number,
-                                runtime_minutes,
-                            )
+                    logger.debug(
+                        "Skipping runtime backfill item creation for %s S%sE%s; only existing episodes are updated",
+                        media_id,
+                        season_number,
+                        episode_number,
+                    )
 
                 missing_by_number.pop(episode_number, None)
 

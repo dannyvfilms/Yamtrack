@@ -247,5 +247,3 @@ class EpisodeStatusTests(TestCase):
 
         self.tv.refresh_from_db()
         self.assertEqual(self.tv.status, Status.PLANNING.value)
-
-

@@ -482,24 +482,6 @@ class User(AbstractUser):
         choices=MediaStatusChoices.choices,
     )
 
-    # Media type preferences: Board Games
-    boardgame_enabled = models.BooleanField(default=True)
-    boardgame_layout = models.CharField(
-        max_length=20,
-        default=LayoutChoices.GRID,
-        choices=LayoutChoices.choices,
-    )
-    boardgame_sort = models.CharField(
-        max_length=20,
-        default=MediaSortChoices.SCORE,
-        choices=MediaSortChoices.choices,
-    )
-    boardgame_status = models.CharField(
-        max_length=20,
-        default=MediaStatusChoices.ALL,
-        choices=MediaStatusChoices.choices,
-    )
-
     # UI preferences
     clickable_media_cards = models.BooleanField(
         default=False,
@@ -531,18 +513,21 @@ class User(AbstractUser):
         choices=RatingScaleChoices.choices,
         help_text="Preferred rating scale for user scores",
     )
-    date_format = models.CharField(
-        max_length=20,
-        default=DateFormatChoices.ISO_8601,
-        choices=DateFormatChoices.choices,
-        help_text="Preferred date display format",
+
+    # Progress visibility preferences
+    progress_bar = models.BooleanField(
+        default=True,
+        help_text="Show progress bar",
     )
-    time_format = models.CharField(
-        max_length=20,
-        default=TimeFormatChoices.HH_MM,
-        choices=TimeFormatChoices.choices,
-        help_text="Preferred time display format",
+    hide_completed_recommendations = models.BooleanField(
+        default=False,
+        help_text="Hide completed media in recommendations",
     )
+    hide_zero_rating = models.BooleanField(
+        default=False,
+        help_text="Hide zero ratings from media cards",
+    )
+
     # Calendar preferences
     calendar_layout = models.CharField(
         max_length=20,
@@ -1091,10 +1076,13 @@ class User(AbstractUser):
         """Return a list of active media type values based on user preferences."""
         enabled_types = self.get_enabled_media_types()
 
-        # Add season if TV is enabled (and season isn't already in the list)
+        # Legacy fallback: if a historical user record predates `season_enabled`
+        # but has TV enabled, include seasons as active.
+        season_pref = getattr(self, "season_enabled", None)
         if (
             MediaTypes.TV.value in enabled_types
             and MediaTypes.SEASON.value not in enabled_types
+            and season_pref is None
         ):
             enabled_types.insert(0, MediaTypes.SEASON.value)
 

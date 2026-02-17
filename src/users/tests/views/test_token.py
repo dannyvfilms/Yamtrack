@@ -48,5 +48,3 @@ class RegenerateTokenTests(TestCase):
         messages = list(get_messages(response.wsgi_request))
         self.assertEqual(len(messages), 1)
         self.assertIn("Token regenerated successfully", str(messages[0]))
-
-

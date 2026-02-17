@@ -1,9 +1,10 @@
 from datetime import timedelta
 
-from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
+
 from app.models import (
     CreditRoleType,
     Episode,
@@ -46,6 +47,7 @@ class HistoryModalViewTests(TestCase):
         self.movie.status = Status.COMPLETED.value
         self.movie.progress = 1
         self.movie.score = 8
+        self.movie.end_date = timezone.now()
         self.movie.save()
 
     def test_history_modal_view(self):
@@ -99,6 +101,7 @@ class DeleteHistoryRecordViewTests(TestCase):
         self.movie.status = Status.COMPLETED.value
         self.movie.progress = 1
         self.movie.score = 8
+        self.movie.end_date = timezone.now()
         self.movie.save()
 
         self.history = self.movie.history.first()
@@ -140,6 +143,20 @@ class DeleteHistoryRecordViewTests(TestCase):
         self.assertFalse(
             Movie.objects.filter(id=self.movie.id).exists(),
         )
+
+    def test_delete_nonexistent_history_record(self):
+        """Deleting a missing history record should return 404."""
+        response = self.client.delete(
+            reverse(
+                "delete_history_record",
+                kwargs={
+                    "media_type": MediaTypes.MOVIE.value,
+                    "history_id": 999999,
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 404)
 
 
 class HistoryViewPersonFilterTests(TestCase):

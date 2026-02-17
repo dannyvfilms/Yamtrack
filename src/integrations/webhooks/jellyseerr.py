@@ -190,10 +190,11 @@ class JellyseerrWebhookProcessor:
     def _get_or_create_user_media(self, user, item, media_type, desired_status):
         defaults = {"status": desired_status}
 
-        if desired_status == Status.IN_PROGRESS.value:
-            defaults["start_date"] = timezone.now().replace(second=0, microsecond=0)
-
         model = Movie if media_type == MediaTypes.MOVIE.value else TV
+        model_fields = {field.name for field in model._meta.fields}
+
+        if desired_status == Status.IN_PROGRESS.value and "start_date" in model_fields:
+            defaults["start_date"] = timezone.now().replace(second=0, microsecond=0)
 
         try:
             media_obj, _created = model.objects.get_or_create(

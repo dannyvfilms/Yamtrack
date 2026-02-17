@@ -944,3 +944,18 @@ def exclude_home_media_types(items, media_types_str):
         item for item in items
         if getattr(getattr(item, "item", None), "media_type", "").lower() not in media_types
     ]
+
+
+@register.filter
+def show_media_score(rating, user):
+    """Return whether a media rating should be displayed for the user."""
+    if rating is None:
+        return False
+
+    try:
+        rating_value = float(rating)
+    except (TypeError, ValueError):
+        return True
+
+    hide_zero = getattr(user, "hide_zero_rating", False)
+    return not hide_zero or rating_value > 0

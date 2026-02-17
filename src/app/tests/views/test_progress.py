@@ -157,5 +157,3 @@ class ProgressEditAnime(TestCase):
         )
 
         self.assertEqual(Anime.objects.get(item__media_id="1").progress, 1)
-
-

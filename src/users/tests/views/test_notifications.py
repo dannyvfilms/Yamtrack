@@ -217,5 +217,3 @@ class NotificationTests(TestCase):
         messages = list(get_messages(response.wsgi_request))
         self.assertEqual(len(messages), 1)
         self.assertIn("Failed", str(messages[0]))
-
-

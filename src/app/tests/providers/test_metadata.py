@@ -68,23 +68,23 @@ class Metadata(TestCase):
         """Test the metadata method for TV shows."""
         response = tmdb.tv("1396")
         self.assertEqual(response["title"], "Breaking Bad")
-        self.assertEqual(response["details"]["first_air_date"], "2008-01-20")
+        self.assertEqual(response["details"]["first_air_date"].date().isoformat(), "2008-01-20")
         self.assertEqual(response["details"]["status"], "Ended")
         self.assertEqual(response["details"]["episodes"], 62)
 
     def test_tmdb_process_episodes(self):
         """Test the process_episodes function for TMDB episodes."""
         Item.objects.create(
-            media_id="5",
-            source=Sources.TMDB.value,
+            media_id="proc-5",
+            source=Sources.MANUAL.value,
             media_type=MediaTypes.TV.value,
             title="Process Episodes Test",
             image="http://example.com/process.jpg",
         )
 
         Item.objects.create(
-            media_id="5",
-            source=Sources.TMDB.value,
+            media_id="proc-5",
+            source=Sources.MANUAL.value,
             media_type=MediaTypes.SEASON.value,
             title="Process Episodes Test",
             image="http://example.com/process_s1.jpg",
@@ -93,8 +93,8 @@ class Metadata(TestCase):
 
         for i in range(1, 4):
             Item.objects.create(
-                media_id="5",
-                source=Sources.TMDB.value,
+                media_id="proc-5",
+                source=Sources.MANUAL.value,
                 media_type=MediaTypes.EPISODE.value,
                 title=f"Process Episode {i}",
                 image=f"http://example.com/process_s1e{i}.jpg",
@@ -133,8 +133,8 @@ class Metadata(TestCase):
             ],
         }
         episode_item_1 = Item.objects.get(
-            media_id="5",
-            source=Sources.TMDB.value,
+            media_id="proc-5",
+            source=Sources.MANUAL.value,
             media_type=MediaTypes.EPISODE.value,
             season_number=1,
             episode_number=1,
@@ -142,8 +142,8 @@ class Metadata(TestCase):
         episode_1 = Episode(item=episode_item_1)
 
         episode_item_2 = Item.objects.get(
-            media_id="5",
-            source=Sources.TMDB.value,
+            media_id="proc-5",
+            source=Sources.MANUAL.value,
             media_type=MediaTypes.EPISODE.value,
             season_number=1,
             episode_number=2,
@@ -159,17 +159,17 @@ class Metadata(TestCase):
 
         self.assertEqual(result[0]["episode_number"], 1)
         self.assertEqual(result[0]["title"], "Pilot")
-        self.assertEqual(result[0]["air_date"], "2008-01-20")
+        self.assertEqual(result[0]["air_date"].date().isoformat(), "2008-01-20")
         self.assertTrue(result[0]["history"], [episode_1])
 
         self.assertEqual(result[1]["episode_number"], 2)
         self.assertEqual(result[1]["title"], "Cat's in the Bag...")
-        self.assertEqual(result[1]["air_date"], "2008-01-27")
+        self.assertEqual(result[1]["air_date"].date().isoformat(), "2008-01-27")
         self.assertTrue(result[1]["history"], [episode_2])
 
         self.assertEqual(result[2]["episode_number"], 3)
         self.assertEqual(result[2]["title"], "...And the Bag's in the River")
-        self.assertEqual(result[2]["air_date"], "2008-02-10")
+        self.assertEqual(result[2]["air_date"].date().isoformat(), "2008-02-10")
         self.assertFalse(result[2]["history"], [])
 
     @patch("app.providers.tmdb.tv_with_seasons")
@@ -314,7 +314,7 @@ class Metadata(TestCase):
         """Test the metadata method for movies."""
         response = tmdb.movie("10494")
         self.assertEqual(response["title"], "Perfect Blue")
-        self.assertEqual(response["details"]["release_date"], "1998-02-28")
+        self.assertEqual(response["details"]["release_date"].date().isoformat(), "1998-02-28")
         self.assertEqual(response["details"]["status"], "Released")
 
     @patch("requests.Session.get")

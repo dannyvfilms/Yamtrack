@@ -2,6 +2,7 @@ import logging
 import time
 
 import requests
+from defusedxml import ElementTree
 from django.conf import settings
 from pyrate_limiter import RedisBucket
 from redis import ConnectionPool
@@ -77,6 +78,10 @@ session.mount(
     "https://api.hardcover.app/v1/graphql",
     LimiterAdapter(per_minute=50),
 )
+session.mount(
+    "https://boardgamegeek.com/xmlapi2",
+    LimiterAdapter(per_second=2),
+)
 
 
 class ProviderAPIError(Exception):
@@ -132,8 +137,29 @@ def raise_not_found_error(provider, media_id, media_type="item"):
     raise ProviderAPIError(provider, mock_error, error_msg)
 
 
-def api_request(provider, method, url, params=None, data=None, headers=None):
-    """Make a request to the API and return the response as a dictionary."""
+def api_request(
+    provider,
+    method,
+    url,
+    params=None,
+    data=None,
+    headers=None,
+    response_format="json",
+):
+    """Make a request to the API and return the response.
+
+    Args:
+        provider: Provider identifier for error messages
+        method: HTTP method ("GET" or "POST")
+        url: Request URL
+        params: Query params for GET, JSON body for POST
+        data: Raw data for POST
+        headers: Request headers
+        response_format: "json" (default) or "xml" for XML parsing
+
+    Returns:
+        Parsed JSON dict or ElementTree for XML
+    """
     try:
         request_kwargs = {
             "url": url,
@@ -151,6 +177,9 @@ def api_request(provider, method, url, params=None, data=None, headers=None):
 
         response = request_func(**request_kwargs)
         response.raise_for_status()
+
+        if response_format == "xml":
+            return ElementTree.fromstring(response.text)
         return response.json()
 
     except requests.exceptions.HTTPError as error:
@@ -170,6 +199,7 @@ def api_request(provider, method, url, params=None, data=None, headers=None):
                 params=params,
                 data=data,
                 headers=headers,
+                response_format=response_format,
             )
 
         raise error from None
@@ -238,9 +268,11 @@ def get_media_metadata(
 
     metadata_retrievers = {
         MediaTypes.ANIME.value: lambda: mal.anime(media_id),
-        MediaTypes.MANGA.value: lambda: mangaupdates.manga(media_id)
-        if source == Sources.MANGAUPDATES.value
-        else mal.manga(media_id),
+        MediaTypes.MANGA.value: lambda: (
+            mangaupdates.manga(media_id)
+            if source == Sources.MANGAUPDATES.value
+            else mal.manga(media_id)
+        ),
         MediaTypes.TV.value: lambda: tmdb.tv(media_id),
         "tv_with_seasons": lambda: tmdb.tv_with_seasons(media_id, season_numbers),
         MediaTypes.SEASON.value: tmdb_season_metadata,
@@ -251,11 +283,13 @@ def get_media_metadata(
         ),
         MediaTypes.MOVIE.value: lambda: tmdb.movie(media_id),
         MediaTypes.GAME.value: lambda: igdb.game(media_id),
-        MediaTypes.BOOK.value: lambda: hardcover.book(media_id)
-        if source == Sources.HARDCOVER.value
-        else openlibrary.book(media_id),
+        MediaTypes.BOOK.value: lambda: (
+            hardcover.book(media_id)
+            if source == Sources.HARDCOVER.value
+            else openlibrary.book(media_id)
+        ),
         MediaTypes.COMIC.value: lambda: comicvine.comic(media_id),
-        MediaTypes.BOARDGAME.value: lambda: bgg.metadata(media_id),
+        MediaTypes.BOARDGAME.value: lambda: bgg.boardgame(media_id),
         MediaTypes.MUSIC.value: lambda: musicbrainz.recording(media_id),
         MediaTypes.PODCAST.value: lambda s=source: {
             "max_progress": None,
@@ -297,36 +331,37 @@ def get_media_metadata(
 
 def search(media_type, query, page, source=None):
     """Search for media based on the query and return the results."""
-    if media_type == MediaTypes.MANGA.value:
-        if source == Sources.MANGAUPDATES.value:
-            response = mangaupdates.search(query, page)
-        else:
-            response = mal.search(media_type, query, page)
-    elif media_type == MediaTypes.ANIME.value:
-        response = mal.search(media_type, query, page)
-    elif media_type in (MediaTypes.TV.value, MediaTypes.MOVIE.value):
-        response = tmdb.search(media_type, query, page)
-    elif media_type in (MediaTypes.SEASON.value, MediaTypes.EPISODE.value):
-        response = tmdb.search(MediaTypes.TV.value, query, page)
-    elif media_type == MediaTypes.GAME.value:
-        response = igdb.search(query, page)
-    elif media_type == MediaTypes.BOOK.value:
-        if source == Sources.OPENLIBRARY.value:
-            response = openlibrary.search(query, page)
-        else:
-            response = hardcover.search(query, page)
-    elif media_type == MediaTypes.COMIC.value:
-        response = comicvine.search(query, page)
-    elif media_type == MediaTypes.BOARDGAME.value:
-        response = bgg.search(query, page)
-    elif media_type == MediaTypes.MUSIC.value:
-        response = musicbrainz.search_combined(query, page)
-    elif media_type == MediaTypes.PODCAST.value:
-        if source == Sources.POCKETCASTS.value:
-            response = pocketcasts.search(query, page)
-        else:
-            # Return empty results for other sources (if any are added in future)
-            from app import helpers
-            response = helpers.format_search_response(page, settings.PER_PAGE, 0, [])
+    search_handlers = {
+        MediaTypes.MANGA.value: lambda: (
+            mangaupdates.search(query, page)
+            if source == Sources.MANGAUPDATES.value
+            else mal.search(media_type, query, page)
+        ),
+        MediaTypes.ANIME.value: lambda: mal.search(media_type, query, page),
+        MediaTypes.TV.value: lambda: tmdb.search(media_type, query, page),
+        MediaTypes.MOVIE.value: lambda: tmdb.search(media_type, query, page),
+        MediaTypes.SEASON.value: lambda: tmdb.search(MediaTypes.TV.value, query, page),
+        MediaTypes.EPISODE.value: lambda: tmdb.search(MediaTypes.TV.value, query, page),
+        MediaTypes.GAME.value: lambda: igdb.search(query, page),
+        MediaTypes.BOOK.value: lambda: (
+            openlibrary.search(query, page)
+            if source == Sources.OPENLIBRARY.value
+            else hardcover.search(query, page)
+        ),
+        MediaTypes.COMIC.value: lambda: comicvine.search(query, page),
+        MediaTypes.BOARDGAME.value: lambda: bgg.search(query, page),
+        MediaTypes.MUSIC.value: lambda: musicbrainz.search_combined(query, page),
+        MediaTypes.PODCAST.value: lambda: (
+            pocketcasts.search(query, page)
+            if source == Sources.POCKETCASTS.value
+            else None
+        ),
+    }
+    response = search_handlers[media_type]()
 
+    if response is None:
+        # Return empty results for non-pocketcasts podcast sources.
+        from app import helpers
+
+        return helpers.format_search_response(page, settings.PER_PAGE, 0, [])
     return response

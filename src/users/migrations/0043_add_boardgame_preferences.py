@@ -111,8 +111,4 @@ class Migration(migrations.Migration):
             model_name='user',
             constraint=models.CheckConstraint(condition=models.Q(('last_search_type__in', ['tv', 'movie', 'anime', 'manga', 'game', 'book', 'comic', 'boardgame'])), name='last_search_type_valid'),
         ),
-        AddConstraintIfNotExists(
-            model_name='user',
-            constraint=models.CheckConstraint(condition=models.Q(('home_sort__in', ['upcoming', 'recent', 'completion', 'episodes_left', 'title'])), name='home_sort_valid'),
-        ),
     ]

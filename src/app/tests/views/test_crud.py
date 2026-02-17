@@ -353,7 +353,7 @@ class DeleteMedia(TestCase):
             title="Friends",
             image="http://example.com/image.jpg",
             season_number=1,
-            episode_number=1,
+            episode_number=99,
         )
         self.episode = Episode.objects.create(
             item=self.item_ep,

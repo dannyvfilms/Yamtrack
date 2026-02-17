@@ -6,6 +6,7 @@ from django.utils import timezone
 
 from app.models import Item, MediaTypes, Sources
 from app.templatetags import app_tags
+from users.models import DateFormatChoices, TimeFormatChoices
 
 
 class AppTagsTests(TestCase):
@@ -125,7 +126,11 @@ class AppTagsTests(TestCase):
             singular = label
 
             # Special cases that don't change in plural form
-            if singular.lower() in [MediaTypes.ANIME.value, MediaTypes.MANGA.value]:
+            if singular.lower() in [
+                MediaTypes.ANIME.value,
+                MediaTypes.MANGA.value,
+                MediaTypes.MUSIC.value,
+            ]:
                 expected = singular
             else:
                 expected = f"{singular}s"
@@ -184,8 +189,8 @@ class AppTagsTests(TestCase):
         """Test the natural_day filter."""
         # Create mock user with date_format preference
         mock_user = MagicMock()
-        mock_user.date_format = "Y-m-d"
-        mock_user.time_format = "H:i"
+        mock_user.date_format = DateFormatChoices.ISO_8601
+        mock_user.time_format = TimeFormatChoices.HH_MM
 
         # Mock current date to March 29, 2025
         with patch("django.utils.timezone.now") as mock_now:
@@ -365,3 +370,22 @@ class AppTagsTests(TestCase):
                 self.assertTrue(len(inactive_result) > 0)
             except KeyError:
                 self.fail(f"icon raised KeyError for {media_type}")
+
+    def test_show_media_score(self):
+        """Test if we should show media rating or not."""
+        # Create mock users
+        mock_user_show = MagicMock()
+        mock_user_show.hide_zero_rating = False
+
+        mock_user_hide = MagicMock()
+        mock_user_hide.hide_zero_rating = True
+
+        # With hide_zero_rating=False, show all non-None scores
+        self.assertTrue(app_tags.show_media_score(1, mock_user_show))
+        self.assertTrue(app_tags.show_media_score(0, mock_user_show))
+        self.assertFalse(app_tags.show_media_score(None, mock_user_show))
+
+        # With hide_zero_rating=True, hide zero scores
+        self.assertTrue(app_tags.show_media_score(1, mock_user_hide))
+        self.assertFalse(app_tags.show_media_score(0, mock_user_hide))
+        self.assertFalse(app_tags.show_media_score(None, mock_user_hide))

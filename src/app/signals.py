@@ -2,6 +2,7 @@ import logging
 
 from celery import states
 from celery.signals import before_task_publish
+from django.conf import settings
 from django.db.backends.signals import connection_created
 from django.db.models.signals import post_delete, post_save
 from django.db.utils import OperationalError
@@ -515,6 +516,10 @@ def schedule_runtime_backfill_on_item_save(
 
     relevant_fields = {"runtime_minutes", "genres", "media_id", "source", "media_type"}
     if not created and update_fields is not None and not relevant_fields.intersection(update_fields):
+        return
+
+    # Avoid eager backfill task execution during tests; tests call backfill helpers directly.
+    if settings.TESTING:
         return
 
     runtime_missing = instance.runtime_minutes in (None, 0) and instance.runtime_minutes != 999999

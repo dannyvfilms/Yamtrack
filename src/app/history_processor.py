@@ -116,7 +116,7 @@ def collect_creation_changes(new_record, history_model, media_type, user):
     for field in history_model._meta.get_fields():
         if (
             field.name.startswith("history_")
-            or field.name in ["id"]
+            or field.name == "id"
             or not hasattr(new_record, field.attname)
             or (field.name == "progress" and media_type == MediaTypes.MOVIE.value)
         ):

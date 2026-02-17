@@ -516,10 +516,13 @@ class ReloadCalendarTaskTests(TestCase):
         self.assertEqual(result["437"][0]["episode"], 1)
         self.assertEqual(result["437"][0]["airingAt"], 870739200)
 
+    @patch("events.calendar.services.get_media_metadata")
     @patch("events.calendar.services.api_request")
-    def test_get_anime_schedule_bulk_no_airing_schedule(self, mock_api_request):
+    def test_get_anime_schedule_bulk_no_airing_schedule(
+        self, mock_api_request, mock_get_media_metadata
+    ):
         """Test get_anime_schedule_bulk with no airing schedule."""
-        # Setup mock
+        # Setup mock for AniList API
         mock_api_request.return_value = {
             "data": {
                 "Page": {
@@ -534,6 +537,12 @@ class ReloadCalendarTaskTests(TestCase):
                     ],
                 },
             },
+        }
+
+        # Setup mock for MAL metadata fallback
+        mock_get_media_metadata.return_value = {
+            "max_progress": 2,
+            "details": {"end_date": "1997-08-12"},
         }
 
         # Call the function
@@ -699,6 +708,7 @@ class ReloadCalendarTaskTests(TestCase):
         """Test process_other with invalid date."""
         # Setup mock with invalid date
         mock_get_media_metadata.return_value = {
+            "max_progress": None,
             "details": {
                 "release_date": "invalid-date",
             },
@@ -716,6 +726,7 @@ class ReloadCalendarTaskTests(TestCase):
         """Test process_other with no date."""
         # Setup mock with no date
         mock_get_media_metadata.return_value = {
+            "max_progress": None,
             "details": {},
         }
 
@@ -763,10 +774,13 @@ class ReloadCalendarTaskTests(TestCase):
         expected_date = datetime.datetime.fromtimestamp(870739200, tz=ZoneInfo("UTC"))
         self.assertEqual(events_bulk[0].datetime, expected_date)
 
+    @patch("events.calendar.services.get_media_metadata")
     @patch("events.calendar.services.api_request")
-    def test_process_anime_bulk_no_matching_anime_anilist(self, mock_api_request):
+    def test_process_anime_bulk_no_matching_anime_anilist(
+        self, mock_api_request, mock_get_media_metadata
+    ):
         """Test process_anime_bulk with no matching anime in Anilist."""
-        # Setup mock with empty media list
+        # Setup mock with empty media list (AniList returns nothing)
         mock_api_request.return_value = {
             "data": {
                 "Page": {
@@ -774,6 +788,11 @@ class ReloadCalendarTaskTests(TestCase):
                     "media": [],  # No matching anime
                 },
             },
+        }
+        # Mock the fallback to MAL via get_media_metadata
+        mock_get_media_metadata.return_value = {
+            "max_progress": 1,
+            "details": {"end_date": "1997-08-05"},
         }
 
         # Process anime items

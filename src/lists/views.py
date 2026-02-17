@@ -512,16 +512,20 @@ def list_detail(request, list_id):
 
     # Get and process request parameters
     # Handle anonymous users by using default values
+    valid_sorts = [choice[0] for choice in ListDetailSortChoices.choices]
+    valid_statuses = [choice[0] for choice in MediaStatusChoices.choices]
+
     if request.user.is_authenticated:
         sort_by = request.user.update_preference(
             "list_detail_sort",
             request.GET.get("sort"),
         )
+        if sort_by not in valid_sorts:
+            sort_by = "date_added"
     else:
         # Default sort for anonymous users
         sort_by = request.GET.get("sort", "date_added")
         # Validate sort choice
-        valid_sorts = [choice[0] for choice in ListDetailSortChoices.choices]
         if sort_by not in valid_sorts:
             sort_by = "date_added"
 
@@ -530,9 +534,10 @@ def list_detail(request, list_id):
             "list_detail_status",
             request.GET.get("status"),
         )
+        if status_filter not in valid_statuses:
+            status_filter = MediaStatusChoices.ALL
     else:
         status_filter = request.GET.get("status", MediaStatusChoices.ALL)
-        valid_statuses = [choice[0] for choice in MediaStatusChoices.choices]
         if status_filter not in valid_statuses:
             status_filter = MediaStatusChoices.ALL
 

@@ -110,6 +110,8 @@ def record_music_playback(event: MusicPlaybackEvent) -> Music | None:
         metadata = _resolve_metadata(event)
     _validate_against_payload(metadata, event)
 
+    force_cover_prefetch = False
+
     with transaction.atomic():
         artist, artist_created, artist_mbid_attached = _get_or_create_artist(metadata)
         album, album_created = _get_or_create_album(metadata, artist)
@@ -129,6 +131,7 @@ def record_music_playback(event: MusicPlaybackEvent) -> Music | None:
                 try:
                     sync_artist_discography(artist, force=artist_created or artist_mbid_attached)
                     dedupe_artist_albums(artist)
+                    force_cover_prefetch = True
                 except Exception as exc:  # pragma: no cover - defensive network guard
                     logger.debug("Failed discography sync for %s: %s", artist, exc)
         elif not getattr(event, "defer_cover_prefetch", False):
@@ -136,7 +139,7 @@ def record_music_playback(event: MusicPlaybackEvent) -> Music | None:
 
         if not getattr(event, "defer_cover_prefetch", False):
             _maybe_refresh_album_cover(album)
-            _prefetch_missing_covers(artist)
+            _prefetch_missing_covers(artist, force=force_cover_prefetch)
 
     return music
 
@@ -921,7 +924,8 @@ def _update_music_entry(
             "album": album,
             "track": track,
             "status": Status.COMPLETED.value,
-            "progress": 1,
+            # Start at 0 so the first completed event increments to 1.
+            "progress": 0,
             "start_date": played_at,
             "end_date": played_at,
         }
@@ -1161,19 +1165,22 @@ def _maybe_refresh_album_cover(album: Album) -> None:
         logger.debug("Cover art refresh failed for album %s: %s", album.id, exc)
 
 
-def _prefetch_missing_covers(artist: Artist) -> None:
+def _prefetch_missing_covers(artist: Artist, force: bool = False) -> None:
     """Fetch cover art for all missing albums for the artist."""
     if not artist:
         return
-    needs_art = Album.objects.filter(
+    albums_with_mbids = Album.objects.filter(
         artist=artist,
-    ).filter(
-        models.Q(image="") | models.Q(image=settings.IMG_NONE),
     ).filter(
         models.Q(musicbrainz_release_id__isnull=False)
         | models.Q(musicbrainz_release_group_id__isnull=False),
     )
-    if not needs_art.exists():
+    if not albums_with_mbids.exists():
+        return
+
+    if not force and not albums_with_mbids.filter(
+        models.Q(image="") | models.Q(image=settings.IMG_NONE),
+    ).exists():
         return
     try:
         prefetch_album_covers(artist, limit=None)  # fetch all missing art for this artist

@@ -9,6 +9,8 @@ from app import live_playback
 from app.models import MediaTypes, Sources
 from app.providers import services
 from app.services import music_scrobble
+from integrations import plex as plex_api
+from integrations import tasks
 
 from .base import BaseWebhookProcessor
 
@@ -674,8 +676,7 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
 
     def _fetch_rating_from_plex_api(self, user, rating_key, payload):
         """Fetch user rating from Plex API as fallback if not in webhook payload."""
-        from integrations import plex as plex_api
-        
+
         plex_account = getattr(user, "plex_account", None)
         if not plex_account or not plex_account.plex_token:
             logger.debug("No Plex account found for user %s", user.username)
@@ -996,9 +997,6 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
 
     def _queue_collection_metadata_update(self, payload, user, item):
         """Queue collection metadata update task for Plex webhook."""
-        from integrations import tasks
-        from integrations import plex as plex_api
-
         # Get Plex account
         plex_account = getattr(user, "plex_account", None)
         if not plex_account or not plex_account.plex_token:

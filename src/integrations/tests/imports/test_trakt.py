@@ -48,6 +48,10 @@ class ImportTrakt(TestCase):
         self.assertEqual(len(trakt_importer.bulk_media[MediaTypes.MOVIE.value]), 1)
         self.assertEqual(len(trakt_importer.media_instances[MediaTypes.MOVIE.value]), 1)
 
+        # Verify progress is set to 1 for completed movies
+        movie_obj = trakt_importer.bulk_media[MediaTypes.MOVIE.value][0]
+        self.assertEqual(movie_obj.progress, 1)
+
         # Process the same movie again to test repeat handling
         trakt_importer.process_watched_movie(movie_entry)
         self.assertEqual(len(trakt_importer.bulk_media[MediaTypes.MOVIE.value]), 2)
@@ -269,5 +273,3 @@ class ImportTrakt(TestCase):
         self.assertEqual(importer.username, "testuser")
         self.assertIsNone(importer.refresh_token)
         self.assertEqual(importer.mode, "new")
-
-

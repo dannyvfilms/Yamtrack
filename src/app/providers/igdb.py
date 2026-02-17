@@ -63,18 +63,30 @@ def handle_error(error):
 
     # Invalid keys
     if status_code in (requests.codes.bad_request, requests.codes.forbidden):
-        try:
-            details = error_json.get("message").capitalize()
-            if details:
-                raise services.ProviderAPIError(
-                    Sources.IGDB.value,
-                    error,
-                    details,
-                )
-        # it can be other error format
-        except (KeyError, AttributeError):
-            logger.exception("Unexpected error format from IGDB API")
-            raise services.ProviderAPIError(Sources.IGDB.value, error) from None
+        details = None
+
+        if isinstance(error_json, dict):
+            raw_message = error_json.get("message")
+            if isinstance(raw_message, str) and raw_message:
+                details = raw_message.capitalize()
+        elif isinstance(error_json, list):
+            first_error = error_json[0] if error_json else None
+            if isinstance(first_error, dict):
+                for key in ("message", "cause", "title"):
+                    raw_message = first_error.get(key)
+                    if isinstance(raw_message, str) and raw_message:
+                        details = raw_message.capitalize()
+                        break
+
+        if details:
+            raise services.ProviderAPIError(
+                Sources.IGDB.value,
+                error,
+                details,
+            )
+
+        logger.exception("Unexpected error format from IGDB API")
+        raise services.ProviderAPIError(Sources.IGDB.value, error) from None
 
     raise services.ProviderAPIError(Sources.IGDB.value, error)
 
@@ -231,7 +243,7 @@ def search(query, page):
                     Sources.IGDB.value,
                     "POST",
                     url,
-                    data=data,
+                    data=multiquery,
                     headers=headers,
                 )
 
@@ -286,6 +298,7 @@ def game(media_id):
             "standalone_expansions.name,standalone_expansions.cover.image_id,"
             "expanded_games.name,expanded_games.cover.image_id,"
             "similar_games.name,similar_games.cover.image_id,"
+            "dlcs.name,dlcs.cover.image_id,"
             "external_games.url,websites.url;"
             f"where id = {media_id};"
         )
@@ -318,7 +331,9 @@ def game(media_id):
         # Check if response is empty (no results found)
         if not response:
             services.raise_not_found_error(
-                Sources.IGDB.value, media_id, "game",
+                Sources.IGDB.value,
+                media_id,
+                "game",
             )
 
         response = response[0]  # response is a list with a single element
@@ -346,6 +361,7 @@ def game(media_id):
                 "remasters": get_related(response.get("remasters")),
                 "remakes": get_related(response.get("remakes")),
                 "expansions": get_related(response.get("expansions")),
+                "dlcs": get_related(response.get("dlcs")),
                 "standalone_expansions": get_related(
                     response.get("standalone_expansions"),
                 ),

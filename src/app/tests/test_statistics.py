@@ -711,7 +711,7 @@ class StatisticsTests(TestCase):
             MediaTypes.ANIME.value: Anime.objects.filter(user=self.user),
         }
 
-        score_distribution, top_rated = statistics.get_score_distribution(user_media)
+        score_distribution, top_rated, _ = statistics.get_score_distribution(user_media)
 
         # Check structure
         self.assertIn("labels", score_distribution)

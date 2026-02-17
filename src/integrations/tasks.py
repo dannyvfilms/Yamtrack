@@ -13,6 +13,7 @@ from app.helpers import is_item_collected
 from app.mixins import disable_fetch_releases
 from app.models import CollectionEntry, Item, MediaTypes
 from app.templatetags import app_tags
+from integrations import plex as plex_api
 from integrations.imports import (
     anilist,
     goodreads,

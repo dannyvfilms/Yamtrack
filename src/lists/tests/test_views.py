@@ -473,6 +473,7 @@ class ListDetailViewTests(TestCase):
         self.assertEqual(response.context["current_sort"], "media_type")
 
         # Test rating sorting
+        mock_update_preference.side_effect = None
         mock_update_preference.return_value = "rating"
         response = self.client.get(
             reverse("list_detail", args=[self.custom_list.id]) + "?sort=rating",
