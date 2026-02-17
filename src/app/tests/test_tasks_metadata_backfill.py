@@ -113,3 +113,35 @@ class MetadataBackfillTaskTests(TestCase):
             never_fetched.media_id,
             never_fetched.source,
         )
+
+    def test_genre_backfill_queryset_includes_reading_media_types(self):
+        book = Item.objects.create(
+            media_id="book-no-genre",
+            source=Sources.OPENLIBRARY.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Book",
+            image="https://example.com/book.jpg",
+            genres=[],
+        )
+        comic = Item.objects.create(
+            media_id="comic-no-genre",
+            source=Sources.COMICVINE.value,
+            media_type=MediaTypes.COMIC.value,
+            title="Comic",
+            image="https://example.com/comic.jpg",
+            genres=[],
+        )
+        manga = Item.objects.create(
+            media_id="manga-no-genre",
+            source=Sources.MANGAUPDATES.value,
+            media_type=MediaTypes.MANGA.value,
+            title="Manga",
+            image="https://example.com/manga.jpg",
+            genres=[],
+        )
+
+        queued_ids = set(tasks._genre_items_queryset().values_list("id", flat=True))
+
+        self.assertIn(book.id, queued_ids)
+        self.assertIn(comic.id, queued_ids)
+        self.assertIn(manga.id, queued_ids)

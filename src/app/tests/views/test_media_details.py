@@ -1,15 +1,20 @@
+from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 
+from app import statistics_cache
 from app.models import (
+    Book,
     Item,
     MediaTypes,
     PodcastEpisode,
     PodcastShow,
     Sources,
+    Status,
 )
 from integrations.models import PlexAccount
 
@@ -293,3 +298,60 @@ class MediaDetailsViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Episode Two")
+
+    @patch("app.tasks.enqueue_genre_backfill_items", return_value=1)
+    def test_media_details_genre_update_refreshes_reading_top_genres(self, _mock_enqueue_genre_backfill_items):
+        """Saving reading genres from details should invalidate stale day caches."""
+        played_at = timezone.now() - timedelta(days=30)
+        item = Item.objects.create(
+            media_id="377938",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.BOOK.value,
+            title="The Lord of the Rings",
+            image="http://example.com/book.jpg",
+            genres=[],
+        )
+        Book.objects.create(
+            user=self.user,
+            item=item,
+            status=Status.COMPLETED.value,
+            progress=900,
+            start_date=played_at,
+            end_date=played_at,
+        )
+
+        statistics_cache.build_stats_for_day(self.user.id, played_at.date())
+        stale_stats = statistics_cache.refresh_statistics_cache(self.user.id, "All Time")
+        self.assertEqual(stale_stats["book_consumption"]["top_genres"], [])
+
+        with patch("app.providers.services.get_media_metadata") as mock_get_metadata:
+            mock_get_metadata.return_value = {
+                "media_id": "377938",
+                "title": "The Lord of the Rings",
+                "media_type": MediaTypes.BOOK.value,
+                "source": Sources.MANUAL.value,
+                "image": "http://example.com/book.jpg",
+                "max_progress": 1178,
+                "genres": ["Fantasy"],
+                "details": {"number_of_pages": 1178},
+            }
+            response = self.client.get(
+                reverse(
+                    "media_details",
+                    kwargs={
+                        "source": Sources.MANUAL.value,
+                        "media_type": MediaTypes.BOOK.value,
+                        "media_id": "377938",
+                        "title": "the-lord-of-the-rings",
+                    },
+                ),
+            )
+        self.assertEqual(response.status_code, 200)
+
+        item.refresh_from_db()
+        self.assertEqual(item.genres, ["Fantasy"])
+
+        statistics_cache.invalidate_statistics_cache(self.user.id, "All Time")
+        refreshed_stats = statistics_cache.refresh_statistics_cache(self.user.id, "All Time")
+        refreshed_genres = [entry["name"] for entry in refreshed_stats["book_consumption"]["top_genres"]]
+        self.assertIn("Fantasy", refreshed_genres)

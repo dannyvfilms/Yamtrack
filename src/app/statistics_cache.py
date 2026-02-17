@@ -1800,6 +1800,12 @@ def build_stats_for_day(user_id: int, day_value):
             total_minutes = row.get("progress") or 0
             if total_minutes <= 0:
                 continue
+            genres = stats._coerce_genre_list(row.get("item__genres"))
+            if not genres:
+                missing_genres += 1
+                item_id = row.get("item_id")
+                if item_id:
+                    missing_genre_item_ids.add(item_id)
             start_dt = row.get("start_date")
             end_dt = row.get("end_date")
             start_local = stats._localize_datetime(start_dt).date() if start_dt else None
@@ -1816,7 +1822,7 @@ def build_stats_for_day(user_id: int, day_value):
                     plays=1 if play_dt and day_start <= play_dt < day_end else 0,
                     activity_dt=activity_dt,
                 )
-                for genre in stats._coerce_genre_list(row.get("item__genres")):
+                for genre in genres:
                     key = str(genre).title()
                     reading_genres[media_type][key]["units"] += per_day
                     reading_genres[media_type][key]["name"] = key
@@ -1834,7 +1840,7 @@ def build_stats_for_day(user_id: int, day_value):
                         plays=1 if play_dt and day_start <= play_dt < day_end else 0,
                         activity_dt=activity_dt,
                     )
-                    for genre in stats._coerce_genre_list(row.get("item__genres")):
+                    for genre in genres:
                         key = str(genre).title()
                         reading_genres[media_type][key]["units"] += total_minutes
                         reading_genres[media_type][key]["name"] = key

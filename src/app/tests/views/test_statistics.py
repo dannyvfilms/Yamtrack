@@ -1,5 +1,6 @@
 from datetime import timedelta
-from unittest.mock import patch
+import re
+from unittest.mock import call, patch
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
@@ -166,6 +167,19 @@ class StatisticsViewTests(TestCase):
         self.assertIn("Adventure", book_genres)
         self.assertIn("Sci-Fi", comic_genres)
         self.assertIn("Shonen", manga_genres)
+        response_body = response.content.decode()
+        self.assertRegex(
+            response_body,
+            r"·\s*\d+\s+books?",
+        )
+        self.assertRegex(
+            response_body,
+            r"·\s*\d+\s+comics?",
+        )
+        self.assertRegex(
+            response_body,
+            r"·\s*\d+\s+manga\b",
+        )
 
     @patch("app.providers.services.get_media_metadata")
     def test_statistics_view_returns_empty_reading_top_genres_when_items_have_no_genres(self, mock_get_metadata):
@@ -232,6 +246,41 @@ class StatisticsViewTests(TestCase):
         self.assertEqual(response.context["book_consumption"]["top_genres"], [])
         self.assertEqual(response.context["comic_consumption"]["top_genres"], [])
         self.assertEqual(response.context["manga_consumption"]["top_genres"], [])
+
+    @patch("app.models.providers.services.get_media_metadata")
+    @patch("app.tasks.enqueue_genre_backfill_items")
+    def test_build_history_day_enqueues_genre_backfill_for_reading_entries_with_missing_genres(
+        self,
+        mock_enqueue_genre_backfill_items,
+        _mock_get_media_metadata,
+    ):
+        """Reading entries missing genres should enqueue genre backfill item IDs."""
+        _mock_get_media_metadata.return_value = {"max_progress": 120}
+        cache.clear()
+        now = timezone.now()
+        book_item = Item.objects.create(
+            media_id="book-missing-genre",
+            source=Sources.OPENLIBRARY.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Book Missing Genre",
+            image="http://example.com/book-missing-genre.jpg",
+            genres=[],
+        )
+        Book.objects.create(
+            user=self.user,
+            item=book_item,
+            status=Status.IN_PROGRESS.value,
+            progress=120,
+            start_date=now - timedelta(days=1),
+            end_date=now,
+        )
+
+        statistics_cache.build_stats_for_day(self.user.id, now.date())
+
+        self.assertIn(
+            call([book_item.id]),
+            mock_enqueue_genre_backfill_items.mock_calls,
+        )
 
     @patch("app.statistics_cache._aggregate_top_talent")
     def test_statistics_all_time_uses_aware_boundaries_for_top_talent(self, mock_top_talent):

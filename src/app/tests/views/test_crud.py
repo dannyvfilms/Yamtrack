@@ -9,8 +9,11 @@ from django.utils import timezone
 from app.models import (
     TV,
     Anime,
+    Book,
+    Comic,
     Episode,
     Item,
+    Manga,
     MediaTypes,
     Movie,
     Season,
@@ -144,6 +147,89 @@ class CreateMedia(TestCase):
         )
         self.assertIsNotNone(item.release_datetime)
         self.assertEqual(item.release_datetime.date(), timezone.datetime(1999, 3, 31).date())
+
+    @patch("app.models.providers.services.get_media_metadata")
+    @patch("app.views.services.get_media_metadata")
+    def test_create_reading_media_persists_metadata_genres(self, view_metadata_mock, model_metadata_mock):
+        metadata_by_media = {
+            (MediaTypes.BOOK.value, "book-genre", Sources.OPENLIBRARY.value): {
+                "title": "Book Genre",
+                "original_title": "Book Genre",
+                "localized_title": "Book Genre",
+                "image": "http://example.com/book.jpg",
+                "max_progress": 320,
+                "genres": ["Fantasy", "Adventure"],
+                "details": {"number_of_pages": 320},
+            },
+            (MediaTypes.COMIC.value, "comic-genre", Sources.COMICVINE.value): {
+                "title": "Comic Genre",
+                "original_title": "Comic Genre",
+                "localized_title": "Comic Genre",
+                "image": "http://example.com/comic.jpg",
+                "max_progress": 50,
+                "genres": ["Sci-Fi"],
+                "details": {},
+            },
+            (MediaTypes.MANGA.value, "manga-genre", Sources.MANGAUPDATES.value): {
+                "title": "Manga Genre",
+                "original_title": "Manga Genre",
+                "localized_title": "Manga Genre",
+                "image": "http://example.com/manga.jpg",
+                "max_progress": 120,
+                "genres": ["Shonen"],
+                "details": {},
+            },
+        }
+
+        def _metadata_side_effect(media_type, media_id, source, *_args, **_kwargs):
+            return metadata_by_media[(media_type, media_id, source)]
+
+        view_metadata_mock.side_effect = _metadata_side_effect
+        model_metadata_mock.side_effect = _metadata_side_effect
+
+        cases = [
+            (
+                MediaTypes.BOOK.value,
+                Sources.OPENLIBRARY.value,
+                "book-genre",
+                ["Fantasy", "Adventure"],
+                Book,
+            ),
+            (
+                MediaTypes.COMIC.value,
+                Sources.COMICVINE.value,
+                "comic-genre",
+                ["Sci-Fi"],
+                Comic,
+            ),
+            (
+                MediaTypes.MANGA.value,
+                Sources.MANGAUPDATES.value,
+                "manga-genre",
+                ["Shonen"],
+                Manga,
+            ),
+        ]
+
+        for media_type, source, media_id, expected_genres, model in cases:
+            self.client.post(
+                reverse("media_save"),
+                {
+                    "media_id": media_id,
+                    "source": source,
+                    "media_type": media_type,
+                    "status": Status.PLANNING.value,
+                    "progress": 0,
+                },
+            )
+
+            item = Item.objects.get(
+                media_id=media_id,
+                source=source,
+                media_type=media_type,
+            )
+            self.assertEqual(item.genres, expected_genres)
+            self.assertTrue(model.objects.filter(item=item, user=self.user).exists())
 
     def test_create_season(self):
         """Test the creation of a Season through views."""

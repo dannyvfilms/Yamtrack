@@ -35,7 +35,17 @@ RUNTIME_BACKFILL_EPISODES_QUEUE_KEY = "runtime_backfill_episode_queue"
 RUNTIME_BACKFILL_EPISODES_SCHEDULED_KEY = "runtime_backfill_episode_scheduled"
 RUNTIME_BACKFILL_EPISODES_LOCK_PREFIX = "runtime_backfill_episode_lock:"
 RUNTIME_BACKFILL_EPISODES_LOCK_TTL = 60 * 5  # 5 minutes
-GENRE_BACKFILL_SOURCES = ("tmdb", "mal", "simkl", "igdb", "bgg")
+GENRE_BACKFILL_SOURCES = (
+    Sources.TMDB.value,
+    Sources.MAL.value,
+    "simkl",
+    Sources.IGDB.value,
+    Sources.BGG.value,
+    Sources.OPENLIBRARY.value,
+    Sources.HARDCOVER.value,
+    Sources.COMICVINE.value,
+    Sources.MANGAUPDATES.value,
+)
 GENRE_BACKFILL_QUEUE_TTL = 60 * 60  # 1 hour
 GENRE_BACKFILL_ITEMS_QUEUE_KEY = "genre_backfill_items_queue"
 GENRE_BACKFILL_ITEMS_SCHEDULED_KEY = "genre_backfill_items_scheduled"
@@ -186,7 +196,7 @@ def _add_user_day_key(user_day_keys, user_id, day_key):
 
 
 def _collect_backfill_day_keys(items, field: str):
-    from app.models import Anime, Episode, Game, Movie
+    from app.models import Anime, Book, Comic, Episode, Game, Manga, Movie
 
     user_day_keys = defaultdict(set)
     if not items:
@@ -229,6 +239,28 @@ def _collect_backfill_day_keys(items, field: str):
 
         if item.media_type == MediaTypes.GAME.value:
             rows = Game.objects.filter(item_id=item.id).values(
+                "user_id",
+                "start_date",
+                "end_date",
+                "created_at",
+            )
+            for row in rows:
+                activity_dt = row.get("end_date") or row.get("start_date") or row.get("created_at")
+                _add_user_day_key(user_day_keys, row.get("user_id"), history_cache.history_day_key(activity_dt))
+            continue
+
+        if item.media_type in (
+            MediaTypes.BOOK.value,
+            MediaTypes.COMIC.value,
+            MediaTypes.MANGA.value,
+        ):
+            reading_models = {
+                MediaTypes.BOOK.value: Book,
+                MediaTypes.COMIC.value: Comic,
+                MediaTypes.MANGA.value: Manga,
+            }
+            model = reading_models[item.media_type]
+            rows = model.objects.filter(item_id=item.id).values(
                 "user_id",
                 "start_date",
                 "end_date",
@@ -325,6 +357,9 @@ def _genre_items_queryset():
             MediaTypes.ANIME.value,
             MediaTypes.GAME.value,
             MediaTypes.BOARDGAME.value,
+            MediaTypes.BOOK.value,
+            MediaTypes.COMIC.value,
+            MediaTypes.MANGA.value,
         ],
         source__in=GENRE_BACKFILL_SOURCES,
     )

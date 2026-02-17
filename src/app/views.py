@@ -127,6 +127,22 @@ class _DummyPodcastWrapper:
         return False
 
 
+def _collect_reading_activity_day_keys(entries):
+    """Return history/statistics day keys touched by reading entries."""
+    day_keys = set()
+    for entry in entries or []:
+        start_dt = getattr(entry, "start_date", None)
+        end_dt = getattr(entry, "end_date", None)
+        if start_dt and end_dt:
+            range_keys = history_cache.history_day_keys_for_range(start_dt, end_dt)
+            day_keys.update(range_keys or [])
+        activity_dt = end_dt or start_dt or getattr(entry, "created_at", None)
+        activity_key = history_cache.history_day_key(activity_dt)
+        if activity_key:
+            day_keys.add(activity_key)
+    return sorted(day_keys)
+
+
 @require_GET
 def home(request):
     """Home page with media items in progress."""
@@ -2622,17 +2638,44 @@ def media_details(
     if (
         not public_view
         and current_instance
-        and media_type == MediaTypes.GAME.value
+        and media_type in (
+            MediaTypes.GAME.value,
+            MediaTypes.BOOK.value,
+            MediaTypes.COMIC.value,
+            MediaTypes.MANGA.value,
+        )
         and isinstance(media_metadata, dict)
     ):
-        metadata_genres = stats._coerce_genre_list(media_metadata.get("genres"))
+        details = media_metadata.get("details", {})
+        if not isinstance(details, dict):
+            details = {}
+        metadata_genres = stats._coerce_genre_list(
+            media_metadata.get("genres")
+            or details.get("genres")
+            or media_metadata.get("genre")
+            or details.get("genre"),
+        )
         item = current_instance.item
+        genres_updated = False
         if item:
             if metadata_genres and metadata_genres != item.genres:
                 item.genres = metadata_genres
                 item.save(update_fields=["genres"])
+                genres_updated = True
             elif item.genres:
                 media_metadata["genres"] = item.genres
+        if genres_updated and media_type in (
+            MediaTypes.BOOK.value,
+            MediaTypes.COMIC.value,
+            MediaTypes.MANGA.value,
+        ):
+            day_keys = _collect_reading_activity_day_keys(user_medias)
+            if day_keys:
+                statistics_cache.invalidate_statistics_days(
+                    request.user.id,
+                    day_values=day_keys,
+                    reason="details_genres_update",
+                )
 
     play_stats = None
     if (
@@ -4267,12 +4310,16 @@ def media_save(request):
             # Try max_progress first (from metadata dict), then details.number_of_pages
             number_of_pages = metadata.get("max_progress") or metadata.get("details", {}).get("number_of_pages")
 
-        metadata_genres = []
-        if media_type == MediaTypes.GAME.value:
-            metadata_genres = stats._coerce_genre_list(metadata.get("genres"))
-
         # Extract all metadata fields from details
         details = metadata.get("details", {})
+        if not isinstance(details, dict):
+            details = {}
+        metadata_genres = stats._coerce_genre_list(
+            metadata.get("genres")
+            or details.get("genres")
+            or metadata.get("genre")
+            or details.get("genre"),
+        )
 
         country = details.get("country", "")
         languages = details.get("languages", [])

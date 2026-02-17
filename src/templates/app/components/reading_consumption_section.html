@@ -154,7 +154,16 @@
               </div>
               <div class="flex-1 min-w-0">
                 <p class="text-sm font-medium text-white truncate">{{ genre.name }}</p>
-                <p class="text-xs text-gray-500 truncate">{{ genre.formatted_units }}</p>
+                <p class="text-xs text-gray-500 truncate">
+                  {{ genre.formatted_units }}
+                  {% if media_type_slug == 'book' %}
+                    · {{ genre.titles }} book{{ genre.titles|pluralize }}
+                  {% elif media_type_slug == 'comic' %}
+                    · {{ genre.titles }} comic{{ genre.titles|pluralize }}
+                  {% elif media_type_slug == 'manga' %}
+                    · {{ genre.titles }} manga
+                  {% endif %}
+                </p>
               </div>
             </a>
             {% endfor %}
