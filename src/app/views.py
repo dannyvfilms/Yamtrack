@@ -16,7 +16,7 @@ from django.core.cache import cache
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.paginator import EmptyPage, Paginator
 from django.db import IntegrityError
-from django.db.models import Min, prefetch_related_objects
+from django.db.models import F, Min, prefetch_related_objects
 from django.db.models.functions import ExtractDay, ExtractMonth
 from django.db.utils import OperationalError
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
@@ -1063,7 +1063,12 @@ def media_list(request, media_type):
         elif rating_filter == "not_rated":
             show_trackers = show_trackers.filter(score__isnull=True)
 
-        if release_filter != "all":
+        should_annotate_first_published = (
+            release_filter != "all"
+            or sort_filter == "release_date"
+            or layout == "table"
+        )
+        if should_annotate_first_published:
             show_trackers = show_trackers.annotate(first_published=Min("show__episodes__published"))
 
         # Apply sorting
@@ -1072,6 +1077,16 @@ def media_list(request, media_type):
             show_trackers = show_trackers.order_by(order)
         elif sort_filter == "score":
             order = "score" if direction == "asc" else "-score"
+            show_trackers = show_trackers.order_by(order, "show__title")
+        elif sort_filter == "release_date":
+            order = (
+                F("first_published").asc(nulls_last=True)
+                if direction == "asc"
+                else F("first_published").desc(nulls_last=True)
+            )
+            show_trackers = show_trackers.order_by(order, "show__title")
+        elif sort_filter == "date_added":
+            order = "created_at" if direction == "asc" else "-created_at"
             show_trackers = show_trackers.order_by(order, "show__title")
         elif sort_filter == "start_date":
             order = "start_date" if direction == "asc" else "-start_date"
@@ -1162,6 +1177,7 @@ def media_list(request, media_type):
                 self.notes = tracker.notes
                 self.created_at = tracker.created_at
                 self.updated_at = tracker.updated_at
+                self.release_datetime = getattr(tracker, "first_published", None)
 
                 # Create a mock Item for compatibility with media components
                 # Use the show's podcast_uuid as media_id for routing
@@ -1242,7 +1258,12 @@ def media_list(request, media_type):
         elif rating_filter == "not_rated":
             artist_trackers = artist_trackers.filter(score__isnull=True)
 
-        if release_filter != "all":
+        should_annotate_first_release_date = (
+            release_filter != "all"
+            or sort_filter == "release_date"
+            or layout == "table"
+        )
+        if should_annotate_first_release_date:
             artist_trackers = artist_trackers.annotate(first_release_date=Min("artist__albums__release_date"))
 
         # Apply sorting (limited to what makes sense for artists)
@@ -1251,6 +1272,16 @@ def media_list(request, media_type):
             artist_trackers = artist_trackers.order_by(order)
         elif sort_filter == "score":
             order = "score" if direction == "asc" else "-score"
+            artist_trackers = artist_trackers.order_by(order, "artist__name")
+        elif sort_filter == "release_date":
+            order = (
+                F("first_release_date").asc(nulls_last=True)
+                if direction == "asc"
+                else F("first_release_date").desc(nulls_last=True)
+            )
+            artist_trackers = artist_trackers.order_by(order, "artist__name")
+        elif sort_filter == "date_added":
+            order = "created_at" if direction == "asc" else "-created_at"
             artist_trackers = artist_trackers.order_by(order, "artist__name")
         elif sort_filter == "start_date":
             order = "start_date" if direction == "asc" else "-start_date"

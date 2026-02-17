@@ -93,7 +93,10 @@ class ResolveColumnsTests(TestCase):
         keys = [column.key for column in columns]
 
         # Fixed columns stay first, and hidden only applies to hideable columns.
-        self.assertEqual(keys, ["image", "title", "status", "start_date", "end_date"])
+        self.assertEqual(
+            keys,
+            ["image", "title", "status", "release_date", "date_added", "start_date", "end_date"],
+        )
 
     def test_new_columns_append_when_not_in_saved_order(self):
         self.user.table_column_prefs = {
@@ -114,5 +117,5 @@ class ResolveColumnsTests(TestCase):
 
         self.assertEqual(
             keys,
-            ["image", "title", "status", "score", "start_date", "end_date"],
+            ["image", "title", "status", "score", "release_date", "date_added", "start_date", "end_date"],
         )

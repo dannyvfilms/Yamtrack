@@ -916,11 +916,20 @@ class MediaManager(models.Manager):
             )
 
         # Handle sorting by date fields with special null handling
-        if sort_filter in ("start_date", "end_date"):
+        if sort_filter in ("start_date", "end_date", "date_added"):
+            sort_field = "created_at" if sort_filter == "date_added" else sort_filter
             order = (
-                models.F(sort_filter).asc(nulls_last=True)
+                models.F(sort_field).asc(nulls_last=True)
                 if direction == "asc"
-                else models.F(sort_filter).desc(nulls_last=True)
+                else models.F(sort_field).desc(nulls_last=True)
+            )
+            return queryset.order_by(order, models.functions.Lower("item__title"))
+
+        if sort_filter == "release_date":
+            order = (
+                models.F("item__release_datetime").asc(nulls_last=True)
+                if direction == "asc"
+                else models.F("item__release_datetime").desc(nulls_last=True)
             )
             return queryset.order_by(order, models.functions.Lower("item__title"))
 

@@ -88,7 +88,11 @@
           </span>
         {% endif %}
       </div>
-      {% if tracker.end_date %}
+      {% if current_sort == 'release_date' and tracker.first_release_date %}
+        <p class="media-card-year text-xs text-gray-400 mt-1">{{ tracker.first_release_date|user_date_format:user }}</p>
+      {% elif current_sort == 'date_added' and tracker.created_at %}
+        <p class="media-card-year text-xs text-gray-400 mt-1">{{ tracker.created_at|user_date_format:user }}</p>
+      {% elif tracker.end_date %}
         <p class="media-card-year text-xs text-gray-400 mt-1">{{ tracker.end_date|user_date_format:user }}</p>
       {% elif tracker.start_date %}
         <p class="media-card-year text-xs text-gray-400 mt-1">{{ tracker.start_date|user_date_format:user }}</p>

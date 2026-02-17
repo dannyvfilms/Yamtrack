@@ -39,6 +39,8 @@ class MediaSortChoices(models.TextChoices):
     TITLE = "title", "Title"
     PROGRESS = "progress", "Progress"
     PLAYS = "plays", "Plays"
+    RELEASE_DATE = "release_date", "Release Date"
+    DATE_ADDED = "date_added", "Date Added"
     START_DATE = "start_date", "Start Date"
     END_DATE = "end_date", "End Date"
     TIME_LEFT = "time_left", "Time Left"

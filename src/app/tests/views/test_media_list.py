@@ -195,6 +195,8 @@ class MediaListViewTests(TestCase):
         response = self.client.get(reverse("medialist", args=[MediaTypes.MOVIE.value]))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "toggleSort('plays')")
+        self.assertContains(response, "toggleSort('release_date')")
+        self.assertContains(response, "toggleSort('date_added')")
 
     def test_non_movie_sort_hides_plays_option_and_falls_back(self):
         """Non-movie media types should hide plays sort and fallback to title."""
@@ -244,6 +246,59 @@ class MediaListViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["current_sort"], "plays")
+        self.assertEqual(response.context["media_list"].object_list[0].item.title, "Test Movie 1")
+
+    def test_movie_sort_by_release_date_orders_items(self):
+        """Release date sort should order by item.release_datetime."""
+        now = timezone.now()
+        item1 = Item.objects.get(
+            title="Test Movie 1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+        )
+        item2 = Item.objects.get(
+            title="Test Movie 2",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+        )
+        item3 = Item.objects.get(
+            title="Test Movie 3",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+        )
+        Item.objects.filter(id=item1.id).update(release_datetime=now - timedelta(days=90))
+        Item.objects.filter(id=item2.id).update(release_datetime=now - timedelta(days=15))
+        Item.objects.filter(id=item3.id).update(release_datetime=now - timedelta(days=45))
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.MOVIE.value])
+            + "?sort=release_date&direction=asc",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "release_date")
+        self.assertEqual(response.context["media_list"].object_list[0].item.title, "Test Movie 1")
+
+    def test_movie_sort_by_date_added_orders_items(self):
+        """Date added sort should order by media.created_at."""
+        oldest = timezone.now() - timedelta(days=120)
+        newest = timezone.now() - timedelta(days=3)
+        middle = timezone.now() - timedelta(days=40)
+
+        movie1 = Movie.objects.get(item__title="Test Movie 1", user=self.user)
+        movie2 = Movie.objects.get(item__title="Test Movie 2", user=self.user)
+        movie3 = Movie.objects.get(item__title="Test Movie 3", user=self.user)
+        Movie.objects.filter(id=movie1.id).update(created_at=oldest)
+        Movie.objects.filter(id=movie2.id).update(created_at=newest)
+        Movie.objects.filter(id=movie3.id).update(created_at=middle)
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.MOVIE.value])
+            + "?sort=date_added&direction=asc",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "date_added")
         self.assertEqual(response.context["media_list"].object_list[0].item.title, "Test Movie 1")
 
     def test_media_list_with_filters(self):
@@ -436,7 +491,7 @@ class MediaListViewTests(TestCase):
         self.assertEqual(
             self.user.table_column_prefs[MediaTypes.MOVIE.value],
             {
-                "order": ["status", "score", "start_date", "end_date"],
+                "order": ["status", "score", "release_date", "date_added", "start_date", "end_date"],
                 "hidden": ["status"],
             },
         )
@@ -491,7 +546,7 @@ class MediaListViewTests(TestCase):
         self.user.refresh_from_db()
         self.assertEqual(
             self.user.table_column_prefs[MediaTypes.MOVIE.value]["order"],
-            ["score", "start_date", "status", "end_date"],
+            ["score", "start_date", "status", "release_date", "date_added", "end_date"],
         )
 
         response = self.client.get(
@@ -500,7 +555,7 @@ class MediaListViewTests(TestCase):
         column_keys = [column.key for column in response.context["resolved_columns"]]
         self.assertEqual(
             column_keys,
-            ["image", "title", "score", "start_date", "status", "end_date"],
+            ["image", "title", "score", "start_date", "status", "release_date", "date_added", "end_date"],
         )
 
     def test_consecutive_column_reorder_full_round_trip(self):
@@ -548,7 +603,7 @@ class MediaListViewTests(TestCase):
         first_refresh = self.client.get(f"{list_url}{list_query}", **htmx_headers)
         assert_partial_table_refresh(
             first_refresh,
-            ["", "Title", "End Date", "Status", "Score", "Start Date"],
+            ["", "Title", "End Date", "Status", "Score", "Start Date", "Release Date", "Date Added"],
         )
 
         second_order = ["score", "start_date", "end_date", "status"]
@@ -572,7 +627,7 @@ class MediaListViewTests(TestCase):
         second_refresh = self.client.get(f"{list_url}{list_query}", **htmx_headers)
         assert_partial_table_refresh(
             second_refresh,
-            ["", "Title", "Score", "Start Date", "End Date", "Status"],
+            ["", "Title", "Score", "Start Date", "End Date", "Status", "Release Date", "Date Added"],
         )
 
         full_page = self.client.get(f"{list_url}{list_query}")
@@ -595,11 +650,11 @@ class MediaListViewTests(TestCase):
             column_config = json.loads(config_match.group(1))
             self.assertEqual(
                 [column["key"] for column in column_config],
-                second_order,
+                second_order + ["release_date", "date_added"],
             )
 
         resolved_keys = [column.key for column in full_page.context["resolved_columns"]]
         self.assertEqual(
             resolved_keys,
-            ["image", "title", "score", "start_date", "end_date", "status"],
+            ["image", "title", "score", "start_date", "end_date", "status", "release_date", "date_added"],
         )

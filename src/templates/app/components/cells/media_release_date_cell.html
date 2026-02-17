@@ -1,0 +1,9 @@
+{% load app_tags %}
+{% load user_tags %}
+{% with release_dt=media|safe_attr:'release_datetime'|default_if_none:media.item.release_datetime %}
+  {% if release_dt %}
+    {{ release_dt|user_date_format:user }}
+  {% else %}
+    <span class="text-gray-500">-</span>
+  {% endif %}
+{% endwith %}
