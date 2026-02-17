@@ -8,7 +8,7 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from app import statistics_cache
+from app import history_cache, statistics_cache
 from app.models import (
     Book,
     Comic,
@@ -278,6 +278,93 @@ class StatisticsViewTests(TestCase):
         self.assertIn("Rated Book", book_titles)
         self.assertIn("Rated Comic", comic_titles)
         self.assertIn("Rated Manga", manga_titles)
+
+    def test_refresh_statistics_cache_repairs_stale_reading_score_days(self):
+        """All-time refresh should rebuild stale reading score days missed by older invalidation logic."""
+        cache.clear()
+        self.client.login(**self.credentials)
+        now = timezone.now()
+
+        stale_cases = [
+            {
+                "cache_key": MediaTypes.BOOK.value,
+                "model": Book,
+                "media_type": MediaTypes.BOOK.value,
+                "media_id": "book-stale-score-1",
+                "title": "Stale Score Book",
+                "image": "http://example.com/stale-score-book.jpg",
+                "genres": ["Fantasy"],
+                "progress": 250,
+                "offset_days": 120,
+                "updated_score": 8,
+            },
+            {
+                "cache_key": MediaTypes.COMIC.value,
+                "model": Comic,
+                "media_type": MediaTypes.COMIC.value,
+                "media_id": "comic-stale-score-1",
+                "title": "Stale Score Comic",
+                "image": "http://example.com/stale-score-comic.jpg",
+                "genres": ["Sci-Fi"],
+                "progress": 120,
+                "offset_days": 121,
+                "updated_score": 9,
+            },
+            {
+                "cache_key": MediaTypes.MANGA.value,
+                "model": Manga,
+                "media_type": MediaTypes.MANGA.value,
+                "media_id": "manga-stale-score-1",
+                "title": "Stale Score Manga",
+                "image": "http://example.com/stale-score-manga.jpg",
+                "genres": ["Shonen"],
+                "progress": 85,
+                "offset_days": 122,
+                "updated_score": 10,
+            },
+        ]
+        created_entries = []
+        for case in stale_cases:
+            item = Item.objects.create(
+                media_id=case["media_id"],
+                source=Sources.MANUAL.value,
+                media_type=case["media_type"],
+                title=case["title"],
+                image=case["image"],
+                genres=case["genres"],
+            )
+            entry = case["model"].objects.create(
+                user=self.user,
+                item=item,
+                status=Status.COMPLETED.value,
+                progress=case["progress"],
+                start_date=None,
+                end_date=now - timedelta(days=case["offset_days"]),
+                score=None,
+            )
+            created_entries.append((case, item, entry))
+
+        statistics_cache.refresh_statistics_cache(self.user.id, "All Time")
+        for case, item, entry in created_entries:
+            stale_day_key = history_cache.history_day_key(entry.end_date)
+            stale_cache_key = statistics_cache._day_cache_key(self.user.id, stale_day_key)
+            stale_day_payload = cache.get(stale_cache_key)
+            stale_item_payload = stale_day_payload["items"][case["cache_key"]][str(item.id)]
+            self.assertIsNone(stale_item_payload["score"])
+
+        # Simulate legacy score updates that didn't invalidate day caches.
+        for case, _item, entry in created_entries:
+            case["model"].objects.filter(id=entry.id).update(score=case["updated_score"])
+
+        statistics_cache.refresh_statistics_cache(self.user.id, "All Time")
+        refreshed_response = self.client.get(reverse("statistics") + "?start-date=all&end-date=all")
+        book_titles = [media.item.title for media in refreshed_response.context["top_rated_book"]]
+        comic_titles = [media.item.title for media in refreshed_response.context["top_rated_comic"]]
+        manga_titles = [media.item.title for media in refreshed_response.context["top_rated_manga"]]
+
+        self.assertIn("Stale Score Book", book_titles)
+        self.assertIn("Stale Score Comic", comic_titles)
+        self.assertIn("Stale Score Manga", manga_titles)
 
     @patch("app.providers.services.get_media_metadata")
     def test_statistics_view_returns_empty_reading_top_genres_when_items_have_no_genres(self, mock_get_metadata):

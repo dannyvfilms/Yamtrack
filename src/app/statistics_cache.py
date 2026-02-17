@@ -313,6 +313,83 @@ def invalidate_statistics_days(user_id: int, day_values, reason: str | None = No
         )
 
 
+def _collect_stale_reading_score_days(user, day_whitelist: set[date] | None = None) -> set[date]:
+    """Return reading activity days where cached score metadata is stale."""
+    active_media_types = set(getattr(user, "get_active_media_types", lambda: [])())
+    if not active_media_types:
+        active_media_types = set(MediaTypes.values)
+
+    expected_by_day: dict[date, list[tuple[str, int, float]]] = defaultdict(list)
+    for media_type in (MediaTypes.BOOK.value, MediaTypes.COMIC.value, MediaTypes.MANGA.value):
+        if media_type not in active_media_types:
+            continue
+        model = apps.get_model("app", media_type)
+        rows = model.objects.filter(
+            user=user,
+            score__isnull=False,
+        ).values(
+            "item_id",
+            "score",
+            "start_date",
+            "end_date",
+            "created_at",
+        ).iterator(chunk_size=500)
+        for row in rows:
+            item_id = row.get("item_id")
+            if not item_id:
+                continue
+            activity_key = history_cache.history_day_key(
+                row.get("end_date") or row.get("start_date") or row.get("created_at"),
+            )
+            day = _normalize_day_value(activity_key)
+            if not day:
+                continue
+            if day_whitelist is not None and day not in day_whitelist:
+                continue
+            score = row.get("score")
+            try:
+                expected_score = float(score)
+            except (TypeError, ValueError):
+                continue
+            expected_by_day[day].append((media_type, int(item_id), expected_score))
+
+    if not expected_by_day:
+        return set()
+
+    key_map = {day: _day_cache_key(user.id, day) for day in expected_by_day}
+    cached_payloads = cache.get_many(key_map.values())
+
+    stale_days = set()
+    for day, expected_entries in expected_by_day.items():
+        day_payload = cached_payloads.get(key_map[day])
+        if not isinstance(day_payload, dict):
+            stale_days.add(day)
+            continue
+        items_payload = day_payload.get("items") or {}
+        for media_type, item_id, expected_score in expected_entries:
+            media_items = items_payload.get(media_type) or {}
+            item_meta = media_items.get(str(item_id))
+            if item_meta is None:
+                item_meta = media_items.get(item_id)
+            if not isinstance(item_meta, dict):
+                stale_days.add(day)
+                break
+            cached_score = item_meta.get("score")
+            if cached_score is None:
+                stale_days.add(day)
+                break
+            try:
+                cached_score_value = float(cached_score)
+            except (TypeError, ValueError):
+                stale_days.add(day)
+                break
+            if abs(cached_score_value - expected_score) > 1e-6:
+                stale_days.add(day)
+                break
+
+    return stale_days
+
+
 def build_statistics_data(user, start_date, end_date):
     """Build statistics data for a user and date range.
     
@@ -4123,6 +4200,7 @@ def refresh_statistics_cache(user_id: int, range_name: str):
 
         start_date, end_date = _get_predefined_range_dates(range_name)
         day_list = _resolve_day_list(user, start_date, end_date)
+        day_list_set = set(day_list)
 
         dirty_days = _load_dirty_days(user_id)
         dirty_set = {day for day in dirty_days if day}
@@ -4149,6 +4227,8 @@ def refresh_statistics_cache(user_id: int, range_name: str):
         days_to_refresh = set(warm_days)
         days_to_refresh.update(missing_days)
         days_to_refresh.update(day for day in dirty_dates if day in day_list)
+        stale_score_days = _collect_stale_reading_score_days(user, day_whitelist=day_list_set)
+        days_to_refresh.update(stale_score_days)
 
         refreshed_days = 0
         nonempty_days = 0
@@ -4184,6 +4264,14 @@ def refresh_statistics_cache(user_id: int, range_name: str):
         if processed:
             dirty_set.difference_update(processed)
             _store_dirty_days(user_id, dirty_set)
+
+        if stale_score_days:
+            logger.info(
+                "stats_score_repair user_id=%s range=%s repaired_days=%s",
+                user_id,
+                range_name,
+                len(stale_score_days),
+            )
 
         logger.info(
             "stats_range_summary user_id=%s range=%s days=%s refreshed=%s nonempty=%s elapsed_ms=%.2f totals=%s",
