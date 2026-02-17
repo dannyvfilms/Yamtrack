@@ -119,6 +119,18 @@
   }
 }
 
+/* Mobile default: active playback card spans all columns on very small screens */
+[data-active-playback-card] {
+  grid-column: span 3 !important;
+}
+
+/* Desktop: active playback card spans 2 columns by default */
+@media (min-width: 769px) {
+  [data-active-playback-card] {
+    grid-column: span 2 !important;
+  }
+}
+
 /* https://tailwindcss.com/docs/upgrade-guide#hover-styles-on-mobile */
 @custom-variant hover-tap (&:hover);
 @custom-variant parent-hover-tap (.hover-tap:hover &);
@@ -466,6 +478,15 @@
 
   [data-mobile-grid="compact"] .media-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  /* Active playback card spanning */
+  [data-mobile-grid="comfortable"] [data-active-playback-card] {
+    grid-column: span 2 !important;
+  }
+
+  [data-mobile-grid="compact"] [data-active-playback-card] {
+    grid-column: span 3 !important;
   }
 
   [data-mobile-grid="compact"] .media-card-progress .progress-unit {
