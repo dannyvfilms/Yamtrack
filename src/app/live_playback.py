@@ -115,30 +115,40 @@ def _state_matches(
     return False
 
 
-def apply_plex_event(  # noqa: C901
+def apply_playback_event(  # noqa: C901
     *,
     user_id: int,
-    payload: dict,
+    event_type: str,
     playback_media_type: str | None,
     media_id: str | None = None,
     source: str = Sources.TMDB.value,
+    rating_key: str | None = None,
+    title: str | None = None,
+    series_title: str | None = None,
+    episode_title: str | None = None,
     season_number: int | None = None,
     episode_number: int | None = None,
+    view_offset_seconds: int | None = None,
+    duration_seconds: int | None = None,
 ) -> None:
-    """Update live playback cache state from a Plex webhook payload."""
-    if playback_media_type not in (MediaTypes.MOVIE.value, MediaTypes.EPISODE.value):
+    """Update live playback cache state from a webhook event.
+
+    All fields are pre-extracted by the caller (Plex / Jellyfin
+    processor) so this function is source-agnostic.  Event types
+    use the normalised ``media.*`` naming regardless of origin.
+    """
+    if playback_media_type not in (
+        MediaTypes.MOVIE.value,
+        MediaTypes.EPISODE.value,
+    ):
         return
 
-    event_type = payload.get("event")
     if not event_type:
         return
 
     if event_type == "media.resume":
         event_type = "media.play"
 
-    metadata = payload.get("Metadata", {}) or {}
-    raw_rk = metadata.get("ratingKey") or metadata.get("ratingkey") or ""
-    rating_key = str(raw_rk).strip()
     key = _cache_key(user_id)
     existing_state = cache.get(key)
     now_ts = _now_ts()
@@ -162,8 +172,8 @@ def apply_plex_event(  # noqa: C901
     if event_type not in ("media.play", "media.pause", "media.scrobble"):
         return
 
-    offset_seconds = _extract_offset_seconds(payload)
-    duration_seconds = _extract_duration_seconds(payload)
+    offset_seconds = view_offset_seconds
+    dur_seconds = duration_seconds
 
     if _state_matches(
         existing_state,
@@ -172,13 +182,13 @@ def apply_plex_event(  # noqa: C901
         playback_media_type=playback_media_type,
     ):
         if offset_seconds is None:
-            offset_seconds = _coerce_int(existing_state.get("view_offset_seconds"), 0)
-        if duration_seconds is None:
-            duration_seconds = _coerce_int(existing_state.get("duration_seconds"), 0)
-
-    payload_season, payload_episode = _extract_episode_numbers(payload)
-    season_number = season_number if season_number is not None else payload_season
-    episode_number = episode_number if episode_number is not None else payload_episode
+            offset_seconds = _coerce_int(
+                existing_state.get("view_offset_seconds"), 0,
+            )
+        if dur_seconds is None:
+            dur_seconds = _coerce_int(
+                existing_state.get("duration_seconds"), 0,
+            )
 
     is_paused = event_type == "media.pause"
     status = PLAYBACK_STATUS_PAUSED if is_paused else PLAYBACK_STATUS_PLAYING
@@ -189,17 +199,13 @@ def apply_plex_event(  # noqa: C901
         "media_id": str(media_id) if media_id is not None else None,
         "source": source,
         "rating_key": rating_key or None,
-        "title": metadata.get("title"),
-        "series_title": metadata.get("grandparentTitle"),
-        "episode_title": (
-            metadata.get("title")
-            if playback_media_type == MediaTypes.EPISODE.value
-            else None
-        ),
+        "title": title,
+        "series_title": series_title,
+        "episode_title": episode_title,
         "season_number": season_number,
         "episode_number": episode_number,
         "view_offset_seconds": max(0, offset_seconds or 0),
-        "duration_seconds": max(0, duration_seconds or 0),
+        "duration_seconds": max(0, dur_seconds or 0),
         "status": status,
         "updated_at_ts": now_ts,
         "expires_at_ts": now_ts + PLAYBACK_HARD_STALE_SECONDS,
@@ -213,6 +219,53 @@ def apply_plex_event(  # noqa: C901
         state["scrobble_expires_at_ts"] = now_ts + PLAYBACK_SCROBBLE_GRACE_SECONDS
 
     set_user_playback_state(user_id, state)
+
+
+def apply_plex_event(
+    *,
+    user_id: int,
+    payload: dict,
+    playback_media_type: str | None,
+    media_id: str | None = None,
+    source: str = Sources.TMDB.value,
+    season_number: int | None = None,
+    episode_number: int | None = None,
+) -> None:
+    """Plex-specific wrapper: extract fields and delegate."""
+    event_type = payload.get("event")
+    if not event_type:
+        return
+
+    metadata = payload.get("Metadata", {}) or {}
+    raw_rk = metadata.get("ratingKey") or metadata.get("ratingkey") or ""
+
+    payload_season, payload_episode = _extract_episode_numbers(payload)
+
+    apply_playback_event(
+        user_id=user_id,
+        event_type=event_type,
+        playback_media_type=playback_media_type,
+        media_id=media_id,
+        source=source,
+        rating_key=str(raw_rk).strip() or None,
+        title=metadata.get("title"),
+        series_title=metadata.get("grandparentTitle"),
+        episode_title=(
+            metadata.get("title")
+            if playback_media_type == MediaTypes.EPISODE.value
+            else None
+        ),
+        season_number=(
+            season_number if season_number is not None
+            else payload_season
+        ),
+        episode_number=(
+            episode_number if episode_number is not None
+            else payload_episode
+        ),
+        view_offset_seconds=_extract_offset_seconds(payload),
+        duration_seconds=_extract_duration_seconds(payload),
+    )
 
 
 def _estimate_progress_seconds(state: dict, now_ts: int) -> int:

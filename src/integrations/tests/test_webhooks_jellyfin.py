@@ -1,9 +1,11 @@
 import json
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import Client, TestCase
 from django.urls import reverse
 
+from app import live_playback
 from app.models import TV, Anime, Episode, Item, MediaTypes, Movie, Season, Status
 from integrations.webhooks.jellyfin import JellyfinWebhookProcessor
 
@@ -17,6 +19,9 @@ class JellyfinWebhookTests(TestCase):
         self.credentials = {"username": "testuser", "token": "test-token"}
         self.user = get_user_model().objects.create_superuser(**self.credentials)
         self.url = reverse("jellyfin_webhook", kwargs={"token": "test-token"})
+
+    def tearDown(self):
+        live_playback.clear_user_playback_state(self.user.id)
 
     def test_invalid_token(self):
         """Test webhook with invalid token returns 401."""
@@ -333,3 +338,159 @@ class JellyfinWebhookTests(TestCase):
         if result != expected:
             msg = f"Expected {expected}, got {result}"
             raise AssertionError(msg)
+
+    @patch("app.providers.tmdb.find")
+    def test_play_event_stores_live_playback_state(self, mock_find):
+        """Play events should create live playback state for the home card."""
+        mock_find.return_value = {
+            "tv_episode_results": [
+                {
+                    "show_id": 1668,
+                    "season_number": 1,
+                    "episode_number": 1,
+                },
+            ],
+            "tv_results": [],
+        }
+
+        payload = {
+            "Event": "Play",
+            "Item": {
+                "Type": "Episode",
+                "Name": "The One Where Monica Gets a Roommate",
+                "Id": "jf-episode-1",
+                "SeriesName": "Friends",
+                "ParentIndexNumber": 1,
+                "IndexNumber": 1,
+                "RunTimeTicks": 26660000000,
+                "ProviderIds": {
+                    "Tvdb": "303821",
+                    "Imdb": "tt0583459",
+                },
+                "UserData": {"Played": False},
+            },
+            "PlaybackPositionTicks": 14470000000,
+        }
+
+        response = self.client.post(
+            self.url,
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        state = live_playback.get_user_playback_state(self.user.id)
+        self.assertIsNotNone(state)
+        self.assertEqual(state["media_type"], MediaTypes.EPISODE.value)
+        self.assertEqual(state["media_id"], "1668")
+        self.assertEqual(state["status"], live_playback.PLAYBACK_STATUS_PLAYING)
+        self.assertEqual(state["season_number"], 1)
+        self.assertEqual(state["episode_number"], 1)
+        self.assertEqual(state["duration_seconds"], 2666)
+        self.assertEqual(state["view_offset_seconds"], 1447)
+
+    @patch("app.providers.tmdb.find")
+    def test_pause_and_stop_events_update_live_playback_state(self, mock_find):
+        """Pause should keep card state; stop should transition to stopped."""
+        mock_find.return_value = {
+            "tv_episode_results": [
+                {
+                    "show_id": 1668,
+                    "season_number": 1,
+                    "episode_number": 1,
+                },
+            ],
+            "tv_results": [],
+        }
+
+        play_payload = {
+            "Event": "Play",
+            "Item": {
+                "Type": "Episode",
+                "Name": "The One Where Monica Gets a Roommate",
+                "Id": "jf-episode-2",
+                "SeriesName": "Friends",
+                "ParentIndexNumber": 1,
+                "IndexNumber": 1,
+                "RunTimeTicks": 26660000000,
+                "ProviderIds": {
+                    "Tvdb": "303821",
+                    "Imdb": "tt0583459",
+                },
+                "UserData": {"Played": False},
+            },
+            "PlaybackPositionTicks": 6000000000,
+        }
+        pause_payload = {
+            "Event": "Pause",
+            "Item": {
+                "Type": "Episode",
+                "Name": "The One Where Monica Gets a Roommate",
+                "Id": "jf-episode-2",
+                "SeriesName": "Friends",
+                "ParentIndexNumber": 1,
+                "IndexNumber": 1,
+                "RunTimeTicks": 26660000000,
+                "ProviderIds": {
+                    "Tvdb": "303821",
+                    "Imdb": "tt0583459",
+                },
+                "UserData": {"Played": False},
+            },
+            "PlaybackPositionTicks": 7210000000,
+        }
+        stop_payload = {
+            "Event": "Stop",
+            "Item": {
+                "Type": "Episode",
+                "Name": "The One Where Monica Gets a Roommate",
+                "Id": "jf-episode-2",
+                "SeriesName": "Friends",
+                "ParentIndexNumber": 1,
+                "IndexNumber": 1,
+                "ProviderIds": {
+                    "Tvdb": "303821",
+                    "Imdb": "tt0583459",
+                },
+                "UserData": {"Played": True},
+            },
+        }
+
+        # Play
+        play_response = self.client.post(
+            self.url,
+            data=json.dumps(play_payload),
+            content_type="application/json",
+        )
+        self.assertEqual(play_response.status_code, 200)
+
+        # Pause
+        pause_response = self.client.post(
+            self.url,
+            data=json.dumps(pause_payload),
+            content_type="application/json",
+        )
+        self.assertEqual(pause_response.status_code, 200)
+
+        paused_state = live_playback.get_user_playback_state(self.user.id)
+        self.assertIsNotNone(paused_state)
+        self.assertEqual(
+            paused_state["status"], live_playback.PLAYBACK_STATUS_PAUSED,
+        )
+        self.assertEqual(paused_state["view_offset_seconds"], 721)
+
+        # Stop
+        stop_response = self.client.post(
+            self.url,
+            data=json.dumps(stop_payload),
+            content_type="application/json",
+        )
+        self.assertEqual(stop_response.status_code, 200)
+
+        stopped_state = live_playback.get_user_playback_state(self.user.id)
+        self.assertIsNotNone(stopped_state)
+        self.assertEqual(
+            stopped_state["status"],
+            live_playback.PLAYBACK_STATUS_STOPPED,
+        )
