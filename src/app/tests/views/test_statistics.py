@@ -181,6 +181,104 @@ class StatisticsViewTests(TestCase):
             r"·\s*\d+\s+manga\b",
         )
 
+    def test_updating_reading_scores_refreshes_top_rated_cards(self):
+        """Updating reading scores should invalidate day caches used by top-rated cards."""
+        cache.clear()
+        self.client.login(**self.credentials)
+        now = timezone.now()
+
+        book_item = Item.objects.create(
+            media_id="book-rated-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Rated Book",
+            image="http://example.com/rated-book.jpg",
+            genres=["Fantasy"],
+        )
+        comic_item = Item.objects.create(
+            media_id="comic-rated-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.COMIC.value,
+            title="Rated Comic",
+            image="http://example.com/rated-comic.jpg",
+            genres=["Sci-Fi"],
+        )
+        manga_item = Item.objects.create(
+            media_id="manga-rated-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MANGA.value,
+            title="Rated Manga",
+            image="http://example.com/rated-manga.jpg",
+            genres=["Shonen"],
+        )
+
+        book_entry = Book.objects.create(
+            user=self.user,
+            item=book_item,
+            status=Status.IN_PROGRESS.value,
+            progress=180,
+            start_date=now - timedelta(days=125),
+            end_date=now - timedelta(days=120),
+            score=None,
+        )
+        comic_entry = Comic.objects.create(
+            user=self.user,
+            item=comic_item,
+            status=Status.IN_PROGRESS.value,
+            progress=75,
+            start_date=now - timedelta(days=115),
+            end_date=now - timedelta(days=110),
+            score=None,
+        )
+        manga_entry = Manga.objects.create(
+            user=self.user,
+            item=manga_item,
+            status=Status.IN_PROGRESS.value,
+            progress=95,
+            start_date=now - timedelta(days=105),
+            end_date=now - timedelta(days=100),
+            score=None,
+        )
+
+        statistics_cache.refresh_statistics_cache(self.user.id, "All Time")
+        stale_response = self.client.get(reverse("statistics") + "?start-date=all&end-date=all")
+        self.assertEqual(stale_response.context["top_rated_book"], [])
+        self.assertEqual(stale_response.context["top_rated_comic"], [])
+        self.assertEqual(stale_response.context["top_rated_manga"], [])
+
+        self.assertEqual(
+            self.client.post(
+                reverse("update_media_score", args=[MediaTypes.BOOK.value, book_entry.id]),
+                {"score": "8"},
+            ).status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.post(
+                reverse("update_media_score", args=[MediaTypes.COMIC.value, comic_entry.id]),
+                {"score": "7"},
+            ).status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.post(
+                reverse("update_media_score", args=[MediaTypes.MANGA.value, manga_entry.id]),
+                {"score": "9"},
+            ).status_code,
+            200,
+        )
+
+        statistics_cache.refresh_statistics_cache(self.user.id, "All Time")
+        refreshed_response = self.client.get(reverse("statistics") + "?start-date=all&end-date=all")
+
+        book_titles = [media.item.title for media in refreshed_response.context["top_rated_book"]]
+        comic_titles = [media.item.title for media in refreshed_response.context["top_rated_comic"]]
+        manga_titles = [media.item.title for media in refreshed_response.context["top_rated_manga"]]
+
+        self.assertIn("Rated Book", book_titles)
+        self.assertIn("Rated Comic", comic_titles)
+        self.assertIn("Rated Manga", manga_titles)
+
     @patch("app.providers.services.get_media_metadata")
     def test_statistics_view_returns_empty_reading_top_genres_when_items_have_no_genres(self, mock_get_metadata):
         """Reading top genres should be empty when source items have no genre metadata."""

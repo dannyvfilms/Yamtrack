@@ -298,6 +298,20 @@ def refresh_statistics_cache_on_anime_change(sender, instance, **kwargs):  # noq
         statistics_cache.schedule_all_ranges_refresh(user_id)
 
 
+def _collect_reading_statistics_day_keys(instance):
+    """Return statistics day keys touched by a reading entry."""
+    start_dt = getattr(instance, "start_date", None)
+    end_dt = getattr(instance, "end_date", None)
+    range_keys = history_cache.history_day_keys_for_range(start_dt, end_dt)
+    activity_key = history_cache.history_day_key(
+        end_dt or start_dt or getattr(instance, "created_at", None),
+    )
+    day_keys = set(range_keys or [])
+    if activity_key:
+        day_keys.add(activity_key)
+    return day_keys
+
+
 @receiver([post_save, post_delete], sender=Manga)
 def refresh_statistics_cache_on_manga_change(sender, instance, **kwargs):  # noqa: ARG001
     """Schedule statistics cache refresh when manga activity changes.
@@ -307,6 +321,13 @@ def refresh_statistics_cache_on_manga_change(sender, instance, **kwargs):  # noq
     """
     user_id = getattr(instance, "user_id", None)
     if user_id:
+        day_keys = _collect_reading_statistics_day_keys(instance)
+        if day_keys:
+            statistics_cache.invalidate_statistics_days(
+                user_id,
+                day_values=day_keys,
+                reason="manga_change",
+            )
         # Schedule refresh but don't delete cache - old data will show with notification
         statistics_cache.schedule_all_ranges_refresh(user_id)
 
@@ -320,6 +341,13 @@ def refresh_statistics_cache_on_book_change(sender, instance, **kwargs):  # noqa
     """
     user_id = getattr(instance, "user_id", None)
     if user_id:
+        day_keys = _collect_reading_statistics_day_keys(instance)
+        if day_keys:
+            statistics_cache.invalidate_statistics_days(
+                user_id,
+                day_values=day_keys,
+                reason="book_change",
+            )
         # Schedule refresh but don't delete cache - old data will show with notification
         statistics_cache.schedule_all_ranges_refresh(user_id)
 
@@ -333,6 +361,13 @@ def refresh_statistics_cache_on_comic_change(sender, instance, **kwargs):  # noq
     """
     user_id = getattr(instance, "user_id", None)
     if user_id:
+        day_keys = _collect_reading_statistics_day_keys(instance)
+        if day_keys:
+            statistics_cache.invalidate_statistics_days(
+                user_id,
+                day_values=day_keys,
+                reason="comic_change",
+            )
         # Schedule refresh but don't delete cache - old data will show with notification
         statistics_cache.schedule_all_ranges_refresh(user_id)
 
