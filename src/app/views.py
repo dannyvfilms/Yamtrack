@@ -8179,6 +8179,9 @@ def service_worker(request):
     with sw_path.open(encoding="utf-8") as sw_file:
         response = HttpResponse(sw_file.read(), content_type="application/javascript")
     response["Service-Worker-Allowed"] = "/"
+    response["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response["Pragma"] = "no-cache"
+    response["Expires"] = "0"
     return response
 
 

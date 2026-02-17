@@ -986,55 +986,59 @@
     }
 
     window.columnUiDebugLog = columnUiDebugLog;
+    let columnRefreshInFlight = false;
+    let columnRefreshQueued = false;
 
     function refreshMediaTableAfterColumnSave() {
       const filterForm = document.getElementById('filter-form');
       const indicator = document.getElementById('loading-indicator');
-      const values = filterForm ? htmx.values(filterForm) : {};
+      const filterValues = filterForm ? htmx.values(filterForm) : {};
+      const values = {
+        ...filterValues,
+        column_refresh_nonce: Date.now().toString(),
+      };
+      if (columnRefreshInFlight) {
+        columnRefreshQueued = true;
+        columnUiDebugLog('refresh_request_skipped in_flight=true');
+        return;
+      }
 
-      columnUiDebugLog('refresh_dispatch source=afterRequest');
+      columnRefreshInFlight = true;
+
+      columnUiDebugLog('refresh_dispatch source=save_after_request');
       columnUiDebugLog('refresh_request_start');
       if (indicator) {
         indicator.classList.add('htmx-request');
       }
 
       const request = htmx.ajax('GET', '{% url "medialist" media_type %}', {
+        source: filterForm || document.body,
         target: '.media-table',
         swap: 'innerHTML',
         values,
         headers: { 'HX-Request': 'true' },
       });
 
-      if (request && typeof request.finally === 'function') {
-        request.finally(() => {
-          if (indicator) {
-            indicator.classList.remove('htmx-request');
-          }
-          columnUiDebugLog('refresh_request_complete');
-        });
-      } else {
-        // Fallback for environments without Promise return from htmx.ajax.
+      const completeRefresh = () => {
         if (indicator) {
           indicator.classList.remove('htmx-request');
         }
+        columnRefreshInFlight = false;
         columnUiDebugLog('refresh_request_complete');
+        if (columnRefreshQueued) {
+          columnRefreshQueued = false;
+          columnUiDebugLog('refresh_request_dequeue');
+          refreshMediaTableAfterColumnSave();
+        }
+      };
+
+      if (request && typeof request.finally === 'function') {
+        request.finally(completeRefresh);
+      } else {
+        // Fallback for environments without Promise return from htmx.ajax.
+        completeRefresh();
       }
     }
-
-    document.body.addEventListener('htmx:afterRequest', function(event) {
-      const elt = event?.detail?.elt;
-      if (!elt || elt.id !== 'column-pref-form') {
-        return;
-      }
-
-      const successful = Boolean(event?.detail?.successful);
-      columnUiDebugLog(`save_after_request successful=${successful} elt=${elt.id}`);
-      if (!successful) {
-        return;
-      }
-
-      refreshMediaTableAfterColumnSave();
-    });
 
     function columnConfigMenu() {
       const configEl = document.getElementById('media-column-config-data');
@@ -1063,10 +1067,25 @@
             if (event?.detail?.elt !== this.$refs.form) {
               return;
             }
+            const requestConfig = event?.detail?.requestConfig;
+            const requestVerb = String(requestConfig?.verb || '').toLowerCase();
+            if (requestVerb && requestVerb !== 'post') {
+              return;
+            }
+            const requestPath = String(requestConfig?.path || '');
+            const savePath = this.$refs.form.getAttribute('hx-post') || '';
+            if (requestPath && savePath && !requestPath.includes(savePath)) {
+              return;
+            }
+            const successful = Boolean(event?.detail?.successful);
+            columnUiDebugLog(`save_after_request successful=${successful}`);
             this.isSaving = false;
             if (this.queuedSave) {
               this.queuedSave = false;
               this.save();
+            }
+            if (successful) {
+              refreshMediaTableAfterColumnSave();
             }
           });
         },

@@ -1,4 +1,4 @@
-const CACHE_NAME = "yamtrack-v2";
+const CACHE_NAME = "yamtrack-v3";
 const urlsToCache = [
   "/static/css/main.css",
   "/static/favicon/android-chrome-192x192.png",
@@ -22,27 +22,22 @@ self.addEventListener("fetch", (event) => {
   const request = event.request;
   const url = new URL(request.url);
 
-  // Never serve HTML from cache; always go to network first so pages stay fresh
-  const isNavigationRequest =
-    request.mode === "navigate" ||
-    (request.headers.get("accept") || "").includes("text/html");
+  // Only cache same-origin static assets.
+  const isSameOrigin = url.origin === self.location.origin;
+  const isHtmxRequest = request.headers.get("HX-Request") === "true";
 
-  if (isNavigationRequest) {
+  // Keep app routes and HTMX requests on network to avoid stale dynamic HTML.
+  if (
+    request.method !== "GET" ||
+    !isSameOrigin ||
+    isHtmxRequest ||
+    !url.pathname.startsWith("/static/")
+  ) {
     event.respondWith(fetch(request));
     return;
   }
 
-  // Never cache API responses; they must stay real-time (e.g., cache-status)
-  if (url.pathname.startsWith("/api/")) {
-    event.respondWith(fetch(request));
-    return;
-  }
-
-  // Only cache GET requests for static assets
-  if (request.method !== "GET") {
-    return;
-  }
-
+  // Cache-first for static assets only.
   event.respondWith(
     caches.match(request).then((response) => {
       if (response) {

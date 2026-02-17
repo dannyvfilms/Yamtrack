@@ -343,9 +343,11 @@ class MediaListViewTests(TestCase):
         )
 
         self.assertContains(response, 'id="column-pref-form"')
-        self.assertContains(response, "elt.id !== 'column-pref-form'")
+        self.assertContains(response, "this.$refs.form.addEventListener('htmx:afterRequest'")
         self.assertContains(response, "htmx.ajax('GET'")
-        self.assertContains(response, "refresh_dispatch source=afterRequest")
+        self.assertContains(response, "column_refresh_nonce")
+        self.assertContains(response, "save_after_request successful=")
+        self.assertContains(response, "refresh_dispatch source=save_after_request")
         self.assertNotContains(response, 'id="column-refresh-runner"')
         self.assertNotContains(response, 'hx-trigger="runColumnRefresh"')
 
@@ -499,4 +501,105 @@ class MediaListViewTests(TestCase):
         self.assertEqual(
             column_keys,
             ["image", "title", "score", "start_date", "status", "end_date"],
+        )
+
+    def test_consecutive_column_reorder_full_round_trip(self):
+        """Two consecutive column saves should each render after HTMX refresh."""
+        columns_url = reverse("medialist_columns", args=[MediaTypes.MOVIE.value])
+        list_url = reverse("medialist", args=[MediaTypes.MOVIE.value])
+        list_query = "?layout=table&sort=score&direction=desc"
+        htmx_headers = {"HTTP_HX_REQUEST": "true"}
+
+        def assert_partial_table_refresh(response, expected_labels):
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("HX-Trigger", response)
+            trigger_payload = json.loads(response["HX-Trigger"])
+            self.assertIn("resultCountUpdated", trigger_payload)
+
+            html = response.content.decode()
+            labels = [
+                re.sub(r"<[^>]+>", "", label).strip()
+                for label in re.findall(
+                    r"<th\s[^>]*>(.*?)</th>",
+                    html,
+                    flags=re.DOTALL,
+                )
+            ]
+            self.assertEqual(labels, expected_labels)
+
+        first_order = ["end_date", "status", "score", "start_date"]
+        first_save = self.client.post(
+            columns_url,
+            {
+                "table_type": "media",
+                "sort": "score",
+                "order": json.dumps(first_order),
+                "hidden": json.dumps([]),
+            },
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(first_save.status_code, 204)
+        self.assertIn("HX-Trigger", first_save)
+        self.assertEqual(
+            json.loads(first_save["HX-Trigger"]),
+            {"refreshTableColumns": True},
+        )
+
+        first_refresh = self.client.get(f"{list_url}{list_query}", **htmx_headers)
+        assert_partial_table_refresh(
+            first_refresh,
+            ["", "Title", "End Date", "Status", "Score", "Start Date"],
+        )
+
+        second_order = ["score", "start_date", "end_date", "status"]
+        second_save = self.client.post(
+            columns_url,
+            {
+                "table_type": "media",
+                "sort": "score",
+                "order": json.dumps(second_order),
+                "hidden": json.dumps([]),
+            },
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(second_save.status_code, 204)
+        self.assertIn("HX-Trigger", second_save)
+        self.assertEqual(
+            json.loads(second_save["HX-Trigger"]),
+            {"refreshTableColumns": True},
+        )
+
+        second_refresh = self.client.get(f"{list_url}{list_query}", **htmx_headers)
+        assert_partial_table_refresh(
+            second_refresh,
+            ["", "Title", "Score", "Start Date", "End Date", "Status"],
+        )
+
+        full_page = self.client.get(f"{list_url}{list_query}")
+        self.assertEqual(full_page.status_code, 200)
+        self.assertContains(full_page, 'id="column-pref-form"')
+        self.assertContains(full_page, f'hx-post="{columns_url}"')
+        self.assertContains(full_page, 'hx-swap="none"')
+        self.assertContains(full_page, 'x-data="columnConfigMenu()"')
+        self.assertContains(full_page, "refreshMediaTableAfterColumnSave()")
+
+        full_html = full_page.content.decode()
+        config_match = re.search(
+            r'<script id="media-column-config-data" type="application/json">'
+            r"(.*?)</script>",
+            full_html,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(config_match)
+        if config_match is not None:
+            column_config = json.loads(config_match.group(1))
+            self.assertEqual(
+                [column["key"] for column in column_config],
+                second_order,
+            )
+
+        resolved_keys = [column.key for column in full_page.context["resolved_columns"]]
+        self.assertEqual(
+            resolved_keys,
+            ["image", "title", "score", "start_date", "end_date", "status"],
         )
