@@ -97,6 +97,49 @@ class StatisticsViewTests(TestCase):
 
         self.assertTrue(date_is_none)
 
+    def test_statistics_view_average_rating_uses_user_rating_scale(self):
+        """Average rating card should use the configured user rating scale."""
+        cache.clear()
+        self.client.login(**self.credentials)
+        self.user.rating_scale = "5"
+        self.user.save(update_fields=["rating_scale"])
+
+        now = timezone.now()
+        item = Item.objects.create(
+            media_id="movie-rating-scale-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Rating Scale Movie",
+            image="http://example.com/rating-scale-movie.jpg",
+        )
+        Movie.objects.create(
+            user=self.user,
+            item=item,
+            status=Status.COMPLETED.value,
+            progress=1,
+            start_date=now,
+            end_date=now,
+            score=8,
+        )
+
+        statistics_cache.invalidate_statistics_cache(self.user.id)
+        response = self.client.get(reverse("statistics") + "?start-date=all&end-date=all")
+
+        self.assertEqual(response.status_code, 200)
+        score_distribution = response.context["score_distribution"]
+        self.assertEqual(score_distribution["scale_max"], 5)
+        self.assertEqual(score_distribution["average_score"], 4.0)
+        self.assertEqual(score_distribution["labels"], [str(score) for score in range(6)])
+
+        response_body = response.content.decode()
+        self.assertRegex(
+            response_body,
+            re.compile(
+                r"Average Rating.*?4(?:\.0+)?\s*<span[^>]*>/\s*5</span>",
+                re.DOTALL,
+            ),
+        )
+
     @patch("app.providers.services.get_media_metadata")
     def test_statistics_view_passes_reading_top_genres_for_book_comic_manga(self, mock_get_metadata):
         """Book/comic/manga genre rollups should be exposed in consumption context."""

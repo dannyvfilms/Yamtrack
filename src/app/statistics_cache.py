@@ -3255,7 +3255,14 @@ def _aggregate_statistics_from_days(
     top_rated_heap = []
     top_rated_by_type = {}
     global_counter = itertools.count()
-    score_range = range(11)
+    score_scale_max = getattr(user, "rating_scale_max", 10)
+    try:
+        score_scale_max = int(score_scale_max)
+    except (TypeError, ValueError):
+        score_scale_max = 10
+    if score_scale_max not in (5, 10):
+        score_scale_max = 10
+    score_range = range(score_scale_max + 1)
 
     for media_type in active_types:
         items = items_by_type.get(media_type, {})
@@ -3268,21 +3275,27 @@ def _aggregate_statistics_from_days(
             score = meta.get("score")
             if score is None:
                 continue
-            binned = int(score)
+            score_value = float(score)
+            score_value_scaled = score_value / 2 if score_scale_max == 5 else score_value
+            binned = int(score_value_scaled)
+            if binned < 0:
+                binned = 0
+            if binned > score_scale_max:
+                binned = score_scale_max
             score_counts[binned] += 1
             total_scored += 1
-            total_score_sum += score
+            total_score_sum += score_value_scaled
             media_id = meta.get("media_id")
             if media_id is None:
                 continue
             if len(top_rated_heap) < 14:
-                heapq.heappush(top_rated_heap, (float(score), next(global_counter), meta))
+                heapq.heappush(top_rated_heap, (score_value, next(global_counter), meta))
             else:
-                heapq.heappushpop(top_rated_heap, (float(score), next(global_counter), meta))
+                heapq.heappushpop(top_rated_heap, (score_value, next(global_counter), meta))
             if len(type_heap) < 20:
-                heapq.heappush(type_heap, (float(score), next(type_counter), meta))
+                heapq.heappush(type_heap, (score_value, next(type_counter), meta))
             else:
-                heapq.heappushpop(type_heap, (float(score), next(type_counter), meta))
+                heapq.heappushpop(type_heap, (score_value, next(type_counter), meta))
         score_distribution[media_type] = score_counts
         top_rated_by_type[media_type] = [
             meta for _, _, meta in sorted(type_heap, key=lambda x: (-x[0], x[1]))
@@ -3349,6 +3362,7 @@ def _aggregate_statistics_from_days(
         ],
         "average_score": average_score,
         "total_scored": total_scored,
+        "scale_max": score_scale_max,
     }
 
     top_played = {}
