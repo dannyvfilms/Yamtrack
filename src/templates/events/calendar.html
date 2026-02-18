@@ -13,7 +13,7 @@
     <p class="text-gray-400">Track upcoming releases from your list.</p>
   </div>
 
-  <div class="bg-[#2a2f35] rounded-lg p-6 mb-6">
+  <div class="bg-[#2a2f35] rounded-lg p-6 mb-6" x-data="calendarFilters()" x-init="applyFilter(); $watch('selectedMediaTypes', () => applyFilter())">
     <div class="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
       <div class="flex items-center gap-4">
         <div class="flex items-center bg-[#39404b] rounded-md p-1">
@@ -29,15 +29,63 @@
         </div>
       </div>
 
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-2 flex-wrap justify-end">
         <a class="px-4 py-2 text-sm bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors"
            href="{% url 'calendar' %}?month={{ today.month }}&year={{ today.year }}&view={{ view_type }}">Today</a>
 
+        <div class="relative" @click.outside="dropdownOpen = false">
+          <button type="button"
+                  class="h-10 px-3 text-sm bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex items-center gap-2 cursor-pointer"
+                  @click="dropdownOpen = !dropdownOpen"
+                  :aria-expanded="dropdownOpen">
+            {% include "app/icons/funnel.svg" with classes="w-4 h-4" %}
+            <span class="block min-w-0 truncate max-w-[10rem] sm:max-w-[14rem]"
+                  x-text="dropdownLabel()"></span>
+            <svg xmlns="http://www.w3.org/2000/svg"
+                 viewBox="0 0 20 20"
+                 class="w-4 h-4 ml-1"
+                 aria-hidden="true">
+              <path d="M10 14 L4.5 7 H15.5 Z" fill="currentColor"></path>
+            </svg>
+          </button>
+
+          <div x-cloak
+               x-show="dropdownOpen"
+               x-transition:enter="transition ease-out duration-100"
+               x-transition:enter-start="transform opacity-0 scale-95"
+               x-transition:enter-end="transform opacity-100 scale-100"
+               x-transition:leave="transition ease-in duration-75"
+               x-transition:leave-start="transform opacity-100 scale-100"
+               x-transition:leave-end="transform opacity-0 scale-95"
+               class="absolute right-0 mt-2 w-64 rounded-md bg-[#39404b] border border-gray-700 shadow-lg overflow-hidden z-40">
+            <div class="flex items-center justify-between gap-2 px-3 py-2 border-b border-gray-700">
+              <div class="text-xs uppercase tracking-wide text-gray-300">Media Types</div>
+              <button type="button"
+                      class="text-xs text-gray-300 hover:text-white transition-colors"
+                      @click="toggleAllTypes()"
+                      x-text="allTypesSelected() ? 'Hide all' : 'Show all'"></button>
+            </div>
+            <div class="max-h-64 overflow-y-auto">
+              <template x-for="type in availableMediaTypes" :key="type.value">
+                <button type="button"
+                        class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                        @click="toggleMediaType(type.value)">
+                  <span x-text="type.label"></span>
+                  <span class="ml-auto" x-show="isTypeSelected(type.value)">
+                    {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                  </span>
+                </button>
+              </template>
+            </div>
+          </div>
+        </div>
+
         <form method="post" action="{% url 'reload_calendar' %}">
           {% csrf_token %}
-          <button class="px-4 py-2 text-sm bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex items-center gap-2 cursor-pointer">
+          <button aria-label="Fetch New Releases"
+                  title="Fetch New Releases"
+                  class="w-10 h-10 text-sm bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex items-center justify-center cursor-pointer">
             {% include "app/icons/circle-spinning-clockwise.svg" with classes="w-4 h-4" %}
-            <span>Fetch New Releases</span>
           </button>
         </form>
 
@@ -60,9 +108,15 @@
     </div>
 
     {% if view_type == 'grid' %}
-      {% include "events/components/calendar_grid.html" %}
+      <div x-html="filteredGridHtml"></div>
+      <template x-ref="gridTemplate">
+        {% include "events/components/calendar_grid.html" %}
+      </template>
     {% else %}
-      {% include "events/components/calendar_list.html" %}
+      <div x-html="filteredListHtml"></div>
+      <template x-ref="listTemplate">
+        {% include "events/components/calendar_list.html" %}
+      </template>
     {% endif %}
   </div>
 
@@ -132,3 +186,110 @@
     </div>
   </div>
 {% endblock content %}
+
+{% block js %}
+  {{ block.super }}
+  <script>
+    function calendarFilters() {
+      return {
+        dropdownOpen: false,
+        availableMediaTypes: [
+          {% for media_type in available_media_types %}
+            { value: '{{ media_type }}', label: '{{ media_type|media_type_readable|escapejs }}' }{% if not forloop.last %},{% endif %}
+          {% endfor %}
+        ],
+        selectedMediaTypes: [
+          {% for media_type in available_media_types %}
+            '{{ media_type }}'{% if not forloop.last %},{% endif %}
+          {% endfor %}
+        ],
+        filteredGridHtml: '',
+        filteredListHtml: '',
+        init() {
+          this.applyFilter();
+        },
+        dropdownLabel() {
+          if (this.allTypesSelected()) {
+            return 'All Types';
+          }
+          if (this.selectedMediaTypes.length === 0) {
+            return 'No Types';
+          }
+          if (this.selectedMediaTypes.length === 1) {
+            const selectedType = this.availableMediaTypes.find(
+              type => type.value === this.selectedMediaTypes[0],
+            );
+            return selectedType ? selectedType.label : '1 Type';
+          }
+          return `${this.selectedMediaTypes.length} Types`;
+        },
+        allTypesSelected() {
+          return (
+            this.availableMediaTypes.length > 0
+            && this.selectedMediaTypes.length === this.availableMediaTypes.length
+          );
+        },
+        isTypeSelected(mediaType) {
+          return this.selectedMediaTypes.includes(mediaType);
+        },
+        toggleMediaType(mediaType) {
+          if (this.isTypeSelected(mediaType)) {
+            this.selectedMediaTypes = this.selectedMediaTypes.filter(
+              selectedType => selectedType !== mediaType,
+            );
+          } else {
+            this.selectedMediaTypes = [...this.selectedMediaTypes, mediaType];
+          }
+          this.applyFilter();
+        },
+        toggleAllTypes() {
+          if (this.allTypesSelected()) {
+            this.clearAll();
+            return;
+          }
+          this.selectAll();
+        },
+        selectAll() {
+          this.selectedMediaTypes = this.availableMediaTypes.map(type => type.value);
+          this.applyFilter();
+        },
+        clearAll() {
+          this.selectedMediaTypes = [];
+          this.applyFilter();
+        },
+        applyFilter() {
+          if (this.$refs.gridTemplate) {
+            this.filteredGridHtml = this.filterReleaseMarkup(this.$refs.gridTemplate.innerHTML);
+          }
+          if (this.$refs.listTemplate) {
+            this.filteredListHtml = this.filterReleaseMarkup(this.$refs.listTemplate.innerHTML);
+          }
+        },
+        filterReleaseMarkup(html) {
+          const selected = new Set(this.selectedMediaTypes);
+          const container = document.createElement('div');
+          container.innerHTML = html;
+
+          container.querySelectorAll('[data-release-media-type]').forEach(el => {
+            const type = el.dataset.releaseMediaType;
+            if (!selected.has(type)) {
+              el.remove();
+            }
+          });
+
+          container.querySelectorAll('[data-calendar-day]').forEach(dayEl => {
+            const hasReleases = dayEl.querySelector('[data-release-media-type]');
+            const emptyState = dayEl.querySelector('[data-empty-state]');
+
+            if (emptyState) {
+              emptyState.classList.toggle('hidden', !!hasReleases);
+            }
+          });
+
+          return container.innerHTML;
+        }
+      };
+    }
+
+  </script>
+{% endblock js %}

@@ -4,7 +4,7 @@
 
 <div class="space-y-6">
   {% for day, releases in release_dict.items %}
-    <div class="bg-[#343a40] rounded-lg overflow-hidden">
+    <div data-calendar-day class="bg-[#343a40] rounded-lg overflow-hidden">
       <div class="px-4 py-3 font-medium flex items-center justify-between {% if day == today.day and month == today.month and year == today.year %}bg-indigo-600{% else %}bg-gray-600{% endif %}">
         <span>{% day_of_week day month year %}, {{ month_name }} {{ day }}</span>
         {% if day == today.day and month == today.month and year == today.year %}
@@ -14,7 +14,7 @@
 
       <div class="p-4 space-y-3">
         {% for release in releases %}
-          <a href="{{ release.item|media_url }}" class="block">
+          <a data-release-media-type="{{ release.item.media_type }}" href="{{ release.item|media_url }}" class="block">
             <div class="flex items-center gap-3 p-2 rounded-md hover:bg-[#454d5a] transition-colors">
               <img alt="{{ release }}"
                    class="w-10 h-10 object-cover rounded-md shrink-0"
@@ -31,6 +31,7 @@
             </div>
           </a>
         {% endfor %}
+        <div data-empty-state class="hidden text-sm text-gray-400">No releases for selected media types.</div>
       </div>
     </div>
   {% endfor %}

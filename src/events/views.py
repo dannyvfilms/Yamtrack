@@ -83,6 +83,16 @@ def calendar(request):
             if episode.show and episode.show.image
         }
 
+    release_media_types = {
+        release.item.media_type
+        for release in releases
+        if release.item and release.item.media_type
+    }
+    available_media_types = sorted(
+        release_media_types,
+        key=lambda media_type: MediaTypes(media_type).label,
+    )
+
     release_dict = {}
     for release in releases:
         if (
@@ -122,6 +132,7 @@ def calendar(request):
         "release_dict": release_dict,
         "today": today,
         "view_type": view_type,
+        "available_media_types": available_media_types,
     }
     return render(request, "events/calendar.html", context)
 
