@@ -3,6 +3,29 @@
 from django.db import migrations, models
 
 
+def _normalize_invalid_auto_pause_rules(apps, schema_editor):
+    """Ensure SQLite table remakes don't fail on invalid JSON values."""
+    if schema_editor.connection.vendor != "sqlite":
+        return
+
+    with schema_editor.connection.cursor() as cursor:
+        cursor.execute("PRAGMA table_info(users_user)")
+        existing_columns = {row[1] for row in cursor.fetchall()}
+        if "auto_pause_rules" not in existing_columns:
+            return
+
+        cursor.execute(
+            """
+            UPDATE users_user
+            SET auto_pause_rules = '[]'
+            WHERE auto_pause_rules IS NULL
+               OR auto_pause_rules = ''
+               OR auto_pause_rules = 'auto_pause_rules'
+               OR JSON_VALID(auto_pause_rules) = 0
+            """
+        )
+
+
 class Migration(migrations.Migration):
     dependencies = [
         ("app", "0087_alter_metadatabackfillstate_field"),
@@ -11,6 +34,10 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.RunPython(
+            _normalize_invalid_auto_pause_rules,
+            migrations.RunPython.noop,
+        ),
         migrations.RemoveConstraint(
             model_name="user",
             name="tv_sort_valid",
