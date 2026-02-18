@@ -188,6 +188,36 @@ class BasicGameForm(TestCase):
         form = GameForm(data=form_data)
         self.assertTrue(form.is_valid())
 
+    def test_word_minutes_progress(self):
+        """Test the game form using a Steam-style minutes string."""
+        form_data = {
+            "media_id": "1",
+            "source": Sources.IGDB.value,
+            "media_type": MediaTypes.GAME.value,
+            "user": self.user.id,
+            "status": Status.COMPLETED.value,
+            "progress": "111 minutes",
+            "repeats": 0,
+        }
+        form = GameForm(data=form_data)
+        self.assertTrue(form.is_valid())
+        self.assertEqual(form.cleaned_data["progress"], 111)
+
+    def test_decimal_hours_progress(self):
+        """Test the game form using a Steam-style decimal hours string."""
+        form_data = {
+            "media_id": "1",
+            "source": Sources.IGDB.value,
+            "media_type": MediaTypes.GAME.value,
+            "user": self.user.id,
+            "status": Status.COMPLETED.value,
+            "progress": "4.3 hours",
+            "repeats": 0,
+        }
+        form = GameForm(data=form_data)
+        self.assertTrue(form.is_valid())
+        self.assertEqual(form.cleaned_data["progress"], 258)
+
     def test_invalid_progress(self):
         """Test the game form using an invalid default progress format."""
         form_data = {

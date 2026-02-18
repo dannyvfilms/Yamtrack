@@ -280,7 +280,7 @@
             <input class="w-full p-2 pr-12 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff] appearance-none"
                    name="progress"
                    x-bind:type="mediaType === 'game' ? 'text' : 'number'"
-                   x-bind:placeholder="mediaType === 'game' ? 'hh:mm' : ''"
+                   x-bind:placeholder="mediaType === 'game' ? 'hh:mm or 111 minutes' : ''"
                    x-bind:min="mediaType !== 'game' ? 0 : null"
                    x-bind:max="mediaType !== 'game' ? 99999 : null"
                    x-bind:class="{'[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none': mediaType !== 'game'}"

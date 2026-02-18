@@ -1,3 +1,6 @@
+import re
+from decimal import Decimal, InvalidOperation
+
 from django import forms
 from django.conf import settings
 from django.utils import timezone
@@ -35,8 +38,12 @@ def get_form_class(media_type):
 class CustomDurationField(forms.CharField):
     """Custom form field for duration input that accepts multiple time formats."""
 
+    _UNIT_DURATION_PATTERN = re.compile(
+        r"(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>hours?|hrs?|hr|h|minutes?|mins?|min)"
+    )
+
     def _parse_hours_minutes(self, value):
-        """Parse hours and minutes from various time formats.
+        """Parse and return total minutes from various time formats.
 
         Supported formats:
         - Plain number (hours only): "5"
@@ -45,29 +52,79 @@ class CustomDurationField(forms.CharField):
         - NhNmin: "5h30min"
         - Nmin: "30min"
         - Nh: "5h"
+        - N minutes: "111 minutes"
+        - Decimal hours: "4.3 hours"
         """
-        if value.isdigit():  # hours only
-            return int(value), 0
+        normalized_value = value.strip().lower()
 
-        if ":" in value:  # hh:mm format
-            hours, minutes = value.split(":")
-            return int(hours), int(minutes)
+        if normalized_value.isdigit():  # hours only
+            return int(normalized_value) * 60
 
-        if " " in value:  # [n]h [n]min format
-            hours, minutes = value.split(" ")
-            return int(hours.strip("h")), int(minutes.strip("min"))
+        hh_mm_minutes = self._parse_hh_mm_duration(normalized_value)
+        if hh_mm_minutes is not None:
+            return hh_mm_minutes
 
-        if "h" in value and "min" in value:  # [n]h[n]min format
-            hours, minutes = value.split("h")
-            return int(hours), int(minutes.strip("min"))
+        unit_minutes = self._parse_unit_duration(normalized_value)
+        if unit_minutes is not None:
+            return unit_minutes
 
-        if "min" in value:  # [n]min format
-            return 0, int(value.strip("min"))
-
-        if "h" in value:  # [n]h format
-            return int(value.strip("h")), 0
         msg = "Invalid time format"
         raise ValueError(msg)
+
+    def _parse_hh_mm_duration(self, value):
+        """Parse hh:mm input and return total minutes."""
+        if ":" not in value:
+            return None
+
+        chunks = value.split(":")
+        expected_chunk_count = 2
+        if len(chunks) != expected_chunk_count:
+            msg = "Invalid time format"
+            raise ValueError(msg)
+
+        hours_str, minutes_str = chunks
+        if not (hours_str.isdigit() and minutes_str.isdigit()):
+            msg = "Invalid time format"
+            raise ValueError(msg)
+
+        hours = int(hours_str)
+        minutes = int(minutes_str)
+        self._validate_minutes(minutes)
+        return hours * 60 + minutes
+
+    def _parse_unit_duration(self, value):
+        """Parse unit-based duration strings and return total minutes."""
+        matches = list(self._UNIT_DURATION_PATTERN.finditer(value))
+        if not matches:
+            return None
+
+        remainder = self._UNIT_DURATION_PATTERN.sub("", value)
+        if remainder.strip():
+            msg = "Invalid time format"
+            raise ValueError(msg)
+
+        total_minutes = Decimal(0)
+        has_hours_token = any(
+            match.group("unit").startswith(("h", "hr")) for match in matches
+        )
+
+        for match in matches:
+            raw_value = match.group("value")
+            try:
+                amount = Decimal(raw_value)
+            except InvalidOperation as e:
+                msg = "Invalid time format"
+                raise ValueError(msg) from e
+
+            unit = match.group("unit")
+            if unit.startswith(("h", "hr")):
+                total_minutes += amount * 60
+            else:
+                if has_hours_token:
+                    self._validate_minutes(int(amount))
+                total_minutes += amount
+
+        return int(total_minutes)
 
     def _validate_minutes(self, minutes):
         """Validate that minutes are within acceptable range."""
@@ -83,11 +140,12 @@ class CustomDurationField(forms.CharField):
             return 0
 
         try:
-            hours, minutes = self._parse_hours_minutes(cleaned_value)
-            self._validate_minutes(minutes)
-            return hours * 60 + minutes
+            return self._parse_hours_minutes(cleaned_value)
         except ValueError as e:
-            msg = "Invalid time played format. Please use hh:mm, [n]h [n]min or [n]h[n]min format."  # noqa: E501
+            msg = (
+                "Invalid time played format. Please use hh:mm, [n]h [n]min, "
+                "[n]h[n]min, [n] minutes, or [n.n] hours."
+            )
             raise forms.ValidationError(msg) from e
 
 
@@ -338,7 +396,7 @@ class GameForm(MediaForm):
 
     progress = CustomDurationField(
         required=False,
-        widget=forms.TextInput(attrs={"placeholder": "hh:mm"}),
+        widget=forms.TextInput(attrs={"placeholder": "hh:mm or 111 minutes"}),
         label="Progress (Time Played)",
     )
 
