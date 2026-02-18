@@ -332,3 +332,70 @@ class CalendarViewTests(TestCase):
 
         # Check response - should be 405 Method Not Allowed
         self.assertEqual(response.status_code, 405)
+
+
+class DownloadCalendarViewTests(TestCase):
+    """Tests for the calendar export endpoint."""
+
+    def setUp(self):
+        """Set up test data."""
+        self.credentials = {"username": "caluser", "password": "testpassword"}
+        self.user = get_user_model().objects.create_user(**self.credentials)
+
+        self.movie_item = Item.objects.create(
+            media_id="movie-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Export Movie",
+            image="https://example.com/movie.jpg",
+        )
+        self.season_item = Item.objects.create(
+            media_id="tv-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Export Season",
+            image="https://example.com/season.jpg",
+            season_number=1,
+        )
+
+        now = timezone.now()
+        self.movie_event = Event.objects.create(item=self.movie_item, datetime=now)
+        self.season_event = Event.objects.create(item=self.season_item, datetime=now)
+
+    def test_download_calendar_filters_selected_media_types(self):
+        """Only selected media types should be exported."""
+        export_events = Event.objects.filter(
+            id__in=[self.movie_event.id, self.season_event.id],
+        )
+        with patch(
+            "events.views.Event.objects.get_user_events",
+            return_value=export_events,
+        ):
+            response = self.client.get(
+                reverse("download_calendar", kwargs={"token": self.user.token}),
+                {"media_types": [MediaTypes.MOVIE.value]},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode()
+        self.assertIn("Export Movie", body)
+        self.assertNotIn("Export Season", body)
+
+    def test_download_calendar_tv_filter_includes_seasons(self):
+        """Selecting tv should include season events in export."""
+        export_events = Event.objects.filter(
+            id__in=[self.movie_event.id, self.season_event.id],
+        )
+        with patch(
+            "events.views.Event.objects.get_user_events",
+            return_value=export_events,
+        ):
+            response = self.client.get(
+                reverse("download_calendar", kwargs={"token": self.user.token}),
+                {"media_types": [MediaTypes.TV.value]},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode()
+        self.assertIn("Export Season", body)
+        self.assertNotIn("Export Movie", body)

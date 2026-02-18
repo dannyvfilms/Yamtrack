@@ -106,6 +106,11 @@ def calendar(request):
 
     context = {
         "user": request.user,
+        "media_types": [
+            media_type.value
+            for media_type in MediaTypes
+            if media_type != MediaTypes.EPISODE
+        ],
         "calendar": calendar_format,
         "month": month,
         "month_name": month_name,
@@ -132,7 +137,7 @@ def reload_calendar(request):
 @login_not_required
 @csrf_exempt
 @require_http_methods(["GET", "HEAD", "PROPFIND"])
-def download_calendar(_, token: str):
+def download_calendar(request, token: str):
     """Download the calendar as a iCalendar file."""
     try:
         user = User.objects.get(token=token)
@@ -151,6 +156,21 @@ def download_calendar(_, token: str):
 
     # Retrieve release events
     releases = Event.objects.get_user_events(user, start_date, end_date)
+
+    selected_media_types = request.GET.getlist("media_types")
+    if selected_media_types:
+        valid_media_types = {
+            media_type
+            for media_type in selected_media_types
+            if media_type in {choice.value for choice in MediaTypes}
+        }
+
+        # TV release events are stored at the season level.
+        if MediaTypes.TV.value in valid_media_types:
+            valid_media_types.add(MediaTypes.SEASON.value)
+
+        if valid_media_types:
+            releases = releases.filter(item__media_type__in=valid_media_types)
 
     # Create iCalendar object
     cal = icalendar.Calendar()
