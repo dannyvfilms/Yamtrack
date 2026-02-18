@@ -60,7 +60,6 @@
     --color-rose-600: oklch(58.6% 0.253 17.585);
     --color-rose-700: oklch(51.4% 0.222 16.935);
     --color-slate-200: oklch(92.9% 0.013 255.508);
-    --color-slate-400: oklch(70.4% 0.04 256.788);
     --color-gray-100: oklch(96.7% 0.003 264.542);
     --color-gray-200: oklch(92.8% 0.006 264.531);
     --color-gray-300: oklch(87.2% 0.01 258.338);
@@ -1325,11 +1324,11 @@
   .border-\[\#2c3136\] {
     border-color: #2c3136;
   }
+  .border-\[\#454d5a\] {
+    border-color: #454d5a;
+  }
   .border-\[\#39404b\] {
     border-color: #39404b;
-  }
-  .border-\[\#586172\] {
-    border-color: #586172;
   }
   .border-amber-400\/30 {
     border-color: color-mix(in srgb, oklch(82.8% 0.189 84.429) 30%, transparent);
@@ -2903,6 +2902,11 @@
   .sm\:w-auto {
     @media (width >= 40rem) {
       width: auto;
+    }
+  }
+  .sm\:max-w-\[12rem\] {
+    @media (width >= 40rem) {
+      max-width: 12rem;
     }
   }
   .sm\:max-w-\[14rem\] {

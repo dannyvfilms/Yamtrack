@@ -36,7 +36,7 @@
         <div class="relative" @click.outside="dropdownOpen = false">
           <button type="button"
                   class="h-10 px-3 text-sm bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex items-center gap-2 cursor-pointer"
-                  @click="dropdownOpen = !dropdownOpen"
+                  @click="actionsOpen = false; dropdownOpen = !dropdownOpen"
                   :aria-expanded="dropdownOpen">
             {% include "app/icons/funnel.svg" with classes="w-4 h-4" %}
             <span class="block min-w-0 truncate max-w-[10rem] sm:max-w-[14rem]"
@@ -80,14 +80,42 @@
           </div>
         </div>
 
-        <form method="post" action="{% url 'reload_calendar' %}">
-          {% csrf_token %}
-          <button aria-label="Fetch New Releases"
-                  title="Fetch New Releases"
-                  class="w-10 h-10 text-sm bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex items-center justify-center cursor-pointer">
-            {% include "app/icons/circle-spinning-clockwise.svg" with classes="w-4 h-4" %}
+        <div class="relative" @click.outside="actionsOpen = false">
+          <button type="button"
+                  aria-label="Calendar Actions"
+                  title="Calendar Actions"
+                  class="w-10 h-10 text-sm bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex items-center justify-center cursor-pointer"
+                  @click="dropdownOpen = false; actionsOpen = !actionsOpen"
+                  :aria-expanded="actionsOpen">
+            {% include "app/icons/settings.svg" with classes="w-4 h-4" %}
           </button>
-        </form>
+
+          <div x-cloak
+               x-show="actionsOpen"
+               x-transition:enter="transition ease-out duration-100"
+               x-transition:enter-start="transform opacity-0 scale-95"
+               x-transition:enter-end="transform opacity-100 scale-100"
+               x-transition:leave="transition ease-in duration-75"
+               x-transition:leave-start="transform opacity-100 scale-100"
+               x-transition:leave-end="transform opacity-0 scale-95"
+               class="absolute right-0 mt-2 w-60 rounded-md bg-[#39404b] border border-gray-700 shadow-lg overflow-hidden z-40">
+            <form method="post" action="{% url 'reload_calendar' %}">
+              {% csrf_token %}
+              <button type="submit"
+                      class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                      @click="actionsOpen = false">
+                {% include "app/icons/circle-spinning-clockwise.svg" with classes="w-4 h-4 mr-3" %}
+                <span>Fetch New Releases</span>
+              </button>
+            </form>
+            <a class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white border-t border-gray-700"
+               href="{% url 'download_calendar' token=user.token %}"
+               @click="actionsOpen = false">
+              {% include "app/icons/download.svg" with classes="w-4 h-4 mr-3" %}
+              <span>Download Calendar</span>
+            </a>
+          </div>
+        </div>
 
         <div class="bg-[#39404b] rounded-md p-1 space-x-0.5 flex">
           <a class="p-2 rounded-md transition-colors cursor-pointer {% if view_type == 'grid' %}bg-indigo-600 text-white{% else %}hover:bg-[#454d5a]{% endif %}"
@@ -100,10 +128,6 @@
           </a>
         </div>
 
-        <a class="p-3 text-sm bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors"
-           href="{% url 'download_calendar' token=user.token %}">
-          {% include "app/icons/download.svg" with classes="w-4 h-4" %}
-        </a>
       </div>
     </div>
 
@@ -193,6 +217,7 @@
     function calendarFilters() {
       return {
         dropdownOpen: false,
+        actionsOpen: false,
         availableMediaTypes: [
           {% for media_type in available_media_types %}
             { value: '{{ media_type }}', label: '{{ media_type|media_type_readable|escapejs }}' }{% if not forloop.last %},{% endif %}
