@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -869,9 +870,25 @@ def process_comic(item, events_bulk):
         return
 
     if issue_metadata["store_date"]:
-        issue_datetime = date_parser(issue_metadata["store_date"])
+        try:
+            issue_datetime = date_parser(issue_metadata["store_date"])
+        except ValueError:
+            logger.warning(
+                "Skipping comic event for %s due to invalid store_date: %s",
+                item,
+                issue_metadata["store_date"],
+            )
+            return
     elif issue_metadata["cover_date"]:
-        issue_datetime = date_parser(issue_metadata["cover_date"])
+        try:
+            issue_datetime = date_parser(issue_metadata["cover_date"])
+        except ValueError:
+            logger.warning(
+                "Skipping comic event for %s due to invalid cover_date: %s",
+                item,
+                issue_metadata["cover_date"],
+            )
+            return
     else:
         return
 
@@ -905,7 +922,16 @@ def process_other(item, events_bulk):
 
     if date_key in metadata["details"] and content_number:
         if metadata["details"][date_key]:
-            content_datetime = date_parser(metadata["details"][date_key])
+            try:
+                content_datetime = date_parser(metadata["details"][date_key])
+            except ValueError:
+                logger.warning(
+                    "Skipping event for %s due to invalid %s: %s",
+                    item,
+                    date_key,
+                    metadata["details"][date_key],
+                )
+                return
         else:
             content_datetime = datetime.min.replace(tzinfo=ZoneInfo("UTC"))
 
@@ -970,20 +996,40 @@ def date_parser(date_value):
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=ZoneInfo("UTC"))
     else:
-        date_str = str(date_value)
-        year_only_parts = 1
-        year_month_parts = 2
-        default_month_day = "-01-01"
-        default_day = "-01"
-        # Preprocess the date string
-        parts = date_str.split("-")
-        if len(parts) == year_only_parts:
-            date_str += default_month_day
-        elif len(parts) == year_month_parts:
-            # Year and month are provided, append "-01"
-            date_str += default_day
+        date_str = str(date_value).strip()
+        if not date_str:
+            msg = "Date value is empty."
+            raise ValueError(msg)
 
-        dt = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=ZoneInfo("UTC"))
+        # Prefer explicit ISO-like dates found anywhere in the string.
+        iso_date_match = re.search(r"\b\d{4}-\d{2}-\d{2}\b", date_str)
+        if iso_date_match:
+            parsed = datetime.strptime(iso_date_match.group(0), "%Y-%m-%d")
+            dt = parsed.replace(tzinfo=ZoneInfo("UTC"))
+        elif re.fullmatch(r"\d{4}-\d{2}", date_str):
+            parsed = datetime.strptime(f"{date_str}-01", "%Y-%m-%d")
+            dt = parsed.replace(tzinfo=ZoneInfo("UTC"))
+        elif re.fullmatch(r"\d{4}", date_str):
+            parsed = datetime.strptime(f"{date_str}-01-01", "%Y-%m-%d")
+            dt = parsed.replace(tzinfo=ZoneInfo("UTC"))
+        else:
+            parsed = None
+            for date_format in ("%b %d, %Y", "%B %d, %Y", "%b %Y", "%B %Y"):
+                try:
+                    parsed = datetime.strptime(date_str, date_format)
+                    break
+                except ValueError:
+                    continue
+
+            if parsed is None:
+                msg = f"Invalid date value: {date_str}"
+                raise ValueError(msg)
+
+            # Month-year strings default to first day of month.
+            if date_format in {"%b %Y", "%B %Y"}:
+                parsed = parsed.replace(day=1)
+
+            dt = parsed.replace(tzinfo=ZoneInfo("UTC"))
     # Set to max time and add UTC timezone
     return dt.replace(
         hour=SentinelDatetime.HOUR,

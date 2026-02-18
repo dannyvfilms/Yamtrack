@@ -1324,9 +1324,6 @@
   .border-\[\#2c3136\] {
     border-color: #2c3136;
   }
-  .border-\[\#454d5a\] {
-    border-color: #454d5a;
-  }
   .border-\[\#39404b\] {
     border-color: #39404b;
   }
@@ -1353,9 +1350,6 @@
   }
   .border-gray-400 {
     border-color: var(--color-gray-400);
-  }
-  .border-gray-500 {
-    border-color: var(--color-gray-500);
   }
   .border-gray-600 {
     border-color: var(--color-gray-600);
@@ -2902,11 +2896,6 @@
   .sm\:w-auto {
     @media (width >= 40rem) {
       width: auto;
-    }
-  }
-  .sm\:max-w-\[12rem\] {
-    @media (width >= 40rem) {
-      max-width: 12rem;
     }
   }
   .sm\:max-w-\[14rem\] {

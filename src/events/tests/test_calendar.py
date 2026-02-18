@@ -722,6 +722,28 @@ class ReloadCalendarTaskTests(TestCase):
         self.assertEqual(len(events_bulk), 0)
 
     @patch("events.calendar.services.get_media_metadata")
+    def test_process_other_invalid_date_with_progress(self, mock_get_media_metadata):
+        """Test process_other skips invalid dated items without crashing."""
+        mock_get_media_metadata.return_value = {
+            "max_progress": 12,
+            "details": {
+                "release_date": "not-a-date",
+            },
+        }
+
+        events_bulk = []
+        process_other(self.movie_item, events_bulk)
+
+        self.assertEqual(len(events_bulk), 0)
+
+    def test_date_parser_mixed_date_prefers_embedded_iso_date(self):
+        """Test date_parser handles mixed date strings from providers."""
+        dt = date_parser("Nov 01, 2001-01-01")
+        self.assertEqual(dt.year, 2001)
+        self.assertEqual(dt.month, 1)
+        self.assertEqual(dt.day, 1)
+
+    @patch("events.calendar.services.get_media_metadata")
     def test_process_other_no_date(self, mock_get_media_metadata):
         """Test process_other with no date."""
         # Setup mock with no date

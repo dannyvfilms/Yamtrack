@@ -29,6 +29,12 @@ from integrations.webhooks import plex as plex_webhooks
 logger = logging.getLogger(__name__)
 
 
+def _read_uploaded_file(file):
+    """Read uploaded file bytes for safe Celery serialization."""
+    file.seek(0)
+    return file.read()
+
+
 @require_POST
 def trakt_oauth(request):
     """View for initiating Trakt OAuth2 authorization flow."""
@@ -479,7 +485,7 @@ def import_yamtrack(request):
 
     mode = request.POST["mode"]
     tasks.import_yamtrack.delay(
-        file=request.FILES["yamtrack_csv"],
+        file=_read_uploaded_file(file),
         user_id=request.user.id,
         mode=mode,
     )
@@ -501,7 +507,7 @@ def import_hltb(request):
 
     mode = request.POST["mode"]
     tasks.import_hltb.delay(
-        file=request.FILES["hltb_csv"],
+        file=_read_uploaded_file(file),
         user_id=request.user.id,
         mode=mode,
     )
@@ -878,7 +884,7 @@ def import_imdb(request):
 
     mode = request.POST["mode"]
     tasks.import_imdb.delay(
-        file=request.FILES["imdb_csv"],
+        file=_read_uploaded_file(file),
         user_id=request.user.id,
         mode=mode,
     )
@@ -900,7 +906,7 @@ def import_goodreads(request):
 
     mode = request.POST["mode"]
     tasks.import_goodreads.delay(
-        file=request.FILES["goodreads_csv"],
+        file=_read_uploaded_file(file),
         user_id=request.user.id,
         mode=mode,
     )
@@ -922,7 +928,7 @@ def import_hardcover(request):
 
     mode = request.POST["mode"]
     tasks.import_hardcover.delay(
-        file=request.FILES["hardcover_csv"],
+        file=_read_uploaded_file(file),
         user_id=request.user.id,
         mode=mode,
     )
