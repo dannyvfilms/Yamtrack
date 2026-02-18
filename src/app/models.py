@@ -1216,12 +1216,17 @@ class MediaManager(models.Manager):
                 return [base_type]
             return [specific_media_type]
 
-        # Get active types excluding TV
-        return [
+        media_types = [
             media_type
             for media_type in user.get_active_media_types()
             if media_type != MediaTypes.TV.value
         ]
+
+        # Home should continue to include TV seasons when TV shows are enabled.
+        if getattr(user, "tv_enabled", False) and MediaTypes.SEASON.value not in media_types:
+            media_types.insert(0, MediaTypes.SEASON.value)
+
+        return media_types
 
     def _annotate_next_event(self, media_list):
         """Annotate next_event for media items."""

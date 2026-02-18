@@ -516,6 +516,26 @@ class MediaManagerTests(TestCase):
         self.assertNotIn(MediaTypes.MANGA.value, media_types)
         self.assertIn(MediaTypes.MOVIE.value, media_types)
 
+    def test_get_media_types_to_process_keeps_seasons_on_home_when_tv_enabled(self):
+        """Home processing should include seasons when TV is enabled."""
+        manager = MediaManager()
+
+        self.user.tv_enabled = True
+        self.user.season_enabled = False
+        self.user.save(update_fields=["tv_enabled", "season_enabled"])
+
+        media_types = manager._get_media_types_to_process(self.user, None)
+        self.assertIn(MediaTypes.SEASON.value, media_types)
+        self.assertNotIn(MediaTypes.TV.value, media_types)
+
+        self.user.tv_enabled = False
+        self.user.season_enabled = False
+        self.user.save(update_fields=["tv_enabled", "season_enabled"])
+
+        media_types = manager._get_media_types_to_process(self.user, None)
+        self.assertNotIn(MediaTypes.SEASON.value, media_types)
+        self.assertNotIn(MediaTypes.TV.value, media_types)
+
     def test_annotate_next_event(self):
         """Test the _annotate_next_event method."""
         manager = MediaManager()

@@ -97,6 +97,20 @@ class HomeViewTests(TestCase):
         self.assertEqual(len(season["items"]), 1)
         self.assertEqual(season["items"][0].progress, 5)
 
+    def test_home_view_includes_seasons_when_tv_enabled_and_season_disabled(self):
+        """Home should still include TV seasons when TV is enabled."""
+        self.user.tv_enabled = True
+        self.user.season_enabled = False
+        self.user.save(update_fields=["tv_enabled", "season_enabled"])
+
+        response = self.client.get(reverse("home"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(MediaTypes.SEASON.value, response.context["list_by_type"])
+        season = response.context["list_by_type"][MediaTypes.SEASON.value]
+        self.assertEqual(len(season["items"]), 1)
+        self.assertEqual(season["items"][0].progress, 5)
+
     def test_home_view_with_sort(self):
         """Test the home view with sorting parameter."""
         response = self.client.get(reverse("home") + "?sort=completion")
