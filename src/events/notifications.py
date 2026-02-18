@@ -1,5 +1,6 @@
 import logging
 from datetime import UTC
+from html import escape
 
 import apprise
 from django.apps import apps
@@ -396,11 +397,28 @@ def deliver_notifications(user_releases, users, title):
         if not urls:
             continue
 
-        # Format notification
-        notification_body = format_notification(releases=releases)
+        # Format notification as HTML for richer email output
+        notification_body = format_notification_html(releases=releases)
 
         # Send notification
-        send_user_notification(user, urls, title, notification_body)
+        send_user_notification(
+            user,
+            urls,
+            title,
+            notification_body,
+            body_format=apprise.NotifyFormat.HTML,
+        )
+
+
+def group_releases_by_type(releases):
+    """Group events by media type while preserving release ordering."""
+    releases_by_type = {}
+    for event in releases:
+        media_type = event.item.media_type
+        if media_type not in releases_by_type:
+            releases_by_type[media_type] = []
+        releases_by_type[media_type].append(event)
+    return releases_by_type
 
 
 def format_notification(releases):
@@ -413,12 +431,7 @@ def format_notification(releases):
         Formatted notification text as a string
     """
     # Group releases by media type
-    releases_by_type = {}
-    for event in releases:
-        media_type = event.item.media_type
-        if media_type not in releases_by_type:
-            releases_by_type[media_type] = []
-        releases_by_type[media_type].append(event)
+    releases_by_type = group_releases_by_type(releases)
 
     # Format the notification body
     notification_body = []
@@ -453,7 +466,45 @@ def format_notification(releases):
     return "\n".join(notification_body)
 
 
-def send_user_notification(user, urls, title, body):
+def format_notification_html(releases):
+    """Format notification HTML for releases."""
+    releases_by_type = group_releases_by_type(releases)
+    notification_html = ["<div>"]
+
+    for media_type, media_events in releases_by_type.items():
+        icon = app_tags.unicode_icon(media_type)
+
+        if media_type == MediaTypes.SEASON.value:
+            heading = "TV Shows"
+        else:
+            heading = media_type.upper()
+
+        notification_html.append(
+            f"<p><strong>{escape(icon)} {escape(heading)}</strong></p><ul>",
+        )
+
+        for event in media_events:
+            if event.is_sentinel_time:
+                line = escape(str(event))
+            else:
+                local_dt = timezone.localtime(event.datetime)
+                time_str = local_dt.strftime("%H:%M")
+                line = f"{escape(str(event))} ({time_str})"
+            notification_html.append(f"<li>{line}</li>")
+
+        notification_html.append("</ul>")
+
+    notification_html.append("<p>Enjoy your media!</p></div>")
+    return "".join(notification_html)
+
+
+def send_user_notification(
+    user,
+    urls,
+    title,
+    body,
+    body_format=apprise.NotifyFormat.TEXT,
+):
     """Send a notification to a specific user.
 
     Args:
@@ -461,13 +512,18 @@ def send_user_notification(user, urls, title, body):
         urls: List of notification URLs
         title: Notification title
         body: Notification body
+        body_format: Apprise body format
     """
     apobj = apprise.Apprise()
     for url in urls:
         apobj.add(url)
 
     try:
-        result = apobj.notify(title=title, body=body)
+        result = apobj.notify(
+            title=title,
+            body=body,
+            body_format=body_format,
+        )
 
         if result:
             logger.info(

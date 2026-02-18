@@ -1,6 +1,7 @@
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
+import apprise
 from django.contrib.auth import get_user_model
 from django.db import models
 from django.test import TestCase, override_settings
@@ -10,6 +11,7 @@ from app.models import TV, Anime, Item, Manga, MediaTypes, Season, Sources, Stat
 from events.models import Event
 from events.notifications import (
     format_notification,
+    format_notification_html,
     get_all_user_tracking_data,
     get_tv_tracking_data,
     get_user_releases,
@@ -704,6 +706,15 @@ class NotificationTests(TestCase):
         self.assertIn("event_ids", result)
         self.assertEqual(result["event_count"], 5)
         self.assertEqual(len(result["event_ids"]), 5)
+        self.assertGreaterEqual(mock_instance.notify.call_count, 1)
+
+        for call in mock_instance.notify.call_args_list:
+            self.assertEqual(
+                call.kwargs["body_format"],
+                apprise.NotifyFormat.HTML,
+            )
+            self.assertIn("<ul>", call.kwargs["body"])
+            self.assertIn("Enjoy your media!", call.kwargs["body"])
 
     def test_format_notification(self):
         """Test the format_notification function."""
@@ -731,6 +742,23 @@ class NotificationTests(TestCase):
         self.assertIn("E5", notification_text)
         self.assertNotIn("MANGA", notification_text)
         self.assertNotIn("Test Manga", notification_text)
+
+    def test_format_notification_html(self):
+        """Test the format_notification_html function."""
+        releases = [self.anime_event, self.manga_event, self.season1_event]
+        notification_html = format_notification_html(releases)
+
+        self.assertIn("<ul>", notification_html)
+        self.assertIn("</ul>", notification_html)
+        self.assertIn("ANIME", notification_html)
+        self.assertIn("MANGA", notification_html)
+        self.assertIn("TV Shows", notification_html)
+        self.assertIn("Test Anime", notification_html)
+        self.assertIn("Test Manga", notification_html)
+        self.assertIn("Test TV Show", notification_html)
+        self.assertIn("E5", notification_html)
+        self.assertIn("#10", notification_html)
+        self.assertIn("Enjoy your media!", notification_html)
 
     @patch("events.notifications.send_notifications")
     def test_no_recent_events(self, mock_send_notifications):

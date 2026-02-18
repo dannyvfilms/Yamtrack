@@ -1,5 +1,6 @@
 from unittest.mock import MagicMock, patch
 
+import apprise
 from django.contrib.auth import get_user_model
 from django.contrib.messages import get_messages
 from django.test import TestCase
@@ -180,6 +181,9 @@ class NotificationTests(TestCase):
         self.assertRedirects(response, reverse("notifications"))
 
         mock_instance.notify.assert_called_once()
+        kwargs = mock_instance.notify.call_args.kwargs
+        self.assertEqual(kwargs["body_format"], apprise.NotifyFormat.HTML)
+        self.assertIn("<p>", kwargs["body"])
 
         messages = list(get_messages(response.wsgi_request))
         self.assertEqual(len(messages), 1)
@@ -213,6 +217,9 @@ class NotificationTests(TestCase):
         self.assertRedirects(response, reverse("notifications"))
 
         mock_instance.notify.assert_called_once()
+        kwargs = mock_instance.notify.call_args.kwargs
+        self.assertEqual(kwargs["body_format"], apprise.NotifyFormat.HTML)
+        self.assertIn("<p>", kwargs["body"])
 
         messages = list(get_messages(response.wsgi_request))
         self.assertEqual(len(messages), 1)

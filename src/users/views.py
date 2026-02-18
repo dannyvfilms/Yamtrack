@@ -286,9 +286,11 @@ def test_notification(request):
         result = apobj.notify(
             title="YamTrack Test Notification",
             body=(
-                "This is a test notification from YamTrack. "
-                "If you're seeing this, your notifications are working correctly!"
+                "<p>This is a test notification from YamTrack.</p>"
+                "<p>If you're seeing this, "
+                "your notifications are working correctly!</p>"
             ),
+            body_format=apprise.NotifyFormat.HTML,
         )
 
         if result:
