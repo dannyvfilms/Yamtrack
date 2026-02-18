@@ -162,7 +162,10 @@
               
               <a href="{% if use_podcast_show|default:False and podcast_show %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=podcast_show.podcast_uuid title=podcast_show.slug|default:podcast_show.title|default:podcast_show.podcast_uuid|slug %}{% else %}{{ item|media_url }}{% endif %}" class="absolute inset-0 z-0"></a>
 
-              <div class="relative z-10 flex items-center justify-center space-x-2.5">
+              <div class="relative z-10 flex items-center justify-center space-x-2.5"
+                   {% if list_ordering_enabled|default:False %}
+                     x-show="!isOrderEditing"
+                   {% endif %}>
                 {% if item.media_type == MediaTypes.EPISODE.value %}
                   <button @click="trackOpen = true"
                           class="p-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full hover:scale-110 hover:shadow-[0_0_15px_rgba(99,102,241,0.5)] transition-all duration-200 cursor-pointer">
@@ -215,6 +218,53 @@
                   {% include "app/icons/history.svg" with classes="w-4 h-4" %}
                 </a>
               </div>
+
+              {% if list_ordering_enabled|default:False %}
+                <div class="relative z-10 flex items-center justify-center gap-2"
+                     x-cloak
+                     x-show="isOrderEditing">
+                  <button class="min-w-9 h-9 px-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-500 transition-colors cursor-pointer text-sm font-semibold"
+                          title="Move to first"
+                          hx-post="{% url 'list_reorder_item' custom_list.id %}"
+                          hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+                          hx-include="#filter-form"
+                          hx-indicator="#loading-indicator"
+                          hx-vals='{"item_id": "{{ item.id }}", "action": "first"}'
+                          hx-swap="none"
+                          hx-on::after-request="if(event.detail.successful){window.refreshCustomListGrid();}"
+                          type="button">&lt;&lt;</button>
+                  <button class="min-w-9 h-9 px-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-500 transition-colors cursor-pointer text-sm font-semibold"
+                          title="Move back"
+                          hx-post="{% url 'list_reorder_item' custom_list.id %}"
+                          hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+                          hx-include="#filter-form"
+                          hx-indicator="#loading-indicator"
+                          hx-vals='{"item_id": "{{ item.id }}", "action": "back"}'
+                          hx-swap="none"
+                          hx-on::after-request="if(event.detail.successful){window.refreshCustomListGrid();}"
+                          type="button">&lt;</button>
+                  <button class="min-w-9 h-9 px-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-500 transition-colors cursor-pointer text-sm font-semibold"
+                          title="Move next"
+                          hx-post="{% url 'list_reorder_item' custom_list.id %}"
+                          hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+                          hx-include="#filter-form"
+                          hx-indicator="#loading-indicator"
+                          hx-vals='{"item_id": "{{ item.id }}", "action": "next"}'
+                          hx-swap="none"
+                          hx-on::after-request="if(event.detail.successful){window.refreshCustomListGrid();}"
+                          type="button">&gt;</button>
+                  <button class="min-w-9 h-9 px-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-500 transition-colors cursor-pointer text-sm font-semibold"
+                          title="Move to last"
+                          hx-post="{% url 'list_reorder_item' custom_list.id %}"
+                          hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+                          hx-include="#filter-form"
+                          hx-indicator="#loading-indicator"
+                          hx-vals='{"item_id": "{{ item.id }}", "action": "last"}'
+                          hx-swap="none"
+                          hx-on::after-request="if(event.detail.successful){window.refreshCustomListGrid();}"
+                          type="button">&gt;&gt;</button>
+                </div>
+              {% endif %}
             </div>
           {% endif %}
         </div>

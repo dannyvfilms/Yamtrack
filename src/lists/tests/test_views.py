@@ -1,8 +1,10 @@
+from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import Client, RequestFactory, TestCase
 from django.urls import reverse
+from django.utils import timezone
 
 from app.models import TV, Anime, Item, MediaTypes, Movie, Sources, Status
 from lists.models import CustomList, CustomListItem
@@ -505,6 +507,14 @@ class ListDetailViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["current_sort"], "end_date")
 
+        # Test custom sorting
+        mock_update_preference.return_value = "custom"
+        response = self.client.get(
+            reverse("list_detail", args=[self.custom_list.id]) + "?sort=custom",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "custom")
+
     @patch.object(get_user_model(), "update_preference")
     @patch.object(CustomList, "user_can_view")
     @patch("app.providers.services.get_media_metadata")
@@ -707,6 +717,94 @@ class DeleteListViewTest(TestCase):
         self.client.login(**self.collaborator_credentials)
         self.client.post(reverse("list_delete"), {"list_id": self.list.id})
         self.assertEqual(CustomList.objects.count(), 1)
+
+
+class ReorderListItemViewTests(TestCase):
+    """Tests for reordering items on a custom list."""
+
+    def setUp(self):
+        self.client = Client()
+        self.owner = get_user_model().objects.create_user(
+            username="owner",
+            password="12345",
+        )
+        self.collaborator = get_user_model().objects.create_user(
+            username="collab",
+            password="12345",
+        )
+        self.outsider = get_user_model().objects.create_user(
+            username="outsider",
+            password="12345",
+        )
+
+        self.custom_list = CustomList.objects.create(
+            name="Order Test",
+            owner=self.owner,
+        )
+        self.custom_list.collaborators.add(self.collaborator)
+
+        self.item_one = Item.objects.create(
+            media_id="101",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="One",
+        )
+        self.item_two = Item.objects.create(
+            media_id="102",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Two",
+        )
+        self.item_three = Item.objects.create(
+            media_id="103",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Three",
+        )
+
+        custom_items = [
+            CustomListItem.objects.create(custom_list=self.custom_list, item=self.item_one),
+            CustomListItem.objects.create(custom_list=self.custom_list, item=self.item_two),
+            CustomListItem.objects.create(custom_list=self.custom_list, item=self.item_three),
+        ]
+        start = timezone.now().replace(microsecond=0)
+        for offset, custom_item in enumerate(custom_items):
+            custom_item.date_added = start + timedelta(seconds=offset)
+        CustomListItem.objects.bulk_update(custom_items, ["date_added"])
+
+    def test_owner_can_move_item_to_first(self):
+        self.client.login(username="owner", password="12345")
+        response = self.client.post(
+            reverse("list_reorder_item", args=[self.custom_list.id]),
+            {"item_id": self.item_three.id, "action": "first"},
+        )
+        self.assertEqual(response.status_code, 204)
+
+        ordered_ids = list(
+            CustomListItem.objects.filter(custom_list=self.custom_list)
+            .order_by("date_added", "id")
+            .values_list("item_id", flat=True),
+        )
+        self.assertEqual(
+            ordered_ids,
+            [self.item_three.id, self.item_one.id, self.item_two.id],
+        )
+
+    def test_collaborator_can_reorder_items(self):
+        self.client.login(username="collab", password="12345")
+        response = self.client.post(
+            reverse("list_reorder_item", args=[self.custom_list.id]),
+            {"item_id": self.item_one.id, "action": "last"},
+        )
+        self.assertEqual(response.status_code, 204)
+
+    def test_outsider_cannot_reorder_items(self):
+        self.client.login(username="outsider", password="12345")
+        response = self.client.post(
+            reverse("list_reorder_item", args=[self.custom_list.id]),
+            {"item_id": self.item_two.id, "action": "first"},
+        )
+        self.assertEqual(response.status_code, 403)
 
 
 class ListsModalViewTests(TestCase):

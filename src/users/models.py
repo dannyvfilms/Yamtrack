@@ -91,6 +91,7 @@ class ListDetailSortChoices(models.TextChoices):
     """Choices for list detail sort options."""
 
     DATE_ADDED = "date_added", "Date Added"
+    CUSTOM = "custom", "Custom"
     TITLE = "title", "Title"
     MEDIA_TYPE = "media_type", "Media Type"
     RATING = "rating", "Rating"

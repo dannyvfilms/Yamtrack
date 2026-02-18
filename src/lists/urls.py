@@ -27,6 +27,11 @@ urlpatterns = [
     path("list/edit", views.edit, name="list_edit"),
     path("list/delete", views.delete, name="list_delete"),
     path(
+        "list/<int:list_id>/reorder",
+        views.reorder_list_item,
+        name="list_reorder_item",
+    ),
+    path(
         "lists/import/trakt/credentials",
         views.trakt_lists_credentials,
         name="trakt_lists_credentials",

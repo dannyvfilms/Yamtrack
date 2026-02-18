@@ -107,7 +107,31 @@
     </div>
   {% endif %}
 
-  <div x-data="{ showModal: false, sort: '{{ current_sort }}', type: '{{ request.GET.type|default:'all' }}', query: '{{ request.GET.q|default:''|escapejs }}', mediaTypeLabels: { {% for media_type in media_types %}'{{ media_type }}': '{{ media_type|media_type_readable_plural }}',{% endfor %} 'all': 'All Types' }, sortLabels: { {% for value, label in sort_choices %}'{{ value }}': '{{ label }}'{% if not forloop.last %},{% endif %}{% endfor %} }, getMediaTypeLabel() { return this.mediaTypeLabels[this.type] || this.type; } }">
+  <div x-data="{
+    showModal: false,
+    isOrderEditing: false,
+    canEdit: {% if can_edit %}true{% else %}false{% endif %},
+    sort: '{{ current_sort }}',
+    status: '{{ current_status }}',
+    type: '{{ request.GET.type|default:'all' }}',
+    query: '{{ request.GET.q|default:''|escapejs }}',
+    mediaTypeLabels: {
+      {% for media_type in media_types %}'{{ media_type }}': '{{ media_type|media_type_readable_plural }}',{% endfor %}
+      'all': 'All Types'
+    },
+    sortLabels: {
+      {% for value, label in sort_choices %}'{{ value }}': '{{ label }}'{% if not forloop.last %},{% endif %}{% endfor %}
+    },
+    getMediaTypeLabel() {
+      return this.mediaTypeLabels[this.type] || this.type;
+    },
+    setSort(value) {
+      this.sort = value;
+      if (value !== 'custom') {
+        this.isOrderEditing = false;
+      }
+    }
+  }">
 
     <!-- Form to manage state -->
     <form id="filter-form" class="hidden">
@@ -184,19 +208,44 @@
           </div>
 
           {# Sort by #}
-          <div class="relative filter-control" x-data="{ open: false }">
-            <button class="h-10 flex items-center gap-2 px-4 bg-[#39404b] rounded-md hover:bg-[#454d5a] transition-colors cursor-pointer"
-                    @click="open = !open"
+          <div class="relative filter-control"
+               x-data="{ sortOpen: false, orderOpen: false }"
+               @click.outside="sortOpen = false; orderOpen = false">
+            <button class="h-10 flex items-center gap-2 px-4 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors cursor-pointer"
+                    x-cloak
+                    x-show="sort === 'custom' && canEdit && isOrderEditing"
+                    @click="isOrderEditing = false; sortOpen = false; orderOpen = false"
                     type="button">
-              {% include "app/icons/arrows-up-down.svg" with classes="w-4 h-4" %}
-              <span class="text-sm" x-text="sortLabels[sort] || sort"></span>
-              {% include "app/icons/chevron-down.svg" with classes="w-4 h-4" %}
+              {% include "app/icons/checkmark.svg" with classes="w-4 h-4" %}
+              <span class="text-sm">Done Editing Order</span>
             </button>
+
+            <div class="inline-flex"
+                 x-cloak
+                 x-show="!(sort === 'custom' && canEdit && isOrderEditing)">
+              <button class="h-10 flex items-center gap-2 px-4 bg-[#39404b] hover:bg-[#454d5a] transition-colors cursor-pointer"
+                      :class="sort === 'custom' && canEdit ? 'rounded-l-md' : 'rounded-md'"
+                      @click="sortOpen = !sortOpen; orderOpen = false"
+                      type="button">
+                {% include "app/icons/arrows-up-down.svg" with classes="w-4 h-4" %}
+                <span class="text-sm" x-text="sortLabels[sort] || sort"></span>
+                <span x-cloak x-show="!(sort === 'custom' && canEdit)">
+                  {% include "app/icons/chevron-down.svg" with classes="w-4 h-4" %}
+                </span>
+              </button>
+              <button class="h-10 flex items-center px-2 bg-[#39404b] rounded-r-md border-l-2 border-gray-600 hover:bg-[#454d5a] transition-colors cursor-pointer"
+                      x-cloak
+                      x-show="sort === 'custom' && canEdit"
+                      @click="orderOpen = !orderOpen; sortOpen = false"
+                      aria-label="Custom sort options"
+                      type="button">
+                {% include "app/icons/chevron-down.svg" with classes="w-4 h-4" %}
+              </button>
+            </div>
 
             <div class="absolute right-0 mt-2 py-1 w-48 bg-[#39404b] rounded-md shadow-lg overflow-hidden z-50 border border-gray-700"
                  x-cloak
-                 x-show="open"
-                 @click.outside="open = false"
+                 x-show="sortOpen && !(sort === 'custom' && canEdit && isOrderEditing)"
                  x-transition:enter="transition ease-out duration-100"
                  x-transition:enter-start="transform opacity-0 scale-95"
                  x-transition:enter-end="transform opacity-100 scale-100"
@@ -210,66 +259,119 @@
                         hx-indicator="#loading-indicator"
                         class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
                         :class="sort === '{{ value }}' ? 'bg-indigo-600 text-white font-medium' : 'text-gray-300 hover:bg-[#454d5a] hover:text-white'"
-                        @click="sort = '{{ value }}'; open = false"
+                        @click="setSort('{{ value }}'); sortOpen = false; orderOpen = false"
                         type="button">{{ label }}</button>
               {% endfor %}
+            </div>
+
+            <div class="absolute right-0 z-50 mt-2 w-56 bg-[#39404b] rounded-md shadow-lg overflow-hidden border border-gray-700"
+                 x-cloak
+                 x-show="orderOpen && sort === 'custom' && canEdit && !isOrderEditing"
+                 x-transition:enter="transition ease-out duration-100"
+                 x-transition:enter-start="transform opacity-0 scale-95"
+                 x-transition:enter-end="transform opacity-100 scale-100"
+                 x-transition:leave="transition ease-in duration-75"
+                 x-transition:leave-start="transform opacity-100 scale-100"
+                 x-transition:leave-end="transform opacity-0 scale-95">
+              <button class="w-full text-left px-3 py-2 text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                      @click="isOrderEditing = true; orderOpen = false; sortOpen = false"
+                      type="button">
+                Edit Item Order
+              </button>
             </div>
           </div>
 
           {% if custom_list.can_recommend and items_count %}
-            <a href="{% url 'recommend_item' custom_list.id %}"
-               class="h-10 inline-flex items-center gap-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md transition-colors cursor-pointer">
-              {% include "app/icons/list-add.svg" with classes="w-4 h-4" %}
-              <span class="text-sm">Recommend Item</span>
-            </a>
+            {% if can_edit %}
+              <div class="relative inline-flex" x-data="{ open: false }" @click.outside="open = false">
+                <a href="{% url 'recommend_item' custom_list.id %}"
+                   class="h-10 inline-flex items-center gap-2 px-4 bg-indigo-600 text-white rounded-l-md hover:bg-indigo-700 transition-colors cursor-pointer border-r border-indigo-500">
+                  {% include "app/icons/list-add.svg" with classes="w-4 h-4" %}
+                  <span class="text-sm">Recommend Item</span>
+                </a>
+                <button @click="open = !open"
+                        class="h-10 inline-flex items-center px-2 bg-indigo-600 text-white rounded-r-md hover:bg-indigo-700 transition-colors cursor-pointer"
+                        aria-label="More list actions"
+                        type="button">
+                  {% include "app/icons/chevron-down.svg" with classes="w-4 h-4" %}
+                </button>
+                <div class="absolute right-0 top-full mt-2 py-1 w-52 bg-[#39404b] rounded-md shadow-lg overflow-hidden z-50 border border-gray-700"
+                     x-cloak
+                     x-show="open"
+                     x-transition:enter="transition ease-out duration-100"
+                     x-transition:enter-start="transform opacity-0 scale-95"
+                     x-transition:enter-end="transform opacity-100 scale-100"
+                     x-transition:leave="transition ease-in duration-75"
+                     x-transition:leave-start="transform opacity-100 scale-100"
+                     x-transition:leave-end="transform opacity-0 scale-95">
+                  <a href="{% url 'list_activity' custom_list.id %}"
+                     class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors">
+                    Activity History
+                  </a>
+                  <button class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors cursor-pointer"
+                          @click="open = false; showModal = true"
+                          type="button">
+                    Edit List
+                  </button>
+                </div>
+              </div>
+            {% else %}
+              <a href="{% url 'recommend_item' custom_list.id %}"
+                 class="h-10 inline-flex items-center gap-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md transition-colors cursor-pointer">
+                {% include "app/icons/list-add.svg" with classes="w-4 h-4" %}
+                <span class="text-sm">Recommend Item</span>
+              </a>
+            {% endif %}
           {% endif %}
 
           {% if can_edit %}
-            <div class="layout-toggle ml-auto flex items-center gap-2">
-              <div class="relative" x-data="{ tooltipOpen: false }">
-                <a href="{% url 'list_activity' custom_list.id %}"
-                   @mouseenter="tooltipOpen = true" @mouseleave="tooltipOpen = false"
-                   @click="tooltipOpen = false"
-                   class="h-10 w-10 bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex items-center justify-center cursor-pointer"
-                   aria-label="Activity history">
-                  {% include "app/icons/history.svg" with classes="w-4 h-4 text-gray-200" %}
-                </a>
-                <div x-show="tooltipOpen"
-                     x-transition:enter="transition ease-out duration-200"
-                     x-transition:enter-start="opacity-0 scale-95"
-                     x-transition:enter-end="opacity-100 scale-100"
-                     x-transition:leave="transition ease-in duration-150"
-                     x-transition:leave-start="opacity-100 scale-100"
-                     x-transition:leave-end="opacity-0 scale-95"
-                     class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-40 p-2 text-white text-xs rounded-lg z-20 text-center"
-                     style="display: none; background: rgba(0, 0, 0, 0.85); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);">
-                  Activity history
-                  <div class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent" style="border-top-color: rgba(0, 0, 0, 0.85);"></div>
+            {% if not custom_list.can_recommend or not items_count %}
+              <div class="layout-toggle ml-auto flex items-center gap-2">
+                <div class="relative" x-data="{ tooltipOpen: false }">
+                  <a href="{% url 'list_activity' custom_list.id %}"
+                     @mouseenter="tooltipOpen = true" @mouseleave="tooltipOpen = false"
+                     @click="tooltipOpen = false"
+                     class="h-10 w-10 bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex items-center justify-center cursor-pointer"
+                     aria-label="Activity history">
+                    {% include "app/icons/history.svg" with classes="w-4 h-4 text-gray-200" %}
+                  </a>
+                  <div x-show="tooltipOpen"
+                       x-transition:enter="transition ease-out duration-200"
+                       x-transition:enter-start="opacity-0 scale-95"
+                       x-transition:enter-end="opacity-100 scale-100"
+                       x-transition:leave="transition ease-in duration-150"
+                       x-transition:leave-start="opacity-100 scale-100"
+                       x-transition:leave-end="opacity-0 scale-95"
+                       class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-40 p-2 text-white text-xs rounded-lg z-20 text-center"
+                       style="display: none; background: rgba(0, 0, 0, 0.85); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);">
+                    Activity history
+                    <div class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent" style="border-top-color: rgba(0, 0, 0, 0.85);"></div>
+                  </div>
+                </div>
+                <div class="relative" x-data="{ tooltipOpen: false }">
+                  <button @click="showModal = true"
+                          @mouseenter="tooltipOpen = true" @mouseleave="tooltipOpen = false"
+                          class="h-10 w-10 bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex items-center justify-center cursor-pointer"
+                          type="button"
+                          aria-label="Edit list">
+                    {% include "app/icons/horizontal-sliders.svg" with classes="w-4 h-4 text-gray-200" %}
+                  </button>
+                  <div x-show="tooltipOpen"
+                       x-transition:enter="transition ease-out duration-200"
+                       x-transition:enter-start="opacity-0 scale-95"
+                       x-transition:enter-end="opacity-100 scale-100"
+                       x-transition:leave="transition ease-in duration-150"
+                       x-transition:leave-start="opacity-100 scale-100"
+                       x-transition:leave-end="opacity-0 scale-95"
+                       class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-32 p-2 text-white text-xs rounded-lg z-20 text-center"
+                       style="display: none; background: rgba(0, 0, 0, 0.85); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);">
+                    Edit list
+                    <div class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent" style="border-top-color: rgba(0, 0, 0, 0.85);"></div>
+                  </div>
                 </div>
               </div>
-              <div class="relative" x-data="{ tooltipOpen: false }">
-                <button @click="showModal = true"
-                        @mouseenter="tooltipOpen = true" @mouseleave="tooltipOpen = false"
-                        class="h-10 w-10 bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex items-center justify-center cursor-pointer"
-                      type="button"
-                      aria-label="Edit list">
-                {% include "app/icons/horizontal-sliders.svg" with classes="w-4 h-4 text-gray-200" %}
-              </button>
-              <div x-show="tooltipOpen"
-                   x-transition:enter="transition ease-out duration-200"
-                   x-transition:enter-start="opacity-0 scale-95"
-                   x-transition:enter-end="opacity-100 scale-100"
-                   x-transition:leave="transition ease-in duration-150"
-                   x-transition:leave-start="opacity-100 scale-100"
-                   x-transition:leave-end="opacity-0 scale-95"
-                   class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-32 p-2 text-white text-xs rounded-lg z-20 text-center"
-                   style="display: none; background: rgba(0, 0, 0, 0.85); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);">
-                Edit list
-                <div class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent" style="border-top-color: rgba(0, 0, 0, 0.85);"></div>
-              </div>
-            </div>
-          </div>
-        {% endif %}
+            {% endif %}
+          {% endif %}
       </div>
     </div>
     <div id="list-results-summary">
@@ -373,6 +475,25 @@
     if (window.htmx) {
       htmx.config.getCacheBusterParam = true;
     }
+  </script>
+
+  <script>
+    function refreshCustomListGrid() {
+      if (!window.htmx) {
+        return;
+      }
+      const filterForm = document.getElementById('filter-form');
+      const values = filterForm ? htmx.values(filterForm) : {};
+      htmx.ajax('GET', '{% url "list_detail" custom_list.id %}', {
+        source: filterForm || document.body,
+        target: '#items-grid',
+        swap: 'innerHTML',
+        values,
+        headers: { 'HX-Request': 'true' },
+      });
+    }
+
+    window.refreshCustomListGrid = refreshCustomListGrid;
   </script>
 
   <script>
