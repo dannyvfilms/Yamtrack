@@ -3,6 +3,7 @@ import logging
 from datetime import UTC, date, timedelta
 
 import icalendar
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_not_required
 from django.core.exceptions import ObjectDoesNotExist
@@ -12,6 +13,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
+from app.models import MediaTypes, PodcastEpisode
 from events import tasks
 from events.models import Event
 from users.models import User
@@ -66,8 +68,32 @@ def calendar(request):
     # Get events and organize by day
     releases = Event.objects.get_user_events(request.user, first_day, last_day)
 
+    podcast_media_ids = [
+        release.item.media_id
+        for release in releases
+        if release.item.media_type == MediaTypes.PODCAST.value
+    ]
+    podcast_art_by_episode_uuid = {}
+    if podcast_media_ids:
+        podcast_art_by_episode_uuid = {
+            episode.episode_uuid: episode.show.image
+            for episode in PodcastEpisode.objects.filter(
+                episode_uuid__in=podcast_media_ids,
+            ).select_related("show")
+            if episode.show and episode.show.image
+        }
+
     release_dict = {}
     for release in releases:
+        if (
+            release.item.media_type == MediaTypes.PODCAST.value
+            and release.item.image in {"", settings.IMG_NONE}
+        ):
+            release.item.image = podcast_art_by_episode_uuid.get(
+                release.item.media_id,
+                settings.IMG_NONE,
+            )
+
         # Convert UTC datetime to user's timezone and extract day
         local_datetime = timezone.localtime(release.datetime)
         day = local_datetime.day

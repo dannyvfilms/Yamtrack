@@ -8,6 +8,7 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
+from app import models as app_models
 from app.models import Item, MediaTypes, Sources
 from events.models import Event
 
@@ -261,6 +262,51 @@ class CalendarViewTests(TestCase):
         self.assertEqual(len(release_dict), 2)  # Two days with events
         self.assertEqual(len(release_dict[15]), 2)  # Two events on the 15th
         self.assertEqual(len(release_dict[20]), 1)  # One event on the 20th
+
+
+    @patch("events.models.Event.objects.get_user_events")
+    @patch.object(get_user_model(), "update_preference")
+    def test_calendar_list_uses_podcast_show_image_when_item_image_missing(
+        self,
+        mock_update_preference,
+        mock_get_user_events,
+    ):
+        """List view should use show artwork when item image is empty."""
+        mock_update_preference.return_value = "list"
+
+        show = app_models.PodcastShow.objects.create(
+            podcast_uuid="show-uuid-1",
+            title="Podcast Show",
+            image="https://example.com/show-art.jpg",
+        )
+        episode = app_models.PodcastEpisode.objects.create(
+            show=show,
+            episode_uuid="episode-uuid-1",
+            title="Episode 1",
+        )
+
+        podcast_item = Item.objects.create(
+            media_id=episode.episode_uuid,
+            source=Sources.POCKETCASTS.value,
+            media_type=MediaTypes.PODCAST.value,
+            title=episode.title,
+            image="",
+        )
+
+        today = timezone.localdate()
+        event = Event(
+            item=podcast_item,
+            datetime=timezone.make_aware(
+                timezone.datetime(today.year, today.month, 15, 12, 0),
+            ),
+        )
+        mock_get_user_events.return_value = [event]
+
+        response = self.client.get(reverse("calendar") + "?view=list")
+
+        self.assertEqual(response.status_code, 200)
+        rendered = response.content.decode()
+        self.assertIn("https://example.com/show-art.jpg", rendered)
 
     @patch("events.tasks.reload_calendar.delay")
     def test_reload_calendar(self, mock_reload_task):
