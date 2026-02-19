@@ -2807,10 +2807,10 @@ def media_details(
     collection_stats = None
     fetching_collection_data = False
     item_id_for_polling = None
-    
+
     if not public_view and media_type != MediaTypes.PODCAST.value:
         from app.helpers import get_item_collection_entries, get_tv_show_collection_stats
-        
+
         try:
             item = Item.objects.get(
                 media_id=media_id,
@@ -2819,13 +2819,13 @@ def media_details(
             )
             collection_entries = list(get_item_collection_entries(request.user, item))
             collection_entry = collection_entries[0] if collection_entries else None
-            
+
             # For TV shows, also get collection statistics (episodes/seasons)
             if media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
                 # Use episode count from metadata if available to match Details pane
                 metadata_episode_count = media_metadata.get("details", {}).get("episodes") or media_metadata.get("episodes")
                 collection_stats = get_tv_show_collection_stats(request.user, item, metadata_episode_count=metadata_episode_count)
-            
+
             # If no collection entry exists and auto-fetch is supported, trigger background fetch
             if not collection_entry and config.supports_collection_auto_fetch(media_type):
                 plex_account = getattr(request.user, "plex_account", None)
@@ -2841,6 +2841,13 @@ def media_details(
             pass
 
     has_collection_data = bool(collection_entries) or collection_entry is not None
+
+    if media_type in ["tv", "movie"]:
+        watch_providers = tmdb.filter_providers(
+            media_metadata.get("providers"), request.user.watch_provider_region
+        )
+    else:
+        watch_providers = None
 
     context = {
         "user": request.user,
@@ -2859,6 +2866,8 @@ def media_details(
         "has_collection_data": has_collection_data,
         "fetching_collection_data": fetching_collection_data if not public_view else False,
         "item_id_for_polling": item_id_for_polling if not public_view else None,
+        "watch_providers": watch_providers,
+        "watch_provider_region": request.user.watch_provider_region,
     }
     return render(request, "app/media_details.html", context)
 
@@ -3305,6 +3314,10 @@ def season_details(
         "has_collection_data": has_collection_data,
         "fetching_collection_data": fetching_collection_data if not public_view else False,
         "item_id_for_polling": item_id_for_polling if not public_view else None,
+        "watch_providers": tmdb.filter_providers(
+            season_metadata.get("providers"), request.user.watch_provider_region
+        ),
+        "watch_provider_region": request.user.watch_provider_region,
     }
     return render(request, "app/media_details.html", context)
 

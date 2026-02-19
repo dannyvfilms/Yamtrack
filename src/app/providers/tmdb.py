@@ -152,9 +152,10 @@ def movie(media_id):
 
     if data is None:
         url = f"{base_url}/movie/{media_id}"
+        appends = ["recommendations", "external_ids", "credits", "watch/providers", "alternative_titles"]
         params = {
             **base_params,
-            "append_to_response": "recommendations,external_ids,credits,alternative_titles",
+            "append_to_response": ",".join(appends),
         }
 
         try:
@@ -225,6 +226,7 @@ def movie(media_id):
                 ),
             },
             "external_links": get_external_links(response.get("external_ids", {})),
+            "providers": response.get("watch/providers", {}).get("results", {}),
         }
 
         cache.set(cache_key, data)
@@ -277,14 +279,19 @@ def enrich_season_with_tv_data(season_data, tv_data, media_id, season_number):
 def fetch_and_cache_seasons(media_id, season_numbers, tv_data):
     """Fetch uncached seasons from API and cache them."""
     url = f"{base_url}/tv/{media_id}"
-    base_append = "recommendations,external_ids,aggregate_credits,alternative_titles"
-    max_seasons_per_request = 18
+    base_append = "recommendations,external_ids,watch/providers"
+    max_seasons_per_request = 8
     fetched_tv_data = tv_data
     result_data = {}
 
     for i in range(0, len(season_numbers), max_seasons_per_request):
         season_subset = season_numbers[i : i + max_seasons_per_request]
-        append_text = ",".join([f"season/{season}" for season in season_subset])
+        append_text = ",".join(
+            [
+                f"season/{season},season/{season}/watch/providers"
+                for season in season_subset
+            ]
+        )
 
         params = {
             **base_params,
@@ -319,8 +326,9 @@ def fetch_and_cache_seasons(media_id, season_numbers, tv_data):
                 )
                 continue
 
-            season_data = process_season(response[season_key])
-
+            season_data = process_season(
+                response[season_key], response[f"{season_key}/watch/providers"]
+            )
             season_data = enrich_season_with_tv_data(
                 season_data,
                 fetched_tv_data,
@@ -373,7 +381,7 @@ def tv(media_id):
         url = f"{base_url}/tv/{media_id}"
         params = {
             **base_params,
-            "append_to_response": "recommendations,external_ids,aggregate_credits,alternative_titles",
+            "append_to_response": "recommendations,external_ids,aggregate_credits,alternative_titles,watch/providers",
         }
 
         try:
@@ -445,10 +453,11 @@ def process_tv(response):
         "external_links": get_external_links(response.get("external_ids", {})),
         "last_episode_season": last_episode["season_number"] if last_episode else None,
         "next_episode_season": next_episode["season_number"] if next_episode else None,
+        "providers": response.get("watch/providers", {}).get("results", {}),
     }
 
 
-def process_season(response):
+def process_season(response, providers_response):
     """Process the metadata for the selected season from The Movie Database."""
     episodes = response["episodes"]
     num_episodes = len(episodes)
@@ -486,6 +495,7 @@ def process_season(response):
             "total_runtime": total_runtime,
         },
         "episodes": response["episodes"],
+        "providers": providers_response.get("results", {}),
     }
 
 
@@ -1044,6 +1054,31 @@ def person(person_id):
     return data
 
 
+def filter_providers(all_providers, region):
+    """Filter watch providers by region."""
+    if region == "":
+        return None
+
+    if not all_providers:
+        return []
+
+    # Create a dict to get rid of duplicates across different provider types
+    region_providers = all_providers.get(region, {})
+    flatrate_providers = region_providers.get("flatrate", [])
+    free_providers = region_providers.get("free", [])
+    providers = {}
+    for provider in [*flatrate_providers, *free_providers]:
+        providers[provider.get("provider_id")] = provider
+
+    # Convert dict back to list and add image URLs
+    providers = list(providers.values())
+    for provider in providers:
+        provider["image"] = get_image_url(provider.get("logo_path"))
+
+    providers.sort(key=lambda e: e.get("display_priority", 999))
+    return providers
+
+
 def process_episodes(season_metadata, episodes_in_db):
     """Process the episodes for the selected season."""
     episodes_metadata = []
@@ -1124,6 +1159,7 @@ def episode(media_id, season_number, episode_number):
             **base_params,
             "append_to_response": "credits",
         }
+
         try:
             response = services.api_request(
                 Sources.TMDB.value,
@@ -1164,6 +1200,41 @@ def episode(media_id, season_number, episode_number):
             "cast": get_cast_credits({"cast": cast_rows}),
             "crew": get_crew_credits({"crew": crew_rows}),
         }
+
+        cache.set(cache_key, data)
+
+    return data
+
+
+def watch_provider_regions():
+    """Return the available watch provider regions from The Movie Database."""
+    cache_key = f"{Sources.TMDB.value}_watch_provider_regions"
+    data = cache.get(cache_key)
+
+    if data is None:
+        url = f"{base_url}/watch/providers/regions"
+        params = {**base_params}
+
+        try:
+            response = services.api_request(
+                Sources.TMDB.value,
+                "GET",
+                url,
+                params=params,
+            )
+        except requests.exceptions.HTTPError as error:
+            handle_error(error)
+
+        data = [("", "Disabled")]
+        regions = response.get("results", [])
+        for region in sorted(regions, key=lambda r: r.get("english_name", "")):
+            key = region.get("iso_3166_1")
+            name = region.get("english_name")
+            if key:
+                if not name:
+                    name = key
+                data.append((key, name))
+
         cache.set(cache_key, data)
 
     return data

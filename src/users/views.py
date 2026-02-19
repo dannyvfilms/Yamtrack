@@ -18,6 +18,7 @@ from django_celery_beat.models import PeriodicTask
 
 from app import history_cache, statistics_cache
 from app.models import Item, MediaTypes, Status
+from app.providers import tmdb
 from app.templatetags import app_tags
 from integrations import exports
 from integrations import plex
@@ -365,6 +366,7 @@ def preferences(request):
     library_labels = {"all": "All Libraries"}
     for library in active_libraries:
         library_labels[library] = app_tags.media_type_readable_plural(library)
+    watch_provider_regions = tmdb.watch_provider_regions()
 
     if request.method == "POST":
         # Prevent demo users from updating preferences
@@ -518,6 +520,16 @@ def preferences(request):
             request.user.book_comic_manga_progress_percentage = book_comic_manga_progress_percentage
             fields_to_update.append("book_comic_manga_progress_percentage")
 
+        provider_region = request.POST.get("watch_provider_region", "")
+        if provider_region in [region[0] for region in watch_provider_regions]:
+            if request.user.watch_provider_region != provider_region:
+                request.user.watch_provider_region = provider_region
+                fields_to_update.append("watch_provider_region")
+        else:
+            if request.user.watch_provider_region != "UNSET":
+                request.user.watch_provider_region = "UNSET"
+                fields_to_update.append("watch_provider_region")
+
         if fields_to_update:
             request.user.save(update_fields=fields_to_update)
             request.user.refresh_from_db()
@@ -547,6 +559,7 @@ def preferences(request):
         "auto_pause_enabled": request.user.auto_pause_in_progress_enabled,
         "auto_pause_rules_json": json.dumps(request.user.auto_pause_rules or []),
         "library_labels_json": json.dumps(library_labels),
+        "watch_provider_choices": watch_provider_regions,
     }
 
     return render(request, "users/preferences.html", context)

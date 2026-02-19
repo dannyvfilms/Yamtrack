@@ -450,6 +450,9 @@
   .my-3 {
     margin-block: calc(var(--spacing) * 3);
   }
+  .my-4 {
+    margin-block: calc(var(--spacing) * 4);
+  }
   .my-5 {
     margin-block: calc(var(--spacing) * 5);
   }
@@ -638,6 +641,10 @@
   }
   .aspect-square {
     aspect-ratio: 1 / 1;
+  }
+  .size-10 {
+    width: calc(var(--spacing) * 10);
+    height: calc(var(--spacing) * 10);
   }
   .h-0 {
     height: calc(var(--spacing) * 0);
@@ -1018,6 +1025,9 @@
   }
   .flex-wrap {
     flex-wrap: wrap;
+  }
+  .place-content-evenly {
+    place-content: space-evenly;
   }
   .items-baseline {
     align-items: baseline;
