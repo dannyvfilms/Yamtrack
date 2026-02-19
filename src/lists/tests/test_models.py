@@ -2,7 +2,7 @@ from django.contrib.auth import get_user_model
 from django.db import IntegrityError
 from django.test import TestCase
 
-from app.models import Item, MediaTypes, Sources
+from app.models import CollectionEntry, Game, Item, MediaTypes, Movie, Sources, Status, TV
 from lists.models import CustomList, CustomListItem
 
 
@@ -105,3 +105,103 @@ class CustomListManagerTest(TestCase):
         self.assertEqual(user_lists.count(), 2)
         self.assertIn(self.list1, user_lists)
         self.assertIn(self.list2, user_lists)
+
+
+    def test_smart_list_sync_items(self):
+        """Smart list should sync matching items from saved filters."""
+        item = Item.objects.create(
+            title="Smart Movie",
+            media_id="456",
+            media_type=MediaTypes.MOVIE.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/movie.jpg",
+        )
+        Movie.objects.create(item=item, user=self.user, status=Status.COMPLETED.value)
+
+        smart_list = CustomList.objects.create(
+            name="Smart",
+            owner=self.user,
+            is_smart=True,
+            smart_media_types=[MediaTypes.MOVIE.value],
+            smart_filters={"status": "all", "rating": "all", "collection": "all"},
+        )
+
+        smart_list.sync_smart_items()
+        self.assertTrue(smart_list.items.filter(id=item.id).exists())
+
+    def test_smart_list_collection_filter_uses_episode_collection_for_tv(self):
+        """Collected TV rules should match when related episodes are collected."""
+        tv_item = Item.objects.create(
+            title="Collected Show",
+            media_id="777",
+            media_type=MediaTypes.TV.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/tv.jpg",
+        )
+        TV.objects.create(item=tv_item, user=self.user, status=Status.IN_PROGRESS.value)
+
+        episode_item = Item.objects.create(
+            title="Collected Show Episode",
+            media_id="777",
+            media_type=MediaTypes.EPISODE.value,
+            source=Sources.TMDB.value,
+            season_number=1,
+            episode_number=1,
+            image="https://example.com/episode.jpg",
+        )
+        CollectionEntry.objects.create(user=self.user, item=episode_item)
+
+        smart_list = CustomList.objects.create(
+            name="Collected Shows",
+            owner=self.user,
+            is_smart=True,
+            smart_media_types=[MediaTypes.TV.value],
+            smart_filters={"collection": "collected"},
+        )
+
+        smart_list.sync_smart_items()
+        self.assertTrue(smart_list.items.filter(id=tv_item.id).exists())
+
+    def test_smart_list_language_filter(self):
+        """Language filter should match item language metadata."""
+        item = Item.objects.create(
+            title="English Movie",
+            media_id="900",
+            media_type=MediaTypes.MOVIE.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/english.jpg",
+            languages=["en"],
+        )
+        Movie.objects.create(item=item, user=self.user, status=Status.COMPLETED.value)
+
+        smart_list = CustomList.objects.create(
+            name="English Movies",
+            owner=self.user,
+            is_smart=True,
+            smart_media_types=[MediaTypes.MOVIE.value],
+            smart_filters={"language": "en"},
+        )
+        smart_list.sync_smart_items()
+        self.assertTrue(smart_list.items.filter(id=item.id).exists())
+
+    def test_smart_list_platform_filter(self):
+        """Platform filter should match game platform metadata."""
+        item = Item.objects.create(
+            title="Switch Game",
+            media_id="1200",
+            media_type=MediaTypes.GAME.value,
+            source=Sources.IGDB.value,
+            image="https://example.com/game.jpg",
+            platforms=["Switch"],
+        )
+        Game.objects.create(item=item, user=self.user, status=Status.COMPLETED.value)
+
+        smart_list = CustomList.objects.create(
+            name="Switch Games",
+            owner=self.user,
+            is_smart=True,
+            smart_media_types=[MediaTypes.GAME.value],
+            smart_filters={"platform": "Switch"},
+        )
+        smart_list.sync_smart_items()
+        self.assertTrue(smart_list.items.filter(id=item.id).exists())

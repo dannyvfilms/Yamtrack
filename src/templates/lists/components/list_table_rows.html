@@ -1,0 +1,64 @@
+{% load app_tags %}
+{% load user_tags %}
+
+{% for item in items %}
+  <tr class="border-t border-gray-700/70 hover:bg-[#313842] transition-colors">
+    <td class="px-4 py-3 text-sm text-gray-100 max-w-xs truncate">{{ item.title }}</td>
+    <td class="px-4 py-3 text-sm text-gray-300">{{ item.media_type|media_type_readable }}</td>
+    <td class="px-4 py-3 text-sm text-gray-300">{{ item.media.status|default:"-" }}</td>
+    <td class="px-4 py-3 text-sm text-gray-300">
+      {% with aggregated_score=item.media|safe_attr:"aggregated_score" %}
+        {% if aggregated_score is not None %}
+          {{ aggregated_score }}
+        {% elif item.media.score is not None %}
+          {{ item.media.score }}
+        {% else %}
+          -
+        {% endif %}
+      {% endwith %}
+    </td>
+    <td class="px-4 py-3 text-sm text-gray-300">
+      {% with aggregated_progress=item.media|safe_attr:"aggregated_progress" %}
+        {% if aggregated_progress is not None %}
+          {{ item.media.formatted_aggregated_progress }}{% if item.media.max_progress %} / {{ item.media.max_progress }}{% endif %}
+        {% elif item.media.progress is not None %}
+          {{ item.media.formatted_progress|default:item.media.progress }}{% if item.media.max_progress %} / {{ item.media.max_progress }}{% endif %}
+        {% else %}
+          -
+        {% endif %}
+      {% endwith %}
+    </td>
+    <td class="px-4 py-3 text-sm text-gray-300">
+      {% if item.release_datetime %}
+        {{ item.release_datetime|user_date_format:user }}
+      {% else %}
+        -
+      {% endif %}
+    </td>
+    <td class="px-4 py-3 text-sm text-gray-300">
+      {% if item.list_date_added %}
+        {{ item.list_date_added|user_date_format:user }}
+      {% else %}
+        -
+      {% endif %}
+    </td>
+  </tr>
+{% endfor %}
+
+{% if has_next %}
+  <tr id="list-table-next-row"
+      hx-get="{% url 'list_detail' custom_list.id %}?page={{ next_page_number }}"
+      hx-trigger="revealed threshold:200px"
+      hx-swap="outerHTML"
+      hx-target="this"
+      hx-include="#smart-filter-form"
+      hx-indicator="#loading-indicator">
+    <td colspan="7" class="px-4 py-4 text-sm text-gray-400 text-center">Loading more items…</td>
+  </tr>
+{% endif %}
+
+{% if is_partial %}
+  <div id="list-results-summary" hx-swap-oob="true">
+    {% include "lists/components/list_results_summary.html" %}
+  </div>
+{% endif %}

@@ -1,3 +1,4 @@
+import json
 from datetime import timedelta
 from unittest.mock import patch
 
@@ -613,6 +614,48 @@ class ListDetailViewTests(TestCase):
         self.assertTemplateUsed(response, "lists/components/media_grid.html")
         self.assertNotIn("form", response.context)
 
+    def test_smart_list_detail_uses_smart_template(self):
+        """Smart lists should render the dedicated smart detail view."""
+        Movie.objects.create(
+            item=self.movie_item,
+            status=Status.COMPLETED.value,
+            user=self.user,
+        )
+        smart_list = CustomList.objects.create(
+            name="Smart List",
+            owner=self.user,
+            is_smart=True,
+            smart_media_types=[MediaTypes.MOVIE.value],
+            smart_filters={"status": "all"},
+        )
+
+        response = self.client.get(reverse("list_detail", args=[smart_list.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "lists/smart_list_detail.html")
+        self.assertTrue(response.context["is_smart_list"])
+
+    def test_smart_list_detail_table_partial(self):
+        """Smart list table layout should return list-table partials for HTMX."""
+        Movie.objects.create(
+            item=self.movie_item,
+            status=Status.COMPLETED.value,
+            user=self.user,
+        )
+        smart_list = CustomList.objects.create(
+            name="Smart List",
+            owner=self.user,
+            is_smart=True,
+            smart_media_types=[MediaTypes.MOVIE.value],
+            smart_filters={"status": "all"},
+        )
+
+        response = self.client.get(
+            reverse("list_detail", args=[smart_list.id]) + "?edit_smart_rules=1&layout=table",
+            HTTP_HX_REQUEST="true",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "lists/components/list_table.html")
+
 
 class CreateListViewTest(TestCase):
     """Test case for the create list view."""
@@ -635,6 +678,116 @@ class CreateListViewTest(TestCase):
         self.assertEqual(new_list.name, "New List")
         self.assertEqual(new_list.description, "New Description")
         self.assertEqual(new_list.owner, self.user)
+
+    def test_create_smart_list_redirects_to_builder(self):
+        """Smart-create flow should land on detail page in smart edit mode."""
+        response = self.client.post(
+            reverse("list_create"),
+            {
+                "name": "Smart List",
+                "description": "",
+                "is_smart": "on",
+                "smart_create_flow": "1",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        smart_list = CustomList.objects.get(name="Smart List")
+        self.assertEqual(
+            response.url,
+            reverse("list_detail", args=[smart_list.id]) + "?edit_smart_rules=1",
+        )
+
+
+class SmartRulesUpdateViewTest(TestCase):
+    """Tests for smart rules autosave endpoint."""
+
+    def setUp(self):
+        self.client = Client()
+        self.owner = get_user_model().objects.create_user(
+            username="owner",
+            password="12345",
+        )
+        self.collaborator = get_user_model().objects.create_user(
+            username="collab",
+            password="12345",
+        )
+        self.outsider = get_user_model().objects.create_user(
+            username="outsider",
+            password="12345",
+        )
+        self.item = Item.objects.create(
+            media_id="500",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Smart Match",
+            image="https://example.com/smart.jpg",
+        )
+        Movie.objects.create(
+            item=self.item,
+            user=self.owner,
+            status=Status.COMPLETED.value,
+        )
+
+        self.smart_list = CustomList.objects.create(
+            name="Smart",
+            owner=self.owner,
+            is_smart=True,
+        )
+        self.smart_list.collaborators.add(self.collaborator)
+
+        self.manual_list = CustomList.objects.create(
+            name="Manual",
+            owner=self.owner,
+            is_smart=False,
+        )
+
+    def test_owner_can_update_smart_rules(self):
+        self.client.login(username="owner", password="12345")
+        response = self.client.post(
+            reverse("list_smart_rules_update", args=[self.smart_list.id]),
+            data=json.dumps(
+                {
+                    "media_types": [MediaTypes.MOVIE.value],
+                    "status": "all",
+                    "rating": "all",
+                    "collection": "all",
+                    "search": "Smart",
+                },
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.smart_list.refresh_from_db()
+        self.assertEqual(self.smart_list.smart_media_types, [MediaTypes.MOVIE.value])
+        self.assertEqual(self.smart_list.smart_filters["search"], "Smart")
+        self.assertTrue(self.smart_list.items.filter(id=self.item.id).exists())
+
+    def test_collaborator_can_update_smart_rules(self):
+        self.client.login(username="collab", password="12345")
+        response = self.client.post(
+            reverse("list_smart_rules_update", args=[self.smart_list.id]),
+            data=json.dumps({"media_types": [MediaTypes.MOVIE.value]}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_outsider_cannot_update_smart_rules(self):
+        self.client.login(username="outsider", password="12345")
+        response = self.client.post(
+            reverse("list_smart_rules_update", args=[self.smart_list.id]),
+            data=json.dumps({"media_types": [MediaTypes.MOVIE.value]}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_manual_list_rejects_smart_rule_updates(self):
+        self.client.login(username="owner", password="12345")
+        response = self.client.post(
+            reverse("list_smart_rules_update", args=[self.manual_list.id]),
+            data=json.dumps({"media_types": [MediaTypes.MOVIE.value]}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
 
 
 class EditListViewTest(TestCase):

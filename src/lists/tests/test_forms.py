@@ -2,6 +2,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 
 from lists.forms import CustomListForm
+from lists.models import CustomList
 
 
 class CustomListFormTest(TestCase):
@@ -52,3 +53,48 @@ class CustomListFormTest(TestCase):
         form = CustomListForm(data=form_data)
         self.assertTrue(form.is_valid())
         self.assertEqual(form.cleaned_data["tags"], ["Sci Fi", "Drama"])
+
+    def test_custom_list_form_smart_toggle(self):
+        """Smart toggle should persist list type."""
+        form_data = {
+            "name": "Smart List",
+            "is_smart": "on",
+        }
+        form = CustomListForm(data=form_data, user=self.user)
+        self.assertTrue(form.is_valid())
+
+        custom_list = form.save(commit=False)
+        custom_list.owner = self.user
+        custom_list.save()
+        form.save_m2m()
+
+        self.assertTrue(custom_list.is_smart)
+        self.assertEqual(custom_list.smart_media_types, [])
+        self.assertEqual(custom_list.smart_excluded_media_types, [])
+        self.assertEqual(custom_list.smart_filters, {})
+
+    def test_custom_list_form_clears_smart_fields_when_disabled(self):
+        """Disabling smart mode should clear saved smart rule data."""
+        custom_list = CustomList.objects.create(
+            name="Smart",
+            owner=self.user,
+            is_smart=True,
+            smart_media_types=["movie"],
+            smart_excluded_media_types=["tv"],
+            smart_filters={"status": "Completed", "rating": "rated"},
+        )
+        form = CustomListForm(
+            data={
+                "name": "Smart",
+                "description": "",
+            },
+            instance=custom_list,
+            user=self.user,
+        )
+        self.assertTrue(form.is_valid())
+        saved_list = form.save()
+
+        self.assertFalse(saved_list.is_smart)
+        self.assertEqual(saved_list.smart_media_types, [])
+        self.assertEqual(saved_list.smart_excluded_media_types, [])
+        self.assertEqual(saved_list.smart_filters, {})

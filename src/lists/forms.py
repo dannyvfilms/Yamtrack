@@ -26,6 +26,11 @@ class CustomListForm(forms.ModelForm):
         label="Public (read-only access)",
         help_text="Anyone with the link can view this list",
     )
+    is_smart = forms.BooleanField(
+        required=False,
+        label="Smart List",
+        help_text="Automatically updates based on media types and filters",
+    )
     tags = TagsField(
         required=False,
         label="Tags",
@@ -50,6 +55,7 @@ class CustomListForm(forms.ModelForm):
             "collaborators",
             "is_public",
             "allow_recommendations",
+            "is_smart",
         ]
         widgets = {
             "collaborators": CollaboratorsWidget(
@@ -69,6 +75,7 @@ class CustomListForm(forms.ModelForm):
         if self.instance and self.instance.pk:
             self.initial["is_public"] = self.instance.visibility == "public"
             self.initial["tags"] = self._normalize_tags(self.instance.tags)
+            self.initial["is_smart"] = self.instance.is_smart
 
         existing_tags = []
         if available_tags is not None:
@@ -105,6 +112,14 @@ class CustomListForm(forms.ModelForm):
         instance.visibility = "public" if is_public else "private"
         if not is_public:
             instance.allow_recommendations = False
+
+        is_smart = bool(self.cleaned_data.get("is_smart"))
+        instance.is_smart = is_smart
+        if not is_smart:
+            instance.smart_media_types = []
+            instance.smart_excluded_media_types = []
+            instance.smart_filters = {}
+
         if commit:
             instance.save()
             self.save_m2m()

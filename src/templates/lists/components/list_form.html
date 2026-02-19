@@ -1,9 +1,11 @@
 {% load widget_tweaks %}
+{% load app_tags %}
 
 {# djlint:off #}
 <div x-show="showModal" x-cloak class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
   <div @click.outside="showModal = false" class="bg-[#2a2f35] p-6 rounded-lg w-152 max-h-[90vh] overflow-y-auto"
-    x-data="{ isPublic: {{ form.instance.is_public|yesno:'true,false' }} }">
+    x-data="{ isPublic: {{ form.instance.is_public|yesno:'true,false' }}, isSmart: {{ form.instance.is_smart|yesno:'true,false' }} || (typeof listMode !== 'undefined' && listMode === 'smart') }"
+    x-init="if (typeof listMode !== 'undefined' && listMode === 'smart') { isSmart = true; }">
     <div class="flex items-center justify-between mb-6">
       <h2 class="text-2xl font-bold">
         {% if form.instance.pk %}
@@ -19,6 +21,10 @@
     <form class="space-y-6" method="post">
       {% csrf_token %}
       <input type="hidden" name="list_id" value="{{ custom_list.id }}">
+      <input type="hidden"
+             name="smart_create_flow"
+             :value="(typeof listMode !== 'undefined' && listMode === 'smart') ? '1' : ''">
+
       {% for field in form %}
         <div>
           {% if field.name == 'is_public' %}
@@ -32,6 +38,20 @@
               </div>
               <label class="relative inline-flex items-center cursor-pointer ml-4">
                 <input class="sr-only peer" type="checkbox" name="{{ field.name }}" x-model="isPublic" {% if form.instance.is_public %}checked{% endif %}>
+                <div class="w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-px after:left-0.5 after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4.5 after:w-4.5 after:transition-all peer-checked:bg-indigo-600"></div>
+              </label>
+            </div>
+          {% elif field.name == 'is_smart' %}
+            <div class="flex items-center justify-between p-3 bg-[#39404b] rounded-md">
+              <div class="flex-1">
+                <div class="flex items-center text-gray-200 mb-1">
+                  {% include "app/icons/horizontal-sliders.svg" with classes="w-5 h-5 mr-2" %}
+                  <span class="text-sm font-medium">{{ field.label }}</span>
+                </div>
+                <p class="text-xs text-gray-400 ml-7">{{ field.help_text }}</p>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer ml-4">
+                <input class="sr-only peer" type="checkbox" name="{{ field.name }}" x-model="isSmart" :checked="listMode === 'smart'">
                 <div class="w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-px after:left-0.5 after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4.5 after:w-4.5 after:transition-all peer-checked:bg-indigo-600"></div>
               </label>
             </div>
@@ -52,6 +72,7 @@
           {% elif field.name == 'collaborators' or field.name == 'tags' %}
             <label class="block text text-sm font-medium mb-2 text-gray-300">{{ field.label }}</label>
             {{ field }}
+          {% elif field.name|slice:':6' == 'smart_' %}
           {% else %}
             <label class="block text text-sm font-medium mb-2 text-gray-300">{{ field.label }}</label>
             {{ field|add_class:"w-full p-2 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff] appearance-none" }}

@@ -382,7 +382,7 @@
     <div id="items-grid" class="media-grid" hx-history="false">{% include "lists/components/media_grid.html" %}</div>
     {% else %}
       {% if items_count %}
-        {% if request.GET.q or request.GET.type and request.GET.type != 'all' %}
+        {% if request.GET.q or has_media_type_filter %}
           <div class="flex flex-col items-center justify-center py-32 px-4 bg-[#2a2f35] rounded-lg">
             <div class="bg-[#39404b] rounded-full p-4 w-16 h-16 mx-auto mb-4 flex items-center justify-center">
               {% include "app/icons/magnifying-glass.svg" with classes="w-8 h-8 text-gray-400" %}

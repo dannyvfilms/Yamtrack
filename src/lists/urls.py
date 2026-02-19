@@ -21,6 +21,11 @@ urlpatterns = [
         name="lists_modal",
     ),
     path("list/<int:list_id>", views.list_detail, name="list_detail"),
+    path(
+        "list/<int:list_id>/smart-rules",
+        views.smart_rules_update,
+        name="list_smart_rules_update",
+    ),
     path("list/<int:list_id>/rss", feeds.list_rss_feed, name="list_rss"),
     path("list/<int:list_id>/json", feeds.list_json, name="list_json"),
     path("list/create", views.create, name="list_create"),

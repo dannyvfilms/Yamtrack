@@ -1,0 +1,441 @@
+{% extends base_template %}
+{% load static %}
+{% load app_tags %}
+
+{% block extra_head %}
+  {% if form %}{{ form.media.css }}{% endif %}
+{% endblock extra_head %}
+
+{% block title %}
+  {{ custom_list }} - Yamtrack
+{% endblock title %}
+
+{# djlint:off #}
+{% block content %}
+  {{ smart_filter_data|json_script:"smart-filter-data" }}
+
+  <div x-data="{
+    showModal: false,
+    editMode: {{ smart_edit_mode|yesno:'true,false' }},
+    saveState: 'idle',
+    saveTimer: null,
+    sort: '{{ current_sort }}',
+    layout: '{{ current_layout }}',
+    query: '{{ active_smart_rules.search|default:''|escapejs }}',
+    status: '{{ active_smart_rules.status|default:'all'|escapejs }}',
+    rating: '{{ active_smart_rules.rating|default:'all'|escapejs }}',
+    collection: '{{ active_smart_rules.collection|default:'all'|escapejs }}',
+    genre: '{{ active_smart_rules.genre|default:''|escapejs }}',
+    year: '{{ active_smart_rules.year|default:''|escapejs }}',
+    release: '{{ active_smart_rules.release|default:'all'|escapejs }}',
+    source: '{{ active_smart_rules.source|default:''|escapejs }}',
+    language: '{{ active_smart_rules.language|default:''|escapejs }}',
+    country: '{{ active_smart_rules.country|default:''|escapejs }}',
+    platform: '{{ active_smart_rules.platform|default:''|escapejs }}',
+    origin: '{{ active_smart_rules.origin|default:''|escapejs }}',
+    showLanguages: {{ smart_filter_data.show_languages|yesno:'true,false' }},
+    showCountries: {{ smart_filter_data.show_countries|yesno:'true,false' }},
+    showPlatforms: {{ smart_filter_data.show_platforms|yesno:'true,false' }},
+    showOrigins: {{ smart_filter_data.show_origins|yesno:'true,false' }},
+    availableMediaTypes: [
+      {% for media_type in available_media_types %}
+        { value: '{{ media_type }}', label: '{{ media_type|media_type_readable|escapejs }}' }{% if not forloop.last %},{% endif %}
+      {% endfor %}
+    ],
+    selectedTypes: [
+      {% for media_type in active_smart_rules.media_types %}
+        '{{ media_type }}'{% if not forloop.last %},{% endif %}
+      {% endfor %}
+    ],
+    statusLabels: {
+      {% for value, label in status_choices %}'{{ value }}': '{{ label }}'{% if not forloop.last %},{% endif %}{% endfor %}
+    },
+    ratingLabels: {
+      'all': 'All',
+      'rated': 'Rated',
+      'not_rated': 'Not Rated'
+    },
+    collectionLabels: {
+      'all': 'All',
+      'collected': 'Collected',
+      'not_collected': 'Not Collected'
+    },
+    releaseLabels: {
+      'all': 'Any',
+      'released': 'Released',
+      'not_released': 'Not Released'
+    },
+    sortLabels: {
+      {% for value, label in sort_choices %}'{{ value }}': '{{ label }}'{% if not forloop.last %},{% endif %}{% endfor %}
+    },
+    init() {
+      if (this.selectedTypes.length === 0 && this.availableMediaTypes.length > 0) {
+        this.selectedTypes = this.availableMediaTypes.map((type) => type.value);
+      }
+    },
+    allTypesSelected() {
+      return this.availableMediaTypes.length > 0 && this.selectedTypes.length === this.availableMediaTypes.length;
+    },
+    isTypeSelected(mediaType) {
+      return this.selectedTypes.includes(mediaType);
+    },
+    toggleMediaType(mediaType) {
+      if (this.isTypeSelected(mediaType)) {
+        this.selectedTypes = this.selectedTypes.filter((type) => type !== mediaType);
+        return;
+      }
+      this.selectedTypes = [...this.selectedTypes, mediaType];
+    },
+    toggleAllTypes() {
+      if (this.allTypesSelected()) {
+        this.selectedTypes = [];
+        return;
+      }
+      this.selectedTypes = this.availableMediaTypes.map((type) => type.value);
+    },
+    dropdownLabel() {
+      if (this.allTypesSelected()) {
+        return 'All Types';
+      }
+      if (this.selectedTypes.length === 0) {
+        return 'No Types';
+      }
+      if (this.selectedTypes.length === 1) {
+        const mediaType = this.availableMediaTypes.find((type) => type.value === this.selectedTypes[0]);
+        return mediaType ? mediaType.label : '1 Type';
+      }
+      return `${this.selectedTypes.length} Types`;
+    },
+    selectedTypesForSubmit() {
+      if (this.allTypesSelected()) {
+        return [];
+      }
+      return this.selectedTypes;
+    },
+    filterLabel() {
+      const labels = [];
+      if (this.rating && this.rating !== 'all') {
+        labels.push(this.ratingLabels[this.rating] || 'Rated');
+      }
+      if (this.collection && this.collection !== 'all') {
+        labels.push(this.collectionLabels[this.collection] || 'Collected');
+      }
+      if (this.genre) {
+        labels.push(this.genre);
+      }
+      if (this.year) {
+        labels.push(this.year === 'unknown' ? 'Unknown Year' : this.year);
+      }
+      if (this.release && this.release !== 'all') {
+        labels.push(this.releaseLabels[this.release] || 'Released');
+      }
+      if (this.source) {
+        labels.push(this.source.toUpperCase());
+      }
+      if (this.showLanguages && this.language) {
+        labels.push(this.language.length <= 3 ? this.language.toUpperCase() : this.language);
+      }
+      if (this.showCountries && this.country) {
+        labels.push(this.country.length <= 3 ? this.country.toUpperCase() : this.country);
+      }
+      if (this.showPlatforms && this.platform) {
+        labels.push(this.platform);
+      }
+      if (this.showOrigins && this.origin) {
+        labels.push(this.origin.length <= 3 ? this.origin.toUpperCase() : this.origin);
+      }
+      if (labels.length === 0) {
+        return 'All';
+      }
+      if (labels.length === 1) {
+        return labels[0];
+      }
+      return `${labels[0]} +${labels.length - 1}`;
+    },
+    clearFilters() {
+      this.rating = 'all';
+      this.collection = 'all';
+      this.genre = '';
+      this.year = '';
+      this.release = 'all';
+      this.source = '';
+      this.language = '';
+      this.country = '';
+      this.platform = '';
+      this.origin = '';
+    },
+    onRuleChange(delay = 350) {
+      if (!this.editMode) {
+        return;
+      }
+      this.saveState = 'saving';
+      if (this.saveTimer) {
+        clearTimeout(this.saveTimer);
+      }
+      this.saveTimer = setTimeout(() => this.saveSmartRules(), delay);
+    },
+    saveStateLabel() {
+      if (this.saveState === 'saving') {
+        return 'Saving…';
+      }
+      if (this.saveState === 'saved') {
+        return 'Saved';
+      }
+      if (this.saveState === 'error') {
+        return 'Save failed';
+      }
+      return 'Not saved';
+    },
+    saveStateClass() {
+      if (this.saveState === 'saving') {
+        return 'text-yellow-300';
+      }
+      if (this.saveState === 'saved') {
+        return 'text-green-400';
+      }
+      if (this.saveState === 'error') {
+        return 'text-red-400';
+      }
+      return 'text-gray-400';
+    },
+    async saveSmartRules() {
+      const payload = {
+        media_types: this.selectedTypesForSubmit(),
+        status: this.status,
+        rating: this.rating,
+        collection: this.collection,
+        genre: this.genre,
+        year: this.year,
+        release: this.release,
+        source: this.source,
+        language: this.language,
+        country: this.country,
+        platform: this.platform,
+        origin: this.origin,
+        search: this.query,
+      };
+
+      const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+
+      try {
+        const response = await fetch('{% url "list_smart_rules_update" custom_list.id %}', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken,
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to save smart rules');
+        }
+
+        this.saveState = 'saved';
+      } catch (error) {
+        console.error(error);
+        this.saveState = 'error';
+      }
+    }
+  }"
+  x-init="init()">
+
+    <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
+      <div>
+        <div class="flex flex-wrap items-center gap-3 mb-2">
+          <h1 class="text-3xl font-bold">{{ custom_list.name }}</h1>
+          <span class="text-sm bg-indigo-600/20 text-indigo-300 rounded-md flex items-center gap-1 px-1.5 py-0.5">
+            {% include "app/icons/horizontal-sliders.svg" with classes="w-3 h-3" %}
+            Smart List
+          </span>
+          {% if custom_list.visibility == "public" %}
+            <span class="text-sm bg-green-600/20 text-green-400 rounded-md flex items-center gap-1 px-1.5 py-0.5">
+              {% include "app/icons/globe.svg" with classes="w-3 h-3" %}
+              Public
+            </span>
+          {% endif %}
+        </div>
+        {% if custom_list.description %}<p class="text-gray-400 mb-2">{{ custom_list.description }}</p>{% endif %}
+        <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-gray-400">
+          <span>{{ collaborators_count }} collaborator{{ collaborators_count|pluralize }}</span>
+          <span class="inline-flex items-center gap-1">
+            <span class="text-gray-400">•</span>
+            <span>{{ items_count }} item{{ items_count|pluralize }}</span>
+          </span>
+          {% if can_edit and recommendation_count > 0 %}
+            <span class="inline-flex items-center gap-1">
+              <span class="text-gray-400">•</span>
+              <a href="{% url 'list_recommendations' custom_list.id %}"
+                 class="inline-flex items-center gap-1 text-indigo-400 hover:text-indigo-300 transition-colors">
+                {% include "app/icons/bell.svg" with classes="w-3 h-3" %}
+                <span>{{ recommendation_count }} Recommendation{{ recommendation_count|pluralize }}</span>
+              </a>
+            </span>
+          {% endif %}
+        </div>
+      </div>
+
+      {% if can_edit %}
+        <div class="flex items-center gap-2">
+          {% if smart_edit_mode %}
+            <span class="text-xs uppercase tracking-wide" :class="saveStateClass()" x-text="saveStateLabel()"></span>
+            <a href="{% url 'list_detail' custom_list.id %}"
+               class="h-10 inline-flex items-center gap-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md transition-colors">
+              {% include "app/icons/checkmark.svg" with classes="w-4 h-4" %}
+              Done Editing
+            </a>
+          {% else %}
+            <a href="{% url 'list_detail' custom_list.id %}?edit_smart_rules=1"
+               class="h-10 inline-flex items-center gap-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md transition-colors">
+              {% include "app/icons/edit.svg" with classes="w-4 h-4" %}
+              Edit Smart Rules
+            </a>
+          {% endif %}
+          <button @click="showModal = true"
+                  class="h-10 w-10 bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex items-center justify-center cursor-pointer"
+                  type="button"
+                  aria-label="Edit list metadata">
+            {% include "app/icons/horizontal-sliders.svg" with classes="w-4 h-4 text-gray-200" %}
+          </button>
+        </div>
+      {% endif %}
+    </div>
+
+    {% if is_public_view %}
+      <div class="bg-blue-900/20 border border-blue-700/50 rounded-lg p-4 mb-6">
+        <div class="flex items-center gap-2 text-blue-400">
+          {% include "app/icons/info.svg" with classes="w-5 h-5" %}
+          <span class="text-sm">You're viewing a public list. <a href="{% url 'account_login' %}" class="underline hover:text-blue-300">Log in</a> to track your own media.</span>
+        </div>
+      </div>
+    {% endif %}
+
+    {% if can_edit %}
+      {% include "lists/components/list_form.html" %}
+    {% endif %}
+
+    {% include "lists/components/smart_rules_summary.html" %}
+
+    {% if can_edit and smart_edit_mode %}
+      {% include "lists/components/smart_rules_builder.html" %}
+    {% endif %}
+
+    <div id="list-results-summary" class="mb-3">
+      {% include "lists/components/list_results_summary.html" %}
+    </div>
+
+    <div id="items-view"
+         hx-history="false"
+         :class="layout === 'grid' ? 'media-grid' : ''">
+      {% if current_layout == 'table' %}
+        {% include "lists/components/list_table.html" %}
+      {% else %}
+        {% include "lists/components/media_grid.html" %}
+      {% endif %}
+    </div>
+
+    <div id="loading-indicator" class="htmx-indicator text-center pt-8">
+      <div class="inline-flex justify-center items-center">
+        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500"></div>
+      </div>
+    </div>
+  </div>
+{% endblock content %}
+{# djlint:on #}
+
+{% block js %}
+  {% if form %}{{ form.media.js }}{% endif %}
+
+  <script>
+    function mediaFilterMenu() {
+      const dataEl = document.getElementById('smart-filter-data');
+      const data = dataEl ? JSON.parse(dataEl.textContent) : {};
+      return {
+        open: false,
+        view: 'root',
+        genreSearch: '',
+        yearSearch: '',
+        sourceSearch: '',
+        languageSearch: '',
+        countrySearch: '',
+        platformSearch: '',
+        originSearch: '',
+        genres: data.genres || [],
+        years: data.years || [],
+        sources: data.sources || [],
+        languages: data.languages || [],
+        countries: data.countries || [],
+        platforms: data.platforms || [],
+        origins: data.origins || [],
+        resetSearch() {
+          this.genreSearch = '';
+          this.yearSearch = '';
+          this.sourceSearch = '';
+          this.languageSearch = '';
+          this.countrySearch = '';
+          this.platformSearch = '';
+          this.originSearch = '';
+        },
+        filteredGenres() {
+          const term = this.genreSearch.toLowerCase();
+          if (!term) {
+            return this.genres;
+          }
+          return this.genres.filter((genre) => genre.toLowerCase().includes(term));
+        },
+        filteredYears() {
+          const term = this.yearSearch.toLowerCase();
+          if (!term) {
+            return this.years;
+          }
+          return this.years.filter((option) => option.label.toLowerCase().includes(term));
+        },
+        filteredSources() {
+          const term = this.sourceSearch.toLowerCase();
+          if (!term) {
+            return this.sources;
+          }
+          return this.sources.filter((option) => option.label.toLowerCase().includes(term));
+        },
+        filteredLanguages() {
+          const term = this.languageSearch.toLowerCase();
+          if (!term) {
+            return this.languages;
+          }
+          return this.languages.filter((option) => option.label.toLowerCase().includes(term));
+        },
+        filteredCountries() {
+          const term = this.countrySearch.toLowerCase();
+          if (!term) {
+            return this.countries;
+          }
+          return this.countries.filter((option) => option.label.toLowerCase().includes(term));
+        },
+        filteredPlatforms() {
+          const term = this.platformSearch.toLowerCase();
+          if (!term) {
+            return this.platforms;
+          }
+          return this.platforms.filter((option) => option.label.toLowerCase().includes(term));
+        },
+        filteredOrigins() {
+          const term = this.originSearch.toLowerCase();
+          if (!term) {
+            return this.origins;
+          }
+          return this.origins.filter((option) => option.label.toLowerCase().includes(term));
+        },
+      };
+    }
+
+    window.addEventListener('pageshow', (event) => {
+      if (event.persisted) {
+        window.location.reload();
+      }
+    });
+
+    if (window.htmx) {
+      htmx.config.getCacheBusterParam = true;
+    }
+  </script>
+{% endblock js %}

@@ -6,6 +6,7 @@ from django.db.models import Prefetch, Q
 
 from app.models import Item, MediaTypes, Sources
 from app.providers import services
+from lists import smart_rules
 
 
 class CustomListManager(models.Manager):
@@ -104,6 +105,22 @@ class CustomList(models.Model):
         default="local",
     )
     source_id = models.CharField(max_length=100, blank=True, default="")
+    is_smart = models.BooleanField(default=False)
+    smart_media_types = models.JSONField(
+        blank=True,
+        default=list,
+        help_text="Media types included in this smart list.",
+    )
+    smart_excluded_media_types = models.JSONField(
+        blank=True,
+        default=list,
+        help_text="Media types excluded from this smart list.",
+    )
+    smart_filters = models.JSONField(
+        blank=True,
+        default=dict,
+        help_text="Saved filter criteria for smart lists.",
+    )
 
     objects = CustomListManager()
 
@@ -146,6 +163,63 @@ class CustomList(models.Model):
     def can_recommend(self):
         """Check if recommendations are allowed for this list."""
         return self.visibility == "public" and self.allow_recommendations
+
+    def get_smart_items_queryset(self):
+        """Build a queryset of items that match this smart list definition."""
+        if not self.is_smart:
+            return Item.objects.none()
+        normalized_rules = smart_rules.normalize_rule_payload(
+            {
+                "media_types": self.smart_media_types or [],
+                **(self.smart_filters or {}),
+            },
+            self.owner,
+        )
+
+        excluded_media_types = {
+            media_type
+            for media_type in (self.smart_excluded_media_types or [])
+            if media_type in MediaTypes.values
+        }
+        if excluded_media_types:
+            if normalized_rules["media_types"]:
+                normalized_rules["media_types"] = [
+                    media_type
+                    for media_type in normalized_rules["media_types"]
+                    if media_type not in excluded_media_types
+                ]
+            else:
+                normalized_rules["media_types"] = [
+                    media_type
+                    for media_type in smart_rules.get_available_media_types(self.owner)
+                    if media_type not in excluded_media_types
+                ]
+
+        matched_item_ids = smart_rules.collect_matching_item_ids(self.owner, normalized_rules)
+        return Item.objects.filter(id__in=matched_item_ids)
+
+    def sync_smart_items(self):
+        """Synchronize list membership for smart lists."""
+        if not self.is_smart:
+            return
+
+        target_item_ids = set(self.get_smart_items_queryset().values_list("id", flat=True))
+        existing_item_ids = set(
+            CustomListItem.objects.filter(custom_list=self).values_list("item_id", flat=True),
+        )
+
+        to_remove = existing_item_ids - target_item_ids
+        to_add = target_item_ids - existing_item_ids
+
+        if to_remove:
+            CustomListItem.objects.filter(custom_list=self, item_id__in=to_remove).delete()
+        if to_add:
+            CustomListItem.objects.bulk_create(
+                [
+                    CustomListItem(custom_list=self, item_id=item_id, added_by=self.owner)
+                    for item_id in to_add
+                ],
+            )
 
     @property
     def image(self):

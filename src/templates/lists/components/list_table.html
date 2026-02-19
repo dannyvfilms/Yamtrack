@@ -1,0 +1,49 @@
+{% load app_tags %}
+{% load user_tags %}
+
+{% if items %}
+  <div class="bg-[#2a2f35] p-4 rounded-lg overflow-x-auto">
+    <table class="w-full min-w-[860px] text-left">
+      <thead>
+        <tr class="text-xs uppercase tracking-wide text-gray-400">
+          <th class="px-4 py-3 font-medium">Title</th>
+          <th class="px-4 py-3 font-medium">Media Type</th>
+          <th class="px-4 py-3 font-medium">Status</th>
+          <th class="px-4 py-3 font-medium">Rating</th>
+          <th class="px-4 py-3 font-medium">Progress</th>
+          <th class="px-4 py-3 font-medium">Release Date</th>
+          <th class="px-4 py-3 font-medium">Date Added</th>
+        </tr>
+      </thead>
+      <tbody id="list-table-body">
+        {% include "lists/components/list_table_rows.html" %}
+      </tbody>
+    </table>
+  </div>
+{% elif items_count %}
+  <div class="flex flex-col items-center justify-center py-20 px-4 bg-[#2a2f35] rounded-lg">
+    <div class="bg-[#39404b] rounded-full p-4 w-16 h-16 mx-auto mb-4 flex items-center justify-center">
+      {% include "app/icons/magnifying-glass.svg" with classes="w-8 h-8 text-gray-400" %}
+    </div>
+    <h3 class="text-xl font-semibold mb-2">No results found</h3>
+    <p class="text-gray-400 text-center max-w-md mb-4">
+      We couldn't find any matches with the current smart-list filters.
+    </p>
+  </div>
+{% else %}
+  <div class="flex flex-col items-center justify-center py-20 px-4 bg-[#2a2f35] rounded-lg">
+    <div class="bg-[#39404b] rounded-full p-4 w-16 h-16 mx-auto mb-4 flex items-center justify-center">
+      {% include "app/icons/list-add.svg" with classes="w-8 h-8 text-gray-400" %}
+    </div>
+    <h3 class="text-xl font-semibold mb-2">No matching items yet</h3>
+    <p class="text-gray-400 text-center max-w-md mb-4">
+      Save rules in edit mode and your list will keep itself updated as your library changes.
+    </p>
+  </div>
+{% endif %}
+
+{% if is_partial %}
+  <div id="list-results-summary" hx-swap-oob="true">
+    {% include "lists/components/list_results_summary.html" %}
+  </div>
+{% endif %}

@@ -1,0 +1,73 @@
+{% load app_tags %}
+
+<div class="bg-[#2a2f35] rounded-lg p-4 mb-6">
+  <div class="flex items-center justify-between gap-2 mb-3">
+    <h2 class="text-xs uppercase tracking-wide text-gray-300">Smart Rules</h2>
+    {% if smart_edit_mode %}
+      <span class="text-xs text-indigo-300">Edit mode active</span>
+    {% else %}
+      <span class="text-xs text-gray-500">Read-only</span>
+    {% endif %}
+  </div>
+
+  <div class="flex flex-wrap gap-2 text-xs">
+    <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200">
+      <span class="text-gray-400">Types:</span>
+      {% if saved_smart_rules.media_types %}
+        {% for media_type in saved_smart_rules.media_types %}
+          {{ media_type|media_type_readable }}{% if not forloop.last %}, {% endif %}
+        {% endfor %}
+      {% else %}
+        All Types
+      {% endif %}
+    </span>
+
+    {% if saved_smart_rules.status and saved_smart_rules.status != 'all' %}
+      <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Status:</span> {{ saved_smart_rules.status }}</span>
+    {% endif %}
+
+    {% if saved_smart_rules.rating and saved_smart_rules.rating != 'all' %}
+      <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Rating:</span> {{ saved_smart_rules.rating|title }}</span>
+    {% endif %}
+
+    {% if saved_smart_rules.collection and saved_smart_rules.collection != 'all' %}
+      <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Collection:</span> {{ saved_smart_rules.collection|title }}</span>
+    {% endif %}
+
+    {% if saved_smart_rules.genre %}
+      <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Genre:</span> {{ saved_smart_rules.genre }}</span>
+    {% endif %}
+
+    {% if saved_smart_rules.year %}
+      <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Year:</span> {% if saved_smart_rules.year == 'unknown' %}Unknown{% else %}{{ saved_smart_rules.year }}{% endif %}</span>
+    {% endif %}
+
+    {% if saved_smart_rules.release and saved_smart_rules.release != 'all' %}
+      <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Released:</span> {{ saved_smart_rules.release|title }}</span>
+    {% endif %}
+
+    {% if saved_smart_rules.source %}
+      <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Source:</span> {{ saved_smart_rules.source|upper }}</span>
+    {% endif %}
+
+    {% if saved_smart_rules.language %}
+      <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Language:</span> {{ saved_smart_rules.language|upper }}</span>
+    {% endif %}
+
+    {% if saved_smart_rules.country %}
+      <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Country:</span> {{ saved_smart_rules.country|upper }}</span>
+    {% endif %}
+
+    {% if saved_smart_rules.platform %}
+      <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Platform:</span> {{ saved_smart_rules.platform }}</span>
+    {% endif %}
+
+    {% if saved_smart_rules.origin %}
+      <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Origin:</span> {{ saved_smart_rules.origin|upper }}</span>
+    {% endif %}
+
+    {% if saved_smart_rules.search %}
+      <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Search:</span> “{{ saved_smart_rules.search }}”</span>
+    {% endif %}
+  </div>
+</div>

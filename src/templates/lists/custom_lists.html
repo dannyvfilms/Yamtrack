@@ -15,7 +15,7 @@
 {% endblock title %}
 
 {% block content %}
-  <div x-data="{ showModal: false, showTraktModal: false, traktDefaultStep: {% if trakt_has_credentials %}3{% else %}1{% endif %}, traktStep: {% if trakt_has_credentials %}3{% else %}1{% endif %} }">
+  <div x-data="{ showModal: false, listMode: 'manual', showTraktModal: false, traktDefaultStep: {% if trakt_has_credentials %}3{% else %}1{% endif %}, traktStep: {% if trakt_has_credentials %}3{% else %}1{% endif %} }">
     <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
       <div>
         <h1 class="text-3xl font-bold mb-2">Lists</h1>
@@ -28,7 +28,7 @@
           Public Profile
         </a>
         <div class="relative inline-flex" x-data="{ open: false }">
-          <button @click="showModal = true"
+          <button @click="listMode = 'manual'; showModal = true"
                   class="flex items-center px-4 py-2 bg-indigo-600 text-white rounded-l-md hover:bg-indigo-700 transition-colors cursor-pointer border-r border-indigo-500">
             {% include "app/icons/plus.svg" with classes="w-5 h-5 mr-2" %}
             New List
@@ -49,6 +49,11 @@
                x-transition:leave="transition ease-in duration-75"
                x-transition:leave-start="transform opacity-100 scale-100"
                x-transition:leave-end="transform opacity-0 scale-95">
+            <button class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors cursor-pointer"
+                    type="button"
+                    @click.stop="open = false; listMode = 'smart'; showModal = true">
+              Create Smart List
+            </button>
             <button class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors cursor-pointer"
                     type="button"
                     @click.stop="open = false; showTraktModal = true; traktStep = traktDefaultStep">
