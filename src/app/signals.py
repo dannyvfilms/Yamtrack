@@ -17,6 +17,7 @@ from app.models import (
     BoardGame,
     Book,
     Comic,
+    CollectionEntry,
     Episode,
     Game,
     Item,
@@ -32,6 +33,7 @@ from app.models import (
     Season,
     Sources,
 )
+from lists.smart_rules import sync_smart_lists_for_item
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +80,71 @@ def create_task_result_on_publish(
     except Exception as e:  # pragma: no cover
         # Catch any other unexpected errors
         logger.warning("Unexpected error storing task result: %s", e)
+
+
+def _sync_owner_smart_lists_for_items(owner, items):
+    """Sync smart-list membership for a deduped set of owner items."""
+    if not owner:
+        return
+
+    seen_item_ids = set()
+    for item in items:
+        if not item:
+            continue
+        if item.id in seen_item_ids:
+            continue
+        seen_item_ids.add(item.id)
+        try:
+            sync_smart_lists_for_item(owner=owner, item=item)
+        except Exception:
+            logger.exception(
+                "Failed incremental smart-list sync for owner_id=%s item_id=%s",
+                owner.id,
+                item.id,
+            )
+
+
+@receiver([post_save, post_delete], sender=TV)
+@receiver([post_save, post_delete], sender=Season)
+@receiver([post_save, post_delete], sender=Anime)
+@receiver([post_save, post_delete], sender=Movie)
+@receiver([post_save, post_delete], sender=Manga)
+@receiver([post_save, post_delete], sender=Book)
+@receiver([post_save, post_delete], sender=Comic)
+@receiver([post_save, post_delete], sender=Game)
+@receiver([post_save, post_delete], sender=BoardGame)
+@receiver([post_save, post_delete], sender=Music)
+@receiver([post_save, post_delete], sender=Podcast)
+def sync_smart_lists_on_media_change(sender, instance, **kwargs):  # noqa: ARG001
+    """Incrementally update smart-list memberships when owner media rows change."""
+    _sync_owner_smart_lists_for_items(
+        getattr(instance, "user", None),
+        [getattr(instance, "item", None)],
+    )
+
+
+@receiver([post_save, post_delete], sender=CollectionEntry)
+def sync_smart_lists_on_collection_change(sender, instance, **kwargs):  # noqa: ARG001
+    """Incrementally update smart lists when collection ownership changes."""
+    owner = getattr(instance, "user", None)
+    item = getattr(instance, "item", None)
+    if not owner or not item:
+        return
+
+    items_to_sync = [item]
+    if item.media_type == MediaTypes.EPISODE.value:
+        related_show_items = Item.objects.filter(
+            media_id=item.media_id,
+            source=item.source,
+            media_type__in=[
+                MediaTypes.TV.value,
+                MediaTypes.ANIME.value,
+                MediaTypes.SEASON.value,
+            ],
+        ).only("id", "media_type", "media_id", "source")
+        items_to_sync.extend(related_show_items)
+
+    _sync_owner_smart_lists_for_items(owner, items_to_sync)
 
 
 @receiver([post_save, post_delete], sender=Episode)

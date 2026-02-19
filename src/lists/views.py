@@ -267,11 +267,6 @@ def lists(request):
         for tag in (custom_list.tags or [])
     )
 
-    # Keep smart lists fresh as library changes.
-    for custom_list in lists_page:
-        if custom_list.is_smart:
-            custom_list.sync_smart_items()
-
     # Create a form for each list
     # needs unique id for django-select2
     for custom_list in lists_page:

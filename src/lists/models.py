@@ -168,32 +168,7 @@ class CustomList(models.Model):
         """Build a queryset of items that match this smart list definition."""
         if not self.is_smart:
             return Item.objects.none()
-        normalized_rules = smart_rules.normalize_rule_payload(
-            {
-                "media_types": self.smart_media_types or [],
-                **(self.smart_filters or {}),
-            },
-            self.owner,
-        )
-
-        excluded_media_types = {
-            media_type
-            for media_type in (self.smart_excluded_media_types or [])
-            if media_type in MediaTypes.values
-        }
-        if excluded_media_types:
-            if normalized_rules["media_types"]:
-                normalized_rules["media_types"] = [
-                    media_type
-                    for media_type in normalized_rules["media_types"]
-                    if media_type not in excluded_media_types
-                ]
-            else:
-                normalized_rules["media_types"] = [
-                    media_type
-                    for media_type in smart_rules.get_available_media_types(self.owner)
-                    if media_type not in excluded_media_types
-                ]
+        normalized_rules = smart_rules.normalize_list_rules(self)
 
         matched_item_ids = smart_rules.collect_matching_item_ids(self.owner, normalized_rules)
         return Item.objects.filter(id__in=matched_item_ids)

@@ -205,3 +205,77 @@ class CustomListManagerTest(TestCase):
         )
         smart_list.sync_smart_items()
         self.assertTrue(smart_list.items.filter(id=item.id).exists())
+
+    def test_smart_list_updates_on_media_status_and_delete(self):
+        """Media save/delete events should incrementally add/remove smart memberships."""
+        smart_list = CustomList.objects.create(
+            name="Planning Games",
+            owner=self.user,
+            is_smart=True,
+            smart_media_types=[MediaTypes.GAME.value],
+            smart_filters={"status": Status.PLANNING.value},
+        )
+        item = Item.objects.create(
+            title="Signal Game",
+            media_id="1300",
+            media_type=MediaTypes.GAME.value,
+            source=Sources.IGDB.value,
+            image="https://example.com/signal-game.jpg",
+        )
+
+        game = Game.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.PLANNING.value,
+        )
+        self.assertTrue(smart_list.items.filter(id=item.id).exists())
+
+        game.status = Status.COMPLETED.value
+        game.save(update_fields=["status"])
+        self.assertFalse(smart_list.items.filter(id=item.id).exists())
+
+        game.status = Status.PLANNING.value
+        game.save(update_fields=["status"])
+        self.assertTrue(smart_list.items.filter(id=item.id).exists())
+
+        game.delete()
+        self.assertFalse(smart_list.items.filter(id=item.id).exists())
+
+    def test_smart_list_updates_on_episode_collection_changes(self):
+        """Episode collection ownership should incrementally update TV collection lists."""
+        smart_list = CustomList.objects.create(
+            name="Collected Shows",
+            owner=self.user,
+            is_smart=True,
+            smart_media_types=[MediaTypes.TV.value],
+            smart_filters={"collection": "collected"},
+        )
+        tv_item = Item.objects.create(
+            title="Collection Show",
+            media_id="1400",
+            media_type=MediaTypes.TV.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/collection-show.jpg",
+        )
+        TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        episode_item = Item.objects.create(
+            title="Collection Show Episode",
+            media_id="1400",
+            media_type=MediaTypes.EPISODE.value,
+            source=Sources.TMDB.value,
+            season_number=1,
+            episode_number=1,
+            image="https://example.com/collection-show-episode.jpg",
+        )
+
+        self.assertFalse(smart_list.items.filter(id=tv_item.id).exists())
+
+        entry = CollectionEntry.objects.create(user=self.user, item=episode_item)
+        self.assertTrue(smart_list.items.filter(id=tv_item.id).exists())
+
+        entry.delete()
+        self.assertFalse(smart_list.items.filter(id=tv_item.id).exists())
