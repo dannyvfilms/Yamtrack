@@ -1,16 +1,8 @@
 {% load app_tags %}
 
 <div class="bg-[#2a2f35] rounded-lg p-4 mb-6">
-  <div class="flex items-center justify-between gap-2 mb-3">
-    <h2 class="text-xs uppercase tracking-wide text-gray-300">Smart Rules</h2>
-    {% if smart_edit_mode %}
-      <span class="text-xs text-indigo-300">Edit mode active</span>
-    {% else %}
-      <span class="text-xs text-gray-500">Read-only</span>
-    {% endif %}
-  </div>
-
-  <div class="flex flex-wrap gap-2 text-xs">
+  <div class="flex flex-wrap items-center gap-2 text-xs">
+    <h2 class="text-xs uppercase tracking-wide text-gray-300 mr-1">Smart Rules</h2>
     <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200">
       <span class="text-gray-400">Types:</span>
       {% if saved_smart_rules.media_types %}
@@ -68,6 +60,10 @@
 
     {% if saved_smart_rules.search %}
       <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Search:</span> “{{ saved_smart_rules.search }}”</span>
+    {% endif %}
+
+    {% if smart_edit_mode %}
+      <span class="ml-auto text-xs text-indigo-300">Edit mode active</span>
     {% endif %}
   </div>
 </div>

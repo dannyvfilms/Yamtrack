@@ -1,7 +1,9 @@
-<div class="flex items-center justify-between mb-3">
-  <p class="text-sm text-indigo-300">Editing smart rules updates this list automatically.</p>
-  <p class="text-xs uppercase tracking-wide" :class="saveStateClass()" x-text="saveStateLabel()"></p>
-</div>
+{% if smart_edit_mode %}
+  <div class="flex items-center justify-between mb-3">
+    <p class="text-sm text-indigo-300">Editing smart rules updates this list automatically.</p>
+    <p class="text-xs uppercase tracking-wide" :class="saveStateClass()" x-text="saveStateLabel()"></p>
+  </div>
+{% endif %}
 
 <form id="smart-filter-form" class="hidden">
   <input type="hidden" name="sort" x-model="sort">
@@ -27,7 +29,7 @@
 <div class="flex flex-col md:flex-row gap-4 mb-6">
   <div class="relative grow min-w-0">
     <input id="smart-search-input"
-           placeholder="Search this smart list..."
+           placeholder="Search this list or recommend something..."
            class="w-full min-w-0 py-2 pl-10 pr-4 bg-[#39404b] rounded-md text-white focus:outline-none focus:ring-2 focus:ring-[#4a9eff] appearance-none"
            type="text"
            x-model="query"
@@ -770,6 +772,41 @@
         {% endfor %}
       </div>
     </div>
+
+    {% if custom_list.can_recommend and items_count %}
+      <div class="relative inline-flex" x-data="{ open: false }" @click.outside="open = false">
+        <a href="{% url 'recommend_item' custom_list.id %}"
+           class="h-10 inline-flex items-center gap-2 px-4 bg-indigo-600 text-white rounded-l-md hover:bg-indigo-700 transition-colors cursor-pointer border-r border-indigo-500">
+          {% include "app/icons/list-add.svg" with classes="w-4 h-4" %}
+          <span class="text-sm">Recommend Item</span>
+        </a>
+        <button @click="open = !open"
+                class="h-10 inline-flex items-center px-2 bg-indigo-600 text-white rounded-r-md hover:bg-indigo-700 transition-colors cursor-pointer"
+                aria-label="More list actions"
+                type="button">
+          {% include "app/icons/chevron-down.svg" with classes="w-4 h-4" %}
+        </button>
+        <div class="absolute right-0 top-full mt-2 py-1 w-52 bg-[#39404b] rounded-md shadow-lg overflow-hidden z-50 border border-gray-700"
+             x-cloak
+             x-show="open"
+             x-transition:enter="transition ease-out duration-100"
+             x-transition:enter-start="transform opacity-0 scale-95"
+             x-transition:enter-end="transform opacity-100 scale-100"
+             x-transition:leave="transition ease-in duration-75"
+             x-transition:leave-start="transform opacity-100 scale-100"
+             x-transition:leave-end="transform opacity-0 scale-95">
+          <a href="{% url 'list_activity' custom_list.id %}"
+             class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors">
+            Activity History
+          </a>
+          <button class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors cursor-pointer"
+                  @click="open = false; showModal = true"
+                  type="button">
+            Edit List
+          </button>
+        </div>
+      </div>
+    {% endif %}
 
     <div class="flex rounded-md overflow-hidden border border-gray-700 layout-toggle">
       <button hx-get="{% url 'list_detail' custom_list.id %}"
