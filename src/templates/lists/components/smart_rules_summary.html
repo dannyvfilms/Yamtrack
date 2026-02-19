@@ -63,7 +63,12 @@
     {% endif %}
 
     {% if smart_edit_mode %}
-      <span class="ml-auto text-xs text-indigo-300">Edit mode active</span>
+      <span class="ml-auto text-xs"
+            :class="saveState === 'saving' ? 'text-yellow-300' : (saveState === 'error' ? 'text-red-400' : 'text-indigo-300')">
+        <span>Edit mode active</span>
+        <span x-show="saveState === 'saving'"> • Saving…</span>
+        <span x-show="saveState === 'error'"> • Save failed</span>
+      </span>
     {% endif %}
   </div>
 </div>

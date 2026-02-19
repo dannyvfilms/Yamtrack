@@ -174,30 +174,6 @@
       }
       this.saveTimer = setTimeout(() => this.saveSmartRules(), delay);
     },
-    saveStateLabel() {
-      if (this.saveState === 'saving') {
-        return 'Saving…';
-      }
-      if (this.saveState === 'saved') {
-        return 'Saved';
-      }
-      if (this.saveState === 'error') {
-        return 'Save failed';
-      }
-      return 'Not saved';
-    },
-    saveStateClass() {
-      if (this.saveState === 'saving') {
-        return 'text-yellow-300';
-      }
-      if (this.saveState === 'saved') {
-        return 'text-green-400';
-      }
-      if (this.saveState === 'error') {
-        return 'text-red-400';
-      }
-      return 'text-gray-400';
-    },
     async saveSmartRules() {
       const payload = {
         media_types: this.selectedTypesForSubmit(),
@@ -278,7 +254,6 @@
       {% if can_edit %}
         <div class="flex items-center gap-2">
           {% if smart_edit_mode %}
-            <span class="text-xs uppercase tracking-wide" :class="saveStateClass()" x-text="saveStateLabel()"></span>
             <a href="{% url 'list_detail' custom_list.id %}"
                class="h-10 inline-flex items-center gap-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md transition-colors">
               {% include "app/icons/checkmark.svg" with classes="w-4 h-4" %}
@@ -312,6 +287,10 @@
 
     {% if can_edit %}
       {% include "lists/components/list_form.html" %}
+    {% endif %}
+
+    {% if smart_edit_mode %}
+      <p class="text-sm text-indigo-300 mb-3">Editing smart rules updates this list automatically.</p>
     {% endif %}
 
     {% include "lists/components/smart_rules_summary.html" %}
