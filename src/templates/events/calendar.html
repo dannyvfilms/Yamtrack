@@ -13,7 +13,7 @@
     <p class="text-gray-400">Track upcoming releases from your list.</p>
   </div>
 
-  <div class="bg-[#2a2f35] rounded-lg p-6 mb-6" x-data="calendarFilters()" x-init="applyFilter(); $watch('selectedMediaTypes', () => applyFilter())">
+  <div class="bg-[#2a2f35] rounded-lg p-6 mb-6" x-data="calendarFilters()">
     <div class="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
       <div class="flex items-center gap-4">
         <div class="flex items-center bg-[#39404b] rounded-md p-1">
@@ -27,11 +27,27 @@
             {% include "app/icons/chevron-right.svg" with classes="w-5 h-5" %}
           </a>
         </div>
+        <a class="hidden sm:flex w-10 h-10 bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex-col items-center justify-center leading-none"
+           href="{% url 'calendar' %}?month={{ today.month }}&year={{ today.year }}&view={{ view_type }}"
+           aria-label="Go to Today">
+          <span class="text-xl font-bold leading-none">{{ today|date:"j" }}</span>
+          <span class="uppercase text-gray-300/90 mt-0.5"
+                style="font-size: 9px; font-weight: 400; letter-spacing: 0.04em; line-height: 1;">
+            {{ today|date:"M" }}
+          </span>
+        </a>
       </div>
 
       <div class="flex items-center gap-2 flex-wrap justify-end">
-        <a class="px-4 py-2 text-sm bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors"
-           href="{% url 'calendar' %}?month={{ today.month }}&year={{ today.year }}&view={{ view_type }}">Today</a>
+        <a class="sm:hidden w-10 h-10 bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex flex-col items-center justify-center leading-none shrink-0"
+           href="{% url 'calendar' %}?month={{ today.month }}&year={{ today.year }}&view={{ view_type }}"
+           aria-label="Go to Today">
+          <span class="text-xl font-bold leading-none">{{ today|date:"j" }}</span>
+          <span class="uppercase text-gray-300/90 mt-0.5"
+                style="font-size: 9px; font-weight: 400; letter-spacing: 0.04em; line-height: 1;">
+            {{ today|date:"M" }}
+          </span>
+        </a>
 
         <div class="relative" @click.outside="dropdownOpen = false">
           <button type="button"
@@ -228,9 +244,11 @@
             '{{ media_type }}'{% if not forloop.last %},{% endif %}
           {% endfor %}
         ],
+        mobileSelectedDay: null,
         filteredGridHtml: '',
         filteredListHtml: '',
         init() {
+          this.$watch('selectedMediaTypes', () => this.applyFilter());
           this.applyFilter();
         },
         dropdownLabel() {
@@ -289,6 +307,7 @@
           if (this.$refs.listTemplate) {
             this.filteredListHtml = this.filterReleaseMarkup(this.$refs.listTemplate.innerHTML);
           }
+          this.$nextTick(() => this.bindMobileCalendar());
         },
         filterReleaseMarkup(html) {
           const selected = new Set(this.selectedMediaTypes);
@@ -311,7 +330,88 @@
             }
           });
 
+          container.querySelectorAll('[data-day-panel]').forEach(panel => {
+            const releaseCount = panel.querySelectorAll('[data-release-media-type]').length;
+            const emptyState = panel.querySelector('[data-mobile-empty-state]');
+
+            if (emptyState) {
+              emptyState.classList.toggle('hidden', releaseCount > 0);
+            }
+          });
+
           return container.innerHTML;
+        },
+        bindMobileCalendar() {
+          const mobileCalendar = this.$root.querySelector('[data-mobile-calendar]');
+          if (!mobileCalendar) {
+            return;
+          }
+
+          const dayTriggers = [...mobileCalendar.querySelectorAll('[data-day-trigger]')];
+          const dayPanels = [...mobileCalendar.querySelectorAll('[data-day-panel]')];
+          if (!dayTriggers.length || !dayPanels.length) {
+            return;
+          }
+
+          const agendaTitle = mobileCalendar.querySelector('[data-agenda-title]');
+          const agendaCount = mobileCalendar.querySelector('[data-agenda-count]');
+          const monthName = mobileCalendar.dataset.monthName || '';
+
+          const releaseCountByDay = new Map();
+          dayPanels.forEach((panel) => {
+            releaseCountByDay.set(
+              panel.dataset.dayPanel,
+              panel.querySelectorAll('[data-release-media-type]').length,
+            );
+          });
+
+          const updateDayIndicators = () => {
+            dayTriggers.forEach((trigger) => {
+              const count = releaseCountByDay.get(trigger.dataset.dayTrigger) || 0;
+              const activeDots = Math.min(count, 3);
+              const dots = [...trigger.querySelectorAll('[data-day-indicator-dot]')];
+
+              dots.forEach((dot, index) => {
+                dot.style.backgroundColor = index < activeDots
+                  ? '#60a5fa'
+                  : 'rgba(148, 163, 184, 0.75)';
+              });
+            });
+          };
+
+          const selectDay = (day) => {
+            this.mobileSelectedDay = day;
+
+            dayTriggers.forEach((trigger) => {
+              const isSelected = trigger.dataset.dayTrigger === day;
+              trigger.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+              trigger.classList.toggle('ring-1', isSelected);
+              trigger.classList.toggle('ring-indigo-400', isSelected);
+            });
+
+            dayPanels.forEach((panel) => {
+              panel.classList.toggle('hidden', panel.dataset.dayPanel !== day);
+            });
+
+            const eventCount = releaseCountByDay.get(day) || 0;
+            if (agendaTitle) {
+              agendaTitle.textContent = monthName ? `${monthName} ${day}` : `Day ${day}`;
+            }
+            if (agendaCount) {
+              agendaCount.textContent = eventCount === 1 ? '1 release' : `${eventCount} releases`;
+            }
+          };
+
+          dayTriggers.forEach((trigger) => {
+            trigger.addEventListener('click', () => selectDay(trigger.dataset.dayTrigger));
+          });
+
+          updateDayIndicators();
+
+          const defaultDay = this.mobileSelectedDay
+            || mobileCalendar.dataset.selectedDay
+            || dayTriggers[0].dataset.dayTrigger;
+          selectDay(defaultDay);
         }
       };
     }

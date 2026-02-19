@@ -2,42 +2,145 @@
 {% load events_tags %}
 {% load user_tags %}
 
-<div class="grid grid-cols-7 gap-1 mb-2">
-  <div class="text-center text-sm font-medium text-gray-400 py-2">Mon</div>
-  <div class="text-center text-sm font-medium text-gray-400 py-2">Tue</div>
-  <div class="text-center text-sm font-medium text-gray-400 py-2">Wed</div>
-  <div class="text-center text-sm font-medium text-gray-400 py-2">Thu</div>
-  <div class="text-center text-sm font-medium text-gray-400 py-2">Fri</div>
-  <div class="text-center text-sm font-medium text-gray-400 py-2">Sat</div>
-  <div class="text-center text-sm font-medium text-gray-400 py-2">Sun</div>
-</div>
+<div class="calendar-mobile-only md:hidden"
+     data-mobile-calendar
+     data-selected-day="{{ selected_day }}"
+     data-month-name="{{ month_name }}">
+  <div class="grid grid-cols-7 gap-1 mb-2">
+    <div class="text-center text-xs font-medium text-gray-400 py-1">Mon</div>
+    <div class="text-center text-xs font-medium text-gray-400 py-1">Tue</div>
+    <div class="text-center text-xs font-medium text-gray-400 py-1">Wed</div>
+    <div class="text-center text-xs font-medium text-gray-400 py-1">Thu</div>
+    <div class="text-center text-xs font-medium text-gray-400 py-1">Fri</div>
+    <div class="text-center text-xs font-medium text-gray-400 py-1">Sat</div>
+    <div class="text-center text-xs font-medium text-gray-400 py-1">Sun</div>
+  </div>
 
-<div class="grid grid-cols-7 gap-1">
-  {% for week in calendar %}
-    {% for day in week %}
-      {% if day == 0 %}
-        <div class="min-h-[130px] p-1 rounded-md relative bg-[#343a40] opacity-40"></div>
-      {% else %}
-        <div data-calendar-day
-             class="min-h-[130px] p-1 rounded-md relative bg-[#39404b] cursor-pointer hover:bg-[#454d5a] {% if day == today.day and month == today.month and year == today.year %}ring-2 ring-indigo-500{% endif %}">
-          <div class="text-right text-sm p-1 font-medium {% if day == today.day and month == today.month and year == today.year %}bg-indigo-500 text-white rounded-full w-7 h-7 flex items-center justify-center ml-auto{% endif %}">
-            {{ day }}
-          </div>
-          <div class="mt-1 space-y-1 max-h-20 overflow-y-auto">
-            {% for release in release_dict|get_item:day %}
-              <a data-release-media-type="{{ release.item.media_type }}" href="{{ release.item|media_url }}" class="block">
-                <div class="flex items-center gap-1 px-1 py-0.5 text-xs rounded hover:bg-[#343a40] transition-colors">
-                  {% with color=release.item.media_type|media_color %}
-                    {% icon release.item.media_type is_active=False extra_classes=color|add:" w-4 h-4 shrink-0" %}
-                  {% endwith %}
-                  <span class="truncate" title="{{ release }} {{ release|user_event_time:user }}">{{ release }} {{ release|user_event_time:user }}</span>
+  <div class="grid grid-cols-7 gap-1" role="grid" aria-label="Monthly calendar">
+    {% for week in calendar %}
+      {% for day in week %}
+        {% if day == 0 %}
+          <div class="h-12 rounded-md bg-[#343a40] opacity-35"></div>
+        {% else %}
+          {% with event_count=release_dict|get_item:day|length %}
+            <button class="h-12 rounded-md px-1 py-1 bg-[#39404b] hover:bg-[#454d5a] transition-colors flex flex-col items-center justify-center gap-1 cursor-pointer {% if day == today.day and month == today.month and year == today.year %}ring-1 ring-indigo-500{% endif %}"
+                    type="button"
+                    data-day-trigger="{{ day }}"
+                    aria-pressed="{% if day == selected_day %}true{% else %}false{% endif %}">
+              <span class="text-sm leading-none {% if day == today.day and month == today.month and year == today.year %}text-indigo-300 font-semibold{% else %}text-white{% endif %}">{{ day }}</span>
+              <span class="flex items-center justify-center gap-0.5"
+                    aria-hidden="true"
+                    style="min-height: 6px;">
+                {% for _ in "123"|make_list %}
+                  <span data-day-indicator-dot
+                        class="inline-block shrink-0 rounded-full"
+                        style="width: 12px; height: 4px; background-color: {% if forloop.counter <= event_count %}#60a5fa{% else %}rgba(148, 163, 184, 0.75){% endif %};"></span>
+                {% endfor %}
+              </span>
+            </button>
+          {% endwith %}
+        {% endif %}
+      {% endfor %}
+    {% endfor %}
+  </div>
+
+  <div class="mt-4 bg-[#343a40] rounded-lg overflow-hidden">
+    <div class="px-4 py-3 font-medium flex items-center justify-between bg-gray-600" data-agenda-header>
+      <span data-agenda-title>Agenda</span>
+      <span class="text-xs text-gray-200" data-agenda-count></span>
+    </div>
+
+    {% for day in days_in_month %}
+      {% with releases=release_dict|get_item:day %}
+        <div class="p-3 space-y-2 {% if day != selected_day %}hidden{% endif %}" data-day-panel="{{ day }}">
+          {% for release in releases %}
+            <a data-release-media-type="{{ release.item.media_type }}"
+               href="{{ release.item|media_url }}"
+               class="block">
+              <div class="flex items-center gap-3 p-2 rounded-md hover:bg-[#454d5a] transition-colors">
+                <img alt="{{ release }}"
+                     class="w-10 h-10 object-cover rounded-md shrink-0"
+                     src="{{ release.item.image }}">
+                <div class="flex-1 min-w-0">
+                  <h4 class="font-medium text-sm line-clamp-1">{{ release.item }}</h4>
+                  <div class="flex items-center">
+                    <span class="text-xs text-gray-400 me-2">{{ release.item.media_type|media_type_readable }}</span>
+                    {% if release.readable_content_number %}
+                      <span class="text-xs text-indigo-400">{{ release.readable_content_number }} {{ release|user_event_time:user }}</span>
+                    {% endif %}
+                  </div>
                 </div>
-              </a>
-            {% endfor %}
-            <div data-empty-state class="hidden text-xs text-gray-400 px-1 py-0.5">No releases</div>
+              </div>
+            </a>
+          {% endfor %}
+          <div data-mobile-empty-state
+               class="p-3 rounded-md bg-[#2a2f35] text-sm text-gray-400 {% if releases %}hidden{% endif %}">
+            No releases scheduled for this day.
           </div>
         </div>
-      {% endif %}
+      {% endwith %}
     {% endfor %}
-  {% endfor %}
+  </div>
 </div>
+
+<div class="calendar-desktop-only hidden md:block">
+  <div class="grid grid-cols-7 gap-1 mb-2">
+    <div class="text-center text-sm font-medium text-gray-400 py-2">Mon</div>
+    <div class="text-center text-sm font-medium text-gray-400 py-2">Tue</div>
+    <div class="text-center text-sm font-medium text-gray-400 py-2">Wed</div>
+    <div class="text-center text-sm font-medium text-gray-400 py-2">Thu</div>
+    <div class="text-center text-sm font-medium text-gray-400 py-2">Fri</div>
+    <div class="text-center text-sm font-medium text-gray-400 py-2">Sat</div>
+    <div class="text-center text-sm font-medium text-gray-400 py-2">Sun</div>
+  </div>
+
+  <div class="grid grid-cols-7 gap-1">
+    {% for week in calendar %}
+      {% for day in week %}
+        {% if day == 0 %}
+          <div class="min-h-[130px] p-1 rounded-md relative bg-[#343a40] opacity-40"></div>
+        {% else %}
+          <div data-calendar-day
+               class="min-h-[130px] p-1 rounded-md relative bg-[#39404b] cursor-pointer hover:bg-[#454d5a] {% if day == today.day and month == today.month and year == today.year %}ring-2 ring-indigo-500{% endif %}">
+            <div class="text-right text-sm p-1 font-medium {% if day == today.day and month == today.month and year == today.year %}bg-indigo-500 text-white rounded-full w-7 h-7 flex items-center justify-center ml-auto{% endif %}">
+              {{ day }}
+            </div>
+            <div class="mt-1 space-y-1 max-h-20 overflow-y-auto">
+              {% for release in release_dict|get_item:day %}
+                <a data-release-media-type="{{ release.item.media_type }}" href="{{ release.item|media_url }}" class="block">
+                  <div class="flex items-center gap-1 px-1 py-0.5 text-xs rounded hover:bg-[#343a40] transition-colors">
+                    {% with color=release.item.media_type|media_color %}
+                      {% icon release.item.media_type is_active=False extra_classes=color|add:" w-4 h-4 shrink-0" %}
+                    {% endwith %}
+                    <span class="truncate" title="{{ release }} {{ release|user_event_time:user }}">{{ release }} {{ release|user_event_time:user }}</span>
+                  </div>
+                </a>
+              {% endfor %}
+              <div data-empty-state class="hidden text-xs text-gray-400 px-1 py-0.5">No releases</div>
+            </div>
+          </div>
+        {% endif %}
+      {% endfor %}
+    {% endfor %}
+  </div>
+</div>
+
+<style>
+  .calendar-mobile-only {
+    display: block;
+  }
+
+  .calendar-desktop-only {
+    display: none;
+  }
+
+  @media (min-width: 48rem) {
+    .calendar-mobile-only {
+      display: none !important;
+    }
+
+    .calendar-desktop-only {
+      display: block !important;
+    }
+  }
+</style>

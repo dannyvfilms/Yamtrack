@@ -64,7 +64,11 @@ class CalendarViewTests(TestCase):
             response.context["month_name"],
             calendar.month_name[today.month],
         )
+
         self.assertEqual(response.context["view_type"], "month")
+        self.assertEqual(response.context["selected_day"], today.day)
+        self.assertEqual(response.context["days_in_month"].start, 1)
+        self.assertEqual(response.context["days_in_month"].stop, last_day.day + 1)
         self.assertEqual(response.context["today"], today)
 
     @patch("events.models.Event.objects.get_user_events")
@@ -102,6 +106,7 @@ class CalendarViewTests(TestCase):
         self.assertEqual(response.context["prev_year"], 2024)
         self.assertEqual(response.context["next_month"], 7)
         self.assertEqual(response.context["next_year"], 2024)
+        self.assertEqual(response.context["selected_day"], 1)
 
     @patch("events.models.Event.objects.get_user_events")
     @patch.object(get_user_model(), "update_preference")
@@ -262,6 +267,7 @@ class CalendarViewTests(TestCase):
         self.assertEqual(len(release_dict), 2)  # Two days with events
         self.assertEqual(len(release_dict[15]), 2)  # Two events on the 15th
         self.assertEqual(len(release_dict[20]), 1)  # One event on the 20th
+        self.assertEqual(response.context["selected_day"], today.day)
 
 
     @patch("events.models.Event.objects.get_user_events")

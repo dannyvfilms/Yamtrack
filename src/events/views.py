@@ -113,6 +113,12 @@ def calendar(request):
 
     # Get today's date for highlighting
     today = timezone.localdate()
+    days_in_month = range(1, last_day.day + 1)
+    selected_day = (
+        today.day
+        if month == today.month and year == today.year
+        else next(iter(sorted(release_dict.keys())), 1)
+    )
 
     context = {
         "user": request.user,
@@ -133,6 +139,8 @@ def calendar(request):
         "today": today,
         "view_type": view_type,
         "available_media_types": available_media_types,
+        "days_in_month": days_in_month,
+        "selected_day": selected_day,
     }
     return render(request, "events/calendar.html", context)
 
