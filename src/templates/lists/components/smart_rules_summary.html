@@ -3,72 +3,149 @@
 <div class="bg-[#2a2f35] rounded-lg p-4 mb-6">
   <div class="flex flex-wrap items-center gap-2 text-xs">
     <h2 class="text-xs uppercase tracking-wide text-gray-300 mr-1">Smart Rules</h2>
-    <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200">
-      <span class="text-gray-400">Types:</span>
-      {% if saved_smart_rules.media_types %}
-        {% for media_type in saved_smart_rules.media_types %}
-          {{ media_type|media_type_readable }}{% if not forloop.last %}, {% endif %}
-        {% endfor %}
-      {% else %}
-        All Types
-      {% endif %}
-    </span>
-
-    {% if saved_smart_rules.status and saved_smart_rules.status != 'all' %}
-      <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Status:</span> {{ saved_smart_rules.status }}</span>
-    {% endif %}
-
-    {% if saved_smart_rules.rating and saved_smart_rules.rating != 'all' %}
-      <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Rating:</span> {{ saved_smart_rules.rating|title }}</span>
-    {% endif %}
-
-    {% if saved_smart_rules.collection and saved_smart_rules.collection != 'all' %}
-      <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Collection:</span> {{ saved_smart_rules.collection|title }}</span>
-    {% endif %}
-
-    {% if saved_smart_rules.genre %}
-      <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Genre:</span> {{ saved_smart_rules.genre }}</span>
-    {% endif %}
-
-    {% if saved_smart_rules.year %}
-      <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Year:</span> {% if saved_smart_rules.year == 'unknown' %}Unknown{% else %}{{ saved_smart_rules.year }}{% endif %}</span>
-    {% endif %}
-
-    {% if saved_smart_rules.release and saved_smart_rules.release != 'all' %}
-      <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Released:</span> {{ saved_smart_rules.release|title }}</span>
-    {% endif %}
-
-    {% if saved_smart_rules.source %}
-      <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Source:</span> {{ saved_smart_rules.source|upper }}</span>
-    {% endif %}
-
-    {% if saved_smart_rules.language %}
-      <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Language:</span> {{ saved_smart_rules.language|upper }}</span>
-    {% endif %}
-
-    {% if saved_smart_rules.country %}
-      <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Country:</span> {{ saved_smart_rules.country|upper }}</span>
-    {% endif %}
-
-    {% if saved_smart_rules.platform %}
-      <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Platform:</span> {{ saved_smart_rules.platform }}</span>
-    {% endif %}
-
-    {% if saved_smart_rules.origin %}
-      <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Origin:</span> {{ saved_smart_rules.origin|upper }}</span>
-    {% endif %}
-
-    {% if saved_smart_rules.search %}
-      <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Search:</span> “{{ saved_smart_rules.search }}”</span>
-    {% endif %}
-
     {% if smart_edit_mode %}
+      <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200">
+        <span class="text-gray-400">Types:</span>
+        <span x-text="allTypesSelected() ? 'All Types' : (selectedTypes.length ? selectedTypes.map((mediaType) => { const match = availableMediaTypes.find((type) => type.value === mediaType); return match ? match.label : mediaType; }).join(', ') : 'No Types')"></span>
+      </span>
+
+      <span x-show="status && status !== 'all'"
+            class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200">
+        <span class="text-gray-400">Status:</span>
+        <span x-text="statusLabels[status] || status"></span>
+      </span>
+
+      <span x-show="rating && rating !== 'all'"
+            class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200">
+        <span class="text-gray-400">Rating:</span>
+        <span x-text="ratingLabels[rating] || rating"></span>
+      </span>
+
+      <span x-show="collection && collection !== 'all'"
+            class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200">
+        <span class="text-gray-400">Collection:</span>
+        <span x-text="collectionLabels[collection] || collection"></span>
+      </span>
+
+      <span x-show="genre"
+            class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200">
+        <span class="text-gray-400">Genre:</span>
+        <span x-text="genre"></span>
+      </span>
+
+      <span x-show="year"
+            class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200">
+        <span class="text-gray-400">Year:</span>
+        <span x-text="year === 'unknown' ? 'Unknown' : year"></span>
+      </span>
+
+      <span x-show="release && release !== 'all'"
+            class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200">
+        <span class="text-gray-400">Released:</span>
+        <span x-text="releaseLabels[release] || release"></span>
+      </span>
+
+      <span x-show="source"
+            class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200">
+        <span class="text-gray-400">Source:</span>
+        <span x-text="source.toUpperCase()"></span>
+      </span>
+
+      <span x-show="language"
+            class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200">
+        <span class="text-gray-400">Language:</span>
+        <span x-text="language.length <= 3 ? language.toUpperCase() : language"></span>
+      </span>
+
+      <span x-show="country"
+            class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200">
+        <span class="text-gray-400">Country:</span>
+        <span x-text="country.length <= 3 ? country.toUpperCase() : country"></span>
+      </span>
+
+      <span x-show="platform"
+            class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200">
+        <span class="text-gray-400">Platform:</span>
+        <span x-text="platform"></span>
+      </span>
+
+      <span x-show="origin"
+            class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200">
+        <span class="text-gray-400">Origin:</span>
+        <span x-text="origin.length <= 3 ? origin.toUpperCase() : origin"></span>
+      </span>
+
+      <span x-show="query && query.trim().length"
+            class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200">
+        <span class="text-gray-400">Search:</span>
+        <span>“<span x-text="query"></span>”</span>
+      </span>
+
       <span class="ml-auto text-xs"
             :class="saveState === 'saving' ? 'text-yellow-300' : (saveState === 'error' ? 'text-red-400' : 'text-indigo-300')">
         <span>Edit mode active</span>
         <span x-show="saveState === 'saving'"> • Saving…</span>
         <span x-show="saveState === 'error'"> • Save failed</span>
       </span>
+    {% else %}
+      <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200">
+        <span class="text-gray-400">Types:</span>
+        {% if saved_smart_rules.media_types %}
+          {% for media_type in saved_smart_rules.media_types %}
+            {{ media_type|media_type_readable }}{% if not forloop.last %}, {% endif %}
+          {% endfor %}
+        {% else %}
+          All Types
+        {% endif %}
+      </span>
+
+      {% if saved_smart_rules.status and saved_smart_rules.status != 'all' %}
+        <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Status:</span> {{ saved_smart_rules.status }}</span>
+      {% endif %}
+
+      {% if saved_smart_rules.rating and saved_smart_rules.rating != 'all' %}
+        <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Rating:</span> {{ saved_smart_rules.rating|title }}</span>
+      {% endif %}
+
+      {% if saved_smart_rules.collection and saved_smart_rules.collection != 'all' %}
+        <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Collection:</span> {{ saved_smart_rules.collection|title }}</span>
+      {% endif %}
+
+      {% if saved_smart_rules.genre %}
+        <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Genre:</span> {{ saved_smart_rules.genre }}</span>
+      {% endif %}
+
+      {% if saved_smart_rules.year %}
+        <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Year:</span> {% if saved_smart_rules.year == 'unknown' %}Unknown{% else %}{{ saved_smart_rules.year }}{% endif %}</span>
+      {% endif %}
+
+      {% if saved_smart_rules.release and saved_smart_rules.release != 'all' %}
+        <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Released:</span> {{ saved_smart_rules.release|title }}</span>
+      {% endif %}
+
+      {% if saved_smart_rules.source %}
+        <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Source:</span> {{ saved_smart_rules.source|upper }}</span>
+      {% endif %}
+
+      {% if saved_smart_rules.language %}
+        <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Language:</span> {{ saved_smart_rules.language|upper }}</span>
+      {% endif %}
+
+      {% if saved_smart_rules.country %}
+        <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Country:</span> {{ saved_smart_rules.country|upper }}</span>
+      {% endif %}
+
+      {% if saved_smart_rules.platform %}
+        <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Platform:</span> {{ saved_smart_rules.platform }}</span>
+      {% endif %}
+
+      {% if saved_smart_rules.origin %}
+        <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Origin:</span> {{ saved_smart_rules.origin|upper }}</span>
+      {% endif %}
+
+      {% if saved_smart_rules.search %}
+        <span class="px-2 py-1 rounded-md bg-[#39404b] text-gray-200"><span class="text-gray-400">Search:</span> “{{ saved_smart_rules.search }}”</span>
+      {% endif %}
     {% endif %}
   </div>
 </div>

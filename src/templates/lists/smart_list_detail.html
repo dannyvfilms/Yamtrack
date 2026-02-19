@@ -17,6 +17,7 @@
   <div x-data="{
     showModal: false,
     editMode: {{ smart_edit_mode|yesno:'true,false' }},
+    itemsCount: {{ items_count }},
     saveState: 'idle',
     saveTimer: null,
     sort: '{{ current_sort }}',
@@ -164,6 +165,9 @@
       this.platform = '';
       this.origin = '';
     },
+    itemsCountLabel() {
+      return `${this.itemsCount} item${this.itemsCount === 1 ? '' : 's'}`;
+    },
     onRuleChange(delay = 350) {
       if (!this.editMode) {
         return;
@@ -206,6 +210,11 @@
         if (!response.ok) {
           throw new Error('Failed to save smart rules');
         }
+        const responseData = await response.json().catch(() => ({}));
+        const nextItemsCount = Number(responseData.items_count);
+        if (Number.isFinite(nextItemsCount)) {
+          this.itemsCount = nextItemsCount;
+        }
 
         this.saveState = 'saved';
       } catch (error) {
@@ -236,7 +245,7 @@
           <span>{{ collaborators_count }} collaborator{{ collaborators_count|pluralize }}</span>
           <span class="inline-flex items-center gap-1">
             <span class="text-gray-400">•</span>
-            <span>{{ items_count }} item{{ items_count|pluralize }}</span>
+            <span x-text="itemsCountLabel()"></span>
           </span>
           {% if can_edit and recommendation_count > 0 %}
             <span class="inline-flex items-center gap-1">
