@@ -12,6 +12,7 @@ from app.models import (
     Anime,
     Book,
     Comic,
+    Game,
     Item,
     Manga,
     MediaTypes,
@@ -481,6 +482,59 @@ class ReloadCalendarTaskTests(TestCase):
         self.assertEqual(events_bulk[0].content_number, 375)
         expected_end_date = date_parser("2023-12-22")
         self.assertEqual(events_bulk[0].datetime, expected_end_date)
+
+    @patch("events.calendar.services.get_media_metadata")
+    def test_process_other_game_without_max_progress(self, mock_get_media_metadata):
+        """Test process_other creates game events even when max_progress is missing."""
+        game_item = Item.objects.create(
+            media_id="12345",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Future Game",
+            image="http://example.com/game.jpg",
+        )
+        Game.objects.create(
+            item=game_item,
+            user=self.user,
+            status=Status.PLANNING.value,
+        )
+
+        mock_get_media_metadata.return_value = {
+            "max_progress": None,
+            "details": {
+                "release_date": "2030-05-01",
+            },
+        }
+
+        events_bulk = []
+        process_other(game_item, events_bulk)
+
+        self.assertEqual(len(events_bulk), 1)
+        self.assertEqual(events_bulk[0].item, game_item)
+        self.assertIsNone(events_bulk[0].content_number)
+        self.assertEqual(events_bulk[0].datetime, date_parser("2030-05-01"))
+
+    @patch("events.calendar.services.get_media_metadata")
+    def test_process_other_uses_item_release_datetime_fallback(self, mock_get_media_metadata):
+        """Test process_other falls back to item.release_datetime when provider date is missing."""
+        fallback_release = timezone.make_aware(datetime.datetime(2032, 7, 10, 14, 0))
+        self.movie_item.release_datetime = fallback_release
+        self.movie_item.save(update_fields=["release_datetime"])
+
+        mock_get_media_metadata.return_value = {
+            "max_progress": None,
+            "details": {
+                "release_date": "",
+            },
+        }
+
+        events_bulk = []
+        process_other(self.movie_item, events_bulk)
+
+        self.assertEqual(len(events_bulk), 1)
+        self.assertEqual(events_bulk[0].item, self.movie_item)
+        self.assertIsNone(events_bulk[0].content_number)
+        self.assertEqual(events_bulk[0].datetime, fallback_release)
 
     @patch("events.calendar.services.api_request")
     def test_get_anime_schedule_bulk(self, mock_api_request):

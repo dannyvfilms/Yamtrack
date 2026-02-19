@@ -143,22 +143,36 @@ def generate_final_message(items_to_process, items_updated):
 def cleanup_invalid_events(events_bulk):
     """Remove events that are no longer valid based on updated items."""
     processed_items = {}
+    processed_without_content = set()
 
     for event in events_bulk:
-        if event.content_number is not None:
+        if event.content_number is None:
+            processed_without_content.add(event.item.id)
+        else:
             try:
                 processed_items[event.item.id].add(event.content_number)
             except KeyError:
                 processed_items[event.item.id] = {event.content_number}
 
     all_events = Event.objects.filter(
-        item_id__in=processed_items.keys(),
+        item_id__in=set(processed_items.keys()) | processed_without_content,
     ).select_related("item")
 
     events_to_delete = []
 
     for event in all_events:
         if (
+            event.item_id in processed_without_content
+            and event.content_number is not None
+        ):
+            logger.info(
+                "Invalid event detected: %s - Number %s (scheduled for %s)",
+                event.item,
+                event.content_number,
+                event.datetime,
+            )
+            events_to_delete.append(event.id)
+        elif (
             event.content_number is not None
             and event.item_id in processed_items
             and event.content_number not in processed_items[event.item_id]
@@ -918,26 +932,28 @@ def process_other(item, events_bulk):
         return
 
     date_key = config.get_date_key(item.media_type)
-    content_number = metadata["max_progress"]
+    content_number = _coerce_content_number(item.media_type, metadata.get("max_progress"))
+    details = metadata.get("details", {})
+    content_datetime = None
 
-    if date_key in metadata["details"] and content_number:
-        if metadata["details"][date_key]:
-            try:
-                content_datetime = date_parser(metadata["details"][date_key])
-            except ValueError:
-                logger.warning(
-                    "Skipping event for %s due to invalid %s: %s",
-                    item,
-                    date_key,
-                    metadata["details"][date_key],
-                )
-                return
-        else:
-            content_datetime = datetime.min.replace(tzinfo=ZoneInfo("UTC"))
+    if date_key in details and details[date_key]:
+        try:
+            content_datetime = date_parser(details[date_key])
+        except ValueError:
+            logger.warning(
+                "Skipping provider date for %s due to invalid %s: %s",
+                item,
+                date_key,
+                details[date_key],
+            )
 
-        if item.media_type == MediaTypes.MOVIE.value:
-            content_number = None
+    # Use cached item release datetime if provider metadata date is missing/invalid.
+    if content_datetime is None and item.release_datetime:
+        content_datetime = item.release_datetime
+        if timezone.is_naive(content_datetime):
+            content_datetime = timezone.make_aware(content_datetime)
 
+    if content_datetime is not None:
         events_bulk.append(
             Event(
                 item=item,
@@ -945,7 +961,6 @@ def process_other(item, events_bulk):
                 datetime=content_datetime,
             ),
         )
-
     elif item.source == Sources.MANGAUPDATES.value and content_number:
         # MangaUpdates doesn't have an end date, so use a placeholder
         content_datetime = datetime.min.replace(tzinfo=ZoneInfo("UTC"))
@@ -956,6 +971,19 @@ def process_other(item, events_bulk):
                 datetime=content_datetime,
             ),
         )
+
+
+def _coerce_content_number(media_type, max_progress):
+    """Normalize max_progress to a valid integer content number or None."""
+    if media_type == MediaTypes.MOVIE.value:
+        return None
+    if max_progress in (None, ""):
+        return None
+    try:
+        content_number = int(max_progress)
+    except (TypeError, ValueError):
+        return None
+    return content_number if content_number > 0 else None
 
 
 def process_podcast(item, events_bulk):
