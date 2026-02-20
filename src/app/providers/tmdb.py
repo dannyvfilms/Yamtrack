@@ -763,7 +763,12 @@ def get_cast_credits(credits_data, is_aggregate=False):
             },
         )
 
-    cast_entries.sort(key=lambda row: (row.get("order") is None, row.get("order") or 999999))
+    cast_entries.sort(
+        key=lambda row: (
+            row.get("order") is None,
+            row.get("order") if row.get("order") is not None else 999999,
+        ),
+    )
     return cast_entries
 
 
@@ -829,7 +834,7 @@ def get_crew_credits(credits_data, is_aggregate=False):
         key=lambda row: (
             row.get("department", "").lower(),
             row.get("order") is None,
-            row.get("order") or 999999,
+            row.get("order") if row.get("order") is not None else 999999,
         ),
     )
     return crew_entries

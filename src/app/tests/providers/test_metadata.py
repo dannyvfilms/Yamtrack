@@ -6,6 +6,7 @@ import requests
 from django.conf import settings
 from django.test import TestCase
 
+from app.credits import _normalize_credit_rows
 from app.models import Episode, Item, MediaTypes, Sources
 from app.providers import (
     comicvine,
@@ -714,3 +715,83 @@ class Metadata(TestCase):
             hardcover.handle_error(error)
 
         self.assertEqual(cm.exception.provider, Sources.HARDCOVER.value)
+
+
+class CastOrderRegressionTests(TestCase):
+    """Regression tests for issue #92 — first cast member (order=0) being dropped."""
+
+    def test_get_cast_credits_order_zero_is_first(self):
+        """Cast member with order=0 must sort before members with higher orders."""
+        credits_data = {
+            "cast": [
+                {
+                    "id": 2,
+                    "name": "Second Actor",
+                    "character": "Side Role",
+                    "order": 1,
+                    "known_for_department": "Acting",
+                    "gender": 2,
+                    "profile_path": None,
+                },
+                {
+                    "id": 1,
+                    "name": "Lead Actor",
+                    "character": "Main Role",
+                    "order": 0,
+                    "known_for_department": "Acting",
+                    "gender": 2,
+                    "profile_path": None,
+                },
+            ],
+        }
+        result = tmdb.get_cast_credits(credits_data)
+        self.assertEqual(result[0]["name"], "Lead Actor")
+        self.assertEqual(result[0]["order"], 0)
+        self.assertEqual(result[1]["name"], "Second Actor")
+
+    def test_get_cast_credits_order_zero_not_treated_as_missing(self):
+        """order=0 must not be conflated with order=None (missing order)."""
+        credits_data = {
+            "cast": [
+                {
+                    "id": 10,
+                    "name": "No Order Actor",
+                    "character": "Unknown Spot",
+                    "order": None,
+                    "known_for_department": "Acting",
+                    "gender": 1,
+                    "profile_path": None,
+                },
+                {
+                    "id": 11,
+                    "name": "First Billed",
+                    "character": "Lead",
+                    "order": 0,
+                    "known_for_department": "Acting",
+                    "gender": 2,
+                    "profile_path": None,
+                },
+            ],
+        }
+        result = tmdb.get_cast_credits(credits_data)
+        # order=0 must come before order=None
+        self.assertEqual(result[0]["name"], "First Billed")
+        self.assertEqual(result[1]["name"], "No Order Actor")
+
+    def test_normalize_credit_rows_preserves_order_zero(self):
+        """_normalize_credit_rows must store sort_order=0, not None."""
+        rows = [
+            {
+                "person_id": "42",
+                "name": "Top Billed",
+                "image": "",
+                "known_for_department": "Acting",
+                "gender": "male",
+                "role": "Hero",
+                "department": "Acting",
+                "order": 0,
+            },
+        ]
+        result = _normalize_credit_rows(rows)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["sort_order"], 0)

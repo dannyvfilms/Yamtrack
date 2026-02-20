@@ -67,7 +67,10 @@ def _normalize_credit_rows(rows):
                 "gender": _coerce_gender(row.get("gender")),
                 "role": (row.get("role") or row.get("character") or row.get("job") or "").strip(),
                 "department": (row.get("department") or "").strip(),
-                "sort_order": _as_int(row.get("order") or row.get("sort_order")),
+                "sort_order": _as_int(
+                    row["order"] if "order" in row and row["order"] is not None
+                    else row.get("sort_order")
+                ),
             },
         )
     return normalized
@@ -84,7 +87,10 @@ def _normalize_studio_rows(rows):
                 "studio_id": str(studio_id),
                 "name": (row.get("name") or "").strip(),
                 "logo": (row.get("logo") or "").strip(),
-                "sort_order": _as_int(row.get("order") or row.get("sort_order")),
+                "sort_order": _as_int(
+                    row["order"] if "order" in row and row["order"] is not None
+                    else row.get("sort_order")
+                ),
             },
         )
     return normalized
