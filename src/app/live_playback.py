@@ -18,8 +18,9 @@ PLAYBACK_CACHE_PREFIX = "active_playback_v1"
 PLAYBACK_CACHE_TIMEOUT_SECONDS = 6 * 60 * 60
 PLAYBACK_HARD_STALE_SECONDS = 4 * 60 * 60
 PLAYBACK_PAUSE_STALE_SECONDS = 45 * 60
-PLAYBACK_SCROBBLE_GRACE_SECONDS = 45 * 60
-PLAYBACK_STOP_GRACE_SECONDS = 5 * 60
+PLAYBACK_SCROBBLE_BUFFER_SECONDS = 30        # small buffer after calculated end time
+PLAYBACK_SCROBBLE_FALLBACK_SECONDS = 15 * 60  # fallback when duration unavailable
+PLAYBACK_STOP_GRACE_SECONDS = 60
 
 PLAYBACK_STATUS_PLAYING = "playing"
 PLAYBACK_STATUS_PAUSED = "paused"
@@ -115,7 +116,7 @@ def _state_matches(
     return False
 
 
-def apply_playback_event(  # noqa: C901
+def apply_playback_event(  # noqa: C901, PLR0912
     *,
     user_id: int,
     event_type: str,
@@ -216,7 +217,17 @@ def apply_playback_event(  # noqa: C901
     if event_type == "media.pause":
         state["pause_expires_at_ts"] = now_ts + PLAYBACK_PAUSE_STALE_SECONDS
     elif event_type == "media.scrobble":
-        state["scrobble_expires_at_ts"] = now_ts + PLAYBACK_SCROBBLE_GRACE_SECONDS
+        dur = dur_seconds or 0
+        off = offset_seconds or 0
+        if dur > 0:
+            remaining = max(0, dur - off)
+            state["scrobble_expires_at_ts"] = (
+                now_ts + remaining + PLAYBACK_SCROBBLE_BUFFER_SECONDS
+            )
+        else:
+            state["scrobble_expires_at_ts"] = (
+                now_ts + PLAYBACK_SCROBBLE_FALLBACK_SECONDS
+            )
 
     set_user_playback_state(user_id, state)
 

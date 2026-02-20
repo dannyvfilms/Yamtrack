@@ -1,9 +1,12 @@
 import json
+from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.test import Client, TestCase
 from django.urls import reverse
+from django.utils import timezone
 
 from app import live_playback
 from app.models import (
@@ -942,3 +945,83 @@ class PlexWebhookTests(TestCase):
         self.assertIsNotNone(episode.end_date)
         # Call might happen via title search if GUID resolution falls back
         mock_tmdb_search.assert_called()
+
+
+class LivePlaybackScrobbleClearingTests(TestCase):
+    """Unit tests for scrobble-based now-playing card expiry calculation."""
+
+    def setUp(self):
+        """Set up a test user and clear any cached playback state."""
+        self.user = get_user_model().objects.create_user(
+            username="scrobbleuser", password="pass",  # noqa: S106
+        )
+        live_playback.clear_user_playback_state(self.user.id)
+
+    def test_scrobble_with_duration_and_offset_sets_calculated_expiry(self):
+        """Scrobble with known duration/offset sets expiry from remaining time."""
+        now = timezone.now()
+        duration = 2666  # seconds (~44 min episode)
+        offset = 2265    # ~85% through -> 401 seconds remaining
+
+        live_playback.apply_playback_event(
+            user_id=self.user.id,
+            event_type="media.scrobble",
+            playback_media_type="episode",
+            media_id="1668",
+            duration_seconds=duration,
+            view_offset_seconds=offset,
+        )
+
+        now_ts = int(now.timestamp())
+        remaining = duration - offset
+        buffer = live_playback.PLAYBACK_SCROBBLE_BUFFER_SECONDS
+        expected = now_ts + remaining + buffer
+        raw = cache.get(f"{live_playback.PLAYBACK_CACHE_PREFIX}:{self.user.id}")
+        self.assertIsNotNone(raw)
+        self.assertAlmostEqual(raw["scrobble_expires_at_ts"], expected, delta=5)
+
+    def test_scrobble_without_duration_uses_fallback_expiry(self):
+        """Scrobble with no duration uses the fallback grace period."""
+        now = timezone.now()
+
+        live_playback.apply_playback_event(
+            user_id=self.user.id,
+            event_type="media.scrobble",
+            playback_media_type="movie",
+            media_id="550",
+            duration_seconds=None,
+            view_offset_seconds=None,
+        )
+
+        now_ts = int(now.timestamp())
+        raw = cache.get(f"{live_playback.PLAYBACK_CACHE_PREFIX}:{self.user.id}")
+        self.assertIsNotNone(raw)
+        expected = now_ts + live_playback.PLAYBACK_SCROBBLE_FALLBACK_SECONDS
+        self.assertAlmostEqual(raw["scrobble_expires_at_ts"], expected, delta=5)
+
+    def test_scrobble_state_clears_after_content_ends(self):
+        """State clears when get_user_playback_state is called past scrobble expiry."""
+        now = timezone.now()
+        duration = 2666
+        offset = 2265
+        remaining = duration - offset  # 401 seconds
+
+        live_playback.apply_playback_event(
+            user_id=self.user.id,
+            event_type="media.scrobble",
+            playback_media_type="episode",
+            media_id="1668",
+            duration_seconds=duration,
+            view_offset_seconds=offset,
+        )
+
+        buffer = live_playback.PLAYBACK_SCROBBLE_BUFFER_SECONDS
+        before_expiry = now + timedelta(seconds=remaining + buffer - 1)
+        self.assertIsNotNone(
+            live_playback.get_user_playback_state(self.user.id, now=before_expiry),
+        )
+
+        after_expiry = now + timedelta(seconds=remaining + buffer + 1)
+        self.assertIsNone(
+            live_playback.get_user_playback_state(self.user.id, now=after_expiry),
+        )
