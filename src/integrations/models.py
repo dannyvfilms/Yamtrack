@@ -133,6 +133,51 @@ class PocketCastsAccount(models.Model):
         return timezone.now() >= self.token_expires_at
 
 
+class AudiobookshelfAccount(models.Model):
+    """Store Audiobookshelf connection settings and sync state for a user."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="audiobookshelf_account",
+    )
+    base_url = models.URLField(help_text="Audiobookshelf server URL")
+    api_token = models.TextField(help_text="Encrypted Audiobookshelf API token")
+    sync_finished = models.BooleanField(
+        default=True,
+        help_text="Import finished items as completed entries",
+    )
+    create_missing = models.BooleanField(
+        default=True,
+        help_text="Create Yamtrack items when ABS items cannot be matched",
+    )
+    last_sync_ms = models.BigIntegerField(
+        null=True,
+        blank=True,
+        help_text="Last imported Audiobookshelf progress timestamp (milliseconds)",
+    )
+    last_sync_at = models.DateTimeField(null=True, blank=True)
+    connection_broken = models.BooleanField(default=False)
+    last_error_message = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        """Model options."""
+
+        verbose_name = "Audiobookshelf account"
+        verbose_name_plural = "Audiobookshelf accounts"
+
+    def __str__(self):
+        """Readable representation."""
+        return f"AudiobookshelfAccount({self.user.username})"
+
+    @property
+    def is_connected(self):
+        """Return True when the account appears connected."""
+        return bool(self.base_url and self.api_token) and not self.connection_broken
+
+
 class LastFMAccount(models.Model):
     """Store Last.fm username and sync state for a user."""
 

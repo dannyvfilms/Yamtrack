@@ -17,6 +17,7 @@ from app.templatetags import app_tags
 from integrations import plex as plex_api
 from integrations.imports import (
     anilist,
+    audiobookshelf,
     goodreads,
     hardcover,
     helpers,
@@ -243,6 +244,19 @@ def import_plex(library, user_id, mode, username=None):  # noqa: ARG001
     """Celery task for importing media data from Plex."""
     return import_media(plex.importer, library, user_id, mode)
 
+
+
+
+@shared_task(name="Import from Audiobookshelf")
+def import_audiobookshelf(user_id, mode="new"):
+    """Celery task for importing audiobook progress from Audiobookshelf."""
+    return import_media(audiobookshelf.importer, None, user_id, mode)
+
+
+@shared_task(name="Import from Audiobookshelf (Recurring)")
+def import_audiobookshelf_recurring(user_id):
+    """Recurring import task for Audiobookshelf."""
+    return import_audiobookshelf.delay(user_id=user_id, mode="new")
 
 @shared_task(name="Import from Pocket Casts")
 def import_pocketcasts(user_id, mode="new"):

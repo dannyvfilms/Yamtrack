@@ -19,9 +19,10 @@ import users
 from integrations import exports, lastfm_api, pocketcasts_api, tasks
 from integrations import plex as plex_api
 from integrations.imports import anilist, helpers, simkl, trakt
-from integrations.models import LastFMAccount, PlexAccount, PocketCastsAccount
+from integrations.models import AudiobookshelfAccount, LastFMAccount, PlexAccount, PocketCastsAccount
 from integrations.lastfm_api import LastFMAPIError, LastFMClientError, LastFMRateLimitError
 from integrations.pocketcasts_api import PocketCastsAuthError
+from integrations.imports.audiobookshelf import AudiobookshelfAuthError, AudiobookshelfClient
 from integrations.webhooks import emby, jellyfin
 from integrations.webhooks import jellyseerr as jellyseerr_webhooks
 from integrations.webhooks import plex as plex_webhooks
@@ -544,6 +545,96 @@ def import_steam(request):
         )
     return redirect("import_data")
 
+
+
+
+@require_POST
+def audiobookshelf_connect(request):
+    """Connect Audiobookshelf account using base URL + API token."""
+    base_url = request.POST.get("base_url", "").strip()
+    api_token = request.POST.get("api_token", "").strip()
+
+    if not base_url or not api_token:
+        messages.error(request, "Audiobookshelf base URL and API token are required.")
+        return redirect("import_data")
+
+    try:
+        client = AudiobookshelfClient(base_url, api_token)
+        client.get_me()
+    except AudiobookshelfAuthError as exc:
+        messages.error(request, str(exc))
+        return redirect("import_data")
+    except Exception as exc:
+        messages.error(request, f"Failed to connect to Audiobookshelf: {exc}")
+        return redirect("import_data")
+
+    AudiobookshelfAccount.objects.update_or_create(
+        user=request.user,
+        defaults={
+            "base_url": base_url,
+            "api_token": helpers.encrypt(api_token),
+            "connection_broken": False,
+            "last_error_message": "",
+        },
+    )
+
+    tasks.import_audiobookshelf.delay(user_id=request.user.id, mode="new")
+    messages.success(request, "Connected Audiobookshelf. Initial import queued.")
+    return redirect("import_data")
+
+
+@require_POST
+def audiobookshelf_disconnect(request):
+    """Disconnect Audiobookshelf integration."""
+    from django_celery_beat.models import PeriodicTask
+
+    PeriodicTask.objects.filter(
+        task="Import from Audiobookshelf (Recurring)",
+        kwargs__contains=f'"user_id": {request.user.id}',
+    ).delete()
+    AudiobookshelfAccount.objects.filter(user=request.user).delete()
+    messages.info(request, "Disconnected Audiobookshelf.")
+    return redirect("import_data")
+
+
+@require_POST
+def import_audiobookshelf(request):
+    """Queue Audiobookshelf import and ensure recurring schedule exists."""
+    from django_celery_beat.models import CrontabSchedule, PeriodicTask
+
+    account = getattr(request.user, "audiobookshelf_account", None)
+    if not account:
+        messages.error(request, "Connect Audiobookshelf before importing.")
+        return redirect("import_data")
+
+    tasks.import_audiobookshelf.delay(user_id=request.user.id, mode="new")
+
+    existing_task = PeriodicTask.objects.filter(
+        task="Import from Audiobookshelf (Recurring)",
+        kwargs__contains=f'"user_id": {request.user.id}',
+        enabled=True,
+    ).first()
+
+    if not existing_task:
+        crontab, _ = CrontabSchedule.objects.get_or_create(
+            minute=0,
+            hour="*/2",
+            day_of_week="*",
+            day_of_month="*",
+            month_of_year="*",
+            timezone=timezone.get_default_timezone(),
+        )
+        PeriodicTask.objects.create(
+            name=f"Import from Audiobookshelf for {request.user.username} (every 2 hours)",
+            task="Import from Audiobookshelf (Recurring)",
+            crontab=crontab,
+            kwargs=json.dumps({"user_id": request.user.id}),
+            start_time=timezone.now(),
+            enabled=True,
+        )
+
+    messages.info(request, "Audiobookshelf import queued.")
+    return redirect("import_data")
 
 @require_POST
 def pocketcasts_connect(request):

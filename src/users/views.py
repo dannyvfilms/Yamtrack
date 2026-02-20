@@ -623,6 +623,11 @@ def import_data(request):
 
             plex_sections = plex_account.sections or []
 
+    # Get Audiobookshelf account
+    audiobookshelf_account = getattr(request.user, "audiobookshelf_account", None)
+    if audiobookshelf_account:
+        audiobookshelf_account.refresh_from_db()
+
     # Get Pocket Casts account
     pocketcasts_account = getattr(request.user, "pocketcasts_account", None)
     # Refresh from DB to get latest connection_broken status
@@ -654,6 +659,7 @@ def import_data(request):
         "plex_account": plex_account if plex_connected else None,
         "plex_sections": plex_sections,
         "plex_error": plex_error,
+        "audiobookshelf_account": audiobookshelf_account,
         "pocketcasts_account": pocketcasts_account,
         "lastfm_account": lastfm_account,
         "lastfm_periodic_task": lastfm_periodic_task,

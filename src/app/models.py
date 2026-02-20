@@ -50,6 +50,7 @@ class Sources(models.TextChoices):
     BGG = "bgg", "BoardGameGeek"
     MUSICBRAINZ = "musicbrainz", "MusicBrainz"
     POCKETCASTS = "pocketcasts", "Pocket Casts"
+    AUDIOBOOKSHELF = "audiobookshelf", "Audiobookshelf"
     MANUAL = "manual", "Manual"
 
 

@@ -235,6 +235,77 @@
           {% endif %}
         </div>
 
+
+        {# Audiobookshelf #}
+        <div class="bg-[#39404b] p-4 rounded-lg space-y-3"
+             x-show="sourceSupports(['books', 'podcasts'])"
+             x-transition.opacity.duration.150ms>
+          <div class="flex items-center justify-between">
+            <div class="flex items-center">{% source_display "audiobookshelf" %}</div>
+            {% if audiobookshelf_account and audiobookshelf_account.is_connected %}
+              <form method="post" action="{% url 'audiobookshelf_disconnect' %}">
+                {% csrf_token %}
+                <button type="submit"
+                        class="px-2 py-1 text-xs rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/20 transition-colors cursor-pointer">
+                  Connected
+                </button>
+              </form>
+            {% else %}
+              <span class="px-2 py-1 text-xs rounded bg-gray-500/20 text-gray-300 border border-gray-600/50">Disconnected</span>
+            {% endif %}
+          </div>
+
+          {% if audiobookshelf_account %}
+            <p class="text-sm text-gray-400">Sync Audiobook progress from Audiobookshelf every 2 hours.</p>
+            <div class="flex items-center gap-2 text-sm text-gray-400">
+              <span>{{ audiobookshelf_account.base_url }}</span>
+              {% if audiobookshelf_account.last_sync_at %}
+                <span>•</span>
+                <span>Last sync: {{ audiobookshelf_account.last_sync_at|user_datetime_format:user }}</span>
+              {% endif %}
+            </div>
+            {% if audiobookshelf_account.last_error_message %}
+              <div class="text-xs text-amber-200 bg-amber-500/10 border border-amber-400/30 rounded p-2">
+                <strong>Error:</strong> {{ audiobookshelf_account.last_error_message }}
+              </div>
+            {% endif %}
+            <div class="space-y-3">
+              <form method="post" action="{% url 'import_audiobookshelf' %}">
+                {% csrf_token %}
+                <button type="submit" class="w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer bg-indigo-600 text-white hover:bg-indigo-700">
+                  Sync now
+                </button>
+              </form>
+              <form method="post" action="{% url 'audiobookshelf_disconnect' %}">
+                {% csrf_token %}
+                <button type="submit" class="w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer bg-red-600 text-white hover:bg-red-700">
+                  Disconnect
+                </button>
+              </form>
+            </div>
+          {% else %}
+            <p class="text-sm text-gray-400 mb-3">Pull audiobook progress from Audiobookshelf.</p>
+            <form method="post" action="{% url 'audiobookshelf_connect' %}" class="space-y-3">
+              {% csrf_token %}
+              <div>
+                <label class="block text-sm text-gray-400 mb-2">Base URL</label>
+                <input type="url" name="base_url" required
+                       class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                       placeholder="https://abs.example.com">
+              </div>
+              <div>
+                <label class="block text-sm text-gray-400 mb-2">API Token</label>
+                <input type="password" name="api_token" required
+                       class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                       placeholder="Audiobookshelf API token">
+              </div>
+              <button type="submit" class="w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer bg-indigo-600 text-white hover:bg-indigo-700">
+                Connect Audiobookshelf
+              </button>
+            </form>
+          {% endif %}
+        </div>
+
         {# Pocket Casts #}
         <div class="bg-[#39404b] p-4 rounded-lg space-y-3"
              x-show="sourceSupports(['podcasts'])"

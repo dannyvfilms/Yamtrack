@@ -61,6 +61,10 @@ SOURCES_CONFIG = {
         "name": "Plex",
         "logo": static("img/plex-logo.svg"),
     },
+    "audiobookshelf": {
+        "name": "Audiobookshelf",
+        "logo": static("img/audiobookshelf-logo.svg"),
+    },
     "pocketcasts": {
         "name": "Pocket Casts",
         "logo": static("img/pocketcasts-logo.svg"),

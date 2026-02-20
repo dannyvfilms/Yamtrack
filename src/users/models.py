@@ -1124,14 +1124,15 @@ class User(AbstractUser):
             "anilist": "Import from AniList",
             "kitsu": "Import from Kitsu",
             "yamtrack": "Import from Yamtrack",
-        "hltb": "Import from HowLongToBeat",
-        "steam": "Import from Steam",
-        "imdb": "Import from IMDB",
-        "goodreads": "Import from GoodReads",
-        "plex": "Import from Plex",
-        "pocketcasts": "Import from Pocket Casts (Recurring)",
-        "lastfm": "Poll Last.fm for all users",
-    }
+            "hltb": "Import from HowLongToBeat",
+            "steam": "Import from Steam",
+            "imdb": "Import from IMDB",
+            "goodreads": "Import from GoodReads",
+            "plex": "Import from Plex",
+            "audiobookshelf": "Import from Audiobookshelf (Recurring)",
+            "pocketcasts": "Import from Pocket Casts (Recurring)",
+            "lastfm": "Poll Last.fm for all users",
+        }
 
         # Reverse mapping to get source from task name
         task_to_source = {v: k for k, v in import_tasks.items()}
