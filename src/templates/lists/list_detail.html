@@ -82,6 +82,12 @@
                 <span class="text-gray-400">•</span>
                 <span>{{ items_count }} item{{ items_count|pluralize }}</span>
               </span>
+              {% if completion_percent is not None %}
+                <span class="inline-flex items-center gap-1">
+                  <span class="text-gray-400">•</span>
+                  <span>{{ completed_count }}/{{ items_count }} completed ({{ completion_percent }}%)</span>
+                </span>
+              {% endif %}
               {% if can_edit and recommendation_count > 0 %}
                 <span class="inline-flex items-center gap-1">
                   <span class="text-gray-400">•</span>

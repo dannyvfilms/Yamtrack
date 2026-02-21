@@ -42,6 +42,28 @@ logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
+def _get_completed_item_ids(user, item_ids):
+    """Return the subset of item_ids that the user has marked Completed in any media type."""
+    if not item_ids:
+        return set()
+    completed = set()
+    for media_type in MediaTypes.values:
+        if media_type == MediaTypes.EPISODE.value:
+            continue  # Episode has no status/user field
+        try:
+            model = apps.get_model("app", media_type)
+        except LookupError:
+            continue
+        completed.update(
+            model.objects.filter(
+                item_id__in=item_ids,
+                user=user,
+                status="Completed",
+            ).values_list("item_id", flat=True).distinct()
+        )
+    return completed
+
+
 def _get_trakt_credentials(user):
     """Return decrypted Trakt client credentials for a user, if configured."""
     trakt_account = TraktAccount.objects.filter(user=user).first()
@@ -266,6 +288,19 @@ def lists(request):
         ).only("tags")
         for tag in (custom_list.tags or [])
     )
+
+    # Compute completion percentages for each list (titles completed / total titles)
+    all_item_ids = {item.id for cl in lists_page for item in cl.items.all()}
+    completed_item_ids = _get_completed_item_ids(request.user, all_item_ids)
+    for cl in lists_page:
+        list_item_ids = {item.id for item in cl.items.all()}
+        if list_item_ids:
+            n_done = len(list_item_ids & completed_item_ids)
+            cl.completed_count = n_done
+            cl.completion_percent = round(n_done / len(list_item_ids) * 100)
+        else:
+            cl.completed_count = 0
+            cl.completion_percent = None
 
     # Create a form for each list
     # needs unique id for django-select2
@@ -885,6 +920,16 @@ def list_detail(request, list_id):
     # Build and filter base queryset
     items = custom_list.items.all()
     total_items_count = items.count()
+
+    # Compute completion percentage (titles completed / total titles)
+    completion_percent = None
+    completed_count = 0
+    if total_items_count > 0 and not is_public_view:
+        all_item_ids = set(custom_list.items.values_list("id", flat=True))
+        completed_ids = _get_completed_item_ids(request.user, all_item_ids)
+        completed_count = len(completed_ids)
+        completion_percent = round(completed_count / total_items_count * 100)
+
     if params["search_query"]:
         items = items.filter(title__icontains=params["search_query"])
     if params["media_types"]:
@@ -1101,6 +1146,8 @@ def list_detail(request, list_id):
                 else None,
                 "media_types": MediaTypes.values,
                 "collaborators_count": custom_list.collaborators.count() + 1,
+                "completion_percent": completion_percent,
+                "completed_count": completed_count,
             },
         )
         return render(request, "lists/list_detail.html", context)
