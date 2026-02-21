@@ -34,10 +34,12 @@
     country: '{{ active_smart_rules.country|default:''|escapejs }}',
     platform: '{{ active_smart_rules.platform|default:''|escapejs }}',
     origin: '{{ active_smart_rules.origin|default:''|escapejs }}',
+    format: '{{ active_smart_rules.format|default:''|escapejs }}',
     showLanguages: {{ smart_filter_data.show_languages|yesno:'true,false' }},
     showCountries: {{ smart_filter_data.show_countries|yesno:'true,false' }},
     showPlatforms: {{ smart_filter_data.show_platforms|yesno:'true,false' }},
     showOrigins: {{ smart_filter_data.show_origins|yesno:'true,false' }},
+    showFormats: {{ smart_filter_data.show_formats|yesno:'true,false' }},
     availableMediaTypes: [
       {% for media_type in available_media_types %}
         { value: '{{ media_type }}', label: '{{ media_type|media_type_readable|escapejs }}' }{% if not forloop.last %},{% endif %}
@@ -145,6 +147,9 @@
       if (this.showOrigins && this.origin) {
         labels.push(this.origin.length <= 3 ? this.origin.toUpperCase() : this.origin);
       }
+      if (this.showFormats && this.format) {
+        labels.push(this.format === 'ebook' ? 'eBook' : this.format.charAt(0).toUpperCase() + this.format.slice(1));
+      }
       if (labels.length === 0) {
         return 'All';
       }
@@ -164,6 +169,7 @@
       this.country = '';
       this.platform = '';
       this.origin = '';
+      this.format = '';
     },
     itemsCountLabel() {
       return `${this.itemsCount} item${this.itemsCount === 1 ? '' : 's'}`;
@@ -192,6 +198,7 @@
         country: this.country,
         platform: this.platform,
         origin: this.origin,
+        format: this.format,
         search: this.query,
       };
 
@@ -348,6 +355,7 @@
         countrySearch: '',
         platformSearch: '',
         originSearch: '',
+        formatSearch: '',
         genres: data.genres || [],
         years: data.years || [],
         sources: data.sources || [],
@@ -355,6 +363,7 @@
         countries: data.countries || [],
         platforms: data.platforms || [],
         origins: data.origins || [],
+        formats: data.formats || [],
         resetSearch() {
           this.genreSearch = '';
           this.yearSearch = '';
@@ -363,6 +372,7 @@
           this.countrySearch = '';
           this.platformSearch = '';
           this.originSearch = '';
+          this.formatSearch = '';
         },
         filteredGenres() {
           const term = this.genreSearch.toLowerCase();
@@ -412,6 +422,13 @@
             return this.origins;
           }
           return this.origins.filter((option) => option.label.toLowerCase().includes(term));
+        },
+        filteredFormats() {
+          const term = this.formatSearch.toLowerCase();
+          if (!term) {
+            return this.formats;
+          }
+          return this.formats.filter((option) => option.label.toLowerCase().includes(term));
         },
       };
     }

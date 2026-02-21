@@ -23,6 +23,7 @@ SMART_FILTER_KEYS = (
     "country",
     "platform",
     "origin",
+    "format",
 )
 
 SMART_FILTER_DEFAULTS = {
@@ -38,6 +39,7 @@ SMART_FILTER_DEFAULTS = {
     "country": "",
     "platform": "",
     "origin": "",
+    "format": "",
 }
 
 RATING_CHOICES = {"all", "rated", "not_rated"}
@@ -57,6 +59,7 @@ LANGUAGE_MEDIA_TYPES = {
 COUNTRY_MEDIA_TYPES = LANGUAGE_MEDIA_TYPES
 PLATFORM_MEDIA_TYPES = {MediaTypes.GAME.value}
 ORIGIN_MEDIA_TYPES = {MediaTypes.MUSIC.value}
+FORMAT_MEDIA_TYPES = {MediaTypes.BOOK.value, MediaTypes.MANGA.value, MediaTypes.COMIC.value}
 
 
 def _normalize_filter_value(value) -> str:
@@ -226,6 +229,7 @@ def normalize_rule_payload(payload, owner):
         "country": str(_payload_get(payload, "country", "") or "").strip(),
         "platform": str(_payload_get(payload, "platform", "") or "").strip(),
         "origin": str(_payload_get(payload, "origin", "") or "").strip(),
+        "format": str(_payload_get(payload, "format", "") or "").strip(),
     }
     return normalized
 
@@ -338,6 +342,12 @@ def _matches_item_filters(item: Item, rules: dict, today) -> bool:
     if platform_filter:
         platforms = _extract_platforms(item)
         if not any(_normalize_filter_value(platform) == platform_filter for platform in platforms):
+            return False
+
+    format_filter = _normalize_filter_value(rules.get("format"))
+    if format_filter:
+        item_format = _normalize_filter_value(getattr(item, "format", "") or "")
+        if item_format != format_filter:
             return False
 
     return True
@@ -578,7 +588,16 @@ def build_rule_filter_data(owner, media_types: list[str], status: str, search: s
         "languages",
         "country",
         "platforms",
+        "format",
+        "media_type",
     )
+
+    _FORMAT_LABELS = {
+        "hardcover": "Hardcover",
+        "paperback": "Paperback",
+        "ebook": "eBook",
+        "audiobook": "Audiobook",
+    }
 
     genres_set = set()
     years_set = set()
@@ -587,6 +606,7 @@ def build_rule_filter_data(owner, media_types: list[str], status: str, search: s
     countries_set = set()
     platforms_set = set()
     origins_set = set()
+    formats_set = set()
     has_unknown_year = False
 
     for item in items:
@@ -612,6 +632,10 @@ def build_rule_filter_data(owner, media_types: list[str], status: str, search: s
             origins_set.add(country_value)
 
         platforms_set.update(_extract_platforms(item))
+
+        format_value = str(getattr(item, "format", "") or "").strip()
+        if format_value:
+            formats_set.add(format_value)
 
     source_labels = dict(Sources.choices)
     filter_data = {
@@ -653,6 +677,11 @@ def build_rule_filter_data(owner, media_types: list[str], status: str, search: s
         "show_countries": any(media_type in COUNTRY_MEDIA_TYPES for media_type in target_media_types),
         "show_platforms": any(media_type in PLATFORM_MEDIA_TYPES for media_type in target_media_types),
         "show_origins": any(media_type in ORIGIN_MEDIA_TYPES for media_type in target_media_types),
+        "formats": [
+            {"value": value, "label": _FORMAT_LABELS.get(value, value.title())}
+            for value in sorted(formats_set, key=lambda val: val.lower())
+        ],
+        "show_formats": any(media_type in FORMAT_MEDIA_TYPES for media_type in target_media_types),
     }
 
     if has_unknown_year:
