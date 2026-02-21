@@ -218,8 +218,14 @@ class RatingScaleFormMixin:
                 "placeholder": f"0-{scale_max}",
             },
         )
-        if not self.is_bound and self.instance and getattr(self.instance, "score", None) is not None:
-            self.initial["score"] = self.user.scale_score_for_display(self.instance.score)
+        if (
+            not self.is_bound
+            and self.instance
+            and getattr(self.instance, "score", None) is not None
+        ):
+            self.initial["score"] = self.user.scale_score_for_display(
+                self.instance.score,
+            )
 
     def clean_score(self):
         score = self.cleaned_data.get("score")
@@ -288,8 +294,7 @@ class MangaForm(MediaForm):
         model = Manga
         labels = {
             "progress": (
-                f"Progress "
-                f"({config.get_unit(MediaTypes.MANGA.value, short=False)}s)"
+                f"Progress ({config.get_unit(MediaTypes.MANGA.value, short=False)}s)"
             ),
         }
 
@@ -297,16 +302,18 @@ class MangaForm(MediaForm):
         """Initialize the form."""
         max_progress = kwargs.pop("max_progress", None)
         super().__init__(*args, **kwargs)
-        
+
         # Adjust progress field for percentage mode
         if self.user and self.user.book_comic_manga_progress_percentage:
             self.fields["progress"].label = "Progress (%)"
-            self.fields["progress"].widget.attrs.update({
-                "min": 0,
-                "max": 100,
-                "step": 0.1,
-                "placeholder": "%"
-            })
+            self.fields["progress"].widget.attrs.update(
+                {
+                    "min": 0,
+                    "max": 100,
+                    "step": 0.1,
+                    "placeholder": "%",
+                },
+            )
 
 
 class AnimeForm(MediaForm):
@@ -371,27 +378,63 @@ class BookForm(MediaForm):
         """Bind form to model."""
 
         model = Book
+        fields = list(MediaForm.Meta.fields) + ["authors", "series"]
         labels = {
             "progress": (
-                f"Progress "
-                f"({config.get_unit(MediaTypes.BOOK.value, short=False)}s)"
+                f"Progress ({config.get_unit(MediaTypes.BOOK.value, short=False)}s)"
             ),
+            "authors": "Authors",
+            "series": "Book Series",
         }
 
     def __init__(self, *args, **kwargs):
         """Initialize the form."""
         max_progress = kwargs.pop("max_progress", None)
         super().__init__(*args, **kwargs)
-        
+
         # Adjust progress field for percentage mode
         if self.user and self.user.book_comic_manga_progress_percentage:
             self.fields["progress"].label = "Progress (%)"
-            self.fields["progress"].widget.attrs.update({
-                "min": 0,
-                "max": 100,
-                "step": 0.1,
-                "placeholder": "%"
-            })
+            self.fields["progress"].widget.attrs.update(
+                {
+                    "min": 0,
+                    "max": 100,
+                    "step": 0.1,
+                    "placeholder": "%",
+                },
+            )
+
+    def save(self, commit=True):
+        """Save the book and populate authors/series from provider metadata if not set."""
+        from app.models import BookAuthor, BookSeries
+
+        book = super().save(commit=False)
+        if commit:
+            book.save()
+            self.save_m2m()
+
+        # Populate authors from provider metadata if form didn't specify them
+        if not book.authors.exists() and book.item.provider_author_names:
+            for author_name in book.item.provider_author_names:
+                if author_name and isinstance(author_name, str):
+                    author_name = author_name.strip()
+                    if author_name:
+                        author_obj, _ = BookAuthor.objects.get_or_create(
+                            name=author_name,
+                        )
+                        book.authors.add(author_obj)
+
+        # Populate series from provider metadata if form didn't specify it
+        if not book.series and book.item.provider_series_data:
+            series_name = book.item.provider_series_data.get("name")
+            if series_name:
+                series_obj, _ = BookSeries.objects.get_or_create(name=series_name)
+                book.series = series_obj
+                book.save(update_fields=["series"])
+
+        if not commit:
+            return book
+        return book
 
 
 class ComicForm(MediaForm):
@@ -403,8 +446,7 @@ class ComicForm(MediaForm):
         model = Comic
         labels = {
             "progress": (
-                f"Progress "
-                f"({config.get_unit(MediaTypes.COMIC.value, short=False)}s)"
+                f"Progress ({config.get_unit(MediaTypes.COMIC.value, short=False)}s)"
             ),
         }
 
@@ -412,16 +454,18 @@ class ComicForm(MediaForm):
         """Initialize the form."""
         max_progress = kwargs.pop("max_progress", None)
         super().__init__(*args, **kwargs)
-        
+
         # Adjust progress field for percentage mode
         if self.user and self.user.book_comic_manga_progress_percentage:
             self.fields["progress"].label = "Progress (%)"
-            self.fields["progress"].widget.attrs.update({
-                "min": 0,
-                "max": 100,
-                "step": 0.1,
-                "placeholder": "%"
-            })
+            self.fields["progress"].widget.attrs.update(
+                {
+                    "min": 0,
+                    "max": 100,
+                    "step": 0.1,
+                    "placeholder": "%",
+                },
+            )
 
 
 class BoardgameForm(MediaForm):
@@ -506,8 +550,7 @@ class MusicForm(MediaForm):
         model = Music
         labels = {
             "progress": (
-                f"Progress "
-                f"({config.get_unit(MediaTypes.MUSIC.value, short=False)}s)"
+                f"Progress ({config.get_unit(MediaTypes.MUSIC.value, short=False)}s)"
             ),
         }
 
@@ -521,8 +564,7 @@ class PodcastForm(MediaForm):
         model = Podcast
         labels = {
             "progress": (
-                f"Progress "
-                f"({config.get_unit(MediaTypes.PODCAST.value, short=False)}s)"
+                f"Progress ({config.get_unit(MediaTypes.PODCAST.value, short=False)}s)"
             ),
         }
 
@@ -689,7 +731,9 @@ class CollectionEntryForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         self.user = kwargs.pop("user", None)
         collection_media_type = kwargs.pop("collection_media_type", None)
-        collection_choices_override = kwargs.pop("collection_choices_override", None) or {}
+        collection_choices_override = (
+            kwargs.pop("collection_choices_override", None) or {}
+        )
         super().__init__(*args, **kwargs)
         if settings.TRACK_TIME:
             collected_widget = forms.DateTimeInput(attrs={"type": "datetime-local"})

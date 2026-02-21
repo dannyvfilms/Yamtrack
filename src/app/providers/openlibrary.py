@@ -37,7 +37,7 @@ def search(query, page):
     if data is None:
         params = {
             "q": query,
-            "fields": "title,key,editions,editions.key,editions.cover_i,editions.title,first_publish_year",
+            "fields": "title,key,editions,editions.key,editions.cover_i,editions.title,first_publish_year,author_name,isbn",
             "limit": settings.PER_PAGE,
             "page": page,
         }
@@ -67,6 +67,12 @@ def search(query, page):
             else:
                 result_title = title
 
+            # Extract ISBN from edition
+            isbn = None
+            if "isbn" in top_edition:
+                isbn_list = top_edition.get("isbn", [])
+                isbn = isbn_list[0] if isbn_list else None
+
             results.append(
                 {
                     "media_id": media_id,
@@ -75,6 +81,8 @@ def search(query, page):
                     "title": result_title,
                     "image": get_image_url(top_edition),
                     "year": doc.get("first_publish_year"),
+                    "authors": doc.get("author_name", []),
+                    "isbn": isbn,
                 },
             )
 

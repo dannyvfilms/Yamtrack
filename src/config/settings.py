@@ -230,7 +230,7 @@ if config("DB_HOST", default=None):
 else:
     SQLITE_BUSY_TIMEOUT_SECONDS = config(
         "SQLITE_BUSY_TIMEOUT_SECONDS",
-        default=30,
+        default=60,
         cast=int,
     )
     SQLITE_JOURNAL_MODE = config("SQLITE_JOURNAL_MODE", default="WAL")
@@ -263,6 +263,7 @@ else:
             # Log but don't raise - allow connection to proceed even if PRAGMA fails
             # This prevents disk I/O errors during connection setup from blocking all requests
             import logging
+
             logger = logging.getLogger(__name__)
             logger.warning(
                 "Failed to configure SQLite connection PRAGMA settings: %s",
@@ -459,11 +460,11 @@ def _parse_repo_owner(value):
     parsed = urlparse(value)
     repo_path = parsed.path if parsed.netloc else value
     repo_path = repo_path.strip("/")
-    if repo_path.endswith(".git"):
-        repo_path = repo_path[:-4]
+    repo_path = repo_path.removesuffix(".git")
     if not repo_path:
         return None
     return repo_path.split("/", 1)[0]
+
 
 def _read_fork_owner_file():
     file_paths = []
@@ -484,7 +485,10 @@ def _read_fork_owner_file():
 
 
 def _get_fork_owner():
-    owner = config("FORK_OWNER_NAME", default=None) or config("GITHUB_REPOSITORY_OWNER", default=None)
+    owner = config("FORK_OWNER_NAME", default=None) or config(
+        "GITHUB_REPOSITORY_OWNER",
+        default=None,
+    )
     if owner:
         return owner.strip()
 
@@ -520,8 +524,16 @@ ADMIN_ENABLED = config("ADMIN_ENABLED", default=False, cast=bool)
 TRACK_TIME = config("TRACK_TIME", default=True, cast=bool)
 
 # Runtime population settings
-RUNTIME_POPULATION_DISABLED = config("RUNTIME_POPULATION_DISABLED", default=False, cast=bool)
-RUNTIME_POPULATION_ON_STARTUP = config("RUNTIME_POPULATION_ON_STARTUP", default=False, cast=bool)
+RUNTIME_POPULATION_DISABLED = config(
+    "RUNTIME_POPULATION_DISABLED",
+    default=False,
+    cast=bool,
+)
+RUNTIME_POPULATION_ON_STARTUP = config(
+    "RUNTIME_POPULATION_ON_STARTUP",
+    default=False,
+    cast=bool,
+)
 
 TZ = zoneinfo.ZoneInfo(TIME_ZONE)
 
@@ -669,7 +681,11 @@ PLEX_HISTORY_PAGE_SIZE = config("PLEX_HISTORY_PAGE_SIZE", default=200, cast=int)
 PLEX_HISTORY_MAX_ITEMS = config("PLEX_HISTORY_MAX_ITEMS", default=0, cast=int)
 
 LASTFM_API_KEY = config("LASTFM_API_KEY", default="")
-LASTFM_POLL_INTERVAL_MINUTES = config("LASTFM_POLL_INTERVAL_MINUTES", default=15, cast=int)
+LASTFM_POLL_INTERVAL_MINUTES = config(
+    "LASTFM_POLL_INTERVAL_MINUTES",
+    default=15,
+    cast=int,
+)
 
 TESTING = False
 
@@ -720,7 +736,11 @@ CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 60 * 60 * 6  # 6 hours
 
 CELERY_RESULT_EXTENDED = True
-CELERY_RESULT_BACKEND = "django-db"
+# Use Redis for results in SQLite environments to avoid database contention
+# For PostgreSQL, use django-db as before
+CELERY_RESULT_BACKEND = (
+    REDIS_URL if "sqlite" in DATABASES["default"]["ENGINE"] else "django-db"
+)
 CELERY_CACHE_BACKEND = "default"
 CELERY_RESULT_EXPIRES = 60 * 60 * 24 * 7  # 7 days
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
@@ -728,7 +748,11 @@ CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 # https://docs.celeryq.dev/en/stable/userguide/configuration.html#task-serializer
 CELERY_TASK_SERIALIZER = "pickle"
 # https://docs.celeryq.dev/en/stable/userguide/configuration.html#std-setting-accept_content
-CELERY_ACCEPT_CONTENT = ["application/json", "application/x-python-serialize", "application/x-pickle"]
+CELERY_ACCEPT_CONTENT = [
+    "application/json",
+    "application/x-python-serialize",
+    "application/x-pickle",
+]
 
 
 DAILY_DIGEST_HOUR = config(

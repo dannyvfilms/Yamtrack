@@ -50,9 +50,13 @@ METADATA_BACKFILL_MAX_ATTEMPTS = 6
 
 def _apply_backfill_state_filters(queryset, field: str):
     now = timezone.now()
-    blocked = MetadataBackfillState.objects.filter(field=field).filter(
-        Q(give_up=True) | Q(next_retry_at__gt=now),
-    ).values("item_id")
+    blocked = (
+        MetadataBackfillState.objects.filter(field=field)
+        .filter(
+            Q(give_up=True) | Q(next_retry_at__gt=now),
+        )
+        .values("item_id")
+    )
     return queryset.exclude(id__in=blocked)
 
 
@@ -63,7 +67,11 @@ def _backfill_delay_seconds(fail_count: int) -> int:
     return min(delay, METADATA_BACKFILL_MAX_DELAY_SECONDS)
 
 
-def _record_backfill_failure(item: Item, field: str, error_message: str | None = None) -> bool:
+def _record_backfill_failure(
+    item: Item,
+    field: str,
+    error_message: str | None = None,
+) -> bool:
     now = timezone.now()
     state, _ = MetadataBackfillState.objects.get_or_create(item=item, field=field)
     state.fail_count = min(state.fail_count + 1, 9999)
@@ -75,14 +83,18 @@ def _record_backfill_failure(item: Item, field: str, error_message: str | None =
         state.next_retry_at = None
     else:
         state.give_up = False
-        state.next_retry_at = now + timedelta(seconds=_backfill_delay_seconds(state.fail_count))
-    state.save(update_fields=[
-        "fail_count",
-        "last_attempt_at",
-        "next_retry_at",
-        "last_error",
-        "give_up",
-    ])
+        state.next_retry_at = now + timedelta(
+            seconds=_backfill_delay_seconds(state.fail_count),
+        )
+    state.save(
+        update_fields=[
+            "fail_count",
+            "last_attempt_at",
+            "next_retry_at",
+            "last_error",
+            "give_up",
+        ],
+    )
     reason = error_message or state.last_error or "unknown"
     if state.give_up:
         logger.warning(
@@ -140,7 +152,7 @@ def _filter_backfill_item_ids(item_ids, field: str):
     blocked_ids = set(
         MetadataBackfillState.objects.filter(field=field, item_id__in=item_ids)
         .filter(Q(give_up=True) | Q(next_retry_at__gt=now))
-        .values_list("item_id", flat=True)
+        .values_list("item_id", flat=True),
     )
     if field == MetadataBackfillField.CREDITS:
         blocked_ids.update(
@@ -178,8 +190,16 @@ def _collect_backfill_day_keys(items, field: str):
                 "created_at",
             )
             for row in rows:
-                activity_dt = row.get("end_date") or row.get("start_date") or row.get("created_at")
-                _add_user_day_key(user_day_keys, row.get("user_id"), history_cache.history_day_key(activity_dt))
+                activity_dt = (
+                    row.get("end_date")
+                    or row.get("start_date")
+                    or row.get("created_at")
+                )
+                _add_user_day_key(
+                    user_day_keys,
+                    row.get("user_id"),
+                    history_cache.history_day_key(activity_dt),
+                )
             continue
 
         if item.media_type == MediaTypes.ANIME.value:
@@ -192,7 +212,11 @@ def _collect_backfill_day_keys(items, field: str):
                 "created_at",
             )
             for row in rows:
-                if field == MetadataBackfillField.RUNTIME and row.get("start_date") and row.get("end_date"):
+                if (
+                    field == MetadataBackfillField.RUNTIME
+                    and row.get("start_date")
+                    and row.get("end_date")
+                ):
                     day_keys = history_cache.history_day_keys_for_range(
                         row.get("start_date"),
                         row.get("end_date"),
@@ -200,8 +224,16 @@ def _collect_backfill_day_keys(items, field: str):
                     if day_keys:
                         user_day_keys[row.get("user_id")].update(day_keys)
                     continue
-                activity_dt = row.get("end_date") or row.get("start_date") or row.get("created_at")
-                _add_user_day_key(user_day_keys, row.get("user_id"), history_cache.history_day_key(activity_dt))
+                activity_dt = (
+                    row.get("end_date")
+                    or row.get("start_date")
+                    or row.get("created_at")
+                )
+                _add_user_day_key(
+                    user_day_keys,
+                    row.get("user_id"),
+                    history_cache.history_day_key(activity_dt),
+                )
             continue
 
         if item.media_type == MediaTypes.GAME.value:
@@ -212,8 +244,16 @@ def _collect_backfill_day_keys(items, field: str):
                 "created_at",
             )
             for row in rows:
-                activity_dt = row.get("end_date") or row.get("start_date") or row.get("created_at")
-                _add_user_day_key(user_day_keys, row.get("user_id"), history_cache.history_day_key(activity_dt))
+                activity_dt = (
+                    row.get("end_date")
+                    or row.get("start_date")
+                    or row.get("created_at")
+                )
+                _add_user_day_key(
+                    user_day_keys,
+                    row.get("user_id"),
+                    history_cache.history_day_key(activity_dt),
+                )
             continue
 
         if item.media_type == MediaTypes.TV.value and field in (
@@ -231,7 +271,10 @@ def _collect_backfill_day_keys(items, field: str):
                 )
             continue
 
-        if item.media_type == MediaTypes.EPISODE.value and field == MetadataBackfillField.RUNTIME:
+        if (
+            item.media_type == MediaTypes.EPISODE.value
+            and field == MetadataBackfillField.RUNTIME
+        ):
             rows = Episode.objects.filter(item_id=item.id).values(
                 "related_season__user_id",
                 "end_date",
@@ -257,7 +300,11 @@ def _schedule_metadata_statistics_refresh(items, field: str, reason: str):
             continue
         statistics_cache.mark_metadata_refreshing(user_id, reason=reason)
         statistics_cache.invalidate_statistics_days(user_id, day_keys, reason=reason)
-        statistics_cache.schedule_all_ranges_refresh(user_id, debounce_seconds=10, countdown=3)
+        statistics_cache.schedule_all_ranges_refresh(
+            user_id,
+            debounce_seconds=10,
+            countdown=3,
+        )
         logger.info(
             "metadata_refresh_scheduled user_id=%s field=%s days=%s reason=%s",
             user_id,
@@ -353,10 +400,16 @@ def _missing_credits_item_ids(item_ids):
             ).values("item_id", "strategy_version")
         }
     person_credit_ids = set(
-        ItemPersonCredit.objects.filter(item_id__in=candidate_ids).values_list("item_id", flat=True),
+        ItemPersonCredit.objects.filter(item_id__in=candidate_ids).values_list(
+            "item_id",
+            flat=True,
+        ),
     )
     studio_credit_ids = set(
-        ItemStudioCredit.objects.filter(item_id__in=candidate_ids).values_list("item_id", flat=True),
+        ItemStudioCredit.objects.filter(item_id__in=candidate_ids).values_list(
+            "item_id",
+            flat=True,
+        ),
     )
     missing_ids = []
     for item_id in sorted(candidate_ids):
@@ -418,10 +471,14 @@ def _filter_episode_runtime_season_keys(season_keys):
         )
     if not season_filters:
         return []
-    eligible = _episode_runtime_items_queryset().filter(season_filters).values_list(
-        "media_id",
-        "source",
-        "season_number",
+    eligible = (
+        _episode_runtime_items_queryset()
+        .filter(season_filters)
+        .values_list(
+            "media_id",
+            "source",
+            "season_number",
+        )
     )
     return sorted(set(eligible))
 
@@ -434,12 +491,19 @@ def enqueue_runtime_backfill_items(item_ids, countdown=10):
     try:
         queue = cache.get(RUNTIME_BACKFILL_ITEMS_QUEUE_KEY) or []
         queue = list(set(queue).union(normalized))
-        cache.set(RUNTIME_BACKFILL_ITEMS_QUEUE_KEY, queue, timeout=RUNTIME_BACKFILL_QUEUE_TTL)
+        cache.set(
+            RUNTIME_BACKFILL_ITEMS_QUEUE_KEY,
+            queue,
+            timeout=RUNTIME_BACKFILL_QUEUE_TTL,
+        )
         if cache.add(RUNTIME_BACKFILL_ITEMS_SCHEDULED_KEY, True, timeout=30):
             populate_runtime_backfill_queue.apply_async(countdown=countdown)
     except Exception as exc:  # pragma: no cover - cache unavailable
         logger.debug("Runtime backfill queue unavailable: %s", exc)
-        populate_runtime_data_for_items.apply_async(args=[normalized], countdown=countdown)
+        populate_runtime_data_for_items.apply_async(
+            args=[normalized],
+            countdown=countdown,
+        )
     return len(normalized)
 
 
@@ -460,12 +524,19 @@ def enqueue_episode_runtime_backfill(season_keys, countdown=10):
             return 0
         queue = cache.get(RUNTIME_BACKFILL_EPISODES_QUEUE_KEY) or []
         queue = list(set(queue).union(tokens))
-        cache.set(RUNTIME_BACKFILL_EPISODES_QUEUE_KEY, queue, timeout=RUNTIME_BACKFILL_QUEUE_TTL)
+        cache.set(
+            RUNTIME_BACKFILL_EPISODES_QUEUE_KEY,
+            queue,
+            timeout=RUNTIME_BACKFILL_QUEUE_TTL,
+        )
         if cache.add(RUNTIME_BACKFILL_EPISODES_SCHEDULED_KEY, True, timeout=30):
             populate_episode_runtime_queue.apply_async(countdown=countdown)
     except Exception as exc:  # pragma: no cover - cache unavailable
         logger.debug("Episode runtime backfill queue unavailable: %s", exc)
-        populate_episode_runtime_data.apply_async(kwargs={"season_keys": normalized}, countdown=countdown)
+        populate_episode_runtime_data.apply_async(
+            kwargs={"season_keys": normalized},
+            countdown=countdown,
+        )
         return len(normalized)
     return len(tokens)
 
@@ -478,12 +549,19 @@ def enqueue_genre_backfill_items(item_ids, countdown=10):
     try:
         queue = cache.get(GENRE_BACKFILL_ITEMS_QUEUE_KEY) or []
         queue = list(set(queue).union(normalized))
-        cache.set(GENRE_BACKFILL_ITEMS_QUEUE_KEY, queue, timeout=GENRE_BACKFILL_QUEUE_TTL)
+        cache.set(
+            GENRE_BACKFILL_ITEMS_QUEUE_KEY,
+            queue,
+            timeout=GENRE_BACKFILL_QUEUE_TTL,
+        )
         if cache.add(GENRE_BACKFILL_ITEMS_SCHEDULED_KEY, True, timeout=30):
             populate_genre_backfill_queue.apply_async(countdown=countdown)
     except Exception as exc:  # pragma: no cover - cache unavailable
         logger.debug("Genre backfill queue unavailable: %s", exc)
-        populate_genre_data_for_items.apply_async(args=[normalized], countdown=countdown)
+        populate_genre_data_for_items.apply_async(
+            args=[normalized],
+            countdown=countdown,
+        )
     return len(normalized)
 
 
@@ -496,12 +574,19 @@ def enqueue_credits_backfill_items(item_ids, countdown=10):
     try:
         queue = cache.get(CREDITS_BACKFILL_ITEMS_QUEUE_KEY) or []
         queue = list(set(queue).union(normalized))
-        cache.set(CREDITS_BACKFILL_ITEMS_QUEUE_KEY, queue, timeout=CREDITS_BACKFILL_QUEUE_TTL)
+        cache.set(
+            CREDITS_BACKFILL_ITEMS_QUEUE_KEY,
+            queue,
+            timeout=CREDITS_BACKFILL_QUEUE_TTL,
+        )
         if cache.add(CREDITS_BACKFILL_ITEMS_SCHEDULED_KEY, True, timeout=30):
             populate_credits_backfill_queue.apply_async(countdown=countdown)
     except Exception as exc:  # pragma: no cover - cache unavailable
         logger.debug("Credits backfill queue unavailable: %s", exc)
-        populate_credits_data_for_items.apply_async(args=[normalized], countdown=countdown)
+        populate_credits_data_for_items.apply_async(
+            args=[normalized],
+            countdown=countdown,
+        )
     return len(normalized)
 
 
@@ -533,16 +618,29 @@ def _populate_genres_for_items(items, delay_seconds):
             )
 
             if not metadata:
-                logger.warning("No metadata returned for %s (%s, %s)", item.title, item.media_type, item.source)
+                logger.warning(
+                    "No metadata returned for %s (%s, %s)",
+                    item.title,
+                    item.media_type,
+                    item.source,
+                )
                 error_count += 1
-                _record_backfill_failure(item, MetadataBackfillField.GENRES, "no metadata")
+                _record_backfill_failure(
+                    item,
+                    MetadataBackfillField.GENRES,
+                    "no metadata",
+                )
                 continue
 
             genres = _extract_genres_from_metadata(metadata)
             if not genres:
                 logger.warning("No genre data available for %s", item.title)
                 error_count += 1
-                _record_backfill_failure(item, MetadataBackfillField.GENRES, "no genres")
+                _record_backfill_failure(
+                    item,
+                    MetadataBackfillField.GENRES,
+                    "no genres",
+                )
                 continue
 
             with transaction.atomic():
@@ -561,9 +659,17 @@ def _populate_genres_for_items(items, delay_seconds):
         except Exception as exc:
             error_count += 1
             logger.error("Error updating genres for %s: %s", item.title, exc)
-            _record_backfill_failure(item, MetadataBackfillField.GENRES, f"exception: {exc}")
+            _record_backfill_failure(
+                item,
+                MetadataBackfillField.GENRES,
+                f"exception: {exc}",
+            )
 
-    logger.info("Genre population batch completed: %s updated, %s errors", updated_count, error_count)
+    logger.info(
+        "Genre population batch completed: %s updated, %s errors",
+        updated_count,
+        error_count,
+    )
     if updated_items:
         _schedule_metadata_statistics_refresh(
             updated_items,
@@ -617,14 +723,24 @@ def _populate_credits_for_items(items, delay_seconds):
                     item.source,
                 )
                 error_count += 1
-                _record_backfill_failure(item, MetadataBackfillField.CREDITS, "no metadata")
+                _record_backfill_failure(
+                    item,
+                    MetadataBackfillField.CREDITS,
+                    "no metadata",
+                )
                 continue
 
-            has_payload = any(key in metadata for key in ("cast", "crew", "studios_full"))
+            has_payload = any(
+                key in metadata for key in ("cast", "crew", "studios_full")
+            )
             if not has_payload:
                 logger.warning("No credits payload available for %s", item.title)
                 error_count += 1
-                _record_backfill_failure(item, MetadataBackfillField.CREDITS, "no credits payload")
+                _record_backfill_failure(
+                    item,
+                    MetadataBackfillField.CREDITS,
+                    "no credits payload",
+                )
                 continue
 
             credits.sync_item_credits_from_metadata(item, metadata)
@@ -643,9 +759,17 @@ def _populate_credits_for_items(items, delay_seconds):
         except Exception as exc:
             error_count += 1
             logger.error("Error syncing credits for %s: %s", item.title, exc)
-            _record_backfill_failure(item, MetadataBackfillField.CREDITS, f"exception: {exc}")
+            _record_backfill_failure(
+                item,
+                MetadataBackfillField.CREDITS,
+                f"exception: {exc}",
+            )
 
-    logger.info("Credits population batch completed: %s updated, %s errors", updated_count, error_count)
+    logger.info(
+        "Credits population batch completed: %s updated, %s errors",
+        updated_count,
+        error_count,
+    )
     if updated_items:
         _schedule_metadata_statistics_refresh(
             updated_items,
@@ -661,6 +785,7 @@ def _populate_runtime_for_items(items, delay_seconds):
     updated_count = 0
     error_count = 0
     updated_items = []
+
     def _mark_runtime_failure(item, reason):
         give_up = _record_backfill_failure(item, MetadataBackfillField.RUNTIME, reason)
         if give_up:
@@ -686,13 +811,22 @@ def _populate_runtime_for_items(items, delay_seconds):
             )
 
             if not metadata:
-                logger.warning("No metadata returned for %s (%s, %s)", item.title, item.media_type, item.source)
+                logger.warning(
+                    "No metadata returned for %s (%s, %s)",
+                    item.title,
+                    item.media_type,
+                    item.source,
+                )
                 error_count += 1
                 _mark_runtime_failure(item, "no metadata")
                 continue
 
             if not isinstance(metadata, dict):
-                logger.warning("Invalid metadata format for %s: %s", item.title, type(metadata))
+                logger.warning(
+                    "Invalid metadata format for %s: %s",
+                    item.title,
+                    type(metadata),
+                )
                 error_count += 1
                 _mark_runtime_failure(item, "invalid metadata")
                 continue
@@ -715,7 +849,11 @@ def _populate_runtime_for_items(items, delay_seconds):
             runtime_minutes = parse_runtime_to_minutes(runtime_str)
 
             if runtime_minutes is None:
-                logger.warning("Failed to parse runtime '%s' for %s", runtime_str, item.title)
+                logger.warning(
+                    "Failed to parse runtime '%s' for %s",
+                    runtime_str,
+                    item.title,
+                )
                 error_count += 1
                 _mark_runtime_failure(item, "parse failure")
                 continue
@@ -727,7 +865,11 @@ def _populate_runtime_for_items(items, delay_seconds):
             _record_backfill_success(item, MetadataBackfillField.RUNTIME)
             updated_count += 1
             updated_items.append(item)
-            logger.info("Updated runtime for %s: %s minutes", item.title, runtime_minutes)
+            logger.info(
+                "Updated runtime for %s: %s minutes",
+                item.title,
+                runtime_minutes,
+            )
 
             if delay_seconds > 0:
                 import time
@@ -738,7 +880,11 @@ def _populate_runtime_for_items(items, delay_seconds):
             logger.error("Error updating runtime for %s: %s", item.title, exc)
             _mark_runtime_failure(item, f"exception: {exc}")
 
-    logger.info("Runtime population batch completed: %s updated, %s errors", updated_count, error_count)
+    logger.info(
+        "Runtime population batch completed: %s updated, %s errors",
+        updated_count,
+        error_count,
+    )
     if updated_items:
         _schedule_metadata_statistics_refresh(
             updated_items,
@@ -757,13 +903,18 @@ def populate_runtime_data_batch(batch_size=10, delay_seconds=1.0):
         logger.info("No items need runtime data")
         return {"updated": 0, "errors": 0}
 
-    updated_count, error_count = _populate_runtime_for_items(items_to_update, delay_seconds)
+    updated_count, error_count = _populate_runtime_for_items(
+        items_to_update,
+        delay_seconds,
+    )
 
     # Check if there are more items to process (exclude previously failed items)
     remaining_items = _runtime_items_queryset().count()
 
     if remaining_items > 0:
-        logger.info(f"Found {remaining_items} remaining items. Scheduling next batch...")
+        logger.info(
+            f"Found {remaining_items} remaining items. Scheduling next batch...",
+        )
         # Schedule the next batch with a small delay
         populate_runtime_data_batch.apply_async(
             kwargs={"batch_size": batch_size, "delay_seconds": delay_seconds},
@@ -775,10 +926,13 @@ def populate_runtime_data_batch(batch_size=10, delay_seconds=1.0):
             "remaining_items": remaining_items,
             "next_batch_scheduled": True,
         }
-    logger.info("🎉 All runtime data population completed! No more items need processing.")
+    logger.info(
+        "🎉 All runtime data population completed! No more items need processing.",
+    )
 
     # Mark as completed in cache to prevent repeated runs
     from django.core.cache import cache
+
     cache.set("runtime_population_completed", True, timeout=3600)  # 1 hour
 
     return {
@@ -800,9 +954,16 @@ def populate_runtime_data_for_items(item_ids: list[int], delay_seconds: float = 
     items_to_update = list(_runtime_items_queryset().filter(id__in=normalized))
     if not items_to_update:
         logger.info("No targeted items need runtime data")
-        return {"updated": 0, "errors": 0, "message": "No targeted items need runtime data"}
+        return {
+            "updated": 0,
+            "errors": 0,
+            "message": "No targeted items need runtime data",
+        }
 
-    updated_count, error_count = _populate_runtime_for_items(items_to_update, delay_seconds)
+    updated_count, error_count = _populate_runtime_for_items(
+        items_to_update,
+        delay_seconds,
+    )
     return {
         "updated": updated_count,
         "errors": error_count,
@@ -820,9 +981,16 @@ def populate_genre_data_for_items(item_ids: list[int], delay_seconds: float = 0.
     items_to_update = list(_genre_items_queryset().filter(id__in=normalized))
     if not items_to_update:
         logger.info("No targeted items need genre data")
-        return {"updated": 0, "errors": 0, "message": "No targeted items need genre data"}
+        return {
+            "updated": 0,
+            "errors": 0,
+            "message": "No targeted items need genre data",
+        }
 
-    updated_count, error_count = _populate_genres_for_items(items_to_update, delay_seconds)
+    updated_count, error_count = _populate_genres_for_items(
+        items_to_update,
+        delay_seconds,
+    )
     return {
         "updated": updated_count,
         "errors": error_count,
@@ -837,7 +1005,11 @@ def populate_credits_data_for_items(item_ids: list[int], delay_seconds: float = 
     normalized = _filter_backfill_item_ids(normalized, MetadataBackfillField.CREDITS)
     normalized = _missing_credits_item_ids(normalized)
     if not normalized:
-        return {"updated": 0, "errors": 0, "message": "No targeted items need credits data"}
+        return {
+            "updated": 0,
+            "errors": 0,
+            "message": "No targeted items need credits data",
+        }
 
     items_to_update = list(
         Item.objects.filter(
@@ -852,9 +1024,16 @@ def populate_credits_data_for_items(item_ids: list[int], delay_seconds: float = 
     )
     if not items_to_update:
         logger.info("No targeted items need credits data")
-        return {"updated": 0, "errors": 0, "message": "No targeted items need credits data"}
+        return {
+            "updated": 0,
+            "errors": 0,
+            "message": "No targeted items need credits data",
+        }
 
-    updated_count, error_count = _populate_credits_for_items(items_to_update, delay_seconds)
+    updated_count, error_count = _populate_credits_for_items(
+        items_to_update,
+        delay_seconds,
+    )
     return {
         "updated": updated_count,
         "errors": error_count,
@@ -874,7 +1053,11 @@ def populate_runtime_backfill_queue(batch_size: int = 50, delay_seconds: float =
     batch = queue[:batch_size]
     remaining = queue[batch_size:]
     if remaining:
-        cache.set(RUNTIME_BACKFILL_ITEMS_QUEUE_KEY, remaining, timeout=RUNTIME_BACKFILL_QUEUE_TTL)
+        cache.set(
+            RUNTIME_BACKFILL_ITEMS_QUEUE_KEY,
+            remaining,
+            timeout=RUNTIME_BACKFILL_QUEUE_TTL,
+        )
         if cache.add(RUNTIME_BACKFILL_ITEMS_SCHEDULED_KEY, True, timeout=30):
             populate_runtime_backfill_queue.apply_async(countdown=10)
     else:
@@ -895,7 +1078,11 @@ def populate_genre_backfill_queue(batch_size: int = 50, delay_seconds: float = 0
     batch = queue[:batch_size]
     remaining = queue[batch_size:]
     if remaining:
-        cache.set(GENRE_BACKFILL_ITEMS_QUEUE_KEY, remaining, timeout=GENRE_BACKFILL_QUEUE_TTL)
+        cache.set(
+            GENRE_BACKFILL_ITEMS_QUEUE_KEY,
+            remaining,
+            timeout=GENRE_BACKFILL_QUEUE_TTL,
+        )
         if cache.add(GENRE_BACKFILL_ITEMS_SCHEDULED_KEY, True, timeout=30):
             populate_genre_backfill_queue.apply_async(countdown=10)
     else:
@@ -916,7 +1103,11 @@ def populate_credits_backfill_queue(batch_size: int = 50, delay_seconds: float =
     batch = queue[:batch_size]
     remaining = queue[batch_size:]
     if remaining:
-        cache.set(CREDITS_BACKFILL_ITEMS_QUEUE_KEY, remaining, timeout=CREDITS_BACKFILL_QUEUE_TTL)
+        cache.set(
+            CREDITS_BACKFILL_ITEMS_QUEUE_KEY,
+            remaining,
+            timeout=CREDITS_BACKFILL_QUEUE_TTL,
+        )
         if cache.add(CREDITS_BACKFILL_ITEMS_SCHEDULED_KEY, True, timeout=30):
             populate_credits_backfill_queue.apply_async(countdown=10)
     else:
@@ -937,7 +1128,11 @@ def populate_episode_runtime_queue(batch_size: int = 20):
     batch = queue[:batch_size]
     remaining = queue[batch_size:]
     if remaining:
-        cache.set(RUNTIME_BACKFILL_EPISODES_QUEUE_KEY, remaining, timeout=RUNTIME_BACKFILL_QUEUE_TTL)
+        cache.set(
+            RUNTIME_BACKFILL_EPISODES_QUEUE_KEY,
+            remaining,
+            timeout=RUNTIME_BACKFILL_QUEUE_TTL,
+        )
         if cache.add(RUNTIME_BACKFILL_EPISODES_SCHEDULED_KEY, True, timeout=30):
             populate_episode_runtime_queue.apply_async(countdown=10)
     else:
@@ -995,6 +1190,7 @@ def refresh_history_cache_task(
 def refresh_statistics_cache_task(user_id: int, range_name: str):
     """Rebuild the cached Statistics page for a user and range."""
     from app import statistics_cache
+
     statistics_cache.refresh_statistics_cache(user_id, range_name)
 
 
@@ -1009,33 +1205,49 @@ def populate_runtime_data_continuous():
     cache_key = "runtime_population_completed"
     if cache.get(cache_key):
         # Check if episodes also need runtime data
-        episodes_needing_runtime = Item.objects.filter(
-            runtime_minutes__isnull=True,
-            media_type=MediaTypes.EPISODE.value,
-            source__in=RUNTIME_BACKFILL_SOURCES,
-        ).exclude(runtime_minutes=999999).count()
+        episodes_needing_runtime = (
+            Item.objects.filter(
+                runtime_minutes__isnull=True,
+                media_type=MediaTypes.EPISODE.value,
+                source__in=RUNTIME_BACKFILL_SOURCES,
+            )
+            .exclude(runtime_minutes=999999)
+            .count()
+        )
 
         if episodes_needing_runtime > 0:
-            logger.info(f"Runtime population completed for movies/TV/anime, but {episodes_needing_runtime} episodes still need runtime data. Starting episode population...")
+            logger.info(
+                f"Runtime population completed for movies/TV/anime, but {episodes_needing_runtime} episodes still need runtime data. Starting episode population...",
+            )
             # Clear the cache and continue with episode population
             cache.delete(cache_key)
         else:
             logger.info("Runtime population already completed recently - skipping")
-            return {"total_items": 0, "batches_scheduled": 0, "message": "Already completed recently"}
+            return {
+                "total_items": 0,
+                "batches_scheduled": 0,
+                "message": "Already completed recently",
+            }
 
     # Count total items that need runtime data (exclude previously failed items)
     total_items = _runtime_items_queryset().count()
 
     if total_items == 0:
         # Check if episodes also need runtime data
-        episodes_needing_runtime = Item.objects.filter(
-            runtime_minutes__isnull=True,
-            media_type=MediaTypes.EPISODE.value,
-            source__in=RUNTIME_BACKFILL_SOURCES,
-        ).exclude(runtime_minutes=999999).count()
+        episodes_needing_runtime = (
+            Item.objects.filter(
+                runtime_minutes__isnull=True,
+                media_type=MediaTypes.EPISODE.value,
+                source__in=RUNTIME_BACKFILL_SOURCES,
+            )
+            .exclude(runtime_minutes=999999)
+            .count()
+        )
 
         if episodes_needing_runtime > 0:
-            logger.info(f"No movies/TV/anime need runtime data, but {episodes_needing_runtime} episodes still need runtime data. Starting episode population...")
+            logger.info(
+                f"No movies/TV/anime need runtime data, but {episodes_needing_runtime} episodes still need runtime data. Starting episode population...",
+            )
             # Start episode population
             episode_result = populate_episode_runtime_data.delay()
             return {
@@ -1046,9 +1258,15 @@ def populate_runtime_data_continuous():
         logger.info("No items need runtime data - all up to date!")
         # Mark as completed for 1 hour to prevent repeated runs
         cache.set(cache_key, True, timeout=3600)
-        return {"total_items": 0, "batches_scheduled": 0, "message": "All up to date - marked as completed"}
+        return {
+            "total_items": 0,
+            "batches_scheduled": 0,
+            "message": "All up to date - marked as completed",
+        }
 
-    logger.info(f"Found {total_items} items that need runtime data. Starting comprehensive population...")
+    logger.info(
+        f"Found {total_items} items that need runtime data. Starting comprehensive population...",
+    )
 
     # Start the first batch - it will chain itself if more items remain
     first_batch = populate_runtime_data_batch.delay(batch_size=20, delay_seconds=1.0)
@@ -1103,8 +1321,12 @@ def enrich_music_library_task(user_id: int):
     artists_with_mbid = [a for a in artists if a.musicbrainz_id]
 
     # Log sample names to verify we're seeing the full set (not just "A" names)
-    sample_without_mbid = [a.name for a in artists_without_mbid[:10]] if artists_without_mbid else []
-    sample_with_mbid = [a.name for a in artists_with_mbid[:10]] if artists_with_mbid else []
+    sample_without_mbid = (
+        [a.name for a in artists_without_mbid[:10]] if artists_without_mbid else []
+    )
+    sample_with_mbid = (
+        [a.name for a in artists_with_mbid[:10]] if artists_with_mbid else []
+    )
 
     logger.info(
         "enrich_music_library_task: Found %d total artists (%d without MBID, %d with MBID). "
@@ -1148,7 +1370,11 @@ def enrich_music_library_task(user_id: int):
                 items_to_update_runtime.append(music.item)
 
     if items_to_update_runtime:
-        Item.objects.bulk_update(items_to_update_runtime, ["runtime_minutes"], batch_size=500)
+        Item.objects.bulk_update(
+            items_to_update_runtime,
+            ["runtime_minutes"],
+            batch_size=500,
+        )
         logger.info(
             "enrich_music_library_task: Backfilled %d runtimes from existing tracks",
             len(items_to_update_runtime),
@@ -1244,7 +1470,9 @@ def enrich_music_library_task(user_id: int):
                                 merged += 1
                                 logger.info(
                                     "enrich_music_library_task: SUCCESS - merged artist '%s' (id=%s) into '%s' (id=%s, MBID=%s) via variant '%s'",
-                                    artist.name if hasattr(artist, "name") else "Unknown",
+                                    artist.name
+                                    if hasattr(artist, "name")
+                                    else "Unknown",
                                     artist.id if hasattr(artist, "id") else "Unknown",
                                     existing.name,
                                     existing.id,
@@ -1254,7 +1482,9 @@ def enrich_music_library_task(user_id: int):
                             except Exception as merge_exc:
                                 logger.warning(
                                     "enrich_music_library_task: merge FAILED for '%s' (id=%s) into '%s' (id=%s, MBID=%s): %s",
-                                    artist.name if hasattr(artist, "name") else "Unknown",
+                                    artist.name
+                                    if hasattr(artist, "name")
+                                    else "Unknown",
                                     artist.id if hasattr(artist, "id") else "Unknown",
                                     existing.name,
                                     existing.id,
@@ -1266,7 +1496,9 @@ def enrich_music_library_task(user_id: int):
                                 if not artist.pk:
                                     logger.warning(
                                         "enrich_music_library_task: artist '%s' invalid after failed merge, skipping remaining processing for this artist, continuing with next",
-                                        artist.name if hasattr(artist, "name") else "Unknown",
+                                        artist.name
+                                        if hasattr(artist, "name")
+                                        else "Unknown",
                                     )
                                     continue
                         else:
@@ -1326,7 +1558,11 @@ def enrich_music_library_task(user_id: int):
             try:
                 Artist.objects.get(pk=artist.pk)
             except Artist.DoesNotExist:
-                logger.debug("Artist %s (pk=%s) no longer exists, skipping album collection", artist.name, artist.pk)
+                logger.debug(
+                    "Artist %s (pk=%s) no longer exists, skipping album collection",
+                    artist.name,
+                    artist.pk,
+                )
             else:
                 for album in Album.objects.filter(
                     artist_id=artist.pk,
@@ -1397,7 +1633,11 @@ def enrich_music_library_task(user_id: int):
                 items_final_runtime.append(music.item)
 
     if items_final_runtime:
-        Item.objects.bulk_update(items_final_runtime, ["runtime_minutes"], batch_size=500)
+        Item.objects.bulk_update(
+            items_final_runtime,
+            ["runtime_minutes"],
+            batch_size=500,
+        )
         logger.info(
             "enrich_music_library_task: Backfilled %d additional runtimes from newly linked tracks",
             len(items_final_runtime),
@@ -1405,7 +1645,10 @@ def enrich_music_library_task(user_id: int):
 
     cover_task_id = None
     if defer_covers and artists_for_covers:
-        result = prefetch_album_covers_batch.delay(artists_for_covers, limit_per_artist=5)
+        result = prefetch_album_covers_batch.delay(
+            artists_for_covers,
+            limit_per_artist=5,
+        )
         cover_task_id = result.id
 
     # Queue track population as background task (only for albums with MBIDs)
@@ -1486,11 +1729,11 @@ def enrich_music_library_task(user_id: int):
 @shared_task
 def fast_runtime_backfill_task(user_id: int):
     """Fast runtime backfill from existing Track durations - runs immediately after import.
-    
+
     This is the critical path for statistics to work. Backfills runtime from:
     1. Track.duration_ms (if tracks already have duration from Plex)
     2. Direct lookup from album tracklists (if tracks are populated but not linked)
-    
+
     This runs BEFORE enrichment to get statistics working immediately.
     """
     from app.models import Item, Music, Track
@@ -1504,14 +1747,11 @@ def fast_runtime_backfill_task(user_id: int):
         return {"backfilled": 0}
 
     # Strategy 1: Backfill from linked Track.duration_ms (fastest path)
-    music_with_track_duration = (
-        Music.objects.filter(
-            user=user,
-            item__runtime_minutes__isnull=True,
-            track__duration_ms__isnull=False,
-        )
-        .select_related("item", "track")
-    )
+    music_with_track_duration = Music.objects.filter(
+        user=user,
+        item__runtime_minutes__isnull=True,
+        track__duration_ms__isnull=False,
+    ).select_related("item", "track")
 
     items_to_update = []
     for music in music_with_track_duration:
@@ -1523,7 +1763,30 @@ def fast_runtime_backfill_task(user_id: int):
 
     # Bulk update items
     if items_to_update:
-        Item.objects.bulk_update(items_to_update, ["runtime_minutes"], batch_size=500)
+        # Use smaller batch size for SQLite to reduce lock contention
+        batch_size = 100  # Much smaller for SQLite locking issues
+        try:
+            from integrations.imports.helpers import retry_on_lock
+
+            retry_on_lock(
+                lambda: Item.objects.bulk_update(
+                    items_to_update,
+                    ["runtime_minutes"],
+                    batch_size=batch_size,
+                ),
+                max_retries=3,
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to bulk update runtime after retries: %s",
+                e,
+            )
+            # Fall back to individual saves if bulk update fails
+            for item in items_to_update:
+                try:
+                    item.save(update_fields=["runtime_minutes"])
+                except Exception as save_error:
+                    logger.error("Failed to save item %s: %s", item.id, save_error)
         logger.info(
             "fast_runtime_backfill_task: Backfilled %d runtimes from linked Track records",
             len(items_to_update),
@@ -1562,7 +1825,30 @@ def fast_runtime_backfill_task(user_id: int):
 
     # Bulk update additional items
     if additional_items:
-        Item.objects.bulk_update(additional_items, ["runtime_minutes"], batch_size=500)
+        # Use smaller batch size for SQLite to reduce lock contention
+        batch_size = 100  # Much smaller for SQLite locking issues
+        try:
+            from integrations.imports.helpers import retry_on_lock
+
+            retry_on_lock(
+                lambda: Item.objects.bulk_update(
+                    additional_items,
+                    ["runtime_minutes"],
+                    batch_size=batch_size,
+                ),
+                max_retries=3,
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to bulk update runtime after retries: %s",
+                e,
+            )
+            # Fall back to individual saves if bulk update fails
+            for item in additional_items:
+                try:
+                    item.save(update_fields=["runtime_minutes"])
+                except Exception as save_error:
+                    logger.error("Failed to save item %s: %s", item.id, save_error)
         logger.info(
             "fast_runtime_backfill_task: Backfilled %d runtimes from album tracklists",
             len(additional_items),
@@ -1575,13 +1861,13 @@ def fast_runtime_backfill_task(user_id: int):
 @shared_task
 def populate_album_tracks_batch(album_ids: list[int], user_id: int | None = None):
     """Populate tracks for a batch of albums in the background.
-    
+
     This defers the slow API operations (1 req/sec per album) to background
     so enrichment task completes faster.
-    
+
     After populating tracks, automatically links Music entries to tracks and
     backfills runtime data.
-    
+
     Args:
         album_ids: List of album IDs to populate tracks for
         user_id: Optional user ID - if provided, links tracks and backfills runtime after population
@@ -1608,13 +1894,18 @@ def populate_album_tracks_batch(album_ids: list[int], user_id: int | None = None
                 continue
 
             # Skip albums without MBIDs - can't populate tracks without them
-            if not album.musicbrainz_release_id and not album.musicbrainz_release_group_id:
+            if (
+                not album.musicbrainz_release_id
+                and not album.musicbrainz_release_group_id
+            ):
                 continue
 
             count = populate_album_tracks(album)
             if count > 0:
                 populated += 1
-            elif album.musicbrainz_release_group_id and not album.musicbrainz_release_id:
+            elif (
+                album.musicbrainz_release_group_id and not album.musicbrainz_release_id
+            ):
                 skipped_no_release_id += 1
         except Exception as exc:
             logger.warning("Track populate failed for album %s: %s", album_id, exc)
@@ -1651,9 +1942,15 @@ def populate_album_tracks_batch(album_ids: list[int], user_id: int | None = None
                 backfill_result.get("backfilled", 0),
             )
         except User.DoesNotExist:
-            logger.warning("populate_album_tracks_batch: User %s not found, skipping track linking", user_id)
+            logger.warning(
+                "populate_album_tracks_batch: User %s not found, skipping track linking",
+                user_id,
+            )
         except Exception as exc:
-            logger.warning("Failed to link tracks/backfill runtime after track population: %s", exc)
+            logger.warning(
+                "Failed to link tracks/backfill runtime after track population: %s",
+                exc,
+            )
 
     return {
         "albums": len(album_ids),
@@ -1666,7 +1963,7 @@ def populate_album_tracks_batch(album_ids: list[int], user_id: int | None = None
 @shared_task
 def enrich_albums_task(user_id: int):
     """Post-import enrichment for albums - resolve MBIDs and populate tracks.
-    
+
     This task processes albums that don't have MusicBrainz IDs, similar to how
     enrich_music_library_task processes artists. Uses the same proven search/matching
     logic from resolve_artist_mbid adapted for albums.
@@ -1708,19 +2005,23 @@ def enrich_albums_task(user_id: int):
         if not a.musicbrainz_release_id and not a.musicbrainz_release_group_id
     ]
     albums_with_mbid = [
-        a
-        for a in albums
-        if a.musicbrainz_release_id or a.musicbrainz_release_group_id
+        a for a in albums if a.musicbrainz_release_id or a.musicbrainz_release_group_id
     ]
 
     # Log sample names to verify we're seeing the full set
     sample_without_mbid = (
-        [f"{a.title} - {a.artist.name if a.artist else 'Unknown'}" for a in albums_without_mbid[:10]]
+        [
+            f"{a.title} - {a.artist.name if a.artist else 'Unknown'}"
+            for a in albums_without_mbid[:10]
+        ]
         if albums_without_mbid
         else []
     )
     sample_with_mbid = (
-        [f"{a.title} - {a.artist.name if a.artist else 'Unknown'}" for a in albums_with_mbid[:10]]
+        [
+            f"{a.title} - {a.artist.name if a.artist else 'Unknown'}"
+            for a in albums_with_mbid[:10]
+        ]
         if albums_with_mbid
         else []
     )
@@ -1759,7 +2060,11 @@ def enrich_albums_task(user_id: int):
                 items_to_update_runtime.append(music.item)
 
     if items_to_update_runtime:
-        Item.objects.bulk_update(items_to_update_runtime, ["runtime_minutes"], batch_size=500)
+        Item.objects.bulk_update(
+            items_to_update_runtime,
+            ["runtime_minutes"],
+            batch_size=500,
+        )
         logger.info(
             "enrich_albums_task: Backfilled %d runtimes from existing tracks",
             len(items_to_update_runtime),
@@ -1845,13 +2150,21 @@ def enrich_albums_task(user_id: int):
                         # Find existing album with this release_group_id
                         existing = None
                         if release_group_id:
-                            existing = Album.objects.filter(
-                                musicbrainz_release_group_id=release_group_id,
-                            ).exclude(id=album.id).first()
+                            existing = (
+                                Album.objects.filter(
+                                    musicbrainz_release_group_id=release_group_id,
+                                )
+                                .exclude(id=album.id)
+                                .first()
+                            )
                         if not existing and release_id:
-                            existing = Album.objects.filter(
-                                musicbrainz_release_id=release_id,
-                            ).exclude(id=album.id).first()
+                            existing = (
+                                Album.objects.filter(
+                                    musicbrainz_release_id=release_id,
+                                )
+                                .exclude(id=album.id)
+                                .first()
+                            )
 
                         if existing:
                             logger.info(
@@ -1864,17 +2177,30 @@ def enrich_albums_task(user_id: int):
                                 # Merge album into existing (similar to _merge_album_into_target logic)
                                 updates = set()
                                 if (
-                                    (not existing.image or existing.image == settings.IMG_NONE)
+                                    (
+                                        not existing.image
+                                        or existing.image == settings.IMG_NONE
+                                    )
                                     and album.image
                                     and album.image != settings.IMG_NONE
                                 ):
                                     existing.image = album.image
                                     updates.add("image")
-                                if not existing.musicbrainz_release_id and album.musicbrainz_release_id:
-                                    existing.musicbrainz_release_id = album.musicbrainz_release_id
+                                if (
+                                    not existing.musicbrainz_release_id
+                                    and album.musicbrainz_release_id
+                                ):
+                                    existing.musicbrainz_release_id = (
+                                        album.musicbrainz_release_id
+                                    )
                                     updates.add("musicbrainz_release_id")
-                                if not existing.musicbrainz_release_group_id and album.musicbrainz_release_group_id:
-                                    existing.musicbrainz_release_group_id = album.musicbrainz_release_group_id
+                                if (
+                                    not existing.musicbrainz_release_group_id
+                                    and album.musicbrainz_release_group_id
+                                ):
+                                    existing.musicbrainz_release_group_id = (
+                                        album.musicbrainz_release_group_id
+                                    )
                                     updates.add("musicbrainz_release_group_id")
                                 if not existing.release_date and album.release_date:
                                     existing.release_date = album.release_date
@@ -1892,22 +2218,27 @@ def enrich_albums_task(user_id: int):
                                         album=existing,
                                     ).first()
                                     if existing_tracker:
-                                        if (
-                                            tracker.start_date
-                                            and (
-                                                not existing_tracker.start_date
-                                                or tracker.start_date < existing_tracker.start_date
-                                            )
+                                        if tracker.start_date and (
+                                            not existing_tracker.start_date
+                                            or tracker.start_date
+                                            < existing_tracker.start_date
                                         ):
-                                            existing_tracker.start_date = tracker.start_date
-                                            existing_tracker.save(update_fields=["start_date"])
+                                            existing_tracker.start_date = (
+                                                tracker.start_date
+                                            )
+                                            existing_tracker.save(
+                                                update_fields=["start_date"],
+                                            )
                                         tracker.delete()
                                     else:
                                         tracker.album = existing
                                         tracker.save(update_fields=["album"])
 
                                 # Re-point music entries to the canonical album
-                                Music.objects.filter(album=album).update(album=existing, track=None)
+                                Music.objects.filter(album=album).update(
+                                    album=existing,
+                                    track=None,
+                                )
 
                                 # Delete the source album
                                 album.delete()
@@ -1915,7 +2246,9 @@ def enrich_albums_task(user_id: int):
                                 merged += 1
                                 logger.info(
                                     "enrich_albums_task: SUCCESS - merged album '%s' (id=%s) into '%s' (id=%s, release_group_id=%s) via variant '%s'",
-                                    album.title if hasattr(album, "title") else "Unknown",
+                                    album.title
+                                    if hasattr(album, "title")
+                                    else "Unknown",
                                     album.id if hasattr(album, "id") else "Unknown",
                                     existing.title,
                                     existing.id,
@@ -1925,7 +2258,9 @@ def enrich_albums_task(user_id: int):
                             except Exception as merge_exc:
                                 logger.warning(
                                     "enrich_albums_task: merge FAILED for '%s' (id=%s) into '%s' (id=%s): %s",
-                                    album.title if hasattr(album, "title") else "Unknown",
+                                    album.title
+                                    if hasattr(album, "title")
+                                    else "Unknown",
                                     album.id if hasattr(album, "id") else "Unknown",
                                     existing.title,
                                     existing.id,
@@ -1936,7 +2271,9 @@ def enrich_albums_task(user_id: int):
                                 if not album.pk:
                                     logger.warning(
                                         "enrich_albums_task: album '%s' invalid after failed merge, skipping remaining processing",
-                                        album.title if hasattr(album, "title") else "Unknown",
+                                        album.title
+                                        if hasattr(album, "title")
+                                        else "Unknown",
                                     )
                                     continue
                         else:
@@ -1974,7 +2311,9 @@ def enrich_albums_task(user_id: int):
             continue
 
         # Collect albums that need track population (only albums with MBIDs)
-        if album.pk and (album.musicbrainz_release_id or album.musicbrainz_release_group_id):
+        if album.pk and (
+            album.musicbrainz_release_id or album.musicbrainz_release_group_id
+        ):
             if not album.tracks_populated:
                 albums_to_populate.append(album.id)
 
@@ -1988,7 +2327,10 @@ def enrich_albums_task(user_id: int):
             if album.tracks_populated:
                 continue
             # Skip albums without MBIDs - can't populate tracks without them
-            if not album.musicbrainz_release_id and not album.musicbrainz_release_group_id:
+            if (
+                not album.musicbrainz_release_id
+                and not album.musicbrainz_release_group_id
+            ):
                 continue
 
             count = populate_album_tracks(album)
@@ -2017,7 +2359,10 @@ def enrich_albums_task(user_id: int):
                 backfill_result.get("backfilled", 0),
             )
         except Exception as exc:
-            logger.warning("Failed to link tracks/backfill runtime after track population: %s", exc)
+            logger.warning(
+                "Failed to link tracks/backfill runtime after track population: %s",
+                exc,
+            )
 
     # Phase 5: Final runtime backfill from newly populated/linked tracks
     music_with_new_runtime = (
@@ -2035,7 +2380,11 @@ def enrich_albums_task(user_id: int):
                 items_final_runtime.append(music.item)
 
     if items_final_runtime:
-        Item.objects.bulk_update(items_final_runtime, ["runtime_minutes"], batch_size=500)
+        Item.objects.bulk_update(
+            items_final_runtime,
+            ["runtime_minutes"],
+            batch_size=500,
+        )
         logger.info(
             "enrich_albums_task: Backfilled %d additional runtimes from newly linked tracks",
             len(items_final_runtime),
@@ -2069,20 +2418,30 @@ def enrich_albums_task(user_id: int):
 
 
 @shared_task
-def prefetch_album_covers_batch(artist_ids: list[int], limit_per_artist: int | None = 10):
+def prefetch_album_covers_batch(
+    artist_ids: list[int],
+    limit_per_artist: int | None = 10,
+):
     """Prefetch album covers for a batch of artists (run after enrichment)."""
     from app.models import Artist
     from app.services.music import prefetch_album_covers
 
     updated = 0
     for artist_id in artist_ids:
-        artist = Artist.objects.filter(id=artist_id, musicbrainz_id__isnull=False).first()
+        artist = Artist.objects.filter(
+            id=artist_id,
+            musicbrainz_id__isnull=False,
+        ).first()
         if not artist:
             continue
         try:
             updated += prefetch_album_covers(artist, limit=limit_per_artist)
         except Exception as exc:  # pragma: no cover - defensive
-            logger.debug("Cover batch prefetch failed for artist %s: %s", artist_id, exc)
+            logger.debug(
+                "Cover batch prefetch failed for artist %s: %s",
+                artist_id,
+                exc,
+            )
     return {"artists": len(artist_ids), "covers_updated": updated}
 
 
@@ -2156,7 +2515,7 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
                     source=source,
                     media_type=MediaTypes.EPISODE.value,
                     season_number=season_number,
-                )
+                ),
             )
             existing_by_number = {
                 ep.episode_number: ep
@@ -2258,8 +2617,15 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
                     continue
 
                 existing_item = existing_by_number.get(episode_number)
-                existing_title, existing_image = episode_title_map.get(episode_number, ("", ""))
-                title = existing_title or ep_data.get("title") or f"Episode {episode_number}"
+                existing_title, existing_image = episode_title_map.get(
+                    episode_number,
+                    ("", ""),
+                )
+                title = (
+                    existing_title
+                    or ep_data.get("title")
+                    or f"Episode {episode_number}"
+                )
                 image = ep_data.get("image") or existing_image or settings.IMG_NONE
 
                 if existing_item:
@@ -2279,7 +2645,10 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
                         if runtime_changed:
                             updated_count += 1
                             updated_items.append(existing_item)
-                            _record_backfill_success(existing_item, MetadataBackfillField.RUNTIME)
+                            _record_backfill_success(
+                                existing_item,
+                                MetadataBackfillField.RUNTIME,
+                            )
                             logger.info(
                                 "Updated runtime for %s S%sE%s: %s minutes",
                                 existing_item.title,
@@ -2301,7 +2670,10 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
                         )
                         updated_count += 1
                         updated_items.append(episode_item)
-                        _record_backfill_success(episode_item, MetadataBackfillField.RUNTIME)
+                        _record_backfill_success(
+                            episode_item,
+                            MetadataBackfillField.RUNTIME,
+                        )
                         logger.info(
                             "Updated runtime for %s S%sE%s: %s minutes",
                             episode_item.title,
@@ -2317,12 +2689,18 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
                             season_number=season_number,
                             episode_number=episode_number,
                         ).first()
-                        if existing_item and existing_item.runtime_minutes != runtime_minutes:
+                        if (
+                            existing_item
+                            and existing_item.runtime_minutes != runtime_minutes
+                        ):
                             existing_item.runtime_minutes = runtime_minutes
                             existing_item.save(update_fields=["runtime_minutes"])
                             updated_count += 1
                             updated_items.append(existing_item)
-                            _record_backfill_success(existing_item, MetadataBackfillField.RUNTIME)
+                            _record_backfill_success(
+                                existing_item,
+                                MetadataBackfillField.RUNTIME,
+                            )
                             logger.info(
                                 "Updated runtime for %s S%sE%s: %s minutes",
                                 existing_item.title,
@@ -2344,11 +2722,19 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
             time.sleep(0.1)
 
         except Exception as e:
-            logger.error("Error processing episode season %s %s S%s: %s", media_id, source, season_number, e)
+            logger.error(
+                "Error processing episode season %s %s S%s: %s",
+                media_id,
+                source,
+                season_number,
+                e,
+            )
             error_count += 1
             continue
 
-    logger.info(f"Episode runtime population completed: {updated_count} episodes updated, {error_count} errors")
+    logger.info(
+        f"Episode runtime population completed: {updated_count} episodes updated, {error_count} errors",
+    )
 
     if updated_items:
         _schedule_metadata_statistics_refresh(
@@ -2359,10 +2745,139 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
 
     if not normalized_seasons:
         cache.set("runtime_population_completed", True, timeout=3600)
-        logger.info("🎉 All runtime data population completed! Movies, TV shows, anime, and episodes all processed.")
+        logger.info(
+            "🎉 All runtime data population completed! Movies, TV shows, anime, and episodes all processed.",
+        )
 
     return {
         "updated": updated_count,
         "errors": error_count,
         "message": f"Processed {len(processed_seasons)} seasons, updated {updated_count} episodes.",
+    }
+
+
+@shared_task(bind=True, max_retries=3)
+def update_book_metadata(self):
+    """Update books with author and series metadata from provider data or search."""
+    from app.models import Book, BookAuthor, BookSeries
+
+    logger.info("update_book_metadata_task: Starting book metadata backfill")
+
+    # Find books missing authors or series
+    books_to_update = (
+        Book.objects.filter(
+            Q(authors__isnull=True) | Q(series__isnull=True),
+        )
+        .select_related("item")
+        .distinct()
+    )
+
+    updated_count = 0
+    error_count = 0
+
+    for book in books_to_update[:1000]:  # Process in batches
+        try:
+            updated = False
+
+            # Try to populate authors from provider metadata first
+            if not book.authors.exists() and book.item.provider_author_names:
+                for author_name in book.item.provider_author_names:
+                    if author_name and isinstance(author_name, str):
+                        author_name = author_name.strip()
+                        if author_name:
+                            author_obj, _ = BookAuthor.objects.get_or_create(
+                                name=author_name,
+                            )
+                            book.authors.add(author_obj)
+                            updated = True
+
+            # Try to populate series from provider metadata
+            if not book.series and book.item.provider_series_data:
+                series_name = book.item.provider_series_data.get("name")
+                if series_name:
+                    series_obj, _ = BookSeries.objects.get_or_create(
+                        name=series_name,
+                    )
+                    book.series = series_obj
+                    book.save(update_fields=["series"])
+                    updated = True
+
+            # If no provider metadata, try searching provider API
+            if not book.authors.exists() or not book.series:
+                try:
+                    metadata = services.get_media_metadata(
+                        MediaTypes.BOOK.value,
+                        book.item.media_id,
+                        book.item.source,
+                    )
+
+                    # Extract and populate authors from metadata
+                    if not book.authors.exists() and metadata.get("authors"):
+                        authors = metadata.get("authors", [])
+                        if not isinstance(authors, list):
+                            authors = [authors]
+                        for author_info in authors:
+                            author_name = (
+                                author_info.get("name")
+                                if isinstance(author_info, dict)
+                                else author_info
+                            )
+                            if author_name:
+                                author_name = str(author_name).strip()
+                                if author_name:
+                                    author_obj, _ = BookAuthor.objects.get_or_create(
+                                        name=author_name,
+                                    )
+                                    book.authors.add(author_obj)
+                                    updated = True
+
+                    # Extract and populate series from metadata
+                    if not book.series:
+                        series_name = metadata.get("series_name") or metadata.get(
+                            "details",
+                            {},
+                        ).get("series")
+                        if series_name:
+                            series_obj, _ = BookSeries.objects.get_or_create(
+                                name=series_name,
+                            )
+                            book.series = series_obj
+                            book.save(update_fields=["series"])
+                            updated = True
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "update_book_metadata_task: Failed to fetch metadata for book %s (%s): %s",
+                        book.item.title,
+                        book.item.media_id,
+                        exc,
+                    )
+                    error_count += 1
+                    continue
+
+            if updated:
+                updated_count += 1
+                logger.debug(
+                    "update_book_metadata_task: Updated book %s (%s)",
+                    book.item.title,
+                    book.item.media_id,
+                )
+
+        except Exception as exc:
+            logger.exception(
+                "update_book_metadata_task: Error processing book %s: %s",
+                book.item.title if book.item else "unknown",
+                exc,
+            )
+            error_count += 1
+
+    logger.info(
+        "update_book_metadata_task: Completed. Updated: %d, Errors: %d",
+        updated_count,
+        error_count,
+    )
+
+    return {
+        "updated": updated_count,
+        "errors": error_count,
+        "message": f"Processed {books_to_update.count()} books, updated {updated_count} with authors/series.",
     }

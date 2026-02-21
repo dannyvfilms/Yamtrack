@@ -213,7 +213,21 @@
         {% endif %}
 
         <h1 class="text-3xl font-bold mb-1 text-center md:text-start">{{ media.title }}</h1>
-        {% if media.media_type == MediaTypes.BOOK.value and media.series_name %}
+        
+        {# Book authors #}
+        {% if media_type == MediaTypes.BOOK.value and book_authors %}
+          <p class="text-gray-400 mb-2 text-center md:text-start">
+            by {% for author in book_authors %}<a href="{% url 'books_by_author' author.id %}" class="text-indigo-400 hover:text-indigo-300 transition-colors">{{ author.name }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}
+          </p>
+        {% endif %}
+        
+        {# Book series #}
+        {% if media_type == MediaTypes.BOOK.value and book_series %}
+          <p class="text-indigo-400 font-medium mb-4 text-center md:text-start">
+            <a href="{% url 'books_by_series' book_series.id %}" class="text-indigo-400 hover:text-indigo-300 transition-colors">{{ book_series.name }}</a>
+            {% if media.series_position %}<span class="text-gray-400 ml-1">#{{ media.series_position|floatformat:"-2" }}</span>{% endif %}
+          </p>
+        {% elif media_type == MediaTypes.BOOK.value and media.series_name %}
           <p class="text-indigo-400 font-medium mb-4 text-center md:text-start">
             {{ media.series_name }}
             {% if media.series_position %}<span class="text-gray-400 ml-1">#{{ media.series_position|floatformat:"-2" }}</span>{% endif %}
@@ -710,6 +724,13 @@
               {% else %}
                 {% if key == 'first_air_date' or key == 'last_air_date' %}
                   <p class="text-gray-200">{{ value|user_date_format:user|default_if_none:"Unknown" }}</p>
+                {% elif media_type == MediaTypes.BOOK.value and key == 'author' and book_authors %}
+                  {# For books, link author names to books_by_author if available #}
+                  <div class="flex flex-wrap gap-2">
+                    {% for author in book_authors %}
+                      <a href="{% url 'books_by_author' author.id %}" class="text-indigo-400 hover:text-indigo-300 transition-colors">{{ author.name }}</a>{% if not forloop.last %}<span class="text-gray-400">,</span>{% endif %}
+                    {% endfor %}
+                  </div>
                 {% else %}
                   <p class="text-gray-200">{{ value|default_if_none:"Unknown" }}</p>
                 {% endif %}

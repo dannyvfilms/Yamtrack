@@ -4,10 +4,7 @@ from django.apps import apps
 from django.contrib import admin
 from django.contrib.admin.sites import AlreadyRegistered
 
-from app.models import (
-    Episode,
-    Item,
-)
+from app.models import Episode, Item
 
 
 # Custom ModelAdmin classes with search functionality
@@ -65,7 +62,13 @@ class TrackAdmin(admin.ModelAdmin):
     """Custom admin for Track model."""
 
     search_fields = ["title", "musicbrainz_recording_id", "album__title"]
-    list_display = ["title", "album", "track_number", "disc_number", "duration_formatted"]
+    list_display = [
+        "title",
+        "album",
+        "track_number",
+        "disc_number",
+        "duration_formatted",
+    ]
     list_filter = ["album"]
 
 
@@ -89,6 +92,8 @@ SpecialModels = [
     "ItemStudioCredit",
     "MetadataBackfillState",
     "CollectionEntry",
+    "BookAuthor",
+    "BookSeries",
 ]
 for model in app_models:
     if (
@@ -100,10 +105,10 @@ for model in app_models:
 
 
 # Register Artist, Album, Track, ArtistTracker, and AlbumTracker with custom admin classes
-from app.models import (  # noqa: E402
+from app.models import (
     Album,
     AlbumTracker,
-    Artist,
+    Artist,  # noqa: E402
     ArtistTracker,
     MetadataBackfillState,
     Track,
@@ -182,7 +187,15 @@ admin.site.register(PodcastEpisode, PodcastEpisodeAdmin)
 class CollectionEntryAdmin(admin.ModelAdmin):
     """Admin for CollectionEntry model."""
 
-    list_display = ["user", "item", "collected_at", "media_type", "resolution", "audio_codec", "bitrate"]
+    list_display = [
+        "user",
+        "item",
+        "collected_at",
+        "media_type",
+        "resolution",
+        "audio_codec",
+        "bitrate",
+    ]
     list_filter = ["media_type", "resolution", "hdr", "is_3d", "collected_at"]
     search_fields = ["user__username", "item__title"]
     readonly_fields = ["collected_at", "updated_at"]

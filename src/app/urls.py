@@ -185,7 +185,11 @@ urlpatterns = [
         name="create_album_from_search",
     ),
     # Podcast show hierarchy navigation
-    path("podcast/show/<int:show_id>/", views.podcast_show_detail, name="podcast_show_detail"),
+    path(
+        "podcast/show/<int:show_id>/",
+        views.podcast_show_detail,
+        name="podcast_show_detail",
+    ),
     path(
         "podcast/show/<int:show_id>/track_modal/",
         views.podcast_show_track_modal,
@@ -238,5 +242,16 @@ urlpatterns = [
         "api/collection-status/<int:item_id>/",
         views.collection_status_api,
         name="collection_status_api",
+    ),
+    # Book author/series navigation
+    path(
+        "books/author/<int:author_id>/",
+        views.books_by_author,
+        name="books_by_author",
+    ),
+    path(
+        "books/series/<int:series_id>/",
+        views.books_by_series,
+        name="books_by_series",
     ),
 ]

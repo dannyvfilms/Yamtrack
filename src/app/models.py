@@ -1,6 +1,6 @@
 import logging
-from datetime import timedelta
 from collections import defaultdict
+from datetime import timedelta
 
 from django.apps import apps
 from django.conf import settings
@@ -87,12 +87,36 @@ class Item(CalendarTriggerMixin, models.Model):
     image = models.URLField()  # if add default, custom media entry will show the value
     season_number = models.PositiveIntegerField(null=True, blank=True)
     episode_number = models.PositiveIntegerField(null=True, blank=True)
-    runtime_minutes = models.PositiveIntegerField(null=True, blank=True, help_text="Runtime in minutes")
-    number_of_pages = models.PositiveIntegerField(null=True, blank=True, help_text="Number of pages for books")
+    runtime_minutes = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Runtime in minutes",
+    )
+    number_of_pages = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Number of pages for books",
+    )
     release_datetime = models.DateTimeField(null=True, blank=True)
     genres = models.JSONField(default=list, blank=True)
     series_name = models.TextField(null=True, blank=True)
     series_position = models.FloatField(null=True, blank=True)
+    isbn = models.CharField(
+        max_length=20,
+        null=True,
+        blank=True,
+        help_text="ISBN for books",
+    )
+    provider_author_names = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of author names from provider search results",
+    )
+    provider_series_data = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Series data from provider (name, position, etc.)",
+    )
 
     class Meta:
         """Meta options for the model."""
@@ -221,7 +245,9 @@ class Item(CalendarTriggerMixin, models.Model):
                 if tv_metadata.get("details", {}).get("runtime"):
                     from app.statistics import parse_runtime_to_minutes
 
-                    runtime_minutes = parse_runtime_to_minutes(tv_metadata["details"]["runtime"])
+                    runtime_minutes = parse_runtime_to_minutes(
+                        tv_metadata["details"]["runtime"],
+                    )
 
                 tv_item = Item.objects.create(
                     media_id=self.media_id,
@@ -239,7 +265,10 @@ class Item(CalendarTriggerMixin, models.Model):
             items_to_process = [self]
 
         if delay:
-            events.tasks.reload_calendar.apply_async(kwargs={"items_to_process": items_to_process}, countdown=3)
+            events.tasks.reload_calendar.apply_async(
+                kwargs={"items_to_process": items_to_process},
+                countdown=3,
+            )
         else:
             events.tasks.reload_calendar(items_to_process=items_to_process)
 
@@ -288,7 +317,6 @@ class MetadataBackfillState(models.Model):
             models.Index(fields=["field", "next_retry_at"]),
             models.Index(fields=["field", "give_up"]),
         ]
-
 
 
 class PersonGender(models.TextChoices):
@@ -473,7 +501,15 @@ class MediaManager(models.Manager):
             return "asc"
         return "desc"
 
-    def get_media_list(self, user, media_type, status_filter, sort_filter, search=None, direction=None):
+    def get_media_list(
+        self,
+        user,
+        media_type,
+        status_filter,
+        sort_filter,
+        search=None,
+        direction=None,
+    ):
         """Get a media list by type with filtering and sorting."""
         model = apps.get_model(app_label="app", model_name=media_type)
         direction = self.resolve_direction(sort_filter, direction)
@@ -533,7 +569,12 @@ class MediaManager(models.Manager):
 
         # Apply sorting AFTER aggregation
         if sort_filter:
-            queryset = self._sort_media_list(queryset, sort_filter, media_type, direction)
+            queryset = self._sort_media_list(
+                queryset,
+                sort_filter,
+                media_type,
+                direction,
+            )
 
         return queryset
 
@@ -570,7 +611,9 @@ class MediaManager(models.Manager):
         display_media.aggregated_progress = total_progress
 
         # Aggregate start date (earliest start date)
-        start_dates = [entry.start_date for entry in all_media_entries if entry.start_date]
+        start_dates = [
+            entry.start_date for entry in all_media_entries if entry.start_date
+        ]
         if start_dates:
             display_media.aggregated_start_date = min(start_dates)
         else:
@@ -606,14 +649,20 @@ class MediaManager(models.Manager):
                     entry_activity = entry.created_at
 
                 # If this entry has more recent activity, use its rating
-                if latest_rating_activity is None or entry_activity > latest_rating_activity:
+                if (
+                    latest_rating_activity is None
+                    or entry_activity > latest_rating_activity
+                ):
                     latest_rating_activity = entry_activity
                     latest_rating = entry.score
             else:
-                entry_activity = entry.end_date or entry.progressed_at or entry.created_at
+                entry_activity = (
+                    entry.end_date or entry.progressed_at or entry.created_at
+                )
 
             if entry_activity and (
-                latest_status_activity is None or entry_activity > latest_status_activity
+                latest_status_activity is None
+                or entry_activity > latest_status_activity
             ):
                 latest_status_activity = entry_activity
                 latest_status = entry.status
@@ -777,7 +826,10 @@ class MediaManager(models.Manager):
             media_list = list(queryset)
             return sorted(
                 media_list,
-                key=lambda x: (getattr(x, "aggregated_progress", x.progress), x.item.title.lower()),
+                key=lambda x: (
+                    getattr(x, "aggregated_progress", x.progress),
+                    x.item.title.lower(),
+                ),
                 reverse=(direction == "desc"),
             )
 
@@ -820,7 +872,11 @@ class MediaManager(models.Manager):
         media_types = self._get_media_types_to_process(user, specific_media_type)
 
         # Get user preference for planned items display mode
-        planned_mode = getattr(user, "show_planned_on_home", users.models.PlannedHomeDisplayChoices.DISABLED)
+        planned_mode = getattr(
+            user,
+            "show_planned_on_home",
+            users.models.PlannedHomeDisplayChoices.DISABLED,
+        )
 
         def filter_by_latest_status(media_list, desired_status):
             """Filter media entries by their most recent status across duplicates."""
@@ -828,7 +884,11 @@ class MediaManager(models.Manager):
                 return media_list
             filtered = []
             for media in media_list:
-                latest_status = getattr(media, "aggregated_status", None) or getattr(media, "status", None)
+                latest_status = getattr(media, "aggregated_status", None) or getattr(
+                    media,
+                    "status",
+                    None,
+                )
                 if latest_status == desired_status:
                     filtered.append(media)
             return filtered
@@ -844,7 +904,10 @@ class MediaManager(models.Manager):
                 sort_filter=None,
             )
             in_progress_list = list(in_progress_list)
-            in_progress_list = filter_by_latest_status(in_progress_list, Status.IN_PROGRESS.value)
+            in_progress_list = filter_by_latest_status(
+                in_progress_list,
+                Status.IN_PROGRESS.value,
+            )
 
             # Get planned items if needed
             planned_list = []
@@ -855,7 +918,10 @@ class MediaManager(models.Manager):
                     status_filter=Status.PLANNING.value,
                     sort_filter=None,
                 )
-                planned_list = filter_by_latest_status(list(planned_queryset), Status.PLANNING.value)
+                planned_list = filter_by_latest_status(
+                    list(planned_queryset),
+                    Status.PLANNING.value,
+                )
 
             # Handle different modes
             if planned_mode == users.models.PlannedHomeDisplayChoices.DISABLED:
@@ -935,10 +1001,15 @@ class MediaManager(models.Manager):
                     if base_media_type == MediaTypes.SEASON.value:
                         self._fix_missing_season_images(in_progress_processed)
 
-                    sorted_in_progress = self._sort_in_progress_media(in_progress_processed, sort_by)
+                    sorted_in_progress = self._sort_in_progress_media(
+                        in_progress_processed,
+                        sort_by,
+                    )
                     total_in_progress = len(sorted_in_progress)
 
-                    if specific_media_type and specific_media_type.endswith("_in_progress"):
+                    if specific_media_type and specific_media_type.endswith(
+                        "_in_progress",
+                    ):
                         paginated_in_progress = sorted_in_progress[items_limit:]
                     else:
                         paginated_in_progress = sorted_in_progress[:items_limit]
@@ -959,7 +1030,10 @@ class MediaManager(models.Manager):
                     if base_media_type == MediaTypes.SEASON.value:
                         self._fix_missing_season_images(planned_processed)
 
-                    sorted_planned = self._sort_in_progress_media(planned_processed, sort_by)
+                    sorted_planned = self._sort_in_progress_media(
+                        planned_processed,
+                        sort_by,
+                    )
                     total_planned = len(sorted_planned)
 
                     if specific_media_type and specific_media_type.endswith("_planned"):
@@ -999,14 +1073,11 @@ class MediaManager(models.Manager):
                 score__isnull=False,
             ).values("item_id")
 
-            queryset = (
-                model.objects.filter(
-                    user=user.id,
-                    score__isnull=True,
-                    status=Status.COMPLETED.value,
-                )
-                .exclude(item_id__in=rated_item_ids)
-            )
+            queryset = model.objects.filter(
+                user=user.id,
+                score__isnull=True,
+                status=Status.COMPLETED.value,
+            ).exclude(item_id__in=rated_item_ids)
 
             if media_type == MediaTypes.SEASON.value:
                 queryset = queryset.filter(
@@ -1034,17 +1105,21 @@ class MediaManager(models.Manager):
             elif media_type == MediaTypes.MUSIC.value:
                 select_related_fields.append("album")
 
-            queryset = queryset.annotate(
-                repeats=Window(
-                    expression=Count("id"),
-                    partition_by=[F("item")],
-                ),
-                row_number=Window(
-                    expression=RowNumber(),
-                    partition_by=[F("item")],
-                    order_by=order_by_fields,
-                ),
-            ).filter(row_number=1).select_related(*select_related_fields)
+            queryset = (
+                queryset.annotate(
+                    repeats=Window(
+                        expression=Count("id"),
+                        partition_by=[F("item")],
+                    ),
+                    row_number=Window(
+                        expression=RowNumber(),
+                        partition_by=[F("item")],
+                        order_by=order_by_fields,
+                    ),
+                )
+                .filter(row_number=1)
+                .select_related(*select_related_fields)
+            )
 
             queryset = self._apply_prefetch_related(queryset, media_type)
             items = list(queryset)
@@ -1189,6 +1264,7 @@ class MediaManager(models.Manager):
             # The metadata value is more accurate as it reflects the actual total episodes
             # from the provider, not just episodes with release_datetime set
             from app.providers import services
+
             for season in media_list:
                 try:
                     season_metadata = services.get_media_metadata(
@@ -1203,7 +1279,10 @@ class MediaManager(models.Manager):
                         season.max_progress = metadata_max_progress
                     else:
                         # Fall back to database annotation if metadata doesn't have max_progress
-                        self._annotate_season_released_episodes([season], current_datetime)
+                        self._annotate_season_released_episodes(
+                            [season],
+                            current_datetime,
+                        )
                 except Exception:
                     # If metadata fetch fails, fall back to database annotation
                     self._annotate_season_released_episodes([season], current_datetime)
@@ -1219,12 +1298,16 @@ class MediaManager(models.Manager):
                     # Try to fetch from metadata if not stored
                     try:
                         from app.providers import services
+
                         metadata = services.get_media_metadata(
                             media.item.media_type,
                             media.item.media_id,
                             media.item.source,
                         )
-                        number_of_pages = metadata.get("max_progress") or metadata.get("details", {}).get("number_of_pages")
+                        number_of_pages = metadata.get("max_progress") or metadata.get(
+                            "details",
+                            {},
+                        ).get("number_of_pages")
                         if number_of_pages:
                             # Save it to the Item for future use
                             media.item.number_of_pages = number_of_pages
@@ -1339,7 +1422,11 @@ class MediaManager(models.Manager):
         }
         media_ids = {media_id for media_id, _, _ in season_keys}
         media_sources = {source for _, source, _ in season_keys}
-        season_numbers = {season_number for _, _, season_number in season_keys if season_number is not None}
+        season_numbers = {
+            season_number
+            for _, _, season_number in season_keys
+            if season_number is not None
+        }
 
         released_by_season: dict[tuple[str, str, int], int] = {}
 
@@ -1380,7 +1467,11 @@ class MediaManager(models.Manager):
         )
 
         for row in released_events:
-            key = (row["item__media_id"], row["item__source"], row["item__season_number"])
+            key = (
+                row["item__media_id"],
+                row["item__source"],
+                row["item__season_number"],
+            )
             max_episode = row["max_episode"] or 0
             released_by_season[key] = max(released_by_season.get(key, 0), max_episode)
 
@@ -1660,7 +1751,10 @@ class Media(models.Model):
             self.progress = 0
         else:
             # For podcasts, use runtime_minutes from Item instead of external metadata
-            if self.item.media_type in (MediaTypes.PODCAST.value, MediaTypes.MUSIC.value):
+            if self.item.media_type in (
+                MediaTypes.PODCAST.value,
+                MediaTypes.MUSIC.value,
+            ):
                 max_progress = self._get_local_max_progress()
             else:
                 max_progress = providers.services.get_media_metadata(
@@ -1677,7 +1771,10 @@ class Media(models.Model):
 
                     # For podcasts, don't set end_date here - it's calculated from published date + duration in import
                     # For other media types, set end_date if not already set
-                    if self.item.media_type != MediaTypes.PODCAST.value and not self.end_date:
+                    if (
+                        self.item.media_type != MediaTypes.PODCAST.value
+                        and not self.end_date
+                    ):
                         now = timezone.now().replace(second=0, microsecond=0)
                         self.end_date = now
 
@@ -1685,7 +1782,10 @@ class Media(models.Model):
         """Update fields depending on the status of the media."""
         if self.status == Status.COMPLETED.value:
             # For podcasts, use runtime_minutes from Item instead of external metadata
-            if self.item.media_type in (MediaTypes.PODCAST.value, MediaTypes.MUSIC.value):
+            if self.item.media_type in (
+                MediaTypes.PODCAST.value,
+                MediaTypes.MUSIC.value,
+            ):
                 max_progress = self._get_local_max_progress()
             else:
                 max_progress = providers.services.get_media_metadata(
@@ -1697,7 +1797,10 @@ class Media(models.Model):
             if max_progress:
                 self.progress = max_progress
 
-        if self.item.media_type not in (MediaTypes.MUSIC.value, MediaTypes.PODCAST.value):
+        if self.item.media_type not in (
+            MediaTypes.MUSIC.value,
+            MediaTypes.PODCAST.value,
+        ):
             self.item.fetch_releases(delay=True)
 
     @property
@@ -1719,7 +1822,10 @@ class Media(models.Model):
     @property
     def formatted_aggregated_progress(self):
         """Return formatted aggregated progress string."""
-        if hasattr(self, "aggregated_progress") and self.aggregated_progress is not None:
+        if (
+            hasattr(self, "aggregated_progress")
+            and self.aggregated_progress is not None
+        ):
             # Format based on media type
             if hasattr(self, "item") and self.item.media_type == MediaTypes.GAME.value:
                 return app.helpers.minutes_to_hhmm(self.aggregated_progress)
@@ -1772,20 +1878,25 @@ class Media(models.Model):
             # For a Season: query episodes in this season where episode_number > progress
             # Only count episodes that have actually been released (have aired)
             current_datetime = timezone.now()
-            unwatched_episodes = Item.objects.filter(
-                media_id=self.item.media_id,
-                source=self.item.source,
-                media_type=MediaTypes.EPISODE.value,
-                season_number=season_number,
-                episode_number__gt=self.progress,
-                runtime_minutes__isnull=False,
-                release_datetime__isnull=False,  # Only count episodes with air dates
-                release_datetime__lte=current_datetime,  # Only count episodes that have aired
-            ).exclude(
-                runtime_minutes=999999,  # Exclude placeholder for unknown runtime
-            ).exclude(
-                runtime_minutes=999998,  # Exclude 999998 marker for "aired but runtime unknown"
-            ).values_list("runtime_minutes", flat=True)
+            unwatched_episodes = (
+                Item.objects.filter(
+                    media_id=self.item.media_id,
+                    source=self.item.source,
+                    media_type=MediaTypes.EPISODE.value,
+                    season_number=season_number,
+                    episode_number__gt=self.progress,
+                    runtime_minutes__isnull=False,
+                    release_datetime__isnull=False,  # Only count episodes with air dates
+                    release_datetime__lte=current_datetime,  # Only count episodes that have aired
+                )
+                .exclude(
+                    runtime_minutes=999999,  # Exclude placeholder for unknown runtime
+                )
+                .exclude(
+                    runtime_minutes=999998,  # Exclude 999998 marker for "aired but runtime unknown"
+                )
+                .values_list("runtime_minutes", flat=True)
+            )
 
             runtimes = list(unwatched_episodes)
             if runtimes:
@@ -1816,18 +1927,23 @@ class Media(models.Model):
                         watched_in_season = remaining_progress
                         remaining_progress = 0
 
-                        unwatched_episodes = Item.objects.filter(
-                            media_id=self.item.media_id,
-                            source=self.item.source,
-                            media_type=MediaTypes.EPISODE.value,
-                            season_number=season_num,
-                            episode_number__gt=watched_in_season,
-                            runtime_minutes__isnull=False,
-                        ).exclude(
-                            runtime_minutes=999999,  # Exclude placeholder for unknown runtime
-                        ).exclude(
-                            runtime_minutes=999998,  # Exclude 999998 marker for "aired but runtime unknown"
-                        ).values_list("runtime_minutes", flat=True)
+                        unwatched_episodes = (
+                            Item.objects.filter(
+                                media_id=self.item.media_id,
+                                source=self.item.source,
+                                media_type=MediaTypes.EPISODE.value,
+                                season_number=season_num,
+                                episode_number__gt=watched_in_season,
+                                runtime_minutes__isnull=False,
+                            )
+                            .exclude(
+                                runtime_minutes=999999,  # Exclude placeholder for unknown runtime
+                            )
+                            .exclude(
+                                runtime_minutes=999998,  # Exclude 999998 marker for "aired but runtime unknown"
+                            )
+                            .values_list("runtime_minutes", flat=True)
+                        )
 
                         runtimes = list(unwatched_episodes)
                         if runtimes:
@@ -1862,7 +1978,9 @@ class Media(models.Model):
             season_cache_key = f"tmdb_season_{self.item.media_id}_1"
             cached_season_data = cache.get(season_cache_key)
 
-            if cached_season_data and cached_season_data.get("details", {}).get("runtime"):
+            if cached_season_data and cached_season_data.get("details", {}).get(
+                "runtime",
+            ):
                 runtime_str = cached_season_data["details"]["runtime"]
                 runtime_minutes = parse_runtime_to_minutes(runtime_str)
             else:
@@ -1870,7 +1988,9 @@ class Media(models.Model):
                 for season_num in [2, 3, 4, 5]:
                     season_cache_key = f"tmdb_season_{self.item.media_id}_{season_num}"
                     cached_season_data = cache.get(season_cache_key)
-                    if cached_season_data and cached_season_data.get("details", {}).get("runtime"):
+                    if cached_season_data and cached_season_data.get("details", {}).get(
+                        "runtime",
+                    ):
                         runtime_str = cached_season_data["details"]["runtime"]
                         runtime_minutes = parse_runtime_to_minutes(runtime_str)
                         break
@@ -2257,7 +2377,7 @@ class Season(Media):
     @property
     def progress(self):
         """Return the current episode number of the season.
-        
+
         For rewatching: only considers it a rewatch if ALL episodes up to that point
         have been watched at least that many times. Otherwise uses max episode number
         to ignore errant repeats.
@@ -2279,11 +2399,11 @@ class Season(Media):
             # Check for systematic rewatching: only consider it a rewatch if ALL episodes
             # up to that point have been watched at least that many times.
             # This prevents errant repeats (single episode watched twice) from skewing progress.
-            
+
             sorted_episode_nums = sorted(episode_counts.keys())
             max_rewatch_level = 0
             max_rewatch_progress = 0
-            
+
             # Check each possible rewatch level (2, 3, ...)
             # Level 1 is just normal watching, so we start at 2
             for rewatch_level in range(2, max(episode_counts.values()) + 1):
@@ -2295,15 +2415,15 @@ class Season(Media):
                     else:
                         # Can't be a consistent rewatch beyond this point
                         break
-                
+
                 if consistent_up_to > max_rewatch_progress:
                     max_rewatch_level = rewatch_level
                     max_rewatch_progress = consistent_up_to
-            
+
             # If we found a consistent rewatch pattern, use it
             if max_rewatch_level > 1 and max_rewatch_progress > 0:
                 return max_rewatch_progress
-        
+
         # Otherwise, use the maximum episode number watched (at least once)
         # This handles normal watching and errant repeats
         return max(episode_counts.keys())
@@ -2465,9 +2585,13 @@ class Season(Media):
         if tv and tv.status != Status.DROPPED.value and desired_status:
             if desired_status == Status.COMPLETED.value:
                 # Only mark TV complete if all real seasons are complete
-                has_incomplete = tv.seasons.filter(
-                    item__season_number__gt=0,
-                ).exclude(status=Status.COMPLETED.value).exists()
+                has_incomplete = (
+                    tv.seasons.filter(
+                        item__season_number__gt=0,
+                    )
+                    .exclude(status=Status.COMPLETED.value)
+                    .exists()
+                )
                 tv_target = (
                     Status.COMPLETED.value
                     if not has_incomplete
@@ -2582,7 +2706,7 @@ class Season(Media):
         image = settings.IMG_NONE
         runtime_minutes = None
         release_datetime = None
-        
+
         for episode in season_metadata["episodes"]:
             if episode["episode_number"] == int(episode_number):
                 if episode.get("still_path"):
@@ -2598,26 +2722,36 @@ class Season(Media):
                 # Extract runtime from episode metadata (raw TMDB data has integer runtime in minutes)
                 if episode.get("runtime") is not None:
                     # Runtime is an integer (minutes) from TMDB
-                    runtime_minutes = int(episode["runtime"]) if episode["runtime"] > 0 else None
-                
+                    runtime_minutes = (
+                        int(episode["runtime"]) if episode["runtime"] > 0 else None
+                    )
+
                 # Extract release_datetime from episode air_date
                 air_date = episode.get("air_date")
                 if air_date:
                     from datetime import datetime
+
                     from django.utils import timezone
-                    
+
                     try:
                         # TMDB returns dates in YYYY-MM-DD format (string)
                         if isinstance(air_date, str):
                             date_obj = datetime.strptime(air_date, "%Y-%m-%d")
-                            release_datetime = timezone.make_aware(date_obj, timezone.get_current_timezone())
+                            release_datetime = timezone.make_aware(
+                                date_obj,
+                                timezone.get_current_timezone(),
+                            )
                         elif hasattr(air_date, "year"):
                             # Already a datetime object
-                            release_datetime = air_date if timezone.is_aware(air_date) else timezone.make_aware(air_date)
+                            release_datetime = (
+                                air_date
+                                if timezone.is_aware(air_date)
+                                else timezone.make_aware(air_date)
+                            )
                     except (ValueError, TypeError):
                         # If parsing fails, keep release_datetime as None
                         pass
-                
+
                 break
 
         item, created = Item.objects.get_or_create(
@@ -2807,9 +2941,48 @@ class BoardGame(Media):
         return f"{value} play{'s' if value != 1 else ''}"
 
 
+class BookAuthor(models.Model):
+    """Model for book authors."""
+
+    name = models.CharField(max_length=255, unique=True)
+
+    class Meta:
+        """Meta options for the model."""
+
+        ordering = ["name"]
+
+    def __str__(self):
+        """Return author name."""
+        return self.name
+
+
+class BookSeries(models.Model):
+    """Model for book series."""
+
+    name = models.CharField(max_length=255, unique=True)
+
+    class Meta:
+        """Meta options for the model."""
+
+        ordering = ["name"]
+        verbose_name_plural = "Book Series"
+
+    def __str__(self):
+        """Return series name."""
+        return self.name
+
+
 class Book(Media):
     """Model for books."""
 
+    authors = models.ManyToManyField(BookAuthor, blank=True, related_name="books")
+    series = models.ForeignKey(
+        BookSeries,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="books",
+    )
     tracker = FieldTracker()
 
 
@@ -2928,7 +3101,7 @@ class Album(models.Model):
 
 class Track(models.Model):
     """Model for music tracks (like Episode for TV).
-    
+
     This represents a track from MusicBrainz metadata, independent of user tracking.
     Populated from MusicBrainz when an album is viewed.
     """
@@ -3037,7 +3210,7 @@ class Music(Media):
 
 class ArtistTracker(models.Model):
     """Model for tracking artists in user's library.
-    
+
     This mirrors the Media model fields so artist tracking feels identical
     to TV/Movie tracking in terms of status, score, dates, and notes.
     """
@@ -3097,7 +3270,7 @@ class ArtistTracker(models.Model):
 
 class AlbumTracker(models.Model):
     """Model for tracking albums in user's library.
-    
+
     This mirrors the Media model fields so album tracking feels identical
     to TV/Movie tracking in terms of status, score, dates, and notes.
     """
@@ -3157,7 +3330,7 @@ class AlbumTracker(models.Model):
 
 class PodcastShow(models.Model):
     """Model for podcast shows (container, not Media subclass).
-    
+
     Similar to Artist in the music hierarchy.
     """
 
@@ -3170,10 +3343,18 @@ class PodcastShow(models.Model):
     slug = models.CharField(max_length=255, blank=True, default="")
     author = models.CharField(max_length=255, blank=True, default="")
     image = models.URLField(blank=True, default="")
-    description = models.TextField(blank=True, default="", help_text="Show description from Pocket Casts")
+    description = models.TextField(
+        blank=True,
+        default="",
+        help_text="Show description from Pocket Casts",
+    )
     language = models.CharField(max_length=10, blank=True, default="")
     genres = models.JSONField(default=list, blank=True)
-    rss_feed_url = models.URLField(blank=True, default="", help_text="RSS feed URL for fetching full episode list")
+    rss_feed_url = models.URLField(
+        blank=True,
+        default="",
+        help_text="RSS feed URL for fetching full episode list",
+    )
 
     class Meta:
         """Meta options for the model."""
@@ -3189,7 +3370,7 @@ class PodcastShow(models.Model):
 
 class PodcastEpisode(models.Model):
     """Model for podcast episodes (container, not Media subclass).
-    
+
     Similar to Track in the music hierarchy.
     """
 
@@ -3244,7 +3425,7 @@ class PodcastEpisode(models.Model):
 
 class Podcast(Media):
     """Model for podcast episodes (per-user tracking).
-    
+
     This is the trackable unit for podcasts (per-user tracking),
     backed by an Item with media_type='podcast'.
     Links to PodcastEpisode and PodcastShow for metadata.
@@ -3280,11 +3461,12 @@ class Podcast(Media):
     @property
     def completed_play_count(self):
         """Return count of completed plays (excludes in-progress records).
-        
+
         For podcasts, we only count history records with end_date (completed plays),
         not in-progress records where end_date is None.
         """
         from django.apps import apps
+
         HistoricalPodcast = apps.get_model("app", "HistoricalPodcast")
 
         # Count only history records with end_date (completed plays)
@@ -3296,17 +3478,21 @@ class Podcast(Media):
     @property
     def formatted_progress(self):
         """Return progress as minutes listened.
-        
+
         For in-progress episodes, shows actual progress from played_up_to_seconds.
         Otherwise shows progress from the progress field.
         """
         # Check if episode is in-progress and has actual progress stored
         is_in_progress = (
-            self.status == Status.IN_PROGRESS.value or
-            self.last_seen_status == 2  # 2 = in-progress from API
+            self.status == Status.IN_PROGRESS.value
+            or self.last_seen_status == 2  # 2 = in-progress from API
         )
 
-        if is_in_progress and self.played_up_to_seconds and self.played_up_to_seconds > 0:
+        if (
+            is_in_progress
+            and self.played_up_to_seconds
+            and self.played_up_to_seconds > 0
+        ):
             # Use actual progress from played_up_to_seconds for in-progress episodes
             minutes = self.played_up_to_seconds // 60
             return f"{minutes}m"
@@ -3318,7 +3504,7 @@ class Podcast(Media):
 
 class PodcastShowTracker(models.Model):
     """Model for tracking podcast shows in user's library.
-    
+
     This mirrors the Media model fields so show tracking feels identical
     to TV/Movie tracking in terms of status, score, dates, and notes.
     Similar to ArtistTracker for music.
