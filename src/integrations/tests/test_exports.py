@@ -154,6 +154,11 @@ class ExportCSVTest(TestCase):
                 item=item_movie,
                 added_by=self.user,
             )
+            CustomListItem.objects.create(
+                custom_list=custom_list,
+                item=item_episode,
+                added_by=self.user,
+            )
 
     def test_export_csv(self):
         """Basic test exporting media to CSV."""
@@ -203,5 +208,8 @@ class ExportCSVTest(TestCase):
 
         self.assertEqual(len(list_rows), 1)
         self.assertEqual(list_rows[0]["list_name"], "Favorites")
-        self.assertEqual(len(list_item_rows), 1)
-        self.assertEqual(list_item_rows[0]["list_name"], "Favorites")
+        self.assertEqual(len(list_item_rows), 2)
+        self.assertTrue(all(r["list_name"] == "Favorites" for r in list_item_rows))
+        exported_media_types = {r["media_type"] for r in list_item_rows}
+        self.assertIn("movie", exported_media_types)
+        self.assertIn("episode", exported_media_types)

@@ -569,8 +569,9 @@ def _smart_list_detail_response(
         aggregated_score = getattr(media, "aggregated_score", None)
         if aggregated_score is not None:
             return aggregated_score
-        if media.score is not None:
-            return media.score
+        score = getattr(media, "score", None)
+        if score is not None:
+            return score
         return -1
 
     def _progress_value(media):
@@ -889,7 +890,16 @@ def list_detail(request, list_id):
         items = items.filter(title__icontains=params["search_query"])
     if params["media_types"]:
         items = items.filter(media_type__in=params["media_types"])
-    items = items.annotate(list_date_added=F("customlistitem__date_added"))
+    items = items.annotate(
+        list_date_added=Subquery(
+            CustomListItem.objects.filter(
+                custom_list=custom_list,
+                item_id=OuterRef("pk"),
+            )
+            .order_by("-date_added")
+            .values("date_added")[:1],
+        ),
+    )
 
     def _attach_media_with_aggregation(item_list):
         media_by_item_id = {}
@@ -937,8 +947,9 @@ def list_detail(request, list_id):
         aggregated_score = getattr(media, "aggregated_score", None)
         if aggregated_score is not None:
             return aggregated_score
-        if media.score is not None:
-            return media.score
+        score = getattr(media, "score", None)
+        if score is not None:
+            return score
         return -1
 
     def _progress_value(media):
@@ -988,15 +999,15 @@ def list_detail(request, list_id):
 
     # Apply sorting
     sort_mapping = {
-        "date_added": ["-customlistitem__date_added"],
-        "custom": ["customlistitem__date_added", "customlistitem__id"],
+        "date_added": [F("list_date_added").desc(nulls_last=True)],
+        "custom": [F("list_date_added").asc(nulls_last=True)],
         "title": [
             F("title").asc(nulls_last=True),
             F("season_number").asc(nulls_first=True),
             F("episode_number").asc(nulls_first=True),
         ],
         "media_type": ["media_type"],
-        "rating": ["-customlistitem__date_added"],  # Fallback before media-based sorting
+        "rating": [F("list_date_added").desc(nulls_last=True)],  # Fallback before media-based sorting
     }
 
     media_sort_config = {
