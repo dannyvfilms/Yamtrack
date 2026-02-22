@@ -59,6 +59,8 @@ def process_items(items_to_process):
 
 def save_events(events_bulk):
     """Save events in bulk with proper conflict handling."""
+    from integrations.imports.helpers import retry_on_lock
+
     items_updated = set()
 
     # Get all existing events that match our bulk data
@@ -101,12 +103,52 @@ def save_events(events_bulk):
         else:
             to_create.append(event)
 
-    # Perform bulk operations
+    # Perform bulk operations with retry logic
     if to_create:
-        Event.objects.bulk_create(to_create)
+        try:
+            retry_on_lock(
+                lambda: Event.objects.bulk_create(to_create),
+                max_retries=3,
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to bulk create %d events after retries: %s",
+                len(to_create),
+                e,
+            )
+            # Fall back to individual creates
+            for event in to_create:
+                try:
+                    event.save()
+                except Exception as save_error:
+                    logger.error(
+                        "Failed to save event for item %s: %s",
+                        event.item_id,
+                        save_error,
+                    )
 
     if to_update:
-        Event.objects.bulk_update(to_update, ["datetime"])
+        try:
+            retry_on_lock(
+                lambda: Event.objects.bulk_update(to_update, ["datetime"]),
+                max_retries=3,
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to bulk update %d events after retries: %s",
+                len(to_update),
+                e,
+            )
+            # Fall back to individual updates
+            for event in to_update:
+                try:
+                    event.save(update_fields=["datetime"])
+                except Exception as save_error:
+                    logger.error(
+                        "Failed to save event for item %s: %s",
+                        event.item_id,
+                        save_error,
+                    )
 
     logger.info(
         "Successfully processed %d events (%d created, %d updated)",

@@ -3,27 +3,10 @@ from django.conf import settings
 from django.utils import timezone
 
 from app import config
-from app.models import (
-    TV,
-    AlbumTracker,
-    Anime,
-    ArtistTracker,
-    BoardGame,
-    Book,
-    CollectionEntry,
-    Comic,
-    Episode,
-    Game,
-    Item,
-    Manga,
-    MediaTypes,
-    Movie,
-    Music,
-    Podcast,
-    PodcastShowTracker,
-    Season,
-    Sources,
-)
+from app.models import (TV, AlbumTracker, Anime, ArtistTracker, BoardGame,
+                        Book, CollectionEntry, Comic, Episode, Game, Item,
+                        Manga, MediaTypes, Movie, Music, Podcast,
+                        PodcastShowTracker, Season, Sources)
 
 
 def get_form_class(media_type):
@@ -378,13 +361,11 @@ class BookForm(MediaForm):
         """Bind form to model."""
 
         model = Book
-        fields = list(MediaForm.Meta.fields) + ["authors", "series"]
+        fields = list(MediaForm.Meta.fields)
         labels = {
             "progress": (
                 f"Progress ({config.get_unit(MediaTypes.BOOK.value, short=False)}s)"
             ),
-            "authors": "Authors",
-            "series": "Book Series",
         }
 
     def __init__(self, *args, **kwargs):
@@ -414,7 +395,7 @@ class BookForm(MediaForm):
             self.save_m2m()
 
         # Populate authors from provider metadata if form didn't specify them
-        if not book.authors.exists() and book.item.provider_author_names:
+        if book.item.provider_author_names:
             for author_name in book.item.provider_author_names:
                 if author_name and isinstance(author_name, str):
                     author_name = author_name.strip()
@@ -422,7 +403,9 @@ class BookForm(MediaForm):
                         author_obj, _ = BookAuthor.objects.get_or_create(
                             name=author_name,
                         )
-                        book.authors.add(author_obj)
+                        # Add the author to the book only if not already linked
+                        if not book.authors.filter(id=author_obj.id).exists():
+                            book.authors.add(author_obj)
 
         # Populate series from provider metadata if form didn't specify it
         if not book.series and book.item.provider_series_data:
@@ -780,4 +763,6 @@ class CollectionEntryForm(forms.ModelForm):
                 normalized.append((submitted_value, submitted_value))
             choices_list = [("", "Select"), *normalized]
             self.fields[field_name].widget = forms.Select(choices=choices_list)
+            self.fields[field_name].required = False
+            self.fields[field_name].required = False
             self.fields[field_name].required = False

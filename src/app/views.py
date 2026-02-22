@@ -26,39 +26,25 @@ from django.utils import formats, timezone
 from django.utils.dateparse import parse_date
 from django.utils.timezone import datetime
 from django.views.decorators.cache import never_cache
-from django.views.decorators.http import require_GET, require_http_methods, require_POST
+from django.views.decorators.http import (require_GET, require_http_methods,
+                                          require_POST)
 
 # history_cache is imported above
-from app import cache_utils, config, credits, helpers, history_cache, history_processor
+from app import (cache_utils, config, credits, helpers, history_cache,
+                 history_processor)
 from app import statistics as stats
 from app import statistics_cache
-from app.forms import CollectionEntryForm, EpisodeForm, ManualItemForm, get_form_class
-from app.models import (
-    TV,
-    Album,
-    Artist,
-    BasicMedia,
-    CollectionEntry,
-    Episode,
-    Item,
-    MediaTypes,
-    Movie,
-    Music,
-    Season,
-    Sources,
-    Status,
-    Track,
-)
+from app.forms import (CollectionEntryForm, EpisodeForm, ManualItemForm,
+                       get_form_class)
+from app.models import (TV, Album, Artist, BasicMedia, CollectionEntry,
+                        Episode, Item, MediaTypes, Movie, Music, Season,
+                        Sources, Status, Track)
 from app.providers import manual, services, tmdb
 from app.services import music as sync_services
 from app.templatetags import app_tags
 from lists.models import CustomList
-from users.models import (
-    HomeSortChoices,
-    MediaSortChoices,
-    MediaStatusChoices,
-    TopTalentSortChoices,
-)
+from users.models import (HomeSortChoices, MediaSortChoices,
+                          MediaStatusChoices, TopTalentSortChoices)
 
 logger = logging.getLogger(__name__)
 
@@ -2440,38 +2426,17 @@ def media_details(
                 else:
                     book = None
                 if book:
-                    # Convert QuerySet to list - empty QuerySet is still truthy
+                    # Get authors and series from the Book model (via BookAuthor and BookSeries relationships)
                     authors_qs = book.authors.all()
                     book_authors = list(authors_qs) if authors_qs.exists() else None
                     book_series = book.series
+                else:
+                    book_authors = None
+                    book_series = None
             except Book.DoesNotExist:
                 book = None
-
-            # If no Book found or Book has no authors, try to use provider metadata
-            if not book_authors and item.provider_author_names:
-                # Create BookAuthor objects from provider data
-                author_list = []
-                for author_name in item.provider_author_names:
-                    if author_name and isinstance(author_name, str):
-                        author_name = author_name.strip()
-                        if author_name:
-                            author_obj, _ = BookAuthor.objects.get_or_create(
-                                name=author_name,
-                            )
-                            author_list.append(author_obj)
-                if author_list:
-                    book_authors = author_list
-
-            # If no Book series found, try to use provider metadata
-            if not book_series and item.provider_series_data:
-                from app.models import BookSeries
-
-                series_name = item.provider_series_data.get("name")
-                if series_name:
-                    series_obj, _ = BookSeries.objects.get_or_create(
-                        name=series_name,
-                    )
-                    book_series = series_obj
+                book_authors = None
+                book_series = None
 
             update_fields = []
             if (
@@ -2762,7 +2727,8 @@ def media_details(
             ):
                 plex_account = getattr(request.user, "plex_account", None)
                 if plex_account and plex_account.plex_token:
-                    from integrations.tasks import fetch_collection_metadata_for_item
+                    from integrations.tasks import \
+                        fetch_collection_metadata_for_item
 
                     # Trigger background task to fetch collection data
                     fetch_collection_metadata_for_item.delay(
@@ -3161,14 +3127,11 @@ def season_details(
     fetching_collection_data = False
     item_id_for_polling = None
     if not public_view:
-        from app.helpers import (
-            get_season_collection_metadata,
-            get_season_collection_stats,
-            is_item_collected,
-        )
-        from app.models import (
-            Item as ItemModel,
-        )  # Use alias to avoid any potential shadowing
+        from app.helpers import (get_season_collection_metadata,
+                                 get_season_collection_stats,
+                                 is_item_collected)
+        from app.models import \
+            Item as ItemModel  # Use alias to avoid any potential shadowing
 
         # Get the season item
         try:
@@ -3203,9 +3166,8 @@ def season_details(
                     plex_account = getattr(request.user, "plex_account", None)
                     if plex_account and plex_account.plex_token:
                         try:
-                            from integrations.tasks import (
-                                fetch_collection_metadata_for_item,
-                            )
+                            from integrations.tasks import \
+                                fetch_collection_metadata_for_item
 
                             # Trigger background task to fetch collection data for the show
                             result = fetch_collection_metadata_for_item.delay(
@@ -4327,24 +4289,48 @@ def media_save(request):
                     source,
                     [season_number],
                 )
+                # Extract number_of_pages for books
                 if media_type == MediaTypes.BOOK.value:
-                    number_of_pages = metadata.get("max_progress") or metadata.get(
-                        "details",
-                        {},
-                    ).get("number_of_pages")
+                    number_of_pages = (
+                        metadata.get("max_progress")
+                        or metadata.get("details", {}).get("number_of_pages")
+                    )
                 else:
                     number_of_pages = None
-                item, _ = Item.objects.get_or_create(
+
+                # Extract author info from metadata (search may provide 'authors' at root,
+                # provider details use 'details.author') so check both.
+                metadata_authors = []
+                if isinstance(metadata, dict):
+                    metadata_authors = metadata.get("authors", [])
+                    if not metadata_authors:
+                        metadata_authors = metadata.get("details", {}).get("author", [])
+                    if isinstance(metadata_authors, str):
+                        metadata_authors = [metadata_authors]
+                    elif not isinstance(metadata_authors, list):
+                        metadata_authors = []
+
+                item, created = Item.objects.get_or_create(
                     media_id=media_id,
                     source=source,
                     media_type=media_type,
                     season_number=season_number,
                     defaults={
-                        "title": metadata["title"],
-                        "image": metadata["image"],
+                        "title": metadata.get("title", ""),
+                        "image": metadata.get("image", ""),
                         "number_of_pages": number_of_pages,
+                        "provider_author_names": metadata_authors if metadata_authors else [],
                     },
                 )
+
+                # If the item already existed but lacks provider_author_names, populate it now
+                try:
+                    if not created and metadata_authors and not item.provider_author_names:
+                        item.provider_author_names = metadata_authors
+                        item.save(update_fields=["provider_author_names"])
+                except Exception:
+                    # Don't let a save error block the media_save flow
+                    pass
 
             if item:
                 if media_type == MediaTypes.BOOK.value:
@@ -4426,6 +4412,43 @@ def media_save(request):
         if media_type == MediaTypes.GAME.value:
             metadata_genres = stats._coerce_genre_list(metadata.get("genres"))
 
+        # Extract author info from metadata for books (search may provide 'authors' at root,
+        # provider details use 'details.author') so check both.
+        metadata_authors = []
+        if media_type == MediaTypes.BOOK.value:
+            metadata_authors = metadata.get("authors", [])
+            if not metadata_authors:
+                metadata_authors = metadata.get("details", {}).get("author", [])
+            if isinstance(metadata_authors, str):
+                metadata_authors = [metadata_authors]
+            elif not isinstance(metadata_authors, list):
+                metadata_authors = []
+
+        # Extract series info from metadata for books
+        # Hardcover returns series_name at root level, other providers may vary
+        metadata_series_data = {}
+        if media_type == MediaTypes.BOOK.value:
+            logger.info(f"media_save: Checking metadata for series - keys: {list(metadata.keys())}")
+            logger.info(f"media_save: metadata.get('series_name')={metadata.get('series_name')}")
+            logger.info(f"media_save: metadata.get('series')={metadata.get('series')}")
+            logger.info(f"media_save: metadata.get('details')={metadata.get('details', {}).keys() if metadata.get('details') else 'None'}")
+            
+            series_name = (
+                metadata.get("series_name")  # Hardcover root level
+                or metadata.get("series", {}).get("name")  # Generic nested structure
+                or metadata.get("details", {}).get("series_name")  # Another variant
+            )
+            if series_name:
+                metadata_series_data = {
+                    "name": series_name,
+                    "position": (
+                        metadata.get("series_position")  # Hardcover root level
+                        or metadata.get("series", {}).get("position")  # Generic nested
+                        or metadata.get("details", {}).get("series_position")  # Another variant
+                    ),
+                }
+            logger.info(f"media_save: Extracted series_name for book: {series_name}, metadata_series_data={metadata_series_data}")
+
         item, created = Item.objects.get_or_create(
             media_id=media_id,
             source=source,
@@ -4437,10 +4460,11 @@ def media_save(request):
                 "runtime_minutes": runtime_minutes,
                 "number_of_pages": number_of_pages,
                 "genres": metadata_genres,
+                "provider_author_names": metadata_authors if metadata_authors else [],
             },
         )
 
-        # Update image, runtime, and number_of_pages if they're not set and we have them now
+        # Update image, runtime, number_of_pages, and provider_author_names if they're not set and we have them now
         needs_save = False
         if item.image == settings.IMG_NONE and metadata.get("image"):
             item.image = metadata["image"]
@@ -4454,6 +4478,9 @@ def media_save(request):
         if metadata_genres and metadata_genres != item.genres:
             item.genres = metadata_genres
             needs_save = True
+        if not item.provider_author_names and metadata_authors:
+            item.provider_author_names = metadata_authors
+            needs_save = True
         if needs_save:
             item.save()
 
@@ -4464,7 +4491,11 @@ def media_save(request):
             credits.sync_item_credits_from_metadata(item, metadata)
 
         model = apps.get_model(app_label="app", model_name=media_type)
-        instance = model(item=item, user=request.user)
+        # Try to get existing instance first, create only if it doesn't exist
+        instance, created = model.objects.get_or_create(
+            item=item,
+            user=request.user,
+        )
 
         # For music tracks, create/link Artist and Album
         if media_type == MediaTypes.MUSIC.value:
@@ -6110,11 +6141,9 @@ def artist_detail(request, artist_id):
 
     from app.models import ArtistTracker
     from app.providers import musicbrainz
-    from app.services.music import (
-        build_discography_groups,
-        needs_discography_sync,
-        sync_artist_discography,
-    )
+    from app.services.music import (build_discography_groups,
+                                    needs_discography_sync,
+                                    sync_artist_discography)
     from app.services.music_scrobble import dedupe_artist_albums
 
     artist = get_object_or_404(Artist, id=artist_id)
@@ -6436,17 +6465,12 @@ def album_detail(request, album_id):
 
     from app.models import Track
     from app.providers import musicbrainz
-    from app.services.music import (
-        album_has_musicbrainz_id,
-        ensure_album_has_release_id,
-        sync_artist_discography,
-    )
-    from app.services.music_scrobble import (
-        _choose_primary_album,
-        _normalize,
-        dedupe_artist_albums,
-        is_incomplete_album,
-    )
+    from app.services.music import (album_has_musicbrainz_id,
+                                    ensure_album_has_release_id,
+                                    sync_artist_discography)
+    from app.services.music_scrobble import (_choose_primary_album, _normalize,
+                                             dedupe_artist_albums,
+                                             is_incomplete_album)
 
     album = get_object_or_404(Album.objects.select_related("artist"), id=album_id)
     original_artist = album.artist
@@ -6691,7 +6715,8 @@ def sync_artist_discography_view(request, artist_id):
     """Manually trigger discography sync for an artist."""
     from django.shortcuts import get_object_or_404
 
-    from app.services.music import prefetch_album_covers, sync_artist_discography
+    from app.services.music import (prefetch_album_covers,
+                                    sync_artist_discography)
     from app.services.music_scrobble import dedupe_artist_albums
     from app.tasks import prefetch_album_covers_batch
 
@@ -6821,7 +6846,8 @@ def podcast_show_detail(request, show_id):
     """Return the detail page for a podcast show."""
     from django.shortcuts import get_object_or_404
 
-    from app.models import Podcast, PodcastEpisode, PodcastShow, PodcastShowTracker
+    from app.models import (Podcast, PodcastEpisode, PodcastShow,
+                            PodcastShowTracker)
 
     show = get_object_or_404(PodcastShow, id=show_id)
 
@@ -6915,14 +6941,8 @@ def podcast_episodes_api(request, show_id):
     from django.conf import settings
     from django.shortcuts import get_object_or_404
 
-    from app.models import (
-        Item,
-        MediaTypes,
-        Podcast,
-        PodcastEpisode,
-        PodcastShow,
-        Sources,
-    )
+    from app.models import (Item, MediaTypes, Podcast, PodcastEpisode,
+                            PodcastShow, Sources)
 
     show = get_object_or_404(PodcastShow, id=show_id)
     format_type = request.GET.get("format", "json")  # 'json' or 'html'
@@ -7277,16 +7297,8 @@ def podcast_mark_all_played(request, show_id):
 
     import events
     from app.mixins import disable_fetch_releases
-    from app.models import (
-        Item,
-        MediaTypes,
-        Podcast,
-        PodcastEpisode,
-        PodcastShow,
-        PodcastShowTracker,
-        Sources,
-        Status,
-    )
+    from app.models import (Item, MediaTypes, Podcast, PodcastEpisode,
+                            PodcastShow, PodcastShowTracker, Sources, Status)
     from integrations import podcast_rss
 
     show = get_object_or_404(PodcastShow, id=show_id)
@@ -9463,6 +9475,54 @@ def books_by_author(request, author_id):
                     self.score = None
 
             books_list.append(BookLike(item))
+
+        # Query providers for other titles by this author
+        from app.providers import hardcover, openlibrary, services
+
+        provider_books = {}
+        for source, provider_search in [
+            (Sources.HARDCOVER.value, hardcover.search),
+            (Sources.OPENLIBRARY.value, openlibrary.search),
+        ]:
+            try:
+                search_response = provider_search(author.name, page=1)
+                if search_response and search_response.get("results"):
+                    for book_result in search_response["results"]:
+                        media_id = str(book_result.get("media_id"))
+                        # Check if we already have this book in our database
+                        existing_item = Item.objects.filter(
+                            media_id=media_id,
+                            source=source,
+                            media_type=MediaTypes.BOOK.value,
+                        ).first()
+
+                        if existing_item:
+                            # Skip if already in our local items
+                            if existing_item.id not in tracked_book_ids and existing_item.id not in new_item_ids:
+                                # Add if not already in list
+                                class BookLike:
+                                    def __init__(self, item_obj):
+                                        self.item = item_obj
+                                        self.score = None
+
+                                books_list.append(BookLike(existing_item))
+                        else:
+                            # Create a temporary book-like object from provider data
+                            class ProviderBook:
+                                def __init__(self, data):
+                                    self.score = data.get("score")
+                                    self.item = type('Item', (), {
+                                        'media_id': data.get("media_id"),
+                                        'title': data.get("title"),
+                                        'source': data.get("source"),
+                                        'image': data.get("image"),
+                                        'media_type': MediaTypes.BOOK.value,
+                                    })()
+
+                            provider_books[f"{source}_{media_id}"] = ProviderBook(book_result)
+                            books_list.append(provider_books[f"{source}_{media_id}"])
+            except Exception as e:
+                logger.debug(f"Error fetching books from {source} for author {author.name}: {e}")
     else:
         # Show only user's books by this author
         books_list = list(

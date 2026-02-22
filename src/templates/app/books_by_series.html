@@ -14,7 +14,7 @@
         <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
             {% for book in books %}
                 <div class="group relative">
-                    <a href="{% url 'media_details' book.item.source book.item.media_type book.item.media_id book.item.title %}">
+                    <a href="{% url 'media_details' book.item.source book.item.media_type book.item.media_id book.item.title|default:'Unknown' %}">
                         <div class="aspect-square rounded-lg overflow-hidden bg-gray-200 dark:bg-gray-700">
                             {% if book.item.image %}
                                 <img src="{{ book.item.image }}" alt="{{ book.item.title }}" class="w-full h-full object-cover group-hover:opacity-75 transition-opacity">

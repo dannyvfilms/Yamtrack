@@ -32,21 +32,20 @@
         
         {# Series info if available #}
         {% if author.books.count > 0 %}
-            {% with unique_series=author.books.values_list('series', flat=True).distinct %}
-                {% if unique_series|length > 0 %}
-                    <div class="mt-4 flex flex-wrap gap-2">
-                        <span class="text-sm text-gray-500 dark:text-gray-400">Series:</span>
-                        {% for book in author.books.all|dictsort:"series__name" %}
-                            {% if book.series and not forloop.last or forloop.first %}
-                                <a href="{% url 'books_by_series' book.series.id %}" 
-                                   class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-indigo-100 dark:bg-indigo-900 text-indigo-900 dark:text-indigo-100 hover:bg-indigo-200 dark:hover:bg-indigo-800 transition-colors">
-                                    {{ book.series.name }}
-                                </a>
-                            {% endif %}
-                        {% endfor %}
-                    </div>
-                {% endif %}
-            {% endwith %}
+            {% regroup author.books.all|dictsort:"series__name" by series as series_list %}
+            {% if series_list %}
+                <div class="mt-4 flex flex-wrap gap-2">
+                    <span class="text-sm text-gray-500 dark:text-gray-400">Series:</span>
+                    {% for series_group in series_list %}
+                        {% if series_group.grouper %}
+                            <a href="{% url 'books_by_series' series_group.grouper.id %}" 
+                               class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-indigo-100 dark:bg-indigo-900 text-indigo-900 dark:text-indigo-100 hover:bg-indigo-200 dark:hover:bg-indigo-800 transition-colors">
+                                {{ series_group.grouper.name }}
+                            </a>
+                        {% endif %}
+                    {% endfor %}
+                </div>
+            {% endif %}
         {% endif %}
     </div>
 
@@ -54,7 +53,7 @@
         <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
             {% for book in books %}
                 <div class="group relative">
-                    <a href="{% url 'media_details' book.item.source book.item.media_type book.item.media_id book.item.title %}">
+                    <a href="{% url 'media_details' book.item.source book.item.media_type book.item.media_id book.item.title|default:'Unknown' %}">>
                         <div class="aspect-square rounded-lg overflow-hidden bg-gray-200 dark:bg-gray-700">
                             {% if book.item.image %}
                                 <img src="{{ book.item.image }}" alt="{{ book.item.title }}" class="w-full h-full object-cover group-hover:opacity-75 transition-opacity">
