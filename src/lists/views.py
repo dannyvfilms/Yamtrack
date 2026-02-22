@@ -614,6 +614,10 @@ def _smart_list_detail_response(
         ListDetailSortChoices.MEDIA_TYPE: ["media_type"],
         ListDetailSortChoices.RATING: [F("list_date_added").desc(nulls_last=True)],
         ListDetailSortChoices.PROGRESS: [F("list_date_added").desc(nulls_last=True)],
+        ListDetailSortChoices.RELEASE_DATE: [
+            F("release_datetime").asc(nulls_last=True),
+            F("title").asc(nulls_last=True),
+        ],
         ListDetailSortChoices.START_DATE: [F("list_date_added").desc(nulls_last=True)],
         ListDetailSortChoices.END_DATE: [F("list_date_added").desc(nulls_last=True)],
     }
@@ -997,6 +1001,10 @@ def list_detail(request, list_id):
         ],
         "media_type": ["media_type"],
         "rating": ["-customlistitem__date_added"],  # Fallback before media-based sorting
+        "release_date": [
+            F("release_datetime").asc(nulls_last=True),
+            F("title").asc(nulls_last=True),
+        ],
     }
 
     media_sort_config = {

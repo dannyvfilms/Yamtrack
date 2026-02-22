@@ -508,6 +508,14 @@ class ListDetailViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["current_sort"], "end_date")
 
+        # Test release_date sorting
+        mock_update_preference.return_value = "release_date"
+        response = self.client.get(
+            reverse("list_detail", args=[self.custom_list.id]) + "?sort=release_date",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "release_date")
+
         # Test custom sorting
         mock_update_preference.return_value = "custom"
         response = self.client.get(
