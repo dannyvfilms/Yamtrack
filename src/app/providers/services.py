@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 
 import requests
@@ -329,8 +330,93 @@ def get_media_metadata(
     return _ensure_title_fields(metadata_retrievers[media_type]())
 
 
+# ---------------------------------------------------------------------------
+# Direct ID lookup helpers
+# ---------------------------------------------------------------------------
+
+_NUMERIC_ID_RE = re.compile(r"^\d+$")
+_OL_ID_RE = re.compile(r"^OL\d+[A-Za-z]$")
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+
+
+def _metadata_to_search_result(metadata):
+    """Convert a full metadata dict to a minimal search-result entry."""
+    return {
+        "media_id": str(metadata.get("media_id", "")),
+        "source": metadata.get("source"),
+        "media_type": metadata.get("media_type"),
+        "title": metadata.get("title", ""),
+        "original_title": metadata.get("original_title"),
+        "localized_title": metadata.get("localized_title"),
+        "image": metadata.get("image", settings.IMG_NONE),
+    }
+
+
+def _lookup_by_numeric_id(media_type, query, source):  # noqa: PLR0911
+    """Return full metadata for a media item identified by a numeric provider ID."""
+    n = int(query)
+    tv_types = (MediaTypes.TV.value, MediaTypes.SEASON.value, MediaTypes.EPISODE.value)
+    if media_type == MediaTypes.MOVIE.value:
+        return tmdb.movie(n)
+    if media_type in tv_types:
+        return tmdb.tv(n)
+    if media_type == MediaTypes.ANIME.value:
+        return mal.anime(n)
+    if media_type == MediaTypes.MANGA.value:
+        if source == Sources.MANGAUPDATES.value:
+            return mangaupdates.manga(query)
+        return mal.manga(n)
+    if media_type == MediaTypes.GAME.value:
+        return igdb.game(n)
+    if media_type == MediaTypes.BOOK.value and source == Sources.HARDCOVER.value:
+        return hardcover.book(n)
+    if media_type == MediaTypes.COMIC.value:
+        return comicvine.comic(query)
+    if media_type == MediaTypes.BOARDGAME.value:
+        return bgg.boardgame(query)
+    return None
+
+
+def search_by_id(media_type, query, source=None):
+    """Try to look up a single media item directly by its provider ID.
+
+    Returns a search-format response dict (1 result) when the query matches
+    an ID pattern and the provider lookup succeeds, or ``None`` otherwise
+    (triggering the normal text-search fallback).
+    """
+    from app import helpers  # noqa: PLC0415
+
+    query = query.strip()
+    metadata = None
+
+    try:
+        if _NUMERIC_ID_RE.match(query):
+            metadata = _lookup_by_numeric_id(media_type, query, source)
+        elif _OL_ID_RE.match(query) and media_type == MediaTypes.BOOK.value:
+            metadata = openlibrary.book(query)
+        elif _UUID_RE.match(query) and media_type == MediaTypes.MUSIC.value:
+            metadata = musicbrainz.recording(query)
+    except Exception:  # noqa: BLE001
+        return None
+
+    if not metadata or not metadata.get("title"):
+        return None
+
+    result = _metadata_to_search_result(metadata)
+    return helpers.format_search_response(1, 1, 1, [result])
+
+
 def search(media_type, query, page, source=None):
     """Search for media based on the query and return the results."""
+    # Attempt direct ID lookup on page 1 only
+    if page == 1:
+        id_result = search_by_id(media_type, query, source)
+        if id_result is not None:
+            return id_result
+
     search_handlers = {
         MediaTypes.MANGA.value: lambda: (
             mangaupdates.search(query, page)
