@@ -821,10 +821,99 @@ document.addEventListener("DOMContentLoaded", function () {
     "gameHoursByMonthChart",
     "game_hours_by_month"
   );
-  initializeSingleSeriesBarChart(
-    "gameDailyAverageChart",
-    "game_daily_average"
-  );
+  // Custom initialization for gameDailyAverageChart with band-level game tooltip
+  (function initGameDailyAverageChart() {
+    const dataEl = document.getElementById("game_daily_average");
+    if (!dataEl) return;
+    const rawData = JSON.parse(dataEl.textContent || "null");
+    if (!rawData || !rawData.labels || rawData.labels.length === 0) return;
+
+    const topGamesByBand = rawData.top_games_per_band || {};
+
+    function gameDailyAverageTooltip(context) {
+      let tooltipEl = document.getElementById("chartjs-tooltip");
+      if (!tooltipEl) {
+        tooltipEl = document.createElement("div");
+        tooltipEl.id = "chartjs-tooltip";
+        tooltipEl.innerHTML = "<table></table>";
+        document.body.appendChild(tooltipEl);
+      }
+
+      const tooltipModel = context.tooltip;
+      if (tooltipModel.opacity === 0) {
+        tooltipEl.style.opacity = 0;
+        return;
+      }
+
+      if (tooltipModel.body) {
+        const dataIndex = tooltipModel.dataPoints[0].dataIndex;
+        const bandLabel = tooltipModel.title[0] || "";
+        const bandGames = topGamesByBand[bandLabel] || [];
+        const totalCount = tooltipModel.dataPoints[0].raw || 0;
+
+        let tableBody =
+          '<thead><tr><th colspan="2">Avg/day: ' + bandLabel + "</th></tr></thead><tbody>";
+
+        if (bandGames.length > 0) {
+          bandGames.forEach(function (game, idx) {
+            tableBody +=
+              "<tr>" +
+              '<td style="padding-right:15px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+              (idx + 1) +
+              ". " +
+              (game.title || "Unknown") +
+              "</td>" +
+              '<td style="text-align:right;font-weight:bold;white-space:nowrap;">' +
+              (game.formatted_daily_average || "") +
+              "</td>" +
+              "</tr>";
+          });
+        }
+
+        tableBody +=
+          '<tr class="total-row">' +
+          "<td>Games:</td>" +
+          '<td style="text-align:right;font-weight:bold;">' +
+          totalCount +
+          "</td>" +
+          "</tr>";
+        tableBody += "</tbody>";
+
+        const tableRoot = tooltipEl.querySelector("table");
+        tableRoot.innerHTML = tableBody;
+      }
+
+      const position = context.chart.canvas.getBoundingClientRect();
+      tooltipEl.style.opacity = 1;
+      tooltipEl.style.position = "absolute";
+      tooltipEl.style.left =
+        position.left + window.scrollX + tooltipModel.caretX + "px";
+      tooltipEl.style.top =
+        position.top + window.scrollY + tooltipModel.caretY + "px";
+      tooltipEl.style.transform = "translate(-50%, -100%)";
+      tooltipEl.style.pointerEvents = "none";
+    }
+
+    const chartOptions = JSON.parse(JSON.stringify(barChartConfig));
+    chartOptions.scales.x.stacked = false;
+    chartOptions.scales.y.stacked = false;
+    if (chartOptions.plugins && chartOptions.plugins.legend) {
+      chartOptions.plugins.legend.display = false;
+    }
+    chartOptions.plugins.tooltip = {
+      enabled: false,
+      mode: "index",
+      intersect: false,
+      external: gameDailyAverageTooltip,
+    };
+
+    initializeChartIfExists(
+      "gameDailyAverageChart",
+      "bar",
+      processBarData(rawData),
+      chartOptions
+    );
+  })();
 
   // Music consumption charts
   initializeSingleSeriesBarChart(

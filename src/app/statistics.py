@@ -2676,49 +2676,107 @@ def _build_game_hours_charts(game_data, start_date, end_date, color, dataset_lab
     }
 
 
+DAILY_AVERAGE_BANDS = [
+    (0, 5/60, "5 min"),             # 0 to 5 minutes
+    (5/60, 15/60, "15 min"),        # 5 to 15 minutes
+    (15/60, 30/60, "30 min"),       # 15 to 30 minutes
+    (30/60, 1, "60 min"),           # 30 minutes to 1 hour
+    (1, 2, "2 hr"),                 # 1 to 2 hours
+    (2, 4, "4 hr"),                 # 2 to 4 hours
+    (4, float("inf"), "4+ hr"),     # 4+ hours
+]
+
+
+def _get_daily_average_band_index(daily_avg_hours):
+    """Return the band index for a given daily average hours value."""
+    for i, (min_hours, max_hours, _) in enumerate(DAILY_AVERAGE_BANDS):
+        if min_hours <= daily_avg_hours < max_hours:
+            return i
+    if daily_avg_hours >= DAILY_AVERAGE_BANDS[-1][0]:
+        return len(DAILY_AVERAGE_BANDS) - 1
+    return -1
+
+
+def _build_daily_average_band_top_games(game_data, limit=5):
+    """Build a dict mapping each band label to the top N games by daily average.
+
+    Each entry in the returned dict is a list of serialisable dicts:
+        {"title": str, "image": str, "formatted_daily_average": str}
+
+    Only game_data dicts that contain a "game" key (Game model instance with an
+    .item FK) will contribute title/image; dicts with only bare fields (cache path)
+    are expected to already have "title" and "image" injected by the caller.
+    """
+    from app.helpers import minutes_to_hhmm
+
+    band_games = {label: [] for _, _, label in DAILY_AVERAGE_BANDS}
+
+    for data in game_data:
+        daily_avg_hours = data.get("daily_average", 0)
+        if daily_avg_hours <= 0:
+            continue
+        idx = _get_daily_average_band_index(daily_avg_hours)
+        if idx < 0:
+            continue
+        band_label = DAILY_AVERAGE_BANDS[idx][2]
+
+        game_obj = data.get("game")
+        if game_obj is not None:
+            item = getattr(game_obj, "item", None)
+            title = item.title if item else ""
+            image = item.image if item else ""
+        else:
+            title = data.get("title", "")
+            image = data.get("image", "")
+
+        daily_avg_minutes = daily_avg_hours * 60
+        band_games[band_label].append({
+            "title": title,
+            "image": image,
+            "formatted_daily_average": minutes_to_hhmm(daily_avg_minutes) + "/day",
+            "_sort_key": daily_avg_hours,
+        })
+
+    result = {}
+    for label, games in band_games.items():
+        sorted_games = sorted(games, key=lambda g: g["_sort_key"], reverse=True)[:limit]
+        for g in sorted_games:
+            g.pop("_sort_key", None)
+        if sorted_games:
+            result[label] = sorted_games
+
+    return result
+
+
 def _build_daily_average_distribution_chart(game_data, color, dataset_label):
     """Build chart showing distribution of games by daily average time bands.
-    
-    Returns chart data with labels (time bands) and values (number of games).
+
+    Returns chart data with labels (time bands) and values (number of games),
+    plus a ``top_games_per_band`` key with the top 5 games per band (serialisable).
     """
-    empty_chart = {"labels": [], "datasets": []}
+    empty_chart = {"labels": [], "datasets": [], "top_games_per_band": {}}
 
     if not game_data:
         return empty_chart
 
-    # Define time bands (in hours per day)
-    bands = [
-        (0, 5/60, "5 min"),             # 0 to 5 minutes
-        (5/60, 15/60, "15 min"),        # 5 to 15 minutes
-        (15/60, 30/60, "30 min"),       # 15 to 30 minutes
-        (30/60, 1, "60 min"),           # 30 minutes to 1 hour
-        (1, 2, "2 hr"),                 # 1 to 2 hours
-        (2, 4, "4 hr"),                 # 2 to 4 hours
-        (4, float("inf"), "4+ hr"),     # 4+ hours
-    ]
+    bands = DAILY_AVERAGE_BANDS
 
     # Count games in each band
     band_counts = [0] * len(bands)
 
     for data in game_data:
         daily_avg_hours = data["daily_average"]
-
-        # Find which band this game belongs to
-        for i, (min_hours, max_hours, _) in enumerate(bands):
-            if min_hours <= daily_avg_hours < max_hours:
-                band_counts[i] += 1
-                break
-        else:
-            # If we get here, it must be >= the last band's max (infinity case)
-            # For the last band (4+ hr/day), we check if >= 4
-            if daily_avg_hours >= bands[-1][0]:
-                band_counts[-1] += 1
+        idx = _get_daily_average_band_index(daily_avg_hours)
+        if 0 <= idx < len(bands):
+            band_counts[idx] += 1
 
     # Extract labels
     labels = [label for _, _, label in bands]
 
-    # Build chart
-    return _build_single_series_chart(labels, band_counts, color, dataset_label)
+    # Build chart and attach top-games-per-band tooltip data
+    chart = _build_single_series_chart(labels, band_counts, color, dataset_label)
+    chart["top_games_per_band"] = _build_daily_average_band_top_games(game_data)
+    return chart
 
 
 def _build_completed_length_distribution_chart(values, unit_name, color):
@@ -2908,8 +2966,103 @@ def _compute_game_top_daily_average(game_data, limit=20):
     return results
 
 
-def get_game_consumption_stats(user_media, start_date, end_date, minutes_per_type=None):
+def _compute_game_platform_breakdown(game_data, user):
+    """Compute a breakdown of hours and unique game counts per platform.
+
+    Platform detection priority:
+      1. CollectionEntry.resolution  (user's explicitly chosen platform)
+      2. item.platforms if exactly one platform listed on the Item
+      3. Skip (multi-platform game with no collection data)
+
+    Args:
+        game_data: List of game data dicts from _collect_game_data (each has
+                   a "game" key pointing to a Game model instance and "hours").
+        user: The Django user instance used to query CollectionEntry.
+
+    Returns:
+        List of dicts sorted by hours desc:
+            {"name": str, "games": int, "hours": float, "formatted_hours": str}
+    """
+    from app.helpers import minutes_to_hhmm
+    from app.models import CollectionEntry
+
+    if not game_data or not user:
+        return []
+
+    # Collect all unique item_ids from this period's game_data
+    item_to_hours = {}  # item_id -> total hours across all entries for that item
+    item_obj_map = {}   # item_id -> item object (for platforms list)
+    for data in game_data:
+        game = data.get("game")
+        if not game:
+            continue
+        item = getattr(game, "item", None)
+        if not item:
+            continue
+        item_id = item.id
+        item_to_hours[item_id] = item_to_hours.get(item_id, 0) + data["hours"]
+        item_obj_map[item_id] = item
+
+    if not item_to_hours:
+        return []
+
+    # Fetch collection entries for these items so we can read the resolution field
+    collection_platform_map = {}  # item_id -> platform string
+    ce_qs = CollectionEntry.objects.filter(
+        user=user,
+        item_id__in=list(item_to_hours.keys()),
+    ).values("item_id", "resolution")
+    for ce in ce_qs:
+        resolution = (ce.get("resolution") or "").strip()
+        if resolution:
+            collection_platform_map[ce["item_id"]] = resolution
+
+    # Aggregate per platform
+    platform_hours = defaultdict(float)
+    platform_game_ids = defaultdict(set)
+
+    for item_id, hours in item_to_hours.items():
+        item = item_obj_map.get(item_id)
+        if not item:
+            continue
+
+        # Priority 1: collection entry resolution
+        platform = collection_platform_map.get(item_id)
+
+        # Priority 2: single IGDB platform
+        if not platform:
+            item_platforms = item.platforms if isinstance(item.platforms, list) else []
+            item_platforms = [str(p).strip() for p in item_platforms if str(p).strip()]
+            if len(item_platforms) == 1:
+                platform = item_platforms[0]
+
+        # Skip if we can't determine the platform
+        if not platform:
+            continue
+
+        platform_hours[platform] += hours
+        platform_game_ids[platform].add(item_id)
+
+    if not platform_hours:
+        return []
+
+    results = []
+    for platform_name, hours in platform_hours.items():
+        results.append({
+            "name": platform_name,
+            "games": len(platform_game_ids[platform_name]),
+            "hours": hours,
+            "formatted_hours": minutes_to_hhmm(hours * 60),
+        })
+
+    return sorted(results, key=lambda x: x["hours"], reverse=True)
+
+
+def get_game_consumption_stats(user_media, start_date, end_date, minutes_per_type=None, user=None):
     """Return aggregate metrics and chart data for game activity."""
+    if user is None:
+        user = _infer_user_from_user_media(user_media)
+
     game_queryset = (user_media or {}).get(MediaTypes.GAME.value)
     game_data = _collect_game_data(game_queryset, start_date, end_date)
 
@@ -2942,7 +3095,7 @@ def get_game_consumption_stats(user_media, start_date, end_date, minutes_per_typ
     # Build hours charts
     hours_charts = _build_game_hours_charts(game_data, start_date, end_date, color, chart_label)
 
-    # Build daily average distribution chart
+    # Build daily average distribution chart (includes top_games_per_band for tooltip)
     daily_avg_chart = _build_daily_average_distribution_chart(game_data, color, "Games")
 
     # Combine charts
@@ -2951,12 +3104,15 @@ def get_game_consumption_stats(user_media, start_date, end_date, minutes_per_typ
         "by_month": hours_charts["by_month"],
         "by_daily_average": daily_avg_chart,
     }
-    
+
     # Compute top genres using stored genres, fall back to cached metadata only
     top_genres = _compute_game_top_genres(play_details, limit=20)
 
     # Compute top daily average games
     top_daily_average_games = _compute_game_top_daily_average(game_data, limit=20)
+
+    # Compute platform breakdown
+    platform_breakdown = _compute_game_platform_breakdown(game_data, user)
 
     # has_data should be True if we have any game data, not just hours
     has_data = len(game_data) > 0 or total_hours > 0
@@ -2967,6 +3123,7 @@ def get_game_consumption_stats(user_media, start_date, end_date, minutes_per_typ
         "has_data": has_data,
         "top_genres": top_genres,
         "top_daily_average_games": top_daily_average_games,
+        "platform_breakdown": platform_breakdown,
     }
 
 
