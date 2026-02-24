@@ -1025,3 +1025,61 @@ class LivePlaybackScrobbleClearingTests(TestCase):
         self.assertIsNone(
             live_playback.get_user_playback_state(self.user.id, now=after_expiry),
         )
+
+    def test_library_filter_rejects_unselected_library(self):
+        """Webhook events should be ignored when library is not selected."""
+        self.user.plex_webhook_libraries = ["machine-a::1"]
+        self.user.save(update_fields=["plex_webhook_libraries"])
+
+        payload = {
+            "event": "media.scrobble",
+            "Account": {"title": "testuser"},
+            "Server": {"uuid": "machine-a"},
+            "Metadata": {
+                "type": "episode",
+                "librarySectionID": "2",
+                "grandparentTitle": "Friends",
+                "index": 1,
+                "parentIndex": 1,
+                "Guid": [{"id": "tmdb://85987"}],
+            },
+        }
+
+        with patch.object(PlexWebhookProcessor, "_process_media") as mock_process_media:
+            response = self.client.post(
+                self.url,
+                data={"payload": json.dumps(payload)},
+                format="multipart",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        mock_process_media.assert_not_called()
+
+    def test_library_filter_accepts_selected_library(self):
+        """Webhook events should be accepted when library is selected."""
+        self.user.plex_webhook_libraries = ["machine-a::2"]
+        self.user.save(update_fields=["plex_webhook_libraries"])
+
+        payload = {
+            "event": "media.scrobble",
+            "Account": {"title": "testuser"},
+            "Server": {"uuid": "machine-a"},
+            "Metadata": {
+                "type": "episode",
+                "librarySectionID": "2",
+                "grandparentTitle": "Friends",
+                "index": 1,
+                "parentIndex": 1,
+                "Guid": [{"id": "tmdb://85987"}],
+            },
+        }
+
+        with patch.object(PlexWebhookProcessor, "_process_media") as mock_process_media:
+            response = self.client.post(
+                self.url,
+                data={"payload": json.dumps(payload)},
+                format="multipart",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        mock_process_media.assert_called_once()

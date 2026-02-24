@@ -592,6 +592,15 @@ class User(AbstractUser):
         blank=True,
         help_text="Comma-separated list of Plex usernames for webhook matching",
     )
+    plex_webhook_libraries = models.JSONField(
+        blank=True,
+        null=True,
+        default=None,
+        help_text=(
+            "List of Plex webhook library keys to accept. "
+            "Null means all available libraries."
+        ),
+    )
     plex_webhook_last_received_at = models.DateTimeField(
         blank=True,
         null=True,

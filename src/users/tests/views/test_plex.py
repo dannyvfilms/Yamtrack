@@ -3,6 +3,8 @@ from django.contrib.messages import get_messages
 from django.test import TestCase
 from django.urls import reverse
 
+from integrations.models import PlexAccount
+
 
 class PlexUsernamesUpdateTests(TestCase):
     """Tests for Plex integration functionality."""
@@ -78,3 +80,50 @@ class PlexUsernamesUpdateTests(TestCase):
 
         messages = list(get_messages(response.wsgi_request))
         self.assertEqual(len(messages), 0)
+
+
+class PlexWebhookLibrariesUpdateTests(TestCase):
+    """Tests for Plex webhook library selection settings."""
+
+    def setUp(self):
+        self.credentials = {"username": "testlibs", "password": "12345"}
+        self.user = get_user_model().objects.create_user(**self.credentials)
+        self.client.login(**self.credentials)
+        PlexAccount.objects.create(
+            user=self.user,
+            plex_token="token",
+            plex_username="testlibs",
+            sections=[
+                {
+                    "id": "1",
+                    "title": "Movies",
+                    "machine_identifier": "machine-a",
+                    "server_name": "Home Server",
+                },
+                {
+                    "id": "2",
+                    "title": "Shows",
+                    "machine_identifier": "machine-a",
+                    "server_name": "Home Server",
+                },
+            ],
+        )
+
+    def test_update_plex_webhook_libraries_success(self):
+        response = self.client.post(
+            reverse("update_plex_webhook_libraries"),
+            {"plex_webhook_libraries": ["machine-a::1"]},
+        )
+
+        self.assertRedirects(response, reverse("integrations"))
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.plex_webhook_libraries, ["machine-a::1"])
+
+    def test_update_plex_webhook_libraries_filters_invalid_values(self):
+        self.client.post(
+            reverse("update_plex_webhook_libraries"),
+            {"plex_webhook_libraries": ["machine-a::1", "machine-z::9"]},
+        )
+
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.plex_webhook_libraries, ["machine-a::1"])

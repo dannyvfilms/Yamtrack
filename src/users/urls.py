@@ -48,6 +48,11 @@ urlpatterns = [
         name="update_plex_usernames",
     ),
     path(
+        "update_plex_webhook_libraries",
+        views.update_plex_webhook_libraries,
+        name="update_plex_webhook_libraries",
+    ),
+    path(
         "settings/integrations/jellyseerr/",
         views.update_jellyseerr_settings,
         name="update_jellyseerr_settings",

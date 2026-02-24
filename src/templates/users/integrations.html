@@ -205,6 +205,112 @@
             </div>
           </form>
         </div>
+
+        <div class="bg-[#262a2f] p-3 rounded-md mb-4"
+             x-data="{
+               dropdownOpen: false,
+               selectedLibraries: JSON.parse('{{ selected_plex_webhook_libraries_json|escapejs }}'),
+               availableLibraries: JSON.parse('{{ plex_library_options_json|escapejs }}'),
+               selectedLabel() {
+                 if (!this.availableLibraries.length) {
+                   return 'No libraries available';
+                 }
+                 if (this.selectedLibraries.length === this.availableLibraries.length) {
+                   return 'All Libraries';
+                 }
+                 if (!this.selectedLibraries.length) {
+                   return 'No Libraries';
+                 }
+                 return `${this.selectedLibraries.length} selected`;
+               },
+               toggleLibrary(value) {
+                 if (this.selectedLibraries.includes(value)) {
+                   this.selectedLibraries = this.selectedLibraries.filter((entry) => entry !== value);
+                 } else {
+                   this.selectedLibraries = [...this.selectedLibraries, value];
+                 }
+               },
+               isLibrarySelected(value) {
+                 return this.selectedLibraries.includes(value);
+               },
+               allLibrariesSelected() {
+                 return this.availableLibraries.length > 0
+                   && this.selectedLibraries.length === this.availableLibraries.length;
+               },
+               toggleAllLibraries() {
+                 if (this.allLibrariesSelected()) {
+                   this.selectedLibraries = [];
+                 } else {
+                   this.selectedLibraries = this.availableLibraries.map((library) => library.value);
+                 }
+               }
+             }">
+          <h4 class="text-sm font-medium mb-3">Plex Webhook Libraries</h4>
+          <p class="text-gray-400 mb-4 text-sm">
+            Choose which Plex libraries are accepted by your webhook. All libraries are selected by default.
+          </p>
+          {% if plex_library_options_json != "[]" %}
+            <form method="post" action="{% url 'update_plex_webhook_libraries' %}" class="space-y-3">
+              {% csrf_token %}
+              <div class="relative" @click.outside="dropdownOpen = false">
+                <button type="button"
+                        class="h-10 px-3 text-sm bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex items-center gap-2 w-full cursor-pointer"
+                        @click="dropdownOpen = !dropdownOpen"
+                        :aria-expanded="dropdownOpen">
+                  {% include "app/icons/funnel.svg" with classes="w-4 h-4" %}
+                  <span class="block min-w-0 truncate" x-text="selectedLabel()"></span>
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" class="w-4 h-4 ml-auto" aria-hidden="true">
+                    <path d="M10 14 L4.5 7 H15.5 Z" fill="currentColor"></path>
+                  </svg>
+                </button>
+
+                <div x-cloak
+                     x-show="dropdownOpen"
+                     x-transition:enter="transition ease-out duration-100"
+                     x-transition:enter-start="transform opacity-0 scale-95"
+                     x-transition:enter-end="transform opacity-100 scale-100"
+                     x-transition:leave="transition ease-in duration-75"
+                     x-transition:leave-start="transform opacity-100 scale-100"
+                     x-transition:leave-end="transform opacity-0 scale-95"
+                     class="absolute left-0 mt-2 w-full rounded-md bg-[#39404b] border border-gray-700 shadow-lg overflow-hidden z-40">
+                  <div class="flex items-center justify-between gap-2 px-3 py-2 border-b border-gray-700">
+                    <div class="text-xs uppercase tracking-wide text-gray-300">Plex Libraries</div>
+                    <button type="button"
+                            class="text-xs text-gray-300 hover:text-white transition-colors"
+                            @click="toggleAllLibraries()"
+                            x-text="allLibrariesSelected() ? 'Hide all' : 'Show all'"></button>
+                  </div>
+                  <div class="max-h-64 overflow-y-auto">
+                    <template x-for="library in availableLibraries" :key="library.value">
+                      <button type="button"
+                              class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                              @click="toggleLibrary(library.value)">
+                        <span class="block min-w-0 truncate" x-text="library.server_name ? `${library.label} (${library.server_name})` : library.label"></span>
+                        <span class="ml-auto" x-show="isLibrarySelected(library.value)">
+                          {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                        </span>
+                      </button>
+                    </template>
+                  </div>
+                </div>
+              </div>
+
+              <template x-for="library in selectedLibraries" :key="`selected-${library}`">
+                <input type="hidden" name="plex_webhook_libraries" :value="library">
+              </template>
+
+              <div class="pt-2">
+                <button type="submit"
+                        class="flex items-center px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors text-sm cursor-pointer">
+                  {% include "app/icons/save.svg" with classes="w-4 h-4 mr-2" %}
+                  Save Changes
+                </button>
+              </div>
+            </form>
+          {% else %}
+            <p class="text-sm text-amber-300">Connect Plex from the Import page to load your available libraries.</p>
+          {% endif %}
+        </div>
         <div class="bg-[#262a2f] p-4 rounded-md mb-4">
           <h4 class="text-sm font-medium mb-3">Webhook Status</h4>
           {% if plex_webhook_needs_update %}

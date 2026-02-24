@@ -36,7 +36,7 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
             return None
 
         payload_user = payload["Account"]["title"].strip().lower()
-        if not self._is_valid_user(payload_user, user):
+        if not self._is_valid_user(payload_user, payload, user):
             logger.debug(
                 "Ignoring Plex webhook event for user %s: not a valid user",
                 payload_user,
@@ -776,7 +776,7 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
 
         return rating
 
-    def _is_valid_user(self, payload_user, user):
+    def _is_valid_user(self, payload_user, payload, user):
         stored_usernames = [
             u.strip().lower()
             for u in (user.plex_usernames or "").split(",")
@@ -787,7 +787,33 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
             payload_user,
             stored_usernames,
         )
-        return payload_user in stored_usernames
+
+        if payload_user not in stored_usernames:
+            return False
+
+        return self._is_valid_library(payload, user)
+
+    def _is_valid_library(self, payload, user):
+        selected_libraries = user.plex_webhook_libraries
+        if not selected_libraries:
+            return True
+
+        machine_identifier = payload.get("Server", {}).get("uuid")
+        section_id = payload.get("Metadata", {}).get("librarySectionID")
+        if not machine_identifier or not section_id:
+            logger.debug(
+                "Rejecting Plex webhook event because library info is missing while library filtering is enabled.",
+            )
+            return False
+
+        payload_library = f"{machine_identifier}::{section_id}"
+        is_allowed = payload_library in selected_libraries
+        logger.debug(
+            "Checking if payload library '%s' is in selected libraries: %s",
+            payload_library,
+            selected_libraries,
+        )
+        return is_allowed
 
     def _is_played(self, payload):
         return payload["event"] == "media.scrobble"

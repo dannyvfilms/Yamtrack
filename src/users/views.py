@@ -575,12 +575,50 @@ def integrations(request):
     if rotated_at:
         plex_webhook_needs_update = not last_received or last_received < rotated_at
 
+    plex_account = getattr(user, "plex_account", None)
+    plex_library_options: list[dict] = []
+    selected_plex_webhook_libraries: list[str] = []
+
+    if plex_account and plex_account.plex_token:
+        if _should_refresh_plex_sections(plex_account):
+            try:
+                plex_account.sections = plex.list_sections(plex_account.plex_token)
+                plex_account.sections_refreshed_at = timezone.now()
+                plex_account.save(update_fields=["sections", "sections_refreshed_at"])
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning(
+                    "Could not refresh Plex libraries for webhook settings for user %s: %s",
+                    user.username,
+                    exc,
+                )
+
+        sections = plex_account.sections or []
+        for section in sections:
+            machine_identifier = section.get("machine_identifier")
+            section_id = section.get("id")
+            if not machine_identifier or not section_id:
+                continue
+            library_value = f"{machine_identifier}::{section_id}"
+            plex_library_options.append(
+                {
+                    "value": library_value,
+                    "label": section.get("title") or f"Library {section_id}",
+                    "server_name": section.get("server_name") or "",
+                },
+            )
+
+        selected_plex_webhook_libraries = user.plex_webhook_libraries or [
+            option["value"] for option in plex_library_options
+        ]
+
     return render(
         request,
         "users/integrations.html",
         {
             "user": user,
             "plex_webhook_needs_update": plex_webhook_needs_update,
+            "plex_library_options_json": json.dumps(plex_library_options),
+            "selected_plex_webhook_libraries_json": json.dumps(selected_plex_webhook_libraries),
         },
     )
 
@@ -860,6 +898,42 @@ def update_plex_usernames(request):
         request.user.save(update_fields=["plex_usernames"])
         messages.success(request, "Plex usernames updated successfully")
 
+    return redirect(redirect_target)
+
+
+@require_POST
+def update_plex_webhook_libraries(request):
+    """Update selected Plex libraries allowed for webhook events."""
+    redirect_target = request.POST.get("next") or "integrations"
+    selected_libraries = request.POST.getlist("plex_webhook_libraries")
+
+    deduplicated_libraries: list[str] = []
+    seen: set[str] = set()
+    for library in selected_libraries:
+        value = (library or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        deduplicated_libraries.append(value)
+
+    plex_account = getattr(request.user, "plex_account", None)
+    valid_library_values: list[str] = []
+    if plex_account and plex_account.plex_token:
+        sections = plex_account.sections or []
+        for section in sections:
+            machine_identifier = section.get("machine_identifier")
+            section_id = section.get("id")
+            if machine_identifier and section_id:
+                valid_library_values.append(f"{machine_identifier}::{section_id}")
+
+    if valid_library_values:
+        deduplicated_libraries = [
+            value for value in deduplicated_libraries if value in valid_library_values
+        ]
+
+    request.user.plex_webhook_libraries = deduplicated_libraries
+    request.user.save(update_fields=["plex_webhook_libraries"])
+    messages.success(request, "Plex webhook libraries updated successfully")
     return redirect(redirect_target)
 
 
