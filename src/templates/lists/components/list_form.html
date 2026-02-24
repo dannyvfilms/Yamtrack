@@ -81,18 +81,24 @@
       {% endfor %}
 
       {% if form.instance.pk %}
-        <div class="flex flex-row-reverse justify-between mt-6">
-          <button type="submit" formaction="{% url 'list_edit' %}?next={{ request.path }}"
-            class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 cursor-pointer">
-            Save
-          </button>
-          {% if request.user == custom_list.owner %}
-            <button type="submit" formaction="{% url 'list_delete' %}?next={{ request.path }}"
-              class="px-4 py-2 rounded-md transition duration-300 bg-red-700 text-white hover:bg-red-800 cursor-pointer">Delete</button>
-          {% else %}
-            <button type="submit" formaction="{% url 'list_delete' %}?next={{ request.path }}"
-              class="px-4 py-2 rounded-md transition duration-300 bg-gray-600 text-gray-300 cursor-not-allowed" disabled>Delete</button>
-          {% endif %}
+        <div class="flex flex-wrap items-center justify-between gap-3 mt-6">
+          <a href="{% url 'list_activity' custom_list.id %}"
+             class="px-4 py-2 bg-[#39404b] text-gray-200 rounded-md hover:bg-[#454d5a] transition-colors">
+            Activity History
+          </a>
+          <div class="flex flex-row-reverse gap-2">
+            <button type="submit" formaction="{% url 'list_edit' %}?next={{ request.path }}"
+              class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 cursor-pointer">
+              Save
+            </button>
+            {% if request.user == custom_list.owner %}
+              <button type="submit" formaction="{% url 'list_delete' %}?next={{ request.path }}"
+                class="px-4 py-2 rounded-md transition duration-300 bg-red-700 text-white hover:bg-red-800 cursor-pointer">Delete</button>
+            {% else %}
+              <button type="submit" formaction="{% url 'list_delete' %}?next={{ request.path }}"
+                class="px-4 py-2 rounded-md transition duration-300 bg-gray-600 text-gray-300 cursor-not-allowed" disabled>Delete</button>
+            {% endif %}
+          </div>
         </div>
       {% else %}
         <div class="flex justify-end pt-4">

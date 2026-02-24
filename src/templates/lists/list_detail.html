@@ -133,9 +133,11 @@
     canEdit: {% if can_edit %}true{% else %}false{% endif %},
     sort: '{{ current_sort }}',
     direction: '{{ current_direction|default:'desc' }}',
+    layout: '{{ current_layout|default:'grid' }}',
     status: '{{ current_status }}',
     type: '{{ request.GET.type|default:'all' }}',
     query: '{{ request.GET.q|default:''|escapejs }}',
+    searchMode: false,
     mediaTypeLabels: {
       {% for media_type in media_types %}'{{ media_type }}': '{{ media_type|media_type_readable_plural }}',{% endfor %}
       'all': 'All Types'
@@ -170,6 +172,7 @@
     <form id="filter-form" class="hidden">
       <input type="hidden" name="sort" x-model="sort">
       <input type="hidden" name="direction" x-model="direction">
+      <input type="hidden" name="layout" x-model="layout">
       <input type="hidden" name="type" x-model="type">
       <input type="hidden" name="status" x-model="status">
       <input type="hidden" name="q" x-model="query">
@@ -179,27 +182,42 @@
     {% endif %}
 
     <div class="flex flex-col md:flex-row gap-4 mb-8">
-      {# Search #}
-      <div class="relative grow min-w-0">
-        <input id="search-input"
-               placeholder="Search this list or recommend something..."
-               class="w-full min-w-0 py-2 pl-10 pr-4 bg-[#39404b] rounded-md text-white focus:outline-none focus:ring-2 focus:ring-[#4a9eff] appearance-none"
-               type="text"
-               x-model="query"
-               autocomplete="off"
-               hx-get="{% url 'list_detail' custom_list.id %}"
-               hx-trigger="keyup changed delay:300ms, search"
-               {% if items %}hx-target="#items-grid"{% else %}hx-target="this" hx-swap="none"{% endif %}
-               hx-include="#filter-form"
-               hx-indicator="#search-indicator">
-        {% include "app/icons/magnifying-glass.svg" with classes="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" %}
-        <div id="search-indicator"
-             class="htmx-indicator absolute right-3 top-1/2 transform -translate-y-1/2">
-          <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-indigo-500"></div>
-        </div>
-      </div>
-
       <div class="flex gap-1 flex-wrap md:flex-nowrap w-full items-center filter-toolbar media-filter-toolbar">
+        <div class="relative filter-control"
+             :class="searchMode ? 'grow min-w-0' : 'shrink-0'"
+             @click.outside="if (searchMode) { searchMode = false; }">
+          <button class="flex items-center px-2 py-2 rounded-md text-gray-200 hover:text-white transition-colors cursor-pointer"
+                  x-cloak
+                  x-show="!searchMode"
+                  @click="searchMode = true; $nextTick(() => $refs.listSearchInput?.focus())"
+                  type="button"
+                  aria-label="Search this list">
+            {% include "app/icons/magnifying-glass.svg" with classes="w-5 h-5" %}
+          </button>
+
+          <div class="relative grow min-w-0" x-cloak x-show="searchMode">
+            <input id="search-input"
+                   x-ref="listSearchInput"
+                   placeholder="Search this list or recommend something..."
+                   class="w-full min-w-0 py-2 pl-10 pr-4 bg-[#39404b] rounded-md text-white focus:outline-none focus:ring-2 focus:ring-[#4a9eff] appearance-none"
+                   type="text"
+                   x-model="query"
+                   @keydown.escape.prevent="searchMode = false; $refs.listSearchInput?.blur()"
+                   autocomplete="off"
+                   hx-get="{% url 'list_detail' custom_list.id %}"
+                   hx-trigger="keyup changed delay:300ms, search"
+                   hx-target="#items-view"
+                   hx-include="#filter-form"
+                   hx-indicator="#search-indicator">
+            {% include "app/icons/magnifying-glass.svg" with classes="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" %}
+            <div id="search-indicator"
+                 class="htmx-indicator absolute right-3 top-1/2 transform -translate-y-1/2">
+              <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-indigo-500"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="contents" x-cloak x-show="!searchMode">
           {# Filter by Type #}
           <div class="relative filter-control" x-data="{ open: false }">
             <button class="flex items-center gap-2 px-2 py-2 rounded-md text-gray-200 hover:text-white transition-colors cursor-pointer"
@@ -221,7 +239,7 @@
                  x-transition:leave-start="transform opacity-100 scale-100"
                  x-transition:leave-end="transform opacity-0 scale-95">
               <button hx-get="{% url 'list_detail' custom_list.id %}"
-                      {% if items %}hx-target="#items-grid"{% else %}hx-target="this" hx-swap="none"{% endif %}
+                      hx-target="#items-view"
                       hx-include="#filter-form"
                       hx-indicator="#loading-indicator"
                       class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
@@ -230,7 +248,7 @@
                       type="button">All</button>
               {% for media_type in media_types %}
                 <button hx-get="{% url 'list_detail' custom_list.id %}"
-                        {% if items %}hx-target="#items-grid"{% else %}hx-target="this" hx-swap="none"{% endif %}
+                        hx-target="#items-view"
                         hx-include="#filter-form"
                         hx-indicator="#loading-indicator"
                         class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
@@ -261,10 +279,22 @@
                       :class="sort === 'custom' && canEdit ? 'rounded-l-md' : 'rounded-md'"
                       @click="sortOpen = !sortOpen; orderOpen = false"
                       type="button">
-                {% include "app/icons/arrows-up-down.svg" with classes="w-4 h-4" %}
                 <span class="text-sm" x-text="sortLabels[sort] || sort"></span>
-                <span x-cloak x-show="!(sort === 'custom' && canEdit)">
-                  {% include "app/icons/chevron-down.svg" with classes="w-4 h-4" %}
+                <span class="inline-flex items-center" x-cloak x-show="sort !== 'custom' || !canEdit">
+                  <svg xmlns="http://www.w3.org/2000/svg"
+                       viewBox="0 0 20 20"
+                       class="w-4 h-4 ml-2"
+                       x-show="direction === 'asc'"
+                       aria-hidden="true">
+                    <path d="M10 5 L16 15 H4 Z" fill="currentColor"></path>
+                  </svg>
+                  <svg xmlns="http://www.w3.org/2000/svg"
+                       viewBox="0 0 20 20"
+                       class="w-4 h-4 ml-2"
+                       x-show="direction !== 'asc'"
+                       aria-hidden="true">
+                    <path d="M10 15 L4 5 H16 Z" fill="currentColor"></path>
+                  </svg>
                 </span>
               </button>
               <button class="flex items-center px-2 py-2 rounded-r-md border-l border-gray-700 text-gray-200 hover:text-white transition-colors cursor-pointer"
@@ -288,7 +318,7 @@
                  x-transition:leave-end="transform opacity-0 scale-95">
               {% for value, label in sort_choices %}
                 <button hx-get="{% url 'list_detail' custom_list.id %}"
-                        {% if items %}hx-target="#items-grid"{% else %}hx-target="this" hx-swap="none"{% endif %}
+                        hx-target="#items-view"
                         hx-include="#filter-form"
                         hx-indicator="#loading-indicator"
                         class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
@@ -338,10 +368,6 @@
                      x-transition:leave="transition ease-in duration-75"
                      x-transition:leave-start="transform opacity-100 scale-100"
                      x-transition:leave-end="transform opacity-0 scale-95">
-                  <a href="{% url 'list_activity' custom_list.id %}"
-                     class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors">
-                    Activity History
-                  </a>
                   <button class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors cursor-pointer"
                           @click="open = false; showModal = true"
                           type="button">
@@ -358,33 +384,13 @@
             {% endif %}
           {% endif %}
 
-          {% if can_edit %}
-            {% if not custom_list.can_recommend or not items_count %}
-              <div class="layout-toggle ml-auto flex items-center gap-2">
-                <div class="relative" x-data="{ tooltipOpen: false }">
-                  <a href="{% url 'list_activity' custom_list.id %}"
-                     @mouseenter="tooltipOpen = true" @mouseleave="tooltipOpen = false"
-                     @click="tooltipOpen = false"
-                     class="h-10 w-10 bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex items-center justify-center cursor-pointer"
-                     aria-label="Activity history">
-                    {% include "app/icons/history.svg" with classes="w-4 h-4 text-gray-200" %}
-                  </a>
-                  <div x-show="tooltipOpen"
-                       x-transition:enter="transition ease-out duration-200"
-                       x-transition:enter-start="opacity-0 scale-95"
-                       x-transition:enter-end="opacity-100 scale-100"
-                       x-transition:leave="transition ease-in duration-150"
-                       x-transition:leave-start="opacity-100 scale-100"
-                       x-transition:leave-end="opacity-0 scale-95"
-                       class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-40 p-2 text-white text-xs rounded-lg z-20 text-center"
-                       style="display: none; background: rgba(0, 0, 0, 0.85); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);">
-                    Activity history
-                    <div class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent" style="border-top-color: rgba(0, 0, 0, 0.85);"></div>
-                  </div>
-                </div>
+          <div class="ml-auto flex items-center gap-2">
+            {% if can_edit %}
+              {% if not custom_list.can_recommend or not items_count %}
                 <div class="relative" x-data="{ tooltipOpen: false }">
                   <button @click="showModal = true"
-                          @mouseenter="tooltipOpen = true" @mouseleave="tooltipOpen = false"
+                          @mouseenter="tooltipOpen = true"
+                          @mouseleave="tooltipOpen = false"
                           class="h-10 w-10 bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex items-center justify-center cursor-pointer"
                           type="button"
                           aria-label="Edit list">
@@ -403,18 +409,51 @@
                     <div class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent" style="border-top-color: rgba(0, 0, 0, 0.85);"></div>
                   </div>
                 </div>
-              </div>
+              {% endif %}
             {% endif %}
-          {% endif %}
+
+            <div class="flex rounded-md overflow-hidden border border-gray-700 layout-toggle">
+              <button hx-get="{% url 'list_detail' custom_list.id %}"
+                      hx-target="#items-view"
+                      hx-include="#filter-form"
+                      hx-indicator="#loading-indicator"
+                      class="p-2 cursor-pointer"
+                      :class="layout === 'grid' ? 'bg-indigo-600 text-white' : 'bg-[#39404b] hover:bg-[#454d5a]'"
+                      title="Grid View"
+                      @click="layout = 'grid'"
+                      type="button">
+                {% include "app/icons/four-square.svg" with classes="w-5 h-5" %}
+              </button>
+              <button hx-get="{% url 'list_detail' custom_list.id %}"
+                      hx-target="#items-view"
+                      hx-include="#filter-form"
+                      hx-indicator="#loading-indicator"
+                      class="p-2 cursor-pointer"
+                      :class="layout === 'table' ? 'bg-indigo-600 text-white' : 'bg-[#39404b] hover:bg-[#454d5a]'"
+                      title="Table View"
+                      @click="layout = 'table'"
+                      type="button">
+                {% include "app/icons/table.svg" with classes="w-5 h-5" %}
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
     <div id="list-results-summary">
       {% include "lists/components/list_results_summary.html" %}
     </div>
 
-    {% if items %}
-    <div id="items-grid" class="media-grid" hx-history="false">{% include "lists/components/media_grid.html" %}</div>
-    {% else %}
+    <div id="items-view"
+         hx-history="false"
+         :class="layout === 'grid' ? 'media-grid' : ''">
+      {% if items %}
+        {% if current_layout == 'table' %}
+          {% include "lists/components/list_table.html" %}
+        {% else %}
+          {% include "lists/components/media_grid.html" %}
+        {% endif %}
+      {% else %}
       {% if items_count %}
         {% if request.GET.q or has_media_type_filter %}
           <div class="flex flex-col items-center justify-center py-32 px-4 bg-[#2a2f35] rounded-lg">
@@ -484,7 +523,8 @@
           </div>
         </div>
       {% endif %}
-    {% endif %}
+      {% endif %}
+    </div>
 
     <div id="loading-indicator" class="htmx-indicator text-center pt-8">
       <div class="inline-flex justify-center items-center">
@@ -520,7 +560,7 @@
       const values = filterForm ? htmx.values(filterForm) : {};
       htmx.ajax('GET', '{% url "list_detail" custom_list.id %}', {
         source: filterForm || document.body,
-        target: '#items-grid',
+        target: '#items-view',
         swap: 'innerHTML',
         values,
         headers: { 'HX-Request': 'true' },
