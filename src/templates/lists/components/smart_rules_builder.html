@@ -1,5 +1,6 @@
 <form id="smart-filter-form" class="hidden">
   <input type="hidden" name="sort" x-model="sort">
+  <input type="hidden" name="direction" x-model="direction">
   <input type="hidden" name="layout" x-model="layout">
   <input type="hidden" name="status" x-model="status">
   <input type="hidden" name="rating" x-model="rating">
@@ -760,7 +761,7 @@
                   hx-indicator="#loading-indicator"
                   class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
                   :class="sort === '{{ value }}' ? 'bg-indigo-600 text-white font-medium' : 'text-gray-300 hover:bg-[#454d5a] hover:text-white'"
-                  @click="sort = '{{ value }}'; open = false"
+                  @click="setSort('{{ value }}'); open = false"
                   type="button">{{ label }}</button>
         {% endfor %}
       </div>

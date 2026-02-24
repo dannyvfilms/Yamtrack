@@ -112,6 +112,7 @@
     isOrderEditing: false,
     canEdit: {% if can_edit %}true{% else %}false{% endif %},
     sort: '{{ current_sort }}',
+    direction: '{{ current_direction|default:'desc' }}',
     status: '{{ current_status }}',
     type: '{{ request.GET.type|default:'all' }}',
     query: '{{ request.GET.q|default:''|escapejs }}',
@@ -125,7 +126,19 @@
     getMediaTypeLabel() {
       return this.mediaTypeLabels[this.type] || this.type;
     },
+    defaultDirection(value) {
+      return ['title', 'media_type', 'release_date', 'start_date'].includes(value) ? 'asc' : 'desc';
+    },
     setSort(value) {
+      if (value === 'custom') {
+        this.sort = value;
+        this.direction = 'asc';
+        this.isOrderEditing = false;
+        return;
+      }
+      this.direction = (this.sort === value)
+        ? (this.direction === 'asc' ? 'desc' : 'asc')
+        : this.defaultDirection(value);
       this.sort = value;
       if (value !== 'custom') {
         this.isOrderEditing = false;
@@ -136,6 +149,7 @@
     <!-- Form to manage state -->
     <form id="filter-form" class="hidden">
       <input type="hidden" name="sort" x-model="sort">
+      <input type="hidden" name="direction" x-model="direction">
       <input type="hidden" name="type" x-model="type">
       <input type="hidden" name="status" x-model="status">
       <input type="hidden" name="q" x-model="query">

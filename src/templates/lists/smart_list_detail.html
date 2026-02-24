@@ -21,6 +21,7 @@
     saveState: 'idle',
     saveTimer: null,
     sort: '{{ current_sort }}',
+    direction: '{{ current_direction|default:'desc' }}',
     layout: '{{ current_layout }}',
     query: '{{ active_smart_rules.search|default:''|escapejs }}',
     status: '{{ active_smart_rules.status|default:'all'|escapejs }}',
@@ -68,6 +69,15 @@
     },
     sortLabels: {
       {% for value, label in sort_choices %}'{{ value }}': '{{ label }}'{% if not forloop.last %},{% endif %}{% endfor %}
+    },
+    defaultDirection(value) {
+      return ['title', 'media_type', 'release_date', 'start_date'].includes(value) ? 'asc' : 'desc';
+    },
+    setSort(value) {
+      this.direction = (this.sort === value)
+        ? (this.direction === 'asc' ? 'desc' : 'asc')
+        : this.defaultDirection(value);
+      this.sort = value;
     },
     init() {
       if (this.selectedTypes.length === 0 && this.availableMediaTypes.length > 0) {

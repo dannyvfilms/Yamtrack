@@ -1,5 +1,5 @@
 import json
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -9,6 +9,7 @@ from django.utils import timezone
 
 from app.models import TV, Anime, Item, MediaTypes, Movie, Sources, Status
 from lists.models import CustomList, CustomListItem
+from users.models import DateFormatChoices
 
 
 class ListsViewTests(TestCase):
@@ -524,6 +525,64 @@ class ListDetailViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["current_sort"], "custom")
 
+    def test_release_date_sort_orders_items_and_renders_subtitles(self):
+        """Release-date sort should persist, order items, and render full dates."""
+        self.user.date_format = DateFormatChoices.ISO_8601
+        self.user.save(update_fields=["date_format"])
+
+        self.tv_item.release_datetime = datetime(2019, 3, 10, 12, 0, 0, tzinfo=UTC)
+        self.movie_item.release_datetime = datetime(2020, 1, 1, 12, 0, 0, tzinfo=UTC)
+        self.anime_item.release_datetime = datetime(2021, 7, 15, 12, 0, 0, tzinfo=UTC)
+        self.tv_item.save(update_fields=["release_datetime"])
+        self.movie_item.save(update_fields=["release_datetime"])
+        self.anime_item.save(update_fields=["release_datetime"])
+
+        response = self.client.get(
+            reverse("list_detail", args=[self.custom_list.id]) + "?sort=release_date",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "release_date")
+
+        ordered_titles = [item.title for item in response.context["items"]]
+        self.assertEqual(ordered_titles, ["Test TV Show", "Test Movie", "Test Anime"])
+
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.list_detail_sort, "release_date")
+
+        self.assertContains(response, "2019-03-10")
+        self.assertContains(response, "2020-01-01")
+        self.assertContains(response, "2021-07-15")
+
+    def test_release_date_sort_honors_direction(self):
+        """Release-date sort should reverse ordering when direction switches."""
+        self.tv_item.release_datetime = datetime(2019, 3, 10, 12, 0, 0, tzinfo=UTC)
+        self.movie_item.release_datetime = datetime(2020, 1, 1, 12, 0, 0, tzinfo=UTC)
+        self.anime_item.release_datetime = datetime(2021, 7, 15, 12, 0, 0, tzinfo=UTC)
+        self.tv_item.save(update_fields=["release_datetime"])
+        self.movie_item.save(update_fields=["release_datetime"])
+        self.anime_item.save(update_fields=["release_datetime"])
+
+        asc_response = self.client.get(
+            reverse("list_detail", args=[self.custom_list.id]) + "?sort=release_date&direction=asc",
+        )
+        self.assertEqual(asc_response.status_code, 200)
+        self.assertEqual(asc_response.context["current_direction"], "asc")
+        self.assertEqual(
+            [item.title for item in asc_response.context["items"]],
+            ["Test TV Show", "Test Movie", "Test Anime"],
+        )
+
+        desc_response = self.client.get(
+            reverse("list_detail", args=[self.custom_list.id]) + "?sort=release_date&direction=desc",
+        )
+        self.assertEqual(desc_response.status_code, 200)
+        self.assertEqual(desc_response.context["current_direction"], "desc")
+        self.assertEqual(
+            [item.title for item in desc_response.context["items"]],
+            ["Test Anime", "Test Movie", "Test TV Show"],
+        )
+
     @patch.object(get_user_model(), "update_preference")
     @patch.object(CustomList, "user_can_view")
     @patch("app.providers.services.get_media_metadata")
@@ -663,6 +722,51 @@ class ListDetailViewTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "lists/components/list_table.html")
+
+    def test_smart_list_release_date_sort_honors_direction(self):
+        """Smart-list release-date sort should reverse ordering by direction."""
+        self.movie_item.release_datetime = datetime(2020, 1, 1, 12, 0, 0, tzinfo=UTC)
+        self.tv_item.release_datetime = datetime(2021, 1, 1, 12, 0, 0, tzinfo=UTC)
+        self.anime_item.release_datetime = datetime(2019, 1, 1, 12, 0, 0, tzinfo=UTC)
+        self.movie_item.save(update_fields=["release_datetime"])
+        self.tv_item.save(update_fields=["release_datetime"])
+        self.anime_item.save(update_fields=["release_datetime"])
+
+        Movie.objects.create(item=self.movie_item, status=Status.COMPLETED.value, user=self.user)
+        TV.objects.create(item=self.tv_item, status=Status.IN_PROGRESS.value, user=self.user)
+        Anime.objects.create(item=self.anime_item, status=Status.PLANNING.value, user=self.user)
+
+        smart_list = CustomList.objects.create(
+            name="Smart List",
+            owner=self.user,
+            is_smart=True,
+            smart_media_types=[
+                MediaTypes.MOVIE.value,
+                MediaTypes.TV.value,
+                MediaTypes.ANIME.value,
+            ],
+            smart_filters={"status": "all"},
+        )
+
+        asc_response = self.client.get(
+            reverse("list_detail", args=[smart_list.id]) + "?sort=release_date&direction=asc",
+        )
+        self.assertEqual(asc_response.status_code, 200)
+        self.assertEqual(asc_response.context["current_direction"], "asc")
+        self.assertEqual(
+            [item.title for item in asc_response.context["items"]],
+            ["Test Anime", "Test Movie", "Test TV Show"],
+        )
+
+        desc_response = self.client.get(
+            reverse("list_detail", args=[smart_list.id]) + "?sort=release_date&direction=desc",
+        )
+        self.assertEqual(desc_response.status_code, 200)
+        self.assertEqual(desc_response.context["current_direction"], "desc")
+        self.assertEqual(
+            [item.title for item in desc_response.context["items"]],
+            ["Test TV Show", "Test Movie", "Test Anime"],
+        )
 
 
 class CreateListViewTest(TestCase):

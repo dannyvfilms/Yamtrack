@@ -42,6 +42,31 @@ logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
+ASCENDING_LIST_SORTS = {
+    ListDetailSortChoices.TITLE,
+    ListDetailSortChoices.MEDIA_TYPE,
+    ListDetailSortChoices.RELEASE_DATE,
+    ListDetailSortChoices.START_DATE,
+}
+
+
+def _default_list_sort_direction(sort_by):
+    return "asc" if sort_by in ASCENDING_LIST_SORTS else "desc"
+
+
+def _resolve_list_sort_direction(sort_by, direction):
+    if direction in {"asc", "desc"}:
+        return direction
+    return _default_list_sort_direction(sort_by)
+
+
+def _order_expression(field_name, direction, *, nulls_last=True):
+    field = F(field_name)
+    if direction == "asc":
+        return field.asc(nulls_last=nulls_last)
+    return field.desc(nulls_last=nulls_last)
+
+
 def _get_trakt_credentials(user):
     """Return decrypted Trakt client credentials for a user, if configured."""
     trakt_account = TraktAccount.objects.filter(user=user).first()
@@ -460,6 +485,10 @@ def _smart_list_detail_response(
     sort_by = request.GET.get("sort", ListDetailSortChoices.DATE_ADDED)
     if sort_by not in valid_sorts:
         sort_by = ListDetailSortChoices.DATE_ADDED
+    direction = _resolve_list_sort_direction(
+        sort_by,
+        request.GET.get("direction"),
+    )
 
     layout = request.GET.get("layout", "grid")
     if layout not in {"grid", "table"}:
@@ -603,46 +632,60 @@ def _smart_list_detail_response(
 
     sort_mapping = {
         ListDetailSortChoices.DATE_ADDED: [
-            F("list_date_added").desc(nulls_last=True),
-            F("title").asc(nulls_last=True),
+            _order_expression("list_date_added", direction),
+            _order_expression("title", direction),
         ],
         ListDetailSortChoices.TITLE: [
-            F("title").asc(nulls_last=True),
-            F("season_number").asc(nulls_first=True),
-            F("episode_number").asc(nulls_first=True),
+            _order_expression("title", direction),
+            F("season_number").asc(nulls_first=True)
+            if direction == "asc"
+            else F("season_number").desc(nulls_last=True),
+            F("episode_number").asc(nulls_first=True)
+            if direction == "asc"
+            else F("episode_number").desc(nulls_last=True),
         ],
-        ListDetailSortChoices.MEDIA_TYPE: ["media_type"],
-        ListDetailSortChoices.RATING: [F("list_date_added").desc(nulls_last=True)],
-        ListDetailSortChoices.PROGRESS: [F("list_date_added").desc(nulls_last=True)],
+        ListDetailSortChoices.MEDIA_TYPE: [
+            _order_expression("media_type", direction),
+        ],
+        ListDetailSortChoices.RATING: [
+            _order_expression("list_date_added", direction),
+        ],
+        ListDetailSortChoices.PROGRESS: [
+            _order_expression("list_date_added", direction),
+        ],
         ListDetailSortChoices.RELEASE_DATE: [
-            F("release_datetime").asc(nulls_last=True),
-            F("title").asc(nulls_last=True),
+            _order_expression("release_datetime", direction),
+            _order_expression("title", direction),
         ],
-        ListDetailSortChoices.START_DATE: [F("list_date_added").desc(nulls_last=True)],
-        ListDetailSortChoices.END_DATE: [F("list_date_added").desc(nulls_last=True)],
+        ListDetailSortChoices.START_DATE: [
+            _order_expression("list_date_added", direction),
+        ],
+        ListDetailSortChoices.END_DATE: [
+            _order_expression("list_date_added", direction),
+        ],
     }
     media_sort_config = {
         ListDetailSortChoices.RATING: {
             "key": lambda item: _rating_value(item.media),
-            "reverse": True,
+            "reverse": direction == "desc",
         },
         ListDetailSortChoices.PROGRESS: {
             "key": lambda item: _progress_value(item.media),
-            "reverse": True,
+            "reverse": direction == "desc",
         },
         ListDetailSortChoices.START_DATE: {
             "key": lambda item: _date_sort_value(
                 _media_date_value(item.media, "start_date"),
-                "asc",
+                direction,
             ),
-            "reverse": False,
+            "reverse": direction == "desc",
         },
         ListDetailSortChoices.END_DATE: {
             "key": lambda item: _date_sort_value(
                 _media_date_value(item.media, "end_date"),
-                "desc",
+                direction,
             ),
-            "reverse": True,
+            "reverse": direction == "desc",
         },
     }
 
@@ -716,6 +759,7 @@ def _smart_list_detail_response(
         "items_count": total_items_count,
         "filtered_items_count": filtered_items_count,
         "current_sort": sort_by,
+        "current_direction": direction,
         "chip_sort": "score" if sort_by == ListDetailSortChoices.RATING else sort_by,
         "current_status": active_rules["status"],
         "current_layout": layout,
@@ -855,6 +899,10 @@ def list_detail(request, list_id):
         # Validate sort choice
         if sort_by not in valid_sorts:
             sort_by = "date_added"
+    direction = _resolve_list_sort_direction(
+        sort_by,
+        request.GET.get("direction"),
+    )
 
     if request.user.is_authenticated:
         status_filter = request.user.update_preference(
@@ -880,6 +928,7 @@ def list_detail(request, list_id):
 
     params = {
         "sort_by": sort_by,
+        "direction": direction,
         "media_types": selected_media_types,
         "status_filter": status_filter,
         "page": int(request.GET.get("page", 1)),
@@ -992,43 +1041,52 @@ def list_detail(request, list_id):
 
     # Apply sorting
     sort_mapping = {
-        "date_added": ["-customlistitem__date_added"],
+        "date_added": [
+            _order_expression("customlistitem__date_added", params["direction"]),
+            _order_expression("title", params["direction"]),
+        ],
         "custom": ["customlistitem__date_added", "customlistitem__id"],
         "title": [
-            F("title").asc(nulls_last=True),
-            F("season_number").asc(nulls_first=True),
-            F("episode_number").asc(nulls_first=True),
+            _order_expression("title", params["direction"]),
+            F("season_number").asc(nulls_first=True)
+            if params["direction"] == "asc"
+            else F("season_number").desc(nulls_last=True),
+            F("episode_number").asc(nulls_first=True)
+            if params["direction"] == "asc"
+            else F("episode_number").desc(nulls_last=True),
         ],
-        "media_type": ["media_type"],
-        "rating": ["-customlistitem__date_added"],  # Fallback before media-based sorting
+        "media_type": [_order_expression("media_type", params["direction"])],
+        "rating": [
+            _order_expression("customlistitem__date_added", params["direction"]),
+        ],  # Fallback before media-based sorting
         "release_date": [
-            F("release_datetime").asc(nulls_last=True),
-            F("title").asc(nulls_last=True),
+            _order_expression("release_datetime", params["direction"]),
+            _order_expression("title", params["direction"]),
         ],
     }
 
     media_sort_config = {
         "rating": {
             "key": lambda item: _rating_value(item.media),
-            "reverse": True,
+            "reverse": params["direction"] == "desc",
         },
         "progress": {
             "key": lambda item: _progress_value(item.media),
-            "reverse": True,
+            "reverse": params["direction"] == "desc",
         },
         "start_date": {
             "key": lambda item: _date_sort_value(
                 _media_date_value(item.media, "start_date"),
-                "asc",
+                params["direction"],
             ),
-            "reverse": False,
+            "reverse": params["direction"] == "desc",
         },
         "end_date": {
             "key": lambda item: _date_sort_value(
                 _media_date_value(item.media, "end_date"),
-                "desc",
+                params["direction"],
             ),
-            "reverse": True,
+            "reverse": params["direction"] == "desc",
         },
     }
 
@@ -1085,6 +1143,7 @@ def list_detail(request, list_id):
         "items_count": total_items_count,
         "filtered_items_count": filtered_items_count,
         "current_sort": params["sort_by"],
+        "current_direction": params["direction"],
         "chip_sort": chip_sort,
         "current_status": params["status_filter"] or MediaStatusChoices.ALL,
         "sort_choices": ListDetailSortChoices.choices,

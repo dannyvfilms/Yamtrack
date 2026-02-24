@@ -26,6 +26,12 @@
           {% if item.list_date_added %}
             <p class="mt-2 text-sm font-semibold text-white">{{ item.list_date_added|user_date_format:user }}</p>
           {% endif %}
+        {% elif current_sort == 'release_date' %}
+          {% if item.release_datetime %}
+            <p class="mt-2 text-sm font-semibold text-white">{{ item.release_datetime|user_date_format:user }}</p>
+          {% elif media and media.item and media.item.release_datetime %}
+            <p class="mt-2 text-sm font-semibold text-white">{{ media.item.release_datetime|user_date_format:user }}</p>
+          {% endif %}
         {% elif current_sort == 'progress' %}
           {% if media %}
             {% with aggregated_progress=media|safe_attr:"aggregated_progress" %}
