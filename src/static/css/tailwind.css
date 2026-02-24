@@ -94,7 +94,6 @@
     --text-3xl--line-height: calc(2.25 / 1.875);
     --text-9xl: 8rem;
     --text-9xl--line-height: 1;
-    --font-weight-normal: 400;
     --font-weight-medium: 500;
     --font-weight-semibold: 600;
     --font-weight-bold: 700;
@@ -2667,16 +2666,6 @@
       }
     }
   }
-  .hover\:bg-indigo-600\/30 {
-    &:hover {
-      @media (hover: hover) {
-        background-color: color-mix(in srgb, oklch(51.1% 0.262 276.966) 30%, transparent);
-        @supports (color: color-mix(in lab, red, red)) {
-          background-color: color-mix(in oklab, var(--color-indigo-600) 30%, transparent);
-        }
-      }
-    }
-  }
   .hover\:bg-indigo-700 {
     &:hover {
       @media (hover: hover) {
@@ -3019,11 +3008,6 @@
   .sm\:ml-auto {
     @media (width >= 40rem) {
       margin-left: auto;
-    }
-  }
-  .sm\:block {
-    @media (width >= 40rem) {
-      display: block;
     }
   }
   .sm\:flex {
@@ -4076,7 +4060,7 @@
     max-width: none;
   }
   .list-detail-filter-toolbar .ml-auto {
-    margin-left: 0 !important;
+    margin-left: auto !important;
   }
   .list-detail-filter-toolbar .layout-toggle {
     margin-left: 0 !important;

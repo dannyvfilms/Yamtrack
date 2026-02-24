@@ -3967,7 +3967,7 @@
     max-width: none;
   }
   .list-detail-filter-toolbar .ml-auto {
-    margin-left: 0 !important;
+    margin-left: auto !important;
   }
   .list-detail-filter-toolbar .layout-toggle {
     margin-left: 0 !important;
