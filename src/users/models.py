@@ -96,6 +96,7 @@ class ListDetailSortChoices(models.TextChoices):
     MEDIA_TYPE = "media_type", "Media Type"
     RATING = "rating", "Rating"
     PROGRESS = "progress", "Progress"
+    RELEASE_DATE = "release_date", "Release Date"
     START_DATE = "start_date", "Start Date"
     END_DATE = "end_date", "End Date"
 

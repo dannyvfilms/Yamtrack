@@ -60,7 +60,6 @@
     --color-rose-600: oklch(58.6% 0.253 17.585);
     --color-rose-700: oklch(51.4% 0.222 16.935);
     --color-slate-200: oklch(92.9% 0.013 255.508);
-    --color-slate-400: oklch(70.4% 0.04 256.788);
     --color-gray-100: oklch(96.7% 0.003 264.542);
     --color-gray-200: oklch(92.8% 0.006 264.531);
     --color-gray-300: oklch(87.2% 0.01 258.338);
@@ -95,7 +94,6 @@
     --text-3xl--line-height: calc(2.25 / 1.875);
     --text-9xl: 8rem;
     --text-9xl--line-height: 1;
-    --font-weight-normal: 400;
     --font-weight-medium: 500;
     --font-weight-semibold: 600;
     --font-weight-bold: 700;
@@ -666,9 +664,6 @@
   .h-1 {
     height: calc(var(--spacing) * 1);
   }
-  .h-1\.5 {
-    height: calc(var(--spacing) * 1.5);
-  }
   .h-3 {
     height: calc(var(--spacing) * 3);
   }
@@ -776,9 +771,6 @@
   }
   .w-0 {
     width: calc(var(--spacing) * 0);
-  }
-  .w-1\.5 {
-    width: calc(var(--spacing) * 1.5);
   }
   .w-2 {
     width: calc(var(--spacing) * 2);
@@ -893,9 +885,6 @@
   }
   .max-w-\[11rem\] {
     max-width: 11rem;
-  }
-  .max-w-\[12rem\] {
-    max-width: 12rem;
   }
   .max-w-\[250px\] {
     max-width: 250px;
@@ -1110,6 +1099,9 @@
   }
   .justify-end-safe {
     justify-content: safe flex-end;
+  }
+  .gap-0 {
+    gap: calc(var(--spacing) * 0);
   }
   .gap-0\.5 {
     gap: calc(var(--spacing) * 0.5);
@@ -1525,9 +1517,6 @@
   }
   .bg-\[\#454d5a\] {
     background-color: #454d5a;
-  }
-  .bg-\[\#565f6e\] {
-    background-color: #565f6e;
   }
   .bg-\[\#39404b\] {
     background-color: #39404b;
@@ -2047,15 +2036,6 @@
     font-size: var(--text-xs);
     line-height: var(--tw-leading, var(--text-xs--line-height));
   }
-  .text-\[6px\] {
-    font-size: 6px;
-  }
-  .text-\[7px\] {
-    font-size: 7px;
-  }
-  .text-\[9px\] {
-    font-size: 9px;
-  }
   .leading-none {
     --tw-leading: 1;
     line-height: 1;
@@ -2076,21 +2056,9 @@
     --tw-font-weight: var(--font-weight-medium);
     font-weight: var(--font-weight-medium);
   }
-  .font-normal {
-    --tw-font-weight: var(--font-weight-normal);
-    font-weight: var(--font-weight-normal);
-  }
   .font-semibold {
     --tw-font-weight: var(--font-weight-semibold);
     font-weight: var(--font-weight-semibold);
-  }
-  .tracking-\[0\.06em\] {
-    --tw-tracking: 0.06em;
-    letter-spacing: 0.06em;
-  }
-  .tracking-\[0\.08em\] {
-    --tw-tracking: 0.08em;
-    letter-spacing: 0.08em;
   }
   .tracking-wide {
     --tw-tracking: var(--tracking-wide);
@@ -2950,11 +2918,6 @@
   .focus\:ring-indigo-200 {
     &:focus {
       --tw-ring-color: var(--color-indigo-200);
-    }
-  }
-  .focus\:ring-indigo-400 {
-    &:focus {
-      --tw-ring-color: var(--color-indigo-400);
     }
   }
   .focus\:ring-indigo-500 {
