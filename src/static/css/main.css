@@ -3937,15 +3937,11 @@
   .list-detail-filter-toolbar {
     display: flex !important;
     flex-wrap: nowrap !important;
-    overflow-x: auto;
+    overflow-x: visible;
+    overflow-y: visible;
     column-gap: calc(var(--spacing) * 1);
     row-gap: 0;
     align-items: center;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-  }
-  .list-detail-filter-toolbar::-webkit-scrollbar {
-    display: none;
   }
   .list-detail-filter-toolbar>* {
     flex: 0 0 auto;
