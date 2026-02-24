@@ -1801,15 +1801,15 @@
               {% endif %}
             </div>
 
-            <!-- Top Daily Average -->
+            <!-- Top Platforms -->
             <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
               <div class="flex items-center gap-2 mb-4">
-                <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300">Top Daily Average</h3>
+                <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300">Top Platforms</h3>
                 <div class="relative" x-data="{ tooltipOpen: false }">
                   <button @mouseenter="tooltipOpen = true" @mouseleave="tooltipOpen = false" @click="tooltipOpen = !tooltipOpen" @click.outside="tooltipOpen = false" class="text-gray-400 hover:text-gray-300 transition-colors cursor-pointer" type="button" aria-label="Show information">
                     {% include "app/icons/info.svg" with classes="w-4 h-4" %}
                   </button>
-                  <div x-show="tooltipOpen" 
+                  <div x-show="tooltipOpen"
                        x-transition:enter="transition ease-out duration-200"
                        x-transition:enter-start="opacity-0 scale-95"
                        x-transition:enter-end="opacity-100 scale-100"
@@ -1818,36 +1818,29 @@
                        x-transition:leave-end="opacity-0 scale-95"
                        class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-64 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10"
                        style="display: none; background: rgba(0, 0, 0, 0.85); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);">
-                    <p>Highest average play time per day (total hours ÷ days played) during the selected range.</p>
+                    <p>Hours and unique games per platform during the selected range. Platform is determined from your collection data. For games with only one available platform, that platform is used automatically. Multi-platform games with no collection entry are not counted.</p>
                     <div class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent" style="border-top-color: rgba(0, 0, 0, 0.85);"></div>
                   </div>
                 </div>
               </div>
-              {% if game_consumption.top_daily_average_games %}
+              {% if game_consumption.platform_breakdown %}
                 <div class="overflow-y-auto pr-1 statistics-card-scroll">
-                  {% for item in game_consumption.top_daily_average_games %}
-                  <a href="{{ item.game.item|media_url }}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
+                  {% for platform in game_consumption.platform_breakdown %}
+                  <div class="flex items-center space-x-3 p-1 -m-1">
                     <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
-                    {% if item.game.item.image and item.game.item.image != IMG_NONE %}
-                    <img src="{{ item.game.item.image }}" alt="{{ item.game.item.title }}" class="w-10 h-10 rounded object-cover">
-                    {% else %}
-                    <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center">
-                      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
+                    <div class="w-10 h-10 rounded bg-[#2a2f35] flex items-center justify-center text-gray-300 text-xs font-semibold uppercase flex-shrink-0">
+                      {{ platform.name|slice:":2" }}
                     </div>
-                    {% endif %}
                     <div class="flex-1 min-w-0">
-                      <p class="text-sm font-medium text-white truncate">{{ item.game.item.title }}</p>
-                      <p class="text-xs text-gray-500 truncate">{{ item.formatted_daily_average }}</p>
+                      <p class="text-sm font-medium text-white truncate">{{ platform.name }}</p>
+                      <p class="text-xs text-gray-500 truncate">{{ platform.formatted_hours }} · {{ platform.games }} game{{ platform.games|pluralize }}</p>
                     </div>
-                  </a>
+                  </div>
                   {% endfor %}
                 </div>
               {% else %}
                 <div class="flex flex-col items-center justify-center py-8 text-gray-400">
-                  <p class="text-sm">No daily average data available.</p>
+                  <p class="text-sm">No platform data available.</p>
                 </div>
               {% endif %}
             </div>

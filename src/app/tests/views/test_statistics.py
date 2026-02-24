@@ -15,6 +15,7 @@ from app.models import (
     CREDITS_BACKFILL_VERSION,
     CreditRoleType,
     Episode,
+    Game,
     Item,
     ItemPersonCredit,
     ItemStudioCredit,
@@ -96,6 +97,45 @@ class StatisticsViewTests(TestCase):
         )
 
         self.assertTrue(date_is_none)
+
+    def test_refresh_statistics_cache_game_daily_average_tooltip_uses_game_title(self):
+        """Cached game daily-average tooltip payload should include resolved game titles."""
+        cache.clear()
+        now = timezone.now()
+        game_item = Item.objects.create(
+            media_id="tooltip-game-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.GAME.value,
+            title="Tooltip Game",
+            image="http://example.com/tooltip-game.jpg",
+            platforms=["PlayStation 5"],
+        )
+        Game.objects.create(
+            user=self.user,
+            item=game_item,
+            status=Status.IN_PROGRESS.value,
+            progress=84,
+            start_date=now,
+            end_date=now,
+        )
+
+        statistics_cache.invalidate_statistics_cache(self.user.id)
+        stats_data = statistics_cache.refresh_statistics_cache(self.user.id, "All Time")
+
+        self.assertIsNotNone(stats_data)
+
+        by_daily_average = stats_data["game_consumption"]["charts"]["by_daily_average"]
+        top_games_per_band = by_daily_average["top_games_per_band"]
+        all_titles = [
+            game["title"]
+            for games in top_games_per_band.values()
+            for game in games
+        ]
+        self.assertIn("Tooltip Game", all_titles)
+
+        platform_breakdown = stats_data["game_consumption"]["platform_breakdown"]
+        self.assertTrue(platform_breakdown)
+        self.assertEqual(platform_breakdown[0]["name"], "PlayStation 5")
 
     def test_statistics_view_average_rating_uses_user_rating_scale(self):
         """Average rating card should use the configured user rating scale."""

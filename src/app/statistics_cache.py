@@ -468,6 +468,7 @@ def build_statistics_data(user, start_date, end_date):
         start_date,
         end_date,
         minutes_per_media_type,
+        user=user,
     )
     book_consumption = stats.get_reading_consumption_stats(
         user_media,
@@ -585,11 +586,12 @@ def _get_empty_statistics_data():
             "charts": {
                 "by_year": {"labels": [], "datasets": []},
                 "by_month": {"labels": [], "datasets": []},
-                "by_daily_average": {"labels": [], "datasets": []},
+                "by_daily_average": {"labels": [], "datasets": [], "top_games_per_band": {}},
             },
             "has_data": False,
             "top_genres": [],
             "top_daily_average_games": [],
+            "platform_breakdown": [],
         },
         "book_consumption": {},
         "comic_consumption": {},
@@ -3132,10 +3134,14 @@ def _aggregate_statistics_from_days(
                                 existing[field] = payload.get(field)
 
             for item_id_str, payload in day_stats.get("game", {}).get("by_game", {}).items():
-                existing = game_rollups.get(item_id_str)
+                try:
+                    item_id = int(item_id_str)
+                except (TypeError, ValueError):
+                    continue
+                existing = game_rollups.get(item_id)
                 if not existing:
                     existing = {"minutes_total": 0, "days": 0, "activity_dt": None, "media_id": payload.get("media_id")}
-                    game_rollups[item_id_str] = existing
+                    game_rollups[item_id] = existing
                 existing["minutes_total"] += payload.get("minutes_total", 0)
                 existing["days"] += payload.get("days", 0)
                 activity_dt = _parse_activity_dt(payload.get("activity_dt"))
@@ -3577,8 +3583,53 @@ def _aggregate_statistics_from_days(
             "activity_dt": payload.get("activity_dt"),
         })
 
+    # --- Collect item_ids needed for chart tooltip and platform breakdown ---
+    all_item_ids = [item["item_id"] for item in game_data if item.get("item_id") is not None]
+
+    # Determine which item_ids are needed for the top-5-per-band tooltip
+    bands = stats.DAILY_AVERAGE_BANDS
+    band_game_groups = {label: [] for _, _, label in bands}
+    for item in game_data:
+        idx = stats._get_daily_average_band_index(item["daily_average"])
+        if 0 <= idx < len(bands):
+            band_game_groups[bands[idx][2]].append(item)
+    tooltip_item_ids = set()
+    for label, items in band_game_groups.items():
+        for g in sorted(items, key=lambda x: x["daily_average"], reverse=True)[:5]:
+            if g.get("item_id") is not None:
+                tooltip_item_ids.add(g["item_id"])
+
+    # Fetch Item metadata (platforms for breakdown + title/image for tooltip)
+    item_info_map = {}
+    if all_item_ids:
+        item_info_map = {
+            row["id"]: row
+            for row in Item.objects.filter(id__in=all_item_ids).values("id", "title", "image", "platforms")
+        }
+
+    # Fetch CollectionEntry resolution for platform breakdown
+    CollectionEntry = apps.get_model("app", "CollectionEntry")
+    collection_platform_map = {}
+    if all_item_ids:
+        for ce in CollectionEntry.objects.filter(
+            user=user, item_id__in=all_item_ids
+        ).values("item_id", "resolution"):
+            resolution = (ce.get("resolution") or "").strip()
+            if resolution:
+                collection_platform_map[ce["item_id"]] = resolution
+
+    # Enrich game_data with title/image for the chart tooltip
+    enriched_game_data = []
+    for item in game_data:
+        info = item_info_map.get(item.get("item_id"), {})
+        enriched_game_data.append({
+            **item,
+            "title": info.get("title", ""),
+            "image": info.get("image", ""),
+        })
+
     daily_avg_chart = stats._build_daily_average_distribution_chart(
-        [{"daily_average": item["daily_average"]} for item in game_data],
+        enriched_game_data,
         config.get_stats_color(MediaTypes.GAME.value),
         "Games",
     )
@@ -3611,6 +3662,44 @@ def _aggregate_statistics_from_days(
             "formatted_total": helpers.minutes_to_hhmm(item["hours"] * 60),
         })
 
+    # --- Platform breakdown ---
+    platform_hours = defaultdict(float)
+    platform_game_ids = defaultdict(set)
+    for item in game_data:
+        item_id = item.get("item_id")
+        if item_id is None:
+            continue
+        hours = item["hours"]
+        # Priority 1: collection entry resolution
+        platform = collection_platform_map.get(item_id)
+        # Priority 2: single IGDB platform from Item.platforms
+        if not platform:
+            raw_platforms = item_info_map.get(item_id, {}).get("platforms") or []
+            if isinstance(raw_platforms, list):
+                cleaned = [str(p).strip() for p in raw_platforms if str(p).strip()]
+            else:
+                cleaned = []
+            if len(cleaned) == 1:
+                platform = cleaned[0]
+        if not platform:
+            continue
+        platform_hours[platform] += hours
+        platform_game_ids[platform].add(item_id)
+
+    platform_breakdown = sorted(
+        [
+            {
+                "name": name,
+                "games": len(platform_game_ids[name]),
+                "hours": hours,
+                "formatted_hours": helpers.minutes_to_hhmm(hours * 60),
+            }
+            for name, hours in platform_hours.items()
+        ],
+        key=lambda x: x["hours"],
+        reverse=True,
+    )
+
     game_consumption = {
         "hours": _compute_metric_breakdown_for_range(game_total_hours, start_date, end_date),
         "charts": {
@@ -3621,6 +3710,7 @@ def _aggregate_statistics_from_days(
         "has_data": bool(game_data) or game_total_hours > 0,
         "top_genres": game_genre_items,
         "top_daily_average_games": top_daily_avg_payload,
+        "platform_breakdown": platform_breakdown,
     }
 
     def _build_cached_reading_consumption(media_type):
