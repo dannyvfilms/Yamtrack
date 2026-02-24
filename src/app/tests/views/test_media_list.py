@@ -8,6 +8,8 @@ from django.urls import reverse
 from django.utils import timezone
 
 from app.models import (
+    Book,
+    CollectionEntry,
     Item,
     MediaTypes,
     Movie,
@@ -372,6 +374,47 @@ class MediaListViewTests(TestCase):
         self.assertEqual(not_released_response.context["media_list"].paginator.count, 4)
         self.assertContains(not_released_response, "Test Movie 2")
         self.assertNotContains(not_released_response, "Test Movie 1")
+
+    def test_book_format_filter_uses_collection_entry_media_type(self):
+        """Book format options should include collection-only formats like Audiobook."""
+        book_item = Item.objects.create(
+            media_id="book-audiobook-filter",
+            source=Sources.OPENLIBRARY.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Audiobook Filter Book",
+            image="http://example.com/book.jpg",
+            format="",
+        )
+        Book.objects.create(
+            item=book_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=0,
+        )
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=book_item,
+            media_type="Audiobook",
+        )
+
+        url = reverse("medialist", args=[MediaTypes.BOOK.value])
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["filter_data"]["show_formats"])
+        self.assertTrue(
+            any(
+                option["value"] == "audiobook"
+                and option["label"] == "Audiobook"
+                for option in response.context["filter_data"]["formats"]
+            ),
+        )
+
+        filtered_response = self.client.get(f"{url}?format=audiobook")
+        self.assertEqual(filtered_response.status_code, 200)
+        self.assertEqual(filtered_response.context["current_format"], "audiobook")
+        self.assertEqual(filtered_response.context["media_list"].paginator.count, 1)
+        self.assertContains(filtered_response, "Audiobook Filter Book")
 
     def test_media_list_htmx_request(self):
         """Test the media list view with HTMX request."""

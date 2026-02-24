@@ -13,6 +13,7 @@
   <input type="hidden" name="country" x-model="country">
   <input type="hidden" name="platform" x-model="platform">
   <input type="hidden" name="origin" x-model="origin">
+  <input type="hidden" name="format" x-model="format">
   <input type="hidden" name="q" x-model="query">
   <input type="hidden" name="edit_smart_rules" value="1">
   <template x-for="type in selectedTypesForSubmit()" :key="`smart-type-${type}`">
@@ -226,6 +227,16 @@
                     type="button">
               <span class="flex-shrink-0 mr-3">Origin</span>
               <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]" x-text="origin ? (origin.length <= 3 ? origin.toUpperCase() : origin) : 'Any'"></span>
+              <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+            </button>
+          {% endif %}
+
+          {% if smart_filter_data.show_formats %}
+            <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="view = 'format'; resetSearch()"
+                    type="button">
+              <span class="flex-shrink-0 mr-3">Format</span>
+              <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]" x-text="format ? (format === 'ebook' ? 'eBook' : format.charAt(0).toUpperCase() + format.slice(1)) : 'Any'"></span>
               <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
             </button>
           {% endif %}
@@ -686,6 +697,51 @@
                       type="button">
                 <span class="block min-w-0 truncate max-w-[11rem]" x-text="option.label"></span>
                 <span class="ml-auto" x-show="origin === option.value">
+                  {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                </span>
+              </button>
+            </template>
+          </div>
+        </div>
+
+        <div x-show="view === 'format'" x-cloak class="p-2">
+          <div class="flex items-center gap-2 px-2 py-1">
+            <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                    @click="view = 'root'"
+                    type="button">
+              {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+            </button>
+            <div class="text-xs uppercase tracking-wide text-gray-300">Format</div>
+          </div>
+          <div class="px-2 py-2">
+            <input type="text"
+                   x-model="formatSearch"
+                   placeholder="Filter Format"
+                   class="w-full px-3 py-2 rounded-md bg-[#2a2f35] text-sm text-gray-200 placeholder-gray-500 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          </div>
+          <div class="max-h-64 overflow-y-auto">
+            <button hx-get="{% url 'list_detail' custom_list.id %}"
+                    hx-target="#items-view"
+                    hx-include="#smart-filter-form"
+                    hx-indicator="#loading-indicator"
+                    class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                    @click="format = ''; open = false; view = 'root'; onRuleChange()"
+                    type="button">
+              <span>Any Format</span>
+              <span class="ml-auto" x-show="format === ''">
+                {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+              </span>
+            </button>
+            <template x-for="option in filteredFormats()" :key="option.value">
+              <button hx-get="{% url 'list_detail' custom_list.id %}"
+                      hx-target="#items-view"
+                      hx-include="#smart-filter-form"
+                      hx-indicator="#loading-indicator"
+                      class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                      @click="format = option.value; open = false; view = 'root'; onRuleChange()"
+                      type="button">
+                <span class="block min-w-0 truncate max-w-[11rem]" x-text="option.label"></span>
+                <span class="ml-auto" x-show="format === option.value">
                   {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
                 </span>
               </button>

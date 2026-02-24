@@ -577,6 +577,7 @@ def media_list(request, media_type):
     country_filter = (request.GET.get("country") or "").strip()
     platform_filter = (request.GET.get("platform") or "").strip()
     origin_filter = (request.GET.get("origin") or "").strip()
+    format_filter = (request.GET.get("format") or "").strip()
     
     search_query = request.GET.get("search", "")
     try:
@@ -820,6 +821,35 @@ def media_list(request, media_type):
                 filtered_items.append(media)
         return filtered_items
 
+    collection_formats_by_item_id = defaultdict(set)
+
+    def _extract_item_formats(item):
+        """Extract normalized format values from Item and collection metadata."""
+        formats = set()
+        if item and hasattr(item, "format") and item.format:
+            normalized_item_format = _normalize_filter_value(item.format)
+            if normalized_item_format:
+                formats.add(normalized_item_format)
+
+        if item:
+            formats.update(collection_formats_by_item_id.get(item.id, set()))
+
+        return formats
+
+    def apply_format_filter(media_items, filter_value):
+        if not filter_value:
+            return media_items
+        target = _normalize_filter_value(filter_value)
+        filtered_items = []
+        for media in media_items:
+            item = getattr(media, "item", None)
+            if not item:
+                continue
+            item_formats = _extract_item_formats(item)
+            if target in item_formats:
+                filtered_items.append(media)
+        return filtered_items
+
     def apply_platform_filter(media_items, filter_value):
         if not filter_value:
             return media_items
@@ -834,6 +864,13 @@ def media_list(request, media_type):
                 filtered_items.append(media)
         return filtered_items
 
+    FORMAT_LABELS = {
+        "hardcover": "Hardcover",
+        "paperback": "Paperback",
+        "ebook": "eBook",
+        "audiobook": "Audiobook",
+    }
+
     def build_filter_data_from_items(media_items):
         from app.models import Sources
 
@@ -843,6 +880,7 @@ def media_list(request, media_type):
         languages_set = set()
         countries_set = set()
         platforms_set = set()
+        formats_set = set()
         has_unknown_year = False
         for media in media_items:
             item = getattr(media, "item", None)
@@ -868,6 +906,9 @@ def media_list(request, media_type):
             platforms = _extract_cached_platforms(item)
             if platforms:
                 platforms_set.update(platforms)
+            item_formats = _extract_item_formats(item)
+            if item_formats:
+                formats_set.update(item_formats)
 
         genres = sorted(genres_set, key=lambda value: value.lower())
         years = [
@@ -900,6 +941,13 @@ def media_list(request, media_type):
             {"value": value, "label": value}
             for value in sorted(platforms_set, key=lambda val: val.lower())
         ]
+        formats = [
+            {
+                "value": value,
+                "label": FORMAT_LABELS.get(_normalize_filter_value(value), value.title()),
+            }
+            for value in sorted(formats_set, key=lambda val: val.lower())
+        ]
         return {
             "genres": genres,
             "years": years,
@@ -908,10 +956,12 @@ def media_list(request, media_type):
             "countries": countries,
             "platforms": platforms,
             "origins": [],
+            "formats": formats,
             "show_languages": False,
             "show_countries": False,
             "show_platforms": False,
             "show_origins": False,
+            "show_formats": False,
         }
 
     # Get media list with filters applied
@@ -926,6 +976,21 @@ def media_list(request, media_type):
     
     # Convert to list for filtering (rating and collection filters work on lists)
     media_list = list(media_queryset)
+    if media_type in (MediaTypes.BOOK.value, MediaTypes.MANGA.value, MediaTypes.COMIC.value):
+        item_ids = {
+            media.item_id
+            for media in media_list
+            if getattr(media, "item_id", None)
+        }
+        if item_ids:
+            collection_formats = CollectionEntry.objects.filter(
+                user=request.user,
+                item_id__in=item_ids,
+            ).exclude(media_type="").values_list("item_id", "media_type")
+            for item_id, collection_format in collection_formats:
+                normalized_collection_format = _normalize_filter_value(collection_format)
+                if normalized_collection_format:
+                    collection_formats_by_item_id[item_id].add(normalized_collection_format)
     filter_data = build_filter_data_from_items(media_list)
     filter_data["show_languages"] = media_type in (
         MediaTypes.TV.value,
@@ -941,6 +1006,11 @@ def media_list(request, media_type):
     )
     filter_data["show_platforms"] = media_type == MediaTypes.GAME.value
     filter_data["show_origins"] = media_type == MediaTypes.MUSIC.value
+    filter_data["show_formats"] = media_type in (
+        MediaTypes.BOOK.value,
+        MediaTypes.MANGA.value,
+        MediaTypes.COMIC.value,
+    )
     media_list = apply_rating_filter(media_list, rating_filter)
     media_list = apply_collection_filter(media_list, collection_filter, request.user, media_type)
     media_list = apply_genre_filter(media_list, genre_filter)
@@ -952,6 +1022,8 @@ def media_list(request, media_type):
         media_list = apply_country_filter(media_list, country_filter)
     if media_type == MediaTypes.GAME.value:
         media_list = apply_platform_filter(media_list, platform_filter)
+    if media_type in (MediaTypes.BOOK.value, MediaTypes.MANGA.value, MediaTypes.COMIC.value):
+        media_list = apply_format_filter(media_list, format_filter)
 
     # Handle time_left sorting for TV shows
     if sort_filter == "time_left" and media_type == MediaTypes.TV.value:
@@ -1045,6 +1117,7 @@ def media_list(request, media_type):
         "current_country": country_filter,
         "current_platform": platform_filter,
         "current_origin": origin_filter,
+        "current_format": format_filter,
         "sort_choices": MediaSortChoices.choices,
         "status_choices": MediaStatusChoices.choices,
         "rating_choices": MEDIA_RATING_CHOICES,
