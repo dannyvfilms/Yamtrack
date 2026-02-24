@@ -3134,10 +3134,14 @@ def _aggregate_statistics_from_days(
                                 existing[field] = payload.get(field)
 
             for item_id_str, payload in day_stats.get("game", {}).get("by_game", {}).items():
-                existing = game_rollups.get(item_id_str)
+                try:
+                    item_id = int(item_id_str)
+                except (TypeError, ValueError):
+                    continue
+                existing = game_rollups.get(item_id)
                 if not existing:
                     existing = {"minutes_total": 0, "days": 0, "activity_dt": None, "media_id": payload.get("media_id")}
-                    game_rollups[item_id_str] = existing
+                    game_rollups[item_id] = existing
                 existing["minutes_total"] += payload.get("minutes_total", 0)
                 existing["days"] += payload.get("days", 0)
                 activity_dt = _parse_activity_dt(payload.get("activity_dt"))
