@@ -127,6 +127,9 @@
     },
     filterLabel() {
       const labels = [];
+      if (!this.allTypesSelected()) {
+        labels.push(this.dropdownLabel());
+      }
       if (this.rating && this.rating !== 'all') {
         labels.push(this.ratingLabels[this.rating] || 'Rated');
       }

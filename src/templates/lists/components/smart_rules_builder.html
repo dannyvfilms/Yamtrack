@@ -42,64 +42,9 @@
     </div>
   </div>
 
-  <div class="flex items-center gap-2 flex-wrap filter-toolbar">
-    <div class="relative" @click.outside="dropdownOpen = false" x-data="{ dropdownOpen: false }">
-      <button type="button"
-              class="h-10 px-3 text-sm bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors flex items-center gap-2 cursor-pointer"
-              @click="dropdownOpen = !dropdownOpen"
-              :aria-expanded="dropdownOpen">
-        {% include "app/icons/funnel.svg" with classes="w-4 h-4" %}
-        <span class="block min-w-0 truncate max-w-[10rem] sm:max-w-[14rem]"
-              x-text="dropdownLabel()"></span>
-        <svg xmlns="http://www.w3.org/2000/svg"
-             viewBox="0 0 20 20"
-             class="w-4 h-4 ml-1"
-             aria-hidden="true">
-          <path d="M10 14 L4.5 7 H15.5 Z" fill="currentColor"></path>
-        </svg>
-      </button>
-
-      <div x-cloak
-           x-show="dropdownOpen"
-           x-transition:enter="transition ease-out duration-100"
-           x-transition:enter-start="transform opacity-0 scale-95"
-           x-transition:enter-end="transform opacity-100 scale-100"
-           x-transition:leave="transition ease-in duration-75"
-           x-transition:leave-start="transform opacity-100 scale-100"
-           x-transition:leave-end="transform opacity-0 scale-95"
-           class="absolute right-0 mt-2 w-64 rounded-md bg-[#39404b] border border-gray-700 shadow-lg overflow-hidden z-40">
-        <div class="flex items-center justify-between gap-2 px-3 py-2 border-b border-gray-700">
-          <div class="text-xs uppercase tracking-wide text-gray-300">Media Types</div>
-          <button type="button"
-                  class="text-xs text-gray-300 hover:text-white transition-colors"
-                  hx-get="{% url 'list_detail' custom_list.id %}"
-                  hx-target="#items-view"
-                  hx-include="#smart-filter-form"
-                  hx-indicator="#loading-indicator"
-                  @click="toggleAllTypes(); onRuleChange()"
-                  x-text="allTypesSelected() ? 'Hide all' : 'Show all'"></button>
-        </div>
-        <div class="max-h-64 overflow-y-auto">
-          <template x-for="type in availableMediaTypes" :key="type.value">
-            <button type="button"
-                    hx-get="{% url 'list_detail' custom_list.id %}"
-                    hx-target="#items-view"
-                    hx-include="#smart-filter-form"
-                    hx-indicator="#loading-indicator"
-                    class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
-                    @click="toggleMediaType(type.value); onRuleChange()">
-              <span x-text="type.label"></span>
-              <span class="ml-auto" x-show="isTypeSelected(type.value)">
-                {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
-              </span>
-            </button>
-          </template>
-        </div>
-      </div>
-    </div>
-
+  <div class="flex gap-1 flex-wrap md:flex-nowrap w-full items-center filter-toolbar media-filter-toolbar">
     <div class="relative filter-control" x-data="mediaFilterMenu()" @click.outside="open = false; view = 'root'">
-      <button class="h-10 flex items-center px-3 py-2 rounded-md bg-[#39404b] hover:bg-[#454d5a] text-gray-200 hover:text-white transition-colors cursor-pointer"
+      <button class="flex items-center px-2 py-2 rounded-md text-gray-200 hover:text-white transition-colors cursor-pointer"
               @click="open = !open; if (open) { view = 'root'; }"
               type="button">
         <span class="block min-w-0 truncate max-w-[10rem] sm:max-w-[14rem]" x-text="filterLabel()"></span>
@@ -126,13 +71,22 @@
                   hx-include="#smart-filter-form"
                   hx-indicator="#loading-indicator"
                   class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
-                  @click="clearFilters(); open = false; onRuleChange()"
+                  @click="clearFilters(); selectedTypes = availableMediaTypes.map((type) => type.value); open = false; onRuleChange()"
                   type="button">
             <span>All</span>
             <span class="ml-auto text-xs text-gray-500" x-show="filterLabel() === 'All'">Active</span>
           </button>
 
           <div class="border-t border-gray-700 my-1"></div>
+          <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                  @click="view = 'mediaTypes'"
+                  type="button">
+            <span class="flex-shrink-0 mr-3">Media Type</span>
+            <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]"
+                  x-text="dropdownLabel()"></span>
+            <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+          </button>
+
           <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
                   @click="view = 'rating'"
                   type="button">
@@ -382,6 +336,41 @@
                 {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
               </span>
             </button>
+          </div>
+        </div>
+
+        <div x-show="view === 'mediaTypes'" x-cloak class="p-2">
+          <div class="flex items-center gap-2 px-2 py-1">
+            <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                    @click="view = 'root'"
+                    type="button">
+              {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+            </button>
+            <div class="text-xs uppercase tracking-wide text-gray-300">Media Types</div>
+            <button type="button"
+                    class="ml-auto text-xs text-gray-300 hover:text-white transition-colors"
+                    hx-get="{% url 'list_detail' custom_list.id %}"
+                    hx-target="#items-view"
+                    hx-include="#smart-filter-form"
+                    hx-indicator="#loading-indicator"
+                    @click="toggleAllTypes(); onRuleChange()"
+                    x-text="allTypesSelected() ? 'Hide all' : 'Show all'"></button>
+          </div>
+          <div class="max-h-64 overflow-y-auto">
+            <template x-for="type in availableMediaTypes" :key="type.value">
+              <button type="button"
+                      hx-get="{% url 'list_detail' custom_list.id %}"
+                      hx-target="#items-view"
+                      hx-include="#smart-filter-form"
+                      hx-indicator="#loading-indicator"
+                      class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                      @click="toggleMediaType(type.value); onRuleChange()">
+                <span x-text="type.label"></span>
+                <span class="ml-auto" x-show="isTypeSelected(type.value)">
+                  {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                </span>
+              </button>
+            </template>
           </div>
         </div>
 
@@ -752,7 +741,7 @@
     </div>
 
     <div class="relative filter-control" x-data="{ open: false }">
-      <button class="h-10 flex items-center px-3 py-2 rounded-md bg-[#39404b] hover:bg-[#454d5a] text-gray-200 hover:text-white transition-colors cursor-pointer"
+      <button class="flex items-center px-2 py-2 rounded-md text-gray-200 hover:text-white transition-colors cursor-pointer"
               @click="open = !open"
               type="button">
         <span x-text="(status === 'all' || status === 'All' || status === '') ? 'Status' : (statusLabels[status] || status)"></span>
@@ -788,7 +777,7 @@
     </div>
 
     <div class="relative filter-control" x-data="{ open: false }">
-      <button class="h-10 flex items-center px-3 py-2 rounded-md bg-[#39404b] hover:bg-[#454d5a] text-gray-200 hover:text-white transition-colors cursor-pointer"
+      <button class="flex items-center px-2 py-2 rounded-md text-gray-200 hover:text-white transition-colors cursor-pointer"
               @click="open = !open"
               type="button">
         <span x-text="sortLabels[sort] || sort"></span>

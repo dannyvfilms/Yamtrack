@@ -185,10 +185,10 @@
         </div>
       </div>
 
-      <div class="flex items-center gap-2 flex-wrap filter-toolbar">
+      <div class="flex gap-1 flex-wrap md:flex-nowrap w-full items-center filter-toolbar media-filter-toolbar">
           {# Filter by Type #}
           <div class="relative filter-control" x-data="{ open: false }">
-            <button class="h-10 flex items-center gap-2 px-4 bg-[#39404b] rounded-md hover:bg-[#454d5a] transition-colors cursor-pointer"
+            <button class="flex items-center gap-2 px-2 py-2 rounded-md text-gray-200 hover:text-white transition-colors cursor-pointer"
                     @click="open = !open"
                     type="button">
               {% include "app/icons/funnel.svg" with classes="w-4 h-4" %}
@@ -243,7 +243,7 @@
             <div class="inline-flex"
                  x-cloak
                  x-show="!(sort === 'custom' && canEdit && isOrderEditing)">
-              <button class="h-10 flex items-center gap-2 px-4 bg-[#39404b] hover:bg-[#454d5a] transition-colors cursor-pointer"
+              <button class="flex items-center gap-2 px-2 py-2 text-gray-200 hover:text-white transition-colors cursor-pointer"
                       :class="sort === 'custom' && canEdit ? 'rounded-l-md' : 'rounded-md'"
                       @click="sortOpen = !sortOpen; orderOpen = false"
                       type="button">
@@ -253,7 +253,7 @@
                   {% include "app/icons/chevron-down.svg" with classes="w-4 h-4" %}
                 </span>
               </button>
-              <button class="h-10 flex items-center px-2 bg-[#39404b] rounded-r-md border-l-2 border-gray-600 hover:bg-[#454d5a] transition-colors cursor-pointer"
+              <button class="flex items-center px-2 py-2 rounded-r-md border-l border-gray-700 text-gray-200 hover:text-white transition-colors cursor-pointer"
                       x-cloak
                       x-show="sort === 'custom' && canEdit"
                       @click="orderOpen = !orderOpen; sortOpen = false"
