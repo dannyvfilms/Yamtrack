@@ -181,9 +181,28 @@
       {% include "lists/components/list_form.html" %}
     {% endif %}
 
-    <div class="flex flex-col md:flex-row gap-4 mb-8">
-      <div class="flex gap-1 flex-wrap md:flex-nowrap w-full items-center filter-toolbar media-filter-toolbar">
-        <div class="relative filter-control"
+    <div class="flex flex-col gap-3 md:flex-row md:gap-4 mb-8">
+      <div class="relative grow min-w-0 md:hidden">
+        <input id="search-input-mobile"
+               placeholder="Search this list or recommend something..."
+               class="w-full min-w-0 py-2 pl-10 pr-4 bg-[#39404b] rounded-md text-white focus:outline-none focus:ring-2 focus:ring-[#4a9eff] appearance-none"
+               type="text"
+               x-model="query"
+               autocomplete="off"
+               hx-get="{% url 'list_detail' custom_list.id %}"
+               hx-trigger="keyup changed delay:300ms, search"
+               hx-target="#items-view"
+               hx-include="#filter-form"
+               hx-indicator="#search-indicator-mobile">
+        {% include "app/icons/magnifying-glass.svg" with classes="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" %}
+        <div id="search-indicator-mobile"
+             class="htmx-indicator absolute right-3 top-1/2 transform -translate-y-1/2">
+          <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-indigo-500"></div>
+        </div>
+      </div>
+
+      <div class="flex gap-1 flex-wrap md:flex-nowrap w-full items-center filter-toolbar media-filter-toolbar list-detail-filter-toolbar">
+        <div class="relative filter-control hidden md:block"
              :class="searchMode ? 'grow min-w-0' : 'shrink-0'"
              @click.outside="if (searchMode) { searchMode = false; }">
           <button class="flex items-center px-2 py-2 rounded-md text-gray-200 hover:text-white transition-colors cursor-pointer"
@@ -208,9 +227,9 @@
                    hx-trigger="keyup changed delay:300ms, search"
                    hx-target="#items-view"
                    hx-include="#filter-form"
-                   hx-indicator="#search-indicator">
+                   hx-indicator="#search-indicator-desktop">
             {% include "app/icons/magnifying-glass.svg" with classes="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" %}
-            <div id="search-indicator"
+            <div id="search-indicator-desktop"
                  class="htmx-indicator absolute right-3 top-1/2 transform -translate-y-1/2">
               <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-indigo-500"></div>
             </div>
@@ -225,7 +244,12 @@
                     type="button">
               {% include "app/icons/funnel.svg" with classes="w-4 h-4" %}
               <span class="text-sm" x-text="getMediaTypeLabel(type)"></span>
-              {% include "app/icons/chevron-down.svg" with classes="w-4 h-4" %}
+              <svg xmlns="http://www.w3.org/2000/svg"
+                   viewBox="0 0 20 20"
+                   class="w-4 h-4"
+                   aria-hidden="true">
+                <path d="M10 14 L4.5 7 H15.5 Z" fill="currentColor"></path>
+              </svg>
             </button>
 
             <div class="absolute right-0 mt-2 py-1 w-48 bg-[#39404b] rounded-md shadow-lg overflow-hidden z-50 border border-gray-700"

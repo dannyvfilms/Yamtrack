@@ -60,7 +60,6 @@
     --color-rose-600: oklch(58.6% 0.253 17.585);
     --color-rose-700: oklch(51.4% 0.222 16.935);
     --color-slate-200: oklch(92.9% 0.013 255.508);
-    --color-slate-400: oklch(70.4% 0.04 256.788);
     --color-gray-100: oklch(96.7% 0.003 264.542);
     --color-gray-200: oklch(92.8% 0.006 264.531);
     --color-gray-300: oklch(87.2% 0.01 258.338);
@@ -620,6 +619,9 @@
   .block {
     display: block;
   }
+  .contents {
+    display: contents;
+  }
   .flex {
     display: flex;
   }
@@ -773,9 +775,6 @@
   }
   .w-0 {
     width: calc(var(--spacing) * 0);
-  }
-  .w-1 {
-    width: calc(var(--spacing) * 1);
   }
   .w-2 {
     width: calc(var(--spacing) * 2);
@@ -1199,13 +1198,6 @@
   .gap-x-5 {
     column-gap: calc(var(--spacing) * 5);
   }
-  .-space-x-2 {
-    :where(& > :not(:last-child)) {
-      --tw-space-x-reverse: 0;
-      margin-inline-start: calc(calc(var(--spacing) * -2) * var(--tw-space-x-reverse));
-      margin-inline-end: calc(calc(var(--spacing) * -2) * calc(1 - var(--tw-space-x-reverse)));
-    }
-  }
   .space-x-0 {
     :where(& > :not(:last-child)) {
       --tw-space-x-reverse: 0;
@@ -1348,10 +1340,6 @@
     border-style: var(--tw-border-style);
     border-width: 0px;
   }
-  .border-2 {
-    border-style: var(--tw-border-style);
-    border-width: 2px;
-  }
   .border-t {
     border-top-style: var(--tw-border-style);
     border-top-width: 1px;
@@ -1387,9 +1375,6 @@
   .border-l-4 {
     border-left-style: var(--tw-border-style);
     border-left-width: 4px;
-  }
-  .border-\[\#2a2f35\] {
-    border-color: #2a2f35;
   }
   .border-\[\#2c3136\] {
     border-color: #2c3136;
@@ -1507,12 +1492,6 @@
   }
   .bg-\[\#3e454d\] {
     background-color: #3e454d;
-  }
-  .bg-\[\#4b5563\] {
-    background-color: #4b5563;
-  }
-  .bg-\[\#4f46e5\] {
-    background-color: #4f46e5;
   }
   .bg-\[\#262a2f\] {
     background-color: #262a2f;
@@ -2047,9 +2026,6 @@
     font-size: var(--text-xs);
     line-height: var(--tw-leading, var(--text-xs--line-height));
   }
-  .text-\[13px\] {
-    font-size: 13px;
-  }
   .leading-none {
     --tw-leading: 1;
     line-height: 1;
@@ -2069,10 +2045,6 @@
   .font-medium {
     --tw-font-weight: var(--font-weight-medium);
     font-weight: var(--font-weight-medium);
-  }
-  .font-normal {
-    --tw-font-weight: var(--font-weight-normal);
-    font-weight: var(--font-weight-normal);
   }
   .font-semibold {
     --tw-font-weight: var(--font-weight-semibold);
@@ -3177,11 +3149,6 @@
       padding: calc(var(--spacing) * 6);
     }
   }
-  .sm\:px-1\.5 {
-    @media (width >= 40rem) {
-      padding-inline: calc(var(--spacing) * 1.5);
-    }
-  }
   .sm\:px-2\.5 {
     @media (width >= 40rem) {
       padding-inline: calc(var(--spacing) * 2.5);
@@ -3365,6 +3332,11 @@
   .md\:gap-2 {
     @media (width >= 48rem) {
       gap: calc(var(--spacing) * 2);
+    }
+  }
+  .md\:gap-4 {
+    @media (width >= 48rem) {
+      gap: calc(var(--spacing) * 4);
     }
   }
   .md\:gap-10 {
@@ -4065,6 +4037,46 @@
   }
   .lists-filter-toolbar .filter-control:last-child>button {
     padding-right: 0 !important;
+  }
+  .list-detail-filter-toolbar {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto;
+    column-gap: calc(var(--spacing) * 1);
+    row-gap: 0;
+    align-items: center;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .list-detail-filter-toolbar::-webkit-scrollbar {
+    display: none;
+  }
+  .list-detail-filter-toolbar>* {
+    flex: 0 0 auto;
+  }
+  .list-detail-filter-toolbar .filter-control {
+    width: auto;
+    min-width: fit-content;
+    flex: 0 0 auto;
+  }
+  .list-detail-filter-toolbar .filter-control>button {
+    width: auto;
+    white-space: nowrap;
+    padding-inline: calc(var(--spacing) * 2) !important;
+  }
+  .list-detail-filter-toolbar .filter-control>button span {
+    white-space: nowrap;
+    overflow: visible;
+    text-overflow: clip;
+    max-width: none;
+  }
+  .list-detail-filter-toolbar .ml-auto {
+    margin-left: 0 !important;
+  }
+  .list-detail-filter-toolbar .layout-toggle {
+    margin-left: 0 !important;
+    justify-self: auto;
+    flex: 0 0 auto;
   }
   .mobile-tight-section {
     padding: 0 !important;
