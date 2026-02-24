@@ -821,11 +821,20 @@ def media_list(request, media_type):
                 filtered_items.append(media)
         return filtered_items
 
-    def _extract_item_format(item):
-        """Extract format directly from Item.format field."""
+    collection_formats_by_item_id = defaultdict(set)
+
+    def _extract_item_formats(item):
+        """Extract normalized format values from Item and collection metadata."""
+        formats = set()
         if item and hasattr(item, "format") and item.format:
-            return str(item.format).strip()
-        return ""
+            normalized_item_format = _normalize_filter_value(item.format)
+            if normalized_item_format:
+                formats.add(normalized_item_format)
+
+        if item:
+            formats.update(collection_formats_by_item_id.get(item.id, set()))
+
+        return formats
 
     def apply_format_filter(media_items, filter_value):
         if not filter_value:
@@ -836,7 +845,8 @@ def media_list(request, media_type):
             item = getattr(media, "item", None)
             if not item:
                 continue
-            if _normalize_filter_value(_extract_item_format(item)) == target:
+            item_formats = _extract_item_formats(item)
+            if target in item_formats:
                 filtered_items.append(media)
         return filtered_items
 
@@ -896,9 +906,9 @@ def media_list(request, media_type):
             platforms = _extract_cached_platforms(item)
             if platforms:
                 platforms_set.update(platforms)
-            format_value = _extract_item_format(item)
-            if format_value:
-                formats_set.add(format_value)
+            item_formats = _extract_item_formats(item)
+            if item_formats:
+                formats_set.update(item_formats)
 
         genres = sorted(genres_set, key=lambda value: value.lower())
         years = [
@@ -932,7 +942,10 @@ def media_list(request, media_type):
             for value in sorted(platforms_set, key=lambda val: val.lower())
         ]
         formats = [
-            {"value": value, "label": FORMAT_LABELS.get(value, value.title())}
+            {
+                "value": value,
+                "label": FORMAT_LABELS.get(_normalize_filter_value(value), value.title()),
+            }
             for value in sorted(formats_set, key=lambda val: val.lower())
         ]
         return {
@@ -963,6 +976,21 @@ def media_list(request, media_type):
     
     # Convert to list for filtering (rating and collection filters work on lists)
     media_list = list(media_queryset)
+    if media_type in (MediaTypes.BOOK.value, MediaTypes.MANGA.value, MediaTypes.COMIC.value):
+        item_ids = {
+            media.item_id
+            for media in media_list
+            if getattr(media, "item_id", None)
+        }
+        if item_ids:
+            collection_formats = CollectionEntry.objects.filter(
+                user=request.user,
+                item_id__in=item_ids,
+            ).exclude(media_type="").values_list("item_id", "media_type")
+            for item_id, collection_format in collection_formats:
+                normalized_collection_format = _normalize_filter_value(collection_format)
+                if normalized_collection_format:
+                    collection_formats_by_item_id[item_id].add(normalized_collection_format)
     filter_data = build_filter_data_from_items(media_list)
     filter_data["show_languages"] = media_type in (
         MediaTypes.TV.value,
