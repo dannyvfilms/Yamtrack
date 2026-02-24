@@ -7,7 +7,7 @@ from django.test import Client, RequestFactory, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from app.models import TV, Anime, Item, MediaTypes, Movie, Sources, Status
+from app.models import TV, Anime, Episode, Item, MediaTypes, Movie, Season, Sources, Status
 from lists.models import CustomList, CustomListItem
 
 
@@ -655,6 +655,62 @@ class ListDetailViewTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "lists/components/list_table.html")
+
+
+    @patch("app.providers.services.get_media_metadata")
+    @patch.object(get_user_model(), "update_preference")
+    @patch.object(CustomList, "user_can_view")
+    def test_list_detail_with_episode_rating_sort(
+        self,
+        mock_user_can_view,
+        mock_update_preference,
+        mock_get_metadata,
+    ):
+        """Episode items in lists must not cause 500 when sorted by rating (issue #93)."""
+        mock_update_preference.return_value = "rating"
+        mock_user_can_view.return_value = True
+        # Make the API call fail gracefully so Episode.save() doesn't error
+        mock_get_metadata.side_effect = KeyError("no api in tests")
+
+        season_item = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Friends",
+            season_number=1,
+        )
+        season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        episode_item = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Friends S1E1",
+            season_number=1,
+            episode_number=1,
+        )
+        Episode.objects.create(
+            item=episode_item,
+            related_season=season,
+        )
+
+        episode_list = CustomList.objects.create(
+            name="Episode List",
+            owner=self.user,
+        )
+        CustomListItem.objects.create(
+            custom_list=episode_list,
+            item=episode_item,
+        )
+
+        response = self.client.get(
+            reverse("list_detail", args=[episode_list.id]) + "?sort=rating",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.context["items"]), 1)
 
 
 class CreateListViewTest(TestCase):

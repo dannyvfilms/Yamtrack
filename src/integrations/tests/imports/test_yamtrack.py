@@ -182,15 +182,31 @@ class ImportYamtrackLists(TestCase):
     def test_list_item_created(self):
         """Ensure list item rows create list items without tracking media."""
         custom_list = CustomList.objects.get(owner=self.user, name="Favorites")
-        self.assertEqual(CustomListItem.objects.filter(custom_list=custom_list).count(), 1)
-        self.assertEqual(
-            CustomListItem.objects.filter(custom_list=custom_list).first().item.title,
-            "Manual Book",
+        self.assertEqual(CustomListItem.objects.filter(custom_list=custom_list).count(), 2)
+        titles = set(
+            CustomListItem.objects.filter(custom_list=custom_list).values_list(
+                "item__title", flat=True
+            )
         )
+        self.assertIn("Manual Book", titles)
+        self.assertIn("Manual Episode S1E1", titles)
+
+    def test_episode_list_item_created(self):
+        """Episode items should be importable as list items (issue #93)."""
+        custom_list = CustomList.objects.get(owner=self.user, name="Favorites")
+        episode_item = CustomListItem.objects.filter(
+            custom_list=custom_list,
+            item__media_type="episode",
+        ).first()
+        self.assertIsNotNone(episode_item)
+        self.assertEqual(episode_item.item.title, "Manual Episode S1E1")
+        self.assertEqual(episode_item.item.season_number, 1)
+        self.assertEqual(episode_item.item.episode_number, 1)
 
     def test_list_item_does_not_track_media(self):
         """List items should not create tracked media entries."""
         self.assertEqual(Book.objects.filter(user=self.user).count(), 0)
+        self.assertEqual(Episode.objects.filter(related_season__user=self.user).count(), 0)
 
 
 class ImportYamtrackStatusNormalization(TestCase):
