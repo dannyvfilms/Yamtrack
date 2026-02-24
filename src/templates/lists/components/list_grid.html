@@ -30,7 +30,7 @@
         <p class="media-card-year text-xs text-gray-400 mt-1">
           {% if custom_list.items_count > 0 %}
             {{ custom_list.items_count }} item{{ custom_list.items_count|pluralize }}
-            {% if custom_list.completion_percent is not None %}· {{ custom_list.completion_percent }}%{% endif %}
+            {% if custom_list.completion_percent is not None %}· {{ custom_list.completion_percent }}% completed{% endif %}
           {% endif %}
         </p>
       </div>
