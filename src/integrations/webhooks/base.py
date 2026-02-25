@@ -99,6 +99,43 @@ class BaseWebhookProcessor:
             season_number: Season number from payload (optional, will be extracted if None)
             episode_number: Episode number from payload (optional, will be extracted if None)
         """
+        anidb_id = ids.get("anidb_id")
+        if user.anime_enabled and anidb_id:
+            mapping_data = self._fetch_mapping_data()
+            matching_entry = mapping_data.get(anidb_id)
+            if not matching_entry:
+                logger.info(
+                    "AniDB ID %s not found in mapping, "
+                    "falling through to TV processing",
+                    anidb_id,
+                )
+            else:
+                resolved_episode = episode_number
+                if resolved_episode is None:
+                    _, resolved_episode = self._extract_season_episode_from_payload(
+                        payload,
+                    )
+
+                if resolved_episode is None:
+                    logger.warning(
+                        "No episode number found for AniDB ID: %s",
+                        anidb_id,
+                    )
+                else:
+                    logger.info(
+                        "Detected anime via AniDB ID: %s. Matching MAL ID: %s, Episode: %s",
+                        anidb_id,
+                        matching_entry["mal_id"],
+                        resolved_episode,
+                    )
+                    self._handle_anime(
+                        matching_entry["mal_id"],
+                        resolved_episode,
+                        payload,
+                        user,
+                    )
+                    return
+
         media_id, found_season, found_episode = self._find_tv_media_id(ids)
         if not media_id:
             logger.warning("No matching TMDB ID found for TV show")

@@ -609,12 +609,25 @@ def _smart_list_detail_response(
                     "user": media_user,
                 }
 
-            queryset = model.objects.filter(**filter_kwargs).select_related("item")
+            select_related_fields = ["item"]
+            if media_type == MediaTypes.EPISODE.value:
+                select_related_fields.extend(["related_season", "related_season__related_tv"])
+            queryset = model.objects.filter(**filter_kwargs).select_related(*select_related_fields)
             queryset = media_manager._apply_prefetch_related(queryset, media_type)
             media_manager.annotate_max_progress(queryset, media_type)
 
             entries_by_item = {}
             for entry in queryset:
+                if media_type == MediaTypes.EPISODE.value:
+                    # Episode does not inherit Media; expose compatible fields for list templates.
+                    if not hasattr(entry, "status"):
+                        entry.status = getattr(entry.related_season, "status", None)
+                    if not hasattr(entry, "score"):
+                        entry.score = None
+                    if not hasattr(entry, "progress"):
+                        entry.progress = entry.item.episode_number
+                    if not hasattr(entry, "max_progress"):
+                        entry.max_progress = getattr(entry.related_season, "max_progress", None)
                 entries_by_item.setdefault(entry.item_id, []).append(entry)
 
             for item_id, entries in entries_by_item.items():

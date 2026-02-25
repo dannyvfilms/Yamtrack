@@ -10,11 +10,22 @@ from app.models import MediaTypes, Sources
 from app.providers import services
 from app.services import music_scrobble
 from integrations import plex as plex_api
-from integrations import tasks
 
 from .base import BaseWebhookProcessor
 
 logger = logging.getLogger(__name__)
+
+
+class _TasksProxy:
+    """Lazily import integrations.tasks to avoid circular imports."""
+
+    def __getattr__(self, name):
+        from integrations import tasks as tasks_module
+
+        return getattr(tasks_module, name)
+
+
+tasks = _TasksProxy()
 
 
 class PlexWebhookProcessor(BaseWebhookProcessor):
@@ -116,7 +127,10 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
         if event_type in ("media.pause", "media.stop"):
             return None
 
-        if not any(ids.get(key) for key in ("tmdb_id", "imdb_id", "tvdb_id")):
+        if not any(
+            ids.get(key)
+            for key in ("tmdb_id", "imdb_id", "tvdb_id", "anidb_id")
+        ):
             logger.warning("Ignoring Plex webhook call because no ID was found.")
             return None
 
@@ -870,9 +884,24 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
             "imdb_id": None,
             "tvdb_id": None,
             "plex_guid": None,
+            "anidb_id": None,
         }
 
         logger.debug("Extracting external IDs from %d GUIDs", len(guids))
+
+        def extract_hama_anidb_id(guid_value):
+            """Extract the AniDB ID from a Hama agent GUID string."""
+            if not guid_value:
+                return None
+
+            guid_lower = guid_value.lower()
+            if "hama://anidb-" not in guid_lower:
+                return None
+
+            match = re.search(r"anidb-(\d+)", guid_lower)
+            if match:
+                return match.group(1)
+            return None
 
         for guid in guids:
             guid_value = guid.get("id") if isinstance(guid, dict) else guid
@@ -880,6 +909,12 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
                 continue
 
             guid_lower = guid_value.lower()
+
+            if ids["anidb_id"] is None:
+                anidb_id = extract_hama_anidb_id(guid_value)
+                if anidb_id:
+                    ids["anidb_id"] = anidb_id
+                    logger.debug("Found anidb_id: %s", anidb_id)
 
             if ids["plex_guid"] is None and guid_lower.startswith("plex://"):
                 ids["plex_guid"] = guid_value.split("plex://", 1)[1]
@@ -916,7 +951,10 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
                     ids["tvdb_id"] = tvdb_id
                     logger.debug("Found tvdb_id: %s", tvdb_id)
 
-            if all(ids.get(key) for key in ("tmdb_id", "imdb_id", "tvdb_id", "plex_guid")):
+            if all(
+                ids.get(key)
+                for key in ("tmdb_id", "imdb_id", "tvdb_id", "plex_guid", "anidb_id")
+            ):
                 break
 
         return ids

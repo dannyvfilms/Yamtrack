@@ -2711,15 +2711,31 @@ class Season(Media):
                 user=self.user,
             )
         except TV.DoesNotExist:
-            tv_metadata = providers.services.get_media_metadata(
-                MediaTypes.TV.value,
-                self.item.media_id,
-                self.item.source,
-            )
-
-            season_count = tv_metadata.get("details", {}).get("seasons")
-            if season_count is None:
-                season_count = len(tv_metadata.get("related", {}).get("seasons", []))
+            fallback_title = self.item.series_name or self.item.title
+            try:
+                tv_metadata = providers.services.get_media_metadata(
+                    MediaTypes.TV.value,
+                    self.item.media_id,
+                    self.item.source,
+                )
+                season_count = tv_metadata.get("details", {}).get("seasons")
+                if season_count is None:
+                    season_count = len(tv_metadata.get("related", {}).get("seasons", []))
+            except Exception as exc:  # pragma: no cover - defensive for test/no-network paths
+                logger.warning(
+                    "Could not fetch TV metadata for media_id=%s while creating season parent: %s",
+                    self.item.media_id,
+                    exc,
+                )
+                tv_metadata = {
+                    "title": fallback_title,
+                    "localized_title": fallback_title,
+                    "original_title": None,
+                    "image": self.item.image,
+                    "details": {},
+                    "related": {"seasons": []},
+                }
+                season_count = None
 
             # creating tv with multiple seasons from a completed season
             if self.status == Status.COMPLETED.value and season_count > 1:
@@ -2732,8 +2748,11 @@ class Season(Media):
                 source=self.item.source,
                 media_type=MediaTypes.TV.value,
                 defaults={
-                    **Item.title_fields_from_metadata(tv_metadata),
-                    "image": tv_metadata["image"],
+                    **Item.title_fields_from_metadata(
+                        tv_metadata,
+                        fallback_title=fallback_title,
+                    ),
+                    "image": tv_metadata.get("image") or self.item.image,
                 },
             )
 
@@ -2906,6 +2925,51 @@ class Episode(models.Model):
     def __str__(self):
         """Return the season and episode number."""
         return self.item.__str__()
+
+    @property
+    def status(self):
+        """Expose season status for UI components that expect media.status."""
+        if hasattr(self, "_status_override"):
+            return self._status_override
+        related_season = getattr(self, "related_season", None)
+        return related_season.status if related_season else None
+
+    @status.setter
+    def status(self, value):
+        self._status_override = value
+
+    @property
+    def score(self):
+        """Episodes do not carry standalone ratings in Yamtrack."""
+        return getattr(self, "_score_override", None)
+
+    @score.setter
+    def score(self, value):
+        self._score_override = value
+
+    @property
+    def progress(self):
+        """Expose episode number as progress for list rendering/sorting fallbacks."""
+        if hasattr(self, "_progress_override"):
+            return self._progress_override
+        item = getattr(self, "item", None)
+        return item.episode_number if item else None
+
+    @progress.setter
+    def progress(self, value):
+        self._progress_override = value
+
+    @property
+    def max_progress(self):
+        """Expose related season max progress when available."""
+        if hasattr(self, "_max_progress_override"):
+            return self._max_progress_override
+        related_season = getattr(self, "related_season", None)
+        return getattr(related_season, "max_progress", None)
+
+    @max_progress.setter
+    def max_progress(self, value):
+        self._max_progress_override = value
 
     def save(self, *args, **kwargs):
         """Save the episode instance."""

@@ -41,7 +41,7 @@ def handle_error(error):
     )
 
 
-def get_external_links(external_ids):
+def get_external_links(external_ids, tmdb_id=None):
     """Build external links dictionary from TMDB external_ids response."""
     links = {}
 
@@ -57,6 +57,13 @@ def get_external_links(external_ids):
         links["Wikidata"] = (
             f"https://www.wikidata.org/wiki/{external_ids['wikidata_id']}"
         )
+
+    # Only passed in for movies as Letterboxd seldom supports TV
+    if tmdb_id:
+        # https://letterboxd.com/about/film-data/
+        # Letterboxd will redirect to the correct movie
+        # as they source their data from TMDB
+        links["Letterboxd"] = f"https://www.letterboxd.com/tmdb/{tmdb_id}"
 
     return links
 
@@ -225,7 +232,10 @@ def movie(media_id):
                     MediaTypes.MOVIE.value,
                 ),
             },
-            "external_links": get_external_links(response.get("external_ids", {})),
+            "external_links": get_external_links(
+                response.get("external_ids", {}),
+                media_id
+            ),
             "providers": response.get("watch/providers", {}).get("results", {}),
         }
 
