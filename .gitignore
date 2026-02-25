@@ -11,6 +11,7 @@ db.sqlite3-wal
 .DS_Store
 .vscode/launch.json
 CLAUDE.md
+.claude/settings.local.json
 requests.http
 TODO.txt
 
