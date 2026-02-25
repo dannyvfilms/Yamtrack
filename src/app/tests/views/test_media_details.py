@@ -9,8 +9,11 @@ from django.utils import timezone
 from app import statistics_cache
 from app.models import (
     Book,
+    CreditRoleType,
     Item,
+    ItemPersonCredit,
     MediaTypes,
+    Person,
     PodcastEpisode,
     PodcastShow,
     Sources,
@@ -239,6 +242,144 @@ class MediaDetailsViewTests(TestCase):
                     "source": Sources.TMDB.value,
                     "person_id": "10",
                     "name": "john-actor",
+                },
+            ),
+        )
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_backfills_author_credits_and_renders_links(
+        self,
+        mock_get_metadata,
+    ):
+        mock_get_metadata.return_value = {
+            "media_id": "OL123M",
+            "title": "Linked Book",
+            "media_type": MediaTypes.BOOK.value,
+            "source": Sources.OPENLIBRARY.value,
+            "source_url": "https://openlibrary.org/books/OL123M",
+            "image": "http://example.com/book.jpg",
+            "synopsis": "Book synopsis",
+            "max_progress": 300,
+            "details": {
+                "author": ["Open Author"],
+                "publish_date": "2000-01-01",
+            },
+            "authors_full": [
+                {
+                    "person_id": "OL1A",
+                    "name": "Open Author",
+                    "image": "http://example.com/author.jpg",
+                    "role": "Author",
+                    "sort_order": 0,
+                },
+            ],
+            "related": {},
+        }
+
+        item = Item.objects.create(
+            media_id="OL123M",
+            source=Sources.OPENLIBRARY.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Linked Book",
+            image="http://example.com/book.jpg",
+        )
+        Book.objects.create(
+            user=self.user,
+            item=item,
+            status=Status.COMPLETED.value,
+            progress=300,
+            start_date=timezone.now(),
+            end_date=timezone.now(),
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.OPENLIBRARY.value,
+                    "media_type": MediaTypes.BOOK.value,
+                    "media_id": "OL123M",
+                    "title": "linked-book",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        author_person = Person.objects.get(
+            source=Sources.OPENLIBRARY.value,
+            source_person_id="OL1A",
+        )
+        self.assertTrue(
+            ItemPersonCredit.objects.filter(
+                item=item,
+                person=author_person,
+                role_type=CreditRoleType.AUTHOR.value,
+            ).exists(),
+        )
+        self.assertContains(
+            response,
+            reverse(
+                "person_detail",
+                kwargs={
+                    "source": Sources.OPENLIBRARY.value,
+                    "person_id": "OL1A",
+                    "name": "open-author",
+                },
+            ),
+        )
+        html = response.content.decode()
+        self.assertEqual(
+            html.count('text-sm font-semibold text-gray-400">AUTHOR</h3>'),
+            1,
+        )
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_uses_authors_full_fallback_without_item(self, mock_get_metadata):
+        mock_get_metadata.return_value = {
+            "media_id": "72274276213",
+            "title": "Metadata Only Manga",
+            "media_type": MediaTypes.MANGA.value,
+            "source": Sources.MANGAUPDATES.value,
+            "source_url": "https://www.mangaupdates.com/series/72274276213",
+            "image": "http://example.com/manga.jpg",
+            "synopsis": "Manga synopsis",
+            "details": {
+                "authors": ["Manga Author"],
+            },
+            "authors_full": [
+                {
+                    "person_id": "55",
+                    "name": "Manga Author",
+                    "image": "http://example.com/manga-author.jpg",
+                    "role": "Author",
+                    "sort_order": 0,
+                },
+            ],
+            "related": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.MANGAUPDATES.value,
+                    "media_type": MediaTypes.MANGA.value,
+                    "media_id": "72274276213",
+                    "title": "metadata-only-manga",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(ItemPersonCredit.objects.count(), 0)
+        self.assertContains(
+            response,
+            reverse(
+                "person_detail",
+                kwargs={
+                    "source": Sources.MANGAUPDATES.value,
+                    "person_id": "55",
+                    "name": "manga-author",
                 },
             ),
         )

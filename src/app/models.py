@@ -423,6 +423,7 @@ class CreditRoleType(models.TextChoices):
 
     CAST = "cast", "Cast"
     CREW = "crew", "Crew"
+    AUTHOR = "author", "Author"
 
 
 class Person(models.Model):

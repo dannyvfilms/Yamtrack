@@ -18,10 +18,14 @@ from app import helpers
 from app.models import (
     Album,
     BoardGame,
+    Book,
+    Comic,
+    CreditRoleType,
     Episode,
     Game,
     Item,
     ItemPersonCredit,
+    Manga,
     MediaTypes,
     Movie,
     Music,
@@ -523,8 +527,8 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
             - artist: Filter music entries by album__artist_id
             - tv: Filter episodes by related_season__related_tv_id
             - season: Filter episodes by related_season_id
-            - person_source: Filter movie/TV plays by credited person source (e.g. "tmdb")
-            - person_id: Filter movie/TV plays by credited provider person ID
+            - person_source: Filter by credited person source (e.g. "tmdb", "openlibrary")
+            - person_id: Filter by credited provider person ID
             - media_id: Filter entries by item media_id
             - source: Filter entries by item source
             - season_number: Filter episodes by season number (requires media_id/source)
@@ -545,6 +549,9 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
         "podcasts": 0,
         "games": 0,
         "boardgames": 0,
+        "books": 0,
+        "comics": 0,
+        "manga": 0,
     }
     music_history_records_scanned = 0
 
@@ -999,6 +1006,108 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
             entry["play_count"] = play_count
             entries.append(entry)
             entry_counts["movies"] += 1
+
+    # Author-filtered reading history support:
+    # include only book/comic/manga entries credited to the selected author.
+    if has_person_filter:
+        credited_reading_item_ids = set(
+            ItemPersonCredit.objects.filter(
+                role_type=CreditRoleType.AUTHOR.value,
+                person__source=person_source_filter,
+                person__source_person_id=person_id_filter,
+                item__media_type__in=(
+                    MediaTypes.BOOK.value,
+                    MediaTypes.COMIC.value,
+                    MediaTypes.MANGA.value,
+                ),
+            ).values_list("item_id", flat=True),
+        )
+
+        if credited_reading_item_ids:
+            reading_qs = {
+                MediaTypes.BOOK.value: Book.objects.filter(
+                    user=user,
+                    item_id__in=credited_reading_item_ids,
+                    item__media_type=MediaTypes.BOOK.value,
+                ).select_related("item"),
+                MediaTypes.COMIC.value: Comic.objects.filter(
+                    user=user,
+                    item_id__in=credited_reading_item_ids,
+                    item__media_type=MediaTypes.COMIC.value,
+                ).select_related("item"),
+                MediaTypes.MANGA.value: Manga.objects.filter(
+                    user=user,
+                    item_id__in=credited_reading_item_ids,
+                    item__media_type=MediaTypes.MANGA.value,
+                ).select_related("item"),
+            }
+
+            for reading_media_type, queryset in reading_qs.items():
+                if media_type_filter and media_type_filter != reading_media_type:
+                    continue
+                if target_media_id and target_source and media_type_filter == reading_media_type:
+                    queryset = queryset.filter(
+                        item__media_id=target_media_id,
+                        item__source=target_source,
+                    )
+                if start_date:
+                    queryset = queryset.filter(
+                        models.Q(end_date__gte=start_date)
+                        | (
+                            models.Q(end_date__isnull=True)
+                            & models.Q(start_date__gte=start_date)
+                        ),
+                    )
+                if end_date:
+                    queryset = queryset.filter(
+                        models.Q(end_date__lte=end_date)
+                        | (
+                            models.Q(end_date__isnull=True)
+                            & models.Q(start_date__lte=end_date)
+                        ),
+                    )
+                queryset = queryset.filter(
+                    models.Q(start_date__isnull=False) | models.Q(end_date__isnull=False),
+                ).order_by("-end_date", "-start_date", "-created_at")
+
+                for reading_entry in queryset:
+                    item = getattr(reading_entry, "item", None)
+                    if not item:
+                        continue
+                    if genre_filter and not matches_item_genre(item):
+                        continue
+                    played_at_local = _localize_datetime(
+                        reading_entry.end_date
+                        or reading_entry.start_date
+                        or reading_entry.created_at,
+                    )
+                    if not played_at_local:
+                        continue
+
+                    entry = {
+                        "media_type": item.media_type,
+                        "item": _serialize_item(item),
+                        "poster": item.image or settings.IMG_NONE,
+                        "title": item.title,
+                        "display_title": item.title,
+                        "episode_label": None,
+                        "episode_code": None,
+                        "played_at_local": played_at_local,
+                        "runtime_minutes": 0,
+                        "runtime_display": None,
+                        "instance_id": reading_entry.id,
+                        "entry_key": f"{item.media_type}-{reading_entry.id}",
+                    }
+                    genres = _resolve_genres(item)
+                    if genres:
+                        entry["genres"] = genres
+                    entries.append(entry)
+                    if item.media_type == MediaTypes.BOOK.value:
+                        entry_counts["books"] += 1
+                    elif item.media_type == MediaTypes.COMIC.value:
+                        entry_counts["comics"] += 1
+                    elif item.media_type == MediaTypes.MANGA.value:
+                        entry_counts["manga"] += 1
 
     # Process music entries (always process if filtering by music, or if processing all)
     if process_all or has_music_filter or media_type_filter == MediaTypes.MUSIC.value:

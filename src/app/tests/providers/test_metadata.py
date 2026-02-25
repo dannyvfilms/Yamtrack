@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -391,6 +392,206 @@ class Metadata(TestCase):
         self.assertEqual(response["synopsis"], "No synopsis available.")
         self.assertEqual(response["details"]["format"], "Unknown")
         self.assertIsNone(response["genres"])
+
+    def test_hardcover_get_authors_full(self):
+        authors = hardcover.get_authors_full(
+            [
+                {
+                    "contribution": "Author",
+                    "author": {
+                        "id": 1,
+                        "name": "Author One",
+                        "cached_image": "http://example.com/a1.jpg",
+                    },
+                },
+                {
+                    "contribution": "Author",
+                    "author": {
+                        "id": 2,
+                        "name": "Author Two",
+                    },
+                },
+            ],
+        )
+
+        self.assertEqual(len(authors), 2)
+        self.assertEqual(authors[0]["person_id"], "1")
+        self.assertEqual(authors[0]["name"], "Author One")
+        self.assertEqual(authors[0]["role"], "Author")
+
+    @patch("app.providers.hardcover.services.api_request")
+    def test_hardcover_author_profile_normalization(self, mock_api_request):
+        hardcover.cache.delete(f"{Sources.HARDCOVER.value}_person_77")
+        mock_api_request.return_value = {
+            "data": {
+                "authors_by_pk": {
+                    "id": 77,
+                    "name": "Hardcover Author",
+                    "bio": "Hardcover bio",
+                    "cached_image": "http://example.com/author.jpg",
+                    "born_date": "1970-01-01",
+                    "death_date": None,
+                    "location": "London",
+                    "contributions": [
+                        {
+                            "contribution": "Author",
+                            "book": {
+                                "id": 7001,
+                                "title": "Hardcover Book",
+                                "release_date": "2001-01-01",
+                                "cached_image": "http://example.com/book.jpg",
+                            },
+                        },
+                    ],
+                },
+            },
+        }
+
+        response = hardcover.author_profile("77")
+
+        self.assertEqual(response["person_id"], "77")
+        self.assertEqual(response["source"], Sources.HARDCOVER.value)
+        self.assertEqual(response["name"], "Hardcover Author")
+        self.assertEqual(response["known_for_department"], "Author")
+        self.assertEqual(response["bibliography"][0]["media_id"], "7001")
+        self.assertEqual(response["bibliography"][0]["media_type"], MediaTypes.BOOK.value)
+
+    @patch("app.providers.openlibrary.fetch_author_data")
+    def test_openlibrary_get_authors_full(self, mock_fetch_author_data):
+        mock_fetch_author_data.side_effect = [
+            {
+                "person_id": "OL1A",
+                "name": "Open Author",
+                "image": "http://example.com/ol-author.jpg",
+                "role": "Author",
+                "sort_order": 0,
+            },
+        ]
+
+        authors_full = asyncio.run(
+            openlibrary.get_authors_full(
+                {"authors": [{"author": {"key": "/authors/OL1A"}}]},
+            ),
+        )
+
+        self.assertEqual(len(authors_full), 1)
+        self.assertEqual(authors_full[0]["person_id"], "OL1A")
+        self.assertEqual(authors_full[0]["name"], "Open Author")
+
+    @patch("app.providers.openlibrary.services.api_request")
+    def test_openlibrary_author_profile_normalization(self, mock_api_request):
+        openlibrary.cache.delete(f"{Sources.OPENLIBRARY.value}_person_OL1A")
+
+        def _mock_api_request(_source, _method, url, params=None, **kwargs):  # noqa: ARG001
+            if url.endswith("/authors/OL1A.json"):
+                return {
+                    "name": "Open Author",
+                    "bio": {"value": "Open bio"},
+                    "photos": [1234],
+                    "birth_date": "1940-01-01",
+                    "death_date": None,
+                }
+            if url.endswith("/authors/OL1A/works.json"):
+                return {
+                    "entries": [
+                        {
+                            "key": "/works/OL1W",
+                            "title": "Work One",
+                            "first_publish_year": 1950,
+                        },
+                        {
+                            "key": "/works/OL2W",
+                            "title": "Work Two",
+                        },
+                    ],
+                }
+            if url.endswith("/works/OL1W/editions.json"):
+                return {"entries": [{"key": "/books/OL123M"}]}
+            if url.endswith("/works/OL2W/editions.json"):
+                return {"entries": []}
+            raise AssertionError(f"Unexpected URL in test: {url}")
+
+        mock_api_request.side_effect = _mock_api_request
+        response = openlibrary.author_profile("OL1A")
+
+        self.assertEqual(response["person_id"], "OL1A")
+        self.assertEqual(response["source"], Sources.OPENLIBRARY.value)
+        self.assertEqual(response["name"], "Open Author")
+        self.assertEqual(response["biography"], "Open bio")
+        self.assertEqual(len(response["bibliography"]), 1)
+        self.assertEqual(response["bibliography"][0]["media_id"], "OL123M")
+        self.assertEqual(response["bibliography"][0]["media_type"], MediaTypes.BOOK.value)
+
+    def test_comicvine_get_people_full_writer_only(self):
+        people = comicvine.get_people_full(
+            {
+                "people": [
+                    {"id": 1, "name": "Writer One", "role": "writer"},
+                    {"id": 2, "name": "Artist One", "role": "artist"},
+                    {"id": 3, "name": "Story Lead", "role": "story"},
+                ],
+            },
+        )
+
+        self.assertEqual(len(people), 2)
+        self.assertEqual([person["person_id"] for person in people], ["1", "3"])
+
+    @patch("app.providers.comicvine.services.api_request")
+    def test_comicvine_person_profile_normalization(self, mock_api_request):
+        comicvine.cache.delete(f"{Sources.COMICVINE.value}_person_44")
+        mock_api_request.return_value = {
+            "results": {
+                "id": 44,
+                "name": "Comic Writer",
+                "deck": "Short bio",
+                "image": {"medium_url": "http://example.com/cv-author.jpg"},
+                "birth": "1970-01-01",
+                "death": None,
+                "hometown": "New York",
+            },
+        }
+
+        response = comicvine.person_profile("44")
+
+        self.assertEqual(response["person_id"], "44")
+        self.assertEqual(response["source"], Sources.COMICVINE.value)
+        self.assertEqual(response["name"], "Comic Writer")
+        self.assertEqual(response["known_for_department"], "Writing")
+        self.assertEqual(response["bibliography"], [])
+
+    def test_mangaupdates_get_authors_full(self):
+        authors = mangaupdates.get_authors_full(
+            [
+                {"id": 10, "name": "Mangaka One", "type": "Author"},
+                {"id": 11, "name": "Mangaka Two", "type": "Artist"},
+            ],
+        )
+
+        self.assertEqual(len(authors), 2)
+        self.assertEqual(authors[0]["person_id"], "10")
+        self.assertEqual(authors[0]["role"], "Author")
+
+    @patch("app.providers.mangaupdates.services.api_request")
+    def test_mangaupdates_author_profile_normalization(self, mock_api_request):
+        mangaupdates.cache.delete(f"{Sources.MANGAUPDATES.value}_person_55")
+        mock_api_request.return_value = {
+            "id": 55,
+            "name": "Manga Author",
+            "description": "Manga bio",
+            "image": {"url": {"original": "http://example.com/mu-author.jpg"}},
+            "series_list": [
+                {"series_id": 777, "title": "Series One", "year": "2010"},
+            ],
+        }
+
+        response = mangaupdates.author_profile("55")
+
+        self.assertEqual(response["person_id"], "55")
+        self.assertEqual(response["source"], Sources.MANGAUPDATES.value)
+        self.assertEqual(response["name"], "Manga Author")
+        self.assertEqual(response["known_for_department"], "Author")
+        self.assertEqual(response["bibliography"][0]["media_id"], "777")
+        self.assertEqual(response["bibliography"][0]["media_type"], MediaTypes.MANGA.value)
 
     def test_manual_tv(self):
         """Test the metadata method for manually created TV shows."""

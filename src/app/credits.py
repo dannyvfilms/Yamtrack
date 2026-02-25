@@ -1,4 +1,4 @@
-"""Helpers for synchronizing cast/crew/studio metadata."""
+"""Helpers for synchronizing person/studio metadata."""
 
 from __future__ import annotations
 
@@ -99,7 +99,7 @@ def _normalize_studio_rows(rows):
 @transaction.atomic
 def sync_item_credits_from_metadata(item, metadata):
     """Persist cast/crew and studios for an item from normalized metadata."""
-    if not item or item.source != Sources.TMDB.value or not isinstance(metadata, dict):
+    if not item or not isinstance(metadata, dict):
         return
 
     has_people_payload = "cast" in metadata or "crew" in metadata
@@ -113,7 +113,7 @@ def sync_item_credits_from_metadata(item, metadata):
         people_by_source_id = {}
         for row in cast_rows + crew_rows:
             person, _ = Person.objects.update_or_create(
-                source=Sources.TMDB.value,
+                source=item.source,
                 source_person_id=row["person_id"],
                 defaults={
                     "name": row["name"] or "Unknown Person",
@@ -124,7 +124,13 @@ def sync_item_credits_from_metadata(item, metadata):
             )
             people_by_source_id[row["person_id"]] = person
 
-        ItemPersonCredit.objects.filter(item=item).delete()
+        ItemPersonCredit.objects.filter(
+            item=item,
+            role_type__in=(
+                CreditRoleType.CAST.value,
+                CreditRoleType.CREW.value,
+            ),
+        ).delete()
         credits_to_create = []
 
         for row in cast_rows:
@@ -164,7 +170,7 @@ def sync_item_credits_from_metadata(item, metadata):
         studios_by_source_id = {}
         for row in studio_rows:
             studio, _ = Studio.objects.update_or_create(
-                source=Sources.TMDB.value,
+                source=item.source,
                 source_studio_id=row["studio_id"],
                 defaults={
                     "name": row["name"] or "Unknown Studio",
@@ -190,10 +196,91 @@ def sync_item_credits_from_metadata(item, metadata):
             ItemStudioCredit.objects.bulk_create(studio_links, ignore_conflicts=True)
 
 
+def _normalize_author_rows(rows):
+    normalized = []
+    for row in rows or []:
+        person_id = row.get("person_id") or row.get("id")
+        if person_id is None:
+            continue
+        normalized.append(
+            {
+                "person_id": str(person_id),
+                "name": (row.get("name") or "").strip(),
+                "image": (row.get("image") or "").strip(),
+                "known_for_department": (
+                    row.get("known_for_department")
+                    or row.get("department")
+                    or "Author"
+                ).strip(),
+                "gender": _coerce_gender(row.get("gender")),
+                "role": (row.get("role") or "").strip(),
+                "department": (row.get("department") or "").strip(),
+                "sort_order": _as_int(
+                    row["order"] if "order" in row and row["order"] is not None
+                    else row.get("sort_order")
+                ),
+            },
+        )
+    return normalized
+
+
+@transaction.atomic
+def sync_item_author_credits(item, authors_full):
+    """Persist author credits for an item from normalized metadata."""
+    if not item:
+        return
+
+    author_rows = _normalize_author_rows(authors_full)
+    ItemPersonCredit.objects.filter(
+        item=item,
+        role_type=CreditRoleType.AUTHOR.value,
+    ).delete()
+
+    if not author_rows:
+        return
+
+    people_by_source_id = {}
+    for row in author_rows:
+        person, _ = Person.objects.update_or_create(
+            source=item.source,
+            source_person_id=row["person_id"],
+            defaults={
+                "name": row["name"] or "Unknown Person",
+                "image": row["image"],
+                "known_for_department": row["known_for_department"],
+                "gender": row["gender"],
+            },
+        )
+        people_by_source_id[row["person_id"]] = person
+
+    credits_to_create = []
+    for row in author_rows:
+        person = people_by_source_id.get(row["person_id"])
+        if not person:
+            continue
+        credits_to_create.append(
+            ItemPersonCredit(
+                item=item,
+                person=person,
+                role_type=CreditRoleType.AUTHOR.value,
+                role=row["role"],
+                department=row["department"],
+                sort_order=row["sort_order"],
+            ),
+        )
+
+    if credits_to_create:
+        ItemPersonCredit.objects.bulk_create(credits_to_create, ignore_conflicts=True)
+
+
 @transaction.atomic
 def upsert_person_profile(source, source_person_id, metadata):
     """Create or update a local person profile from provider metadata."""
-    if source != Sources.TMDB.value or not source_person_id or not isinstance(metadata, dict):
+    if (
+        source not in Sources.values
+        or not source_person_id
+        or not isinstance(metadata, dict)
+    ):
         return None
 
     person, _ = Person.objects.update_or_create(

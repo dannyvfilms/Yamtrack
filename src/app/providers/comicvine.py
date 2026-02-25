@@ -154,6 +154,7 @@ def comic(media_id):
                 "people": get_people(response),
                 "last_updated": response.get("date_last_updated").split()[0],
             },
+            "authors_full": get_people_full(response),
             "related": {
                 "recommendations": publisher_comics,
             },
@@ -250,6 +251,50 @@ def get_people(response):
     return [person["name"] for person in people[:5] if isinstance(person, dict)]
 
 
+def _extract_person_id(person):
+    person_id = person.get("id")
+    if person_id:
+        return str(person_id)
+
+    detail_url = person.get("api_detail_url") or ""
+    if "/person/4040-" in detail_url:
+        return detail_url.rstrip("/").split("/person/4040-")[-1].split("/")[0]
+    return None
+
+
+def _is_writer_role(role):
+    role_text = (role or "").lower()
+    return any(keyword in role_text for keyword in ("writer", "story", "script"))
+
+
+def get_people_full(response):
+    """Return normalized writer-scoped people payloads for author links."""
+    people = response.get("people", [])
+    people_full = []
+    seen = set()
+    for index, person in enumerate(people):
+        if not isinstance(person, dict):
+            continue
+        role = person.get("role") or ""
+        if not _is_writer_role(role):
+            continue
+        person_id = _extract_person_id(person)
+        name = (person.get("name") or "").strip()
+        if not person_id or not name or person_id in seen:
+            continue
+        seen.add(person_id)
+        people_full.append(
+            {
+                "person_id": person_id,
+                "name": name,
+                "image": settings.IMG_NONE,
+                "role": role or "Writer",
+                "sort_order": index,
+            },
+        )
+    return people_full
+
+
 def get_publisher_comics(publisher_id, current_id, limit=15):
     """Get comics from the same publisher."""
     cache_key = f"{Sources.COMICVINE.value}_publisher_{publisher_id}_{current_id}"
@@ -326,4 +371,60 @@ def issue(media_id):
 
         cache.set(cache_key, data)
 
+    return data
+
+
+def person_profile(person_id):
+    """Return metadata for a Comic Vine person profile."""
+    cache_key = f"{Sources.COMICVINE.value}_person_{person_id}"
+    data = cache.get(cache_key)
+    if data is not None:
+        return data
+
+    params = {
+        "api_key": settings.COMICVINE_API,
+        "format": "json",
+        "field_list": (
+            "id,name,image,deck,description,birth,death,hometown,"
+            "site_detail_url"
+        ),
+    }
+    try:
+        response = services.api_request(
+            Sources.COMICVINE.value,
+            "GET",
+            f"{base_url}/person/4040-{person_id}/",
+            params=params,
+            headers=headers,
+        )
+    except requests.exceptions.HTTPError as error:
+        handle_error(error)
+
+    person_data = response.get("results", {})
+    if not person_data:
+        services.raise_not_found_error(Sources.COMICVINE.value, person_id, "person")
+
+    description = person_data.get("description")
+    biography = ""
+    if description:
+        soup = BeautifulSoup(description, "html.parser")
+        biography = " ".join(soup.get_text(separator=" ").split())
+    elif person_data.get("deck"):
+        biography = person_data["deck"]
+
+    data = {
+        "person_id": str(person_data.get("id") or person_id),
+        "source": Sources.COMICVINE.value,
+        "name": person_data.get("name") or "",
+        "image": get_image(person_data),
+        "biography": biography,
+        "known_for_department": "Writing",
+        "birth_date": person_data.get("birth"),
+        "death_date": person_data.get("death"),
+        "place_of_birth": person_data.get("hometown") or "",
+        # Comic Vine has no direct bibliography endpoint; person detail view
+        # cross-references local tracked credits for this source.
+        "bibliography": [],
+    }
+    cache.set(cache_key, data)
     return data

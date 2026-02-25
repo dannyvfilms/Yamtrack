@@ -158,8 +158,8 @@ async def async_book(media_id):
             response_work = {}
 
         # Run authors, editions, and ratings concurrently
-        authors_task = asyncio.create_task(
-            get_authors(response_work),
+        authors_full_task = asyncio.create_task(
+            get_authors_full(response_work),
         )
         editions_task = asyncio.create_task(
             get_editions(response_book, response_work),
@@ -168,6 +168,8 @@ async def async_book(media_id):
             get_ratings(response_work),
         )
         score, score_count = await ratings_task
+        authors_full = await authors_full_task
+        author_names = [author.get("name") for author in authors_full if author.get("name")]
 
         data = {
             "media_id": media_id,
@@ -185,10 +187,11 @@ async def async_book(media_id):
                 "physical_format": get_physical_format(response_book),
                 "number_of_pages": response_book.get("number_of_pages"),
                 "publish_date": get_publish_date(response_book),
-                "author": await authors_task,
+                "author": author_names or None,
                 "publishers": get_publishers(response_book),
                 "isbn": get_isbns(response_book),
             },
+            "authors_full": authors_full,
             "related": {
                 "other_editions": await editions_task,
             },
@@ -271,32 +274,59 @@ def get_publish_year(response):
     return None
 
 
+def _get_author_image_url(photo_id):
+    if photo_id is None:
+        return settings.IMG_NONE
+    return f"https://covers.openlibrary.org/a/id/{photo_id}-L.jpg"
+
+
 async def get_authors(response):
     """Get list of author names asynchronously."""
+    authors_full = await get_authors_full(response)
+    return [author.get("name") for author in authors_full if author.get("name")] or None
+
+
+async def get_authors_full(response):
+    """Get full author payloads asynchronously."""
     authors = []
     author_entries = response.get("authors", [])
 
     async with aiohttp.ClientSession() as session:
         tasks = []
-        for author in author_entries:
+        for index, author in enumerate(author_entries):
             if isinstance(author, dict) and "author" in author:
                 author_key = author["author"]["key"]
                 author_url = f"https://openlibrary.org{author_key}.json"
-                tasks.append(fetch_author_data(session, author_url))
+                tasks.append(fetch_author_data(session, author_url, author_key, index))
 
         author_data_list = await asyncio.gather(*tasks)
-        authors = [
-            data.get("name", "Unknown Author") for data in author_data_list if data
-        ]
+        for data in author_data_list:
+            if not data:
+                continue
+            author_id = data.get("person_id")
+            name = data.get("name") or ""
+            if not author_id or not name:
+                continue
+            authors.append(data)
 
-    return authors or None
+    return authors
 
 
-async def fetch_author_data(session, url):
+async def fetch_author_data(session, url, author_key=None, sort_order=0):
     """Fetch author data asynchronously."""
     async with session.get(url) as response:
         if response.status == requests.codes.ok:
-            return await response.json()
+            data = await response.json()
+            author_id = extract_openlibrary_id(author_key or data.get("key"))
+            photo_ids = data.get("photos") or []
+            photo_id = photo_ids[0] if photo_ids else None
+            return {
+                "person_id": author_id,
+                "name": data.get("name", "Unknown Author"),
+                "image": _get_author_image_url(photo_id),
+                "role": "Author",
+                "sort_order": sort_order,
+            }
 
     return None
 
@@ -379,3 +409,94 @@ async def get_ratings(response_work):
                 return score, score_count
 
     return None, 0
+
+
+def _normalize_bio(value):
+    if isinstance(value, dict):
+        return value.get("value") or ""
+    return value or ""
+
+
+def _resolve_edition_id_from_work_id(work_id):
+    if not work_id:
+        return None
+    editions_url = f"https://openlibrary.org/works/{work_id}/editions.json"
+    try:
+        editions_response = services.api_request(
+            Sources.OPENLIBRARY.value,
+            "GET",
+            editions_url,
+            params={"limit": 1},
+        )
+    except requests.RequestException as error:
+        logger.debug("Failed to resolve work editions for %s: %s", work_id, error)
+        return None
+
+    entries = editions_response.get("entries") or []
+    for entry in entries:
+        edition_id = extract_openlibrary_id(entry.get("key"))
+        if edition_id:
+            return edition_id
+    return None
+
+
+def author_profile(author_id):
+    """Return metadata for an Open Library author profile."""
+    cache_key = f"{Sources.OPENLIBRARY.value}_person_{author_id}"
+    data = cache.get(cache_key)
+    if data is not None:
+        return data
+
+    author_id = extract_openlibrary_id(author_id)
+    author_url = f"https://openlibrary.org/authors/{author_id}.json"
+    works_url = f"https://openlibrary.org/authors/{author_id}/works.json"
+    try:
+        author_data = services.api_request(
+            Sources.OPENLIBRARY.value,
+            "GET",
+            author_url,
+        )
+        works_data = services.api_request(
+            Sources.OPENLIBRARY.value,
+            "GET",
+            works_url,
+            params={"limit": 100},
+        )
+    except requests.RequestException as error:
+        handle_error(error)
+
+    bibliography = []
+    for entry in works_data.get("entries", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        work_id = extract_openlibrary_id(entry.get("key"))
+        edition_id = _resolve_edition_id_from_work_id(work_id)
+        if not edition_id:
+            continue
+        bibliography.append(
+            {
+                "media_id": edition_id,
+                "source": Sources.OPENLIBRARY.value,
+                "media_type": MediaTypes.BOOK.value,
+                "title": entry.get("title") or "Unknown Title",
+                "image": settings.IMG_NONE,
+                "year": entry.get("first_publish_year"),
+            },
+        )
+
+    photo_ids = author_data.get("photos") or []
+    photo_id = photo_ids[0] if photo_ids else None
+    data = {
+        "person_id": author_id,
+        "source": Sources.OPENLIBRARY.value,
+        "name": author_data.get("name") or "",
+        "image": _get_author_image_url(photo_id),
+        "biography": _normalize_bio(author_data.get("bio")),
+        "known_for_department": "Author",
+        "birth_date": author_data.get("birth_date"),
+        "death_date": author_data.get("death_date"),
+        "place_of_birth": author_data.get("location") or "",
+        "bibliography": bibliography,
+    }
+    cache.set(cache_key, data)
+    return data

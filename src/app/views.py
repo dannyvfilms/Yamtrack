@@ -16,7 +16,7 @@ from django.core.cache import cache
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.paginator import EmptyPage, Paginator
 from django.db import IntegrityError
-from django.db.models import F, Min, prefetch_related_objects
+from django.db.models import F, Min, Q, prefetch_related_objects
 from django.db.models.functions import ExtractDay, ExtractMonth
 from django.db.utils import OperationalError
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
@@ -61,10 +61,15 @@ from app.models import (
     Album,
     Artist,
     BasicMedia,
+    Book,
     CollectionEntry,
+    Comic,
+    CreditRoleType,
     Episode,
     Game,
     Item,
+    ItemPersonCredit,
+    Manga,
     MediaTypes,
     Movie,
     Music,
@@ -74,7 +79,7 @@ from app.models import (
     Status,
     Track,
 )
-from app.providers import manual, services, tmdb
+from app.providers import comicvine, hardcover, mangaupdates, manual, openlibrary, services, tmdb
 from app.services import music as sync_services
 from app.templatetags import app_tags
 from lists.models import CustomList
@@ -578,6 +583,7 @@ def media_list(request, media_type):
     platform_filter = (request.GET.get("platform") or "").strip()
     origin_filter = (request.GET.get("origin") or "").strip()
     format_filter = (request.GET.get("format") or "").strip()
+    author_filter = (request.GET.get("author") or "").strip()
     
     search_query = request.GET.get("search", "")
     try:
@@ -736,6 +742,47 @@ def media_list(request, media_type):
             return [str(platform).strip() for platform in platforms if str(platform).strip()]
         return [str(platforms).strip()] if str(platforms).strip() else []
 
+    def _extract_cached_authors(item):
+        """Extract authors from database or cached metadata."""
+        def _normalize_author_names(raw_authors):
+            if not raw_authors:
+                return []
+            if not isinstance(raw_authors, list):
+                raw_authors = [raw_authors]
+
+            normalized = []
+            for raw_author in raw_authors:
+                if isinstance(raw_author, dict):
+                    author_name = (
+                        raw_author.get("name")
+                        or raw_author.get("person")
+                        or raw_author.get("author")
+                    )
+                else:
+                    author_name = raw_author
+                author_text = str(author_name).strip() if author_name else ""
+                if author_text:
+                    normalized.append(author_text)
+            return normalized
+
+        # First try database (authoritative source)
+        if item and hasattr(item, "authors") and item.authors:
+            return _normalize_author_names(item.authors)
+
+        # Fall back to cache for backwards compatibility
+        cached = _cached_metadata_for_item(item)
+        if not isinstance(cached, dict):
+            return []
+        details = cached.get("details") if isinstance(cached.get("details"), dict) else {}
+        raw_authors = (
+            details.get("authors")
+            or details.get("author")
+            or details.get("people")
+            or cached.get("authors")
+            or cached.get("author")
+        )
+        return _normalize_author_names(raw_authors)
+
     def apply_genre_filter(media_items, filter_value):
         if not filter_value:
             return media_items
@@ -864,6 +911,20 @@ def media_list(request, media_type):
                 filtered_items.append(media)
         return filtered_items
 
+    def apply_author_filter(media_items, filter_value):
+        if not filter_value:
+            return media_items
+        target = _normalize_filter_value(filter_value)
+        filtered_items = []
+        for media in media_items:
+            item = getattr(media, "item", None)
+            if not item:
+                continue
+            authors = _extract_cached_authors(item)
+            if any(_normalize_filter_value(author) == target for author in authors):
+                filtered_items.append(media)
+        return filtered_items
+
     FORMAT_LABELS = {
         "hardcover": "Hardcover",
         "paperback": "Paperback",
@@ -881,6 +942,7 @@ def media_list(request, media_type):
         countries_set = set()
         platforms_set = set()
         formats_set = set()
+        authors_set = set()
         has_unknown_year = False
         for media in media_items:
             item = getattr(media, "item", None)
@@ -906,6 +968,9 @@ def media_list(request, media_type):
             platforms = _extract_cached_platforms(item)
             if platforms:
                 platforms_set.update(platforms)
+            authors = _extract_cached_authors(item)
+            if authors:
+                authors_set.update(authors)
             item_formats = _extract_item_formats(item)
             if item_formats:
                 formats_set.update(item_formats)
@@ -948,6 +1013,10 @@ def media_list(request, media_type):
             }
             for value in sorted(formats_set, key=lambda val: val.lower())
         ]
+        authors = [
+            {"value": value, "label": value}
+            for value in sorted(authors_set, key=lambda val: val.lower())
+        ]
         return {
             "genres": genres,
             "years": years,
@@ -957,11 +1026,13 @@ def media_list(request, media_type):
             "platforms": platforms,
             "origins": [],
             "formats": formats,
+            "authors": authors,
             "show_languages": False,
             "show_countries": False,
             "show_platforms": False,
             "show_origins": False,
             "show_formats": False,
+            "show_authors": False,
         }
 
     # Get media list with filters applied
@@ -1011,6 +1082,11 @@ def media_list(request, media_type):
         MediaTypes.MANGA.value,
         MediaTypes.COMIC.value,
     )
+    filter_data["show_authors"] = media_type in (
+        MediaTypes.BOOK.value,
+        MediaTypes.MANGA.value,
+        MediaTypes.COMIC.value,
+    )
     media_list = apply_rating_filter(media_list, rating_filter)
     media_list = apply_collection_filter(media_list, collection_filter, request.user, media_type)
     media_list = apply_genre_filter(media_list, genre_filter)
@@ -1023,6 +1099,7 @@ def media_list(request, media_type):
     if media_type == MediaTypes.GAME.value:
         media_list = apply_platform_filter(media_list, platform_filter)
     if media_type in (MediaTypes.BOOK.value, MediaTypes.MANGA.value, MediaTypes.COMIC.value):
+        media_list = apply_author_filter(media_list, author_filter)
         media_list = apply_format_filter(media_list, format_filter)
 
     # Handle time_left sorting for TV shows
@@ -1118,6 +1195,7 @@ def media_list(request, media_type):
         "current_platform": platform_filter,
         "current_origin": origin_filter,
         "current_format": format_filter,
+        "current_author": author_filter,
         "sort_choices": MediaSortChoices.choices,
         "status_choices": MediaStatusChoices.choices,
         "rating_choices": MEDIA_RATING_CHOICES,
@@ -2659,6 +2737,52 @@ def media_details(
             if missing_people or missing_studios:
                 credits.sync_item_credits_from_metadata(detail_item, media_metadata)
 
+    author_detail_keys = ("author", "authors", "people")
+    authors_linked = []
+    if (
+        media_type in (
+            MediaTypes.BOOK.value,
+            MediaTypes.COMIC.value,
+            MediaTypes.MANGA.value,
+        )
+        and isinstance(media_metadata, dict)
+    ):
+        authors_full = media_metadata.get("authors_full")
+        if detail_item and isinstance(authors_full, list):
+            credits.sync_item_author_credits(detail_item, authors_full)
+
+        if detail_item:
+            author_credits = (
+                detail_item.person_credits.filter(
+                    role_type=CreditRoleType.AUTHOR.value,
+                )
+                .select_related("person")
+                .order_by("sort_order", "person__name")
+            )
+            for author_credit in author_credits:
+                person = author_credit.person
+                authors_linked.append(
+                    {
+                        "source": person.source,
+                        "person_id": person.source_person_id,
+                        "name": person.name,
+                    },
+                )
+
+        if not authors_linked and isinstance(authors_full, list):
+            for author in authors_full:
+                person_id = author.get("person_id") or author.get("id")
+                name = (author.get("name") or "").strip()
+                if person_id is None or not name:
+                    continue
+                authors_linked.append(
+                    {
+                        "source": source,
+                        "person_id": str(person_id),
+                        "name": name,
+                    },
+                )
+
     # For TV shows, apply fallback for seasons without posters (handles cached metadata)
     if media_type == MediaTypes.TV.value and isinstance(media_metadata, dict):
         tv_poster = media_metadata.get("image")
@@ -2926,6 +3050,8 @@ def media_details(
         "user": request.user,
         "media": media_metadata,
         "media_type": media_type,
+        "authors_linked": authors_linked,
+        "author_detail_keys": author_detail_keys,
         "user_medias": user_medias,
         "current_instance": current_instance,
         "music_artist": music_artist,
@@ -4291,6 +4417,13 @@ def _parse_release_date_str(release_date_value):
 @require_POST
 def media_save(request):
     """Save or update media data to the database."""
+    def _coerce_text(value):
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value
+        return str(value)
+
     media_id = request.POST["media_id"]
     source = request.POST["source"]
     media_type = request.POST["media_type"]
@@ -4413,7 +4546,7 @@ def media_save(request):
             or details.get("genre"),
         )
 
-        country = details.get("country", "")
+        country = _coerce_text(details.get("country"))
         languages = details.get("languages", [])
         if not isinstance(languages, list):
             languages = [languages] if languages else []
@@ -4422,8 +4555,8 @@ def media_save(request):
         if not isinstance(platforms, list):
             platforms = [platforms] if platforms else []
 
-        format_type = details.get("format", "")
-        status = details.get("status", "")
+        format_type = _coerce_text(details.get("format"))
+        status = _coerce_text(details.get("status"))
 
         studios = details.get("studios", [])
         if not isinstance(studios, list):
@@ -4433,26 +4566,42 @@ def media_save(request):
         if not isinstance(themes, list):
             themes = [themes] if themes else []
 
-        authors = details.get("authors", []) or details.get("author", [])
-        if isinstance(authors, str):
-            authors = [authors]
-        elif not isinstance(authors, list):
-            authors = []
+        raw_authors = (
+            details.get("authors")
+            or details.get("author")
+            or details.get("people")
+        )
+        if not isinstance(raw_authors, list):
+            raw_authors = [raw_authors] if raw_authors else []
+        authors = []
+        for raw_author in raw_authors:
+            if isinstance(raw_author, dict):
+                author_name = (
+                    raw_author.get("name")
+                    or raw_author.get("person")
+                    or raw_author.get("author")
+                )
+            else:
+                author_name = raw_author
+            author_text = _coerce_text(author_name)
+            if author_text:
+                authors.append(author_text)
 
         publishers = details.get("publishers", "") or details.get("publisher", "")
         if isinstance(publishers, list):
             publishers = publishers[0] if publishers else ""
+        publishers = _coerce_text(publishers)
 
         isbn = details.get("isbn", [])
         if not isinstance(isbn, list):
             isbn = []
 
-        source_material = details.get("source", "")
+        source_material = _coerce_text(details.get("source"))
 
         creators = details.get("people", [])
         if not isinstance(creators, list):
             creators = []
-        runtime = details.get("runtime") or ""
+        runtime = _coerce_text(details.get("runtime"))
 
         item, created = Item.objects.get_or_create(
             media_id=media_id,
@@ -5809,16 +5958,57 @@ def history(request):
 @login_not_required
 @require_GET
 def person_detail(request, source, person_id, name):
-    """Render a cast/crew person bio page."""
+    """Render a provider-backed person or author profile page."""
     del name  # URL slug is cosmetic; person_id is canonical.
+    source_dispatch = {
+        Sources.TMDB.value: {
+            "fetcher": tmdb.person,
+            "entries_key": "filmography",
+            "tracked_media_types": (
+                MediaTypes.MOVIE.value,
+                MediaTypes.TV.value,
+            ),
+            "source_url": lambda person_id_value: f"https://www.themoviedb.org/person/{person_id_value}",
+            "is_author": False,
+        },
+        Sources.HARDCOVER.value: {
+            "fetcher": hardcover.author_profile,
+            "entries_key": "bibliography",
+            "tracked_media_types": (MediaTypes.BOOK.value,),
+            "source_url": lambda person_id_value: f"https://hardcover.app/authors/{person_id_value}",
+            "is_author": True,
+        },
+        Sources.OPENLIBRARY.value: {
+            "fetcher": openlibrary.author_profile,
+            "entries_key": "bibliography",
+            "tracked_media_types": (MediaTypes.BOOK.value,),
+            "source_url": lambda person_id_value: f"https://openlibrary.org/authors/{person_id_value}",
+            "is_author": True,
+        },
+        Sources.COMICVINE.value: {
+            "fetcher": comicvine.person_profile,
+            "entries_key": "bibliography",
+            "tracked_media_types": (MediaTypes.COMIC.value,),
+            "source_url": lambda person_id_value: f"https://comicvine.gamespot.com/person/4040-{person_id_value}/",
+            "is_author": True,
+        },
+        Sources.MANGAUPDATES.value: {
+            "fetcher": mangaupdates.author_profile,
+            "entries_key": "bibliography",
+            "tracked_media_types": (MediaTypes.MANGA.value,),
+            "source_url": lambda person_id_value: f"https://www.mangaupdates.com/authors.html?id={person_id_value}",
+            "is_author": True,
+        },
+    }
+    source_config = source_dispatch.get(source)
+    if not source_config:
+        return HttpResponseBadRequest("Person pages are not available for this source.")
 
-    if source != Sources.TMDB.value:
-        return HttpResponseBadRequest("Person pages are only available for TMDB metadata.")
-
-    person_metadata = tmdb.person(person_id)
+    person_metadata = source_config["fetcher"](person_id) or {}
     person = credits.upsert_person_profile(source, person_id, person_metadata)
 
     person_id_str = str(person_id)
+    is_author = source_config["is_author"]
     person_data = {
         "source": source,
         "person_id": person_id_str,
@@ -5829,7 +6019,7 @@ def person_detail(request, source, person_id, name):
         "biography": person_metadata.get("biography")
         or (person.biography if person else ""),
         "known_for_department": person_metadata.get("known_for_department")
-        or (person.known_for_department if person else ""),
+        or (person.known_for_department if person else ("Author" if is_author else "")),
         "birth_date": person_metadata.get("birth_date")
         or (person.birth_date.isoformat() if person and person.birth_date else None),
         "death_date": person_metadata.get("death_date")
@@ -5838,29 +6028,124 @@ def person_detail(request, source, person_id, name):
         or (person.place_of_birth if person else ""),
     }
 
-    filmography = [dict(entry) for entry in person_metadata.get("filmography", [])]
-    filmography_media_ids = {
-        str(entry.get("media_id"))
-        for entry in filmography
-        if entry.get("media_id") is not None
-    }
-
-    tracked_items = Item.objects.none()
-    if filmography_media_ids:
-        tracked_items = Item.objects.filter(
-            source=source,
-            media_type__in=(MediaTypes.MOVIE.value, MediaTypes.TV.value),
-            media_id__in=filmography_media_ids,
+    media_types_for_source = source_config["tracked_media_types"]
+    raw_entries = person_metadata.get(source_config["entries_key"], [])
+    filmography = []
+    for index, raw_entry in enumerate(raw_entries):
+        if not isinstance(raw_entry, dict):
+            continue
+        media_id_value = raw_entry.get("media_id")
+        if media_id_value is None:
+            continue
+        media_type = raw_entry.get("media_type")
+        if media_type is None and len(media_types_for_source) == 1:
+            media_type = media_types_for_source[0]
+        if media_type not in media_types_for_source:
+            continue
+        filmography.append(
+            {
+                **raw_entry,
+                "media_id": str(media_id_value),
+                "media_type": media_type,
+                "source": raw_entry.get("source") or source,
+                "title": raw_entry.get("title") or "Unknown Title",
+                "image": raw_entry.get("image") or settings.IMG_NONE,
+                "year": raw_entry.get("year"),
+                "role": raw_entry.get("role") or "",
+                "department": raw_entry.get("department") or "",
+                "credit_type": raw_entry.get("credit_type") or ("author" if is_author else ""),
+                "sort_order": raw_entry.get("sort_order", index),
+            },
         )
-    tracked_item_map = {
-        (item.media_type, str(item.media_id)): item
-        for item in tracked_items
-    }
+
+    if is_author and not filmography:
+        fallback_items = Item.objects.filter(
+            source=source,
+            media_type__in=media_types_for_source,
+            person_credits__role_type=CreditRoleType.AUTHOR.value,
+            person_credits__person__source=source,
+            person_credits__person__source_person_id=person_id_str,
+        ).order_by("title").distinct()
+        for index, item in enumerate(fallback_items):
+            filmography.append(
+                {
+                    "media_id": str(item.media_id),
+                    "source": source,
+                    "media_type": item.media_type,
+                    "title": item.title,
+                    "image": item.image or settings.IMG_NONE,
+                    "year": None,
+                    "role": "Author",
+                    "department": "",
+                    "credit_type": "author",
+                    "sort_order": index,
+                },
+            )
+
+    seen_media = set()
+    deduped_filmography = []
+    for entry in filmography:
+        media_key = (entry.get("media_type"), str(entry.get("media_id")))
+        if media_key in seen_media:
+            continue
+        seen_media.add(media_key)
+        deduped_filmography.append(entry)
+    filmography = deduped_filmography
+
+    tracked_item_map = {}
+    if filmography:
+        tracked_filters = Q()
+        for media_type in media_types_for_source:
+            media_ids_for_type = {
+                entry["media_id"]
+                for entry in filmography
+                if entry.get("media_type") == media_type
+            }
+            if media_ids_for_type:
+                tracked_filters |= Q(
+                    media_type=media_type,
+                    media_id__in=media_ids_for_type,
+                )
+        if tracked_filters:
+            tracked_items = Item.objects.filter(source=source).filter(tracked_filters)
+            tracked_item_map = {
+                (item.media_type, str(item.media_id)): item
+                for item in tracked_items
+            }
+
+    credited_tracked_items_by_key = {}
+    if request.user.is_authenticated and is_author:
+        for model, media_type in (
+            (Book, MediaTypes.BOOK.value),
+            (Comic, MediaTypes.COMIC.value),
+            (Manga, MediaTypes.MANGA.value),
+        ):
+            tracked_reads = (
+                model.objects.filter(
+                    user=request.user,
+                    item__media_type=media_type,
+                    item__person_credits__role_type=CreditRoleType.AUTHOR.value,
+                    item__person_credits__person__source=source,
+                    item__person_credits__person__source_person_id=person_id_str,
+                )
+                .filter(Q(start_date__isnull=False) | Q(end_date__isnull=False))
+                .select_related("item")
+                .distinct()
+            )
+            for tracked_read in tracked_reads:
+                item = tracked_read.item
+                media_key = (item.media_type, str(item.media_id))
+                if media_key in credited_tracked_items_by_key:
+                    continue
+                credited_tracked_items_by_key[media_key] = item
+
+    if credited_tracked_items_by_key:
+        tracked_item_map.update(credited_tracked_items_by_key)
 
     watched_media_keys = set()
     watched_person_minutes_by_media_key = {}
     person_talent_totals = None
-    if request.user.is_authenticated:
+    if request.user.is_authenticated and not is_author:
         person_talent_totals = statistics_cache.get_person_talent_totals(
             request.user,
             source,
@@ -5872,18 +6157,34 @@ def person_detail(request, source, person_id, name):
             else {}
         )
 
-    if request.user.is_authenticated and filmography_media_ids:
+    if credited_tracked_items_by_key:
+        watched_media_keys.update(credited_tracked_items_by_key.keys())
+
+    if request.user.is_authenticated and filmography:
         watched_movie_media_ids = {
-            str(entry.get("media_id"))
+            entry["media_id"]
             for entry in filmography
             if entry.get("media_type") == MediaTypes.MOVIE.value
-            and entry.get("media_id") is not None
         }
         watched_tv_media_ids = {
-            str(entry.get("media_id"))
+            entry["media_id"]
             for entry in filmography
             if entry.get("media_type") == MediaTypes.TV.value
-            and entry.get("media_id") is not None
+        }
+        watched_book_media_ids = {
+            entry["media_id"]
+            for entry in filmography
+            if entry.get("media_type") == MediaTypes.BOOK.value
+        }
+        watched_comic_media_ids = {
+            entry["media_id"]
+            for entry in filmography
+            if entry.get("media_type") == MediaTypes.COMIC.value
+        }
+        watched_manga_media_ids = {
+            entry["media_id"]
+            for entry in filmography
+            if entry.get("media_type") == MediaTypes.MANGA.value
         }
 
         if watched_movie_media_ids:
@@ -5917,6 +6218,51 @@ def person_detail(request, source, person_id, name):
                 ).distinct()
             )
 
+        if watched_book_media_ids:
+            watched_books = Book.objects.filter(
+                user=request.user,
+                item__source=source,
+                item__media_type=MediaTypes.BOOK.value,
+                item__media_id__in=watched_book_media_ids,
+            ).filter(Q(start_date__isnull=False) | Q(end_date__isnull=False))
+            watched_media_keys.update(
+                (media_type, str(media_id))
+                for media_type, media_id in watched_books.values_list(
+                    "item__media_type",
+                    "item__media_id",
+                ).distinct()
+            )
+
+        if watched_comic_media_ids:
+            watched_comics = Comic.objects.filter(
+                user=request.user,
+                item__source=source,
+                item__media_type=MediaTypes.COMIC.value,
+                item__media_id__in=watched_comic_media_ids,
+            ).filter(Q(start_date__isnull=False) | Q(end_date__isnull=False))
+            watched_media_keys.update(
+                (media_type, str(media_id))
+                for media_type, media_id in watched_comics.values_list(
+                    "item__media_type",
+                    "item__media_id",
+                ).distinct()
+            )
+
+        if watched_manga_media_ids:
+            watched_manga = Manga.objects.filter(
+                user=request.user,
+                item__source=source,
+                item__media_type=MediaTypes.MANGA.value,
+                item__media_id__in=watched_manga_media_ids,
+            ).filter(Q(start_date__isnull=False) | Q(end_date__isnull=False))
+            watched_media_keys.update(
+                (media_type, str(media_id))
+                for media_type, media_id in watched_manga.values_list(
+                    "item__media_type",
+                    "item__media_id",
+                ).distinct()
+            )
+
     for entry in filmography:
         media_key = (entry.get("media_type"), str(entry.get("media_id")))
         entry["tracked_item"] = tracked_item_map.get(media_key)
@@ -5936,52 +6282,92 @@ def person_detail(request, source, person_id, name):
                     )
                 watched_filmography.append(watched_entry)
                 seen_watched_media.add(media_key)
+
+        if is_author and credited_tracked_items_by_key:
+            for media_key, tracked_item in credited_tracked_items_by_key.items():
+                if media_key in seen_watched_media:
+                    continue
+                watched_filmography.append(
+                    {
+                        "media_id": str(tracked_item.media_id),
+                        "source": tracked_item.source,
+                        "media_type": tracked_item.media_type,
+                        "title": tracked_item.title,
+                        "image": tracked_item.image or settings.IMG_NONE,
+                        "year": (
+                            tracked_item.release_datetime.year
+                            if tracked_item.release_datetime
+                            else None
+                        ),
+                        "role": "Author",
+                        "department": "",
+                        "credit_type": "author",
+                        "sort_order": len(watched_filmography),
+                        "tracked_item": tracked_item,
+                        "is_watched": True,
+                    },
+                )
+                seen_watched_media.add(media_key)
+
     watched_movie_count = sum(
         1 for media_type, _ in watched_media_keys if media_type == MediaTypes.MOVIE.value
     )
     watched_show_count = sum(
         1 for media_type, _ in watched_media_keys if media_type == MediaTypes.TV.value
     )
+    watched_book_count = sum(
+        1
+        for media_type, _ in watched_media_keys
+        if media_type in (
+            MediaTypes.BOOK.value,
+            MediaTypes.COMIC.value,
+            MediaTypes.MANGA.value,
+        )
+    )
 
     history_filter_url = (
         f"{reverse('history')}?person_source={source}&person_id={person_id}"
     )
-    source_url = None
-    if source == Sources.TMDB.value:
-        source_url = f"https://www.themoviedb.org/person/{person_id_str}"
+    source_url = source_config["source_url"](person_id_str)
+
     tracked_plays_count = None
     tracked_hours_count = None
     if request.user.is_authenticated:
-        episode_plays = (
-            Episode.objects.filter(
-                related_season__user=request.user,
-                end_date__isnull=False,
-                related_season__related_tv__item__person_credits__person__source=source,
-                related_season__related_tv__item__person_credits__person__source_person_id=person_id_str,
+        if is_author:
+            tracked_plays_count = len(credited_tracked_items_by_key)
+        else:
+            episode_plays = (
+                Episode.objects.filter(
+                    related_season__user=request.user,
+                    end_date__isnull=False,
+                    related_season__related_tv__item__person_credits__person__source=source,
+                    related_season__related_tv__item__person_credits__person__source_person_id=person_id_str,
+                )
+                .distinct()
+                .count()
             )
-            .distinct()
-            .count()
-        )
-        movie_plays = (
-            Movie.objects.filter(
-                user=request.user,
-                item__person_credits__person__source=source,
-                item__person_credits__person__source_person_id=person_id_str,
+            movie_plays = (
+                Movie.objects.filter(
+                    user=request.user,
+                    item__person_credits__person__source=source,
+                    item__person_credits__person__source_person_id=person_id_str,
+                )
+                .exclude(start_date__isnull=True, end_date__isnull=True)
+                .distinct()
+                .count()
             )
-            .exclude(start_date__isnull=True, end_date__isnull=True)
-            .distinct()
-            .count()
-        )
-        tracked_plays_count = episode_plays + movie_plays
-        if person_talent_totals:
-            tracked_hours_count = person_talent_totals.get("watched_time")
+            tracked_plays_count = episode_plays + movie_plays
+            if person_talent_totals:
+                tracked_hours_count = person_talent_totals.get("watched_time")
 
     context = {
         "user": request.user,
         "person": person_data,
+        "is_author": is_author,
         "watched_filmography": watched_filmography,
         "watched_movie_count": watched_movie_count,
         "watched_show_count": watched_show_count,
+        "watched_book_count": watched_book_count,
         "filmography": filmography,
         "history_filter_url": history_filter_url,
         "tracked_plays_count": tracked_plays_count,

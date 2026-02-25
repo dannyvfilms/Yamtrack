@@ -6,10 +6,13 @@ from django.urls import reverse
 from django.utils import timezone
 
 from app.models import (
+    Book,
+    Comic,
     CreditRoleType,
     Episode,
     Item,
     ItemPersonCredit,
+    Manga,
     MediaTypes,
     Movie,
     Person,
@@ -429,3 +432,129 @@ class HistoryViewPersonFilterTests(TestCase):
         self.assertIn("Episode Specific Match", titles)
         self.assertIn("Fallback To Show Credit", titles)
         self.assertNotIn("Episode Specific Exclusion", titles)
+
+
+class HistoryViewAuthorFilterTests(TestCase):
+    """Test author-based reading filters on the history page."""
+
+    def setUp(self):
+        self.credentials = {"username": "author-filter-user", "password": "12345"}
+        self.user = get_user_model().objects.create_user(**self.credentials)
+        self.client.login(**self.credentials)
+        self.person = Person.objects.create(
+            source=Sources.OPENLIBRARY.value,
+            source_person_id="OL1A",
+            name="Open Author",
+            gender=PersonGender.UNKNOWN.value,
+        )
+
+        now = timezone.now()
+
+        self.book_item = Item.objects.create(
+            media_id="OL123M",
+            source=Sources.OPENLIBRARY.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Credited Book",
+            image="http://example.com/book.jpg",
+        )
+        Book.objects.create(
+            user=self.user,
+            item=self.book_item,
+            status=Status.COMPLETED.value,
+            progress=350,
+            start_date=now,
+            end_date=now,
+        )
+        ItemPersonCredit.objects.create(
+            item=self.book_item,
+            person=self.person,
+            role_type=CreditRoleType.AUTHOR.value,
+            role="Author",
+        )
+
+        self.comic_item = Item.objects.create(
+            media_id="comic-1",
+            source=Sources.OPENLIBRARY.value,
+            media_type=MediaTypes.COMIC.value,
+            title="Credited Comic",
+            image="http://example.com/comic.jpg",
+        )
+        Comic.objects.create(
+            user=self.user,
+            item=self.comic_item,
+            status=Status.COMPLETED.value,
+            progress=10,
+            start_date=now,
+            end_date=now,
+        )
+        ItemPersonCredit.objects.create(
+            item=self.comic_item,
+            person=self.person,
+            role_type=CreditRoleType.AUTHOR.value,
+            role="Writer",
+        )
+
+        self.manga_item = Item.objects.create(
+            media_id="manga-1",
+            source=Sources.OPENLIBRARY.value,
+            media_type=MediaTypes.MANGA.value,
+            title="Credited Manga",
+            image="http://example.com/manga.jpg",
+        )
+        Manga.objects.create(
+            user=self.user,
+            item=self.manga_item,
+            status=Status.COMPLETED.value,
+            progress=50,
+            start_date=now,
+            end_date=now,
+        )
+        ItemPersonCredit.objects.create(
+            item=self.manga_item,
+            person=self.person,
+            role_type=CreditRoleType.AUTHOR.value,
+            role="Author",
+        )
+
+        self.uncredited_book_item = Item.objects.create(
+            media_id="OL999M",
+            source=Sources.OPENLIBRARY.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Uncredited Book",
+            image="http://example.com/other-book.jpg",
+        )
+        Book.objects.create(
+            user=self.user,
+            item=self.uncredited_book_item,
+            status=Status.COMPLETED.value,
+            progress=200,
+            start_date=now,
+            end_date=now,
+        )
+
+    def test_history_person_filter_includes_credited_reading_entries(self):
+        response = self.client.get(
+            reverse("history") + "?person_source=openlibrary&person_id=OL1A",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        titles = [
+            entry["title"]
+            for day in response.context["history_days"]
+            for entry in day.get("entries", [])
+        ]
+        self.assertIn("Credited Book", titles)
+        self.assertIn("Credited Comic", titles)
+        self.assertIn("Credited Manga", titles)
+        self.assertNotIn("Uncredited Book", titles)
+
+    def test_history_without_person_filter_does_not_include_reading_entries(self):
+        response = self.client.get(reverse("history"))
+
+        self.assertEqual(response.status_code, 200)
+        titles = [
+            entry["title"]
+            for day in response.context["history_days"]
+            for entry in day.get("entries", [])
+        ]
+        self.assertNotIn("Credited Book", titles)

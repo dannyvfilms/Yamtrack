@@ -127,6 +127,7 @@ async def async_manga(media_id):
         recommendations_task = asyncio.create_task(
             get_recommendations(response["recommendations"]),
         )
+        authors_full = get_authors_full(response["authors"])
 
         data = {
             "media_id": media_id,
@@ -147,6 +148,7 @@ async def async_manga(media_id):
                 "status_in_country_of_origin": get_status(response["status"]),
                 "latest_chapter_translated": response["latest_chapter"],
             },
+            "authors_full": authors_full,
             "related": {
                 "related_manga": await related_task,
                 "recommendations": await recommendations_task,
@@ -184,6 +186,37 @@ def get_authors(authors):
     if authors:
         return [item["name"] for item in authors]
     return None
+
+
+def get_authors_full(authors):
+    """Normalize MangaUpdates authors into authors_full payload rows."""
+    if not authors:
+        return []
+
+    normalized = []
+    seen = set()
+    for index, item in enumerate(authors):
+        if not isinstance(item, dict):
+            continue
+        person_id = item.get("author_id") or item.get("id")
+        name = (item.get("name") or "").strip()
+        if person_id is None or not name:
+            continue
+        person_id_str = str(person_id)
+        if person_id_str in seen:
+            continue
+        seen.add(person_id_str)
+        role = item.get("type") or item.get("role") or "Author"
+        normalized.append(
+            {
+                "person_id": person_id_str,
+                "name": name,
+                "image": settings.IMG_NONE,
+                "role": role,
+                "sort_order": index,
+            },
+        )
+    return normalized
 
 
 def get_status(status):
@@ -249,3 +282,61 @@ async def fetch_series_data(session, url, item):
                 "year": data.get("year"),
             }
     return None
+
+
+def author_profile(author_id):
+    """Return metadata for a MangaUpdates author profile."""
+    cache_key = f"{Sources.MANGAUPDATES.value}_person_{author_id}"
+    data = cache.get(cache_key)
+    if data is not None:
+        return data
+
+    url = f"{base_url}/authors/{author_id}"
+    try:
+        response = services.api_request(
+            Sources.MANGAUPDATES.value,
+            "GET",
+            url,
+        )
+    except requests.exceptions.HTTPError as error:
+        handle_error(error)
+
+    bibliography = []
+    for index, series in enumerate(response.get("series_list", []) or response.get("series", [])):
+        if not isinstance(series, dict):
+            continue
+        series_id = series.get("series_id") or series.get("id")
+        title = series.get("title") or series.get("series_name")
+        if series_id is None or not title:
+            continue
+        bibliography.append(
+            {
+                "media_id": str(series_id),
+                "source": Sources.MANGAUPDATES.value,
+                "media_type": MediaTypes.MANGA.value,
+                "title": title,
+                "image": settings.IMG_NONE,
+                "year": series.get("year"),
+                "sort_order": index,
+            },
+        )
+
+    data = {
+        "person_id": str(response.get("author_id") or response.get("id") or author_id),
+        "source": Sources.MANGAUPDATES.value,
+        "name": response.get("name") or "",
+        "image": (
+            (response.get("image") or {}).get("url", {}).get("original")
+            if isinstance(response.get("image"), dict)
+            else settings.IMG_NONE
+        )
+        or settings.IMG_NONE,
+        "biography": response.get("biography") or response.get("description") or "",
+        "known_for_department": "Author",
+        "birth_date": response.get("birth_date"),
+        "death_date": response.get("death_date"),
+        "place_of_birth": response.get("location") or "",
+        "bibliography": bibliography,
+    }
+    cache.set(cache_key, data)
+    return data

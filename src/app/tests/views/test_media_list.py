@@ -9,8 +9,10 @@ from django.utils import timezone
 
 from app.models import (
     Book,
+    Comic,
     CollectionEntry,
     Item,
+    Manga,
     MediaTypes,
     Movie,
     Sources,
@@ -415,6 +417,104 @@ class MediaListViewTests(TestCase):
         self.assertEqual(filtered_response.context["current_format"], "audiobook")
         self.assertEqual(filtered_response.context["media_list"].paginator.count, 1)
         self.assertContains(filtered_response, "Audiobook Filter Book")
+
+    def test_book_author_filter_shows_and_filters_tracked_books(self):
+        book_with_author = Item.objects.create(
+            media_id="book-author-filter-1",
+            source=Sources.OPENLIBRARY.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Author Filter Book One",
+            image="http://example.com/book1.jpg",
+            authors=["Author One"],
+        )
+        other_book = Item.objects.create(
+            media_id="book-author-filter-2",
+            source=Sources.OPENLIBRARY.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Author Filter Book Two",
+            image="http://example.com/book2.jpg",
+            authors=["Author Two"],
+        )
+        Book.objects.create(
+            item=book_with_author,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=0,
+        )
+        Book.objects.create(
+            item=other_book,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=0,
+        )
+
+        url = reverse("medialist", args=[MediaTypes.BOOK.value])
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["filter_data"]["show_authors"])
+        self.assertTrue(
+            any(
+                option["value"] == "Author One"
+                for option in response.context["filter_data"]["authors"]
+            ),
+        )
+
+        filtered_response = self.client.get(f"{url}?author=Author One")
+        self.assertEqual(filtered_response.status_code, 200)
+        self.assertEqual(filtered_response.context["current_author"], "Author One")
+        self.assertEqual(filtered_response.context["media_list"].paginator.count, 1)
+        self.assertContains(filtered_response, "Author Filter Book One")
+        self.assertNotContains(filtered_response, "Author Filter Book Two")
+
+    def test_comic_and_manga_author_filter_work(self):
+        comic_item = Item.objects.create(
+            media_id="comic-author-filter-1",
+            source=Sources.COMICVINE.value,
+            media_type=MediaTypes.COMIC.value,
+            title="Author Filter Comic",
+            image="http://example.com/comic.jpg",
+            authors=["Writer Alpha"],
+        )
+        manga_item = Item.objects.create(
+            media_id="manga-author-filter-1",
+            source=Sources.MANGAUPDATES.value,
+            media_type=MediaTypes.MANGA.value,
+            title="Author Filter Manga",
+            image="http://example.com/manga.jpg",
+            authors=["Mangaka Beta"],
+        )
+        Comic.objects.create(
+            item=comic_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=0,
+        )
+        Manga.objects.create(
+            item=manga_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=0,
+        )
+
+        comic_url = reverse("medialist", args=[MediaTypes.COMIC.value])
+        comic_response = self.client.get(f"{comic_url}?author=Writer Alpha")
+        self.assertEqual(comic_response.status_code, 200)
+        self.assertTrue(comic_response.context["filter_data"]["show_authors"])
+        self.assertEqual(comic_response.context["media_list"].paginator.count, 1)
+        self.assertContains(comic_response, "Author Filter Comic")
+
+        manga_url = reverse("medialist", args=[MediaTypes.MANGA.value])
+        manga_response = self.client.get(f"{manga_url}?author=Mangaka Beta")
+        self.assertEqual(manga_response.status_code, 200)
+        self.assertTrue(manga_response.context["filter_data"]["show_authors"])
+        self.assertEqual(manga_response.context["media_list"].paginator.count, 1)
+        self.assertContains(manga_response, "Author Filter Manga")
+
+    def test_movie_filter_data_hides_author_filter(self):
+        response = self.client.get(reverse("medialist", args=[MediaTypes.MOVIE.value]))
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.context["filter_data"]["show_authors"])
 
     def test_media_list_htmx_request(self):
         """Test the media list view with HTMX request."""

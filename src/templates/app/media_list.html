@@ -18,7 +18,7 @@
     </div>
   </div>
 
-  <div x-data="{ sort: '{{ current_sort }}', direction: '{{ current_direction }}', status: '{{ current_status }}', rating: '{{ current_rating }}', collection: '{{ current_collection }}', genre: '{{ current_genre|default:'' }}', year: '{{ current_year|default:'' }}', release: '{{ current_release|default:'all' }}', source: '{{ current_source|default:'' }}', language: '{{ current_language|default:'' }}', country: '{{ current_country|default:'' }}', platform: '{{ current_platform|default:'' }}', origin: '{{ current_origin|default:'' }}', format: '{{ current_format|default:'' }}', layout: '{{ current_layout }}', search: '{{ request.GET.search|default:'' }}', showLanguages: {{ filter_data.show_languages|yesno:'true,false' }}, showCountries: {{ filter_data.show_countries|yesno:'true,false' }}, showPlatforms: {{ filter_data.show_platforms|yesno:'true,false' }}, showOrigins: {{ filter_data.show_origins|yesno:'true,false' }}, showFormats: {{ filter_data.show_formats|yesno:'true,false' }}, statusLabels: {
+  <div x-data="{ sort: '{{ current_sort }}', direction: '{{ current_direction }}', status: '{{ current_status }}', rating: '{{ current_rating }}', collection: '{{ current_collection }}', genre: '{{ current_genre|default:'' }}', year: '{{ current_year|default:'' }}', release: '{{ current_release|default:'all' }}', source: '{{ current_source|default:'' }}', language: '{{ current_language|default:'' }}', country: '{{ current_country|default:'' }}', platform: '{{ current_platform|default:'' }}', origin: '{{ current_origin|default:'' }}', format: '{{ current_format|default:'' }}', author: '{{ current_author|default:'' }}', layout: '{{ current_layout }}', search: '{{ request.GET.search|default:'' }}', showLanguages: {{ filter_data.show_languages|yesno:'true,false' }}, showCountries: {{ filter_data.show_countries|yesno:'true,false' }}, showPlatforms: {{ filter_data.show_platforms|yesno:'true,false' }}, showOrigins: {{ filter_data.show_origins|yesno:'true,false' }}, showFormats: {{ filter_data.show_formats|yesno:'true,false' }}, showAuthors: {{ filter_data.show_authors|yesno:'true,false' }}, statusLabels: {
     {% for value, label in status_choices %}
       '{{ value }}': '{{ label }}'
       {% if not forloop.last %},{% endif %}
@@ -42,7 +42,7 @@
       {% if not forloop.last %},{% endif %}
 
     {% endfor %}
-    }, defaultDirection(value) { return ['start_date', 'title', 'time_left'].includes(value) ? 'asc' : 'desc' }, toggleSort(value) { this.direction = (this.sort === value) ? (this.direction === 'asc' ? 'desc' : 'asc') : this.defaultDirection(value); this.sort = value; }, toggleRating() { if (this.rating === 'all') { this.rating = 'rated'; } else if (this.rating === 'rated') { this.rating = 'not_rated'; } else { this.rating = 'all'; } }, toggleCollection() { if (this.collection === 'all') { this.collection = 'collected'; } else if (this.collection === 'collected') { this.collection = 'not_collected'; } else { this.collection = 'all'; } }, filterLabel() { const labels = []; if (this.rating && this.rating !== 'all') { labels.push(this.ratingLabels[this.rating] || 'Rated'); } if (this.collection && this.collection !== 'all') { labels.push(this.collectionLabels[this.collection] || 'Collected'); } if (this.genre) { labels.push(this.genre); } if (this.year) { labels.push(this.year === 'unknown' ? 'Unknown Year' : this.year); } if (this.release && this.release !== 'all') { labels.push(this.releaseLabels[this.release] || 'Released'); } if (this.source) { labels.push(this.source.toUpperCase()); } if (this.showLanguages && this.language) { labels.push(this.language.length <= 3 ? this.language.toUpperCase() : this.language); } if (this.showCountries && this.country) { labels.push(this.country.length <= 3 ? this.country.toUpperCase() : this.country); } if (this.showPlatforms && this.platform) { labels.push(this.platform); } if (this.showOrigins && this.origin) { labels.push(this.origin.length <= 3 ? this.origin.toUpperCase() : this.origin); } if (this.showFormats && this.format) { labels.push(this.format === 'ebook' ? 'eBook' : this.format.charAt(0).toUpperCase() + this.format.slice(1)); } if (labels.length === 0) { return 'All'; } if (labels.length === 1) { return labels[0]; } return `${labels[0]} +${labels.length - 1}`; }, clearFilters() { this.rating = 'all'; this.collection = 'all'; this.genre = ''; this.year = ''; this.release = 'all'; this.source = ''; this.language = ''; this.country = ''; this.platform = ''; this.origin = ''; this.format = ''; } }">
+    }, defaultDirection(value) { return ['start_date', 'title', 'time_left'].includes(value) ? 'asc' : 'desc' }, toggleSort(value) { this.direction = (this.sort === value) ? (this.direction === 'asc' ? 'desc' : 'asc') : this.defaultDirection(value); this.sort = value; }, toggleRating() { if (this.rating === 'all') { this.rating = 'rated'; } else if (this.rating === 'rated') { this.rating = 'not_rated'; } else { this.rating = 'all'; } }, toggleCollection() { if (this.collection === 'all') { this.collection = 'collected'; } else if (this.collection === 'collected') { this.collection = 'not_collected'; } else { this.collection = 'all'; } }, filterLabel() { const labels = []; if (this.rating && this.rating !== 'all') { labels.push(this.ratingLabels[this.rating] || 'Rated'); } if (this.collection && this.collection !== 'all') { labels.push(this.collectionLabels[this.collection] || 'Collected'); } if (this.genre) { labels.push(this.genre); } if (this.year) { labels.push(this.year === 'unknown' ? 'Unknown Year' : this.year); } if (this.release && this.release !== 'all') { labels.push(this.releaseLabels[this.release] || 'Released'); } if (this.source) { labels.push(this.source.toUpperCase()); } if (this.showLanguages && this.language) { labels.push(this.language.length <= 3 ? this.language.toUpperCase() : this.language); } if (this.showCountries && this.country) { labels.push(this.country.length <= 3 ? this.country.toUpperCase() : this.country); } if (this.showPlatforms && this.platform) { labels.push(this.platform); } if (this.showOrigins && this.origin) { labels.push(this.origin.length <= 3 ? this.origin.toUpperCase() : this.origin); } if (this.showFormats && this.format) { labels.push(this.format === 'ebook' ? 'eBook' : this.format.charAt(0).toUpperCase() + this.format.slice(1)); } if (this.showAuthors && this.author) { labels.push(this.author); } if (labels.length === 0) { return 'All'; } if (labels.length === 1) { return labels[0]; } return `${labels[0]} +${labels.length - 1}`; }, clearFilters() { this.rating = 'all'; this.collection = 'all'; this.genre = ''; this.year = ''; this.release = 'all'; this.source = ''; this.language = ''; this.country = ''; this.platform = ''; this.origin = ''; this.format = ''; this.author = ''; } }">
 
     <!-- Form to manage state -->
     <form id="filter-form" class="hidden">
@@ -60,6 +60,7 @@
       <input type="hidden" name="platform" x-model="platform">
       <input type="hidden" name="origin" x-model="origin">
       <input type="hidden" name="format" x-model="format">
+      <input type="hidden" name="author" x-model="author">
       <input type="hidden" name="search" x-model="search">
       <input type="hidden" name="layout" x-model="layout">
     </form>
@@ -212,6 +213,16 @@
                         type="button">
                   <span class="flex-shrink-0 mr-3">Format</span>
                   <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]" x-text="format ? (format === 'ebook' ? 'eBook' : format.charAt(0).toUpperCase() + format.slice(1)) : 'Any'"></span>
+                  <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+                </button>
+              {% endif %}
+
+              {% if filter_data.show_authors and filter_data.authors %}
+                <button class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                        @click="view = 'author'; resetSearch()"
+                        type="button">
+                  <span class="flex-shrink-0 mr-3">Author</span>
+                  <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]" x-text="author || 'Any'"></span>
                   <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
                 </button>
               {% endif %}
@@ -723,6 +734,51 @@
                 </template>
               </div>
             </div>
+
+            <div x-show="view === 'author'" x-cloak class="p-2">
+              <div class="flex items-center gap-2 px-2 py-1">
+                <button class="p-1 rounded hover:bg-[#454d5a] transition-colors cursor-pointer"
+                        @click="view = 'root'"
+                        type="button">
+                  {% include "app/icons/chevron-left.svg" with classes="w-4 h-4" %}
+                </button>
+                <div class="text-xs uppercase tracking-wide text-gray-300">Author</div>
+              </div>
+              <div class="px-2 py-2">
+                <input type="text"
+                       x-model="authorSearch"
+                       placeholder="Filter Author"
+                       class="w-full px-3 py-2 rounded-md bg-[#2a2f35] text-sm text-gray-200 placeholder-gray-500 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+              </div>
+              <div class="max-h-64 overflow-y-auto">
+                <button hx-get="{% url 'medialist' media_type %}"
+                        {% if media_list %} hx-target="{{ layout_class }}" {% else %} hx-target="#empty_list" {% endif %}
+                        hx-include="#filter-form"
+                        hx-indicator="#loading-indicator"
+                        class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                        @click="author = ''; open = false; view = 'root'"
+                        type="button">
+                  <span>All Authors</span>
+                  <span class="ml-auto" x-show="author === ''">
+                    {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                  </span>
+                </button>
+                <template x-for="option in filteredAuthors()" :key="option.value">
+                  <button hx-get="{% url 'medialist' media_type %}"
+                          {% if media_list %} hx-target="{{ layout_class }}" {% else %} hx-target="#empty_list" {% endif %}
+                          hx-include="#filter-form"
+                          hx-indicator="#loading-indicator"
+                          class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                          @click="author = option.value; open = false; view = 'root'"
+                          type="button">
+                    <span class="block min-w-0 truncate max-w-[11rem]" x-text="option.label"></span>
+                    <span class="ml-auto" x-show="author === option.value">
+                      {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-green-400" %}
+                    </span>
+                  </button>
+                </template>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -892,14 +948,14 @@
 
           <!-- Layout Toggle -->
           <div class="flex rounded-md overflow-hidden border border-gray-700 layout-toggle">
-            <a :href="`{% url 'medialist' media_type %}?${search ? 'search=' + search + '&' : ''}${status && status !== 'all' && status !== 'All' ? 'status=' + status + '&' : ''}${rating !== 'all' ? 'rating=' + rating + '&' : ''}${collection !== 'all' ? 'collection=' + collection + '&' : ''}${genre ? 'genre=' + genre + '&' : ''}${year ? 'year=' + year + '&' : ''}${release !== 'all' ? 'release=' + release + '&' : ''}${source ? 'source=' + source + '&' : ''}${showLanguages && language ? 'language=' + language + '&' : ''}${showCountries && country ? 'country=' + country + '&' : ''}${showPlatforms && platform ? 'platform=' + platform + '&' : ''}${showOrigins && origin ? 'origin=' + origin + '&' : ''}${direction ? 'direction=' + direction + '&' : ''}${sort !== 'score' ? 'sort=' + sort + '&' : ''}layout=grid`"
+            <a :href="`{% url 'medialist' media_type %}?${search ? 'search=' + search + '&' : ''}${status && status !== 'all' && status !== 'All' ? 'status=' + status + '&' : ''}${rating !== 'all' ? 'rating=' + rating + '&' : ''}${collection !== 'all' ? 'collection=' + collection + '&' : ''}${genre ? 'genre=' + genre + '&' : ''}${year ? 'year=' + year + '&' : ''}${release !== 'all' ? 'release=' + release + '&' : ''}${source ? 'source=' + source + '&' : ''}${showLanguages && language ? 'language=' + language + '&' : ''}${showCountries && country ? 'country=' + country + '&' : ''}${showPlatforms && platform ? 'platform=' + platform + '&' : ''}${showOrigins && origin ? 'origin=' + origin + '&' : ''}${showFormats && format ? 'format=' + format + '&' : ''}${showAuthors && author ? 'author=' + author + '&' : ''}${direction ? 'direction=' + direction + '&' : ''}${sort !== 'score' ? 'sort=' + sort + '&' : ''}layout=grid`"
                class="p-2 cursor-pointer"
                :class="layout === 'grid' ? 'bg-indigo-600 text-white' : 'bg-[#39404b] hover:bg-[#454d5a]'"
                title="Grid View"
                @click="layout = 'grid'">
               {% include "app/icons/four-square.svg" with classes="w-5 h-5" %}
             </a>
-            <a :href="`{% url 'medialist' media_type %}?${search ? 'search=' + search + '&' : ''}${status && status !== 'all' && status !== 'All' ? 'status=' + status + '&' : ''}${rating !== 'all' ? 'rating=' + rating + '&' : ''}${collection !== 'all' ? 'collection=' + collection + '&' : ''}${genre ? 'genre=' + genre + '&' : ''}${year ? 'year=' + year + '&' : ''}${release !== 'all' ? 'release=' + release + '&' : ''}${source ? 'source=' + source + '&' : ''}${showLanguages && language ? 'language=' + language + '&' : ''}${showCountries && country ? 'country=' + country + '&' : ''}${showPlatforms && platform ? 'platform=' + platform + '&' : ''}${showOrigins && origin ? 'origin=' + origin + '&' : ''}${direction ? 'direction=' + direction + '&' : ''}${sort !== 'score' ? 'sort=' + sort + '&' : ''}layout=table`"
+            <a :href="`{% url 'medialist' media_type %}?${search ? 'search=' + search + '&' : ''}${status && status !== 'all' && status !== 'All' ? 'status=' + status + '&' : ''}${rating !== 'all' ? 'rating=' + rating + '&' : ''}${collection !== 'all' ? 'collection=' + collection + '&' : ''}${genre ? 'genre=' + genre + '&' : ''}${year ? 'year=' + year + '&' : ''}${release !== 'all' ? 'release=' + release + '&' : ''}${source ? 'source=' + source + '&' : ''}${showLanguages && language ? 'language=' + language + '&' : ''}${showCountries && country ? 'country=' + country + '&' : ''}${showPlatforms && platform ? 'platform=' + platform + '&' : ''}${showOrigins && origin ? 'origin=' + origin + '&' : ''}${showFormats && format ? 'format=' + format + '&' : ''}${showAuthors && author ? 'author=' + author + '&' : ''}${direction ? 'direction=' + direction + '&' : ''}${sort !== 'score' ? 'sort=' + sort + '&' : ''}layout=table`"
                class="p-2 cursor-pointer"
                :class="layout === 'table' ? 'bg-indigo-600 text-white' : 'bg-[#39404b] hover:bg-[#454d5a]'"
                title="Table View"
@@ -962,6 +1018,7 @@
         platformSearch: '',
         originSearch: '',
         formatSearch: '',
+        authorSearch: '',
         genres: data.genres || [],
         years: data.years || [],
         sources: data.sources || [],
@@ -970,6 +1027,7 @@
         platforms: data.platforms || [],
         origins: data.origins || [],
         formats: data.formats || [],
+        authors: data.authors || [],
         resetSearch() {
           this.genreSearch = '';
           this.yearSearch = '';
@@ -979,6 +1037,7 @@
           this.platformSearch = '';
           this.originSearch = '';
           this.formatSearch = '';
+          this.authorSearch = '';
         },
         filteredGenres() {
           const term = this.genreSearch.toLowerCase();
@@ -1035,6 +1094,13 @@
             return this.formats;
           }
           return this.formats.filter(option => option.label.toLowerCase().includes(term));
+        },
+        filteredAuthors() {
+          const term = this.authorSearch.toLowerCase();
+          if (!term) {
+            return this.authors;
+          }
+          return this.authors.filter(option => option.label.toLowerCase().includes(term));
         },
       };
     }

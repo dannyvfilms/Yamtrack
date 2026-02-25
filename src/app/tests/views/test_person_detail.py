@@ -6,10 +6,13 @@ from django.urls import reverse
 from django.utils import timezone
 
 from app.models import (
+    Book,
+    Comic,
     CreditRoleType,
     Item,
     ItemPersonCredit,
     ItemStudioCredit,
+    Manga,
     MediaTypes,
     Movie,
     Person,
@@ -57,7 +60,7 @@ class PersonDetailViewTests(TestCase):
         Movie.objects.create(
             item=self.item,
             user=self.user,
-            status=Status.COMPLETED.value,
+            status=Status.PLANNING.value,
             progress=1,
             start_date=timezone.now(),
             end_date=timezone.now(),
@@ -174,7 +177,353 @@ class PersonDetailViewTests(TestCase):
         self.assertContains(response, "01.01.1990")
         self.assertNotContains(response, "1990-01-01")
 
-    def test_person_detail_rejects_non_tmdb_source(self):
+    @patch("app.providers.openlibrary.author_profile")
+    def test_person_detail_openlibrary_author_uses_bibliography(self, mock_author_profile):
+        person = Person.objects.create(
+            source=Sources.OPENLIBRARY.value,
+            source_person_id="OL1A",
+            name="Open Author",
+        )
+        item = Item.objects.create(
+            media_id="OL123M",
+            source=Sources.OPENLIBRARY.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Open Book",
+            image="http://example.com/book.jpg",
+        )
+        Book.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.PLANNING.value,
+            progress=100,
+            start_date=timezone.now(),
+            end_date=timezone.now(),
+        )
+        ItemPersonCredit.objects.create(
+            item=item,
+            person=person,
+            role_type=CreditRoleType.AUTHOR.value,
+            role="Author",
+        )
+        mock_author_profile.return_value = {
+            "person_id": "OL1A",
+            "source": Sources.OPENLIBRARY.value,
+            "name": "Open Author",
+            "image": "http://example.com/author.jpg",
+            "biography": "Open bio",
+            "known_for_department": "Author",
+            "birth_date": None,
+            "death_date": None,
+            "place_of_birth": "",
+            "bibliography": [
+                {
+                    "media_id": "OL123M",
+                    "source": Sources.OPENLIBRARY.value,
+                    "media_type": MediaTypes.BOOK.value,
+                    "title": "Open Book",
+                    "image": "http://example.com/book.jpg",
+                },
+            ],
+        }
+
+        response = self.client.get(
+            reverse(
+                "person_detail",
+                kwargs={
+                    "source": Sources.OPENLIBRARY.value,
+                    "person_id": "OL1A",
+                    "name": "open-author",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["is_author"])
+        self.assertEqual(response.context["watched_book_count"], 1)
+        self.assertContains(response, "Read Content")
+        self.assertContains(response, "Bibliography")
+        self.assertContains(response, "1 book")
+        self.assertContains(response, "1 tracked read")
+        self.assertContains(response, "Open Book")
+        self.assertContains(response, "?person_source=openlibrary&amp;person_id=OL1A")
+
+    @patch("app.providers.hardcover.author_profile")
+    def test_person_detail_hardcover_author_uses_bibliography(self, mock_author_profile):
+        person = Person.objects.create(
+            source=Sources.HARDCOVER.value,
+            source_person_id="78661",
+            name="George R.R. Martin",
+        )
+        item = Item.objects.create(
+            media_id="427374",
+            source=Sources.HARDCOVER.value,
+            media_type=MediaTypes.BOOK.value,
+            title="A Clash of Kings",
+            image="http://example.com/clash.jpg",
+        )
+        Book.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.PLANNING.value,
+            progress=300,
+            start_date=timezone.now(),
+            end_date=timezone.now(),
+        )
+        ItemPersonCredit.objects.create(
+            item=item,
+            person=person,
+            role_type=CreditRoleType.AUTHOR.value,
+            role="Author",
+        )
+        mock_author_profile.return_value = {
+            "person_id": "78661",
+            "source": Sources.HARDCOVER.value,
+            "name": "George R.R. Martin",
+            "image": "http://example.com/grrm.jpg",
+            "biography": "Hardcover bio",
+            "known_for_department": "Author",
+            "birth_date": "1948-09-20",
+            "death_date": None,
+            "place_of_birth": "Bayonne",
+            "bibliography": [
+                {
+                    "media_id": "427374",
+                    "source": Sources.HARDCOVER.value,
+                    "media_type": MediaTypes.BOOK.value,
+                    "title": "A Clash of Kings",
+                    "image": "http://example.com/clash.jpg",
+                    "year": 1998,
+                },
+            ],
+        }
+
+        response = self.client.get(
+            reverse(
+                "person_detail",
+                kwargs={
+                    "source": Sources.HARDCOVER.value,
+                    "person_id": "78661",
+                    "name": "george-r-r-martin",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["is_author"])
+        self.assertEqual(response.context["watched_book_count"], 1)
+        self.assertContains(response, "Read Content")
+        self.assertContains(response, "Bibliography")
+        self.assertContains(response, "A Clash of Kings")
+
+    @patch("app.providers.hardcover.author_profile")
+    def test_person_detail_hardcover_tracked_reads_survive_bibliography_id_mismatch(
+        self,
+        mock_author_profile,
+    ):
+        person = Person.objects.create(
+            source=Sources.HARDCOVER.value,
+            source_person_id="78661",
+            name="George R.R. Martin",
+        )
+        item = Item.objects.create(
+            media_id="427374",
+            source=Sources.HARDCOVER.value,
+            media_type=MediaTypes.BOOK.value,
+            title="A Clash of Kings",
+            image="http://example.com/clash.jpg",
+        )
+        Book.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.PLANNING.value,
+            progress=300,
+            start_date=timezone.now(),
+            end_date=timezone.now(),
+        )
+        ItemPersonCredit.objects.create(
+            item=item,
+            person=person,
+            role_type=CreditRoleType.AUTHOR.value,
+            role="Author",
+        )
+        mock_author_profile.return_value = {
+            "person_id": "78661",
+            "source": Sources.HARDCOVER.value,
+            "name": "George R.R. Martin",
+            "image": "http://example.com/grrm.jpg",
+            "biography": "Hardcover bio",
+            "known_for_department": "Author",
+            "birth_date": "1948-09-20",
+            "death_date": None,
+            "place_of_birth": "Bayonne",
+            "bibliography": [
+                {
+                    "media_id": "999999",
+                    "source": Sources.HARDCOVER.value,
+                    "media_type": MediaTypes.BOOK.value,
+                    "title": "Mismatched Edition",
+                    "image": "http://example.com/mismatch.jpg",
+                    "year": 1998,
+                },
+            ],
+        }
+
+        response = self.client.get(
+            reverse(
+                "person_detail",
+                kwargs={
+                    "source": Sources.HARDCOVER.value,
+                    "person_id": "78661",
+                    "name": "george-r-r-martin",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["tracked_plays_count"], 1)
+        self.assertEqual(response.context["watched_book_count"], 1)
+        self.assertEqual(len(response.context["watched_filmography"]), 1)
+        self.assertEqual(
+            response.context["watched_filmography"][0]["title"],
+            "A Clash of Kings",
+        )
+        self.assertContains(response, "A Clash of Kings")
+
+    @patch("app.providers.comicvine.person_profile")
+    def test_person_detail_comicvine_falls_back_to_local_credited_items(self, mock_person_profile):
+        person = Person.objects.create(
+            source=Sources.COMICVINE.value,
+            source_person_id="44",
+            name="Comic Writer",
+        )
+        item = Item.objects.create(
+            media_id="155969",
+            source=Sources.COMICVINE.value,
+            media_type=MediaTypes.COMIC.value,
+            title="Ultimate Spider-Man",
+            image="http://example.com/comic.jpg",
+        )
+        Comic.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.PLANNING.value,
+            progress=20,
+            start_date=timezone.now(),
+            end_date=timezone.now(),
+        )
+        ItemPersonCredit.objects.create(
+            item=item,
+            person=person,
+            role_type=CreditRoleType.AUTHOR.value,
+            role="Writer",
+        )
+        mock_person_profile.return_value = {
+            "person_id": "44",
+            "source": Sources.COMICVINE.value,
+            "name": "Comic Writer",
+            "image": "http://example.com/writer.jpg",
+            "biography": "Writer bio",
+            "known_for_department": "Writing",
+            "birth_date": None,
+            "death_date": None,
+            "place_of_birth": "",
+            "bibliography": [],
+        }
+
+        response = self.client.get(
+            reverse(
+                "person_detail",
+                kwargs={
+                    "source": Sources.COMICVINE.value,
+                    "person_id": "44",
+                    "name": "comic-writer",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["is_author"])
+        self.assertEqual(len(response.context["filmography"]), 1)
+        self.assertEqual(response.context["tracked_plays_count"], 1)
+        self.assertEqual(response.context["watched_book_count"], 1)
+        self.assertEqual(len(response.context["watched_filmography"]), 1)
+        self.assertEqual(response.context["filmography"][0]["title"], "Ultimate Spider-Man")
+        self.assertEqual(response.context["watched_filmography"][0]["title"], "Ultimate Spider-Man")
+        self.assertContains(response, "Ultimate Spider-Man")
+
+    @patch("app.providers.mangaupdates.author_profile")
+    def test_person_detail_mangaupdates_tracked_reads_survive_bibliography_id_mismatch(
+        self,
+        mock_author_profile,
+    ):
+        person = Person.objects.create(
+            source=Sources.MANGAUPDATES.value,
+            source_person_id="991",
+            name="Manga Creator",
+        )
+        item = Item.objects.create(
+            media_id="1234",
+            source=Sources.MANGAUPDATES.value,
+            media_type=MediaTypes.MANGA.value,
+            title="Manga Title",
+            image="http://example.com/manga.jpg",
+        )
+        Manga.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.PLANNING.value,
+            progress=40,
+            start_date=timezone.now(),
+            end_date=timezone.now(),
+        )
+        ItemPersonCredit.objects.create(
+            item=item,
+            person=person,
+            role_type=CreditRoleType.AUTHOR.value,
+            role="Author",
+        )
+        mock_author_profile.return_value = {
+            "person_id": "991",
+            "source": Sources.MANGAUPDATES.value,
+            "name": "Manga Creator",
+            "image": "http://example.com/creator.jpg",
+            "biography": "Creator bio",
+            "known_for_department": "Author",
+            "birth_date": None,
+            "death_date": None,
+            "place_of_birth": "",
+            "bibliography": [
+                {
+                    "media_id": "9999",
+                    "source": Sources.MANGAUPDATES.value,
+                    "media_type": MediaTypes.MANGA.value,
+                    "title": "Different Edition",
+                    "image": "http://example.com/other.jpg",
+                    "year": 2020,
+                },
+            ],
+        }
+
+        response = self.client.get(
+            reverse(
+                "person_detail",
+                kwargs={
+                    "source": Sources.MANGAUPDATES.value,
+                    "person_id": "991",
+                    "name": "manga-creator",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["is_author"])
+        self.assertEqual(response.context["tracked_plays_count"], 1)
+        self.assertEqual(response.context["watched_book_count"], 1)
+        self.assertEqual(len(response.context["watched_filmography"]), 1)
+        self.assertEqual(response.context["watched_filmography"][0]["title"], "Manga Title")
+        self.assertContains(response, "Manga Title")
+
+    def test_person_detail_rejects_unsupported_source(self):
         response = self.client.get(
             reverse(
                 "person_detail",

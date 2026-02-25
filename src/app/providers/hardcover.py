@@ -126,7 +126,7 @@ def book(media_id):
             pages
             release_date
             slug
-            cached_contributors(path: "[0]['author']['name']")
+            cached_contributors
             default_cover_edition {
               edition_format
               isbn_13
@@ -186,6 +186,8 @@ def book(media_id):
             # Use specific series name if available, otherwise default to "Series"
             series_title = series_data.get("name") or "Series"
             related[series_title] = series_data["books"]
+        authors_full = get_authors_full(book_data.get("cached_contributors"))
+        author_names = [author.get("name") for author in authors_full if author.get("name")]
 
         data = {
             "media_id": book_data["id"],
@@ -206,10 +208,11 @@ def book(media_id):
                 "number_of_pages": book_data.get("pages"),
                 "publish_date": edition_details.get("release_date")
                 or book_data.get("release_date"),
-                "author": book_data.get("cached_contributors"),
+                "author": ", ".join(author_names) if author_names else None,
                 "publisher": edition_details.get("publisher"),
                 "isbn": edition_details.get("isbn"),
             },
+            "authors_full": authors_full,
             "related": related,
         }
 
@@ -223,6 +226,83 @@ def get_tags(tags_data):
     if not tags_data:
         return None
     return [tag["tag"] for tag in tags_data]
+
+
+def _extract_image_url(value):
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return (
+            value.get("url")
+            or value.get("medium_url")
+            or value.get("large_url")
+            or value.get("original_url")
+            or ""
+        )
+    return ""
+
+
+def get_authors_full(contributors):
+    """Normalize Hardcover contributor payload into authors_full rows."""
+    if not contributors or not isinstance(contributors, list):
+        return []
+
+    authors = []
+    seen = set()
+    for index, contributor in enumerate(contributors):
+        if not isinstance(contributor, dict):
+            continue
+
+        author_data = contributor.get("author")
+        if not isinstance(author_data, dict):
+            author_data = contributor
+
+        person_id = (
+            author_data.get("id")
+            or contributor.get("author_id")
+            or contributor.get("id")
+        )
+        name = (
+            (author_data.get("name") if isinstance(author_data, dict) else None)
+            or contributor.get("name")
+            or ""
+        ).strip()
+        if person_id is None or not name:
+            continue
+
+        dedupe_key = str(person_id)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+
+        image = (
+            _extract_image_url(author_data.get("cached_image") if isinstance(author_data, dict) else "")
+            or _extract_image_url(author_data.get("image") if isinstance(author_data, dict) else "")
+            or _extract_image_url(contributor.get("cached_image"))
+            or _extract_image_url(contributor.get("image"))
+            or settings.IMG_NONE
+        )
+        role = (
+            contributor.get("contribution")
+            or contributor.get("role")
+            or contributor.get("type")
+            or "Author"
+        )
+        sort_order = contributor.get("position")
+        if sort_order is None:
+            sort_order = index
+
+        authors.append(
+            {
+                "person_id": str(person_id),
+                "name": name,
+                "image": image,
+                "role": role,
+                "sort_order": sort_order,
+            },
+        )
+
+    return authors
 
 
 def get_ratings(rating_data):
@@ -271,6 +351,106 @@ def get_image_url(response):
     if response.get("image") and response["image"].get("url"):
         return response["image"]["url"]
     return settings.IMG_NONE
+
+
+def author_profile(author_id):
+    """Return metadata for a Hardcover author profile."""
+    cache_key = f"{Sources.HARDCOVER.value}_person_{author_id}"
+    data = cache.get(cache_key)
+    if data is not None:
+        return data
+
+    profile_query = """
+    query GetAuthorProfile($author_id: Int!) {
+      authors_by_pk(id: $author_id) {
+        id
+        name
+        bio
+        cached_image(path: "url")
+        born_date
+        death_date
+        location
+        contributions(limit: 200, order_by: {id: desc}) {
+          contribution
+          book {
+            id
+            title
+            slug
+            release_date
+            cached_image(path: "url")
+          }
+        }
+      }
+    }
+    """
+
+    variables = {
+        "author_id": int(author_id),
+    }
+
+    try:
+        response = services.api_request(
+            Sources.HARDCOVER.value,
+            "POST",
+            base_url,
+            params={"query": profile_query, "variables": variables},
+            headers={"Authorization": settings.HARDCOVER_API},
+        )
+    except requests.exceptions.HTTPError as error:
+        handle_error(error)
+
+    author_data = (response.get("data") or {}).get("authors_by_pk") or {}
+    if "errors" in response:
+        error_messages = [err.get("message", "Unknown error") for err in response["errors"]]
+        logger.error("GraphQL errors from Hardcover API (author profile): %s", error_messages)
+        if not author_data:
+            services.raise_not_found_error(Sources.HARDCOVER.value, author_id, "author")
+
+    if not author_data:
+        services.raise_not_found_error(Sources.HARDCOVER.value, author_id, "author")
+
+    bibliography = []
+    seen_book_ids = set()
+    for contribution in author_data.get("contributions", []) or []:
+        if not isinstance(contribution, dict):
+            continue
+        entry = contribution.get("book")
+        if not isinstance(entry, dict):
+            continue
+        media_id = entry.get("id")
+        title = entry.get("title")
+        if media_id is None or not title:
+            continue
+        book_id = str(media_id)
+        if book_id in seen_book_ids:
+            continue
+        seen_book_ids.add(book_id)
+        bibliography.append(
+            {
+                "media_id": book_id,
+                "source": Sources.HARDCOVER.value,
+                "media_type": MediaTypes.BOOK.value,
+                "title": title,
+                "image": entry.get("cached_image") or settings.IMG_NONE,
+                "year": get_year(entry.get("release_date")),
+                "role": contribution.get("contribution") or "Author",
+            },
+        )
+
+    data = {
+        "person_id": str(author_data.get("id") or author_id),
+        "source": Sources.HARDCOVER.value,
+        "name": author_data.get("name") or "",
+        "image": author_data.get("cached_image") or settings.IMG_NONE,
+        "biography": author_data.get("bio") or "",
+        "known_for_department": "Author",
+        "birth_date": author_data.get("born_date"),
+        "death_date": author_data.get("death_date"),
+        "place_of_birth": author_data.get("location") or "",
+        "bibliography": bibliography,
+    }
+    cache.set(cache_key, data)
+    return data
 
 
 def get_series_details(series_id):

@@ -117,6 +117,105 @@ class CreateMedia(TestCase):
             "",
         )
 
+    @patch("app.models.providers.services.get_media_metadata")
+    @patch("app.views.services.get_media_metadata")
+    def test_create_reading_media_with_null_format_metadata(self, view_metadata_mock, model_metadata_mock):
+        """Creating reading media should coerce None format metadata to an empty string."""
+        cases = [
+            (
+                MediaTypes.BOOK.value,
+                Sources.HARDCOVER.value,
+                "format-none-book",
+                Book,
+                100,
+            ),
+            (
+                MediaTypes.COMIC.value,
+                Sources.COMICVINE.value,
+                "format-none-comic",
+                Comic,
+                10,
+            ),
+            (
+                MediaTypes.MANGA.value,
+                Sources.MANGAUPDATES.value,
+                "format-none-manga",
+                Manga,
+                10,
+            ),
+        ]
+
+        for media_type, source, media_id, model_class, max_progress in cases:
+            metadata = {
+                "title": f"Formatless {media_type.title()}",
+                "original_title": f"Formatless {media_type.title()}",
+                "localized_title": f"Formatless {media_type.title()}",
+                "image": "http://example.com/image.jpg",
+                "max_progress": max_progress,
+                "details": {
+                    "format": None,
+                    "number_of_pages": max_progress if media_type == MediaTypes.BOOK.value else None,
+                },
+            }
+            view_metadata_mock.return_value = metadata
+            model_metadata_mock.return_value = metadata
+
+            response = self.client.post(
+                reverse("media_save"),
+                {
+                    "media_id": media_id,
+                    "source": source,
+                    "media_type": media_type,
+                    "status": Status.PLANNING.value,
+                    "progress": 0,
+                },
+            )
+
+            self.assertEqual(response.status_code, 302)
+            item = Item.objects.get(
+                media_id=media_id,
+                source=source,
+                media_type=media_type,
+            )
+            self.assertEqual(item.format, "")
+            self.assertTrue(model_class.objects.filter(item=item, user=self.user).exists())
+
+    @patch("app.models.providers.services.get_media_metadata")
+    @patch("app.views.services.get_media_metadata")
+    def test_create_comic_persists_authors_from_people_metadata(self, view_metadata_mock, model_metadata_mock):
+        """Comic saves should persist provider people names into Item.authors."""
+        metadata = {
+            "title": "People Writer Comic",
+            "original_title": "People Writer Comic",
+            "localized_title": "People Writer Comic",
+            "image": "http://example.com/comic.jpg",
+            "details": {
+                "people": ["Writer One", "Writer Two"],
+            },
+        }
+        view_metadata_mock.return_value = metadata
+        model_metadata_mock.return_value = metadata
+
+        response = self.client.post(
+            reverse("media_save"),
+            {
+                "media_id": "comic-people-authors",
+                "source": Sources.COMICVINE.value,
+                "media_type": MediaTypes.COMIC.value,
+                "status": Status.PLANNING.value,
+                "progress": 0,
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        item = Item.objects.get(
+            media_id="comic-people-authors",
+            source=Sources.COMICVINE.value,
+            media_type=MediaTypes.COMIC.value,
+        )
+        self.assertEqual(item.authors, ["Writer One", "Writer Two"])
+        self.assertTrue(Comic.objects.filter(item=item, user=self.user).exists())
+
     @patch("app.views.services.get_media_metadata")
     def test_create_movie_sets_release_datetime_from_metadata(self, metadata_mock):
         metadata_mock.return_value = {
