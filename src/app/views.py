@@ -2747,41 +2747,74 @@ def media_details(
         )
         and isinstance(media_metadata, dict)
     ):
+        def _collect_authors_linked(metadata_payload):
+            linked = []
+
+            if detail_item:
+                author_credits = (
+                    detail_item.person_credits.filter(
+                        role_type=CreditRoleType.AUTHOR.value,
+                    )
+                    .select_related("person")
+                    .order_by("sort_order", "person__name")
+                )
+                for author_credit in author_credits:
+                    person = author_credit.person
+                    linked.append(
+                        {
+                            "source": person.source,
+                            "person_id": person.source_person_id,
+                            "name": person.name,
+                        },
+                    )
+
+            authors_full_payload = metadata_payload.get("authors_full")
+            if not linked and isinstance(authors_full_payload, list):
+                for author in authors_full_payload:
+                    person_id = author.get("person_id") or author.get("id")
+                    name = (author.get("name") or "").strip()
+                    if person_id is None or not name:
+                        continue
+                    linked.append(
+                        {
+                            "source": source,
+                            "person_id": str(person_id),
+                            "name": name,
+                        },
+                    )
+
+            return linked
+
         authors_full = media_metadata.get("authors_full")
         if detail_item and isinstance(authors_full, list):
             credits.sync_item_author_credits(detail_item, authors_full)
 
-        if detail_item:
-            author_credits = (
-                detail_item.person_credits.filter(
-                    role_type=CreditRoleType.AUTHOR.value,
-                )
-                .select_related("person")
-                .order_by("sort_order", "person__name")
-            )
-            for author_credit in author_credits:
-                person = author_credit.person
-                authors_linked.append(
-                    {
-                        "source": person.source,
-                        "person_id": person.source_person_id,
-                        "name": person.name,
-                    },
-                )
+        authors_linked = _collect_authors_linked(media_metadata)
 
-        if not authors_linked and isinstance(authors_full, list):
-            for author in authors_full:
-                person_id = author.get("person_id") or author.get("id")
-                name = (author.get("name") or "").strip()
-                if person_id is None or not name:
-                    continue
-                authors_linked.append(
-                    {
-                        "source": source,
-                        "person_id": str(person_id),
-                        "name": name,
-                    },
-                )
+        details_payload = media_metadata.get("details")
+        if not isinstance(details_payload, dict):
+            details_payload = {}
+
+        # Old provider cache entries may include plain author names but no authors_full
+        # IDs, which prevents author links from rendering.
+        should_refresh_author_cache = (
+            not authors_linked
+            and detail_item is not None
+            and any(details_payload.get(key) for key in author_detail_keys)
+            and not isinstance(media_metadata.get("authors_full"), list)
+        )
+        if should_refresh_author_cache:
+            cache_key = f"{source}_{media_type}_{media_id}"
+            cache.delete(cache_key)
+            media_metadata = services.get_media_metadata(media_type, media_id, source)
+            if isinstance(media_metadata, dict):
+                media_metadata.setdefault("cast", [])
+                media_metadata.setdefault("crew", [])
+                media_metadata.setdefault("studios_full", [])
+                refreshed_authors_full = media_metadata.get("authors_full")
+                if detail_item and isinstance(refreshed_authors_full, list):
+                    credits.sync_item_author_credits(detail_item, refreshed_authors_full)
+                authors_linked = _collect_authors_linked(media_metadata)
 
     # For TV shows, apply fallback for seasons without posters (handles cached metadata)
     if media_type == MediaTypes.TV.value and isinstance(media_metadata, dict):

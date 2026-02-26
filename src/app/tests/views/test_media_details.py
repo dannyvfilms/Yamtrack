@@ -2,6 +2,7 @@ from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -382,6 +383,115 @@ class MediaDetailsViewTests(TestCase):
                     "name": "manga-author",
                 },
             ),
+        )
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_refreshes_stale_author_cache_and_renders_links(
+        self,
+        mock_get_metadata,
+    ):
+        stale_metadata = {
+            "media_id": "OL999M",
+            "title": "Cached Book",
+            "media_type": MediaTypes.BOOK.value,
+            "source": Sources.OPENLIBRARY.value,
+            "source_url": "https://openlibrary.org/books/OL999M",
+            "image": "http://example.com/book.jpg",
+            "synopsis": "Book synopsis",
+            "max_progress": 320,
+            "details": {
+                "author": ["Cached Author"],
+                "publish_date": "1999-01-01",
+            },
+            "related": {},
+        }
+        refreshed_metadata = {
+            **stale_metadata,
+            "authors_full": [
+                {
+                    "person_id": "OL9A",
+                    "name": "Cached Author",
+                    "image": "http://example.com/author.jpg",
+                    "role": "Author",
+                    "sort_order": 0,
+                },
+            ],
+        }
+        call_count = {"count": 0}
+
+        def _metadata_side_effect(*_args, **_kwargs):
+            call_count["count"] += 1
+            if call_count["count"] == 1:
+                return stale_metadata
+            return refreshed_metadata
+
+        mock_get_metadata.side_effect = _metadata_side_effect
+
+        item = Item.objects.create(
+            media_id="OL999M",
+            source=Sources.OPENLIBRARY.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Cached Book",
+            image="http://example.com/book.jpg",
+        )
+        Book.objects.create(
+            user=self.user,
+            item=item,
+            status=Status.COMPLETED.value,
+            progress=320,
+            start_date=timezone.now(),
+            end_date=timezone.now(),
+        )
+
+        cache_key = f"{Sources.OPENLIBRARY.value}_{MediaTypes.BOOK.value}_OL999M"
+        cache.set(cache_key, stale_metadata)
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.OPENLIBRARY.value,
+                    "media_type": MediaTypes.BOOK.value,
+                    "media_id": "OL999M",
+                    "title": "cached-book",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        detail_calls = [
+            call
+            for call in mock_get_metadata.call_args_list
+            if call.args[:3]
+            == (
+                MediaTypes.BOOK.value,
+                "OL999M",
+                Sources.OPENLIBRARY.value,
+            )
+        ]
+        self.assertGreaterEqual(len(detail_calls), 2)
+        self.assertContains(
+            response,
+            reverse(
+                "person_detail",
+                kwargs={
+                    "source": Sources.OPENLIBRARY.value,
+                    "person_id": "OL9A",
+                    "name": "cached-author",
+                },
+            ),
+        )
+
+        author_person = Person.objects.get(
+            source=Sources.OPENLIBRARY.value,
+            source_person_id="OL9A",
+        )
+        self.assertTrue(
+            ItemPersonCredit.objects.filter(
+                item=item,
+                person=author_person,
+                role_type=CreditRoleType.AUTHOR.value,
+            ).exists(),
         )
 
     def test_podcast_media_details_renders_for_show_with_no_user_plays(self):

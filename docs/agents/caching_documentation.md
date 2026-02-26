@@ -123,6 +123,7 @@
 - UI stuck on "refreshing": stale lock not cleared (clock skew or lock payload missing `started_at`).
 - "Warmed" logs but view still misses: key mismatch (logging_style default vs explicit, YYYYMMDD vs YYYY-MM-DD, or version mismatch).
 - Inline rebuild spikes on filtered views: expected; filtered paths bypass cache and build inline.
+- Book/comic/manga details show plain author text (not links): provider item cache payload is stale and lacks `authors_full`, so `authors_linked` cannot be built from IDs.
 
 ## Ops runbook (verify + actions)
 - Cold miss vs broken:
@@ -178,6 +179,7 @@
 - `custom_lists.html` includes meta tags (`cache-control`, `pragma`, `expires`) in the `<head>` to provide additional cache-busting hints to browsers.
 - Podcast episode list fragment sets `Cache-Control: no-cache, no-store, must-revalidate`, plus `Pragma`/`Expires`.
 - `sync_metadata()` uses `cache.ttl()` to prevent immediate re-sync, and deletes provider cache keys when allowed.
+- `media_details()` now self-heals stale reading metadata cache entries with missing `authors_full`: when author details exist but linkable author IDs are missing, it deletes `{source}_{media_type}_{media_id}`, refetches provider metadata, and backfills `ItemPersonCredit` author links.
 - Static asset busting: `get_static_file_mtime()` appends `?mtime` to static URLs.
   - Applied to `css/main.css`, `js/date-range.js`, `js/statistics-charts.js`, and `js/barcode-scanner.js` (added for cache invalidation during development/debugging).
 - Lists view uses annotated `items_count` instead of `items.count()` to avoid stale prefetch cache. The count is always computed fresh from the database via `Count("items", distinct=True)` annotation.
