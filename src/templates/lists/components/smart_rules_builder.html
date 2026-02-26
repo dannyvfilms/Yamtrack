@@ -15,13 +15,16 @@
   <input type="hidden" name="origin" x-model="origin">
   <input type="hidden" name="format" x-model="format">
   <input type="hidden" name="q" x-model="query">
-  <input type="hidden" name="edit_smart_rules" value="1">
+  {% if can_edit %}
+    <input type="hidden" name="edit_smart_rules" value="1">
+  {% endif %}
   <template x-for="type in selectedTypesForSubmit()" :key="`smart-type-${type}`">
     <input type="hidden" name="type" :value="type">
   </template>
 </form>
 
-<div class="flex flex-col gap-3 md:flex-row md:gap-4 mb-6">
+<div class="flex flex-col gap-3 md:flex-row md:gap-4 mb-6"
+     hx-sync="#smart-filter-form:replace">
   <div class="relative grow min-w-0 md:hidden">
     <input id="smart-search-input-mobile"
            placeholder="Search this list or recommend something..."
@@ -859,7 +862,7 @@
     </div>
 
     <div class="ml-auto flex items-center gap-2">
-      {% if not custom_list.can_recommend %}
+      {% if can_edit and not custom_list.can_recommend %}
         <div class="relative hidden sm:flex" x-data="{ tooltipOpen: false }">
           <button @click="showModal = true"
                   @mouseenter="tooltipOpen = true"

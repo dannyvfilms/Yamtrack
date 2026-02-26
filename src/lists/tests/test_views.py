@@ -723,6 +723,58 @@ class ListDetailViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "lists/components/list_table.html")
 
+    def test_public_smart_list_filters_without_persisting_rules(self):
+        """Public smart-list filtering should not mutate saved rules."""
+        Movie.objects.create(
+            item=self.movie_item,
+            status=Status.COMPLETED.value,
+            user=self.user,
+        )
+        TV.objects.create(
+            item=self.tv_item,
+            status=Status.IN_PROGRESS.value,
+            user=self.user,
+        )
+
+        smart_list = CustomList.objects.create(
+            name="Public Smart List",
+            owner=self.user,
+            is_smart=True,
+            visibility="public",
+            smart_media_types=[MediaTypes.MOVIE.value, MediaTypes.TV.value],
+            smart_filters={"status": "all"},
+        )
+
+        self.client.logout()
+
+        response = self.client.get(reverse("list_detail", args=[smart_list.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="smart-filter-form"')
+        self.assertEqual(len(response.context["items"]), 2)
+
+        filtered_response = self.client.get(
+            reverse("list_detail", args=[smart_list.id])
+            + f"?status={Status.COMPLETED.value}",
+        )
+        self.assertEqual(filtered_response.status_code, 200)
+        self.assertFalse(filtered_response.context["smart_edit_mode"])
+        self.assertEqual(
+            filtered_response.context["active_smart_rules"]["status"],
+            Status.COMPLETED.value,
+        )
+        self.assertEqual(
+            filtered_response.context["saved_smart_rules"]["status"],
+            "all",
+        )
+        self.assertEqual(len(filtered_response.context["items"]), 1)
+        self.assertEqual(
+            filtered_response.context["items"][0].id,
+            self.movie_item.id,
+        )
+
+        smart_list.refresh_from_db()
+        self.assertEqual(smart_list.smart_filters.get("status"), "all")
+
     def test_smart_list_release_date_sort_honors_direction(self):
         """Smart-list release-date sort should reverse ordering by direction."""
         self.movie_item.release_datetime = datetime(2020, 1, 1, 12, 0, 0, tzinfo=UTC)

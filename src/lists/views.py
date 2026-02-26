@@ -554,7 +554,8 @@ def _smart_list_detail_response(
     )
 
     active_rules = dict(saved_rules)
-    if smart_edit_mode:
+    allow_request_filters = smart_edit_mode or is_public_view
+    if allow_request_filters:
         active_rules = smart_rules.normalize_rule_payload(
             {
                 "media_types": request.GET.getlist("type"),
@@ -569,6 +570,7 @@ def _smart_list_detail_response(
                 "country": request.GET.get("country", saved_rules["country"]),
                 "platform": request.GET.get("platform", saved_rules["platform"]),
                 "origin": request.GET.get("origin", saved_rules["origin"]),
+                "format": request.GET.get("format", saved_rules["format"]),
                 "search": request.GET.get("q", saved_rules["search"]),
             },
             custom_list.owner,

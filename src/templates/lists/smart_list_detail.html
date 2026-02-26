@@ -506,7 +506,7 @@
 
     {% include "lists/components/smart_rules_summary.html" %}
 
-    {% if can_edit %}
+    {% if can_edit or is_public_view %}
       {% include "lists/components/smart_rules_builder.html" %}
     {% endif %}
 
