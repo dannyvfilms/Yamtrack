@@ -10,6 +10,7 @@ from django.utils import timezone
 
 from app import history_cache, statistics_cache
 from app.models import (
+    Anime,
     Book,
     Comic,
     CREDITS_BACKFILL_VERSION,
@@ -136,6 +137,33 @@ class StatisticsViewTests(TestCase):
         platform_breakdown = stats_data["game_consumption"]["platform_breakdown"]
         self.assertTrue(platform_breakdown)
         self.assertEqual(platform_breakdown[0]["name"], "PlayStation 5")
+
+    def test_refresh_statistics_cache_handles_anime_date_ranges(self):
+        """Refreshing cache should not crash for anime entries with both start and end dates."""
+        cache.clear()
+        now = timezone.now()
+        anime_item = Item.objects.create(
+            media_id="anime-range-1",
+            source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME.value,
+            title="Range Anime",
+            image="http://example.com/range-anime.jpg",
+            runtime_minutes=24,
+            genres=["Action"],
+        )
+        Anime.objects.create(
+            user=self.user,
+            item=anime_item,
+            status=Status.PLANNING.value,
+            progress=12,
+            start_date=now - timedelta(days=3),
+            end_date=now,
+        )
+
+        statistics_cache.invalidate_statistics_cache(self.user.id)
+        stats_data = statistics_cache.refresh_statistics_cache(self.user.id, "All Time")
+
+        self.assertIsNotNone(stats_data)
 
     def test_statistics_view_average_rating_uses_user_rating_scale(self):
         """Average rating card should use the configured user rating scale."""

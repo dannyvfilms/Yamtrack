@@ -1387,8 +1387,8 @@ def build_stats_for_day(user_id: int, day_value):
                         daily_minutes_by_type[MediaTypes.ANIME.value] += per_day
                 else:
                     activity_local = stats._localize_datetime(activity_dt)
-                if activity_local and activity_local.date() == day:
-                    daily_minutes_by_type[MediaTypes.ANIME.value] += total_minutes
+                    if activity_local and activity_local.date() == day:
+                        daily_minutes_by_type[MediaTypes.ANIME.value] += total_minutes
 
             if total_minutes > 0 and not stats._coerce_genre_list(row.get("item__genres")):
                 missing_genres += 1
