@@ -11,6 +11,7 @@ from app.models import (
     Book,
     Comic,
     CollectionEntry,
+    Game,
     Item,
     Manga,
     MediaTypes,
@@ -376,6 +377,119 @@ class MediaListViewTests(TestCase):
         self.assertEqual(not_released_response.context["media_list"].paginator.count, 4)
         self.assertContains(not_released_response, "Test Movie 2")
         self.assertNotContains(not_released_response, "Test Movie 1")
+
+    def test_game_platform_filter_prefers_collection_resolution(self):
+        """Game platform filtering should prefer collection platform over metadata platforms."""
+        switch_override_item = Item.objects.create(
+            media_id="game-platform-filter-1",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Multiplatform Game",
+            image="http://example.com/game1.jpg",
+            platforms=["PlayStation 5"],
+        )
+        ps5_item = Item.objects.create(
+            media_id="game-platform-filter-2",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="PS5 Exclusive Game",
+            image="http://example.com/game2.jpg",
+            platforms=["PlayStation 5"],
+        )
+
+        Game.objects.bulk_create(
+            [
+                Game(
+                    item=switch_override_item,
+                    user=self.user,
+                    status=Status.IN_PROGRESS.value,
+                    progress=60,
+                ),
+                Game(
+                    item=ps5_item,
+                    user=self.user,
+                    status=Status.IN_PROGRESS.value,
+                    progress=60,
+                ),
+            ],
+        )
+
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=switch_override_item,
+            resolution="Nintendo Switch",
+        )
+
+        url = reverse("medialist", args=[MediaTypes.GAME.value])
+        response = self.client.get(url, {"platform": "PlayStation 5", "status": "All"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["media_list"].paginator.count, 1)
+        self.assertContains(response, "PS5 Exclusive Game")
+        self.assertNotContains(response, "Multiplatform Game")
+
+        platform_values = {
+            option["value"] for option in response.context["filter_data"]["platforms"]
+        }
+        self.assertIn("Nintendo Switch", platform_values)
+        self.assertIn("PlayStation 5", platform_values)
+
+    def test_game_platform_filter_uses_latest_aggregated_status(self):
+        """Status filtering should honor latest aggregated status for duplicate sessions."""
+        stale_item = Item.objects.create(
+            media_id="game-platform-filter-latest-1",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Completed Now, Was In Progress",
+            image="http://example.com/game-latest-1.jpg",
+            platforms=["PlayStation 5"],
+        )
+        active_item = Item.objects.create(
+            media_id="game-platform-filter-latest-2",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Still In Progress",
+            image="http://example.com/game-latest-2.jpg",
+            platforms=["PlayStation 5"],
+        )
+
+        old_in_progress = Game.objects.create(
+            item=stale_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=12,
+        )
+        old_activity = timezone.now() - timedelta(days=3)
+        Game.objects.filter(id=old_in_progress.id).update(
+            created_at=old_activity,
+            progressed_at=old_activity,
+        )
+
+        Game.objects.create(
+            item=stale_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=30,
+            end_date=timezone.now() - timedelta(days=1),
+        )
+
+        Game.objects.create(
+            item=active_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=20,
+        )
+
+        url = reverse("medialist", args=[MediaTypes.GAME.value])
+        response = self.client.get(
+            url,
+            {"platform": "PlayStation 5", "status": Status.IN_PROGRESS.value},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["media_list"].paginator.count, 1)
+        self.assertContains(response, "Still In Progress")
+        self.assertNotContains(response, "Completed Now, Was In Progress")
 
     def test_book_format_filter_uses_collection_entry_media_type(self):
         """Book format options should include collection-only formats like Audiobook."""

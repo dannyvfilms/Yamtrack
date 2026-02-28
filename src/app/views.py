@@ -606,7 +606,21 @@ def media_list(request, media_type):
             return media_items
         should_be_rated = filter_value == "rated"
         return [media for media in media_items if is_rated(media) == should_be_rated]
-    
+
+    def apply_latest_status_filter(media_items, filter_value):
+        """Filter against each item's latest aggregated status."""
+        if not filter_value or filter_value == MediaStatusChoices.ALL:
+            return media_items
+        filtered_items = []
+        for media in media_items:
+            latest_status = (
+                getattr(media, "aggregated_status", None)
+                or getattr(media, "status", None)
+            )
+            if latest_status == filter_value:
+                filtered_items.append(media)
+        return filtered_items
+
     def apply_collection_filter(media_items, filter_value, user, media_type):
         """Filter media items based on collection status.
         
@@ -869,6 +883,7 @@ def media_list(request, media_type):
         return filtered_items
 
     collection_formats_by_item_id = defaultdict(set)
+    collection_platforms_by_item_id = defaultdict(set)
 
     def _extract_item_formats(item):
         """Extract normalized format values from Item and collection metadata."""
@@ -882,6 +897,17 @@ def media_list(request, media_type):
             formats.update(collection_formats_by_item_id.get(item.id, set()))
 
         return formats
+
+    def _extract_item_platforms(item):
+        """Extract platform values, preferring explicit collection platform entries."""
+        if not item:
+            return []
+
+        explicit_platforms = collection_platforms_by_item_id.get(item.id, set())
+        if explicit_platforms:
+            return sorted(explicit_platforms, key=lambda value: value.lower())
+
+        return _extract_cached_platforms(item)
 
     def apply_format_filter(media_items, filter_value):
         if not filter_value:
@@ -906,7 +932,7 @@ def media_list(request, media_type):
             item = getattr(media, "item", None)
             if not item:
                 continue
-            platforms = _extract_cached_platforms(item)
+            platforms = _extract_item_platforms(item)
             if any(_normalize_filter_value(platform) == target for platform in platforms):
                 filtered_items.append(media)
         return filtered_items
@@ -965,7 +991,7 @@ def media_list(request, media_type):
             country_value = _extract_cached_country(item)
             if country_value:
                 countries_set.add(country_value)
-            platforms = _extract_cached_platforms(item)
+            platforms = _extract_item_platforms(item)
             if platforms:
                 platforms_set.update(platforms)
             authors = _extract_cached_authors(item)
@@ -1047,6 +1073,22 @@ def media_list(request, media_type):
     
     # Convert to list for filtering (rating and collection filters work on lists)
     media_list = list(media_queryset)
+    media_list = apply_latest_status_filter(media_list, status_filter)
+    if media_type == MediaTypes.GAME.value:
+        item_ids = {
+            media.item_id
+            for media in media_list
+            if getattr(media, "item_id", None)
+        }
+        if item_ids:
+            collection_platforms = CollectionEntry.objects.filter(
+                user=request.user,
+                item_id__in=item_ids,
+            ).values_list("item_id", "resolution")
+            for item_id, collection_platform in collection_platforms:
+                platform_value = str(collection_platform or "").strip()
+                if platform_value:
+                    collection_platforms_by_item_id[item_id].add(platform_value)
     if media_type in (MediaTypes.BOOK.value, MediaTypes.MANGA.value, MediaTypes.COMIC.value):
         item_ids = {
             media.item_id
