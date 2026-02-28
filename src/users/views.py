@@ -1,11 +1,13 @@
+import base64
 import json
 import logging
+from io import BytesIO
 
 import apprise
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import update_session_auth_hash
-from django.contrib.auth.decorators import login_required
+from django.contrib.auth.decorators import login_not_required, login_required
 from django.core.cache import cache
 from django.db import IntegrityError
 from django.db.models import Q
@@ -23,7 +25,14 @@ from app.templatetags import app_tags
 from integrations import exports
 from integrations import plex
 from integrations.models import PlexAccount
-from users.forms import NotificationSettingsForm, PasswordChangeForm, UserUpdateForm
+from users.forms import (
+    AuthenticatorSetupForm,
+    NotificationSettingsForm,
+    PasswordChangeForm,
+    PasswordRecoveryForm,
+    RegenerateRecoveryCodesForm,
+    UserUpdateForm,
+)
 from users.models import (
     ActivityHistoryViewChoices,
     DateFormatChoices,
@@ -37,6 +46,12 @@ from users.models import (
     TopTalentSortChoices,
     TimeFormatChoices,
 )
+
+try:
+    import qrcode
+except ModuleNotFoundError:  # pragma: no cover - optional dependency guard
+    qrcode = None
+
 
 logger = logging.getLogger(__name__)
 
@@ -113,62 +128,169 @@ def _should_refresh_plex_sections(account: PlexAccount) -> bool:
     return timezone.now() >= expiry
 
 
+def _build_qr_data_uri(provisioning_uri: str) -> str:
+    """Return a base64 PNG data URI for an authenticator provisioning URI."""
+    if not provisioning_uri:
+        return ""
+
+    if qrcode is None:
+        logger.warning("qrcode package is unavailable; skipping authenticator QR rendering")
+        return ""
+
+    qr = qrcode.QRCode(
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=6,
+        border=2,
+    )
+    qr.add_data(provisioning_uri)
+    qr.make(fit=True)
+
+    qr_image = qr.make_image(fill_color="black", back_color="white")
+    output = BytesIO()
+    qr_image.save(output, format="PNG")
+    encoded_png = base64.b64encode(output.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{encoded_png}"
+
+
 @require_http_methods(["GET", "POST"])
 def account(request):
-    """Update the user's account and import/export data."""
+    """Update the user's account and account security settings."""
     user_form = UserUpdateForm(instance=request.user)
     password_form = PasswordChangeForm(user=request.user)
+    authenticator_form = AuthenticatorSetupForm(user=request.user)
+    recovery_codes_form = RegenerateRecoveryCodesForm(user=request.user)
+    fresh_recovery_codes = None
+    show_authenticator_setup = not request.user.has_authenticator_configured
 
     if request.method == "POST":
-        # Handle username update
+        action = request.POST.get("action", "")
+
         if "username" in request.POST:
             user_form = UserUpdateForm(request.POST, instance=request.user)
 
             if user_form.is_valid():
                 user_form.save()
                 messages.success(request, "Your username has been updated!")
-                logger.info(
-                    "Successful username change for user: %s",
-                    request.user.username,
-                )
+                logger.info("Successful username change for user: %s", request.user.username)
                 return redirect("account")
+
             logger.warning(
                 "Failed username change for user: %s - %s",
                 request.user.username,
                 list(user_form.errors.keys()),
             )
 
-        # Handle password update
-        elif any(
-            key in request.POST
-            for key in ["old_password", "new_password1", "new_password2"]
-        ):
+        elif any(key in request.POST for key in ["old_password", "new_password1", "new_password2"]):
             password_form = PasswordChangeForm(user=request.user, data=request.POST)
 
             if password_form.is_valid():
                 user = password_form.save()
-                update_session_auth_hash(
-                    request,
-                    user,
-                )
+                update_session_auth_hash(request, user)
                 messages.success(request, "Your password has been updated!")
-                logger.info(
-                    "Successful password change for user: %s",
-                    request.user.username,
-                )
+                logger.info("Successful password change for user: %s", request.user.username)
                 return redirect("account")
+
             logger.warning(
                 "Failed password change for user: %s - %s",
                 request.user.username,
                 list(password_form.errors.keys()),
             )
 
+        elif action == "enable_authenticator":
+            show_authenticator_setup = True
+            authenticator_form = AuthenticatorSetupForm(request.POST, user=request.user)
+            if authenticator_form.is_valid():
+                request.user.authenticator_enabled = True
+                request.user.authenticator_confirmed_at = timezone.now()
+                request.user.save(update_fields=["authenticator_enabled", "authenticator_confirmed_at"])
+                fresh_recovery_codes = request.user.generate_recovery_codes()
+                show_authenticator_setup = False
+                messages.success(
+                    request,
+                    "Authenticator app enabled. Save your recovery codes now—if you lose both, you cannot self-recover.",
+                )
+
+        elif action == "start_authenticator_setup":
+            request.user.authenticator_enabled = False
+            request.user.authenticator_secret = ""
+            request.user.authenticator_confirmed_at = None
+            request.user.save(
+                update_fields=[
+                    "authenticator_enabled",
+                    "authenticator_secret",
+                    "authenticator_confirmed_at",
+                ],
+            )
+            show_authenticator_setup = True
+            messages.info(
+                request,
+                "Scan and verify a code from your new authenticator app to finish setup.",
+            )
+
+        elif action == "disable_authenticator":
+            request.user.authenticator_enabled = False
+            request.user.authenticator_secret = ""
+            request.user.authenticator_confirmed_at = None
+            request.user.save(
+                update_fields=[
+                    "authenticator_enabled",
+                    "authenticator_secret",
+                    "authenticator_confirmed_at",
+                ],
+            )
+            show_authenticator_setup = True
+            messages.warning(request, "Authenticator app deactivated.")
+
+        elif action == "regenerate_recovery_codes":
+            recovery_codes_form = RegenerateRecoveryCodesForm(request.POST, user=request.user)
+            if recovery_codes_form.is_valid():
+                fresh_recovery_codes = request.user.generate_recovery_codes()
+                messages.success(
+                    request,
+                    "Recovery codes regenerated. Store them securely now.",
+                )
+
+    authenticator_secret = ""
+    authenticator_uri = ""
+    authenticator_qr_data_uri = ""
+    if show_authenticator_setup:
+        authenticator_secret = request.user.get_or_create_authenticator_secret()
+        authenticator_uri = request.user.build_totp_uri()
+        authenticator_qr_data_uri = _build_qr_data_uri(authenticator_uri)
+
     context = {
         "user_form": user_form,
         "password_form": password_form,
+        "authenticator_form": authenticator_form,
+        "recovery_codes_form": recovery_codes_form,
+        "authenticator_secret": authenticator_secret,
+        "authenticator_uri": authenticator_uri,
+        "authenticator_qr_data_uri": authenticator_qr_data_uri,
+        "show_authenticator_setup": show_authenticator_setup,
+        "unused_recovery_code_count": request.user.recovery_codes.filter(used_at__isnull=True).count(),
+        "fresh_recovery_codes": fresh_recovery_codes,
     }
 
     return render(request, "users/account.html", context)
+
+
+@login_not_required
+@require_http_methods(["GET", "POST"])
+def password_recover(request):
+    """Recover password using recovery code and optional authenticator app code."""
+    form = PasswordRecoveryForm()
+
+    if request.method == "POST":
+        form = PasswordRecoveryForm(request.POST)
+        if form.is_valid():
+            user = form.save()
+            logger.info("Successful self-service password recovery for user: %s", user.username)
+            messages.success(request, "Password updated. Sign in with your new password.")
+            return redirect("account_login")
+
+        logger.warning("Failed self-service password recovery attempt")
+
+    return render(request, "users/password_recover.html", {"form": form})
 
 
 @require_http_methods(["GET", "POST"])

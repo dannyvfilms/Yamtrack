@@ -3,6 +3,7 @@ from django.urls import path
 from users import views
 
 urlpatterns = [
+    path("accounts/password/recover/", views.password_recover, name="password_recover"),
     path("settings/account", views.account, name="account"),
     path("settings/notifications", views.notifications, name="notifications"),
     path("notifications/search/", views.search_items, name="search_notification_items"),

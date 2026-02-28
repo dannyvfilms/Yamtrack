@@ -1,10 +1,9 @@
 import apprise
 from allauth.account.forms import LoginForm, SignupForm
 from django import forms
-from django.contrib.auth.forms import (
-    PasswordChangeForm,
-)
+from django.contrib.auth.forms import PasswordChangeForm, SetPasswordForm
 from django.core.exceptions import ValidationError
+from django.utils import timezone
 
 from .models import User
 
@@ -117,3 +116,93 @@ class NotificationSettingsForm(forms.ModelForm):
                 raise ValidationError(message)
 
         return notification_urls
+
+
+class AuthenticatorSetupForm(forms.Form):
+    """Confirm authenticator app setup with a TOTP code."""
+
+    code = forms.CharField(max_length=6, min_length=6)
+
+    def __init__(self, *args, user, **kwargs):
+        self.user = user
+        super().__init__(*args, **kwargs)
+
+    def clean_code(self):
+        """Validate TOTP code against the user's pending secret."""
+        code = self.cleaned_data["code"].strip()
+        if not self.user.verify_totp_code(code):
+            raise ValidationError("Invalid authenticator code.")
+        return code
+
+
+class RegenerateRecoveryCodesForm(forms.Form):
+    """Regenerate recovery codes with password confirmation."""
+
+    current_password = forms.CharField(widget=forms.PasswordInput)
+
+    def __init__(self, *args, user, **kwargs):
+        self.user = user
+        super().__init__(*args, **kwargs)
+
+    def clean_current_password(self):
+        password = self.cleaned_data["current_password"]
+        if not self.user.check_password(password):
+            raise ValidationError("Current password is incorrect.")
+        return password
+
+
+class PasswordRecoveryForm(SetPasswordForm):
+    """Self-service password recovery using recovery codes and authenticator."""
+
+    username = forms.CharField(max_length=150)
+    recovery_code = forms.CharField(max_length=32, required=False)
+    authenticator_code = forms.CharField(required=False, max_length=6)
+
+    error_messages = {
+        "invalid_recovery": "Unable to verify recovery details.",
+    }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(None, *args, **kwargs)
+        self.recovery_instance = None
+
+    def clean(self):
+        cleaned_data = super().clean()
+        username = cleaned_data.get("username", "").strip()
+        recovery_code = cleaned_data.get("recovery_code", "").strip().upper()
+        authenticator_code = cleaned_data.get("authenticator_code", "").strip()
+
+        user = User.objects.filter(username__iexact=username).first()
+        if user is None:
+            raise ValidationError(self.error_messages["invalid_recovery"])
+
+        has_valid_authenticator_code = user.has_authenticator_configured and bool(
+            authenticator_code,
+        ) and user.verify_totp_code(authenticator_code)
+
+        matching_recovery = None
+        if recovery_code:
+            for code in user.recovery_codes.filter(used_at__isnull=True):
+                if code.matches(recovery_code):
+                    matching_recovery = code
+                    break
+
+        if user.has_authenticator_configured:
+            if not has_valid_authenticator_code and matching_recovery is None:
+                raise ValidationError(self.error_messages["invalid_recovery"])
+            if has_valid_authenticator_code:
+                # Don't burn a recovery code when authenticator verification already succeeded.
+                matching_recovery = None
+        elif matching_recovery is None:
+            raise ValidationError(self.error_messages["invalid_recovery"])
+
+        self.user = user
+        self.recovery_instance = matching_recovery
+        return cleaned_data
+
+    def save(self, commit=True):
+        user = super().save(commit=commit)
+        if self.recovery_instance:
+            self.recovery_instance.used_at = timezone.now()
+            self.recovery_instance.save(update_fields=["used_at"])
+        return user

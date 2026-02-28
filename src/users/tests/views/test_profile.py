@@ -49,3 +49,44 @@ class Profile(TestCase):
         )
         self.assertTrue(auth.get_user(self.client).check_password("12345"))
         self.assertContains(response, "Your old password was entered incorrectly")
+
+    def test_account_page_shows_qr_setup_option(self):
+        """Account page should include QR setup data for authenticator apps."""
+        response = self.client.get(reverse("account"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Scan this QR code")
+        self.assertTrue(response.context["authenticator_uri"].startswith("otpauth://"))
+        self.assertTrue(
+            response.context["authenticator_qr_data_uri"].startswith("data:image/png;base64,"),
+        )
+
+    def test_account_page_shows_management_actions_when_authenticator_enabled(self):
+        """Configured accounts should show authenticator management actions."""
+        self.user.get_or_create_authenticator_secret()
+        self.user.authenticator_enabled = True
+        self.user.save(update_fields=["authenticator_enabled"])
+
+        response = self.client.get(reverse("account"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Add New Authenticator App")
+        self.assertContains(response, "Deactivate Authenticator")
+        self.assertFalse(response.context["show_authenticator_setup"])
+        self.assertEqual(response.context["authenticator_qr_data_uri"], "")
+
+    def test_disable_authenticator_does_not_require_password(self):
+        """Configured users can deactivate authenticator directly from management actions."""
+        self.user.get_or_create_authenticator_secret()
+        self.user.authenticator_enabled = True
+        self.user.save(update_fields=["authenticator_enabled"])
+
+        response = self.client.post(
+            reverse("account"),
+            {"action": "disable_authenticator"},
+            follow=True,
+        )
+
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.authenticator_enabled)
+        self.assertContains(response, "Scan this QR code")

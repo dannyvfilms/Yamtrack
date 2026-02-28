@@ -12,6 +12,7 @@
 {% block content %}
 
   {% if not SOCIALACCOUNT_ONLY %}
+    {% url 'account' as account_settings_url %}
     {% url 'account_signup' as action_url %}
     {% element form form=form method="post" action=action_url tags="entrance,signup" %}
       {% slot body %}
@@ -24,6 +25,9 @@
         {% element button tags="prominent,signup" type="submit" icon='<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path> <circle cx="9" cy="7" r="4"></circle><line x1="19" x2="19" y1="8" y2="14"></line><line x1="22" x2="16" y1="11" y2="11"></line>' %}
           Create Account
         {% endelement %}
+        {% element button tags="signup" type="submit" name="next" value=account_settings_url icon='<path d="M20 11a8 8 0 1 0-16 0v6a2 2 0 0 0 2 2h1v-8a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v8h1a2 2 0 0 0 2-2z"></path><rect width="6" height="8" x="9" y="11" rx="1"></rect>' %}
+          Create Account + Set Up Authenticator
+        {% endelement %}
       {% endslot %}
     {% endelement %}
   {% endif %}
@@ -31,6 +35,10 @@
   {% if SOCIALACCOUNT_ENABLED %}
     {% include "socialaccount/snippets/login.html" with page_layout="entrance" %}
   {% endif %}
+
+  <div class="mt-6 p-3 rounded-md border border-amber-700 bg-amber-900/40 text-amber-200 text-sm">
+    Set up an authenticator app right after sign up. Without authenticator or recovery details, account recovery may be impossible.
+  </div>
 
   <div class="mt-6 text-center">
     <p class="text-gray-400">

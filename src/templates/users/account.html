@@ -147,6 +147,104 @@
       </form>
     </div>
 
+    <div class="bg-[#2a2f35] rounded-lg p-6 space-y-4">
+      <div class="flex items-center">
+        {% include "app/icons/shield.svg" with classes="w-6 h-6 text-indigo-400 mr-3" %}
+        <h2 class="text-xl font-semibold">Account Recovery & Authenticator</h2>
+      </div>
+
+      <div class="text-sm text-gray-300">
+        <p class="mb-3 flex items-start gap-2 text-sm text-gray-400 leading-relaxed">
+          {% include "app/icons/info.svg" with classes="w-4 h-4 text-indigo-300 shrink-0 mt-0.5" %}
+          <span>Yamtrack cannot send password reset emails or text messages. Authenticator codes, recovery codes, or an admin password reset in the container terminal are the only recovery options.</span>
+        </p>
+
+        {% if show_authenticator_setup %}
+          {% if authenticator_qr_data_uri %}
+            <div class="inline-block bg-white p-2 rounded-md mb-4 mx-auto md:float-right md:mx-0 md:ml-6 md:mb-4">
+              <img src="{{ authenticator_qr_data_uri }}"
+                   alt="Authenticator setup QR code"
+                   class="h-[168px] w-[168px] md:h-[173px] md:w-[173px]"
+                   width="160"
+                   height="160">
+            </div>
+          {% endif %}
+
+          <div class="space-y-3">
+            <p>1) Scan this QR code with your authenticator app (recommended). If scanning is unavailable, enter the secret manually.</p>
+            <p class="text-xs text-gray-400 md:mr-[216px]">Manual entry secret:</p>
+            <p class="font-mono text-xs bg-[#39404b] p-2 rounded break-all md:mr-[216px]">{{ authenticator_secret }}</p>
+            <p>2) Verify with a 6-digit code to activate authenticator login recovery.</p>
+          </div>
+        {% else %}
+          <p class="mb-3 text-sm text-green-300">Authenticator app is enabled.</p>
+          <p class="mb-4 text-sm text-gray-400 leading-relaxed">
+            Manage your current authenticator setup here. Add a new authenticator app to replace the active one, or deactivate authenticator access for this account.
+          </p>
+          <div class="flex flex-wrap gap-3">
+            <form method="post" class="inline">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="start_authenticator_setup">
+              <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors text-sm cursor-pointer">Add New Authenticator App</button>
+            </form>
+            <form method="post" class="inline">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="disable_authenticator">
+              <button type="submit" class="px-4 py-2 bg-red-700 text-white rounded-md hover:bg-red-800 transition-colors text-sm cursor-pointer">Deactivate Authenticator</button>
+            </form>
+          </div>
+        {% endif %}
+      </div>
+
+      {% if show_authenticator_setup %}
+        <form method="post" class="space-y-3">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="enable_authenticator">
+          <div>
+            <label class="block text-sm font-medium mb-2 text-gray-300" for="authenticator_code">Authenticator Code</label>
+            <input id="authenticator_code"
+                   name="code"
+                   maxlength="6"
+                   class="w-full py-2 px-3 bg-[#39404b] rounded-md text-white text-sm border {% if authenticator_form.code.errors %}border-red-500{% else %}border-gray-600{% endif %}"
+                   placeholder="123456">
+            {% if authenticator_form.code.errors %}
+              <p class="mt-1 text-sm text-red-400">{{ authenticator_form.code.errors.0 }}</p>
+            {% endif %}
+          </div>
+          <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors text-sm cursor-pointer">Verify Authenticator</button>
+        </form>
+      {% endif %}
+
+      <div class="clear-both border-t border-gray-700 pt-4 space-y-3">
+        <p class="text-sm text-gray-300">Unused recovery codes: <span class="font-semibold text-white">{{ unused_recovery_code_count }}</span></p>
+        {% if fresh_recovery_codes %}
+          <div class="p-3 rounded-md border border-amber-700 bg-amber-900/40 text-amber-200 text-sm">
+            Save these recovery codes now. They are shown only once.
+          </div>
+          <ul class="grid grid-cols-2 gap-2 text-xs font-mono">
+            {% for code in fresh_recovery_codes %}
+              <li class="bg-[#39404b] rounded px-2 py-1">{{ code }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+        <form method="post" class="space-y-3">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="regenerate_recovery_codes">
+          <div>
+            <label class="block text-sm font-medium mb-2 text-gray-300" for="regen_current_password">Current Password</label>
+            <input id="regen_current_password"
+                   name="current_password"
+                   type="password"
+                   class="w-full py-2 px-3 bg-[#39404b] rounded-md text-white text-sm border {% if recovery_codes_form.current_password.errors %}border-red-500{% else %}border-gray-600{% endif %}">
+            {% if recovery_codes_form.current_password.errors %}
+              <p class="mt-1 text-sm text-red-400">{{ recovery_codes_form.current_password.errors.0 }}</p>
+            {% endif %}
+          </div>
+          <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors text-sm cursor-pointer">Regenerate Recovery Codes</button>
+        </form>
+      </div>
+    </div>
+
     {% get_providers as socialaccount_providers %}
     {% if socialaccount_providers %}
       <div class="bg-[#2a2f35] rounded-lg p-6">

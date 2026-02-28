@@ -41,6 +41,9 @@
           Need an account?
           <a class="text-indigo-400 hover:text-indigo-300"
              href="{% url 'account_signup' %}">Register now</a>
+          <span class="mx-2 text-gray-600">|</span>
+          <a class="text-indigo-400 hover:text-indigo-300"
+             href="{% url 'password_recover' %}">Forgot Password</a>
         {% else %}
           Sign-ups are disabled.
           {% if FORK_OWNER_URL %}
@@ -51,6 +54,9 @@
           {% else %}
             Host your own.
           {% endif %}
+          <span class="mx-2 text-gray-600">|</span>
+          <a class="text-indigo-400 hover:text-indigo-300"
+             href="{% url 'password_recover' %}">Forgot Password</a>
         {% endif %}
       </p>
     </div>

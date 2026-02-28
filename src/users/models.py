@@ -1,3 +1,4 @@
+import hashlib
 import secrets
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
@@ -579,6 +580,23 @@ class User(AbstractUser):
     daily_digest_enabled = models.BooleanField(
         default=True,
         help_text="Receive a daily digest of upcoming releases",
+    )
+
+    # Account recovery and authenticator settings
+    authenticator_secret = models.CharField(
+        max_length=32,
+        blank=True,
+        default="",
+        help_text="TOTP secret used by authenticator apps",
+    )
+    authenticator_enabled = models.BooleanField(
+        default=False,
+        help_text="Whether authenticator app verification is enabled",
+    )
+    authenticator_confirmed_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        help_text="Timestamp when authenticator setup was confirmed",
     )
 
     # Integration settings
@@ -1312,6 +1330,60 @@ class User(AbstractUser):
             "schedules": schedules,
         }
 
+    @property
+    def has_authenticator_configured(self):
+        """Return whether this user has a confirmed authenticator setup."""
+        return self.authenticator_enabled and bool(self.authenticator_secret)
+
+    def get_or_create_authenticator_secret(self):
+        """Return existing authenticator secret or create one."""
+        if self.authenticator_secret:
+            return self.authenticator_secret
+
+        import pyotp
+
+        self.authenticator_secret = pyotp.random_base32()
+        self.save(update_fields=["authenticator_secret"])
+        return self.authenticator_secret
+
+    def build_totp_uri(self):
+        """Build provisioning URI for authenticator apps."""
+        if not self.authenticator_secret:
+            return ""
+
+        import pyotp
+
+        issuer = "Yamtrack"
+        return pyotp.TOTP(self.authenticator_secret).provisioning_uri(
+            name=self.username,
+            issuer_name=issuer,
+        )
+
+    def verify_totp_code(self, code):
+        """Return True when the supplied TOTP code is valid."""
+        if not self.authenticator_secret:
+            return False
+
+        import pyotp
+
+        return bool(pyotp.TOTP(self.authenticator_secret).verify(str(code).strip(), valid_window=1))
+
+    def generate_recovery_codes(self, count=8):
+        """Generate one-time recovery codes and persist their hashes."""
+        if count <= 0:
+            return []
+
+        self.recovery_codes.all().delete()
+        codes = []
+        for _ in range(count):
+            raw_code = secrets.token_hex(4).upper()
+            codes.append(raw_code)
+            UserRecoveryCode.objects.create(
+                user=self,
+                code_hash=UserRecoveryCode.hash_code(raw_code),
+            )
+        return codes
+
     def regenerate_token(self):
         """Regenerate the user's token."""
         self.token = generate_token()
@@ -1345,3 +1417,35 @@ class User(AbstractUser):
                 "plex_webhook_last_error_at",
             ],
         )
+
+
+class UserRecoveryCode(models.Model):
+    """Single-use recovery code for self-service password reset."""
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="recovery_codes",
+    )
+    code_hash = models.CharField(max_length=64, db_index=True)
+    used_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    @staticmethod
+    def hash_code(raw_code):
+        """Return a deterministic hash for a recovery code."""
+        normalized = str(raw_code).strip().upper()
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+    def matches(self, raw_code):
+        """Check if a raw code matches this stored hash."""
+        candidate = self.hash_code(raw_code)
+        return secrets.compare_digest(candidate, self.code_hash)
+
+    def mark_used(self):
+        """Mark this code as used."""
+        self.used_at = timezone.now()
+        self.save(update_fields=["used_at"])
