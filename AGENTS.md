@@ -4,13 +4,15 @@ Yamtrack is a Django 5.2 app for self-hosted media tracking with Celery workers 
 ## Branch Policy (Fork)
 - `dev` must be an exact mirror of upstream `FuzzyGrim/Yamtrack:dev` with no fork-only commits or edits.
 - Any local `dev` divergence should be reset/fast-forwarded back to upstream before merging.
+- `latest` is the fork integration branch for day-to-day feature work and upstream sync merges.
+- `release` is for versioned release/container publication flow, not the primary integration branch.
 
-## Merge Workflow (Upstream Dev -> Release)
-This workspace is the fork `dannyvfilms/Yamtrack`, branch `release`. When syncing upstream `dev` into `release`, treat the merge as a conflict-resolution task where upstream `dev` brings maintenance changes and `release` preserves fork features.
+## Merge Workflow (Upstream Dev -> Latest)
+This workspace is the fork `dannyvfilms/Yamtrack`, branch `latest`. When syncing upstream `dev` into `latest`, treat the merge as a conflict-resolution task where upstream `dev` brings maintenance changes and `latest` preserves fork features.
 
 High-level rules:
 - Use upstream `dev` as the source of truth for dependency versions, security/bugfix patches, small refactors, settings/config changes, CSS cleanups, and tests.
-- Use `release` as the source of truth for fork-specific features and behavior changes.
+- Use `latest` as the source of truth for fork-specific features and behavior changes.
 - When logic overlaps, merge intent from both sides rather than choosing one side wholesale.
 
 Important fork features to preserve while merging:
@@ -23,10 +25,20 @@ Important fork features to preserve while merging:
 Conflict-resolution steps:
 1. Scan for conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`) and resolve every file.
 2. For each conflict, understand both sides; keep upstream maintenance changes and layer them into fork features.
-3. For views/templates/runtime/statistics/preferences/import/webhook logic, start from `release` behavior and integrate upstream improvements.
-4. For lists/configs (.gitignore, CSS classes, INSTALLED_APPS, URLs, etc.), keep the union and deduplicate.
-5. Remove all conflict markers; run linters/tests and fix underlying issues, not just tests.
-6. If a choice is unavoidable, prioritize fork-visible features while honoring upstream data contracts/integrations.
+3. For views/templates/runtime/statistics/preferences/import/webhook logic, start from `latest` behavior and integrate upstream improvements.
+4. For migration conflicts:
+   - Same migration numbers on different branches are valid in Django; resolve with merge migrations.
+   - Keep upstream migration filenames unchanged in `latest`.
+   - Renumber only fork-local migrations that are unpushed/unreleased.
+   - Never rename or rewrite any migration file that exists in `origin/latest` or any `v*` release tag.
+5. For lists/configs (.gitignore, CSS classes, INSTALLED_APPS, URLs, etc.), keep the union and deduplicate.
+6. Remove all conflict markers; run linters/tests and fix underlying issues, not just tests.
+7. Run hard gates before completing sync:
+   - `cd src && python manage.py makemigrations --merge`
+   - `cd src && python manage.py check_migration_hygiene --strict`
+   - `scripts/replay_upgrade_matrix.sh --from-tag <previous_release_tag> --to-ref latest --db sqlite,postgres --with-drift-scenarios`
+   - `coverage run src/manage.py test app users integrations lists events --parallel`
+8. If a choice is unavoidable, prioritize fork-visible features while honoring upstream data contracts/integrations.
 
 ## Repo Map
 - `src/` Django project code (apps: `app`, `users`, `lists`, `integrations`, `events`; config in `config/`).
@@ -46,6 +58,7 @@ Conflict-resolution steps:
 - `docs/agents/media_type_integration.md`: playbook for adding new media types safely.
 - `docs/agents/music_integration.md`: music-specific data model and UI integration notes.
 - `docs/agents/pocketcasts_workflow.md`: Pocket Casts import/schedule workflow details.
+- `docs/agents/migration_sync_playbook.md`: required hard-gate flow for upstream syncs and migration drift replay.
 
 ## Blessed Workflows
 - Primary (local dev): run Django from source with Redis, Celery worker/beat, and Tailwind watcher. Use this for code changes.
@@ -151,6 +164,16 @@ Quick confidence (CI lint):
 
 ```bash
 ruff check src
+```
+
+Migration sync confidence (required for upstream `dev` -> `latest` syncs):
+
+```bash
+cd src && python manage.py check_migration_hygiene --strict
+```
+
+```bash
+scripts/replay_upgrade_matrix.sh --from-tag <previous_release_tag> --to-ref latest --db sqlite,postgres --with-drift-scenarios
 ```
 
 Full confidence (CI test flow):
