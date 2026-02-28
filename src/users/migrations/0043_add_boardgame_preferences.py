@@ -33,6 +33,28 @@ def _constraint_exists(schema_editor, table_name, constraint_name):
         return cursor.fetchone() is not None
 
 
+def _normalize_invalid_last_search_type_values(schema_editor):
+    """Normalize legacy/invalid last_search_type values before adding constraints."""
+    valid_values = [
+        'tv',
+        'movie',
+        'anime',
+        'manga',
+        'game',
+        'book',
+        'comic',
+        'boardgame',
+    ]
+    placeholders = ','.join(['%s'] * len(valid_values))
+    with schema_editor.connection.cursor() as cursor:
+        cursor.execute(
+            'UPDATE users_user SET last_search_type = %s '
+            "WHERE last_search_type IS NULL OR last_search_type = '' "
+            f'OR last_search_type NOT IN ({placeholders})',
+            ['tv', *valid_values],
+        )
+
+
 class AddFieldIfNotExists(migrations.AddField):
     """Add a field only when the backing column doesn't already exist."""
 
@@ -49,6 +71,8 @@ class AddConstraintIfNotExists(migrations.AddConstraint):
 
     def database_forwards(self, app_label, schema_editor, from_state, to_state):
         to_model = to_state.apps.get_model(app_label, self.model_name)
+        if self.constraint.name == 'last_search_type_valid':
+            _normalize_invalid_last_search_type_values(schema_editor)
         if _constraint_exists(schema_editor, to_model._meta.db_table, self.constraint.name):
             return
         super().database_forwards(app_label, schema_editor, from_state, to_state)
