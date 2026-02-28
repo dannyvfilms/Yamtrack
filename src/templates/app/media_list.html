@@ -1271,6 +1271,162 @@
   </script>
 
   <script>
+    (function() {
+      const filterForm = document.getElementById('filter-form');
+      if (!filterForm) {
+        return;
+      }
+
+      const listPath = '{% url "medialist" media_type %}';
+      const storageKey = 'yamtrack.media.filters.{{ user.id }}.{{ media_type }}';
+      const persistedKeys = [
+        'search',
+        'status',
+        'rating',
+        'collection',
+        'genre',
+        'year',
+        'release',
+        'source',
+        'language',
+        'country',
+        'platform',
+        'origin',
+        'format',
+        'author',
+        'sort',
+        'direction',
+        'layout',
+      ];
+
+      function hasPersistedParams(search) {
+        const params = new URLSearchParams(search || window.location.search);
+        return persistedKeys.some((key) => params.has(key));
+      }
+
+      function readFilterValue(name) {
+        const field = filterForm.elements.namedItem(name);
+        if (!field || typeof field.value !== 'string') {
+          return '';
+        }
+        return field.value.trim();
+      }
+
+      function setParam(params, key, value, omitAll) {
+        if (!value) {
+          return;
+        }
+        if (omitAll && value.toLowerCase() === 'all') {
+          return;
+        }
+        params.set(key, value);
+      }
+
+      function buildFilterParams() {
+        const params = new URLSearchParams();
+
+        setParam(params, 'search', readFilterValue('search'));
+        setParam(params, 'status', readFilterValue('status'), true);
+        setParam(params, 'rating', readFilterValue('rating'), true);
+        setParam(params, 'collection', readFilterValue('collection'), true);
+        setParam(params, 'genre', readFilterValue('genre'));
+        setParam(params, 'year', readFilterValue('year'));
+        setParam(params, 'release', readFilterValue('release'), true);
+        setParam(params, 'source', readFilterValue('source'));
+        setParam(params, 'language', readFilterValue('language'));
+        setParam(params, 'country', readFilterValue('country'));
+        setParam(params, 'platform', readFilterValue('platform'));
+        setParam(params, 'origin', readFilterValue('origin'));
+        setParam(params, 'format', readFilterValue('format'));
+        setParam(params, 'author', readFilterValue('author'));
+        setParam(params, 'sort', readFilterValue('sort'));
+        setParam(params, 'direction', readFilterValue('direction'));
+        setParam(params, 'layout', readFilterValue('layout'));
+
+        return params;
+      }
+
+      function persistFilters(syncUrl) {
+        const params = buildFilterParams();
+        const query = params.toString();
+
+        try {
+          if (query) {
+            window.localStorage.setItem(storageKey, query);
+          } else {
+            window.localStorage.removeItem(storageKey);
+          }
+        } catch (error) {
+          // Ignore storage failures (private mode or disabled storage).
+        }
+
+        if (!syncUrl) {
+          return;
+        }
+
+        const nextUrl = query ? `${listPath}?${query}` : listPath;
+        if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
+          window.history.replaceState(window.history.state, '', nextUrl);
+        }
+      }
+
+      function restoreFiltersIfNeeded() {
+        if (hasPersistedParams()) {
+          return false;
+        }
+
+        try {
+          const savedQuery = window.localStorage.getItem(storageKey);
+          if (!savedQuery) {
+            return false;
+          }
+          if (!hasPersistedParams(`?${savedQuery}`)) {
+            return false;
+          }
+
+          window.location.replace(`${listPath}?${savedQuery}`);
+          return true;
+        } catch (error) {
+          return false;
+        }
+      }
+
+      if (restoreFiltersIfNeeded()) {
+        return;
+      }
+
+      if (hasPersistedParams()) {
+        persistFilters(false);
+      }
+
+      document.body.addEventListener('htmx:afterRequest', function(event) {
+        const requestConfig = event && event.detail ? event.detail.requestConfig : null;
+        if (!requestConfig) {
+          return;
+        }
+
+        const requestVerb = String(requestConfig.verb || '').toLowerCase();
+        if (requestVerb && requestVerb !== 'get') {
+          return;
+        }
+
+        const requestPath = String(requestConfig.path || '');
+        if (!requestPath.includes(listPath)) {
+          return;
+        }
+        if (requestPath.includes('/columns/')) {
+          return;
+        }
+        if (event.detail && event.detail.successful === false) {
+          return;
+        }
+
+        persistFilters(true);
+      });
+    })();
+  </script>
+
+  <script>
     const RELEASE_YEAR_FETCH_URL = '{% url "fetch_release_year" %}';
     const releaseYearPending = new Set();
     let releaseYearQueue = [];
