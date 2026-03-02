@@ -3,7 +3,7 @@
 import hashlib
 import logging
 from collections import defaultdict
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import requests
@@ -240,7 +240,7 @@ class AudiobookshelfImporter:
         if not value:
             return None
         if isinstance(value, (int, float)):
-            return datetime.fromtimestamp(value / 1000, tz=timezone.utc)
+            return datetime.fromtimestamp(value / 1000, tz=UTC)
         if isinstance(value, str):
             try:
                 parsed = datetime.fromisoformat(value)

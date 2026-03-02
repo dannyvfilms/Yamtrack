@@ -1,5 +1,6 @@
 """Tests for Audiobookshelf importer."""
 
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -87,3 +88,55 @@ class AudiobookshelfImporterTests(TestCase):
         self.assertEqual(counts, {})
         self.assertFalse(Item.objects.filter(source=Sources.AUDIOBOOKSHELF.value).exists())
         mock_item.assert_not_called()
+
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_library_item")
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_me")
+    def test_parses_millisecond_timestamps_for_started_and_finished(
+        self,
+        mock_me,
+        mock_item,
+    ):
+        """Use UTC-aware datetimes when ABS returns millisecond timestamps."""
+        started_at_ms = 1_700_000_000_000
+        finished_at_ms = 1_700_003_600_000
+        mock_me.return_value = {
+            "mediaProgress": [
+                {
+                    "libraryItemId": "item-2",
+                    "currentTime": 7200,
+                    "duration": 7200,
+                    "progress": 1,
+                    "isFinished": True,
+                    "startedAt": started_at_ms,
+                    "finishedAt": finished_at_ms,
+                    "lastUpdate": finished_at_ms,
+                },
+            ],
+        }
+        mock_item.return_value = {
+            "media": {
+                "duration": 7200,
+                "metadata": {
+                    "title": "Dune",
+                    "authors": [{"name": "Frank Herbert"}],
+                },
+            },
+            "coverPath": "https://img.example/dune.jpg",
+        }
+
+        importer = AudiobookshelfImporter(self.user)
+        counts, warnings = importer.import_data()
+
+        self.assertEqual(counts.get(MediaTypes.BOOK.value), 1)
+        self.assertEqual(warnings, "")
+
+        media = Book.objects.get(user=self.user)
+        self.assertEqual(media.status, Status.COMPLETED.value)
+        self.assertEqual(
+            media.start_date,
+            datetime.fromtimestamp(started_at_ms / 1000, tz=UTC),
+        )
+        self.assertEqual(
+            media.end_date,
+            datetime.fromtimestamp(finished_at_ms / 1000, tz=UTC),
+        )
