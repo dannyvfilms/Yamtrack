@@ -342,6 +342,26 @@ class AppTagsTests(TestCase):
         episode_dict_modal = app_tags.media_view_url("history_modal", self.episode_dict)
         self.assertEqual(episode_dict_modal, expected_episode_modal)
 
+        # Test with podcast ID containing path separators
+        podcast_episode_dict = {
+            "source": Sources.POCKETCASTS.value,
+            "media_type": MediaTypes.PODCAST.value,
+            "media_id": "gid://art19-episode-locator/V0/MCjgWTshRbS9H7f24imvk8a2E6Zsyb6NQJHy6B0h6hQ",
+        }
+        podcast_lists_modal = app_tags.media_view_url(
+            "lists_modal",
+            podcast_episode_dict,
+        )
+        expected_podcast_lists_modal = reverse(
+            "lists_modal",
+            kwargs={
+                "source": Sources.POCKETCASTS.value,
+                "media_type": MediaTypes.PODCAST.value,
+                "media_id": podcast_episode_dict["media_id"],
+            },
+        )
+        self.assertEqual(podcast_lists_modal, expected_podcast_lists_modal)
+
     def test_unicode_icon(self):
         """Test the unicode_icon tag for all media types."""
         # Test all media types from MediaTypes
