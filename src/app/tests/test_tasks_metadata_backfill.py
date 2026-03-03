@@ -6,7 +6,19 @@ from django.test import TestCase
 from django.utils import timezone
 
 from app import tasks
-from app.models import Item, MediaTypes, Sources
+from app.models import (
+    CREDITS_BACKFILL_VERSION,
+    Item,
+    ItemPersonCredit,
+    ItemStudioCredit,
+    MediaTypes,
+    MetadataBackfillField,
+    MetadataBackfillState,
+    Person,
+    PersonGender,
+    Sources,
+    Studio,
+)
 
 
 class MetadataBackfillTaskTests(TestCase):
@@ -145,3 +157,156 @@ class MetadataBackfillTaskTests(TestCase):
         self.assertIn(book.id, queued_ids)
         self.assertIn(comic.id, queued_ids)
         self.assertIn(manga.id, queued_ids)
+
+    def test_next_credits_backfill_item_ids_filters_complete_items(self):
+        missing_movie = Item.objects.create(
+            media_id="missing-movie",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Needs Credits",
+            image="https://example.com/missing-movie.jpg",
+            genres=["Drama"],
+            runtime_minutes=100,
+        )
+        complete_movie = Item.objects.create(
+            media_id="complete-movie",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Complete Credits",
+            image="https://example.com/complete-movie.jpg",
+            genres=["Drama"],
+            runtime_minutes=99,
+        )
+        episode_missing_strategy = Item.objects.create(
+            media_id="episode-credits",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=2,
+            title="Episode",
+            image="https://example.com/episode.jpg",
+        )
+        person = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="person-1",
+            name="Person One",
+            gender=PersonGender.UNKNOWN.value,
+        )
+        studio = Studio.objects.create(
+            source=Sources.TMDB.value,
+            source_studio_id="studio-1",
+            name="Studio One",
+        )
+        ItemPersonCredit.objects.create(
+            item=complete_movie,
+            person=person,
+            role_type="cast",
+            role="Lead",
+        )
+        ItemStudioCredit.objects.create(
+            item=complete_movie,
+            studio=studio,
+        )
+        ItemPersonCredit.objects.create(
+            item=episode_missing_strategy,
+            person=person,
+            role_type="cast",
+            role="Lead",
+        )
+        MetadataBackfillState.objects.create(
+            item=episode_missing_strategy,
+            field=MetadataBackfillField.CREDITS,
+            strategy_version=max(CREDITS_BACKFILL_VERSION - 1, 1),
+            last_success_at=timezone.now(),
+        )
+
+        candidate_ids = tasks._next_credits_backfill_item_ids(batch_size=5, scan_multiplier=5)
+
+        self.assertIn(missing_movie.id, candidate_ids)
+        self.assertIn(episode_missing_strategy.id, candidate_ids)
+        self.assertNotIn(complete_movie.id, candidate_ids)
+
+    @patch("app.tasks.enqueue_credits_backfill_items", return_value=4)
+    @patch("app.tasks.enqueue_episode_runtime_backfill", return_value=3)
+    @patch("app.tasks.enqueue_runtime_backfill_items", return_value=2)
+    @patch("app.tasks.enqueue_genre_backfill_items", return_value=1)
+    @patch("app.tasks._next_credits_backfill_item_ids")
+    def test_nightly_metadata_quality_backfill_queues_all_dimensions(
+        self,
+        mock_next_credits,
+        mock_enqueue_genres,
+        mock_enqueue_runtime,
+        mock_enqueue_episode_runtime,
+        mock_enqueue_credits,
+    ):
+        genre_item = Item.objects.create(
+            media_id="game-genre",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Genre Game",
+            image="https://example.com/game.jpg",
+            genres=[],
+        )
+        runtime_item = Item.objects.create(
+            media_id="anime-runtime",
+            source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME.value,
+            title="Runtime Anime",
+            image="https://example.com/anime.jpg",
+            genres=["Action"],
+            runtime_minutes=None,
+        )
+        episode_item = Item.objects.create(
+            media_id="tv-episode",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=1,
+            title="Episode Runtime",
+            image="https://example.com/episode-runtime.jpg",
+            runtime_minutes=None,
+        )
+        credits_item = Item.objects.create(
+            media_id="credits-movie",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Credits Movie",
+            image="https://example.com/credits-movie.jpg",
+            genres=["Mystery"],
+            runtime_minutes=102,
+        )
+        mock_next_credits.return_value = [credits_item.id]
+
+        result = tasks.nightly_metadata_quality_backfill_task(
+            genre_batch_size=20,
+            runtime_batch_size=20,
+            episode_season_batch_size=20,
+            credits_batch_size=20,
+            credits_scan_multiplier=3,
+        )
+
+        mock_next_credits.assert_called_once_with(20, scan_multiplier=3)
+        mock_enqueue_genres.assert_called_once_with(
+            [genre_item.id],
+            countdown=tasks.NIGHTLY_METADATA_QUALITY_GENRE_COUNTDOWN,
+        )
+        mock_enqueue_runtime.assert_called_once_with(
+            [runtime_item.id],
+            countdown=tasks.NIGHTLY_METADATA_QUALITY_RUNTIME_COUNTDOWN,
+        )
+        mock_enqueue_episode_runtime.assert_called_once_with(
+            [(episode_item.media_id, episode_item.source, episode_item.season_number)],
+            countdown=tasks.NIGHTLY_METADATA_QUALITY_EPISODE_COUNTDOWN,
+        )
+        mock_enqueue_credits.assert_called_once_with(
+            [credits_item.id],
+            countdown=tasks.NIGHTLY_METADATA_QUALITY_CREDITS_COUNTDOWN,
+        )
+        self.assertEqual(result["selected"]["genres"], 1)
+        self.assertEqual(result["selected"]["runtime"], 1)
+        self.assertEqual(result["selected"]["episode_seasons"], 1)
+        self.assertEqual(result["selected"]["credits"], 1)
+        self.assertEqual(result["queued"]["genres"], 1)
+        self.assertEqual(result["queued"]["runtime"], 2)
+        self.assertEqual(result["queued"]["episode_seasons"], 3)
+        self.assertEqual(result["queued"]["credits"], 4)

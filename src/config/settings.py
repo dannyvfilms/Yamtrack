@@ -807,6 +807,17 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(hour=3, minute=0),  # every day at 3 AM
         "kwargs": {"batch_size": 1000},  # Process 1000 items per run (cleanup mode)
     },
+    "nightly_metadata_quality_backfill": {
+        "task": "Nightly metadata quality backfill",
+        "schedule": crontab(hour=3, minute=30),  # every day at 3:30 AM
+        "kwargs": {
+            "genre_batch_size": 1500,
+            "runtime_batch_size": 500,
+            "episode_season_batch_size": 300,
+            "credits_batch_size": 2500,
+            "credits_scan_multiplier": 20,
+        },
+    },
 }
 # Allauth settings
 if CSRF_TRUSTED_ORIGINS:

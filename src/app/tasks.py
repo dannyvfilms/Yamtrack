@@ -79,6 +79,15 @@ RELEASE_BACKFILL_MEDIA_TYPES = (
 METADATA_BACKFILL_BASE_DELAY_SECONDS = 60 * 60  # 1 hour
 METADATA_BACKFILL_MAX_DELAY_SECONDS = 60 * 60 * 24  # 1 day
 METADATA_BACKFILL_MAX_ATTEMPTS = 6
+NIGHTLY_METADATA_QUALITY_GENRE_BATCH_SIZE = 1500
+NIGHTLY_METADATA_QUALITY_RUNTIME_BATCH_SIZE = 500
+NIGHTLY_METADATA_QUALITY_EPISODE_SEASONS_BATCH_SIZE = 300
+NIGHTLY_METADATA_QUALITY_CREDITS_BATCH_SIZE = 2500
+NIGHTLY_METADATA_QUALITY_CREDITS_SCAN_MULTIPLIER = 20
+NIGHTLY_METADATA_QUALITY_GENRE_COUNTDOWN = 5
+NIGHTLY_METADATA_QUALITY_RUNTIME_COUNTDOWN = 15
+NIGHTLY_METADATA_QUALITY_EPISODE_COUNTDOWN = 30
+NIGHTLY_METADATA_QUALITY_CREDITS_COUNTDOWN = 45
 
 
 def _apply_backfill_state_filters(queryset, field: str):
@@ -451,6 +460,29 @@ def _normalize_item_ids(item_ids):
         if item_id > 0:
             normalized.append(item_id)
     return sorted(set(normalized))
+
+
+def _next_credits_backfill_item_ids(batch_size: int, scan_multiplier: int):
+    if batch_size <= 0:
+        return []
+    candidate_limit = max(batch_size * max(scan_multiplier, 1), batch_size)
+    candidates = (
+        Item.objects.filter(
+            source__in=CREDITS_BACKFILL_SOURCES,
+            media_type__in=[
+                MediaTypes.MOVIE.value,
+                MediaTypes.TV.value,
+                MediaTypes.EPISODE.value,
+            ],
+        )
+        .order_by("id")
+        .values_list("id", flat=True)[:candidate_limit]
+    )
+    candidate_ids = _filter_backfill_item_ids(list(candidates), MetadataBackfillField.CREDITS)
+    if not candidate_ids:
+        return []
+    missing_ids = _missing_credits_item_ids(candidate_ids)
+    return missing_ids[:batch_size]
 
 
 def _missing_credits_item_ids(item_ids):
@@ -1077,6 +1109,103 @@ def populate_episode_runtime_queue(batch_size: int = 20):
         cache.delete(RUNTIME_BACKFILL_EPISODES_QUEUE_KEY)
 
     return populate_episode_runtime_data(season_keys=batch)
+
+
+@shared_task(name="Nightly metadata quality backfill")
+def nightly_metadata_quality_backfill_task(
+    genre_batch_size: int = NIGHTLY_METADATA_QUALITY_GENRE_BATCH_SIZE,
+    runtime_batch_size: int = NIGHTLY_METADATA_QUALITY_RUNTIME_BATCH_SIZE,
+    episode_season_batch_size: int = NIGHTLY_METADATA_QUALITY_EPISODE_SEASONS_BATCH_SIZE,
+    credits_batch_size: int = NIGHTLY_METADATA_QUALITY_CREDITS_BATCH_SIZE,
+    credits_scan_multiplier: int = NIGHTLY_METADATA_QUALITY_CREDITS_SCAN_MULTIPLIER,
+):
+    """Queue targeted metadata backfill batches for genres/runtime/credits.
+
+    This runs on a nightly schedule and uses queue-based workers so metadata quality
+    converges over time without requiring user-triggered maintenance commands.
+    """
+    genre_batch_size = max(int(genre_batch_size), 0)
+    runtime_batch_size = max(int(runtime_batch_size), 0)
+    episode_season_batch_size = max(int(episode_season_batch_size), 0)
+    credits_batch_size = max(int(credits_batch_size), 0)
+    credits_scan_multiplier = max(int(credits_scan_multiplier), 1)
+
+    genre_item_ids = []
+    if genre_batch_size:
+        genre_item_ids = list(
+            _genre_items_queryset().order_by("id").values_list("id", flat=True)[:genre_batch_size],
+        )
+
+    runtime_item_ids = []
+    if runtime_batch_size:
+        runtime_item_ids = list(
+            _runtime_items_queryset().order_by("id").values_list("id", flat=True)[:runtime_batch_size],
+        )
+
+    episode_season_keys = []
+    if episode_season_batch_size:
+        episode_season_keys = list(
+            _episode_runtime_items_queryset()
+            .exclude(season_number__isnull=True)
+            .values_list("media_id", "source", "season_number")
+            .distinct()
+            .order_by("media_id", "source", "season_number")[:episode_season_batch_size],
+        )
+
+    credits_item_ids = _next_credits_backfill_item_ids(
+        credits_batch_size,
+        scan_multiplier=credits_scan_multiplier,
+    )
+
+    queued_genres = 0
+    if genre_item_ids:
+        queued_genres = enqueue_genre_backfill_items(
+            genre_item_ids,
+            countdown=NIGHTLY_METADATA_QUALITY_GENRE_COUNTDOWN,
+        )
+
+    queued_runtime = 0
+    if runtime_item_ids:
+        queued_runtime = enqueue_runtime_backfill_items(
+            runtime_item_ids,
+            countdown=NIGHTLY_METADATA_QUALITY_RUNTIME_COUNTDOWN,
+        )
+
+    queued_episode_seasons = 0
+    if episode_season_keys:
+        queued_episode_seasons = enqueue_episode_runtime_backfill(
+            episode_season_keys,
+            countdown=NIGHTLY_METADATA_QUALITY_EPISODE_COUNTDOWN,
+        )
+
+    queued_credits = 0
+    if credits_item_ids:
+        queued_credits = enqueue_credits_backfill_items(
+            credits_item_ids,
+            countdown=NIGHTLY_METADATA_QUALITY_CREDITS_COUNTDOWN,
+        )
+
+    summary = {
+        "selected": {
+            "genres": len(genre_item_ids),
+            "runtime": len(runtime_item_ids),
+            "episode_seasons": len(episode_season_keys),
+            "credits": len(credits_item_ids),
+        },
+        "queued": {
+            "genres": queued_genres,
+            "runtime": queued_runtime,
+            "episode_seasons": queued_episode_seasons,
+            "credits": queued_credits,
+        },
+        "remaining": {
+            "genres": _genre_items_queryset().count(),
+            "runtime": _runtime_items_queryset().count(),
+            "episode_runtime": _episode_runtime_items_queryset().count(),
+        },
+    }
+    logger.info("nightly_metadata_quality_backfill summary=%s", summary)
+    return summary
 
 
 @shared_task
