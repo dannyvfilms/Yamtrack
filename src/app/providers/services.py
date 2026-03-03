@@ -28,6 +28,45 @@ from app.providers import (
 logger = logging.getLogger(__name__)
 
 
+def _audiobookshelf_book(media_id):
+    """Return local metadata for an Audiobookshelf book item.
+
+    Audiobookshelf library item IDs are not Open Library IDs, so attempting to
+    resolve them via Open Library causes 404s and can break details pages.
+    """
+    from app.models import Item  # noqa: PLC0415
+
+    item = Item.objects.filter(
+        media_id=media_id,
+        source=Sources.AUDIOBOOKSHELF.value,
+        media_type=MediaTypes.BOOK.value,
+    ).first()
+
+    title = item.title if item else ""
+    image = item.image if item and item.image else settings.IMG_NONE
+    runtime_minutes = item.runtime_minutes if item else None
+    authors = item.authors if item else []
+    isbn = item.isbn if item else []
+
+    return {
+        "media_id": str(media_id),
+        "source": Sources.AUDIOBOOKSHELF.value,
+        "media_type": MediaTypes.BOOK.value,
+        "title": title,
+        "image": image,
+        "max_progress": runtime_minutes,
+        "synopsis": "",
+        "genres": [],
+        "related": {},
+        "details": {
+            "author": authors,
+            "isbn": isbn,
+            "format": "audiobook",
+            "runtime_minutes": runtime_minutes,
+        },
+    }
+
+
 def get_redis_connection():
     """Return a Redis connection pool."""
     if settings.TESTING:
@@ -285,6 +324,8 @@ def get_media_metadata(
         MediaTypes.BOOK.value: lambda: (
             hardcover.book(media_id)
             if source == Sources.HARDCOVER.value
+            else _audiobookshelf_book(media_id)
+            if source == Sources.AUDIOBOOKSHELF.value
             else openlibrary.book(media_id)
         ),
         MediaTypes.COMIC.value: lambda: comicvine.comic(media_id),

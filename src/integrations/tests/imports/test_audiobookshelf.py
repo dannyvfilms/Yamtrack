@@ -8,7 +8,12 @@ from django.test import TestCase
 
 from app.models import Book, Item, MediaTypes, Sources, Status
 from integrations.imports import helpers
-from integrations.imports.audiobookshelf import AudiobookshelfImporter
+from integrations.imports.helpers import MediaImportError
+from integrations.imports.audiobookshelf import (
+    AudiobookshelfAuthError,
+    AudiobookshelfClientError,
+    AudiobookshelfImporter,
+)
 from integrations.models import AudiobookshelfAccount
 
 
@@ -139,4 +144,124 @@ class AudiobookshelfImporterTests(TestCase):
         self.assertEqual(
             media.end_date,
             datetime.fromtimestamp(finished_at_ms / 1000, tz=UTC),
+        )
+
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_library_item")
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_me")
+    def test_respects_last_sync_cursor_and_updates_last_sync_ms(
+        self,
+        mock_me,
+        mock_item,
+    ):
+        """Only changed progress after the cursor should be imported."""
+        account = self.user.audiobookshelf_account
+        account.last_sync_ms = 1_500
+        account.save(update_fields=["last_sync_ms", "updated_at"])
+
+        mock_me.return_value = {
+            "mediaProgress": [
+                {
+                    "libraryItemId": "old-item",
+                    "currentTime": 120,
+                    "lastUpdate": 1_000,
+                },
+                {
+                    "libraryItemId": "new-item",
+                    "currentTime": 1_800,
+                    "duration": 3_600,
+                    "lastUpdate": 2_000,
+                },
+            ],
+        }
+        mock_item.return_value = {
+            "media": {"duration": 3_600, "metadata": {"title": "New Book"}},
+            "coverPath": "https://img.example/new-book.jpg",
+        }
+
+        importer = AudiobookshelfImporter(self.user)
+        counts, warnings = importer.import_data()
+
+        self.assertEqual(counts.get(MediaTypes.BOOK.value), 1)
+        self.assertEqual(warnings, "")
+        self.assertEqual(Book.objects.filter(user=self.user).count(), 1)
+        self.assertEqual(Book.objects.get(user=self.user).item.title, "New Book")
+        self.user.audiobookshelf_account.refresh_from_db()
+        self.assertEqual(self.user.audiobookshelf_account.last_sync_ms, 2_000)
+        mock_item.assert_called_once_with("new-item")
+
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_library_item")
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_me")
+    def test_collects_warning_when_library_item_lookup_fails(self, mock_me, mock_item):
+        """A failed item metadata fetch should not abort the whole import."""
+        mock_me.return_value = {
+            "mediaProgress": [
+                {"libraryItemId": "broken-item", "lastUpdate": 3_000},
+            ],
+        }
+        mock_item.side_effect = AudiobookshelfClientError("boom")
+
+        importer = AudiobookshelfImporter(self.user)
+        counts, warnings = importer.import_data()
+
+        self.assertEqual(counts, {})
+        self.assertIn("broken-item", warnings)
+        self.assertFalse(Book.objects.filter(user=self.user).exists())
+
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_library_item")
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_me")
+    def test_falls_back_to_item_title_and_plain_string_authors(
+        self,
+        mock_me,
+        mock_item,
+    ):
+        """Importer should support string authors and top-level title fallback."""
+        mock_me.return_value = {
+            "mediaProgress": [
+                {
+                    "libraryItemId": "item-3",
+                    "currentTime": 300,
+                    "lastUpdate": 5_000,
+                },
+            ],
+        }
+        mock_item.return_value = {
+            "title": "Fallback Title",
+            "media": {
+                "metadata": {
+                    "authors": [
+                        "Author One",
+                        {"name": "Author Two"},
+                        {"name": ""},
+                    ],
+                },
+            },
+        }
+
+        importer = AudiobookshelfImporter(self.user)
+        counts, warnings = importer.import_data()
+
+        self.assertEqual(counts.get(MediaTypes.BOOK.value), 1)
+        self.assertEqual(warnings, "")
+
+        item = Book.objects.get(user=self.user).item
+        self.assertEqual(item.title, "Fallback Title")
+        self.assertEqual(item.authors, ["Author One", "Author Two"])
+
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_me")
+    def test_marks_connection_broken_on_auth_error(self, mock_me):
+        """Auth failures should mark the account as broken and raise import error."""
+        mock_me.side_effect = AudiobookshelfAuthError(
+            "Audiobookshelf token is invalid or expired",
+        )
+
+        importer = AudiobookshelfImporter(self.user)
+
+        with self.assertRaises(MediaImportError):
+            importer.import_data()
+
+        self.user.audiobookshelf_account.refresh_from_db()
+        self.assertTrue(self.user.audiobookshelf_account.connection_broken)
+        self.assertIn(
+            "invalid or expired",
+            self.user.audiobookshelf_account.last_error_message,
         )

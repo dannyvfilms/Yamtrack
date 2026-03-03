@@ -606,3 +606,44 @@ class MediaDetailsViewTests(TestCase):
         refreshed_stats = statistics_cache.refresh_statistics_cache(self.user.id, "All Time")
         refreshed_genres = [entry["name"] for entry in refreshed_stats["book_consumption"]["top_genres"]]
         self.assertIn("Fantasy", refreshed_genres)
+
+    @patch("app.providers.openlibrary.book")
+    def test_audiobookshelf_book_details_does_not_call_openlibrary(
+        self,
+        mock_openlibrary_book,
+    ):
+        """Audiobookshelf detail pages should render using local metadata."""
+        item = Item.objects.create(
+            media_id="f9e2ce45ec9315a7c54c",
+            source=Sources.AUDIOBOOKSHELF.value,
+            media_type=MediaTypes.BOOK.value,
+            title="The Blade Itself",
+            image="https://img.example/blade.jpg",
+            runtime_minutes=1320,
+            authors=["Joe Abercrombie"],
+            format="audiobook",
+        )
+
+        Book.objects.create(
+            user=self.user,
+            item=item,
+            status=Status.IN_PROGRESS.value,
+            progress=60,
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.AUDIOBOOKSHELF.value,
+                    "media_type": MediaTypes.BOOK.value,
+                    "media_id": "f9e2ce45ec9315a7c54c",
+                    "title": "the-blade-itself",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "The Blade Itself")
+        mock_openlibrary_book.assert_not_called()
+

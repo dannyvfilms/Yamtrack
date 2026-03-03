@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 import requests
 from django.test import TestCase
 
-from app.models import MediaTypes, Sources
+from app.models import Item, MediaTypes, Sources
 from app.providers import (
     igdb,
     mal,
@@ -627,3 +627,43 @@ class ServicesTests(TestCase):
         self.assertEqual(result, [{"title": "Test Comic"}])
 
         mock_search.assert_called_once_with("test", 1)
+
+    def test_get_media_metadata_returns_local_payload_for_audiobookshelf_books(self):
+        """Audiobookshelf books should use local Item metadata, not Open Library."""
+        Item.objects.create(
+            media_id="abs-book-1",
+            source=Sources.AUDIOBOOKSHELF.value,
+            media_type=MediaTypes.BOOK.value,
+            title="The Blade Itself",
+            image="https://img.example/blade.jpg",
+            runtime_minutes=123,
+            authors=["Joe Abercrombie"],
+            isbn=["9780316387310"],
+        )
+
+        metadata = services.get_media_metadata(
+            MediaTypes.BOOK.value,
+            "abs-book-1",
+            Sources.AUDIOBOOKSHELF.value,
+        )
+
+        self.assertEqual(metadata["title"], "The Blade Itself")
+        self.assertEqual(metadata["details"]["author"], ["Joe Abercrombie"])
+        self.assertEqual(metadata["details"]["runtime_minutes"], 123)
+        self.assertEqual(metadata["source"], Sources.AUDIOBOOKSHELF.value)
+
+    @patch("app.providers.openlibrary.book")
+    def test_get_media_metadata_does_not_call_openlibrary_for_audiobookshelf(
+        self,
+        mock_ol_book,
+    ):
+        """Audiobookshelf IDs should not be sent to Open Library providers."""
+        metadata = services.get_media_metadata(
+            MediaTypes.BOOK.value,
+            "f9e2ce45ec9315a7c54c",
+            Sources.AUDIOBOOKSHELF.value,
+        )
+
+        mock_ol_book.assert_not_called()
+        self.assertEqual(metadata["source"], Sources.AUDIOBOOKSHELF.value)
+        self.assertEqual(metadata["media_id"], "f9e2ce45ec9315a7c54c")
