@@ -37,6 +37,8 @@
     platform: '{{ active_smart_rules.platform|default:''|escapejs }}',
     origin: '{{ active_smart_rules.origin|default:''|escapejs }}',
     format: '{{ active_smart_rules.format|default:''|escapejs }}',
+    tag: '{{ active_smart_rules.tag|default:''|escapejs }}',
+    tag_exclude: '{{ active_smart_rules.tag_exclude|default:''|escapejs }}',
     showLanguages: {{ smart_filter_data.show_languages|yesno:'true,false' }},
     showCountries: {{ smart_filter_data.show_countries|yesno:'true,false' }},
     showPlatforms: {{ smart_filter_data.show_platforms|yesno:'true,false' }},
@@ -164,6 +166,12 @@
       if (this.showFormats && this.format) {
         labels.push(this.format === 'ebook' ? 'eBook' : this.format.charAt(0).toUpperCase() + this.format.slice(1));
       }
+      if (this.tag) {
+        labels.push('+' + this.tag);
+      }
+      if (this.tag_exclude) {
+        labels.push('-' + this.tag_exclude);
+      }
       if (labels.length === 0) {
         return 'All';
       }
@@ -184,6 +192,8 @@
       this.platform = '';
       this.origin = '';
       this.format = '';
+      this.tag = '';
+      this.tag_exclude = '';
     },
     itemsCountLabel() {
       return `${this.itemsCount} item${this.itemsCount === 1 ? '' : 's'}`;
@@ -213,6 +223,8 @@
         platform: this.platform,
         origin: this.origin,
         format: this.format,
+        tag: this.tag,
+        tag_exclude: this.tag_exclude,
         search: this.query,
       };
 
@@ -551,6 +563,7 @@
         platformSearch: '',
         originSearch: '',
         formatSearch: '',
+        tagSearch: '',
         genres: data.genres || [],
         years: data.years || [],
         sources: data.sources || [],
@@ -559,6 +572,7 @@
         platforms: data.platforms || [],
         origins: data.origins || [],
         formats: data.formats || [],
+        tags: data.tags || [],
         resetSearch() {
           this.genreSearch = '';
           this.yearSearch = '';
@@ -568,6 +582,7 @@
           this.platformSearch = '';
           this.originSearch = '';
           this.formatSearch = '';
+          this.tagSearch = '';
         },
         filteredGenres() {
           const term = this.genreSearch.toLowerCase();
@@ -624,6 +639,13 @@
             return this.formats;
           }
           return this.formats.filter((option) => option.label.toLowerCase().includes(term));
+        },
+        filteredTags() {
+          const term = this.tagSearch.toLowerCase();
+          if (!term) {
+            return this.tags;
+          }
+          return this.tags.filter((t) => t.toLowerCase().includes(term));
         },
       };
     }

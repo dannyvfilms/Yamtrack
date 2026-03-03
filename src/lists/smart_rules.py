@@ -8,7 +8,7 @@ from collections.abc import Iterable
 from django.apps import apps
 from django.utils import timezone
 
-from app.models import CollectionEntry, Item, MediaTypes, Sources, Status
+from app.models import CollectionEntry, Item, ItemTag, MediaTypes, Sources, Status
 
 SMART_FILTER_KEYS = (
     "status",
@@ -24,6 +24,8 @@ SMART_FILTER_KEYS = (
     "platform",
     "origin",
     "format",
+    "tag",
+    "tag_exclude",
 )
 
 SMART_FILTER_DEFAULTS = {
@@ -40,6 +42,8 @@ SMART_FILTER_DEFAULTS = {
     "platform": "",
     "origin": "",
     "format": "",
+    "tag": "",
+    "tag_exclude": "",
 }
 
 RATING_CHOICES = {"all", "rated", "not_rated"}
@@ -230,6 +234,8 @@ def normalize_rule_payload(payload, owner):
         "platform": str(_payload_get(payload, "platform", "") or "").strip(),
         "origin": str(_payload_get(payload, "origin", "") or "").strip(),
         "format": str(_payload_get(payload, "format", "") or "").strip(),
+        "tag": str(_payload_get(payload, "tag", "") or "").strip(),
+        "tag_exclude": str(_payload_get(payload, "tag_exclude", "") or "").strip(),
     }
     return normalized
 
@@ -404,6 +410,25 @@ def collect_matching_item_ids(owner, normalized_rules: dict) -> set[int]:
 
     collected_item_ids, collected_episode_pairs = _collection_filter_context(owner)
 
+    tag_filter = _normalize_filter_value(normalized_rules.get("tag"))
+    tag_exclude = _normalize_filter_value(normalized_rules.get("tag_exclude"))
+    tag_included_ids = None
+    tag_excluded_ids = None
+    if tag_filter:
+        tag_included_ids = set(
+            ItemTag.objects.filter(
+                tag__user=owner,
+                tag__name__iexact=tag_filter,
+            ).values_list("item_id", flat=True)
+        )
+    if tag_exclude:
+        tag_excluded_ids = set(
+            ItemTag.objects.filter(
+                tag__user=owner,
+                tag__name__iexact=tag_exclude,
+            ).values_list("item_id", flat=True)
+        )
+
     matched_ids = set()
     for media_type in target_media_types:
         queryset = _base_media_queryset(
@@ -433,6 +458,12 @@ def collect_matching_item_ids(owner, normalized_rules: dict) -> set[int]:
                 collected_item_ids=collected_item_ids,
                 collected_episode_pairs=collected_episode_pairs,
             ):
+                continue
+
+            if tag_included_ids is not None and item.id not in tag_included_ids:
+                continue
+
+            if tag_excluded_ids is not None and item.id in tag_excluded_ids:
                 continue
 
             matched_ids.add(item.id)
@@ -471,6 +502,25 @@ def item_matches_rules(
     today = timezone.localdate()
     if not _matches_item_filters(item, normalized_rules, today):
         return False
+
+    tag_filter = _normalize_filter_value(normalized_rules.get("tag"))
+    tag_exclude = _normalize_filter_value(normalized_rules.get("tag_exclude"))
+    if tag_filter:
+        has_tag = ItemTag.objects.filter(
+            tag__user=owner,
+            tag__name__iexact=tag_filter,
+            item=item,
+        ).exists()
+        if not has_tag:
+            return False
+    if tag_exclude:
+        has_excluded_tag = ItemTag.objects.filter(
+            tag__user=owner,
+            tag__name__iexact=tag_exclude,
+            item=item,
+        ).exists()
+        if has_excluded_tag:
+            return False
 
     collection_filter = normalized_rules.get("collection", "all")
     if collection_filter != "all":
@@ -686,5 +736,13 @@ def build_rule_filter_data(owner, media_types: list[str], status: str, search: s
 
     if has_unknown_year:
         filter_data["years"].append({"value": "unknown", "label": "Unknown"})
+
+    from app.models import Tag
+
+    filter_data["tags"] = list(
+        Tag.objects.filter(user=owner)
+        .values_list("name", flat=True)
+        .order_by("name")
+    )
 
     return filter_data

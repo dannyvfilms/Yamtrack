@@ -23,6 +23,7 @@ from app.models import (
     Item,
     ItemPersonCredit,
     ItemStudioCredit,
+    ItemTag,
     Manga,
     MediaTypes,
     MetadataBackfillField,
@@ -145,6 +146,16 @@ def sync_smart_lists_on_collection_change(sender, instance, **kwargs):  # noqa: 
         items_to_sync.extend(related_show_items)
 
     _sync_owner_smart_lists_for_items(owner, items_to_sync)
+
+
+@receiver([post_save, post_delete], sender=ItemTag)
+def sync_smart_lists_on_item_tag_change(sender, instance, **kwargs):  # noqa: ARG001
+    """Incrementally update smart lists when a tag is applied to or removed from an item."""
+    owner = getattr(getattr(instance, "tag", None), "user", None)
+    item = getattr(instance, "item", None)
+    if not owner or not item:
+        return
+    _sync_owner_smart_lists_for_items(owner, [item])
 
 
 @receiver([post_save, post_delete], sender=Episode)

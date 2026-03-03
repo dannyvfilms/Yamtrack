@@ -571,6 +571,8 @@ def _smart_list_detail_response(
                 "platform": request.GET.get("platform", saved_rules["platform"]),
                 "origin": request.GET.get("origin", saved_rules["origin"]),
                 "format": request.GET.get("format", saved_rules["format"]),
+                "tag": request.GET.get("tag", saved_rules["tag"]),
+                "tag_exclude": request.GET.get("tag_exclude", saved_rules["tag_exclude"]),
                 "search": request.GET.get("q", saved_rules["search"]),
             },
             custom_list.owner,

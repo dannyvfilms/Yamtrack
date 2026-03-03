@@ -3765,3 +3765,66 @@ class CollectionEntry(models.Model):
 
     def __str__(self):
         return f"{self.user.username} - {self.item.title}"
+
+
+class Tag(models.Model):
+    """User-defined tag for organizing media items."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="tags",
+    )
+    name = models.CharField(max_length=50)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+        constraints = [
+            UniqueConstraint(
+                models.functions.Lower("name"),
+                "user",
+                name="app_tag_unique_user_name_ci",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["user", "name"]),
+        ]
+
+    def __str__(self):
+        return self.name
+
+    def save(self, *args, **kwargs):
+        self.name = " ".join(self.name.split())
+        super().save(*args, **kwargs)
+
+
+class ItemTag(models.Model):
+    """Join table linking tags to items for a user."""
+
+    tag = models.ForeignKey(
+        Tag,
+        on_delete=models.CASCADE,
+        related_name="item_tags",
+    )
+    item = models.ForeignKey(
+        Item,
+        on_delete=models.CASCADE,
+        related_name="item_tags",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            UniqueConstraint(
+                fields=["tag", "item"],
+                name="app_itemtag_unique_tag_item",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["item", "tag"]),
+        ]
+
+    def __str__(self):
+        return f"{self.tag.name} -> {self.item.title}"

@@ -54,7 +54,9 @@
     --color-indigo-500: oklch(58.5% 0.233 277.117);
     --color-indigo-600: oklch(51.1% 0.262 276.966);
     --color-indigo-700: oklch(45.7% 0.24 277.023);
+    --color-violet-500: oklch(60.6% 0.25 292.717);
     --color-violet-600: oklch(54.1% 0.281 293.009);
+    --color-violet-700: oklch(49.1% 0.27 292.581);
     --color-purple-400: oklch(71.4% 0.203 305.504);
     --color-fuchsia-400: oklch(74% 0.238 322.16);
     --color-fuchsia-600: oklch(59.1% 0.293 322.896);
@@ -1498,6 +1500,9 @@
   .bg-\[\#1a1d20\] {
     background-color: #1a1d20;
   }
+  .bg-\[\#1e2328\] {
+    background-color: #1e2328;
+  }
   .bg-\[\#1f2328\] {
     background-color: #1f2328;
   }
@@ -2781,6 +2786,20 @@
       }
     }
   }
+  .hover\:bg-violet-500 {
+    &:hover {
+      @media (hover: hover) {
+        background-color: var(--color-violet-500);
+      }
+    }
+  }
+  .hover\:bg-violet-700 {
+    &:hover {
+      @media (hover: hover) {
+        background-color: var(--color-violet-700);
+      }
+    }
+  }
   .hover\:text-blue-300 {
     &:hover {
       @media (hover: hover) {
@@ -2891,6 +2910,14 @@
     &:hover {
       @media (hover: hover) {
         --tw-shadow: 0 0 15px var(--tw-shadow-color, rgba(99,102,241,0.5));
+        box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
+      }
+    }
+  }
+  .hover\:shadow-\[0_0_15px_rgba\(139\,92\,246\,0\.5\)\] {
+    &:hover {
+      @media (hover: hover) {
+        --tw-shadow: 0 0 15px var(--tw-shadow-color, rgba(139,92,246,0.5));
         box-shadow: var(--tw-inset-shadow), var(--tw-inset-ring-shadow), var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow);
       }
     }
@@ -3448,6 +3475,11 @@
       gap: calc(var(--spacing) * 10);
     }
   }
+  .md\:gap-x-1 {
+    @media (width >= 48rem) {
+      column-gap: calc(var(--spacing) * 1);
+    }
+  }
   .md\:gap-x-2 {
     @media (width >= 48rem) {
       column-gap: calc(var(--spacing) * 2);
@@ -3569,6 +3601,11 @@
         margin-block-start: calc(calc(var(--spacing) * 3) * var(--tw-space-y-reverse));
         margin-block-end: calc(calc(var(--spacing) * 3) * calc(1 - var(--tw-space-y-reverse)));
       }
+    }
+  }
+  .lg\:gap-x-3 {
+    @media (width >= 64rem) {
+      column-gap: calc(var(--spacing) * 3);
     }
   }
   .lg\:gap-x-5 {

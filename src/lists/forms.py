@@ -33,7 +33,7 @@ class CustomListForm(forms.ModelForm):
     )
     tags = TagsField(
         required=False,
-        label="Tags",
+        label="List Tags",
         help_text="Group lists on your public profile",
         widget=s2forms.Select2TagWidget(
             attrs={

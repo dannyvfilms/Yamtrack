@@ -1,0 +1,35 @@
+
+<div class="bg-[#2a2f35] p-6 rounded-lg max-h-[70svh] overflow-y-auto">
+  <div class="flex items-center justify-between mb-6">
+    <h2 class="text-2xl font-bold text-white">Tags</h2>
+    <button class="text-gray-400 hover:text-white cursor-pointer"
+            @click="tagsOpen = false">{% include "app/icons/x.svg" with classes="w-6 h-6" %}</button>
+  </div>
+  <ul class="space-y-3">
+    {% for tag in user_tags %}
+      <li class="flex items-center justify-between bg-[#39404b] p-3 rounded-md gap-1">
+        <span class="text-white">{{ tag.name }}</span>
+        {% include "app/components/tag_item_button.html" with has_tag=tag.has_tag %}
+      </li>
+    {% empty %}
+      <li class="text-gray-200">No tags yet. Create one below.</li>
+    {% endfor %}
+  </ul>
+  <form hx-post="{% url 'tag_create' %}"
+        hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+        hx-target="closest div.bg-\[\#2a2f35\]"
+        hx-swap="outerHTML"
+        class="mt-4 flex gap-2">
+    {% csrf_token %}
+    <input type="hidden" name="item_id" value="{{ item.id }}">
+    <input type="text" name="name"
+           placeholder="New tag..."
+           maxlength="50"
+           required
+           class="flex-1 px-3 py-2 rounded-md bg-[#1e2328] text-sm text-gray-200 placeholder-gray-500 border border-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+    <button type="submit"
+            class="px-3 py-2 bg-violet-600 text-white text-sm rounded-md hover:bg-violet-700 cursor-pointer">
+      Add
+    </button>
+  </form>
+</div>

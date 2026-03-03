@@ -249,4 +249,22 @@ urlpatterns = [
         views.collection_status_api,
         name="collection_status_api",
     ),
+    # Tag endpoints
+    path(
+        "tags_modal/<source:source>/<media_type:media_type>/<path:media_id>/<int:season_number>/<int:episode_number>",
+        views.tags_modal,
+        name="tags_modal",
+    ),
+    path(
+        "tags_modal/<source:source>/<media_type:media_type>/<path:media_id>/<int:season_number>",
+        views.tags_modal,
+        name="tags_modal",
+    ),
+    path(
+        "tags_modal/<source:source>/<media_type:media_type>/<path:media_id>",
+        views.tags_modal,
+        name="tags_modal",
+    ),
+    path("tag_item_toggle", views.tag_item_toggle, name="tag_item_toggle"),
+    path("tag_create", views.tag_create, name="tag_create"),
 ]

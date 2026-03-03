@@ -69,6 +69,7 @@ from app.models import (
     Game,
     Item,
     ItemPersonCredit,
+    ItemTag,
     Manga,
     MediaTypes,
     Movie,
@@ -77,6 +78,7 @@ from app.models import (
     Season,
     Sources,
     Status,
+    Tag,
     Track,
 )
 from app.providers import comicvine, hardcover, mangaupdates, manual, openlibrary, services, tmdb
@@ -584,7 +586,9 @@ def media_list(request, media_type):
     origin_filter = (request.GET.get("origin") or "").strip()
     format_filter = (request.GET.get("format") or "").strip()
     author_filter = (request.GET.get("author") or "").strip()
-    
+    tag_filter = (request.GET.get("tag") or "").strip()
+    tag_exclude_filter = (request.GET.get("tag_exclude") or "").strip()
+
     search_query = request.GET.get("search", "")
     try:
         page = int(request.GET.get("page", 1))
@@ -958,6 +962,34 @@ def media_list(request, media_type):
         "audiobook": "Audiobook",
     }
 
+    # Pre-fetch tag item IDs for include/exclude filters
+    tag_included_ids = None
+    tag_excluded_ids = None
+    if tag_filter:
+        tag_included_ids = set(
+            ItemTag.objects.filter(
+                tag__user=request.user,
+                tag__name__iexact=tag_filter,
+            ).values_list("item_id", flat=True)
+        )
+    if tag_exclude_filter:
+        tag_excluded_ids = set(
+            ItemTag.objects.filter(
+                tag__user=request.user,
+                tag__name__iexact=tag_exclude_filter,
+            ).values_list("item_id", flat=True)
+        )
+
+    def apply_tag_filter(media_items, included_ids, excluded_ids):
+        if included_ids is None and excluded_ids is None:
+            return media_items
+        result = media_items
+        if included_ids is not None:
+            result = [m for m in result if m.item_id in included_ids]
+        if excluded_ids is not None:
+            result = [m for m in result if m.item_id not in excluded_ids]
+        return result
+
     def build_filter_data_from_items(media_items):
         from app.models import Sources
 
@@ -1129,6 +1161,12 @@ def media_list(request, media_type):
         MediaTypes.MANGA.value,
         MediaTypes.COMIC.value,
     )
+    user_tags = list(
+        Tag.objects.filter(user=request.user)
+        .values_list("name", flat=True)
+        .order_by("name")
+    )
+    filter_data["tags"] = user_tags
     media_list = apply_rating_filter(media_list, rating_filter)
     media_list = apply_collection_filter(media_list, collection_filter, request.user, media_type)
     media_list = apply_genre_filter(media_list, genre_filter)
@@ -1143,6 +1181,7 @@ def media_list(request, media_type):
     if media_type in (MediaTypes.BOOK.value, MediaTypes.MANGA.value, MediaTypes.COMIC.value):
         media_list = apply_author_filter(media_list, author_filter)
         media_list = apply_format_filter(media_list, format_filter)
+    media_list = apply_tag_filter(media_list, tag_included_ids, tag_excluded_ids)
 
     # Handle time_left sorting for TV shows
     if sort_filter == "time_left" and media_type == MediaTypes.TV.value:
@@ -1163,6 +1202,8 @@ def media_list(request, media_type):
             country_filter,
             platform_filter,
             origin_filter,
+            tag_filter,
+            tag_exclude_filter,
         )
         cached_results = cache.get(cache_key)
 
@@ -1238,6 +1279,8 @@ def media_list(request, media_type):
         "current_origin": origin_filter,
         "current_format": format_filter,
         "current_author": author_filter,
+        "current_tag": tag_filter,
+        "current_tag_exclude": tag_exclude_filter,
         "sort_choices": MediaSortChoices.choices,
         "status_choices": MediaStatusChoices.choices,
         "rating_choices": MEDIA_RATING_CHOICES,
@@ -9547,3 +9590,137 @@ def collection_status_api(request, item_id):
         })
     except Item.DoesNotExist:
         return JsonResponse({"error": "Item not found"}, status=404)
+
+
+@require_GET
+def tags_modal(
+    request,
+    source,
+    media_type,
+    media_id,
+    season_number=None,
+    episode_number=None,
+):
+    """Return the modal showing all user tags and allowing to toggle them on an item."""
+    try:
+        item = Item.objects.get(
+            media_id=media_id,
+            source=source,
+            media_type=media_type,
+            season_number=season_number,
+            episode_number=episode_number,
+        )
+    except Item.DoesNotExist:
+        metadata = services.get_media_metadata(
+            media_type,
+            media_id,
+            source,
+            [season_number],
+            episode_number,
+        )
+        item = Item.objects.create(
+            media_id=media_id,
+            source=source,
+            media_type=media_type,
+            season_number=season_number,
+            episode_number=episode_number,
+            title=metadata["title"],
+            image=metadata["image"],
+        )
+
+    from django.db import models as db_models
+
+    user_tags = (
+        Tag.objects.filter(user=request.user)
+        .annotate(
+            has_tag=db_models.Exists(
+                ItemTag.objects.filter(
+                    tag_id=db_models.OuterRef("id"),
+                    item=item,
+                ),
+            ),
+        )
+        .order_by("name")
+    )
+
+    return render(
+        request,
+        "app/components/fill_tags.html",
+        {"item": item, "user_tags": user_tags},
+    )
+
+
+@require_POST
+def tag_item_toggle(request):
+    """Add or remove a tag from an item."""
+    item_id = request.POST["item_id"]
+    tag_id = request.POST["tag_id"]
+
+    item = get_object_or_404(Item, id=item_id)
+    tag = get_object_or_404(Tag, id=tag_id, user=request.user)
+
+    existing = ItemTag.objects.filter(tag=tag, item=item)
+    if existing.exists():
+        existing.delete()
+        has_tag = False
+    else:
+        ItemTag.objects.create(tag=tag, item=item)
+        has_tag = True
+
+    return render(
+        request,
+        "app/components/tag_item_button.html",
+        {"tag": tag, "item": item, "has_tag": has_tag},
+    )
+
+
+@require_POST
+def tag_create(request):
+    """Create a new tag for the user and optionally apply it to an item."""
+    name = (request.POST.get("name") or "").strip()
+    item_id = request.POST.get("item_id")
+
+    if not name:
+        return HttpResponseBadRequest("Tag name is required.")
+
+    # Check case-insensitive uniqueness
+    if Tag.objects.filter(user=request.user, name__iexact=name).exists():
+        messages.error(request, f'Tag "{name}" already exists.')
+    else:
+        tag = Tag.objects.create(user=request.user, name=name)
+        if item_id:
+            try:
+                item = Item.objects.get(id=item_id)
+                ItemTag.objects.get_or_create(tag=tag, item=item)
+            except Item.DoesNotExist:
+                pass
+
+    # Re-render the full tags modal content
+    if item_id:
+        try:
+            item = Item.objects.get(id=item_id)
+        except Item.DoesNotExist:
+            return HttpResponseBadRequest("Item not found.")
+
+        from django.db import models as db_models
+
+        user_tags = (
+            Tag.objects.filter(user=request.user)
+            .annotate(
+                has_tag=db_models.Exists(
+                    ItemTag.objects.filter(
+                        tag_id=db_models.OuterRef("id"),
+                        item=item,
+                    ),
+                ),
+            )
+            .order_by("name")
+        )
+
+        return render(
+            request,
+            "app/components/fill_tags.html",
+            {"item": item, "user_tags": user_tags},
+        )
+
+    return HttpResponse(status=204)

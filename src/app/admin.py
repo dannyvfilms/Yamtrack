@@ -89,6 +89,8 @@ SpecialModels = [
     "ItemStudioCredit",
     "MetadataBackfillState",
     "CollectionEntry",
+    "Tag",
+    "ItemTag",
 ]
 for model in app_models:
     if (
@@ -193,3 +195,26 @@ class CollectionEntryAdmin(admin.ModelAdmin):
 from app.models import CollectionEntry  # noqa: E402
 
 admin.site.register(CollectionEntry, CollectionEntryAdmin)
+
+
+class TagAdmin(admin.ModelAdmin):
+    """Admin for Tag model."""
+
+    search_fields = ["name", "user__username"]
+    list_display = ["name", "user", "created_at"]
+    list_filter = ["user"]
+    raw_id_fields = ["user"]
+
+
+class ItemTagAdmin(admin.ModelAdmin):
+    """Admin for ItemTag model."""
+
+    search_fields = ["tag__name", "item__title"]
+    list_display = ["tag", "item", "created_at"]
+    raw_id_fields = ["tag", "item"]
+
+
+from app.models import ItemTag, Tag  # noqa: E402
+
+admin.site.register(Tag, TagAdmin)
+admin.site.register(ItemTag, ItemTagAdmin)

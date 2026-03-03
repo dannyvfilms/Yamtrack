@@ -1,0 +1,17 @@
+{% if has_tag %}
+  <button hx-post="{% url 'tag_item_toggle' %}"
+          hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+          hx-vals='{"tag_id": "{{ tag.id }}", "item_id": "{{ item.id }}"}'
+          hx-swap="outerHTML"
+          class="px-3 py-1 rounded transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-opacity-50 bg-violet-600 hover:bg-violet-700">
+    Remove
+  </button>
+{% else %}
+  <button hx-post="{% url 'tag_item_toggle' %}"
+          hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+          hx-vals='{"tag_id": "{{ tag.id }}", "item_id": "{{ item.id }}"}'
+          hx-swap="outerHTML"
+          class="px-3 py-1 rounded transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-opacity-50 bg-gray-500 hover:bg-gray-600">
+    Add
+  </button>
+{% endif %}
