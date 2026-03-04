@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from django.test import TestCase
@@ -244,6 +245,35 @@ class AppTagsTests(TestCase):
                 "2025-04-10 15:00",
             )
 
+    def test_iso_date_format_respects_user_preference(self):
+        """iso_date_format should handle user choice keys without raising."""
+        iso_user = SimpleNamespace(date_format=DateFormatChoices.ISO_8601)
+        month_user = SimpleNamespace(date_format=DateFormatChoices.MONTH_D_YYYY)
+
+        self.assertEqual(
+            app_tags.iso_date_format("2026-03-04", iso_user),
+            "2026-03-04",
+        )
+        self.assertEqual(
+            app_tags.iso_date_format("2026-03-04", month_user),
+            "Mar 04, 2026",
+        )
+        self.assertEqual(
+            app_tags.iso_date_format(timezone.datetime(2026, 3, 4).date(), iso_user),
+            "2026-03-04",
+        )
+        self.assertEqual(
+            app_tags.iso_date_format("not-a-date", iso_user),
+            "not-a-date",
+        )
+
+    def test_match_percent_clamps_and_rounds(self):
+        """match_percent should clamp values to [0,100] and round."""
+        self.assertEqual(app_tags.match_percent(0.9123), 91)
+        self.assertEqual(app_tags.match_percent(1.6), 100)
+        self.assertEqual(app_tags.match_percent(-0.4), 0)
+        self.assertEqual(app_tags.match_percent(None), None)
+
     def test_media_url(self):
         """Test the media_url filter."""
         # Test with object for TV
@@ -306,6 +336,13 @@ class AppTagsTests(TestCase):
         episode_dict_id = app_tags.component_id("card", self.episode_dict)
         self.assertEqual(episode_dict_id, "card-episode-1668-1-1")
 
+        # Objects without season/episode attributes should still resolve safely
+        candidate_like = SimpleNamespace(
+            media_type=MediaTypes.TV.value,
+            media_id="1668",
+        )
+        self.assertEqual(app_tags.component_id("card", candidate_like), "card-tv-1668")
+
     def test_media_view_url(self):
         """Test the media_view_url tag."""
         # Test with object for TV
@@ -361,6 +398,17 @@ class AppTagsTests(TestCase):
             },
         )
         self.assertEqual(podcast_lists_modal, expected_podcast_lists_modal)
+
+        # Objects without season/episode attributes should still resolve safely
+        candidate_like = SimpleNamespace(
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            media_id="1668",
+        )
+        self.assertEqual(
+            app_tags.media_view_url("track_modal", candidate_like),
+            expected_tv_modal,
+        )
 
     def test_unicode_icon(self):
         """Test the unicode_icon tag for all media types."""

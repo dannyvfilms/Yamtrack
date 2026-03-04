@@ -91,6 +91,9 @@ SpecialModels = [
     "CollectionEntry",
     "Tag",
     "ItemTag",
+    "DiscoverApiCache",
+    "DiscoverTasteProfile",
+    "DiscoverRowCache",
 ]
 for model in app_models:
     if (
@@ -218,3 +221,36 @@ from app.models import ItemTag, Tag  # noqa: E402
 
 admin.site.register(Tag, TagAdmin)
 admin.site.register(ItemTag, ItemTagAdmin)
+
+
+class DiscoverApiCacheAdmin(admin.ModelAdmin):
+    """Admin for DiscoverApiCache model."""
+
+    list_display = ["provider", "endpoint", "fetched_at", "expires_at"]
+    list_filter = ["provider", "expires_at"]
+    search_fields = ["provider", "endpoint", "params_hash"]
+
+
+class DiscoverTasteProfileAdmin(admin.ModelAdmin):
+    """Admin for DiscoverTasteProfile model."""
+
+    list_display = ["user", "media_type", "computed_at", "expires_at"]
+    list_filter = ["media_type", "expires_at"]
+    search_fields = ["user__username", "media_type"]
+    raw_id_fields = ["user"]
+
+
+class DiscoverRowCacheAdmin(admin.ModelAdmin):
+    """Admin for DiscoverRowCache model."""
+
+    list_display = ["user", "media_type", "row_key", "built_at", "expires_at"]
+    list_filter = ["media_type", "row_key", "expires_at"]
+    search_fields = ["user__username", "media_type", "row_key"]
+    raw_id_fields = ["user"]
+
+
+from app.models import DiscoverApiCache, DiscoverRowCache, DiscoverTasteProfile  # noqa: E402
+
+admin.site.register(DiscoverApiCache, DiscoverApiCacheAdmin)
+admin.site.register(DiscoverTasteProfile, DiscoverTasteProfileAdmin)
+admin.site.register(DiscoverRowCache, DiscoverRowCacheAdmin)

@@ -323,7 +323,16 @@
               </p>
             {% endif %}
             {% if from_grid %}
-              {% if show_played_chip|default:False and media and media.last_played_at %}
+              {% if subtitle_override or subtitle_match_percent == 0 or subtitle_match_percent %}
+                <p class="media-card-year text-xs text-gray-400 mt-1">
+                  {% if subtitle_override %}
+                    {{ subtitle_override|iso_date_format:user }}
+                  {% endif %}
+                  {% if subtitle_match_percent == 0 or subtitle_match_percent %}
+                    {% if subtitle_override %} • {% endif %}{{ subtitle_match_percent }}% {% if subtitle_match_label %}{{ subtitle_match_label }}{% else %}match{% endif %}
+                  {% endif %}
+                </p>
+              {% elif show_played_chip|default:False and media and media.last_played_at %}
                 <p class="media-card-year text-xs text-gray-400 mt-1">
                   {% if media.play_count and resolved_media_type == MediaTypes.MUSIC.value %}
                     <span class="text-indigo-400 font-medium">{{ media.play_count }} play{{ media.play_count|pluralize }}</span>

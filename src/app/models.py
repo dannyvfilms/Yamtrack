@@ -108,6 +108,21 @@ class Item(CalendarTriggerMixin, models.Model):
     source_material = models.CharField(max_length=100, blank=True, default="", help_text="Source material (Anime)")
     creators = models.JSONField(default=list, blank=True, help_text="Array of creators (Comics)")
     runtime = models.CharField(max_length=50, blank=True, default="", help_text="Formatted runtime string")
+    provider_popularity = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Normalized popularity value from provider metadata",
+    )
+    provider_rating = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Average rating value from provider metadata",
+    )
+    provider_rating_count = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Rating count from provider metadata",
+    )
     metadata_fetched_at = models.DateTimeField(null=True, blank=True, help_text="When metadata was last fetched")
     series_name = models.TextField(null=True, blank=True)
     series_position = models.FloatField(null=True, blank=True)
@@ -3828,3 +3843,95 @@ class ItemTag(models.Model):
 
     def __str__(self):
         return f"{self.tag.name} -> {self.item.title}"
+
+
+class DiscoverApiCache(models.Model):
+    """DB-backed cache for external Discover endpoint payloads."""
+
+    provider = models.CharField(max_length=32)
+    endpoint = models.CharField(max_length=255)
+    params_hash = models.CharField(max_length=64)
+    payload = models.JSONField(default=dict, blank=True)
+    fetched_at = models.DateTimeField(auto_now=True)
+    expires_at = models.DateTimeField()
+
+    class Meta:
+        ordering = ["-fetched_at"]
+        constraints = [
+            UniqueConstraint(
+                fields=["provider", "endpoint", "params_hash"],
+                name="discover_api_cache_unique_endpoint_params",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["provider", "endpoint"]),
+            models.Index(fields=["expires_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.provider}:{self.endpoint}"
+
+
+class DiscoverTasteProfile(models.Model):
+    """Persisted Discover taste profile vectors per user and media type."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="discover_taste_profiles",
+    )
+    media_type = models.CharField(max_length=20, default="all")
+    genre_affinity = models.JSONField(default=dict, blank=True)
+    recent_genre_affinity = models.JSONField(default=dict, blank=True)
+    tag_affinity = models.JSONField(default=dict, blank=True)
+    person_affinity = models.JSONField(default=dict, blank=True)
+    activity_snapshot_at = models.DateTimeField(null=True, blank=True)
+    computed_at = models.DateTimeField(auto_now=True)
+    expires_at = models.DateTimeField()
+
+    class Meta:
+        ordering = ["user_id", "media_type"]
+        constraints = [
+            UniqueConstraint(
+                fields=["user", "media_type"],
+                name="discover_taste_profile_unique_user_media_type",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["user", "media_type"]),
+            models.Index(fields=["expires_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.user_id}:{self.media_type}"
+
+
+class DiscoverRowCache(models.Model):
+    """DB-backed row cache for Discover page rendering."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="discover_row_caches",
+    )
+    media_type = models.CharField(max_length=20, default="all")
+    row_key = models.CharField(max_length=100)
+    payload = models.JSONField(default=dict, blank=True)
+    built_at = models.DateTimeField(auto_now=True)
+    expires_at = models.DateTimeField()
+
+    class Meta:
+        ordering = ["user_id", "media_type", "row_key"]
+        constraints = [
+            UniqueConstraint(
+                fields=["user", "media_type", "row_key"],
+                name="discover_row_cache_unique_user_media_row",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["user", "media_type"]),
+            models.Index(fields=["expires_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.user_id}:{self.media_type}:{self.row_key}"

@@ -1,0 +1,95 @@
+from django.contrib.auth import get_user_model
+from django.test import TestCase
+from unittest.mock import patch
+
+from app.discover.filters import dedupe_candidates, exclude_tracked_items, get_tracked_keys_by_media_type
+from app.discover.schemas import CandidateItem
+from app.models import Item, MediaTypes, Movie, Sources, Status
+
+
+class DiscoverFilterTests(TestCase):
+    """Tests for Discover candidate filtering helpers."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(username="discover-user", password="testpass")
+        self.item = Item.objects.create(
+            media_id="100",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Tracked Movie",
+            image="http://example.com/image.jpg",
+        )
+        with patch("app.models.providers.services.get_media_metadata", return_value={"max_progress": 1}):
+            Movie.objects.create(
+                item=self.item,
+                user=self.user,
+                status=Status.COMPLETED.value,
+            )
+            planning_item = Item.objects.create(
+                media_id="101",
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.MOVIE.value,
+                title="Planning Movie",
+                image="http://example.com/planning.jpg",
+            )
+            Movie.objects.create(
+                item=planning_item,
+                user=self.user,
+                status=Status.PLANNING.value,
+            )
+
+    def test_get_tracked_keys_by_media_type(self):
+        tracked = get_tracked_keys_by_media_type(self.user, MediaTypes.MOVIE.value)
+        self.assertIn((MediaTypes.MOVIE.value, Sources.TMDB.value, "100"), tracked)
+        self.assertNotIn((MediaTypes.MOVIE.value, Sources.TMDB.value, "101"), tracked)
+
+    def test_get_tracked_keys_by_media_type_accepts_custom_statuses(self):
+        tracked = get_tracked_keys_by_media_type(
+            self.user,
+            MediaTypes.MOVIE.value,
+            statuses={Status.COMPLETED.value, Status.DROPPED.value, Status.PLANNING.value},
+        )
+        self.assertIn((MediaTypes.MOVIE.value, Sources.TMDB.value, "100"), tracked)
+        self.assertIn((MediaTypes.MOVIE.value, Sources.TMDB.value, "101"), tracked)
+
+    def test_exclude_tracked_items_filters_candidates(self):
+        tracked = get_tracked_keys_by_media_type(self.user, MediaTypes.MOVIE.value)
+        candidates = [
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source=Sources.TMDB.value,
+                media_id="100",
+                title="Tracked Movie",
+            ),
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source=Sources.TMDB.value,
+                media_id="101",
+                title="New Movie",
+            ),
+        ]
+
+        filtered = exclude_tracked_items(candidates, tracked)
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered[0].media_id, "101")
+
+    def test_dedupe_candidates_respects_seen_set(self):
+        seen = {(MediaTypes.MOVIE.value, Sources.TMDB.value, "100")}
+        candidates = [
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source=Sources.TMDB.value,
+                media_id="100",
+                title="Duplicate",
+            ),
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source=Sources.TMDB.value,
+                media_id="200",
+                title="Unique",
+            ),
+        ]
+
+        deduped = dedupe_candidates(candidates, seen_identities=seen)
+        self.assertEqual(len(deduped), 1)
+        self.assertEqual(deduped[0].media_id, "200")

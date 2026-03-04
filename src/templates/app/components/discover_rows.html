@@ -1,0 +1,14 @@
+{% load app_tags %}
+
+{% if rows %}
+  <div class="space-y-8">
+    {% for row in rows %}
+      {% include "app/components/discover_row.html" with row=row %}
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="rounded-lg border border-gray-700 bg-[#2a2f35] p-6 text-center">
+    <h2 class="text-lg font-semibold text-white">No Discover rows available</h2>
+    <p class="mt-1 text-sm text-gray-400">Try another media type or start tracking more items.</p>
+  </div>
+{% endif %}

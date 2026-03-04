@@ -1,0 +1,22 @@
+{% load app_tags %}
+
+<article class="w-36 shrink-0 snap-start sm:w-40 md:w-44">
+  <a href="{{ candidate|media_url }}"
+     class="block overflow-hidden rounded-lg border border-[#3a4047] bg-[#2a2f35] transition-colors hover:border-indigo-500">
+    <img src="{{ candidate.image|default:IMG_NONE }}"
+         alt="{{ candidate|display_title:user }}"
+         class="h-52 w-full bg-[#3e454d] object-cover sm:h-56 md:h-60">
+    <div class="p-2.5">
+      <p class="line-clamp-2 text-sm font-semibold text-white" title="{{ candidate|display_title:user }}">{{ candidate|display_title:user }}</p>
+      {% if candidate.release_date %}
+        <p class="mt-1 text-xs text-gray-400">{{ candidate.release_date|slice:":4" }}</p>
+      {% elif candidate.anchor_title %}
+        <p class="mt-1 text-xs text-gray-400">Based on {{ candidate.anchor_title }}</p>
+      {% elif candidate.source_reason %}
+        <p class="mt-1 line-clamp-1 text-xs text-gray-400">{{ candidate.source_reason }}</p>
+      {% else %}
+        <p class="mt-1 text-xs text-gray-500">&nbsp;</p>
+      {% endif %}
+    </div>
+  </a>
+</article>

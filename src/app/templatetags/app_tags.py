@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 from django import template
@@ -100,12 +100,25 @@ def iso_date_format(value, user):
 
     If value is not a valid ISO date string, returns the original value.
     """
-    if isinstance(value, str):
-        date_obj = parse_date(value)
-        if date_obj:
-            return formats.date_format(date_obj, user.date_format)
+    if not value or not user:
+        return value
 
-    return value
+    parsed_value = value
+    if isinstance(value, str):
+        parsed_value = parse_date(value)
+        if parsed_value is None:
+            return value
+    elif not isinstance(value, (date, datetime)):
+        return value
+
+    # user_date_format expects datetime-like values for user-specific formatting.
+    if isinstance(parsed_value, date) and not isinstance(parsed_value, datetime):
+        parsed_value = timezone.make_aware(
+            datetime.combine(parsed_value, time.min),
+            timezone.get_current_timezone(),
+        )
+
+    return user_date_format(parsed_value, user)
 
 
 @register.filter
@@ -158,6 +171,19 @@ def score_display(score, user):
     except AttributeError:
         return score
     return formatted if formatted is not None else score
+
+
+@register.filter
+def match_percent(value):
+    """Convert a 0-1 match score into a clamped integer percentage."""
+    if value is None:
+        return None
+    try:
+        normalized = float(value)
+    except (TypeError, ValueError):
+        return None
+    normalized = max(0.0, min(1.0, normalized))
+    return int(round(normalized * 100))
 
 
 @register.filter
@@ -535,10 +561,12 @@ def media_view_url(view_name, media):
         if "episode_number" in media:
             kwargs["episode_number"] = media["episode_number"]
     else:
-        if media.season_number is not None:
-            kwargs["season_number"] = media.season_number
-        if media.episode_number is not None:
-            kwargs["episode_number"] = media.episode_number
+        season_number = getattr(media, "season_number", None)
+        episode_number = getattr(media, "episode_number", None)
+        if season_number is not None:
+            kwargs["season_number"] = season_number
+        if episode_number is not None:
+            kwargs["episode_number"] = episode_number
 
     # collection_modal URL does not accept season/episode in the path
     if view_name == "collection_modal":
@@ -569,10 +597,12 @@ def component_id(component_type, media, instance_id=None):
         if "episode_number" in media:
             component_id += f"-{media['episode_number']}"
     else:
-        if media.season_number is not None:
-            component_id += f"-{media.season_number}"
-        if media.episode_number is not None:
-            component_id += f"-{media.episode_number}"
+        season_number = getattr(media, "season_number", None)
+        episode_number = getattr(media, "episode_number", None)
+        if season_number is not None:
+            component_id += f"-{season_number}"
+        if episode_number is not None:
+            component_id += f"-{episode_number}"
 
     # Add instance id if provided
     if instance_id:

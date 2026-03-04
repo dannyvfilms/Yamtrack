@@ -33,6 +33,7 @@ from app import (
     cache_utils,
     credits,
     config,
+    discover,
     helpers,
     history_cache,
     history_processor,
@@ -98,6 +99,19 @@ MEDIA_RATING_CHOICES = (
 RECENTLY_NOT_RATED_KEY = "recently_not_rated"
 RECENTLY_NOT_RATED_LABEL = "Recently Played - Not Rated"
 RECENTLY_NOT_RATED_DAYS = 7
+
+DISCOVER_ALLOWED_MEDIA_TYPES = {
+    MediaTypes.MOVIE.value,
+    MediaTypes.TV.value,
+    MediaTypes.ANIME.value,
+    MediaTypes.MUSIC.value,
+    MediaTypes.PODCAST.value,
+    MediaTypes.BOOK.value,
+    MediaTypes.COMIC.value,
+    MediaTypes.MANGA.value,
+    MediaTypes.GAME.value,
+    MediaTypes.BOARDGAME.value,
+}
 
 
 class _EmptyHistoryProxy:
@@ -474,6 +488,75 @@ def home(request):
             "active_playback_card": None,
         }
         return render(request, "app/home.html", context)
+
+
+def _coerce_discover_media_type(raw_media_type: str | None) -> str:
+    media_type = (raw_media_type or "all").strip().lower()
+    if media_type == "all":
+        return "all"
+    if media_type in DISCOVER_ALLOWED_MEDIA_TYPES:
+        return media_type
+    return "all"
+
+
+def _discover_media_options(user):
+    enabled_media_types = [
+        media_type
+        for media_type in user.get_enabled_media_types()
+        if media_type in DISCOVER_ALLOWED_MEDIA_TYPES
+    ]
+    if not enabled_media_types:
+        enabled_media_types = sorted(DISCOVER_ALLOWED_MEDIA_TYPES)
+    return [
+        {"value": "all", "label": "All Media"},
+        *[
+            {
+                "value": media_type,
+                "label": app_tags.media_type_readable_plural(media_type),
+            }
+            for media_type in enabled_media_types
+        ],
+    ]
+
+
+@login_required
+@require_GET
+def discover_page(request):
+    """Render Discover page with selected media rows."""
+    selected_media_type = _coerce_discover_media_type(request.GET.get("media_type"))
+    show_more = request.GET.get("show_more") in {"1", "true", "True"}
+    payload = discover.get_discover_payload(
+        request.user,
+        selected_media_type,
+        show_more=show_more,
+    )
+
+    context = {
+        "selected_media_type": payload.media_type,
+        "show_more": payload.show_more,
+        "rows": payload.rows,
+        "discover_media_options": _discover_media_options(request.user),
+    }
+    return render(request, "app/discover.html", context)
+
+
+@login_required
+@require_GET
+def discover_rows(request):
+    """Render Discover rows partial for HTMX row switching."""
+    selected_media_type = _coerce_discover_media_type(request.GET.get("media_type"))
+    show_more = request.GET.get("show_more") in {"1", "true", "True"}
+    rows = discover.get_discover_rows(
+        request.user,
+        selected_media_type,
+        show_more=show_more,
+    )
+    context = {
+        "selected_media_type": selected_media_type,
+        "show_more": show_more,
+        "rows": rows,
+    }
+    return render(request, "app/components/discover_rows.html", context)
 
 
 def active_playback_fragment(request):

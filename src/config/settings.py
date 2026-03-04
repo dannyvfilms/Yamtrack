@@ -818,6 +818,14 @@ CELERY_BEAT_SCHEDULE = {
             "credits_scan_multiplier": 20,
         },
     },
+    "warm_discover_api_cache": {
+        "task": "Warm Discover API Cache",
+        "schedule": 60 * 60,  # every 1 hour
+    },
+    "refresh_discover_profiles": {
+        "task": "Refresh Discover Profiles",
+        "schedule": crontab(hour=4, minute=0),  # every day at 4 AM
+    },
 }
 # Allauth settings
 if CSRF_TRUSTED_ORIGINS:

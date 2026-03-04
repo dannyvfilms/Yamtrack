@@ -130,6 +130,19 @@
                 </a>
               </li>
 
+              {% url 'discover' as discover_url %}
+              <li>
+                <a href="{{ discover_url }}"
+                   class="flex items-center space-x-3 px-4 py-2 rounded-md transition-colors duration-200 text-sm {% if request.path == discover_url %}text-white bg-[#2c3136]{% else %}text-gray-400 hover:text-white hover:bg-[#23272b]{% endif %}">
+                  {% if request.path|str_equals:discover_url %}
+                    {% include "app/icons/four-square.svg" with classes="w-5 h-5 text-indigo-400 " %}
+                  {% else %}
+                    {% include "app/icons/four-square.svg" with classes="w-5 h-5" %}
+                  {% endif %}
+                  <span>Discover</span>
+                </a>
+              </li>
+
               {% get_sidebar_media_types user as sidebar_media_types %}
               {% for item in sidebar_media_types %}
                 <li>

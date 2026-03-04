@@ -2774,3 +2774,120 @@ def backfill_item_metadata_task(batch_size: int = 10):
             f"{remaining_release} release items remaining"
         ),
     }
+
+
+@shared_task(name="Refresh Discover Rows")
+def refresh_discover_rows(user_id: int, media_type: str, row_keys: list[str], show_more: bool = False):
+    """Refresh selected Discover rows for a user."""
+    from app.discover.service import refresh_rows_for_user
+
+    user_model = get_user_model()
+    user = user_model.objects.filter(id=user_id).first()
+    if not user:
+        logger.warning("discover_refresh_rows_user_missing user_id=%s", user_id)
+        return {"refreshed": 0, "reason": "missing_user"}
+
+    refreshed = refresh_rows_for_user(
+        user,
+        media_type,
+        row_keys or [],
+        show_more=show_more,
+    )
+    return {
+        "refreshed": refreshed,
+        "user_id": user_id,
+        "media_type": media_type,
+    }
+
+
+@shared_task(name="Refresh Discover Profiles")
+def refresh_discover_profiles(user_ids: list[int] | None = None, media_types: list[str] | None = None):
+    """Refresh Discover taste profiles for users and media types."""
+    from app.discover.profile import get_or_compute_taste_profile
+    from app.discover.registry import ALL_MEDIA_KEY
+
+    user_model = get_user_model()
+    users = user_model.objects.all().order_by("id")
+    if user_ids:
+        users = users.filter(id__in=user_ids)
+
+    target_media_types = media_types or [ALL_MEDIA_KEY]
+    refreshed = 0
+    for user in users.iterator(chunk_size=200):
+        for media_type in target_media_types:
+            get_or_compute_taste_profile(user, media_type, force=True)
+            refreshed += 1
+
+    return {
+        "profiles_refreshed": refreshed,
+        "users_count": len(user_ids) if user_ids else users.count(),
+        "media_types": target_media_types,
+    }
+
+
+@shared_task(name="Warm Discover API Cache")
+def warm_discover_api_cache():
+    """Warm provider-backed Discover API cache for core TMDb and Trakt rows."""
+    from app.discover.providers.trakt_adapter import TraktDiscoverAdapter
+    from app.discover.providers.tmdb_adapter import TMDbDiscoverAdapter
+
+    adapter = TMDbDiscoverAdapter()
+    trakt_adapter = TraktDiscoverAdapter()
+    warmed = 0
+    failed = 0
+    for media_type in (MediaTypes.MOVIE.value, MediaTypes.TV.value):
+        for fetcher in (
+            adapter.trending,
+            adapter.current_cycle,
+            adapter.upcoming,
+            adapter.top_rated,
+        ):
+            try:
+                fetcher(media_type, limit=20)
+                warmed += 1
+            except Exception as error:  # noqa: BLE001
+                failed += 1
+                logger.warning(
+                    "discover_api_warm_failed media_type=%s fetcher=%s error=%s",
+                    media_type,
+                    getattr(fetcher, "__name__", "unknown"),
+                    error,
+                )
+
+    try:
+        trakt_adapter.movie_watched_weekly(limit=25)
+        warmed += 1
+    except Exception as error:  # noqa: BLE001
+        failed += 1
+        logger.warning(
+            "discover_api_warm_failed media_type=%s fetcher=%s error=%s",
+            MediaTypes.MOVIE.value,
+            "movie_watched_weekly",
+            error,
+        )
+
+    try:
+        trakt_adapter.movie_popular(page=1, limit=25)
+        warmed += 1
+    except Exception as error:  # noqa: BLE001
+        failed += 1
+        logger.warning(
+            "discover_api_warm_failed media_type=%s fetcher=%s error=%s",
+            MediaTypes.MOVIE.value,
+            "movie_popular",
+            error,
+        )
+
+    try:
+        trakt_adapter.movie_anticipated(page=1, limit=25)
+        warmed += 1
+    except Exception as error:  # noqa: BLE001
+        failed += 1
+        logger.warning(
+            "discover_api_warm_failed media_type=%s fetcher=%s error=%s",
+            MediaTypes.MOVIE.value,
+            "movie_anticipated",
+            error,
+        )
+
+    return {"warmed": warmed, "failed": failed}

@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% load app_tags %}
+
+{% block title %}
+  Discover - Yamtrack
+{% endblock title %}
+
+{% block content %}
+  <div x-data="discoverPage('{{ selected_media_type }}', {{ show_more|yesno:'true,false' }})" class="space-y-6">
+    <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <h1 class="text-3xl font-bold text-white">Discover</h1>
+        <p class="mt-1 text-sm text-gray-400">Recommendations powered by global trends and your local activity.</p>
+      </div>
+      <button type="button"
+              @click="toggleShowMore()"
+              class="inline-flex items-center justify-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700 cursor-pointer"
+              x-text="showMore ? 'Show Fewer Rows' : 'Show More Rows'"></button>
+    </div>
+
+    <div class="flex flex-wrap gap-2">
+      {% for option in discover_media_options %}
+        <button type="button"
+                @click="switchMedia('{{ option.value }}')"
+                class="rounded-full border px-3 py-1.5 text-sm transition-colors cursor-pointer"
+                :class="selectedMedia === '{{ option.value }}'
+                  ? 'border-indigo-500 bg-indigo-600 text-white'
+                  : 'border-gray-700 bg-[#2a2f35] text-gray-300 hover:border-gray-500 hover:text-white'">
+          {{ option.label }}
+        </button>
+      {% endfor %}
+    </div>
+
+    <div id="discover-rows">
+      {% include "app/components/discover_rows.html" with rows=rows selected_media_type=selected_media_type show_more=show_more %}
+    </div>
+  </div>
+{% endblock content %}
+
+{% block js %}
+  <script>
+    function discoverPage(initialMedia, initialShowMore) {
+      return {
+        selectedMedia: initialMedia || "all",
+        showMore: Boolean(initialShowMore),
+        updateUrl() {
+          const params = new URLSearchParams();
+          params.set("media_type", this.selectedMedia);
+          params.set("show_more", this.showMore ? "1" : "0");
+          const query = params.toString();
+          window.history.replaceState({}, "", `${window.location.pathname}?${query}`);
+        },
+        fetchRows() {
+          const params = new URLSearchParams();
+          params.set("media_type", this.selectedMedia);
+          params.set("show_more", this.showMore ? "1" : "0");
+          htmx.ajax("GET", `{% url 'discover_rows' %}?${params.toString()}`, {
+            target: "#discover-rows",
+            swap: "innerHTML",
+          });
+          this.updateUrl();
+        },
+        switchMedia(mediaType) {
+          this.selectedMedia = mediaType;
+          this.fetchRows();
+        },
+        toggleShowMore() {
+          this.showMore = !this.showMore;
+          this.fetchRows();
+        },
+      };
+    }
+  </script>
+{% endblock js %}
