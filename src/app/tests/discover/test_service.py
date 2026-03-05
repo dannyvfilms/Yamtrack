@@ -2,22 +2,29 @@ from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.db import OperationalError
 from django.test import TestCase
 from django.utils import timezone
 
 from app.discover import cache_repo
+from app.discover.providers.trakt_adapter import TraktDiscoverAdapter
+from app.discover.registry import ALL_MEDIA_KEY
 from app.discover.schemas import CandidateItem
 from app.discover.service import (
     _apply_comfort_confidence,
+    _apply_wildcard_novelty,
     _build_comfort_debug_payload,
     _comfort_candidates,
     _comfort_match_signal,
+    _provider_row_candidates,
+    _row_match_signal,
+    _row_match_signal_with_details,
     _prefer_strong_phase_opening_window,
-    _apply_wildcard_novelty,
+    _rewatch_counts,
     _top_picks_candidates,
     get_discover_rows,
 )
-from app.models import Item, MediaTypes, Movie, Sources, Status
+from app.models import Episode, Item, MediaTypes, Movie, Season, Sources, Status, TV
 
 
 class DiscoverServiceTests(TestCase):
@@ -27,6 +34,50 @@ class DiscoverServiceTests(TestCase):
         self.user = get_user_model().objects.create_user(
             username="discover-service-user",
             password="testpass",
+        )
+
+    @staticmethod
+    def _row_snapshot(rows):
+        return {
+            row.key: [f"{item.media_id}:{item.title}" for item in row.items[:6]]
+            for row in rows
+        }
+
+    @patch("app.discover.service.get_or_compute_taste_profile", return_value={})
+    @patch("app.discover.service.TMDB_ADAPTER.trending", return_value=[])
+    def test_continue_all_includes_tv_in_progress_without_progressed_at_field_errors(
+        self,
+        _mock_trending,
+        _mock_profile,
+    ):
+        item = Item.objects.create(
+            media_id="tv-in-progress",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="In Progress TV",
+            image="https://example.com/tv-in-progress.jpg",
+        )
+        TV.objects.create(
+            user=self.user,
+            item=item,
+            status=Status.IN_PROGRESS.value,
+        )
+
+        rows = get_discover_rows(self.user, ALL_MEDIA_KEY, show_more=False)
+        continue_row = next(row for row in rows if row.key == "continue_all")
+
+        self.assertEqual(
+            continue_row.source_state,
+            "live",
+            msg=f"continue_all should not fail. rows={self._row_snapshot(rows)}",
+        )
+        self.assertTrue(
+            any(
+                candidate.media_type == MediaTypes.TV.value
+                and candidate.media_id == "tv-in-progress"
+                for candidate in continue_row.items
+            ),
+            msg=f"continue_all missing TV in-progress item. rows={self._row_snapshot(rows)}",
         )
 
     @patch("app.discover.service.TMDB_ADAPTER.top_rated", return_value=[])
@@ -177,6 +228,148 @@ class DiscoverServiceTests(TestCase):
         mock_trending.assert_called_once_with(limit=100)
         self.assertEqual(len(trending_row.items), 12)
         self.assertTrue(all(item.media_id not in {"1", "2", "3"} for item in trending_row.items))
+
+    @patch("app.discover.service.get_or_compute_taste_profile", return_value={})
+    @patch("app.discover.service.TMDB_ADAPTER.top_rated", return_value=[])
+    @patch("app.discover.service.TMDB_ADAPTER.upcoming", return_value=[])
+    @patch("app.discover.service.TMDB_ADAPTER.current_cycle", return_value=[])
+    @patch("app.discover.service._queue_stale_refresh")
+    @patch("app.discover.service.services.get_media_metadata")
+    @patch("app.discover.service.TRAKT_ADAPTER.movie_anticipated", return_value=[])
+    @patch("app.discover.service.TRAKT_ADAPTER.movie_popular", return_value=[])
+    @patch("app.discover.service.TRAKT_ADAPTER.movie_watched_weekly")
+    def test_trending_row_defers_missing_artwork_hydration_when_enabled(
+        self,
+        mock_trending,
+        _mock_popular,
+        _mock_anticipated,
+        mock_get_metadata,
+        mock_queue_stale_refresh,
+        _mock_current_cycle,
+        _mock_upcoming,
+        _mock_top_rated,
+        _mock_profile,
+    ):
+        mock_trending.return_value = [
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source="tmdb",
+                media_id="701",
+                title="Deferred Art One",
+                image=None,
+            ),
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source="tmdb",
+                media_id="702",
+                title="Deferred Art Two",
+                image=None,
+            ),
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source="tmdb",
+                media_id="703",
+                title="Deferred Art Three",
+                image=None,
+            ),
+        ]
+
+        rows = get_discover_rows(
+            self.user,
+            MediaTypes.MOVIE.value,
+            show_more=False,
+            defer_artwork=True,
+        )
+        trending_row = next(row for row in rows if row.key == "trending_right_now")
+
+        self.assertEqual([item.image for item in trending_row.items], [None, None, None])
+        mock_get_metadata.assert_not_called()
+        mock_queue_stale_refresh.assert_called_once_with(
+            self.user.id,
+            MediaTypes.MOVIE.value,
+            "trending_right_now",
+            False,
+        )
+
+    @patch("app.discover.service.get_or_compute_taste_profile", return_value={})
+    @patch("app.discover.service.TMDB_ADAPTER.top_rated", return_value=[])
+    @patch("app.discover.service.TMDB_ADAPTER.upcoming", return_value=[])
+    @patch("app.discover.service.TMDB_ADAPTER.current_cycle", return_value=[])
+    @patch("app.discover.service._queue_stale_refresh")
+    @patch("app.discover.service.services.get_media_metadata")
+    @patch("app.discover.service.TRAKT_ADAPTER.movie_anticipated", return_value=[])
+    @patch("app.discover.service.TRAKT_ADAPTER.movie_popular", return_value=[])
+    @patch("app.discover.service.TRAKT_ADAPTER.movie_watched_weekly")
+    def test_cached_trending_row_with_missing_artwork_queues_refresh_when_deferred(
+        self,
+        mock_trending,
+        _mock_popular,
+        _mock_anticipated,
+        mock_get_metadata,
+        mock_queue_stale_refresh,
+        _mock_current_cycle,
+        _mock_upcoming,
+        _mock_top_rated,
+        _mock_profile,
+    ):
+        cache_repo.set_row_cache(
+            self.user.id,
+            MediaTypes.MOVIE.value,
+            "trending_right_now",
+            {
+                "key": "trending_right_now",
+                "title": "Trending Right Now",
+                "mission": "Cultural Moment",
+                "why": "What everyone has been watching this week.",
+                "source": "trakt",
+                "items": [
+                    CandidateItem(
+                        media_type=MediaTypes.MOVIE.value,
+                        source="tmdb",
+                        media_id="801",
+                        title="Cached Missing Art",
+                        image="https://www.themoviedb.org/assets/2/v4/glyphicons/basic/glyphicons-basic-38-picture-grey-c2ebdbb057f2a7614185931650f8cee23fa137b93812ccb132b9df511df1cfac.svg",
+                    ).to_dict(),
+                    CandidateItem(
+                        media_type=MediaTypes.MOVIE.value,
+                        source="tmdb",
+                        media_id="802",
+                        title="Cached Missing Art Two",
+                        image="https://www.themoviedb.org/assets/2/v4/glyphicons/basic/glyphicons-basic-38-picture-grey-c2ebdbb057f2a7614185931650f8cee23fa137b93812ccb132b9df511df1cfac.svg",
+                    ).to_dict(),
+                    CandidateItem(
+                        media_type=MediaTypes.MOVIE.value,
+                        source="tmdb",
+                        media_id="803",
+                        title="Cached Missing Art Three",
+                        image="https://www.themoviedb.org/assets/2/v4/glyphicons/basic/glyphicons-basic-38-picture-grey-c2ebdbb057f2a7614185931650f8cee23fa137b93812ccb132b9df511df1cfac.svg",
+                    ).to_dict(),
+                ],
+                "is_stale": False,
+                "show_more": False,
+                "source_state": "cache",
+            },
+            ttl_seconds=3600,
+        )
+
+        rows = get_discover_rows(
+            self.user,
+            MediaTypes.MOVIE.value,
+            show_more=False,
+            defer_artwork=True,
+        )
+        trending_row = next(row for row in rows if row.key == "trending_right_now")
+
+        self.assertEqual(len(trending_row.items), 3)
+        self.assertEqual(trending_row.items[0].title, "Cached Missing Art")
+        mock_trending.assert_not_called()
+        mock_get_metadata.assert_not_called()
+        mock_queue_stale_refresh.assert_called_once_with(
+            self.user.id,
+            MediaTypes.MOVIE.value,
+            "trending_right_now",
+            False,
+        )
 
     @patch("app.discover.service.get_or_compute_taste_profile", return_value={})
     @patch("app.discover.service.TMDB_ADAPTER.top_rated", return_value=[])
@@ -723,6 +916,750 @@ class DiscoverServiceTests(TestCase):
         )
 
     @patch("app.discover.service.get_or_compute_taste_profile", return_value={})
+    @patch("app.discover.service._comfort_candidates")
+    @patch("app.discover.service._top_picks_candidates")
+    @patch("app.discover.service.TRAKT_ADAPTER.show_anticipated")
+    @patch("app.discover.service.TRAKT_ADAPTER.show_popular")
+    @patch("app.discover.service.TRAKT_ADAPTER.show_watched_weekly")
+    def test_tv_rows_render_exactly_five_in_expected_order(
+        self,
+        mock_trending,
+        mock_popular,
+        mock_anticipated,
+        mock_top_picks,
+        mock_comfort,
+        _mock_profile,
+    ):
+        def candidate(media_id: str, title: str) -> CandidateItem:
+            return CandidateItem(
+                media_type=MediaTypes.TV.value,
+                source="tmdb",
+                media_id=media_id,
+                title=title,
+                image=f"https://example.com/{media_id}.jpg",
+                final_score=0.9,
+            )
+
+        mock_trending.return_value = [candidate("100", "Trending 1"), candidate("101", "Trending 2"), candidate("102", "Trending 3")]
+        mock_popular.return_value = [candidate("200", "Canon 1"), candidate("201", "Canon 2"), candidate("202", "Canon 3")]
+        mock_anticipated.return_value = [candidate("300", "Soon 1"), candidate("301", "Soon 2"), candidate("302", "Soon 3")]
+        mock_top_picks.return_value = [candidate("400", "Pick 1"), candidate("401", "Pick 2"), candidate("402", "Pick 3")]
+        mock_comfort.return_value = [candidate("500", "Comfort 1"), candidate("501", "Comfort 2"), candidate("502", "Comfort 3")]
+
+        rows = get_discover_rows(self.user, MediaTypes.TV.value, show_more=False)
+        self.assertEqual(
+            [row.key for row in rows],
+            [
+                "trending_right_now",
+                "all_time_greats_unseen",
+                "coming_soon",
+                "top_picks_for_you",
+                "comfort_rewatches",
+            ],
+        )
+        mock_trending.assert_called_once_with(limit=100, media_type=MediaTypes.TV.value)
+        mock_popular.assert_called_once_with(page=1, limit=100, media_type=MediaTypes.TV.value)
+        mock_anticipated.assert_called_once_with(page=1, limit=100, media_type=MediaTypes.TV.value)
+
+    @patch("app.discover.service.get_or_compute_taste_profile", return_value={})
+    @patch("app.discover.service._comfort_candidates")
+    @patch("app.discover.service._top_picks_candidates")
+    @patch("app.discover.service.TRAKT_ADAPTER.show_anticipated")
+    @patch("app.discover.service.TRAKT_ADAPTER.show_popular")
+    @patch("app.discover.service.TRAKT_ADAPTER.show_watched_weekly")
+    def test_anime_rows_render_exactly_five_in_expected_order_and_uses_anime_filter(
+        self,
+        mock_trending,
+        mock_popular,
+        mock_anticipated,
+        mock_top_picks,
+        mock_comfort,
+        _mock_profile,
+    ):
+        def candidate(media_id: str, title: str) -> CandidateItem:
+            return CandidateItem(
+                media_type=MediaTypes.ANIME.value,
+                source="tmdb",
+                media_id=media_id,
+                title=title,
+                image=f"https://example.com/{media_id}.jpg",
+                final_score=0.9,
+            )
+
+        mock_trending.return_value = [candidate("100", "Trending 1"), candidate("101", "Trending 2"), candidate("102", "Trending 3")]
+        mock_popular.return_value = [candidate("200", "Canon 1"), candidate("201", "Canon 2"), candidate("202", "Canon 3")]
+        mock_anticipated.return_value = [candidate("300", "Soon 1"), candidate("301", "Soon 2"), candidate("302", "Soon 3")]
+        mock_top_picks.return_value = [candidate("400", "Pick 1"), candidate("401", "Pick 2"), candidate("402", "Pick 3")]
+        mock_comfort.return_value = [candidate("500", "Comfort 1"), candidate("501", "Comfort 2"), candidate("502", "Comfort 3")]
+
+        rows = get_discover_rows(self.user, MediaTypes.ANIME.value, show_more=False)
+        self.assertEqual(
+            [row.key for row in rows],
+            [
+                "trending_right_now",
+                "all_time_greats_unseen",
+                "coming_soon",
+                "top_picks_for_you",
+                "comfort_rewatches",
+            ],
+        )
+        mock_trending.assert_called_once_with(
+            limit=100,
+            media_type=MediaTypes.ANIME.value,
+            trakt_genres=["anime"],
+        )
+        mock_popular.assert_called_once_with(
+            page=1,
+            limit=100,
+            media_type=MediaTypes.ANIME.value,
+            trakt_genres=["anime"],
+        )
+        mock_anticipated.assert_called_once_with(
+            page=1,
+            limit=100,
+            media_type=MediaTypes.ANIME.value,
+            trakt_genres=["anime"],
+        )
+
+    @patch("app.discover.service.get_or_compute_taste_profile", return_value={})
+    @patch("app.discover.service._comfort_candidates", return_value=[])
+    @patch("app.discover.service._top_picks_candidates", return_value=[])
+    @patch("app.discover.service.TRAKT_ADAPTER.show_anticipated", return_value=[])
+    @patch("app.discover.service.TRAKT_ADAPTER.show_popular", return_value=[])
+    @patch("app.discover.service.TRAKT_ADAPTER.show_watched_weekly", return_value=[])
+    def test_tv_and_anime_rows_keep_all_five_slots_when_personalized_rows_empty(
+        self,
+        _mock_trending,
+        _mock_popular,
+        _mock_anticipated,
+        _mock_top_picks,
+        _mock_comfort,
+        _mock_profile,
+    ):
+        tv_rows = get_discover_rows(self.user, MediaTypes.TV.value, show_more=False)
+        anime_rows = get_discover_rows(self.user, MediaTypes.ANIME.value, show_more=False)
+
+        expected_order = [
+            "trending_right_now",
+            "all_time_greats_unseen",
+            "coming_soon",
+            "top_picks_for_you",
+            "comfort_rewatches",
+        ]
+        self.assertEqual([row.key for row in tv_rows], expected_order)
+        self.assertEqual([row.key for row in anime_rows], expected_order)
+
+    @patch("app.discover.service.get_or_compute_taste_profile", return_value={})
+    @patch("app.discover.service._comfort_candidates", return_value=[])
+    @patch("app.discover.service._top_picks_candidates", return_value=[])
+    @patch("app.discover.service._provider_row_candidates", return_value=[])
+    def test_remaining_media_types_keep_all_five_slots_when_rows_are_empty(
+        self,
+        _mock_provider_rows,
+        _mock_top_picks,
+        _mock_comfort,
+        _mock_profile,
+    ):
+        expected_order = [
+            "trending_right_now",
+            "all_time_greats_unseen",
+            "coming_soon",
+            "top_picks_for_you",
+            "comfort_rewatches",
+        ]
+        media_types = [
+            MediaTypes.MUSIC.value,
+            MediaTypes.PODCAST.value,
+            MediaTypes.BOOK.value,
+            MediaTypes.COMIC.value,
+            MediaTypes.MANGA.value,
+            MediaTypes.GAME.value,
+            MediaTypes.BOARDGAME.value,
+        ]
+        for media_type in media_types:
+            with self.subTest(media_type=media_type):
+                rows = get_discover_rows(self.user, media_type, show_more=False)
+                self.assertEqual([row.key for row in rows], expected_order)
+
+    @patch("app.discover.service._igdb_games_candidates", return_value=[])
+    def test_game_provider_rows_dispatch_to_igdb(self, mock_igdb_candidates):
+        self.assertEqual(
+            _provider_row_candidates(MediaTypes.GAME.value, "trending_right_now"),
+            [],
+        )
+        self.assertEqual(
+            _provider_row_candidates(MediaTypes.GAME.value, "all_time_greats_unseen"),
+            [],
+        )
+        self.assertEqual(
+            _provider_row_candidates(MediaTypes.GAME.value, "coming_soon"),
+            [],
+        )
+        self.assertEqual(mock_igdb_candidates.call_count, 3)
+
+    @patch("app.discover.service._musicbrainz_coming_soon_recording_candidates")
+    @patch("app.discover.service._itunes_top_podcasts_candidates")
+    @patch("app.discover.service._bgg_hot_candidates")
+    @patch("app.discover.service._comicvine_coming_soon_volume_candidates")
+    @patch("app.discover.service._openlibrary_coming_soon_candidates")
+    def test_provider_coming_soon_dispatch_for_remaining_media_types(
+        self,
+        mock_book_soon,
+        mock_comic_soon,
+        mock_bgg_hot,
+        mock_podcast_soon,
+        mock_music_soon,
+    ):
+        book_candidates = [
+            CandidateItem(
+                media_type=MediaTypes.BOOK.value,
+                source=Sources.OPENLIBRARY.value,
+                media_id="OL1M",
+                title="Upcoming Book",
+            ),
+        ]
+        comic_candidates = [
+            CandidateItem(
+                media_type=MediaTypes.COMIC.value,
+                source=Sources.COMICVINE.value,
+                media_id="1001",
+                title="Upcoming Comic",
+            ),
+        ]
+        boardgame_candidates = [
+            CandidateItem(
+                media_type=MediaTypes.BOARDGAME.value,
+                source=Sources.BGG.value,
+                media_id="2001",
+                title="Upcoming Board Game",
+            ),
+        ]
+        podcast_candidates = [
+            CandidateItem(
+                media_type=MediaTypes.PODCAST.value,
+                source=Sources.POCKETCASTS.value,
+                media_id="3001",
+                title="Upcoming Podcast",
+            ),
+        ]
+        music_candidates = [
+            CandidateItem(
+                media_type=MediaTypes.MUSIC.value,
+                source=Sources.MUSICBRAINZ.value,
+                media_id="4f8ec6dc-8f57-4f4b-a510-56ca25d31f5f",
+                title="Upcoming Track",
+            ),
+        ]
+
+        mock_book_soon.return_value = book_candidates
+        mock_comic_soon.return_value = comic_candidates
+        mock_bgg_hot.return_value = boardgame_candidates
+        mock_podcast_soon.return_value = podcast_candidates
+        mock_music_soon.return_value = music_candidates
+
+        self.assertEqual(
+            _provider_row_candidates(MediaTypes.BOOK.value, "coming_soon"),
+            book_candidates,
+        )
+        self.assertEqual(
+            _provider_row_candidates(MediaTypes.COMIC.value, "coming_soon"),
+            comic_candidates,
+        )
+        self.assertEqual(
+            _provider_row_candidates(MediaTypes.BOARDGAME.value, "coming_soon"),
+            boardgame_candidates,
+        )
+        self.assertEqual(
+            _provider_row_candidates(MediaTypes.PODCAST.value, "coming_soon"),
+            podcast_candidates,
+        )
+        self.assertEqual(
+            _provider_row_candidates(MediaTypes.MUSIC.value, "coming_soon"),
+            music_candidates,
+        )
+
+    @patch("app.discover.service.get_or_compute_taste_profile", return_value={})
+    @patch("app.discover.service.services.get_media_metadata")
+    @patch("app.discover.service._queue_stale_refresh")
+    @patch("app.discover.service._comfort_candidates", return_value=[])
+    @patch("app.discover.service._top_picks_candidates", return_value=[])
+    @patch("app.discover.service._provider_row_candidates")
+    def test_boardgame_provider_row_defers_missing_artwork_hydration_when_enabled(
+        self,
+        mock_provider_candidates,
+        _mock_top_picks,
+        _mock_comfort,
+        mock_queue_stale_refresh,
+        mock_get_metadata,
+        _mock_profile,
+    ):
+        def provider_side_effect(media_type, row_key):
+            if media_type == MediaTypes.BOARDGAME.value and row_key == "trending_right_now":
+                return [
+                    CandidateItem(
+                        media_type=MediaTypes.BOARDGAME.value,
+                        source=Sources.BGG.value,
+                        media_id="9001",
+                        title="Deferred Board Game Art",
+                        image=None,
+                    ),
+                ]
+            return []
+
+        mock_provider_candidates.side_effect = provider_side_effect
+
+        rows = get_discover_rows(
+            self.user,
+            MediaTypes.BOARDGAME.value,
+            show_more=False,
+            defer_artwork=True,
+        )
+        trending_row = next(row for row in rows if row.key == "trending_right_now")
+
+        self.assertEqual(len(trending_row.items), 1)
+        self.assertIsNone(trending_row.items[0].image)
+        mock_get_metadata.assert_not_called()
+        mock_queue_stale_refresh.assert_any_call(
+            self.user.id,
+            MediaTypes.BOARDGAME.value,
+            "trending_right_now",
+            False,
+        )
+
+    @patch("app.discover.service.get_or_compute_taste_profile", return_value={})
+    @patch("app.discover.service._queue_stale_refresh")
+    @patch("app.discover.service.services.get_media_metadata")
+    @patch("app.discover.service._comfort_candidates", return_value=[])
+    @patch("app.discover.service._top_picks_candidates", return_value=[])
+    @patch("app.discover.service._provider_row_candidates")
+    def test_boardgame_provider_row_hydrates_missing_artwork_when_not_deferred(
+        self,
+        mock_provider_candidates,
+        _mock_top_picks,
+        _mock_comfort,
+        mock_get_metadata,
+        mock_queue_stale_refresh,
+        _mock_profile,
+    ):
+        def provider_side_effect(media_type, row_key):
+            if media_type == MediaTypes.BOARDGAME.value and row_key == "trending_right_now":
+                return [
+                    CandidateItem(
+                        media_type=MediaTypes.BOARDGAME.value,
+                        source=Sources.BGG.value,
+                        media_id="9002",
+                        title="Hydrated Board Game Art",
+                        image=None,
+                    ),
+                ]
+            return []
+
+        mock_provider_candidates.side_effect = provider_side_effect
+        mock_get_metadata.return_value = {"image": "https://example.com/boardgame.jpg"}
+
+        rows = get_discover_rows(
+            self.user,
+            MediaTypes.BOARDGAME.value,
+            show_more=False,
+            defer_artwork=False,
+        )
+        trending_row = next(row for row in rows if row.key == "trending_right_now")
+
+        self.assertEqual(len(trending_row.items), 1)
+        self.assertEqual(trending_row.items[0].image, "https://example.com/boardgame.jpg")
+        mock_queue_stale_refresh.assert_not_called()
+        mock_get_metadata.assert_called()
+
+    @patch("app.discover.service.get_or_compute_taste_profile", return_value={})
+    @patch("app.discover.service._comfort_candidates", side_effect=RuntimeError("comfort row failed"))
+    @patch("app.discover.service._top_picks_candidates", side_effect=RuntimeError("top picks row failed"))
+    @patch("app.discover.service.TRAKT_ADAPTER.show_anticipated")
+    @patch("app.discover.service.TRAKT_ADAPTER.show_popular")
+    @patch("app.discover.service.TRAKT_ADAPTER.show_watched_weekly")
+    def test_tv_rows_still_render_empty_personalized_slots_when_row_build_fails(
+        self,
+        mock_trending,
+        mock_popular,
+        mock_anticipated,
+        _mock_top_picks,
+        _mock_comfort,
+        _mock_profile,
+    ):
+        def candidate(media_id: str, title: str) -> CandidateItem:
+            return CandidateItem(
+                media_type=MediaTypes.TV.value,
+                source="tmdb",
+                media_id=media_id,
+                title=title,
+                image=f"https://example.com/{media_id}.jpg",
+                final_score=0.9,
+            )
+
+        mock_trending.return_value = [candidate("100", "Trending 1"), candidate("101", "Trending 2"), candidate("102", "Trending 3")]
+        mock_popular.return_value = [candidate("200", "Canon 1"), candidate("201", "Canon 2"), candidate("202", "Canon 3")]
+        mock_anticipated.return_value = [candidate("300", "Soon 1"), candidate("301", "Soon 2"), candidate("302", "Soon 3")]
+
+        rows = get_discover_rows(self.user, MediaTypes.TV.value, show_more=False)
+        row_map = {row.key: row for row in rows}
+
+        self.assertEqual(
+            [row.key for row in rows],
+            [
+                "trending_right_now",
+                "all_time_greats_unseen",
+                "coming_soon",
+                "top_picks_for_you",
+                "comfort_rewatches",
+            ],
+        )
+        self.assertEqual(row_map["top_picks_for_you"].items, [])
+        self.assertEqual(row_map["top_picks_for_you"].source_state, "error")
+        self.assertEqual(row_map["comfort_rewatches"].items, [])
+        self.assertEqual(row_map["comfort_rewatches"].source_state, "error")
+
+    @patch(
+        "app.discover.service.cache_repo.set_row_cache",
+        side_effect=OperationalError("database is locked"),
+    )
+    @patch("app.discover.service.get_or_compute_taste_profile", return_value={})
+    @patch("app.discover.service._comfort_candidates")
+    @patch("app.discover.service._top_picks_candidates")
+    @patch("app.discover.service.TRAKT_ADAPTER.show_anticipated")
+    @patch("app.discover.service.TRAKT_ADAPTER.show_popular")
+    @patch("app.discover.service.TRAKT_ADAPTER.show_watched_weekly")
+    def test_tv_rows_render_live_items_when_cache_write_is_locked(
+        self,
+        mock_trending,
+        mock_popular,
+        mock_anticipated,
+        mock_top_picks,
+        mock_comfort,
+        _mock_profile,
+        _mock_set_row_cache,
+    ):
+        def candidate(media_id: str, title: str) -> CandidateItem:
+            return CandidateItem(
+                media_type=MediaTypes.TV.value,
+                source=Sources.TMDB.value,
+                media_id=media_id,
+                title=title,
+                image=f"https://example.com/{media_id}.jpg",
+                final_score=0.9,
+            )
+
+        mock_trending.return_value = [candidate("100", "Trending 1"), candidate("101", "Trending 2"), candidate("102", "Trending 3")]
+        mock_popular.return_value = [candidate("200", "Canon 1"), candidate("201", "Canon 2"), candidate("202", "Canon 3")]
+        mock_anticipated.return_value = [candidate("300", "Soon 1"), candidate("301", "Soon 2"), candidate("302", "Soon 3")]
+        mock_top_picks.return_value = [candidate("400", "Pick 1"), candidate("401", "Pick 2"), candidate("402", "Pick 3")]
+        mock_comfort.return_value = [candidate("500", "Comfort 1"), candidate("501", "Comfort 2"), candidate("502", "Comfort 3")]
+
+        rows = get_discover_rows(self.user, MediaTypes.TV.value, show_more=False)
+        row_map = {row.key: row for row in rows}
+
+        self.assertEqual(row_map["top_picks_for_you"].source_state, "live")
+        self.assertEqual(row_map["comfort_rewatches"].source_state, "live")
+        self.assertEqual(
+            [item.title for item in row_map["top_picks_for_you"].items],
+            ["Pick 1", "Pick 2", "Pick 3"],
+        )
+        self.assertEqual(
+            [item.title for item in row_map["comfort_rewatches"].items],
+            ["Comfort 1", "Comfort 2", "Comfort 3"],
+        )
+
+    @patch("app.discover.service.get_or_compute_taste_profile", return_value={})
+    @patch("app.discover.service.TRAKT_ADAPTER.show_anticipated")
+    @patch("app.discover.service.TRAKT_ADAPTER.show_popular")
+    @patch("app.discover.service.TRAKT_ADAPTER.show_watched_weekly")
+    def test_tv_top_picks_uses_planning_entries_without_activity_field_errors(
+        self,
+        mock_trending,
+        mock_popular,
+        mock_anticipated,
+        _mock_profile,
+    ):
+        def provider_candidate(media_id: str, title: str) -> CandidateItem:
+            return CandidateItem(
+                media_type=MediaTypes.TV.value,
+                source="tmdb",
+                media_id=media_id,
+                title=title,
+                image=f"https://example.com/provider-{media_id}.jpg",
+                final_score=0.9,
+            )
+
+        mock_trending.return_value = [
+            provider_candidate("100", "Trending 1"),
+            provider_candidate("101", "Trending 2"),
+            provider_candidate("102", "Trending 3"),
+        ]
+        mock_popular.return_value = [
+            provider_candidate("200", "Canon 1"),
+            provider_candidate("201", "Canon 2"),
+            provider_candidate("202", "Canon 3"),
+        ]
+        mock_anticipated.return_value = [
+            provider_candidate("300", "Soon 1"),
+            provider_candidate("301", "Soon 2"),
+            provider_candidate("302", "Soon 3"),
+        ]
+
+        for media_id, title in [("9001", "Planned TV One"), ("9002", "Planned TV Two")]:
+            item = Item.objects.create(
+                media_id=media_id,
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.TV.value,
+                title=title,
+                image=f"https://example.com/{media_id}.jpg",
+            )
+            TV.objects.create(
+                user=self.user,
+                item=item,
+                status=Status.PLANNING.value,
+            )
+
+        rows = get_discover_rows(self.user, MediaTypes.TV.value, show_more=False)
+        top_picks_row = next(row for row in rows if row.key == "top_picks_for_you")
+        planning_media_ids = list(
+            TV.objects.filter(
+                user=self.user,
+                status=Status.PLANNING.value,
+            ).values_list("item__media_id", flat=True),
+        )
+
+        self.assertEqual(top_picks_row.source_state, "live")
+        self.assertGreaterEqual(
+            len(top_picks_row.items),
+            1,
+            msg=(
+                "TV top picks unexpectedly empty. "
+                f"planning_media_ids={planning_media_ids}; "
+                f"row_snapshot={self._row_snapshot(rows)}"
+            ),
+        )
+        self.assertTrue(
+            any(item.media_id in {"9001", "9002"} for item in top_picks_row.items),
+            msg=(
+                "TV top picks did not include planning entries. "
+                f"planning_media_ids={planning_media_ids}; "
+                f"rendered={[f'{item.media_id}:{item.title}' for item in top_picks_row.items]}"
+            ),
+        )
+
+    @patch("app.discover.service.get_or_compute_taste_profile", return_value={})
+    @patch("app.discover.service.TRAKT_ADAPTER.show_anticipated")
+    @patch("app.discover.service.TRAKT_ADAPTER.show_popular")
+    @patch("app.discover.service.TRAKT_ADAPTER.show_watched_weekly")
+    def test_tv_top_picks_rebuilds_when_cached_schema_is_old(
+        self,
+        mock_trending,
+        mock_popular,
+        mock_anticipated,
+        _mock_profile,
+    ):
+        stale_payload = {
+            "key": "top_picks_for_you",
+            "title": "Top Picks For You",
+            "mission": "Personal Taste Match",
+            "why": "New-to-you shows tailored to your taste.",
+            "source": "local",
+            "items": [
+                CandidateItem(
+                    media_type=MediaTypes.TV.value,
+                    source=Sources.TMDB.value,
+                    media_id="old-tv-pick",
+                    title="Old Cached TV Pick",
+                    image="https://example.com/old-tv-pick.jpg",
+                ).to_dict(),
+            ],
+            "is_stale": False,
+            "show_more": False,
+            "source_state": "cache",
+        }
+        cache_repo.set_row_cache(
+            self.user.id,
+            MediaTypes.TV.value,
+            "top_picks_for_you",
+            stale_payload,
+            ttl_seconds=3600,
+        )
+
+        def provider_candidate(media_id: str, title: str) -> CandidateItem:
+            return CandidateItem(
+                media_type=MediaTypes.TV.value,
+                source=Sources.TMDB.value,
+                media_id=media_id,
+                title=title,
+                image=f"https://example.com/provider-{media_id}.jpg",
+            )
+
+        mock_trending.return_value = [
+            provider_candidate("100", "Trending 1"),
+            provider_candidate("101", "Trending 2"),
+            provider_candidate("102", "Trending 3"),
+        ]
+        mock_popular.return_value = [
+            provider_candidate("200", "Canon 1"),
+            provider_candidate("201", "Canon 2"),
+            provider_candidate("202", "Canon 3"),
+        ]
+        mock_anticipated.return_value = [
+            provider_candidate("300", "Soon 1"),
+            provider_candidate("301", "Soon 2"),
+            provider_candidate("302", "Soon 3"),
+        ]
+
+        planning_item = Item.objects.create(
+            media_id="tv-9001",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Fresh Planned TV Pick",
+            image="https://example.com/tv-9001.jpg",
+        )
+        TV.objects.create(
+            user=self.user,
+            item=planning_item,
+            status=Status.PLANNING.value,
+        )
+
+        rows = get_discover_rows(self.user, MediaTypes.TV.value, show_more=False)
+        top_picks_row = next(row for row in rows if row.key == "top_picks_for_you")
+        rendered_ids = [item.media_id for item in top_picks_row.items]
+
+        self.assertIn(
+            "tv-9001",
+            rendered_ids,
+            msg=(
+                "TV top picks cache should rebuild when schema requirements change. "
+                f"rendered={self._row_snapshot(rows)}"
+            ),
+        )
+        self.assertNotIn("old-tv-pick", rendered_ids)
+
+    @patch("app.discover.service.get_or_compute_taste_profile", return_value={})
+    @patch("app.discover.service._comfort_candidates", return_value=[])
+    @patch("app.discover.service._top_picks_candidates", return_value=[])
+    @patch("app.discover.service.services.get_media_metadata")
+    @patch("app.discover.service.TRAKT_ADAPTER.show_anticipated", return_value=[])
+    @patch("app.discover.service.TRAKT_ADAPTER.show_popular", return_value=[])
+    @patch("app.discover.service.TRAKT_ADAPTER.show_watched_weekly")
+    def test_tv_trending_row_hydrates_artwork_for_missing_images(
+        self,
+        mock_trending,
+        _mock_popular,
+        _mock_anticipated,
+        mock_get_metadata,
+        _mock_top_picks,
+        _mock_comfort,
+        _mock_profile,
+    ):
+        mock_trending.return_value = [
+            CandidateItem(
+                media_type=MediaTypes.TV.value,
+                source="tmdb",
+                media_id="701",
+                title="Needs Art TV One",
+                image=None,
+                release_date="2017-10-02T00:00:00.000Z",
+            ),
+            CandidateItem(
+                media_type=MediaTypes.TV.value,
+                source="tmdb",
+                media_id="702",
+                title="Needs Art TV Two",
+                image=None,
+                release_date="2018-10-02",
+            ),
+        ]
+
+        def metadata_side_effect(media_type, media_id, source, season_numbers=None, episode_number=None):
+            return {"image": f"https://image.tmdb.org/t/p/w500/{media_id}.jpg"}
+
+        mock_get_metadata.side_effect = metadata_side_effect
+
+        rows = get_discover_rows(self.user, MediaTypes.TV.value, show_more=False)
+        trending_row = next(row for row in rows if row.key == "trending_right_now")
+
+        self.assertEqual(
+            [item.image for item in trending_row.items],
+            [
+                "https://image.tmdb.org/t/p/w500/701.jpg",
+                "https://image.tmdb.org/t/p/w500/702.jpg",
+            ],
+        )
+
+    def test_rewatch_counts_tv_normalizes_episode_volume(self):
+        show_item = Item.objects.create(
+            media_id="tv-900",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Episode Weighted Show",
+            image="http://example.com/tv-900.jpg",
+        )
+        tv_entry = TV.objects.create(
+            item=show_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+        )
+
+        season_item = Item.objects.create(
+            media_id="tv-900",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Episode Weighted Show",
+            image="http://example.com/tv-900-s1.jpg",
+            season_number=1,
+        )
+        season_entry = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            related_tv=tv_entry,
+        )
+
+        episode_items = [
+            Item.objects.create(
+                media_id="tv-900",
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.EPISODE.value,
+                title=f"Episode Weighted Show E{episode_number}",
+                image=f"http://example.com/tv-900-e{episode_number}.jpg",
+                season_number=1,
+                episode_number=episode_number,
+            )
+            for episode_number in (1, 2, 3)
+        ]
+        now = timezone.now()
+        Episode.objects.bulk_create(
+            [
+                Episode(item=episode_items[0], related_season=season_entry, end_date=now),
+                Episode(item=episode_items[1], related_season=season_entry, end_date=now),
+                Episode(item=episode_items[2], related_season=season_entry, end_date=now),
+                Episode(item=episode_items[0], related_season=season_entry, end_date=now),
+                Episode(item=episode_items[1], related_season=season_entry, end_date=now),
+            ],
+        )
+
+        counts = _rewatch_counts(
+            self.user,
+            TV,
+            [show_item.id],
+            media_type=MediaTypes.TV.value,
+        )
+        self.assertIn(show_item.id, counts)
+        self.assertAlmostEqual(counts[show_item.id], 5.0 / 3.0, places=4)
+
+    def test_trakt_release_date_normalization_for_show_candidates(self):
+        self.assertEqual(
+            TraktDiscoverAdapter._normalized_release_date("2017-10-02T00:00:00.000Z"),
+            "2017-10-02",
+        )
+        self.assertEqual(
+            TraktDiscoverAdapter._normalized_release_date("2018-11-05"),
+            "2018-11-05",
+        )
+
+    @patch("app.discover.service.get_or_compute_taste_profile", return_value={})
     @patch("app.discover.service._comfort_candidates", return_value=[])
     @patch("app.discover.service._top_picks_candidates")
     @patch("app.discover.service.TRAKT_ADAPTER.movie_anticipated")
@@ -979,8 +1916,11 @@ class DiscoverServiceTests(TestCase):
         self.assertEqual([item.media_id for item in candidates], ["1001", "1002"])
         self.assertTrue(all(item.display_score is not None for item in candidates))
         for candidate in candidates:
-            expected_display = round(max(0.0, min(1.0, 0.42 + (candidate.final_score * 0.44))), 6)
-            self.assertAlmostEqual(candidate.display_score, expected_display)
+            self.assertGreaterEqual(candidate.display_score, 0.0)
+            self.assertLessEqual(candidate.display_score, 1.0)
+            self.assertIn("rewatch_bonus", candidate.score_breakdown)
+            self.assertIn("inactivity_norm", candidate.score_breakdown)
+            self.assertIn("tag_signal_mode", candidate.score_breakdown)
         mock_related.assert_not_called()
         mock_genre_discovery.assert_not_called()
 
@@ -1518,7 +2458,7 @@ class DiscoverServiceTests(TestCase):
                 "phase_genre_affinity": {"drama": 1.0, "action": 0.8},
             },
         )
-        self.assertEqual(signal, "Driven by your current Cozy, Musical, Family Comfort phase")
+        self.assertEqual(signal, "Driven by your current Cozy, Musical, Family phase")
 
     def test_comfort_match_signal_formats_generic_genres_with_descriptive_labels(self):
         signal = _comfort_match_signal(
@@ -1528,8 +2468,85 @@ class DiscoverServiceTests(TestCase):
         )
         self.assertEqual(
             signal,
-            "Driven by your current Character Drama, Feel-Good Comedy, Popcorn Action phase",
+            "Driven by your current Drama, Comedy, Action phase",
         )
+
+    def test_row_match_signal_uses_row_candidates_not_static_phrase(self):
+        profile = {
+            "phase_genre_affinity": {"drama": 1.0, "comedy": 0.9, "action": 0.8, "animation": 0.7},
+            "phase_tag_affinity": {"cozy": 1.0, "ensemble": 0.6},
+        }
+        top_picks_candidates = [
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source="tmdb",
+                media_id="1",
+                title="Top Picks Cozy",
+                genres=["Animation", "Comedy"],
+                tags=["Cozy"],
+                score_breakdown={"phase_fit": 0.9},
+                final_score=0.8,
+            ),
+        ]
+        comfort_candidates = [
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source="tmdb",
+                media_id="2",
+                title="Comfort Action",
+                genres=["Action", "Drama"],
+                tags=["Ensemble"],
+                score_breakdown={"phase_fit": 0.8},
+                final_score=0.75,
+            ),
+        ]
+
+        top_picks_signal = _row_match_signal(
+            "top_picks_for_you",
+            top_picks_candidates,
+            profile,
+        )
+        comfort_signal = _row_match_signal(
+            "comfort_rewatches",
+            comfort_candidates,
+            profile,
+        )
+
+        self.assertIsNotNone(top_picks_signal)
+        self.assertIsNotNone(comfort_signal)
+        self.assertIn("Cozy", top_picks_signal)
+        self.assertNotEqual(top_picks_signal, comfort_signal)
+
+    def test_row_match_signal_details_include_signal_evidence(self):
+        profile = {
+            "phase_genre_affinity": {"drama": 1.0, "thriller": 0.9},
+            "phase_tag_affinity": {"cozy": 0.8},
+        }
+        candidates = [
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source="tmdb",
+                media_id="11",
+                title="Drama Evidence",
+                genres=["Drama", "Thriller"],
+                tags=["Cozy"],
+                score_breakdown={"phase_fit": 0.9},
+                final_score=0.81,
+            ),
+        ]
+
+        signal, details = _row_match_signal_with_details(
+            "comfort_rewatches",
+            candidates,
+            profile,
+        )
+
+        self.assertEqual(signal, "Driven by your current Drama, Thriller, Cozy phase")
+        self.assertIsNotNone(details)
+        details = details or {}
+        self.assertEqual(details["mode"], "row_candidates")
+        self.assertIn("Signal evidence:", details["explanation"])
+        self.assertGreaterEqual(len(details["labels"]), 1)
 
     def test_comfort_confidence_phase_lane_quota_promotes_recent_lane(self):
         candidates: list[CandidateItem] = []

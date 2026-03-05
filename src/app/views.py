@@ -535,6 +535,7 @@ def discover_page(request):
         selected_media_type,
         show_more=show_more,
         include_debug=discover_debug,
+        defer_artwork=True,
     )
 
     context = {
@@ -559,6 +560,7 @@ def discover_rows(request):
         selected_media_type,
         show_more=show_more,
         include_debug=discover_debug,
+        defer_artwork=True,
     )
     context = {
         "selected_media_type": selected_media_type,

@@ -5,11 +5,13 @@ from __future__ import annotations
 import math
 import logging
 from collections import defaultdict
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from django.apps import apps
 from django.conf import settings
 from django.core.cache import cache
+from django.core.exceptions import FieldDoesNotExist
+from django.db import OperationalError
 from django.db.models import Count, Q
 from django.utils import timezone
 
@@ -21,8 +23,8 @@ from app.discover.providers.tmdb_adapter import TMDbDiscoverAdapter
 from app.discover.registry import ALL_MEDIA_KEY, DISCOVER_MEDIA_TYPES, get_rows
 from app.discover.schemas import CandidateItem, DiscoverPayload, RowDefinition, RowResult
 from app.discover.scoring import score_candidates
-from app.models import Item, ItemPersonCredit, ItemTag, MediaTypes, Season, Status
-from app.providers import services
+from app.models import Episode, Item, ItemPersonCredit, ItemTag, MediaTypes, Season, Sources, Status
+from app.providers import bgg, comicvine, igdb, mal, musicbrainz, openlibrary, services
 
 logger = logging.getLogger(__name__)
 
@@ -39,17 +41,56 @@ ROW_CACHE_SCHEMA_META_KEY = "schema_version"
 MOVIE_CANON_ROW_SCHEMA_VERSION = 2
 MOVIE_COMING_SOON_ROW_SCHEMA_VERSION = 1
 MOVIE_PERSONALIZED_ROW_SCHEMA_VERSION = 3
+TV_ANIME_TRAKT_ROW_SCHEMA_VERSION = 1
+TV_ANIME_PERSONALIZED_ROW_SCHEMA_VERSION = 1
 ROW_CANDIDATE_BUFFER_MULTIPLIER = 5
 MOVIE_PERSONALIZED_ROW_KEYS = {
     "top_picks_for_you",
     "comfort_rewatches",
 }
+TV_ANIME_PERSONALIZED_ROW_KEYS = {
+    "top_picks_for_you",
+    "comfort_rewatches",
+}
+TV_ANIME_ROW_KEYS = {
+    "trending_right_now",
+    "all_time_greats_unseen",
+    "coming_soon",
+    "top_picks_for_you",
+    "comfort_rewatches",
+}
+FIVE_ROW_DISCOVER_KEYS = {
+    "trending_right_now",
+    "all_time_greats_unseen",
+    "coming_soon",
+    "top_picks_for_you",
+    "comfort_rewatches",
+}
+FIVE_ROW_MEDIA_TYPES = {
+    MediaTypes.MOVIE.value,
+    MediaTypes.TV.value,
+    MediaTypes.ANIME.value,
+    MediaTypes.MUSIC.value,
+    MediaTypes.PODCAST.value,
+    MediaTypes.BOOK.value,
+    MediaTypes.COMIC.value,
+    MediaTypes.MANGA.value,
+    MediaTypes.GAME.value,
+    MediaTypes.BOARDGAME.value,
+}
+PROVIDER_DISCOVER_TTL_SECONDS = 60 * 60
+PROVIDER_COMING_SOON_WINDOW_DAYS = 180
 
 ALWAYS_VISIBLE_EMPTY_ROWS = {
     "continue",
     "continue_all",
     "continue_up_next",
     "next_episode",
+}
+PROVIDER_ARTWORK_HYDRATION_ROW_KEYS = {
+    "trending_right_now",
+    "all_time_greats_unseen",
+    "coming_soon",
 }
 HOLIDAY_STRONG_TERMS = {"christmas", "xmas", "noel"}
 HOLIDAY_SOFT_TERMS = {"holiday", "holidays", "new year", "new years"}
@@ -72,12 +113,15 @@ COMFORT_TAG_RICH_HISTORY_COVERAGE_THRESHOLD = 0.25
 COMFORT_RECENT_HISTORY_TAG_WINDOW_DAYS = 90
 COMFORT_DEBUG_TOP_N = 12
 COMFORT_SPREAD_COMPRESSION_THRESHOLD = 0.08
-TOP_PICKS_PHASE_WEIGHT = 0.34
-TOP_PICKS_HOT_RECENCY_WEIGHT = 0.14
-TOP_PICKS_GENRE_WEIGHT = 0.2
-TOP_PICKS_TAG_WEIGHT = 0.16
-TOP_PICKS_POPULARITY_WEIGHT = 0.09
-TOP_PICKS_RATING_WEIGHT = 0.07
+ROW_MATCH_SIGNAL_CANDIDATE_LIMIT = 12
+ROW_MATCH_SIGNAL_ROWS = {
+    "top_picks_for_you",
+    "comfort_rewatches",
+    "comfort_binge",
+    "comfort",
+    "comfort_replay",
+    "comfort_picks",
+}
 GENERIC_PHASE_TERMS = {
     "action",
     "adventure",
@@ -92,20 +136,6 @@ GENERIC_PHASE_TERMS = {
     "science fiction",
     "sci-fi",
     "thriller",
-}
-PHASE_LABEL_OVERRIDES = {
-    "action": "Popcorn Action",
-    "adventure": "Big Adventure",
-    "animation": "Animated Comfort",
-    "comedy": "Feel-Good Comedy",
-    "drama": "Character Drama",
-    "family": "Family Comfort",
-    "fantasy": "Escapist Fantasy",
-    "mystery": "Puzzle Mystery",
-    "romance": "Warm Romance",
-    "science fiction": "Sci-Fi Adventure",
-    "sci-fi": "Sci-Fi Adventure",
-    "thriller": "Clever Suspense",
 }
 
 TMDB_ADAPTER = TMDbDiscoverAdapter()
@@ -155,9 +185,50 @@ def _entry_activity_datetime(entry):
     )
 
 
-def _rewatch_counts(user, model, item_ids: list[int]) -> dict[int, int]:
+def _tv_episode_rewatch_counts(user, item_ids: list[int]) -> dict[int, float]:
     if not item_ids:
         return {}
+
+    episode_rollups = (
+        Episode.objects.filter(
+            related_season__related_tv__user=user,
+            related_season__related_tv__item_id__in=item_ids,
+            related_season__item__season_number__gt=0,
+            end_date__isnull=False,
+        )
+        .values("related_season__related_tv__item_id")
+        .annotate(
+            total_episode_plays=Count("id"),
+            unique_episodes_watched=Count("item_id", distinct=True),
+        )
+    )
+    counts: dict[int, float] = {}
+    for rollup in episode_rollups:
+        item_id = rollup.get("related_season__related_tv__item_id")
+        if not item_id:
+            continue
+        unique_episodes = int(rollup.get("unique_episodes_watched") or 0)
+        if unique_episodes <= 0:
+            continue
+        total_plays = int(rollup.get("total_episode_plays") or 0)
+        equivalent_watches = max(1.0, float(total_plays) / float(unique_episodes))
+        if equivalent_watches > 1.0:
+            counts[int(item_id)] = equivalent_watches
+    return counts
+
+
+def _rewatch_counts(
+    user,
+    model,
+    item_ids: list[int],
+    *,
+    media_type: str | None = None,
+) -> dict[int, float]:
+    if not item_ids:
+        return {}
+
+    if media_type == MediaTypes.TV.value:
+        return _tv_episode_rewatch_counts(user, item_ids)
 
     grouped = (
         model.objects.filter(
@@ -170,7 +241,7 @@ def _rewatch_counts(user, model, item_ids: list[int]) -> dict[int, int]:
         .filter(watch_count__gt=1)
     )
     return {
-        int(row["item_id"]): int(row["watch_count"])
+        int(row["item_id"]): float(row["watch_count"])
         for row in grouped
         if row.get("item_id")
     }
@@ -183,7 +254,7 @@ def _entries_to_candidates(
     row_key: str,
     source_reason: str,
     override_media_type: str | None = None,
-    rewatch_counts: dict[int, int] | None = None,
+    rewatch_counts: dict[int, float] | None = None,
     phase_evidence_by_item: dict[int, float] | None = None,
     phase_pool_bucket_by_item: dict[int, str] | None = None,
     recent_history_tag_coverage: float | None = None,
@@ -265,6 +336,34 @@ def _model_for_media_type(media_type: str):
     return apps.get_model("app", model_name)
 
 
+def _model_has_field(model, field_name: str) -> bool:
+    try:
+        model._meta.get_field(field_name)
+    except FieldDoesNotExist:
+        return False
+    return True
+
+
+def _activity_filter_query(model, cutoff, *, newer_than: bool) -> Q:
+    op = "gte" if newer_than else "lte"
+    query = Q(**{f"created_at__{op}": cutoff})
+    if _model_has_field(model, "progressed_at"):
+        query |= Q(**{f"progressed_at__{op}": cutoff})
+    if _model_has_field(model, "end_date"):
+        query |= Q(**{f"end_date__{op}": cutoff})
+    return query
+
+
+def _activity_ordering(model) -> tuple[str, ...]:
+    order_fields: list[str] = []
+    if _model_has_field(model, "end_date"):
+        order_fields.append("-end_date")
+    if _model_has_field(model, "progressed_at"):
+        order_fields.append("-progressed_at")
+    order_fields.append("-created_at")
+    return tuple(order_fields)
+
+
 def _in_progress_candidates(user, media_type: str, *, row_key: str, source_reason: str) -> list[CandidateItem]:
     if media_type == MediaTypes.TV.value and row_key == "next_episode":
         entries = (
@@ -286,7 +385,7 @@ def _in_progress_candidates(user, media_type: str, *, row_key: str, source_reaso
     entries = (
         model.objects.filter(user=user, status=Status.IN_PROGRESS.value)
         .select_related("item")
-        .order_by("-progressed_at", "-created_at")
+        .order_by(*_activity_ordering(model))
     )
     return _entries_to_candidates(
         entries,
@@ -325,18 +424,21 @@ def _recent_completed_tag_coverage(
         return 0.0
 
     cutoff = timezone.now() - timedelta(days=window_days)
-    recent_entries = list(
+    recent_queryset = (
         model.objects.filter(
             user=user,
             status=Status.COMPLETED.value,
         )
-        .filter(
-            Q(end_date__gte=cutoff)
-            | Q(progressed_at__gte=cutoff)
-            | Q(created_at__gte=cutoff),
-        )
-        .only("item_id")[:300],
     )
+    if _model_has_field(model, "end_date") or _model_has_field(model, "progressed_at"):
+        recent_queryset = recent_queryset.filter(
+            _activity_filter_query(model, cutoff, newer_than=True),
+        )
+    recent_entries = [
+        entry
+        for entry in recent_queryset.order_by(*_activity_ordering(model))[:300]
+        if (_entry_activity_datetime(entry) and _entry_activity_datetime(entry) >= cutoff)
+    ]
     if not recent_entries:
         return 0.0
 
@@ -362,40 +464,55 @@ def _comfort_candidates(
 
     now = timezone.now()
     cutoff = now - timedelta(days=older_than_days)
-    rated_entries = (
+    rated_queryset = (
         model.objects.filter(
             user=user,
             status=Status.COMPLETED.value,
             score__gte=min_score,
         )
-        .filter(
-            Q(end_date__lte=cutoff)
-            | Q(progressed_at__lte=cutoff)
-            | Q(created_at__lte=cutoff),
-        )
         .select_related("item")
-        .order_by("-score", "-end_date", "-progressed_at", "-created_at")
+        .order_by("-score", *_activity_ordering(model))
     )
+    if _model_has_field(model, "end_date") or _model_has_field(model, "progressed_at"):
+        rated_queryset = rated_queryset.filter(
+            _activity_filter_query(model, cutoff, newer_than=False),
+        )
 
     unrated_cutoff = now - timedelta(days=max(older_than_days, 90))
-    unrated_entries = (
+    unrated_queryset = (
         model.objects.filter(
             user=user,
             status=Status.COMPLETED.value,
             score__isnull=True,
         )
-        .filter(
-            Q(end_date__lte=unrated_cutoff)
-            | Q(progressed_at__lte=unrated_cutoff)
-            | Q(created_at__lte=unrated_cutoff),
-        )
         .select_related("item")
-        .order_by("-end_date", "-progressed_at", "-created_at")
+        .order_by(*_activity_ordering(model))
     )
+    if _model_has_field(model, "end_date") or _model_has_field(model, "progressed_at"):
+        unrated_queryset = unrated_queryset.filter(
+            _activity_filter_query(model, unrated_cutoff, newer_than=False),
+        )
 
-    entries = list(rated_entries) + list(unrated_entries)
+    rated_entries = []
+    for entry in rated_queryset:
+        activity_dt = _entry_activity_datetime(entry)
+        if activity_dt and activity_dt <= cutoff:
+            rated_entries.append(entry)
+
+    unrated_entries = []
+    for entry in unrated_queryset:
+        activity_dt = _entry_activity_datetime(entry)
+        if activity_dt and activity_dt <= unrated_cutoff:
+            unrated_entries.append(entry)
+
+    entries = rated_entries + unrated_entries
     item_ids = [entry.item_id for entry in entries if entry.item_id]
-    rewatch_count_map = _rewatch_counts(user, model, item_ids)
+    rewatch_count_map = _rewatch_counts(
+        user,
+        model,
+        item_ids,
+        media_type=media_type,
+    )
     tag_map = _item_tag_map(user, item_ids)
     phase_evidence_by_item: dict[int, float] = {}
     phase_pool_bucket_by_item: dict[int, str] = {}
@@ -499,30 +616,1193 @@ def _select_recent_anchors(user, media_type: str, *, max_anchors: int = 3):
     return selected
 
 
-def _provider_row_candidates(media_type: str, row_key: str) -> list[CandidateItem]:
-    if media_type == MediaTypes.MOVIE.value and row_key == "trending_right_now":
-        return TRAKT_ADAPTER.movie_watched_weekly(limit=100)
+def _api_cached_results(
+    provider: str,
+    endpoint: str,
+    params: dict,
+    *,
+    ttl_seconds: int,
+    fetcher,
+) -> list[dict]:
+    payload, is_stale = cache_repo.get_api_cache(provider, endpoint, params)
+    if payload and not is_stale:
+        return list(payload.get("results") or [])
 
-    if media_type == MediaTypes.MOVIE.value and row_key == "all_time_greats_unseen":
-        return TRAKT_ADAPTER.movie_popular(page=1, limit=TRAKT_POPULAR_PAGE_SIZE)
-
-    if media_type == MediaTypes.MOVIE.value and row_key == "coming_soon":
-        return TRAKT_ADAPTER.movie_anticipated(page=1, limit=TRAKT_POPULAR_PAGE_SIZE)
-
-    if media_type not in {MediaTypes.MOVIE.value, MediaTypes.TV.value}:
+    try:
+        results = list(fetcher() or [])
+        cache_repo.set_api_cache(
+            provider,
+            endpoint,
+            params,
+            {"results": results},
+            ttl_seconds=ttl_seconds,
+        )
+        return results
+    except Exception as error:  # noqa: BLE001
+        if payload:
+            logger.warning(
+                "discover_provider_cache_fallback provider=%s endpoint=%s error=%s",
+                provider,
+                endpoint,
+                error,
+            )
+            return list(payload.get("results") or [])
+        logger.warning(
+            "discover_provider_fetch_failed provider=%s endpoint=%s error=%s",
+            provider,
+            endpoint,
+            error,
+        )
         return []
 
-    if row_key == "trending_tv":
-        return TMDB_ADAPTER.trending(media_type, limit=80)
 
-    if row_key in {"new_noteworthy", "new_returning_seasons"}:
-        return TMDB_ADAPTER.current_cycle(media_type, limit=80)
+def _safe_float(value) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_int(value) -> int | None:
+    try:
+        if value is None or value == "":
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _iso_date(raw) -> str | None:
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    if len(text) >= 10 and text[4:5] == "-" and text[7:8] == "-":
+        return text[:10]
+    return None
+
+
+def _iso_date_from_timestamp(value) -> str | None:
+    try:
+        if value is None or value == "":
+            return None
+        timestamp = int(float(value))
+        return datetime.fromtimestamp(timestamp, tz=UTC).strftime("%Y-%m-%d")
+    except (TypeError, ValueError, OSError, OverflowError):
+        return None
+
+
+def _openlibrary_cover_url(entry: dict) -> str:
+    cover_id = (
+        entry.get("cover_i")
+        or entry.get("cover_id")
+        or (entry.get("covers") or [None])[0]
+    )
+    if cover_id:
+        return f"https://covers.openlibrary.org/b/id/{cover_id}-L.jpg"
+    return settings.IMG_NONE
+
+
+def _openlibrary_first_edition_id(work_key: str) -> str | None:
+    if not work_key or not str(work_key).startswith("/works/"):
+        return None
+
+    cache_key = f"discover:openlibrary:first_edition:{work_key}"
+    cached_value = cache.get(cache_key)
+    if cached_value is not None:
+        return str(cached_value) or None
+
+    try:
+        payload = services.api_request(
+            Sources.OPENLIBRARY.value,
+            "GET",
+            f"https://openlibrary.org{work_key}/editions.json",
+            params={"limit": 1},
+        )
+    except Exception:  # noqa: BLE001
+        cache.set(cache_key, "", timeout=60 * 60 * 6)
+        return None
+
+    entries = payload.get("entries") or []
+    edition_id = None
+    if entries and isinstance(entries[0], dict):
+        edition_key = entries[0].get("key")
+        if isinstance(edition_key, str) and "/books/" in edition_key:
+            edition_id = edition_key.rstrip("/").split("/books/")[-1]
+
+    cache.set(cache_key, edition_id or "", timeout=60 * 60 * 24)
+    return edition_id
+
+
+def _openlibrary_entry_edition_id(entry: dict) -> str | None:
+    direct_edition = entry.get("cover_edition_key")
+    if isinstance(direct_edition, str) and direct_edition.strip():
+        return direct_edition.strip()
+
+    edition_keys = entry.get("edition_key") or entry.get("edition_keys")
+    if isinstance(edition_keys, list):
+        for edition_key in edition_keys:
+            if isinstance(edition_key, str) and edition_key.strip():
+                return edition_key.strip()
+
+    editions = entry.get("editions")
+    if isinstance(editions, list):
+        for edition in editions:
+            if not isinstance(edition, dict):
+                continue
+            key = edition.get("key")
+            if isinstance(key, str) and "/books/" in key:
+                return key.rstrip("/").split("/books/")[-1]
+
+    key = entry.get("key")
+    if isinstance(key, str):
+        if "/books/" in key:
+            return key.rstrip("/").split("/books/")[-1]
+        if key.startswith("/works/"):
+            return _openlibrary_first_edition_id(key)
+
+    work = entry.get("work")
+    if isinstance(work, dict):
+        work_key = work.get("key")
+        if isinstance(work_key, str):
+            return _openlibrary_first_edition_id(work_key)
+
+    return None
+
+
+def _openlibrary_trending_candidates(
+    *,
+    period: str,
+    row_key: str,
+    source_reason: str,
+    limit: int = 100,
+) -> list[CandidateItem]:
+    endpoint = f"/trending/{period}.json"
+    params = {"limit": min(max(limit, 1), 100), "page": 1}
+
+    def fetcher() -> list[dict]:
+        payload = services.api_request(
+            Sources.OPENLIBRARY.value,
+            "GET",
+            f"https://openlibrary.org{endpoint}",
+            params=params,
+        )
+        works = payload.get("works") or payload.get("docs") or payload.get("results") or []
+        if isinstance(works, dict):
+            works = list(works.values())
+        return [entry for entry in works if isinstance(entry, dict)]
+
+    entries = _api_cached_results(
+        Sources.OPENLIBRARY.value,
+        endpoint,
+        params,
+        ttl_seconds=PROVIDER_DISCOVER_TTL_SECONDS,
+        fetcher=fetcher,
+    )
+
+    candidates: list[CandidateItem] = []
+    for index, entry in enumerate(entries, start=1):
+        edition_id = _openlibrary_entry_edition_id(entry)
+        if not edition_id:
+            continue
+
+        title = (entry.get("title") or entry.get("name") or "").strip()
+        if not title:
+            continue
+
+        publish_year = _safe_int(entry.get("first_publish_year"))
+        release_date = f"{publish_year}-01-01" if publish_year else None
+        popularity = _safe_float(entry.get("reading_log_count")) or _safe_float(
+            entry.get("want_to_read_count"),
+        )
+        if popularity is None:
+            popularity = float(max(len(entries) - index + 1, 1))
+
+        subjects = entry.get("subject") or entry.get("subjects") or []
+        genres = [
+            str(subject).strip()
+            for subject in subjects
+            if str(subject).strip()
+        ][:4]
+
+        candidates.append(
+            CandidateItem(
+                media_type=MediaTypes.BOOK.value,
+                source=Sources.OPENLIBRARY.value,
+                media_id=str(edition_id),
+                title=title,
+                image=_openlibrary_cover_url(entry),
+                release_date=release_date,
+                genres=genres,
+                popularity=popularity,
+                row_key=row_key,
+                source_reason=source_reason,
+            ),
+        )
+
+    return candidates[:limit]
+
+
+def _openlibrary_coming_soon_candidates(
+    *,
+    row_key: str,
+    source_reason: str,
+    limit: int = 100,
+) -> list[CandidateItem]:
+    endpoint = "/search.json"
+    today = timezone.localdate()
+    current_year = today.year
+    next_year = today.year + 1
+    params = {
+        "q": f"publish_year:{current_year} OR publish_year:{next_year}",
+        "sort": "new",
+        "limit": min(max(limit, 1), 100),
+        "page": 1,
+        "fields": "title,key,edition_key,cover_i,first_publish_year,publish_year,subject",
+    }
+
+    def fetcher() -> list[dict]:
+        payload = services.api_request(
+            Sources.OPENLIBRARY.value,
+            "GET",
+            openlibrary.search_url,
+            params=params,
+        )
+        docs = payload.get("docs") or []
+        if isinstance(docs, dict):
+            docs = [docs]
+        return [entry for entry in docs if isinstance(entry, dict)]
+
+    entries = _api_cached_results(
+        Sources.OPENLIBRARY.value,
+        f"{endpoint}:coming_soon",
+        params,
+        ttl_seconds=PROVIDER_DISCOVER_TTL_SECONDS,
+        fetcher=fetcher,
+    )
+
+    candidates: list[CandidateItem] = []
+    for index, entry in enumerate(entries, start=1):
+        edition_id = _openlibrary_entry_edition_id(entry)
+        if not edition_id:
+            continue
+
+        title = (entry.get("title") or entry.get("name") or "").strip()
+        if not title:
+            continue
+
+        publish_year = _safe_int(entry.get("first_publish_year"))
+        if publish_year is None:
+            publish_years = entry.get("publish_year") or []
+            if isinstance(publish_years, list):
+                filtered_years = [
+                    year
+                    for year in (_safe_int(year) for year in publish_years)
+                    if year is not None
+                ]
+                if filtered_years:
+                    publish_year = min(filtered_years)
+
+        if publish_year and publish_year < current_year:
+            continue
+
+        release_date = f"{publish_year}-01-01" if publish_year else None
+        popularity = _safe_float(entry.get("edition_count"))
+        if popularity is None:
+            popularity = float(max(len(entries) - index + 1, 1))
+
+        subjects = entry.get("subject") or entry.get("subjects") or []
+        genres = [
+            str(subject).strip()
+            for subject in subjects
+            if str(subject).strip()
+        ][:4]
+
+        candidates.append(
+            CandidateItem(
+                media_type=MediaTypes.BOOK.value,
+                source=Sources.OPENLIBRARY.value,
+                media_id=str(edition_id),
+                title=title,
+                image=_openlibrary_cover_url(entry),
+                release_date=release_date,
+                genres=genres,
+                popularity=popularity,
+                row_key=row_key,
+                source_reason=source_reason,
+            ),
+        )
+
+    return candidates[:limit]
+
+
+def _comicvine_volume_candidates(
+    *,
+    sort: str,
+    row_key: str,
+    source_reason: str,
+    limit: int = 100,
+) -> list[CandidateItem]:
+    endpoint = "/volumes/"
+    params = {
+        "api_key": settings.COMICVINE_API,
+        "format": "json",
+        "field_list": "id,name,image,start_year,count_of_issues,date_last_updated",
+        "sort": sort,
+        "limit": min(max(limit, 1), 100),
+        "offset": 0,
+    }
+
+    def fetcher() -> list[dict]:
+        payload = services.api_request(
+            Sources.COMICVINE.value,
+            "GET",
+            f"{comicvine.base_url}{endpoint}",
+            params=params,
+            headers=comicvine.headers,
+        )
+        return [entry for entry in (payload.get("results") or []) if isinstance(entry, dict)]
+
+    entries = _api_cached_results(
+        Sources.COMICVINE.value,
+        endpoint,
+        params,
+        ttl_seconds=PROVIDER_DISCOVER_TTL_SECONDS,
+        fetcher=fetcher,
+    )
+    candidates: list[CandidateItem] = []
+    for index, entry in enumerate(entries, start=1):
+        media_id = _safe_int(entry.get("id"))
+        title = (entry.get("name") or "").strip()
+        if not media_id or not title:
+            continue
+
+        start_year = _safe_int(entry.get("start_year"))
+        release_date = f"{start_year}-01-01" if start_year else None
+        popularity = _safe_float(entry.get("count_of_issues"))
+        if popularity is None:
+            popularity = float(max(len(entries) - index + 1, 1))
+
+        candidates.append(
+            CandidateItem(
+                media_type=MediaTypes.COMIC.value,
+                source=Sources.COMICVINE.value,
+                media_id=str(media_id),
+                title=title,
+                image=comicvine.get_image(entry),
+                release_date=release_date,
+                popularity=popularity,
+                row_key=row_key,
+                source_reason=source_reason,
+            ),
+        )
+
+    return candidates[:limit]
+
+
+def _comicvine_coming_soon_volume_candidates(
+    *,
+    row_key: str,
+    source_reason: str,
+    limit: int = 100,
+) -> list[CandidateItem]:
+    endpoint = "/issues/"
+    start_date = timezone.localdate().isoformat()
+    end_date = (timezone.localdate() + timedelta(days=PROVIDER_COMING_SOON_WINDOW_DAYS)).isoformat()
+    params = {
+        "api_key": settings.COMICVINE_API,
+        "format": "json",
+        "field_list": "id,name,issue_number,store_date,cover_date,image,volume",
+        "filter": f"store_date:{start_date}|{end_date}",
+        "sort": "store_date:asc",
+        "limit": min(max(limit * 2, 20), 200),
+        "offset": 0,
+    }
+
+    def fetcher() -> list[dict]:
+        payload = services.api_request(
+            Sources.COMICVINE.value,
+            "GET",
+            f"{comicvine.base_url}{endpoint}",
+            params=params,
+            headers=comicvine.headers,
+        )
+        return [entry for entry in (payload.get("results") or []) if isinstance(entry, dict)]
+
+    entries = _api_cached_results(
+        Sources.COMICVINE.value,
+        f"{endpoint}:coming_soon",
+        params,
+        ttl_seconds=PROVIDER_DISCOVER_TTL_SECONDS,
+        fetcher=fetcher,
+    )
+
+    earliest_issue_by_volume: dict[int, dict] = {}
+    for entry in entries:
+        volume = entry.get("volume") or {}
+        volume_id = _safe_int(volume.get("id"))
+        if not volume_id:
+            continue
+        release_date = _iso_date(entry.get("store_date")) or _iso_date(entry.get("cover_date"))
+        existing = earliest_issue_by_volume.get(volume_id)
+        if existing is None:
+            earliest_issue_by_volume[volume_id] = {
+                "volume_name": str(volume.get("name") or "").strip(),
+                "release_date": release_date,
+                "image": comicvine.get_image(entry),
+            }
+            continue
+
+        existing_release = existing.get("release_date")
+        if release_date and (not existing_release or release_date < existing_release):
+            earliest_issue_by_volume[volume_id] = {
+                "volume_name": str(volume.get("name") or "").strip(),
+                "release_date": release_date,
+                "image": comicvine.get_image(entry),
+            }
+
+    candidates: list[CandidateItem] = []
+    sorted_volumes = sorted(
+        earliest_issue_by_volume.items(),
+        key=lambda item: (item[1].get("release_date") or "9999-12-31", item[0]),
+    )
+    for index, (volume_id, payload) in enumerate(sorted_volumes, start=1):
+        title = payload.get("volume_name") or ""
+        if not title:
+            continue
+        candidates.append(
+            CandidateItem(
+                media_type=MediaTypes.COMIC.value,
+                source=Sources.COMICVINE.value,
+                media_id=str(volume_id),
+                title=title,
+                image=payload.get("image") or settings.IMG_NONE,
+                release_date=payload.get("release_date"),
+                popularity=float(max(len(sorted_volumes) - index + 1, 1)),
+                row_key=row_key,
+                source_reason=source_reason,
+            ),
+        )
+        if len(candidates) >= limit:
+            break
+
+    return candidates[:limit]
+
+
+def _bgg_hot_candidates(
+    *,
+    row_key: str,
+    source_reason: str,
+    limit: int = 100,
+) -> list[CandidateItem]:
+    endpoint = "/xmlapi2/hot"
+    params = {"type": "boardgame"}
+    headers = {"Authorization": f"Bearer {settings.BGG_API_TOKEN}"}
+
+    def fetcher() -> list[dict]:
+        root = services.api_request(
+            Sources.BGG.value,
+            "GET",
+            f"{bgg.base_url}/hot",
+            params=params,
+            headers=headers,
+            response_format="xml",
+        )
+        entries: list[dict] = []
+        for item in root.findall(".//item"):
+            name_node = item.find("name")
+            year_node = item.find("yearpublished")
+            entries.append(
+                {
+                    "id": item.get("id"),
+                    "rank": item.get("rank"),
+                    "title": name_node.get("value") if name_node is not None else None,
+                    "year": year_node.get("value") if year_node is not None else None,
+                },
+            )
+        return entries
+
+    entries = _api_cached_results(
+        Sources.BGG.value,
+        endpoint,
+        params,
+        ttl_seconds=PROVIDER_DISCOVER_TTL_SECONDS,
+        fetcher=fetcher,
+    )
+
+    ids = [str(entry.get("id")) for entry in entries[:limit] if entry.get("id")]
+    thumbnails = bgg._fetch_thumbnails(ids) if ids else {}  # noqa: SLF001
+
+    candidates: list[CandidateItem] = []
+    for index, entry in enumerate(entries, start=1):
+        media_id = str(entry.get("id") or "").strip()
+        title = str(entry.get("title") or "").strip()
+        if not media_id or not title:
+            continue
+        release_year = _safe_int(entry.get("year"))
+        release_date = f"{release_year}-01-01" if release_year else None
+        popularity = _safe_float(entry.get("rank"))
+        if popularity is None:
+            popularity = float(max(len(entries) - index + 1, 1))
+        else:
+            popularity = max(1.0, 1000.0 - popularity)
+
+        candidates.append(
+            CandidateItem(
+                media_type=MediaTypes.BOARDGAME.value,
+                source=Sources.BGG.value,
+                media_id=media_id,
+                title=title,
+                image=thumbnails.get(media_id, settings.IMG_NONE),
+                release_date=release_date,
+                popularity=popularity,
+                row_key=row_key,
+                source_reason=source_reason,
+            ),
+        )
+
+    return candidates[:limit]
+
+
+def _musicbrainz_coming_soon_recording_candidates(
+    *,
+    row_key: str,
+    source_reason: str,
+    limit: int = 100,
+) -> list[CandidateItem]:
+    endpoint = "/recording/"
+    start_date = timezone.localdate().isoformat()
+    end_date = (timezone.localdate() + timedelta(days=PROVIDER_COMING_SOON_WINDOW_DAYS)).isoformat()
+    params = {
+        "query": f'firstreleasedate:[{start_date} TO {end_date}]',
+        "limit": min(max(limit, 1), 100),
+        "offset": 0,
+        "fmt": "json",
+        "inc": "artist-credits+releases+release-groups",
+    }
+
+    def fetcher() -> list[dict]:
+        payload = services.api_request(
+            Sources.MUSICBRAINZ.value,
+            "GET",
+            f"{musicbrainz.BASE_URL}/recording/",
+            params=params,
+            headers={
+                "User-Agent": musicbrainz.USER_AGENT,
+                "Accept": "application/json",
+            },
+        )
+        recordings = payload.get("recordings") or []
+        if isinstance(recordings, dict):
+            recordings = [recordings]
+        return [entry for entry in recordings if isinstance(entry, dict)]
+
+    entries = _api_cached_results(
+        Sources.MUSICBRAINZ.value,
+        f"{endpoint}:coming_soon",
+        params,
+        ttl_seconds=PROVIDER_DISCOVER_TTL_SECONDS,
+        fetcher=fetcher,
+    )
+
+    candidates: list[CandidateItem] = []
+    for index, entry in enumerate(entries, start=1):
+        media_id = str(entry.get("id") or "").strip()
+        title = str(entry.get("title") or "").strip()
+        if not media_id or not title:
+            continue
+
+        artist_credits = entry.get("artist-credit") or []
+        artist_name_parts: list[str] = []
+        if isinstance(artist_credits, list):
+            for credit in artist_credits:
+                if not isinstance(credit, dict):
+                    continue
+                artist = credit.get("artist") or {}
+                artist_name_parts.append(
+                    str(credit.get("name") or artist.get("name") or "").strip(),
+                )
+                artist_name_parts.append(str(credit.get("joinphrase") or ""))
+        artist_name = "".join(part for part in artist_name_parts if part).strip()
+
+        release_date = _iso_date(entry.get("first-release-date"))
+        image = settings.IMG_NONE
+        release_group_id = None
+        release_id = None
+        releases = entry.get("releases") or []
+        if isinstance(releases, list):
+            selected_release = None
+            for release in releases:
+                if not isinstance(release, dict):
+                    continue
+                if release.get("date"):
+                    selected_release = release
+                    break
+            if selected_release is None and releases:
+                selected_release = releases[0]
+            if isinstance(selected_release, dict):
+                release_date = release_date or _iso_date(selected_release.get("date"))
+                release_id = selected_release.get("id")
+                release_group = (
+                    selected_release.get("release-group")
+                    or selected_release.get("release_group")
+                    or {}
+                )
+                if isinstance(release_group, dict):
+                    release_group_id = release_group.get("id")
+                image = musicbrainz.get_cover_art(
+                    release_id=release_id,
+                    release_group_id=release_group_id,
+                )
+
+        display_title = title if not artist_name else f"{title} - {artist_name}"
+        popularity = _safe_float(entry.get("score")) or float(max(len(entries) - index + 1, 1))
+        candidates.append(
+            CandidateItem(
+                media_type=MediaTypes.MUSIC.value,
+                source=Sources.MUSICBRAINZ.value,
+                media_id=media_id,
+                title=display_title,
+                image=image,
+                release_date=release_date,
+                popularity=popularity,
+                row_key=row_key,
+                source_reason=source_reason,
+            ),
+        )
+
+    return candidates[:limit]
+
+
+def _itunes_top_podcasts_candidates(
+    *,
+    row_key: str,
+    source_reason: str,
+    limit: int = 100,
+) -> list[CandidateItem]:
+    endpoint = "/itunes/top-podcasts"
+    params = {"country": "us", "limit": min(max(limit, 1), 100)}
+
+    def fetcher() -> list[dict]:
+        payload = services.api_request(
+            Sources.POCKETCASTS.value,
+            "GET",
+            f"https://itunes.apple.com/us/rss/toppodcasts/limit={params['limit']}/json",
+        )
+        entries = ((payload.get("feed") or {}).get("entry") or [])
+        if isinstance(entries, dict):
+            entries = [entries]
+        return [entry for entry in entries if isinstance(entry, dict)]
+
+    entries = _api_cached_results(
+        Sources.POCKETCASTS.value,
+        endpoint,
+        params,
+        ttl_seconds=PROVIDER_DISCOVER_TTL_SECONDS,
+        fetcher=fetcher,
+    )
+
+    candidates: list[CandidateItem] = []
+    for index, entry in enumerate(entries, start=1):
+        media_id = (
+            ((entry.get("id") or {}).get("attributes") or {}).get("im:id")
+            or ((entry.get("id") or {}).get("label") or "").strip().rsplit("/", 1)[-1]
+        )
+        title = ((entry.get("im:name") or {}).get("label") or "").strip()
+        if not media_id or not title:
+            continue
+
+        image = settings.IMG_NONE
+        images = entry.get("im:image") or []
+        if isinstance(images, list) and images:
+            image = ((images[-1] or {}).get("label") or "").strip() or settings.IMG_NONE
+        release_text = (
+            ((entry.get("im:releaseDate") or {}).get("label"))
+            or ((entry.get("im:releaseDate") or {}).get("attributes") or {}).get("label")
+        )
+        release_date = _iso_date(release_text)
+        popularity = float(max(len(entries) - index + 1, 1))
+
+        candidates.append(
+            CandidateItem(
+                media_type=MediaTypes.PODCAST.value,
+                source=Sources.POCKETCASTS.value,
+                media_id=str(media_id),
+                title=title,
+                image=image,
+                release_date=release_date,
+                popularity=popularity,
+                row_key=row_key,
+                source_reason=source_reason,
+            ),
+        )
+
+    return candidates[:limit]
+
+
+def _lastfm_top_tracks_candidates(
+    *,
+    row_key: str,
+    source_reason: str,
+    limit: int = 100,
+) -> list[CandidateItem]:
+    if not settings.LASTFM_API_KEY:
+        return []
+
+    endpoint = "/2.0/chart.gettoptracks"
+    params = {
+        "method": "chart.gettoptracks",
+        "api_key": settings.LASTFM_API_KEY,
+        "format": "json",
+        "limit": min(max(limit, 1), 200),
+    }
+
+    def fetcher() -> list[dict]:
+        payload = services.api_request(
+            "LASTFM",
+            "GET",
+            "https://ws.audioscrobbler.com/2.0/",
+            params=params,
+        )
+        tracks = ((payload.get("tracks") or {}).get("track") or [])
+        if isinstance(tracks, dict):
+            tracks = [tracks]
+        return [track for track in tracks if isinstance(track, dict)]
+
+    tracks = _api_cached_results(
+        Sources.MUSICBRAINZ.value,
+        endpoint,
+        params,
+        ttl_seconds=PROVIDER_DISCOVER_TTL_SECONDS,
+        fetcher=fetcher,
+    )
+
+    candidates: list[CandidateItem] = []
+    for track in tracks:
+        mbid = str(track.get("mbid") or "").strip()
+        title = str(track.get("name") or "").strip()
+        if not mbid or not title:
+            continue
+        artist_info = track.get("artist") or {}
+        artist_name = (
+            artist_info.get("name")
+            if isinstance(artist_info, dict)
+            else str(artist_info)
+        )
+        images = track.get("image") or []
+        image = settings.IMG_NONE
+        if isinstance(images, list):
+            for img in reversed(images):
+                if not isinstance(img, dict):
+                    continue
+                image_value = str(img.get("#text") or "").strip()
+                if image_value:
+                    image = image_value
+                    break
+
+        listeners = _safe_float(track.get("listeners"))
+        playcount = _safe_float(track.get("playcount"))
+        popularity = playcount if playcount is not None else listeners
+
+        display_title = title if not artist_name else f"{title} - {artist_name}"
+        candidates.append(
+            CandidateItem(
+                media_type=MediaTypes.MUSIC.value,
+                source=Sources.MUSICBRAINZ.value,
+                media_id=mbid,
+                title=display_title,
+                image=image,
+                popularity=popularity,
+                row_key=row_key,
+                source_reason=source_reason,
+            ),
+        )
+        if len(candidates) >= limit:
+            break
+
+    return candidates[:limit]
+
+
+def _mal_manga_ranking_candidates(
+    *,
+    ranking_type: str,
+    row_key: str,
+    source_reason: str,
+    limit: int = 100,
+) -> list[CandidateItem]:
+    endpoint = "/manga/ranking"
+    params = {
+        "ranking_type": ranking_type,
+        "limit": min(max(limit, 1), 100),
+        "fields": "media_type,start_date,genres,mean,num_scoring_users,main_picture,alternative_titles",
+    }
+    if settings.MAL_NSFW:
+        params["nsfw"] = "true"
+
+    def fetcher() -> list[dict]:
+        payload = services.api_request(
+            Sources.MAL.value,
+            "GET",
+            f"{mal.base_url}{endpoint}",
+            params=params,
+            headers={"X-MAL-CLIENT-ID": settings.MAL_API},
+        )
+        return [entry for entry in (payload.get("data") or []) if isinstance(entry, dict)]
+
+    entries = _api_cached_results(
+        Sources.MAL.value,
+        f"{endpoint}:{ranking_type}",
+        params,
+        ttl_seconds=PROVIDER_DISCOVER_TTL_SECONDS,
+        fetcher=fetcher,
+    )
+    candidates: list[CandidateItem] = []
+    for index, entry in enumerate(entries, start=1):
+        node = entry.get("node") or {}
+        media_id = _safe_int(node.get("id"))
+        title = (mal.get_localized_title(node) or node.get("title") or "").strip()
+        if not media_id or not title:
+            continue
+        image = mal.get_image_url(node)
+        genres = [
+            str(genre.get("name")).strip()
+            for genre in (node.get("genres") or [])
+            if isinstance(genre, dict) and str(genre.get("name") or "").strip()
+        ]
+        ranking = entry.get("ranking") or {}
+        popularity = _safe_float(ranking.get("rank"))
+        if popularity is None:
+            popularity = float(max(len(entries) - index + 1, 1))
+        else:
+            popularity = max(1.0, 1000.0 - popularity)
+
+        candidates.append(
+            CandidateItem(
+                media_type=MediaTypes.MANGA.value,
+                source=Sources.MAL.value,
+                media_id=str(media_id),
+                title=title,
+                original_title=node.get("title") or title,
+                localized_title=title,
+                image=image,
+                release_date=_iso_date(node.get("start_date")),
+                genres=genres,
+                popularity=popularity,
+                rating=_safe_float(node.get("mean")),
+                rating_count=_safe_int(node.get("num_scoring_users")),
+                row_key=row_key,
+                source_reason=source_reason,
+            ),
+        )
+
+    return candidates[:limit]
+
+
+def _igdb_games_candidates(
+    *,
+    query: str,
+    endpoint_key: str,
+    row_key: str,
+    source_reason: str,
+    limit: int = 100,
+) -> list[CandidateItem]:
+    params = {"query": query, "limit": min(max(limit, 1), 100)}
+
+    def fetcher() -> list[dict]:
+        access_token = igdb.get_access_token()
+        payload = services.api_request(
+            Sources.IGDB.value,
+            "POST",
+            f"{igdb.base_url}/games",
+            data=query,
+            headers={
+                "Client-ID": settings.IGDB_ID,
+                "Authorization": f"Bearer {access_token}",
+            },
+        )
+        return [entry for entry in payload if isinstance(entry, dict)]
+
+    entries = _api_cached_results(
+        Sources.IGDB.value,
+        endpoint_key,
+        params,
+        ttl_seconds=PROVIDER_DISCOVER_TTL_SECONDS,
+        fetcher=fetcher,
+    )
+
+    candidates: list[CandidateItem] = []
+    for index, entry in enumerate(entries, start=1):
+        media_id = _safe_int(entry.get("id"))
+        title = (entry.get("name") or "").strip()
+        if not media_id or not title:
+            continue
+        genres = [
+            str(genre.get("name")).strip()
+            for genre in (entry.get("genres") or [])
+            if isinstance(genre, dict) and str(genre.get("name") or "").strip()
+        ]
+        popularity = _safe_float(entry.get("total_rating_count"))
+        if popularity is None:
+            popularity = float(max(len(entries) - index + 1, 1))
+        candidates.append(
+            CandidateItem(
+                media_type=MediaTypes.GAME.value,
+                source=Sources.IGDB.value,
+                media_id=str(media_id),
+                title=title,
+                image=igdb.get_image_url(entry),
+                release_date=_iso_date_from_timestamp(entry.get("first_release_date")),
+                genres=genres,
+                popularity=popularity,
+                rating=_safe_float(entry.get("total_rating")),
+                rating_count=_safe_int(entry.get("total_rating_count")),
+                row_key=row_key,
+                source_reason=source_reason,
+            ),
+        )
+
+    return candidates[:limit]
+
+
+def _provider_row_candidates(media_type: str, row_key: str) -> list[CandidateItem]:
+    if row_key == "trending_right_now":
+        if media_type == MediaTypes.MOVIE.value:
+            return TRAKT_ADAPTER.movie_watched_weekly(limit=100)
+        if media_type == MediaTypes.TV.value:
+            return TRAKT_ADAPTER.show_watched_weekly(
+                limit=100,
+                media_type=MediaTypes.TV.value,
+            )
+        if media_type == MediaTypes.ANIME.value:
+            return TRAKT_ADAPTER.show_watched_weekly(
+                limit=100,
+                media_type=MediaTypes.ANIME.value,
+                trakt_genres=["anime"],
+            )
+        if media_type == MediaTypes.MANGA.value:
+            return _mal_manga_ranking_candidates(
+                ranking_type="manga",
+                row_key=row_key,
+                source_reason="MAL ranking",
+                limit=100,
+            )
+        if media_type == MediaTypes.GAME.value:
+            recent_cutoff = int((timezone.now() - timedelta(days=90)).timestamp())
+            return _igdb_games_candidates(
+                query=(
+                    "fields name,cover.image_id,first_release_date,total_rating,total_rating_count,genres.name;"
+                    f" where first_release_date != null & first_release_date > {recent_cutoff};"
+                    " sort total_rating_count desc;"
+                    " limit 100;"
+                ),
+                endpoint_key="/games/trending_right_now",
+                row_key=row_key,
+                source_reason="IGDB recent popular",
+                limit=100,
+            )
+        if media_type == MediaTypes.BOOK.value:
+            return _openlibrary_trending_candidates(
+                period="daily",
+                row_key=row_key,
+                source_reason="Open Library trending",
+                limit=100,
+            )
+        if media_type == MediaTypes.COMIC.value:
+            return _comicvine_volume_candidates(
+                sort="date_last_updated:desc",
+                row_key=row_key,
+                source_reason="Comic Vine recently active",
+                limit=100,
+            )
+        if media_type == MediaTypes.BOARDGAME.value:
+            return _bgg_hot_candidates(
+                row_key=row_key,
+                source_reason="BGG hotness",
+                limit=100,
+            )
+        if media_type == MediaTypes.PODCAST.value:
+            return _itunes_top_podcasts_candidates(
+                row_key=row_key,
+                source_reason="iTunes top podcasts",
+                limit=100,
+            )
+        if media_type == MediaTypes.MUSIC.value:
+            return _lastfm_top_tracks_candidates(
+                row_key=row_key,
+                source_reason="Last.fm chart top tracks",
+                limit=100,
+            )
+
+    if row_key == "all_time_greats_unseen":
+        if media_type == MediaTypes.MOVIE.value:
+            return TRAKT_ADAPTER.movie_popular(page=1, limit=TRAKT_POPULAR_PAGE_SIZE)
+        if media_type == MediaTypes.TV.value:
+            return TRAKT_ADAPTER.show_popular(
+                page=1,
+                limit=TRAKT_POPULAR_PAGE_SIZE,
+                media_type=MediaTypes.TV.value,
+            )
+        if media_type == MediaTypes.ANIME.value:
+            return TRAKT_ADAPTER.show_popular(
+                page=1,
+                limit=TRAKT_POPULAR_PAGE_SIZE,
+                media_type=MediaTypes.ANIME.value,
+                trakt_genres=["anime"],
+            )
+        if media_type == MediaTypes.MANGA.value:
+            return _mal_manga_ranking_candidates(
+                ranking_type="bypopularity",
+                row_key=row_key,
+                source_reason="MAL popular ranking",
+                limit=100,
+            )
+        if media_type == MediaTypes.GAME.value:
+            return _igdb_games_candidates(
+                query=(
+                    "fields name,cover.image_id,first_release_date,total_rating,total_rating_count,genres.name;"
+                    " where first_release_date != null;"
+                    " sort total_rating_count desc;"
+                    " limit 100;"
+                ),
+                endpoint_key="/games/all_time_greats_unseen",
+                row_key=row_key,
+                source_reason="IGDB all-time popular",
+                limit=100,
+            )
+        if media_type == MediaTypes.BOOK.value:
+            return _openlibrary_trending_candidates(
+                period="monthly",
+                row_key=row_key,
+                source_reason="Open Library monthly popular",
+                limit=100,
+            )
+        if media_type == MediaTypes.COMIC.value:
+            return _comicvine_volume_candidates(
+                sort="count_of_issues:desc",
+                row_key=row_key,
+                source_reason="Comic Vine long-running volumes",
+                limit=100,
+            )
+        if media_type == MediaTypes.BOARDGAME.value:
+            return _bgg_hot_candidates(
+                row_key=row_key,
+                source_reason="BGG top hotness",
+                limit=100,
+            )
+        if media_type == MediaTypes.PODCAST.value:
+            return _itunes_top_podcasts_candidates(
+                row_key=row_key,
+                source_reason="iTunes top podcasts",
+                limit=100,
+            )
+        if media_type == MediaTypes.MUSIC.value:
+            return _lastfm_top_tracks_candidates(
+                row_key=row_key,
+                source_reason="Last.fm chart top tracks",
+                limit=100,
+            )
 
     if row_key == "coming_soon":
-        return TMDB_ADAPTER.upcoming(media_type, limit=80)
-
-    if row_key == "all_time_great_tv":
-        return TMDB_ADAPTER.top_rated(media_type, limit=80)
+        if media_type == MediaTypes.MOVIE.value:
+            return TRAKT_ADAPTER.movie_anticipated(page=1, limit=TRAKT_POPULAR_PAGE_SIZE)
+        if media_type == MediaTypes.TV.value:
+            return TRAKT_ADAPTER.show_anticipated(
+                page=1,
+                limit=TRAKT_POPULAR_PAGE_SIZE,
+                media_type=MediaTypes.TV.value,
+            )
+        if media_type == MediaTypes.ANIME.value:
+            return TRAKT_ADAPTER.show_anticipated(
+                page=1,
+                limit=TRAKT_POPULAR_PAGE_SIZE,
+                media_type=MediaTypes.ANIME.value,
+                trakt_genres=["anime"],
+            )
+        if media_type == MediaTypes.MANGA.value:
+            candidates = _mal_manga_ranking_candidates(
+                ranking_type="upcoming",
+                row_key=row_key,
+                source_reason="MAL upcoming ranking",
+                limit=100,
+            )
+            if candidates:
+                return candidates
+            return _mal_manga_ranking_candidates(
+                ranking_type="manga",
+                row_key=row_key,
+                source_reason="MAL upcoming fallback",
+                limit=100,
+            )
+        if media_type == MediaTypes.GAME.value:
+            now_ts = int(timezone.now().timestamp())
+            return _igdb_games_candidates(
+                query=(
+                    "fields name,cover.image_id,first_release_date,total_rating,total_rating_count,genres.name;"
+                    f" where first_release_date != null & first_release_date > {now_ts};"
+                    " sort first_release_date asc;"
+                    " limit 100;"
+                ),
+                endpoint_key="/games/coming_soon",
+                row_key=row_key,
+                source_reason="IGDB upcoming releases",
+                limit=100,
+            )
+        if media_type == MediaTypes.BOOK.value:
+            candidates = _openlibrary_coming_soon_candidates(
+                row_key=row_key,
+                source_reason="Open Library upcoming releases",
+                limit=100,
+            )
+            if candidates:
+                return candidates
+            return _openlibrary_trending_candidates(
+                period="daily",
+                row_key=row_key,
+                source_reason="Open Library upcoming fallback",
+                limit=100,
+            )
+        if media_type == MediaTypes.COMIC.value:
+            candidates = _comicvine_coming_soon_volume_candidates(
+                row_key=row_key,
+                source_reason="Comic Vine upcoming issues",
+                limit=100,
+            )
+            if candidates:
+                return candidates
+            return _comicvine_volume_candidates(
+                sort="date_last_updated:desc",
+                row_key=row_key,
+                source_reason="Comic Vine upcoming fallback",
+                limit=100,
+            )
+        if media_type == MediaTypes.BOARDGAME.value:
+            return _bgg_hot_candidates(
+                row_key=row_key,
+                source_reason="BGG upcoming fallback",
+                limit=100,
+            )
+        if media_type == MediaTypes.PODCAST.value:
+            return _itunes_top_podcasts_candidates(
+                row_key=row_key,
+                source_reason="iTunes upcoming fallback",
+                limit=100,
+            )
+        if media_type == MediaTypes.MUSIC.value:
+            candidates = _musicbrainz_coming_soon_recording_candidates(
+                row_key=row_key,
+                source_reason="MusicBrainz upcoming releases",
+                limit=100,
+            )
+            if candidates:
+                return candidates
+            return _lastfm_top_tracks_candidates(
+                row_key=row_key,
+                source_reason="Last.fm upcoming fallback",
+                limit=100,
+            )
 
     return []
 
@@ -548,13 +1828,13 @@ def _get_cached_adaptive_pull_target(user_id: int, media_type: str, row_key: str
         return TRAKT_POPULAR_DEFAULT_PULL_TARGET
 
 
-def _movie_trakt_ranked_candidates(
+def _trakt_ranked_candidates(
     user,
     media_type: str,
     *,
     row_key: str,
     fetch_page,
-    row_schema_version: int,
+    row_schema_version: int | None,
     seen_identities: set[tuple[str, str, str]] | None = None,
 ) -> tuple[list[CandidateItem], dict[str, int]]:
     blocked_statuses = {
@@ -618,44 +1898,96 @@ def _movie_trakt_ranked_candidates(
         next_pull_target = max(required_pull, len(candidates))
     next_pull_target = _clamp_adaptive_pull_target(next_pull_target)
 
-    return filtered_candidates, {
+    meta: dict[str, int] = {
         ADAPTIVE_PULL_TARGET_META_KEY: next_pull_target,
         "last_pulled_count": len(candidates),
         "last_filtered_count": len(filtered_candidates),
-        ROW_CACHE_SCHEMA_META_KEY: row_schema_version,
     }
+    if row_schema_version is not None:
+        meta[ROW_CACHE_SCHEMA_META_KEY] = row_schema_version
+    return filtered_candidates, meta
 
 
-def _movie_canon_candidates(
+def _trakt_canon_candidates(
     user,
     media_type: str,
     *,
     row_key: str,
     seen_identities: set[tuple[str, str, str]] | None = None,
 ) -> tuple[list[CandidateItem], dict[str, int]]:
-    return _movie_trakt_ranked_candidates(
+    if media_type == MediaTypes.MOVIE.value:
+        fetch_page = TRAKT_ADAPTER.movie_popular
+        row_schema_version: int | None = MOVIE_CANON_ROW_SCHEMA_VERSION
+    elif media_type == MediaTypes.TV.value:
+        fetch_page = lambda *, page, limit: TRAKT_ADAPTER.show_popular(  # noqa: E731
+            page=page,
+            limit=limit,
+            media_type=MediaTypes.TV.value,
+        )
+        row_schema_version = None
+    elif media_type == MediaTypes.ANIME.value:
+        fetch_page = lambda *, page, limit: TRAKT_ADAPTER.show_popular(  # noqa: E731
+            page=page,
+            limit=limit,
+            media_type=MediaTypes.ANIME.value,
+            trakt_genres=["anime"],
+        )
+        row_schema_version = None
+    else:
+        return [], {
+            ADAPTIVE_PULL_TARGET_META_KEY: TRAKT_POPULAR_DEFAULT_PULL_TARGET,
+            "last_pulled_count": 0,
+            "last_filtered_count": 0,
+        }
+
+    return _trakt_ranked_candidates(
         user,
         media_type,
         row_key=row_key,
-        fetch_page=TRAKT_ADAPTER.movie_popular,
-        row_schema_version=MOVIE_CANON_ROW_SCHEMA_VERSION,
+        fetch_page=fetch_page,
+        row_schema_version=row_schema_version,
         seen_identities=seen_identities,
     )
 
 
-def _movie_anticipated_candidates(
+def _trakt_anticipated_candidates(
     user,
     media_type: str,
     *,
     row_key: str,
     seen_identities: set[tuple[str, str, str]] | None = None,
 ) -> tuple[list[CandidateItem], dict[str, int]]:
-    return _movie_trakt_ranked_candidates(
+    if media_type == MediaTypes.MOVIE.value:
+        fetch_page = TRAKT_ADAPTER.movie_anticipated
+        row_schema_version: int | None = MOVIE_COMING_SOON_ROW_SCHEMA_VERSION
+    elif media_type == MediaTypes.TV.value:
+        fetch_page = lambda *, page, limit: TRAKT_ADAPTER.show_anticipated(  # noqa: E731
+            page=page,
+            limit=limit,
+            media_type=MediaTypes.TV.value,
+        )
+        row_schema_version = None
+    elif media_type == MediaTypes.ANIME.value:
+        fetch_page = lambda *, page, limit: TRAKT_ADAPTER.show_anticipated(  # noqa: E731
+            page=page,
+            limit=limit,
+            media_type=MediaTypes.ANIME.value,
+            trakt_genres=["anime"],
+        )
+        row_schema_version = None
+    else:
+        return [], {
+            ADAPTIVE_PULL_TARGET_META_KEY: TRAKT_POPULAR_DEFAULT_PULL_TARGET,
+            "last_pulled_count": 0,
+            "last_filtered_count": 0,
+        }
+
+    return _trakt_ranked_candidates(
         user,
         media_type,
         row_key=row_key,
-        fetch_page=TRAKT_ADAPTER.movie_anticipated,
-        row_schema_version=MOVIE_COMING_SOON_ROW_SCHEMA_VERSION,
+        fetch_page=fetch_page,
+        row_schema_version=row_schema_version,
         seen_identities=seen_identities,
     )
 
@@ -769,7 +2101,6 @@ def _top_picks_candidates(user, media_type: str, row_key: str, profile_payload: 
         )
 
     _apply_top_picks_confidence(candidates, profile_payload)
-    _apply_top_picks_display_score(candidates)
     return candidates
 
 
@@ -777,155 +2108,8 @@ def _apply_top_picks_confidence(
     candidates: list[CandidateItem],
     profile_payload: dict | None = None,
 ) -> list[CandidateItem]:
-    if not candidates:
-        return candidates
-
-    phase_genre_affinity, phase_tag_affinity = _phase_affinity_maps(profile_payload)
-    phase_affinity = phase_genre_affinity
-    phase_top = sorted(phase_affinity, key=phase_affinity.get, reverse=True)[:5]
-
-    candidate_tag_coverage_pool = _clamp_unit(
-        sum(1 for candidate in candidates if candidate.tags) / max(1, len(candidates)),
-    )
-    history_tag_coverages = [
-        float(candidate.score_breakdown.get("recent_history_tag_coverage", 0.0))
-        for candidate in candidates
-        if "recent_history_tag_coverage" in candidate.score_breakdown
-    ]
-    recent_history_tag_coverage = _clamp_unit(
-        (sum(history_tag_coverages) / len(history_tag_coverages))
-        if history_tag_coverages
-        else 0.0,
-    )
-    tag_signal_mode = (
-        "tag_rich"
-        if (
-            candidate_tag_coverage_pool >= COMFORT_TAG_RICH_CANDIDATE_COVERAGE_THRESHOLD
-            and recent_history_tag_coverage >= COMFORT_TAG_RICH_HISTORY_COVERAGE_THRESHOLD
-        )
-        else "tag_sparse"
-    )
-    hot_recency_mode_multiplier = (
-        1.0 if tag_signal_mode == "tag_rich" else COMFORT_HOT_RECENCY_TAG_SPARSE_MULTIPLIER
-    )
-
-    for candidate in candidates:
-        phase_genre_bonus = float(candidate.score_breakdown.get("phase_genre_bonus", 0.0))
-        phase_tag_bonus = float(candidate.score_breakdown.get("phase_tag_bonus", 0.0))
-        recency_bonus = float(candidate.score_breakdown.get("recency_bonus", 0.0))
-        recency_tag_bonus = float(candidate.score_breakdown.get("recency_tag_bonus", 0.0))
-        genre_match = float(candidate.score_breakdown.get("genre_match", 0.0))
-        tag_match = float(candidate.score_breakdown.get("tag_match", 0.0))
-        popularity = float(candidate.score_breakdown.get("popularity", 0.0))
-        rating = float(candidate.score_breakdown.get("rating", 0.0))
-
-        phase_fit = _clamp_unit((phase_genre_bonus * 0.45) + (phase_tag_bonus * 0.55))
-        hot_recency_base = _clamp_unit((recency_bonus * 0.35) + (recency_tag_bonus * 0.65))
-        genre_overlap_ratio = (
-            min(phase_genre_bonus, recency_bonus)
-            / max(phase_genre_bonus, recency_bonus, 1e-6)
-            if (phase_genre_bonus > 0.0 or recency_bonus > 0.0)
-            else 0.0
-        )
-        tag_overlap_ratio = (
-            min(phase_tag_bonus, recency_tag_bonus)
-            / max(phase_tag_bonus, recency_tag_bonus, 1e-6)
-            if (phase_tag_bonus > 0.0 or recency_tag_bonus > 0.0)
-            else 0.0
-        )
-        hot_recency_incremental = _clamp_unit(
-            (max(0.0, recency_bonus - phase_genre_bonus) * 0.35)
-            + (max(0.0, recency_tag_bonus - phase_tag_bonus) * 0.65),
-        )
-        phase_hot_overlap_ratio = _clamp_unit(
-            (genre_overlap_ratio * 0.4) + (tag_overlap_ratio * 0.6),
-        )
-        hot_recency_specificity = _clamp_unit(
-            hot_recency_incremental * (1.0 - phase_hot_overlap_ratio),
-        )
-        hot_recency = _clamp_unit(
-            (hot_recency_specificity ** COMFORT_HOT_RECENCY_SELECTIVE_EXPONENT)
-            * hot_recency_mode_multiplier,
-        )
-
-        phase_family_contribution = phase_fit * TOP_PICKS_PHASE_WEIGHT
-        hot_recency_contribution = hot_recency * TOP_PICKS_HOT_RECENCY_WEIGHT
-        rating_contribution = rating * TOP_PICKS_RATING_WEIGHT
-        rewatch_contribution = 0.0
-        background_contribution = (
-            (genre_match * TOP_PICKS_GENRE_WEIGHT)
-            + (tag_match * TOP_PICKS_TAG_WEIGHT)
-            + (popularity * TOP_PICKS_POPULARITY_WEIGHT)
-        )
-        top_picks_score = _clamp_unit(
-            phase_family_contribution
-            + hot_recency_contribution
-            + rating_contribution
-            + background_contribution,
-        )
-
-        candidate.score_breakdown["phase_fit"] = round(phase_fit, 6)
-        candidate.score_breakdown["hot_recency_base"] = round(hot_recency_base, 6)
-        candidate.score_breakdown["genre_overlap_ratio"] = round(genre_overlap_ratio, 6)
-        candidate.score_breakdown["tag_overlap_ratio"] = round(tag_overlap_ratio, 6)
-        candidate.score_breakdown["hot_recency_incremental"] = round(hot_recency_incremental, 6)
-        candidate.score_breakdown["hot_recency_specificity"] = round(hot_recency_specificity, 6)
-        candidate.score_breakdown["phase_hot_overlap_ratio"] = round(phase_hot_overlap_ratio, 6)
-        candidate.score_breakdown["hot_recency"] = round(hot_recency, 6)
-        candidate.score_breakdown["tag_signal_mode"] = tag_signal_mode
-        candidate.score_breakdown["hot_recency_mode_multiplier"] = round(
-            hot_recency_mode_multiplier,
-            6,
-        )
-        candidate.score_breakdown["candidate_tag_coverage_pool"] = round(
-            candidate_tag_coverage_pool,
-            6,
-        )
-        candidate.score_breakdown["recent_history_tag_coverage"] = round(
-            recent_history_tag_coverage,
-            6,
-        )
-        candidate.score_breakdown["candidate_has_tags"] = 1.0 if candidate.tags else 0.0
-        candidate.score_breakdown["phase_family_contribution"] = round(phase_family_contribution, 6)
-        candidate.score_breakdown["hot_recency_contribution"] = round(hot_recency_contribution, 6)
-        candidate.score_breakdown["rating_contribution"] = round(rating_contribution, 6)
-        candidate.score_breakdown["rewatch_contribution"] = 0.0
-        candidate.score_breakdown["rewatch_bonus"] = 0.0
-        candidate.score_breakdown["rewatch_gate"] = 0.0
-        candidate.score_breakdown["rating_confidence"] = round(rating, 6)
-        candidate.score_breakdown["inactivity_norm"] = 0.0
-        candidate.score_breakdown["phase_evidence"] = round(
-            float(candidate.score_breakdown.get("phase_evidence", 0.0)),
-            6,
-        )
-        candidate.score_breakdown["seasonal_adjustment"] = 0.0
-        candidate.score_breakdown["seasonality_dampener_contribution"] = 0.0
-        candidate.score_breakdown["diversity_dampener_contribution"] = 0.0
-        candidate.score_breakdown["era_dampener_contribution"] = 0.0
-        candidate.score_breakdown["opening_era_dampener_contribution"] = 0.0
-        candidate.score_breakdown["dampeners_contribution"] = 0.0
-        candidate.score_breakdown["background_contribution"] = round(background_contribution, 6)
-        candidate.score_breakdown["comfort_score"] = round(top_picks_score, 6)
-        candidate.final_score = round(top_picks_score, 6)
-
-        if phase_top:
-            cand_genres = {g.strip().lower() for g in (candidate.genres or []) if g}
-            overlap = [g for g in phase_top if g in cand_genres]
-            if overlap:
-                candidate.score_breakdown["match_genres"] = ", ".join(
-                    g.title() for g in overlap[:3]
-                )
-
-    candidates.sort(
-        key=lambda candidate: (
-            candidate.final_score if candidate.final_score is not None else -1.0,
-            float(candidate.score_breakdown.get("phase_fit", -1.0)),
-            float(candidate.score_breakdown.get("hot_recency", -1.0)),
-            float(candidate.score_breakdown.get("genre_match", -1.0)),
-        ),
-        reverse=True,
-    )
-    return candidates
+    # Keep Top Picks ranking formula aligned with Comfort Rewatches.
+    return _apply_comfort_confidence(candidates, profile_payload)
 
 
 def _clamp_unit(value: float) -> float:
@@ -937,11 +2121,7 @@ def _calibrate_display_score(raw_score: float, *, offset: float, weight: float) 
 
 
 def _apply_top_picks_display_score(candidates: list[CandidateItem]) -> list[CandidateItem]:
-    for candidate in candidates:
-        raw_score = float(candidate.final_score or 0.0)
-        display_score = _calibrate_display_score(raw_score, offset=0.42, weight=0.44)
-        candidate.display_score = round(display_score, 6)
-    return candidates
+    return _calibrate_comfort_display_scores(candidates)
 
 
 def _is_holiday_window(today=None) -> bool:
@@ -1073,9 +2253,7 @@ def _format_phase_label(value: str) -> str:
     key = str(value).strip().lower()
     if not key:
         return ""
-    if key in PHASE_LABEL_OVERRIDES:
-        return PHASE_LABEL_OVERRIDES[key]
-    return " ".join(part.capitalize() for part in key.replace("_", " ").split())
+    return " ".join(part.capitalize() for part in key.replace("_", " ").replace("-", " ").split())
 
 
 def _top_phase_labels(
@@ -1345,7 +2523,10 @@ def _apply_comfort_confidence(
         phase_evidence = float(
             candidate.score_breakdown.get("phase_evidence", 0.0),
         )
-        rewatch_count = int(float(candidate.score_breakdown.get("rewatch_count", 1.0)))
+        rewatch_count = max(
+            1.0,
+            float(candidate.score_breakdown.get("rewatch_count", 1.0)),
+        )
         raw_rewatch_bonus = _clamp_unit(
             math.log1p(rewatch_count - 1) / math.log(8)
             if rewatch_count > 1
@@ -1642,6 +2823,7 @@ def _build_comfort_debug_payload(
     candidates: list[CandidateItem],
     *,
     top_n: int = COMFORT_DEBUG_TOP_N,
+    match_signal_details: dict | None = None,
 ) -> dict:
     if not candidates:
         return {
@@ -1860,7 +3042,7 @@ def _build_comfort_debug_payload(
             },
         )
 
-    return {
+    payload = {
         "top_n": effective_top_n,
         "top_candidates": top_candidates,
         "score_distribution": {
@@ -1904,6 +3086,9 @@ def _build_comfort_debug_payload(
             "hot_recency_mode_multiplier": round(hot_recency_mode_multiplier, 6),
         },
     }
+    if match_signal_details:
+        payload["match_signal"] = dict(match_signal_details)
+    return payload
 
 
 def _comfort_match_signal(profile_payload: dict) -> str:
@@ -1942,6 +3127,156 @@ def _comfort_match_signal(profile_payload: dict) -> str:
     if not top_labels:
         return ""
     return "Driven by your current " + ", ".join(top_labels[:3]) + " phase"
+
+
+def _row_match_signal_with_details(
+    row_key: str,
+    candidates: list[CandidateItem],
+    profile_payload: dict | None,
+) -> tuple[str | None, dict | None]:
+    if row_key not in ROW_MATCH_SIGNAL_ROWS:
+        return None, None
+
+    phase_genres, phase_tags = _phase_affinity_maps(profile_payload)
+    label_scores: dict[str, float] = defaultdict(float)
+    label_source_scores: dict[str, dict[str, dict[str, float] | int]] = defaultdict(
+        lambda: {
+            "tags": defaultdict(float),
+            "genres": defaultdict(float),
+            "matches": 0,
+        },
+    )
+    candidates_window = candidates[:ROW_MATCH_SIGNAL_CANDIDATE_LIMIT]
+    window_size = max(1, len(candidates_window))
+
+    for index, candidate in enumerate(candidates_window):
+        rank_weight = 1.0 - ((index / window_size) * 0.35)
+        phase_weight = _clamp_unit(
+            float(
+                candidate.score_breakdown.get(
+                    "phase_fit",
+                    candidate.final_score or 0.0,
+                ),
+            ),
+        )
+        evidence_weight = max(0.2, phase_weight) * rank_weight
+        candidate_tags = {
+            str(tag).strip().lower()
+            for tag in (candidate.tags or [])
+            if str(tag).strip()
+        }
+        candidate_genres = {
+            str(genre).strip().lower()
+            for genre in (candidate.genres or [])
+            if str(genre).strip()
+        }
+
+        for tag, affinity in phase_tags.items():
+            if tag in candidate_tags:
+                label = _format_phase_label(tag)
+                if not label:
+                    continue
+                contribution = evidence_weight * max(0.2, float(affinity))
+                label_scores[label] += contribution
+                source_bucket = label_source_scores[label]
+                source_bucket["tags"][tag] += contribution
+                source_bucket["matches"] += 1
+        for genre, affinity in phase_genres.items():
+            if genre in candidate_genres:
+                label = _format_phase_label(genre)
+                if not label:
+                    continue
+                contribution = evidence_weight * max(0.2, float(affinity))
+                label_scores[label] += contribution
+                source_bucket = label_source_scores[label]
+                source_bucket["genres"][genre] += contribution
+                source_bucket["matches"] += 1
+
+    if not label_scores:
+        fallback = _comfort_match_signal(profile_payload or {})
+        if not fallback:
+            return None, None
+        return fallback, {
+            "mode": "profile_fallback",
+            "signal": fallback,
+            "candidate_window": len(candidates_window),
+            "labels": [],
+            "explanation": "Signal fell back to phase profile affinity because row candidates had no direct label overlaps.",
+        }
+
+    ranked_labels = sorted(
+        label_scores.items(),
+        key=lambda item: item[1],
+        reverse=True,
+    )[:3]
+    labels = [label for label, _score in ranked_labels]
+    if not labels:
+        return None, None
+
+    signal = "Driven by your current " + ", ".join(labels) + " phase"
+    debug_labels: list[dict[str, object]] = []
+    explanation_parts: list[str] = []
+    for label, score_value in ranked_labels:
+        source_bucket = label_source_scores[label]
+        tag_scores = source_bucket["tags"]
+        genre_scores = source_bucket["genres"]
+        top_tags = [
+            _format_phase_label(key)
+            for key, _value in sorted(
+                tag_scores.items(),
+                key=lambda item: item[1],
+                reverse=True,
+            )[:2]
+        ]
+        top_genres = [
+            _format_phase_label(key)
+            for key, _value in sorted(
+                genre_scores.items(),
+                key=lambda item: item[1],
+                reverse=True,
+            )[:2]
+        ]
+        debug_labels.append(
+            {
+                "label": label,
+                "score": round(float(score_value), 6),
+                "matches": int(source_bucket["matches"]),
+                "top_tags": top_tags,
+                "top_genres": top_genres,
+            },
+        )
+
+        source_phrases: list[str] = []
+        if top_genres:
+            source_phrases.append("genres: " + ", ".join(top_genres))
+        if top_tags:
+            source_phrases.append("tags: " + ", ".join(top_tags))
+        if source_phrases:
+            explanation_parts.append(f"{label} ({'; '.join(source_phrases)})")
+        else:
+            explanation_parts.append(label)
+
+    explanation = "Signal evidence: " + "; ".join(explanation_parts)
+    return signal, {
+        "mode": "row_candidates",
+        "signal": signal,
+        "candidate_window": len(candidates_window),
+        "labels": debug_labels,
+        "explanation": explanation,
+    }
+
+
+def _row_match_signal(
+    row_key: str,
+    candidates: list[CandidateItem],
+    profile_payload: dict | None,
+) -> str | None:
+    signal, _details = _row_match_signal_with_details(
+        row_key,
+        candidates,
+        profile_payload,
+    )
+    return signal
 
 
 def _wildcard_genres(profile_payload: dict) -> list[str]:
@@ -2266,12 +3601,93 @@ def _is_missing_image(candidate: CandidateItem) -> bool:
     return not candidate.image or candidate.image == settings.IMG_NONE
 
 
-def _hydrate_trending_movie_artwork(candidates: list[CandidateItem]) -> None:
-    """Hydrate missing artwork for displayed Trakt-ranked movie candidates."""
+def _provider_media_type_for_artwork(candidate_media_type: str) -> str | None:
+    if candidate_media_type == MediaTypes.MOVIE.value:
+        return MediaTypes.MOVIE.value
+    if candidate_media_type in {MediaTypes.TV.value, MediaTypes.ANIME.value}:
+        return MediaTypes.TV.value
+    return None
+
+
+def _supports_provider_artwork_hydration(candidate: CandidateItem) -> bool:
+    return (
+        (
+            candidate.media_type == MediaTypes.BOARDGAME.value
+            and candidate.source == Sources.BGG.value
+        )
+        or (
+            candidate.media_type == MediaTypes.MUSIC.value
+            and candidate.source == Sources.MUSICBRAINZ.value
+        )
+    )
+
+
+def _hydrate_provider_ranked_artwork(candidates: list[CandidateItem]) -> None:
+    """Hydrate missing artwork for top provider-ranked boardgame/music candidates."""
     display_candidates = [
         candidate
         for candidate in candidates[:MAX_ITEMS_PER_ROW]
-        if candidate.media_type == MediaTypes.MOVIE.value
+        if _supports_provider_artwork_hydration(candidate)
+    ]
+    if not display_candidates:
+        return
+
+    missing = [candidate for candidate in display_candidates if _is_missing_image(candidate)]
+    if not missing:
+        return
+
+    local_images = {
+        (item.media_type, item.source, str(item.media_id)): item.image
+        for item in Item.objects.filter(
+            media_id__in=[candidate.media_id for candidate in missing],
+            media_type__in=[MediaTypes.BOARDGAME.value, MediaTypes.MUSIC.value],
+            source__in=[Sources.BGG.value, Sources.MUSICBRAINZ.value],
+        ).only("media_type", "source", "media_id", "image")
+        if item.image and item.image != settings.IMG_NONE
+    }
+
+    for candidate in missing:
+        local_image = local_images.get(candidate.identity())
+        if local_image:
+            candidate.image = local_image
+
+    for candidate in missing:
+        if not _is_missing_image(candidate):
+            continue
+        try:
+            metadata = services.get_media_metadata(
+                candidate.media_type,
+                candidate.media_id,
+                candidate.source,
+            )
+        except Exception as error:  # noqa: BLE001
+            logger.warning(
+                "discover_provider_artwork_lookup_failed media_type=%s source=%s media_id=%s error=%s",
+                candidate.media_type,
+                candidate.source,
+                candidate.media_id,
+                error,
+            )
+            continue
+
+        image = (metadata or {}).get("image")
+        if image and image != settings.IMG_NONE:
+            candidate.image = image
+
+
+def _hydrate_trakt_ranked_artwork(
+    media_type: str,
+    candidates: list[CandidateItem],
+) -> None:
+    """Hydrate missing artwork for displayed Trakt-ranked TMDB candidates."""
+    provider_media_type = _provider_media_type_for_artwork(media_type)
+    if provider_media_type is None:
+        return
+
+    display_candidates = [
+        candidate
+        for candidate in candidates[:MAX_ITEMS_PER_ROW]
+        if candidate.media_type == media_type
         and candidate.source == TMDB_ADAPTER.provider
     ]
     if not display_candidates:
@@ -2284,7 +3700,7 @@ def _hydrate_trending_movie_artwork(candidates: list[CandidateItem]) -> None:
     local_images = {
         str(item.media_id): item.image
         for item in Item.objects.filter(
-            media_type=MediaTypes.MOVIE.value,
+            media_type=media_type,
             source=TMDB_ADAPTER.provider,
             media_id__in=[candidate.media_id for candidate in missing],
         ).only("media_id", "image")
@@ -2301,7 +3717,7 @@ def _hydrate_trending_movie_artwork(candidates: list[CandidateItem]) -> None:
             continue
         try:
             metadata = services.get_media_metadata(
-                MediaTypes.MOVIE.value,
+                provider_media_type,
                 candidate.media_id,
                 TMDB_ADAPTER.provider,
             )
@@ -2357,22 +3773,24 @@ def _build_and_cache_row(
     profile_payload: dict,
     *,
     seen_identities: set[tuple[str, str, str]] | None = None,
+    defer_artwork: bool = False,
+    show_more: bool = False,
 ) -> RowResult:
     started = timezone.now()
     row_meta: dict | None = None
-    if media_type == MediaTypes.MOVIE.value and row_definition.key in {
+    if media_type in {MediaTypes.MOVIE.value, MediaTypes.TV.value, MediaTypes.ANIME.value} and row_definition.key in {
         "all_time_greats_unseen",
         "coming_soon",
     }:
         if row_definition.key == "all_time_greats_unseen":
-            candidates, row_meta = _movie_canon_candidates(
+            candidates, row_meta = _trakt_canon_candidates(
                 user,
                 media_type,
                 row_key=row_definition.key,
                 seen_identities=seen_identities,
             )
         else:
-            candidates, row_meta = _movie_anticipated_candidates(
+            candidates, row_meta = _trakt_anticipated_candidates(
                 user,
                 media_type,
                 row_key=row_definition.key,
@@ -2408,23 +3826,47 @@ def _build_and_cache_row(
                 )
         candidates = exclude_tracked_items(candidates, tracked_keys)
 
-    if media_type == MediaTypes.MOVIE.value and row_definition.key in {
+    needs_async_artwork_refresh = False
+    is_trakt_ranked_row = media_type in {
+        MediaTypes.MOVIE.value,
+        MediaTypes.TV.value,
+        MediaTypes.ANIME.value,
+    } and row_definition.key in {
         "trending_right_now",
         "all_time_greats_unseen",
         "coming_soon",
-    }:
-        _hydrate_trending_movie_artwork(candidates)
+    }
+    is_provider_ranked_row = (
+        row_definition.source == "provider"
+        and row_definition.key in PROVIDER_ARTWORK_HYDRATION_ROW_KEYS
+    )
+    if is_trakt_ranked_row:
+        if defer_artwork:
+            needs_async_artwork_refresh = any(
+                _is_missing_image(item)
+                for item in candidates[:MAX_ITEMS_PER_ROW]
+            )
+        else:
+            _hydrate_trakt_ranked_artwork(media_type, candidates)
+    elif is_provider_ranked_row:
+        provider_display_candidates = [
+            candidate
+            for candidate in candidates[:MAX_ITEMS_PER_ROW]
+            if _supports_provider_artwork_hydration(candidate)
+        ]
+        if defer_artwork:
+            needs_async_artwork_refresh = any(
+                _is_missing_image(candidate)
+                for candidate in provider_display_candidates
+            )
+        else:
+            _hydrate_provider_ranked_artwork(candidates)
 
-    match_signal = None
-    if row_definition.key in {
-        "top_picks_for_you",
-        "comfort_rewatches",
-        "comfort_binge",
-        "comfort",
-        "comfort_replay",
-        "comfort_picks",
-    }:
-        match_signal = _comfort_match_signal(profile_payload)
+    match_signal = _row_match_signal(
+        row_definition.key,
+        candidates,
+        profile_payload,
+    )
 
     buffered_limit = MAX_ITEMS_PER_ROW * ROW_CANDIDATE_BUFFER_MULTIPLIER
     row = RowResult(
@@ -2443,13 +3885,25 @@ def _build_and_cache_row(
     if row_meta:
         cache_payload["meta"] = row_meta
 
-    cache_repo.set_row_cache(
-        user.id,
-        media_type,
-        row_definition.key,
-        cache_payload,
-        ttl_seconds=_row_ttl_seconds(row_definition),
-    )
+    try:
+        cache_repo.set_row_cache(
+            user.id,
+            media_type,
+            row_definition.key,
+            cache_payload,
+            ttl_seconds=_row_ttl_seconds(row_definition),
+        )
+    except OperationalError as error:
+        logger.warning(
+            "discover_row_cache_write_failed user_id=%s media_type=%s row_key=%s error=%s",
+            user.id,
+            media_type,
+            row_definition.key,
+            error,
+        )
+
+    if needs_async_artwork_refresh:
+        _queue_stale_refresh(user.id, media_type, row_definition.key, show_more)
 
     duration_ms = int((timezone.now() - started).total_seconds() * 1000)
     logger.info(
@@ -2483,13 +3937,19 @@ def _row_requires_artwork_rebuild(
     row_definition: RowDefinition,
     row: RowResult,
 ) -> bool:
-    if media_type != MediaTypes.MOVIE.value or row_definition.key not in {
+    if media_type in {MediaTypes.MOVIE.value, MediaTypes.TV.value, MediaTypes.ANIME.value} and row_definition.key in {
         "trending_right_now",
         "all_time_greats_unseen",
         "coming_soon",
     }:
-        return False
-    return any(_is_missing_image(item) for item in row.items[:MAX_ITEMS_PER_ROW])
+        return any(_is_missing_image(item) for item in row.items[:MAX_ITEMS_PER_ROW])
+
+    if row_definition.source == "provider" and row_definition.key in PROVIDER_ARTWORK_HYDRATION_ROW_KEYS:
+        return any(
+            _supports_provider_artwork_hydration(item) and _is_missing_image(item)
+            for item in row.items[:MAX_ITEMS_PER_ROW]
+        )
+    return False
 
 
 def _is_row_cache_compatible(
@@ -2512,15 +3972,35 @@ def _is_row_cache_compatible(
 
 
 def _required_row_cache_schema_version(media_type: str, row_key: str) -> int | None:
-    if media_type != MediaTypes.MOVIE.value:
+    if media_type == MediaTypes.MOVIE.value:
+        if row_key == "all_time_greats_unseen":
+            return MOVIE_CANON_ROW_SCHEMA_VERSION
+        if row_key == "coming_soon":
+            return MOVIE_COMING_SOON_ROW_SCHEMA_VERSION
+        if row_key in MOVIE_PERSONALIZED_ROW_KEYS:
+            return MOVIE_PERSONALIZED_ROW_SCHEMA_VERSION
         return None
-    if row_key == "all_time_greats_unseen":
-        return MOVIE_CANON_ROW_SCHEMA_VERSION
-    if row_key == "coming_soon":
-        return MOVIE_COMING_SOON_ROW_SCHEMA_VERSION
-    if row_key in MOVIE_PERSONALIZED_ROW_KEYS:
-        return MOVIE_PERSONALIZED_ROW_SCHEMA_VERSION
+    if media_type in {MediaTypes.TV.value, MediaTypes.ANIME.value}:
+        if row_key in {
+            "trending_right_now",
+            "all_time_greats_unseen",
+            "coming_soon",
+        }:
+            return TV_ANIME_TRAKT_ROW_SCHEMA_VERSION
+        if row_key in TV_ANIME_PERSONALIZED_ROW_KEYS:
+            return TV_ANIME_PERSONALIZED_ROW_SCHEMA_VERSION
     return None
+
+
+def _allow_empty_row(
+    media_type: str,
+    row_key: str,
+) -> bool:
+    if row_key in ALWAYS_VISIBLE_EMPTY_ROWS:
+        return True
+    if media_type in (FIVE_ROW_MEDIA_TYPES - {MediaTypes.MOVIE.value}) and row_key in FIVE_ROW_DISCOVER_KEYS:
+        return True
+    return False
 
 
 def get_discover_rows(
@@ -2529,6 +4009,7 @@ def get_discover_rows(
     *,
     show_more: bool = False,
     include_debug: bool = False,
+    defer_artwork: bool = False,
 ) -> list[RowResult]:
     """Return discover rows for selected media type."""
     media_type = _coerce_media_type(media_type)
@@ -2551,6 +4032,8 @@ def get_discover_rows(
                         row_definition,
                         profile_payload,
                         seen_identities=seen_identities,
+                        defer_artwork=defer_artwork,
+                        show_more=show_more,
                     )
                 elif not _is_row_cache_compatible(media_type, row_definition, cached_payload):
                     row = _build_and_cache_row(
@@ -2559,15 +4042,23 @@ def get_discover_rows(
                         row_definition,
                         profile_payload,
                         seen_identities=seen_identities,
+                        defer_artwork=defer_artwork,
+                        show_more=show_more,
                     )
                 elif _row_requires_artwork_rebuild(media_type, row_definition, row):
-                    row = _build_and_cache_row(
-                        user,
-                        media_type,
-                        row_definition,
-                        profile_payload,
-                        seen_identities=seen_identities,
-                    )
+                    if defer_artwork:
+                        row = _apply_row_definition_metadata(row, row_definition)
+                        _queue_stale_refresh(user.id, media_type, row_definition.key, show_more)
+                    else:
+                        row = _build_and_cache_row(
+                            user,
+                            media_type,
+                            row_definition,
+                            profile_payload,
+                            seen_identities=seen_identities,
+                            defer_artwork=defer_artwork,
+                            show_more=show_more,
+                        )
                 else:
                     row = _apply_row_definition_metadata(row, row_definition)
                     if is_stale:
@@ -2583,14 +4074,13 @@ def get_discover_rows(
                     row_definition,
                     profile_payload,
                     seen_identities=seen_identities,
+                    defer_artwork=defer_artwork,
+                    show_more=show_more,
                 )
 
             prior_seen_identities = set(seen_identities)
             before_count = len(row.items)
-            all_time_row = (
-                media_type == MediaTypes.MOVIE.value
-                and row_definition.key == "all_time_greats_unseen"
-            )
+            all_time_row = row_definition.key == "all_time_greats_unseen"
             if all_time_row:
                 row.items = dedupe_candidates(row.items, seen_identities=set())
                 seen_identities.update(item.identity() for item in row.items)
@@ -2599,7 +4089,7 @@ def get_discover_rows(
             dedupe_removed = before_count - len(row.items)
 
             if (
-                media_type == MediaTypes.MOVIE.value
+                media_type in {MediaTypes.MOVIE.value, MediaTypes.TV.value, MediaTypes.ANIME.value}
                 and row_definition.key == "coming_soon"
                 and len(row.items) < MAX_ITEMS_PER_ROW
                 and dedupe_removed > 0
@@ -2612,6 +4102,8 @@ def get_discover_rows(
                     row_definition,
                     profile_payload,
                     seen_identities=prior_seen_identities,
+                    defer_artwork=defer_artwork,
+                    show_more=show_more,
                 )
                 before_count = len(row.items)
                 row.items = dedupe_candidates(row.items, seen_identities=seen_identities)
@@ -2619,15 +4111,38 @@ def get_discover_rows(
 
             row.items = row.items[:MAX_ITEMS_PER_ROW]
             filtered_count = before_count - len(row.items)
+            match_signal, match_signal_details = _row_match_signal_with_details(
+                row_definition.key,
+                row.items,
+                profile_payload,
+            )
+            row.match_signal = match_signal
 
-            if not row.items and row_definition.key not in ALWAYS_VISIBLE_EMPTY_ROWS:
+            if not row.items and not _allow_empty_row(media_type, row_definition.key):
                 continue
 
-            if len(row.items) < row_definition.min_items and row_definition.key not in ALWAYS_VISIBLE_EMPTY_ROWS:
+            if len(row.items) < row_definition.min_items and not _allow_empty_row(
+                media_type,
+                row_definition.key,
+            ):
                 continue
 
             if include_debug and row_definition.key in {"comfort_rewatches", "top_picks_for_you"}:
-                row.debug_payload = _build_comfort_debug_payload(row.items, top_n=COMFORT_DEBUG_TOP_N)
+                row.debug_payload = _build_comfort_debug_payload(
+                    row.items,
+                    top_n=COMFORT_DEBUG_TOP_N,
+                    match_signal_details=match_signal_details,
+                )
+
+            if match_signal_details:
+                logger.info(
+                    "discover_row_match_signal user_id=%s media_type=%s row_key=%s signal=%s explanation=%s",
+                    user.id,
+                    media_type,
+                    row_definition.key,
+                    row.match_signal or "",
+                    str(match_signal_details.get("explanation", "")),
+                )
 
             logger.info(
                 "discover_row_render user_id=%s media_type=%s row_key=%s result_count=%s source=%s filtered_count=%s",
@@ -2647,6 +4162,33 @@ def get_discover_rows(
                 row_definition.key,
                 error,
             )
+            if _allow_empty_row(media_type, row_definition.key):
+                fallback_signal, _fallback_details = _row_match_signal_with_details(
+                    row_definition.key,
+                    [],
+                    profile_payload,
+                )
+                fallback_row = RowResult(
+                    key=row_definition.key,
+                    title=row_definition.title,
+                    mission=row_definition.mission,
+                    why=row_definition.why,
+                    source=row_definition.source,
+                    items=[],
+                    show_more=row_definition.show_more,
+                    source_state="error",
+                    match_signal=fallback_signal,
+                )
+                logger.info(
+                    "discover_row_render user_id=%s media_type=%s row_key=%s result_count=%s source=%s filtered_count=%s",
+                    user.id,
+                    media_type,
+                    row_definition.key,
+                    0,
+                    "error",
+                    0,
+                )
+                rows.append(fallback_row)
             continue
 
     return rows
@@ -2658,6 +4200,7 @@ def get_discover_payload(
     *,
     show_more: bool = False,
     include_debug: bool = False,
+    defer_artwork: bool = False,
 ) -> DiscoverPayload:
     """Return top-level discover payload for selected media type."""
     media_type = _coerce_media_type(media_type)
@@ -2666,6 +4209,7 @@ def get_discover_payload(
         media_type,
         show_more=show_more,
         include_debug=include_debug,
+        defer_artwork=defer_artwork,
     )
     return DiscoverPayload(
         media_type=media_type,

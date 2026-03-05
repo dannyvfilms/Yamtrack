@@ -239,12 +239,242 @@ class TraktDiscoverAdapter:
 
         return candidates[:page_limit]
 
+    @staticmethod
+    def _normalized_release_date(value: str | None) -> str | None:
+        if not value:
+            return None
+        raw = str(value).strip()
+        if not raw:
+            return None
+        if len(raw) >= 10 and raw[4:5] == "-" and raw[7:8] == "-":
+            return raw[:10]
+        return raw
+
+    @staticmethod
+    def _normalized_trakt_genres(trakt_genres: list[str] | None) -> str | None:
+        if not trakt_genres:
+            return None
+        normalized = [
+            str(genre).strip().lower()
+            for genre in trakt_genres
+            if str(genre).strip()
+        ]
+        if not normalized:
+            return None
+        return ",".join(dict.fromkeys(normalized))
+
+    @staticmethod
+    def _show_candidate(
+        show: dict,
+        *,
+        media_type: str,
+        row_key: str,
+        source_reason: str,
+        popularity: float | int | None,
+        trakt_genres: list[str] | None = None,
+    ) -> CandidateItem | None:
+        if not show:
+            return None
+
+        ids = show.get("ids") or {}
+        tmdb_id = ids.get("tmdb")
+        if not tmdb_id:
+            return None
+
+        title = (show.get("title") or "").strip()
+        if not title:
+            return None
+
+        genres = [
+            str(genre).strip()
+            for genre in (show.get("genres") or [])
+            if str(genre).strip()
+        ]
+        normalized_filter_genres = {
+            str(genre).strip().lower()
+            for genre in (trakt_genres or [])
+            if str(genre).strip()
+        }
+        if "anime" in normalized_filter_genres and "anime" not in {
+            genre.lower() for genre in genres
+        }:
+            genres.append("anime")
+
+        return CandidateItem(
+            media_type=media_type,
+            source=Sources.TMDB.value,
+            media_id=str(tmdb_id),
+            title=title,
+            original_title=title,
+            localized_title=title,
+            image=settings.IMG_NONE,
+            release_date=TraktDiscoverAdapter._normalized_release_date(
+                show.get("first_aired"),
+            ),
+            genres=genres,
+            popularity=float(popularity) if popularity is not None else None,
+            rating=float(show["rating"]) if show.get("rating") is not None else None,
+            rating_count=int(show["votes"]) if show.get("votes") is not None else None,
+            row_key=row_key,
+            source_reason=source_reason,
+        )
+
+    def show_watched_weekly(
+        self,
+        *,
+        limit: int = 100,
+        media_type: str = MediaTypes.TV.value,
+        trakt_genres: list[str] | None = None,
+    ) -> list[CandidateItem]:
+        """Return Trakt watched-weekly shows normalized to Discover candidates."""
+        if limit <= 0:
+            return []
+
+        params = {
+            "extended": "full",
+            "page": 1,
+            "limit": min(max(limit, 25), 100),
+        }
+        genres_param = self._normalized_trakt_genres(trakt_genres)
+        if genres_param:
+            params["genres"] = genres_param
+
+        payload = self._cache_request(
+            "/shows/watched/weekly",
+            params,
+            ttl_seconds=WATCHED_WEEKLY_TTL,
+        )
+
+        candidates: list[CandidateItem] = []
+        for entry in payload.get("results", []):
+            show = entry.get("show") or {}
+            popularity = entry.get("watcher_count")
+            if popularity is None:
+                popularity = entry.get("play_count")
+            if popularity is None:
+                popularity = entry.get("collected_count")
+
+            candidate = self._show_candidate(
+                show,
+                media_type=media_type,
+                row_key="trending_right_now",
+                source_reason="Trakt watched weekly",
+                popularity=popularity,
+                trakt_genres=trakt_genres,
+            )
+            if candidate:
+                candidates.append(candidate)
+
+        return candidates[:limit]
+
+    def show_popular(
+        self,
+        *,
+        page: int = 1,
+        limit: int = 100,
+        media_type: str = MediaTypes.TV.value,
+        trakt_genres: list[str] | None = None,
+    ) -> list[CandidateItem]:
+        """Return Trakt popular shows normalized to Discover candidates."""
+        if page <= 0 or limit <= 0:
+            return []
+
+        page_limit = min(max(limit, 1), 100)
+        params = {
+            "extended": "full",
+            "page": page,
+            "limit": page_limit,
+        }
+        genres_param = self._normalized_trakt_genres(trakt_genres)
+        if genres_param:
+            params["genres"] = genres_param
+
+        payload = self._cache_request(
+            "/shows/popular",
+            params,
+            ttl_seconds=POPULAR_TTL,
+        )
+
+        candidates: list[CandidateItem] = []
+        for index, show in enumerate(payload.get("results", []), start=1):
+            popularity = show.get("votes")
+            if popularity is None:
+                popularity = max(page_limit - index + 1, 1)
+
+            candidate = self._show_candidate(
+                show,
+                media_type=media_type,
+                row_key="all_time_greats_unseen",
+                source_reason="Trakt popular",
+                popularity=popularity,
+                trakt_genres=trakt_genres,
+            )
+            if candidate:
+                candidates.append(candidate)
+
+        return candidates[:page_limit]
+
+    def show_anticipated(
+        self,
+        *,
+        page: int = 1,
+        limit: int = 100,
+        media_type: str = MediaTypes.TV.value,
+        trakt_genres: list[str] | None = None,
+    ) -> list[CandidateItem]:
+        """Return Trakt anticipated shows normalized to Discover candidates."""
+        if page <= 0 or limit <= 0:
+            return []
+
+        page_limit = min(max(limit, 1), 100)
+        params = {
+            "extended": "full",
+            "page": page,
+            "limit": page_limit,
+        }
+        genres_param = self._normalized_trakt_genres(trakt_genres)
+        if genres_param:
+            params["genres"] = genres_param
+
+        payload = self._cache_request(
+            "/shows/anticipated",
+            params,
+            ttl_seconds=ANTICIPATED_TTL,
+        )
+
+        candidates: list[CandidateItem] = []
+        for index, entry in enumerate(payload.get("results", []), start=1):
+            show = entry.get("show") if isinstance(entry, dict) else None
+            if not isinstance(show, dict):
+                show = entry if isinstance(entry, dict) else {}
+            popularity = entry.get("list_count") if isinstance(entry, dict) else None
+            if popularity is None:
+                popularity = show.get("votes")
+            if popularity is None:
+                popularity = max(page_limit - index + 1, 1)
+
+            candidate = self._show_candidate(
+                show,
+                media_type=media_type,
+                row_key="coming_soon",
+                source_reason="Trakt anticipated",
+                popularity=popularity,
+                trakt_genres=trakt_genres,
+            )
+            if candidate:
+                candidates.append(candidate)
+
+        return candidates[:page_limit]
+
     def check_capability(self) -> dict[str, bool]:
         """Return endpoint-level availability booleans."""
         checks = {
             "movie_watched_weekly": False,
             "movie_popular": False,
             "movie_anticipated": False,
+            "show_watched_weekly": False,
+            "show_popular": False,
+            "show_anticipated": False,
         }
 
         try:
@@ -261,5 +491,20 @@ class TraktDiscoverAdapter:
             checks["movie_anticipated"] = bool(self.movie_anticipated(limit=1))
         except Exception:  # noqa: BLE001
             checks["movie_anticipated"] = False
+
+        try:
+            checks["show_watched_weekly"] = bool(self.show_watched_weekly(limit=1))
+        except Exception:  # noqa: BLE001
+            checks["show_watched_weekly"] = False
+
+        try:
+            checks["show_popular"] = bool(self.show_popular(limit=1))
+        except Exception:  # noqa: BLE001
+            checks["show_popular"] = False
+
+        try:
+            checks["show_anticipated"] = bool(self.show_anticipated(limit=1))
+        except Exception:  # noqa: BLE001
+            checks["show_anticipated"] = False
 
         return checks

@@ -73,6 +73,14 @@
           recent-tags ({{ row.debug_payload.tag_signal.recent_history_window_days }}d) {{ row.debug_payload.tag_signal.recent_history_tag_coverage|floatformat:3 }},
           hot-mult {{ row.debug_payload.tag_signal.hot_recency_mode_multiplier|floatformat:3 }}
         </p>
+        {% if row.debug_payload.match_signal %}
+          <p>
+            Match signal: {{ row.debug_payload.match_signal.signal }}
+            • mode {{ row.debug_payload.match_signal.mode }}
+            • candidates {{ row.debug_payload.match_signal.candidate_window }}
+          </p>
+          <p>{{ row.debug_payload.match_signal.explanation }}</p>
+        {% endif %}
         <div class="space-y-1">
           {% for debug_item in row.debug_payload.top_candidates %}
             <p>

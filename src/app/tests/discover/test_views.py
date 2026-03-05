@@ -31,7 +31,13 @@ class DiscoverViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "app/discover.html")
         self.assertIn("discover_media_options", response.context)
-        mock_get_payload.assert_called_once_with(self.user, "all", show_more=False, include_debug=False)
+        mock_get_payload.assert_called_once_with(
+            self.user,
+            "all",
+            show_more=False,
+            include_debug=False,
+            defer_artwork=True,
+        )
 
     @patch("app.views.discover.get_discover_payload")
     def test_discover_page_passes_debug_flag(self, mock_get_payload):
@@ -47,7 +53,13 @@ class DiscoverViewTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        mock_get_payload.assert_called_once_with(self.user, "movie", show_more=True, include_debug=True)
+        mock_get_payload.assert_called_once_with(
+            self.user,
+            "movie",
+            show_more=True,
+            include_debug=True,
+            defer_artwork=True,
+        )
 
     @patch("app.views.discover.get_discover_rows")
     def test_discover_rows_respects_query_params(self, mock_get_rows):
@@ -61,7 +73,13 @@ class DiscoverViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "app/components/discover_rows.html")
-        mock_get_rows.assert_called_once_with(self.user, "movie", show_more=True, include_debug=False)
+        mock_get_rows.assert_called_once_with(
+            self.user,
+            "movie",
+            show_more=True,
+            include_debug=False,
+            defer_artwork=True,
+        )
 
     @patch("app.views.discover.get_discover_rows")
     def test_discover_rows_passes_debug_flag(self, mock_get_rows):
@@ -74,7 +92,13 @@ class DiscoverViewTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        mock_get_rows.assert_called_once_with(self.user, "movie", show_more=False, include_debug=True)
+        mock_get_rows.assert_called_once_with(
+            self.user,
+            "movie",
+            show_more=False,
+            include_debug=True,
+            defer_artwork=True,
+        )
 
     @patch("app.views.discover.get_discover_payload")
     def test_discover_page_renders_date_and_row_specific_score_label_for_new_rows(self, mock_get_payload):
