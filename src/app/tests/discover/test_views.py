@@ -31,6 +31,23 @@ class DiscoverViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "app/discover.html")
         self.assertIn("discover_media_options", response.context)
+        mock_get_payload.assert_called_once_with(self.user, "all", show_more=False, include_debug=False)
+
+    @patch("app.views.discover.get_discover_payload")
+    def test_discover_page_passes_debug_flag(self, mock_get_payload):
+        mock_get_payload.return_value = DiscoverPayload(
+            media_type="movie",
+            rows=[],
+            show_more=True,
+        )
+
+        response = self.client.get(
+            reverse("discover"),
+            {"media_type": "movie", "show_more": "1", "discover_debug": "1"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        mock_get_payload.assert_called_once_with(self.user, "movie", show_more=True, include_debug=True)
 
     @patch("app.views.discover.get_discover_rows")
     def test_discover_rows_respects_query_params(self, mock_get_rows):
@@ -44,7 +61,20 @@ class DiscoverViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "app/components/discover_rows.html")
-        mock_get_rows.assert_called_once_with(self.user, "movie", show_more=True)
+        mock_get_rows.assert_called_once_with(self.user, "movie", show_more=True, include_debug=False)
+
+    @patch("app.views.discover.get_discover_rows")
+    def test_discover_rows_passes_debug_flag(self, mock_get_rows):
+        mock_get_rows.return_value = []
+
+        response = self.client.get(
+            reverse("discover_rows"),
+            {"media_type": "movie", "show_more": "0", "discover_debug": "1"},
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        mock_get_rows.assert_called_once_with(self.user, "movie", show_more=False, include_debug=True)
 
     @patch("app.views.discover.get_discover_payload")
     def test_discover_page_renders_date_and_row_specific_score_label_for_new_rows(self, mock_get_payload):
@@ -109,7 +139,7 @@ class DiscoverViewTests(TestCase):
         self.assertNotContains(response, "% match")
 
     @patch("app.views.discover.get_discover_payload")
-    def test_discover_page_renders_score_only_subtitle_with_row_label_when_date_missing(self, mock_get_payload):
+    def test_discover_page_renders_score_only_subtitle_with_top_picks_label_when_date_missing(self, mock_get_payload):
         candidate = CandidateItem(
             media_type="movie",
             source="tmdb",
@@ -122,11 +152,11 @@ class DiscoverViewTests(TestCase):
             media_type="movie",
             rows=[
                 RowResult(
-                    key="wildcard_for_you",
-                    title="Wildcard For You",
-                    mission="Serendipity",
-                    why="Smart curveballs close to your taste.",
-                    source="hybrid",
+                    key="top_picks_for_you",
+                    title="Top Picks For You",
+                    mission="Personal Taste Match",
+                    why="New-to-you movies tailored to your taste.",
+                    source="local",
                     items=[candidate],
                 ),
             ],
@@ -136,4 +166,4 @@ class DiscoverViewTests(TestCase):
         response = self.client.get(reverse("discover"), {"media_type": "movie", "show_more": "0"})
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "87% Serendipity fit")
+        self.assertContains(response, "87% Taste match")

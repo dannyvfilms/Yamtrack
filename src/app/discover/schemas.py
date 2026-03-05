@@ -117,10 +117,12 @@ class RowResult:
     is_stale: bool = False
     show_more: bool = False
     source_state: str = "live"
+    match_signal: str | None = None
+    debug_payload: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize row payload for DB row cache."""
-        return {
+        data: dict[str, Any] = {
             "key": self.key,
             "title": self.title,
             "mission": self.mission,
@@ -131,6 +133,11 @@ class RowResult:
             "show_more": self.show_more,
             "source_state": self.source_state,
         }
+        if self.match_signal:
+            data["match_signal"] = self.match_signal
+        if self.debug_payload:
+            data["debug_payload"] = dict(self.debug_payload)
+        return data
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "RowResult":
@@ -148,6 +155,8 @@ class RowResult:
             is_stale=bool(payload.get("is_stale", False)),
             show_more=bool(payload.get("show_more", False)),
             source_state=str(payload.get("source_state", "live")),
+            match_signal=payload.get("match_signal"),
+            debug_payload=payload.get("debug_payload"),
         )
 
 

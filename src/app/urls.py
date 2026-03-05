@@ -10,6 +10,7 @@ urlpatterns = [
     path("", views.home, name="home"),
     path("discover", views.discover_page, name="discover"),
     path("discover/rows", views.discover_rows, name="discover_rows"),
+    path("discover/refresh", views.refresh_discover, name="refresh_discover"),
     path("medialist/<media_type:media_type>", views.media_list, name="medialist"),
     path(
         "medialist/<media_type:media_type>/columns/",

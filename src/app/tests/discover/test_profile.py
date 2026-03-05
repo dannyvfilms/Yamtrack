@@ -77,3 +77,73 @@ class DiscoverProfileTests(TestCase):
         profile = compute_taste_profile(self.user, MediaTypes.TV.value)
 
         self.assertIn("drama", profile.genre_affinity)
+
+    def test_compute_taste_profile_phase_and_tag_affinity(self):
+        recent_item = Item.objects.create(
+            media_id="601",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Recent Cozy",
+            image="http://example.com/recent-cozy.jpg",
+            genres=["Animation"],
+        )
+        phase_item = Item.objects.create(
+            media_id="602",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Phase Musical",
+            image="http://example.com/phase-musical.jpg",
+            genres=["Musical"],
+        )
+        old_item = Item.objects.create(
+            media_id="603",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Old Classic",
+            image="http://example.com/old-classic.jpg",
+            genres=["Western"],
+        )
+
+        with patch("app.models.providers.services.get_media_metadata", return_value={"max_progress": 1}):
+            Movie.objects.create(
+                item=recent_item,
+                user=self.user,
+                score=8,
+                status=Status.COMPLETED.value,
+                end_date=timezone.now() - timedelta(days=10),
+            )
+            Movie.objects.create(
+                item=phase_item,
+                user=self.user,
+                score=8,
+                status=Status.COMPLETED.value,
+                end_date=timezone.now() - timedelta(days=60),
+            )
+            Movie.objects.create(
+                item=old_item,
+                user=self.user,
+                score=8,
+                status=Status.COMPLETED.value,
+                end_date=timezone.now() - timedelta(days=140),
+            )
+
+        cozy_tag = Tag.objects.create(user=self.user, name="Cozy")
+        phase_tag = Tag.objects.create(user=self.user, name="Singalong")
+        old_tag = Tag.objects.create(user=self.user, name="Classic")
+        ItemTag.objects.create(tag=cozy_tag, item=recent_item)
+        ItemTag.objects.create(tag=phase_tag, item=phase_item)
+        ItemTag.objects.create(tag=old_tag, item=old_item)
+
+        profile = compute_taste_profile(self.user, MediaTypes.MOVIE.value)
+
+        self.assertIn("animation", profile.recent_genre_affinity)
+        self.assertNotIn("musical", profile.recent_genre_affinity)
+        self.assertIn("animation", profile.phase_genre_affinity)
+        self.assertIn("musical", profile.phase_genre_affinity)
+        self.assertNotIn("western", profile.phase_genre_affinity)
+
+        self.assertIn("cozy", profile.recent_tag_affinity)
+        self.assertNotIn("singalong", profile.recent_tag_affinity)
+        self.assertIn("cozy", profile.phase_tag_affinity)
+        self.assertIn("singalong", profile.phase_tag_affinity)
+        self.assertNotIn("classic", profile.phase_tag_affinity)

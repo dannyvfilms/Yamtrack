@@ -96,6 +96,18 @@ def score_candidates(
         str(key).lower(): float(value)
         for key, value in (profile.get("recent_genre_affinity") or {}).items()
     }
+    phase_genre_profile = {
+        str(key).lower(): float(value)
+        for key, value in (profile.get("phase_genre_affinity") or {}).items()
+    }
+    recent_tag_profile = {
+        str(key).lower(): float(value)
+        for key, value in (profile.get("recent_tag_affinity") or {}).items()
+    }
+    phase_tag_profile = {
+        str(key).lower(): float(value)
+        for key, value in (profile.get("phase_tag_affinity") or {}).items()
+    }
 
     for index, candidate in enumerate(candidates):
         genre_vector = _profile_vector(candidate.genres)
@@ -104,6 +116,9 @@ def score_candidates(
         genre_match = cosine_similarity(genre_vector, genre_profile)
         tag_match = cosine_similarity(tag_vector, tag_profile) if include_tag_weight else 0.0
         recency_bonus = cosine_similarity(genre_vector, recent_genre_profile)
+        phase_genre_bonus = cosine_similarity(genre_vector, phase_genre_profile)
+        recency_tag_bonus = cosine_similarity(tag_vector, recent_tag_profile)
+        phase_tag_bonus = cosine_similarity(tag_vector, phase_tag_profile)
         popularity = popularity_norm[index]
         rating = rating_norm[index]
 
@@ -117,11 +132,14 @@ def score_candidates(
 
         candidate.score_breakdown.update(
             {
-            "genre_match": round(genre_match, 6),
-            "tag_match": round(tag_match, 6),
-            "popularity": round(popularity, 6),
-            "rating": round(rating, 6),
-            "recency_bonus": round(recency_bonus, 6),
+                "genre_match": round(genre_match, 6),
+                "tag_match": round(tag_match, 6),
+                "popularity": round(popularity, 6),
+                "rating": round(rating, 6),
+                "recency_bonus": round(recency_bonus, 6),
+                "phase_genre_bonus": round(phase_genre_bonus, 6),
+                "recency_tag_bonus": round(recency_tag_bonus, 6),
+                "phase_tag_bonus": round(phase_tag_bonus, 6),
             },
         )
         candidate.final_score = round(final_score, 6)

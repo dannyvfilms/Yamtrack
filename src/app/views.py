@@ -499,6 +499,10 @@ def _coerce_discover_media_type(raw_media_type: str | None) -> str:
     return "all"
 
 
+def _coerce_discover_debug(raw_debug: str | None) -> bool:
+    return (raw_debug or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _discover_media_options(user):
     enabled_media_types = [
         media_type
@@ -525,16 +529,19 @@ def discover_page(request):
     """Render Discover page with selected media rows."""
     selected_media_type = _coerce_discover_media_type(request.GET.get("media_type"))
     show_more = request.GET.get("show_more") in {"1", "true", "True"}
+    discover_debug = _coerce_discover_debug(request.GET.get("discover_debug"))
     payload = discover.get_discover_payload(
         request.user,
         selected_media_type,
         show_more=show_more,
+        include_debug=discover_debug,
     )
 
     context = {
         "selected_media_type": payload.media_type,
         "show_more": payload.show_more,
         "rows": payload.rows,
+        "discover_debug": discover_debug,
         "discover_media_options": _discover_media_options(request.user),
     }
     return render(request, "app/discover.html", context)
@@ -546,17 +553,38 @@ def discover_rows(request):
     """Render Discover rows partial for HTMX row switching."""
     selected_media_type = _coerce_discover_media_type(request.GET.get("media_type"))
     show_more = request.GET.get("show_more") in {"1", "true", "True"}
+    discover_debug = _coerce_discover_debug(request.GET.get("discover_debug"))
     rows = discover.get_discover_rows(
         request.user,
         selected_media_type,
         show_more=show_more,
+        include_debug=discover_debug,
     )
     context = {
         "selected_media_type": selected_media_type,
         "show_more": show_more,
+        "discover_debug": discover_debug,
         "rows": rows,
     }
     return render(request, "app/components/discover_rows.html", context)
+
+
+@login_required
+@require_POST
+def refresh_discover(request):
+    """Clear Discover caches for the current user/media type and rebuild."""
+    from django.http import JsonResponse
+
+    from app.models import DiscoverRowCache, DiscoverTasteProfile
+
+    media_type = _coerce_discover_media_type(request.POST.get("media_type"))
+    DiscoverRowCache.objects.filter(
+        user=request.user, media_type=media_type,
+    ).delete()
+    DiscoverTasteProfile.objects.filter(
+        user=request.user, media_type=media_type,
+    ).delete()
+    return JsonResponse({"ok": True})
 
 
 def active_playback_fragment(request):

@@ -4,7 +4,12 @@
   <div class="mb-3 flex items-start justify-between gap-4">
     <div>
       <h2 class="text-xl font-semibold text-white">{{ row.title }}</h2>
-      <p class="mt-1 text-sm text-gray-400">{{ row.why }}</p>
+      <div class="mt-1 flex items-center justify-between gap-4">
+        <p class="text-sm text-gray-400">{{ row.why }}</p>
+        {% if row.match_signal %}
+          <p class="shrink-0 text-xs text-gray-500">{{ row.match_signal }}</p>
+        {% endif %}
+      </div>
     </div>
     {% if row.is_stale %}
       <span class="text-xs text-amber-300">Refreshing…</span>
@@ -19,8 +24,6 @@
             {% include "app/components/media_card.html" with media=None item=candidate title=candidate.title from_grid=True user=user current_sort=None media_type=candidate.media_type subtitle_override=candidate.release_date subtitle_match_percent=candidate.display_score|default_if_none:candidate.final_score|match_percent subtitle_match_label='Taste match' score_chip_mode='conditional' progress_chip_mode='conditional' time_left_chip_mode='conditional' show_release_year_placeholder=False show_status_chip=False show_progress_chip=False %}
           {% elif row.key == 'comfort_rewatches' %}
             {% include "app/components/media_card.html" with media=None item=candidate title=candidate.title from_grid=True user=user current_sort=None media_type=candidate.media_type subtitle_override=candidate.release_date subtitle_match_percent=candidate.display_score|default_if_none:candidate.final_score|match_percent subtitle_match_label='Rewatch confidence' score_chip_mode='conditional' progress_chip_mode='conditional' time_left_chip_mode='conditional' show_release_year_placeholder=False show_status_chip=False show_progress_chip=False %}
-          {% elif row.key == 'wildcard_for_you' %}
-            {% include "app/components/media_card.html" with media=None item=candidate title=candidate.title from_grid=True user=user current_sort=None media_type=candidate.media_type subtitle_override=candidate.release_date subtitle_match_percent=candidate.display_score|default_if_none:candidate.final_score|match_percent subtitle_match_label='Serendipity fit' score_chip_mode='conditional' progress_chip_mode='conditional' time_left_chip_mode='conditional' show_release_year_placeholder=False show_status_chip=False show_progress_chip=False %}
           {% else %}
             {% include "app/components/media_card.html" with media=None item=candidate title=candidate.title from_grid=True user=user current_sort=None media_type=candidate.media_type subtitle_override=candidate.release_date score_chip_mode='conditional' progress_chip_mode='conditional' time_left_chip_mode='conditional' show_release_year_placeholder=False show_status_chip=False show_progress_chip=False %}
           {% endif %}
@@ -35,5 +38,78 @@
         No items matched this row right now.
       {% endif %}
     </div>
+  {% endif %}
+
+  {% if discover_debug and row.debug_payload %}
+    <details class="mt-3 rounded-md border border-gray-700 bg-[#1f2429] p-3 text-xs text-gray-300">
+      <summary class="cursor-pointer font-medium text-gray-200">{{ row.title }} debug</summary>
+      <div class="mt-2 space-y-2">
+        <p>
+          Raw spread: {{ row.debug_payload.score_distribution.raw_spread|floatformat:3 }}
+          (compressed={{ row.debug_payload.score_distribution.compressed_raw|yesno:'yes,no' }})
+          • Display spread: {{ row.debug_payload.score_distribution.display_spread|floatformat:3 }}
+          • Multi-penalty picks: {{ row.debug_payload.penalty_stack.multi_penalty_count }}
+        </p>
+        <p>
+          Contributions (top {{ row.debug_payload.top_n }}):
+          phase {{ row.debug_payload.contribution_totals.phase_family|floatformat:3 }},
+          hot {{ row.debug_payload.contribution_totals.hot_recency|floatformat:3 }},
+          rating {{ row.debug_payload.contribution_totals.rating|floatformat:3 }},
+          rewatch {{ row.debug_payload.contribution_totals.rewatch|floatformat:3 }},
+          dampeners {{ row.debug_payload.contribution_totals.dampeners|floatformat:3 }}
+        </p>
+        <p>
+          Dampeners (top {{ row.debug_payload.top_n }}):
+          season {{ row.debug_payload.dampener_totals.seasonality|floatformat:3 }},
+          diversity {{ row.debug_payload.dampener_totals.diversity|floatformat:3 }},
+          era {{ row.debug_payload.dampener_totals.era|floatformat:3 }},
+          opening-era {{ row.debug_payload.dampener_totals.opening_era|floatformat:3 }}
+        </p>
+        <p>
+          Tag signal:
+          mode {{ row.debug_payload.tag_signal.mode }},
+          top-tags {{ row.debug_payload.tag_signal.candidate_tag_coverage_top_n|floatformat:3 }},
+          pool-tags {{ row.debug_payload.tag_signal.candidate_tag_coverage_pool|floatformat:3 }},
+          recent-tags ({{ row.debug_payload.tag_signal.recent_history_window_days }}d) {{ row.debug_payload.tag_signal.recent_history_tag_coverage|floatformat:3 }},
+          hot-mult {{ row.debug_payload.tag_signal.hot_recency_mode_multiplier|floatformat:3 }}
+        </p>
+        <div class="space-y-1">
+          {% for debug_item in row.debug_payload.top_candidates %}
+            <p>
+              #{{ debug_item.rank }} {{ debug_item.title }} —
+              raw {{ debug_item.raw_final_score|floatformat:3 }},
+              display {{ debug_item.display_score|floatformat:3 }},
+              phase {{ debug_item.phase_fit|floatformat:3 }},
+              recency {{ debug_item.hot_recency|floatformat:3 }}
+              (base {{ debug_item.hot_recency_base|floatformat:3 }},
+              genre-ov {{ debug_item.genre_overlap_ratio|floatformat:3 }},
+              tag-ov {{ debug_item.tag_overlap_ratio|floatformat:3 }},
+              inc {{ debug_item.hot_recency_incremental|floatformat:3 }},
+              spec {{ debug_item.hot_recency_specificity|floatformat:3 }},
+              overlap {{ debug_item.phase_hot_overlap_ratio|floatformat:3 }}),
+              rating {{ debug_item.rating_confidence|floatformat:3 }},
+              rewatch {{ debug_item.rewatch_bonus|floatformat:3 }},
+              mode {{ debug_item.tag_signal_mode }},
+              contrib phase {{ debug_item.phase_family_contribution|floatformat:3 }},
+              contrib hot {{ debug_item.hot_recency_contribution|floatformat:3 }},
+              contrib rating {{ debug_item.rating_contribution|floatformat:3 }},
+              contrib rewatch {{ debug_item.rewatch_contribution|floatformat:3 }},
+              contrib damp {{ debug_item.dampeners_contribution|floatformat:3 }},
+              damp(season {{ debug_item.seasonality_dampener_contribution|floatformat:3 }},
+              div {{ debug_item.diversity_dampener_contribution|floatformat:3 }},
+              era {{ debug_item.era_dampener_contribution|floatformat:3 }},
+              open-era {{ debug_item.opening_era_dampener_contribution|floatformat:3 }}),
+              seasonal {{ debug_item.seasonal_adjustment|floatformat:3 }},
+              diversity {{ debug_item.diversity_multiplier|floatformat:3 }},
+              era {{ debug_item.era_multiplier|floatformat:3 }},
+              open {{ debug_item.strong_phase_promoted_opening|yesno:'strong+,normal' }}/{{ debug_item.medium_phase_demoted_opening|yesno:'medium-,normal' }}/{{ debug_item.medium_phase_held_opening|yesno:'medium-kept,normal' }},
+              lane {{ debug_item.phase_lane_promoted|yesno:'promoted,normal' }},
+              pool {{ debug_item.phase_pool_source }},
+              penalties {{ debug_item.penalty_count }}
+            </p>
+          {% endfor %}
+        </div>
+      </div>
+    </details>
   {% endif %}
 </section>

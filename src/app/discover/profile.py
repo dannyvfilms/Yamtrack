@@ -38,7 +38,10 @@ class ProfilePayload:
 
     genre_affinity: dict[str, float]
     recent_genre_affinity: dict[str, float]
+    phase_genre_affinity: dict[str, float]
     tag_affinity: dict[str, float]
+    recent_tag_affinity: dict[str, float]
+    phase_tag_affinity: dict[str, float]
     person_affinity: dict[str, float]
     activity_snapshot_at: timezone.datetime | None
 
@@ -46,7 +49,10 @@ class ProfilePayload:
         return {
             "genre_affinity": self.genre_affinity,
             "recent_genre_affinity": self.recent_genre_affinity,
+            "phase_genre_affinity": self.phase_genre_affinity,
             "tag_affinity": self.tag_affinity,
+            "recent_tag_affinity": self.recent_tag_affinity,
+            "phase_tag_affinity": self.phase_tag_affinity,
             "person_affinity": self.person_affinity,
             "activity_snapshot_at": self.activity_snapshot_at,
         }
@@ -120,7 +126,10 @@ def compute_taste_profile(user, media_type: str) -> ProfilePayload:
 
     genre_weights: dict[str, float] = defaultdict(float)
     recent_genre_weights: dict[str, float] = defaultdict(float)
+    phase_genre_weights: dict[str, float] = defaultdict(float)
     tag_weights: dict[str, float] = defaultdict(float)
+    recent_tag_weights: dict[str, float] = defaultdict(float)
+    phase_tag_weights: dict[str, float] = defaultdict(float)
     person_weights: dict[str, float] = defaultdict(float)
 
     activity_snapshot = None
@@ -194,9 +203,16 @@ def compute_taste_profile(user, media_type: str) -> ProfilePayload:
                 genre_weights[genre_key] += weight
                 if activity_dt and activity_dt >= now - timedelta(days=30):
                     recent_genre_weights[genre_key] += weight
+                if activity_dt and activity_dt >= now - timedelta(days=90):
+                    phase_genre_weights[genre_key] += weight
 
             for tag in tag_map.get(entry.item_id, []):
-                tag_weights[tag.lower()] += weight
+                tag_key = tag.lower()
+                tag_weights[tag_key] += weight
+                if activity_dt and activity_dt >= now - timedelta(days=30):
+                    recent_tag_weights[tag_key] += weight
+                if activity_dt and activity_dt >= now - timedelta(days=90):
+                    phase_tag_weights[tag_key] += weight
 
             for person in person_map.get(entry.item_id, []):
                 person_weights[person.lower()] += weight
@@ -204,7 +220,10 @@ def compute_taste_profile(user, media_type: str) -> ProfilePayload:
     return ProfilePayload(
         genre_affinity=normalize_numeric_map(dict(genre_weights)),
         recent_genre_affinity=normalize_numeric_map(dict(recent_genre_weights)),
+        phase_genre_affinity=normalize_numeric_map(dict(phase_genre_weights)),
         tag_affinity=normalize_numeric_map(dict(tag_weights)),
+        recent_tag_affinity=normalize_numeric_map(dict(recent_tag_weights)),
+        phase_tag_affinity=normalize_numeric_map(dict(phase_tag_weights)),
         person_affinity=normalize_numeric_map(dict(person_weights)),
         activity_snapshot_at=activity_snapshot,
     )
@@ -221,10 +240,13 @@ def get_or_compute_taste_profile(user, media_type: str, *, force: bool = False) 
         and not has_new_activity(user, media_type, cached_entry.activity_snapshot_at)
     ):
         return {
-            "genre_affinity": cached_entry.genre_affinity,
-            "recent_genre_affinity": cached_entry.recent_genre_affinity,
-            "tag_affinity": cached_entry.tag_affinity,
-            "person_affinity": cached_entry.person_affinity,
+            "genre_affinity": getattr(cached_entry, "genre_affinity", None) or {},
+            "recent_genre_affinity": getattr(cached_entry, "recent_genre_affinity", None) or {},
+            "phase_genre_affinity": getattr(cached_entry, "phase_genre_affinity", None) or {},
+            "tag_affinity": getattr(cached_entry, "tag_affinity", None) or {},
+            "recent_tag_affinity": getattr(cached_entry, "recent_tag_affinity", None) or {},
+            "phase_tag_affinity": getattr(cached_entry, "phase_tag_affinity", None) or {},
+            "person_affinity": getattr(cached_entry, "person_affinity", None) or {},
             "activity_snapshot_at": cached_entry.activity_snapshot_at,
         }
 
@@ -234,7 +256,10 @@ def get_or_compute_taste_profile(user, media_type: str, *, force: bool = False) 
         media_type,
         genre_affinity=profile.genre_affinity,
         recent_genre_affinity=profile.recent_genre_affinity,
+        phase_genre_affinity=profile.phase_genre_affinity,
         tag_affinity=profile.tag_affinity,
+        recent_tag_affinity=profile.recent_tag_affinity,
+        phase_tag_affinity=profile.phase_tag_affinity,
         person_affinity=profile.person_affinity,
         activity_snapshot_at=profile.activity_snapshot_at,
         ttl_seconds=PROFILE_TTL_SECONDS,

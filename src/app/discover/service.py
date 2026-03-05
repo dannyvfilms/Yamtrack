@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import logging
 from collections import defaultdict
 from datetime import timedelta
@@ -9,7 +10,7 @@ from datetime import timedelta
 from django.apps import apps
 from django.conf import settings
 from django.core.cache import cache
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.utils import timezone
 
 from app.discover import cache_repo
@@ -37,12 +38,11 @@ ADAPTIVE_PULL_TARGET_META_KEY = "adaptive_pull_target"
 ROW_CACHE_SCHEMA_META_KEY = "schema_version"
 MOVIE_CANON_ROW_SCHEMA_VERSION = 2
 MOVIE_COMING_SOON_ROW_SCHEMA_VERSION = 1
-MOVIE_PERSONALIZED_ROW_SCHEMA_VERSION = 1
+MOVIE_PERSONALIZED_ROW_SCHEMA_VERSION = 3
 ROW_CANDIDATE_BUFFER_MULTIPLIER = 5
 MOVIE_PERSONALIZED_ROW_KEYS = {
     "top_picks_for_you",
     "comfort_rewatches",
-    "wildcard_for_you",
 }
 
 ALWAYS_VISIBLE_EMPTY_ROWS = {
@@ -50,6 +50,62 @@ ALWAYS_VISIBLE_EMPTY_ROWS = {
     "continue_all",
     "continue_up_next",
     "next_episode",
+}
+HOLIDAY_STRONG_TERMS = {"christmas", "xmas", "noel"}
+HOLIDAY_SOFT_TERMS = {"holiday", "holidays", "new year", "new years"}
+COMFORT_DIVERSITY_DECAY = 0.92
+COMFORT_PHASE_LANE_QUOTA = 4
+COMFORT_PHASE_LANE_WINDOW = 6
+COMFORT_PHASE_EVIDENCE_THRESHOLD = 0.25
+COMFORT_PHASE_POOL_MIN_BACKFILL = 6
+COMFORT_ERA_DECAY = 0.95
+COMFORT_LEGACY_ERA_DECAY = 0.97
+COMFORT_ERA_OPENING_WINDOW = 5
+COMFORT_ERA_OPENING_DECAY = 0.86
+COMFORT_LEGACY_OPENING_DECAY = 0.9
+COMFORT_STRONG_PHASE_OPENING_WINDOW = MAX_ITEMS_PER_ROW
+COMFORT_MEDIUM_PHASE_SUPERIORITY_MARGIN = 0.04
+COMFORT_HOT_RECENCY_SELECTIVE_EXPONENT = 0.75
+COMFORT_HOT_RECENCY_TAG_SPARSE_MULTIPLIER = 0.2
+COMFORT_TAG_RICH_CANDIDATE_COVERAGE_THRESHOLD = 0.35
+COMFORT_TAG_RICH_HISTORY_COVERAGE_THRESHOLD = 0.25
+COMFORT_RECENT_HISTORY_TAG_WINDOW_DAYS = 90
+COMFORT_DEBUG_TOP_N = 12
+COMFORT_SPREAD_COMPRESSION_THRESHOLD = 0.08
+TOP_PICKS_PHASE_WEIGHT = 0.34
+TOP_PICKS_HOT_RECENCY_WEIGHT = 0.14
+TOP_PICKS_GENRE_WEIGHT = 0.2
+TOP_PICKS_TAG_WEIGHT = 0.16
+TOP_PICKS_POPULARITY_WEIGHT = 0.09
+TOP_PICKS_RATING_WEIGHT = 0.07
+GENERIC_PHASE_TERMS = {
+    "action",
+    "adventure",
+    "animation",
+    "comedy",
+    "drama",
+    "family",
+    "fantasy",
+    "horror",
+    "mystery",
+    "romance",
+    "science fiction",
+    "sci-fi",
+    "thriller",
+}
+PHASE_LABEL_OVERRIDES = {
+    "action": "Popcorn Action",
+    "adventure": "Big Adventure",
+    "animation": "Animated Comfort",
+    "comedy": "Feel-Good Comedy",
+    "drama": "Character Drama",
+    "family": "Family Comfort",
+    "fantasy": "Escapist Fantasy",
+    "mystery": "Puzzle Mystery",
+    "romance": "Warm Romance",
+    "science fiction": "Sci-Fi Adventure",
+    "sci-fi": "Sci-Fi Adventure",
+    "thriller": "Clever Suspense",
 }
 
 TMDB_ADAPTER = TMDbDiscoverAdapter()
@@ -99,6 +155,27 @@ def _entry_activity_datetime(entry):
     )
 
 
+def _rewatch_counts(user, model, item_ids: list[int]) -> dict[int, int]:
+    if not item_ids:
+        return {}
+
+    grouped = (
+        model.objects.filter(
+            user=user,
+            status=Status.COMPLETED.value,
+            item_id__in=item_ids,
+        )
+        .values("item_id")
+        .annotate(watch_count=Count("id"))
+        .filter(watch_count__gt=1)
+    )
+    return {
+        int(row["item_id"]): int(row["watch_count"])
+        for row in grouped
+        if row.get("item_id")
+    }
+
+
 def _entries_to_candidates(
     entries,
     *,
@@ -106,10 +183,17 @@ def _entries_to_candidates(
     row_key: str,
     source_reason: str,
     override_media_type: str | None = None,
+    rewatch_counts: dict[int, int] | None = None,
+    phase_evidence_by_item: dict[int, float] | None = None,
+    phase_pool_bucket_by_item: dict[int, str] | None = None,
+    recent_history_tag_coverage: float | None = None,
 ) -> list[CandidateItem]:
     entries = list(entries)
     if not entries:
         return []
+    rewatch_counts = rewatch_counts or {}
+    phase_evidence_by_item = phase_evidence_by_item or {}
+    phase_pool_bucket_by_item = phase_pool_bucket_by_item or {}
 
     item_ids = [entry.item_id for entry in entries if entry.item_id]
     tag_map = _item_tag_map(user, item_ids)
@@ -150,6 +234,21 @@ def _entries_to_candidates(
             candidate.score_breakdown["user_score"] = entry_score
             if candidate.rating is None:
                 candidate.rating = entry_score
+        candidate.score_breakdown["rewatch_count"] = float(
+            rewatch_counts.get(item.id, 1),
+        )
+        candidate.score_breakdown["phase_evidence"] = float(
+            phase_evidence_by_item.get(item.id, 0.0),
+        )
+        if recent_history_tag_coverage is not None:
+            candidate.score_breakdown["recent_history_tag_coverage"] = float(
+                _clamp_unit(recent_history_tag_coverage),
+            )
+        phase_bucket = phase_pool_bucket_by_item.get(item.id, "")
+        candidate.score_breakdown["phase_pool_strong"] = 1.0 if phase_bucket == "strong_phase" else 0.0
+        candidate.score_breakdown["phase_pool_medium"] = 1.0 if phase_bucket == "medium_phase" else 0.0
+        candidate.score_breakdown["phase_pool_backfill"] = 1.0 if phase_bucket == "weak_backfill" else 0.0
+        candidate.score_breakdown["phase_pool_weak_only"] = 1.0 if phase_bucket == "weak_only" else 0.0
         if activity_dt:
             candidate.score_breakdown["days_since_activity"] = float(
                 max(0, (timezone.now() - activity_dt).days),
@@ -215,6 +314,38 @@ def _planning_candidates(user, media_type: str, *, row_key: str, source_reason: 
     )
 
 
+def _recent_completed_tag_coverage(
+    user,
+    media_type: str,
+    *,
+    window_days: int = COMFORT_RECENT_HISTORY_TAG_WINDOW_DAYS,
+) -> float:
+    model = _model_for_media_type(media_type)
+    if not model:
+        return 0.0
+
+    cutoff = timezone.now() - timedelta(days=window_days)
+    recent_entries = list(
+        model.objects.filter(
+            user=user,
+            status=Status.COMPLETED.value,
+        )
+        .filter(
+            Q(end_date__gte=cutoff)
+            | Q(progressed_at__gte=cutoff)
+            | Q(created_at__gte=cutoff),
+        )
+        .only("item_id")[:300],
+    )
+    if not recent_entries:
+        return 0.0
+
+    item_ids = [entry.item_id for entry in recent_entries if entry.item_id]
+    tag_map = _item_tag_map(user, item_ids)
+    tagged_count = sum(1 for entry in recent_entries if tag_map.get(entry.item_id))
+    return _clamp_unit(tagged_count / max(1, len(recent_entries)))
+
+
 def _comfort_candidates(
     user,
     media_type: str,
@@ -223,13 +354,15 @@ def _comfort_candidates(
     source_reason: str,
     older_than_days: int,
     min_score: float = 8.0,
+    profile_payload: dict | None = None,
 ) -> list[CandidateItem]:
     model = _model_for_media_type(media_type)
     if not model:
         return []
 
-    cutoff = timezone.now() - timedelta(days=older_than_days)
-    entries = (
+    now = timezone.now()
+    cutoff = now - timedelta(days=older_than_days)
+    rated_entries = (
         model.objects.filter(
             user=user,
             status=Status.COMPLETED.value,
@@ -244,11 +377,97 @@ def _comfort_candidates(
         .order_by("-score", "-end_date", "-progressed_at", "-created_at")
     )
 
+    unrated_cutoff = now - timedelta(days=max(older_than_days, 90))
+    unrated_entries = (
+        model.objects.filter(
+            user=user,
+            status=Status.COMPLETED.value,
+            score__isnull=True,
+        )
+        .filter(
+            Q(end_date__lte=unrated_cutoff)
+            | Q(progressed_at__lte=unrated_cutoff)
+            | Q(created_at__lte=unrated_cutoff),
+        )
+        .select_related("item")
+        .order_by("-end_date", "-progressed_at", "-created_at")
+    )
+
+    entries = list(rated_entries) + list(unrated_entries)
+    item_ids = [entry.item_id for entry in entries if entry.item_id]
+    rewatch_count_map = _rewatch_counts(user, model, item_ids)
+    tag_map = _item_tag_map(user, item_ids)
+    phase_evidence_by_item: dict[int, float] = {}
+    phase_pool_bucket_by_item: dict[int, str] = {}
+    phase_genre_affinity, phase_tag_affinity = _phase_affinity_maps(profile_payload)
+    if entries and (phase_genre_affinity or phase_tag_affinity):
+        scored_entries = [
+            (
+                entry,
+                _entry_phase_evidence(
+                    entry,
+                    tag_map=tag_map,
+                    phase_genre_affinity=phase_genre_affinity,
+                    phase_tag_affinity=phase_tag_affinity,
+                ),
+            )
+            for entry in entries
+        ]
+        strong_phase_entries = [entry for entry, evidence in scored_entries if evidence >= COMFORT_PHASE_EVIDENCE_THRESHOLD]
+        medium_phase_entries = [entry for entry, evidence in scored_entries if 0.0 < evidence < COMFORT_PHASE_EVIDENCE_THRESHOLD]
+        weak_phase_entries = [entry for entry, evidence in scored_entries if evidence <= 0.0]
+        phase_entries = strong_phase_entries + medium_phase_entries
+        if phase_entries:
+            weak_backfill_limit = min(
+                len(weak_phase_entries),
+                max(COMFORT_PHASE_POOL_MIN_BACKFILL, len(phase_entries)),
+            )
+            selected_weak_entries = weak_phase_entries[:weak_backfill_limit]
+            entries = phase_entries + selected_weak_entries
+            for entry in selected_weak_entries:
+                phase_pool_bucket_by_item[entry.item_id] = "weak_backfill"
+        else:
+            entries = weak_phase_entries
+            for entry in weak_phase_entries:
+                phase_pool_bucket_by_item[entry.item_id] = "weak_only"
+
+        for entry in strong_phase_entries:
+            phase_pool_bucket_by_item[entry.item_id] = "strong_phase"
+        for entry in medium_phase_entries:
+            if phase_pool_bucket_by_item.get(entry.item_id) != "strong_phase":
+                phase_pool_bucket_by_item[entry.item_id] = "medium_phase"
+        for entry, evidence in scored_entries:
+            if evidence > phase_evidence_by_item.get(entry.item_id, 0.0):
+                phase_evidence_by_item[entry.item_id] = evidence
+
+    recent_cutoff = now - timedelta(days=COMFORT_RECENT_HISTORY_TAG_WINDOW_DAYS)
+    recent_total = 0
+    recent_with_tags = 0
+    for entry in entries:
+        activity_dt = _entry_activity_datetime(entry)
+        if not activity_dt or activity_dt < recent_cutoff:
+            continue
+        recent_total += 1
+        if tag_map.get(entry.item_id):
+            recent_with_tags += 1
+    if recent_total > 0:
+        recent_history_tag_coverage = _clamp_unit(recent_with_tags / recent_total)
+    else:
+        overall_total = len(entries)
+        overall_with_tags = sum(1 for entry in entries if tag_map.get(entry.item_id))
+        recent_history_tag_coverage = _clamp_unit(
+            (overall_with_tags / overall_total) if overall_total else 0.0,
+        )
+
     return _entries_to_candidates(
         entries,
         user=user,
         row_key=row_key,
         source_reason=source_reason,
+        rewatch_counts=rewatch_count_map,
+        phase_evidence_by_item=phase_evidence_by_item,
+        phase_pool_bucket_by_item=phase_pool_bucket_by_item,
+        recent_history_tag_coverage=recent_history_tag_coverage,
     )
 
 
@@ -349,7 +568,7 @@ def _movie_trakt_ranked_candidates(
         statuses=blocked_statuses,
     )
     blocked_identities = set(tracked_keys)
-    if seen_identities:
+    if seen_identities and row_key != "all_time_greats_unseen":
         blocked_identities.update(seen_identities)
 
     required_pull = _get_cached_adaptive_pull_target(user.id, media_type, row_key)
@@ -538,7 +757,174 @@ def _top_picks_candidates(user, media_type: str, row_key: str, profile_payload: 
         source_reason="Ranked from your planning list",
     )
     score_candidates(candidates, profile_payload)
+    recent_history_tag_coverage = _recent_completed_tag_coverage(
+        user,
+        media_type,
+        window_days=COMFORT_RECENT_HISTORY_TAG_WINDOW_DAYS,
+    )
+    for candidate in candidates:
+        candidate.score_breakdown["recent_history_tag_coverage"] = round(
+            recent_history_tag_coverage,
+            6,
+        )
+
+    _apply_top_picks_confidence(candidates, profile_payload)
     _apply_top_picks_display_score(candidates)
+    return candidates
+
+
+def _apply_top_picks_confidence(
+    candidates: list[CandidateItem],
+    profile_payload: dict | None = None,
+) -> list[CandidateItem]:
+    if not candidates:
+        return candidates
+
+    phase_genre_affinity, phase_tag_affinity = _phase_affinity_maps(profile_payload)
+    phase_affinity = phase_genre_affinity
+    phase_top = sorted(phase_affinity, key=phase_affinity.get, reverse=True)[:5]
+
+    candidate_tag_coverage_pool = _clamp_unit(
+        sum(1 for candidate in candidates if candidate.tags) / max(1, len(candidates)),
+    )
+    history_tag_coverages = [
+        float(candidate.score_breakdown.get("recent_history_tag_coverage", 0.0))
+        for candidate in candidates
+        if "recent_history_tag_coverage" in candidate.score_breakdown
+    ]
+    recent_history_tag_coverage = _clamp_unit(
+        (sum(history_tag_coverages) / len(history_tag_coverages))
+        if history_tag_coverages
+        else 0.0,
+    )
+    tag_signal_mode = (
+        "tag_rich"
+        if (
+            candidate_tag_coverage_pool >= COMFORT_TAG_RICH_CANDIDATE_COVERAGE_THRESHOLD
+            and recent_history_tag_coverage >= COMFORT_TAG_RICH_HISTORY_COVERAGE_THRESHOLD
+        )
+        else "tag_sparse"
+    )
+    hot_recency_mode_multiplier = (
+        1.0 if tag_signal_mode == "tag_rich" else COMFORT_HOT_RECENCY_TAG_SPARSE_MULTIPLIER
+    )
+
+    for candidate in candidates:
+        phase_genre_bonus = float(candidate.score_breakdown.get("phase_genre_bonus", 0.0))
+        phase_tag_bonus = float(candidate.score_breakdown.get("phase_tag_bonus", 0.0))
+        recency_bonus = float(candidate.score_breakdown.get("recency_bonus", 0.0))
+        recency_tag_bonus = float(candidate.score_breakdown.get("recency_tag_bonus", 0.0))
+        genre_match = float(candidate.score_breakdown.get("genre_match", 0.0))
+        tag_match = float(candidate.score_breakdown.get("tag_match", 0.0))
+        popularity = float(candidate.score_breakdown.get("popularity", 0.0))
+        rating = float(candidate.score_breakdown.get("rating", 0.0))
+
+        phase_fit = _clamp_unit((phase_genre_bonus * 0.45) + (phase_tag_bonus * 0.55))
+        hot_recency_base = _clamp_unit((recency_bonus * 0.35) + (recency_tag_bonus * 0.65))
+        genre_overlap_ratio = (
+            min(phase_genre_bonus, recency_bonus)
+            / max(phase_genre_bonus, recency_bonus, 1e-6)
+            if (phase_genre_bonus > 0.0 or recency_bonus > 0.0)
+            else 0.0
+        )
+        tag_overlap_ratio = (
+            min(phase_tag_bonus, recency_tag_bonus)
+            / max(phase_tag_bonus, recency_tag_bonus, 1e-6)
+            if (phase_tag_bonus > 0.0 or recency_tag_bonus > 0.0)
+            else 0.0
+        )
+        hot_recency_incremental = _clamp_unit(
+            (max(0.0, recency_bonus - phase_genre_bonus) * 0.35)
+            + (max(0.0, recency_tag_bonus - phase_tag_bonus) * 0.65),
+        )
+        phase_hot_overlap_ratio = _clamp_unit(
+            (genre_overlap_ratio * 0.4) + (tag_overlap_ratio * 0.6),
+        )
+        hot_recency_specificity = _clamp_unit(
+            hot_recency_incremental * (1.0 - phase_hot_overlap_ratio),
+        )
+        hot_recency = _clamp_unit(
+            (hot_recency_specificity ** COMFORT_HOT_RECENCY_SELECTIVE_EXPONENT)
+            * hot_recency_mode_multiplier,
+        )
+
+        phase_family_contribution = phase_fit * TOP_PICKS_PHASE_WEIGHT
+        hot_recency_contribution = hot_recency * TOP_PICKS_HOT_RECENCY_WEIGHT
+        rating_contribution = rating * TOP_PICKS_RATING_WEIGHT
+        rewatch_contribution = 0.0
+        background_contribution = (
+            (genre_match * TOP_PICKS_GENRE_WEIGHT)
+            + (tag_match * TOP_PICKS_TAG_WEIGHT)
+            + (popularity * TOP_PICKS_POPULARITY_WEIGHT)
+        )
+        top_picks_score = _clamp_unit(
+            phase_family_contribution
+            + hot_recency_contribution
+            + rating_contribution
+            + background_contribution,
+        )
+
+        candidate.score_breakdown["phase_fit"] = round(phase_fit, 6)
+        candidate.score_breakdown["hot_recency_base"] = round(hot_recency_base, 6)
+        candidate.score_breakdown["genre_overlap_ratio"] = round(genre_overlap_ratio, 6)
+        candidate.score_breakdown["tag_overlap_ratio"] = round(tag_overlap_ratio, 6)
+        candidate.score_breakdown["hot_recency_incremental"] = round(hot_recency_incremental, 6)
+        candidate.score_breakdown["hot_recency_specificity"] = round(hot_recency_specificity, 6)
+        candidate.score_breakdown["phase_hot_overlap_ratio"] = round(phase_hot_overlap_ratio, 6)
+        candidate.score_breakdown["hot_recency"] = round(hot_recency, 6)
+        candidate.score_breakdown["tag_signal_mode"] = tag_signal_mode
+        candidate.score_breakdown["hot_recency_mode_multiplier"] = round(
+            hot_recency_mode_multiplier,
+            6,
+        )
+        candidate.score_breakdown["candidate_tag_coverage_pool"] = round(
+            candidate_tag_coverage_pool,
+            6,
+        )
+        candidate.score_breakdown["recent_history_tag_coverage"] = round(
+            recent_history_tag_coverage,
+            6,
+        )
+        candidate.score_breakdown["candidate_has_tags"] = 1.0 if candidate.tags else 0.0
+        candidate.score_breakdown["phase_family_contribution"] = round(phase_family_contribution, 6)
+        candidate.score_breakdown["hot_recency_contribution"] = round(hot_recency_contribution, 6)
+        candidate.score_breakdown["rating_contribution"] = round(rating_contribution, 6)
+        candidate.score_breakdown["rewatch_contribution"] = 0.0
+        candidate.score_breakdown["rewatch_bonus"] = 0.0
+        candidate.score_breakdown["rewatch_gate"] = 0.0
+        candidate.score_breakdown["rating_confidence"] = round(rating, 6)
+        candidate.score_breakdown["inactivity_norm"] = 0.0
+        candidate.score_breakdown["phase_evidence"] = round(
+            float(candidate.score_breakdown.get("phase_evidence", 0.0)),
+            6,
+        )
+        candidate.score_breakdown["seasonal_adjustment"] = 0.0
+        candidate.score_breakdown["seasonality_dampener_contribution"] = 0.0
+        candidate.score_breakdown["diversity_dampener_contribution"] = 0.0
+        candidate.score_breakdown["era_dampener_contribution"] = 0.0
+        candidate.score_breakdown["opening_era_dampener_contribution"] = 0.0
+        candidate.score_breakdown["dampeners_contribution"] = 0.0
+        candidate.score_breakdown["background_contribution"] = round(background_contribution, 6)
+        candidate.score_breakdown["comfort_score"] = round(top_picks_score, 6)
+        candidate.final_score = round(top_picks_score, 6)
+
+        if phase_top:
+            cand_genres = {g.strip().lower() for g in (candidate.genres or []) if g}
+            overlap = [g for g in phase_top if g in cand_genres]
+            if overlap:
+                candidate.score_breakdown["match_genres"] = ", ".join(
+                    g.title() for g in overlap[:3]
+                )
+
+    candidates.sort(
+        key=lambda candidate: (
+            candidate.final_score if candidate.final_score is not None else -1.0,
+            float(candidate.score_breakdown.get("phase_fit", -1.0)),
+            float(candidate.score_breakdown.get("hot_recency", -1.0)),
+            float(candidate.score_breakdown.get("genre_match", -1.0)),
+        ),
+        reverse=True,
+    )
     return candidates
 
 
@@ -558,44 +944,1004 @@ def _apply_top_picks_display_score(candidates: list[CandidateItem]) -> list[Cand
     return candidates
 
 
-def _apply_comfort_confidence(candidates: list[CandidateItem]) -> list[CandidateItem]:
+def _is_holiday_window(today=None) -> bool:
+    if today is None:
+        today = timezone.localdate()
+    month_day = (today.month, today.day)
+    return month_day >= (11, 15) or month_day <= (1, 10)
+
+
+def _holiday_seasonal_strength(candidate: CandidateItem) -> float:
+    values = [
+        *(candidate.tags or []),
+        *(candidate.genres or []),
+        candidate.title,
+        candidate.original_title,
+        candidate.localized_title,
+    ]
+    strength = 0.0
+    for value in values:
+        if not value:
+            continue
+        key = str(value).strip().lower()
+        if not key:
+            continue
+        if any(term in key for term in HOLIDAY_STRONG_TERMS):
+            strength = max(strength, 1.0)
+            continue
+        if any(term in key for term in HOLIDAY_SOFT_TERMS):
+            strength = max(strength, 0.7)
+    return strength
+
+
+def _comfort_bucket_key(candidate: CandidateItem) -> str:
+    tags = sorted(
+        str(tag).strip().lower()
+        for tag in (candidate.tags or [])
+        if str(tag).strip()
+    )
+    if tags:
+        return f"tag:{tags[0]}"
+
+    genres = sorted(
+        str(genre).strip().lower()
+        for genre in (candidate.genres or [])
+        if str(genre).strip()
+    )
+    if genres:
+        return f"genre:{genres[0]}"
+    return "other"
+
+
+def _top_affinity_keys(values: dict[str, float], *, limit: int = 5) -> set[str]:
+    if not values:
+        return set()
+    ranked = sorted(
+        (
+            (str(key).strip().lower(), float(value))
+            for key, value in values.items()
+            if str(key).strip()
+        ),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    return {key for key, _ in ranked[:limit]}
+
+
+def _phase_affinity_maps(profile_payload: dict | None) -> tuple[dict[str, float], dict[str, float]]:
+    profile = profile_payload or {}
+    phase_genre_affinity = {
+        str(key).strip().lower(): float(value)
+        for key, value in (
+            profile.get("phase_genre_affinity")
+            or profile.get("recent_genre_affinity")
+            or {}
+        ).items()
+        if str(key).strip()
+    }
+    phase_tag_affinity = {
+        str(key).strip().lower(): float(value)
+        for key, value in (
+            profile.get("phase_tag_affinity")
+            or profile.get("recent_tag_affinity")
+            or {}
+        ).items()
+        if str(key).strip()
+    }
+    return phase_genre_affinity, phase_tag_affinity
+
+
+def _entry_phase_evidence(
+    entry,
+    *,
+    tag_map: dict[int, list[str]],
+    phase_genre_affinity: dict[str, float],
+    phase_tag_affinity: dict[str, float],
+) -> float:
+    if not phase_genre_affinity and not phase_tag_affinity:
+        return 0.0
+
+    genres = [
+        str(genre).strip().lower()
+        for genre in (entry.item.genres or [])
+        if str(genre).strip()
+    ]
+    tags = [
+        str(tag).strip().lower()
+        for tag in (tag_map.get(entry.item_id, []) or [])
+        if str(tag).strip()
+    ]
+    best_genre = max((phase_genre_affinity.get(genre, 0.0) for genre in genres), default=0.0)
+    best_tag = max((phase_tag_affinity.get(tag, 0.0) for tag in tags), default=0.0)
+    return _clamp_unit((best_genre * 0.45) + (best_tag * 0.55))
+
+
+def _candidate_release_year(candidate: CandidateItem) -> int | None:
+    if not candidate.release_date:
+        return None
+    value = str(candidate.release_date).strip()
+    if len(value) >= 4 and value[:4].isdigit():
+        return int(value[:4])
+    for token in value.split():
+        cleaned = token.strip(",.")
+        if len(cleaned) == 4 and cleaned.isdigit():
+            return int(cleaned)
+    return None
+
+
+def _format_phase_label(value: str) -> str:
+    key = str(value).strip().lower()
+    if not key:
+        return ""
+    if key in PHASE_LABEL_OVERRIDES:
+        return PHASE_LABEL_OVERRIDES[key]
+    return " ".join(part.capitalize() for part in key.replace("_", " ").split())
+
+
+def _top_phase_labels(
+    affinity: dict[str, float],
+    *,
+    limit: int,
+    allow_generic_terms: bool,
+) -> list[str]:
+    if not affinity:
+        return []
+
+    labels: list[str] = []
+    seen: set[str] = set()
+    ranked = sorted(
+        (
+            (str(raw_key).strip().lower(), float(raw_score))
+            for raw_key, raw_score in affinity.items()
+            if str(raw_key).strip()
+        ),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    for key, _score in ranked:
+        if not allow_generic_terms and key in GENERIC_PHASE_TERMS:
+            continue
+        label = _format_phase_label(key)
+        if not label:
+            continue
+        normalized_label = label.strip().lower()
+        if normalized_label in seen:
+            continue
+        seen.add(normalized_label)
+        labels.append(label)
+        if len(labels) >= limit:
+            break
+    return labels
+
+
+def _phase_pool_source(candidate: CandidateItem) -> str:
+    if float(candidate.score_breakdown.get("phase_pool_strong", 0.0)) >= 1.0:
+        return "strong_phase"
+    if float(candidate.score_breakdown.get("phase_pool_medium", 0.0)) >= 1.0:
+        return "medium_phase"
+    if float(candidate.score_breakdown.get("phase_pool_backfill", 0.0)) >= 1.0:
+        return "weak_backfill"
+    if float(candidate.score_breakdown.get("phase_pool_weak_only", 0.0)) >= 1.0:
+        return "weak_only"
+    return "unknown"
+
+
+def _is_phase_lane_candidate(
+    candidate: CandidateItem,
+    *,
+    phase_genres: set[str],
+    phase_tags: set[str],
+) -> bool:
+    candidate_tags = {
+        str(tag).strip().lower()
+        for tag in (candidate.tags or [])
+        if str(tag).strip()
+    }
+    if phase_tags and candidate_tags.intersection(phase_tags):
+        return True
+
+    candidate_genres = {
+        str(genre).strip().lower()
+        for genre in (candidate.genres or [])
+        if str(genre).strip()
+    }
+    return bool(phase_genres and candidate_genres.intersection(phase_genres))
+
+
+def _promote_phase_lane_candidates(
+    candidates: list[CandidateItem],
+    *,
+    phase_genre_affinity: dict[str, float],
+    phase_tag_affinity: dict[str, float],
+    quota: int = COMFORT_PHASE_LANE_QUOTA,
+    window: int = COMFORT_PHASE_LANE_WINDOW,
+) -> list[CandidateItem]:
+    if not candidates or quota <= 0:
+        return candidates
+
+    window = min(window, len(candidates))
+    phase_genres = _top_affinity_keys(phase_genre_affinity, limit=5)
+    phase_tags = _top_affinity_keys(phase_tag_affinity, limit=5)
+    if not phase_genres and not phase_tags:
+        return candidates
+
+    def is_phase_lane(item: CandidateItem) -> bool:
+        return _is_phase_lane_candidate(
+            item,
+            phase_genres=phase_genres,
+            phase_tags=phase_tags,
+        )
+
+    top_slice = candidates[:window]
+    phase_in_top = [item for item in top_slice if is_phase_lane(item)]
+    if len(phase_in_top) >= quota:
+        return candidates
+
+    needed = quota - len(phase_in_top)
+    replacement_indices = [idx for idx, item in enumerate(top_slice) if not is_phase_lane(item)]
+    if not replacement_indices:
+        return candidates
+    replacement_indices = replacement_indices[-needed:]
+
+    promotable: list[CandidateItem] = []
+    for item in candidates[window:]:
+        if is_phase_lane(item):
+            promotable.append(item)
+            if len(promotable) >= len(replacement_indices):
+                break
+    if not promotable:
+        return candidates
+
+    for promoted, target_idx in zip(promotable, replacement_indices):
+        current_idx = next((idx for idx, item in enumerate(candidates) if item is promoted), None)
+        if current_idx is None or current_idx <= target_idx:
+            continue
+        displaced = candidates[target_idx]
+        candidates.pop(current_idx)
+        candidates.insert(target_idx, promoted)
+        promoted.score_breakdown["phase_lane_promoted"] = 1.0
+        displaced.score_breakdown["phase_lane_demoted"] = 1.0
+
+    return candidates
+
+
+def _prefer_strong_phase_opening_window(
+    candidates: list[CandidateItem],
+    *,
+    opening_window: int = COMFORT_STRONG_PHASE_OPENING_WINDOW,
+    superiority_margin: float = COMFORT_MEDIUM_PHASE_SUPERIORITY_MARGIN,
+) -> list[CandidateItem]:
+    """Prefer strong-phase pool entries in opening slots unless medium is clearly better."""
+    if not candidates or opening_window <= 0:
+        return candidates
+
+    opening_window = min(opening_window, len(candidates))
+    used_strong_indices: set[int] = set()
+    for index in range(opening_window):
+        candidate = candidates[index]
+        is_medium = float(candidate.score_breakdown.get("phase_pool_medium", 0.0)) >= 1.0
+        if not is_medium:
+            continue
+
+        replacement_idx = None
+        for down_idx in range(opening_window, len(candidates)):
+            if down_idx in used_strong_indices:
+                continue
+            if float(candidates[down_idx].score_breakdown.get("phase_pool_strong", 0.0)) >= 1.0:
+                replacement_idx = down_idx
+                break
+        if replacement_idx is None:
+            continue
+
+        medium_score = float(candidate.final_score or 0.0)
+        strong_score = float(candidates[replacement_idx].final_score or 0.0)
+        if medium_score >= strong_score + superiority_margin:
+            candidate.score_breakdown["medium_phase_held_opening"] = 1.0
+            used_strong_indices.add(replacement_idx)
+            continue
+
+        candidates[index], candidates[replacement_idx] = (
+            candidates[replacement_idx],
+            candidates[index],
+        )
+        candidates[index].score_breakdown["strong_phase_promoted_opening"] = 1.0
+        candidates[replacement_idx].score_breakdown["medium_phase_demoted_opening"] = 1.0
+        used_strong_indices.add(replacement_idx)
+
+    return candidates
+
+
+def _apply_comfort_confidence(
+    candidates: list[CandidateItem],
+    profile_payload: dict | None = None,
+) -> list[CandidateItem]:
     if not candidates:
         return candidates
 
-    for candidate in candidates:
-        base_score = float(candidate.final_score or 0.0)
-        user_score = float(candidate.score_breakdown.get("user_score", 0.0))
-        user_score_norm = _clamp_unit(user_score / 10.0)
-        inactivity_days = float(candidate.score_breakdown.get("days_since_activity", 0.0))
-        inactivity_norm = _clamp_unit(inactivity_days / 365.0)
-
-        comfort_score = _clamp_unit(
-            (base_score * 0.35)
-            + (user_score_norm * 0.5)
-            + (inactivity_norm * 0.15),
+    phase_genre_affinity, phase_tag_affinity = _phase_affinity_maps(profile_payload)
+    phase_affinity = phase_genre_affinity
+    phase_top = sorted(phase_affinity, key=phase_affinity.get, reverse=True)[:5]
+    holiday_window_active = _is_holiday_window()
+    candidate_tag_coverage_pool = _clamp_unit(
+        sum(1 for candidate in candidates if candidate.tags) / max(1, len(candidates)),
+    )
+    history_tag_coverages = [
+        float(candidate.score_breakdown.get("recent_history_tag_coverage", 0.0))
+        for candidate in candidates
+        if "recent_history_tag_coverage" in candidate.score_breakdown
+    ]
+    recent_history_tag_coverage = _clamp_unit(
+        (sum(history_tag_coverages) / len(history_tag_coverages))
+        if history_tag_coverages
+        else 0.0,
+    )
+    tag_signal_mode = (
+        "tag_rich"
+        if (
+            candidate_tag_coverage_pool >= COMFORT_TAG_RICH_CANDIDATE_COVERAGE_THRESHOLD
+            and recent_history_tag_coverage >= COMFORT_TAG_RICH_HISTORY_COVERAGE_THRESHOLD
         )
-        candidate.score_breakdown["base_score"] = round(base_score, 6)
-        candidate.score_breakdown["user_score_norm"] = round(user_score_norm, 6)
+        else "tag_sparse"
+    )
+    hot_recency_mode_multiplier = (
+        1.0 if tag_signal_mode == "tag_rich" else COMFORT_HOT_RECENCY_TAG_SPARSE_MULTIPLIER
+    )
+
+    for candidate in candidates:
+        phase_genre_bonus = float(
+            candidate.score_breakdown.get("phase_genre_bonus", 0.0),
+        )
+        phase_tag_bonus = float(
+            candidate.score_breakdown.get("phase_tag_bonus", 0.0),
+        )
+        recency_bonus = float(
+            candidate.score_breakdown.get("recency_bonus", 0.0),
+        )
+        recency_tag_bonus = float(
+            candidate.score_breakdown.get("recency_tag_bonus", 0.0),
+        )
+        genre_match = float(
+            candidate.score_breakdown.get("genre_match", 0.0),
+        )
+        tag_match = float(
+            candidate.score_breakdown.get("tag_match", 0.0),
+        )
+        phase_fit = _clamp_unit((phase_genre_bonus * 0.45) + (phase_tag_bonus * 0.55))
+        hot_recency_base = _clamp_unit((recency_bonus * 0.35) + (recency_tag_bonus * 0.65))
+        genre_overlap_ratio = (
+            min(phase_genre_bonus, recency_bonus)
+            / max(phase_genre_bonus, recency_bonus, 1e-6)
+            if (phase_genre_bonus > 0.0 or recency_bonus > 0.0)
+            else 0.0
+        )
+        tag_overlap_ratio = (
+            min(phase_tag_bonus, recency_tag_bonus)
+            / max(phase_tag_bonus, recency_tag_bonus, 1e-6)
+            if (phase_tag_bonus > 0.0 or recency_tag_bonus > 0.0)
+            else 0.0
+        )
+        hot_recency_incremental = _clamp_unit(
+            (max(0.0, recency_bonus - phase_genre_bonus) * 0.35)
+            + (max(0.0, recency_tag_bonus - phase_tag_bonus) * 0.65),
+        )
+        phase_hot_overlap_ratio = _clamp_unit(
+            (genre_overlap_ratio * 0.4) + (tag_overlap_ratio * 0.6),
+        )
+        hot_recency_specificity = _clamp_unit(
+            hot_recency_incremental * (1.0 - phase_hot_overlap_ratio),
+        )
+        hot_recency = _clamp_unit(
+            (hot_recency_specificity ** COMFORT_HOT_RECENCY_SELECTIVE_EXPONENT)
+            * hot_recency_mode_multiplier,
+        )
+
+        user_score = candidate.score_breakdown.get("user_score")
+        if user_score is not None:
+            rating_confidence = _clamp_unit(
+                1.0 - (0.5 ** ((float(user_score) - 5.0) / 2.5)),
+            )
+        else:
+            rating_confidence = 0.5
+        phase_evidence = float(
+            candidate.score_breakdown.get("phase_evidence", 0.0),
+        )
+        rewatch_count = int(float(candidate.score_breakdown.get("rewatch_count", 1.0)))
+        raw_rewatch_bonus = _clamp_unit(
+            math.log1p(rewatch_count - 1) / math.log(8)
+            if rewatch_count > 1
+            else 0.0
+        )
+        rewatch_gate = _clamp_unit(0.25 + (phase_fit * 0.75))
+        rewatch_bonus = (
+            min(0.85, raw_rewatch_bonus) * rewatch_gate
+        )
+        inactivity_days = float(
+            candidate.score_breakdown.get("days_since_activity", 0.0),
+        )
+        # 730-day window: items under ~1 year score low, 2+ years score high.
+        # A strong genre match to recent watches can still overcome a
+        # shorter gap, but all else being equal longer-dormant favourites
+        # surface first.
+        inactivity_norm = _clamp_unit(inactivity_days / 730.0)
+        holiday_strength = _holiday_seasonal_strength(candidate)
+        seasonal_adjustment = 0.0
+        if holiday_strength > 0.0:
+            seasonal_adjustment = (
+                0.06 * holiday_strength
+                if holiday_window_active
+                else -0.14 * holiday_strength
+            )
+
+        phase_family_contribution = (
+            (phase_fit * 0.32)
+            + (phase_evidence * 0.10)
+        )
+        hot_recency_contribution = hot_recency * 0.17
+        rewatch_contribution = rewatch_bonus * 0.08
+        rating_contribution = rating_confidence * 0.09
+        background_contribution = (
+            (inactivity_norm * 0.11)
+            + (genre_match * 0.03)
+            + (tag_match * 0.10)
+        )
+        comfort_score = _clamp_unit(
+            phase_family_contribution
+            + hot_recency_contribution
+            + rewatch_contribution
+            + rating_contribution
+            + background_contribution
+            + seasonal_adjustment,
+        )
+
+        candidate.score_breakdown["phase_fit"] = round(phase_fit, 6)
+        candidate.score_breakdown["hot_recency_base"] = round(hot_recency_base, 6)
+        candidate.score_breakdown["genre_overlap_ratio"] = round(genre_overlap_ratio, 6)
+        candidate.score_breakdown["tag_overlap_ratio"] = round(tag_overlap_ratio, 6)
+        candidate.score_breakdown["hot_recency_incremental"] = round(hot_recency_incremental, 6)
+        candidate.score_breakdown["hot_recency_specificity"] = round(hot_recency_specificity, 6)
+        candidate.score_breakdown["phase_hot_overlap_ratio"] = round(phase_hot_overlap_ratio, 6)
+        candidate.score_breakdown["hot_recency"] = round(hot_recency, 6)
+        candidate.score_breakdown["tag_signal_mode"] = tag_signal_mode
+        candidate.score_breakdown["hot_recency_mode_multiplier"] = round(
+            hot_recency_mode_multiplier,
+            6,
+        )
+        candidate.score_breakdown["candidate_tag_coverage_pool"] = round(
+            candidate_tag_coverage_pool,
+            6,
+        )
+        candidate.score_breakdown["recent_history_tag_coverage"] = round(
+            recent_history_tag_coverage,
+            6,
+        )
+        candidate.score_breakdown["candidate_has_tags"] = 1.0 if candidate.tags else 0.0
+        candidate.score_breakdown["rewatch_gate"] = round(rewatch_gate, 6)
+        candidate.score_breakdown["rewatch_bonus"] = round(rewatch_bonus, 6)
+        candidate.score_breakdown["rating_confidence"] = round(rating_confidence, 6)
         candidate.score_breakdown["inactivity_norm"] = round(inactivity_norm, 6)
+        candidate.score_breakdown["phase_evidence"] = round(phase_evidence, 6)
+        candidate.score_breakdown["holiday_strength"] = round(holiday_strength, 6)
+        candidate.score_breakdown["seasonal_adjustment"] = round(seasonal_adjustment, 6)
+        candidate.score_breakdown["phase_family_contribution"] = round(phase_family_contribution, 6)
+        candidate.score_breakdown["hot_recency_contribution"] = round(hot_recency_contribution, 6)
+        candidate.score_breakdown["rating_contribution"] = round(rating_contribution, 6)
+        candidate.score_breakdown["rewatch_contribution"] = round(rewatch_contribution, 6)
+        candidate.score_breakdown["background_contribution"] = round(background_contribution, 6)
+        candidate.score_breakdown["dampeners_contribution"] = round(seasonal_adjustment, 6)
+        candidate.score_breakdown["diversity_penalty_contribution"] = 0.0
+        candidate.score_breakdown["diversity_dampener_contribution"] = 0.0
+        candidate.score_breakdown["era_penalty_contribution"] = 0.0
+        candidate.score_breakdown["era_base_penalty_contribution"] = 0.0
+        candidate.score_breakdown["era_opening_penalty_contribution"] = 0.0
+        candidate.score_breakdown["seasonality_dampener_contribution"] = round(
+            seasonal_adjustment,
+            6,
+        )
+        candidate.score_breakdown["era_dampener_contribution"] = 0.0
+        candidate.score_breakdown["opening_era_dampener_contribution"] = 0.0
         candidate.score_breakdown["comfort_score"] = round(comfort_score, 6)
         candidate.final_score = round(comfort_score, 6)
 
-        display_score = _calibrate_display_score(comfort_score, offset=0.58, weight=0.38)
-        if user_score_norm >= 0.9 and inactivity_days >= 180:
-            display_score = max(display_score, 0.80)
-        elif user_score_norm >= 0.8 and inactivity_days >= 90:
-            display_score = max(display_score, 0.70)
-        candidate.display_score = round(display_score, 6)
+        # Per-card match genres: overlap of candidate genres with phase activity
+        if phase_top:
+            cand_genres = {
+                g.strip().lower() for g in (candidate.genres or []) if g
+            }
+            overlap = [g for g in phase_top if g in cand_genres]
+            if overlap:
+                candidate.score_breakdown["match_genres"] = ", ".join(
+                    g.title() for g in overlap[:3]
+                )
 
     candidates.sort(
         key=lambda candidate: (
             candidate.final_score if candidate.final_score is not None else -1.0,
-            float(candidate.score_breakdown.get("user_score", -1.0)),
-            float(candidate.score_breakdown.get("days_since_activity", -1.0)),
+            float(candidate.score_breakdown.get("phase_fit", -1.0)),
+            float(candidate.score_breakdown.get("hot_recency", -1.0)),
+            float(candidate.score_breakdown.get("rewatch_bonus", -1.0)),
         ),
         reverse=True,
     )
+
+    bucket_counts: dict[str, int] = {}
+    for candidate in candidates:
+        bucket_key = _comfort_bucket_key(candidate)
+        bucket_seen_count = bucket_counts.get(bucket_key, 0)
+        diversity_multiplier = COMFORT_DIVERSITY_DECAY ** bucket_seen_count
+        before_diversity = float(candidate.final_score or 0.0)
+        diversified_score = _clamp_unit(
+            before_diversity * diversity_multiplier,
+        )
+        diversity_penalty_contribution = max(0.0, before_diversity - diversified_score)
+        candidate.score_breakdown["diversity_multiplier"] = round(diversity_multiplier, 6)
+        candidate.score_breakdown["diversity_penalty"] = round(1.0 - diversity_multiplier, 6)
+        candidate.score_breakdown["diversity_penalty_contribution"] = round(
+            diversity_penalty_contribution,
+            6,
+        )
+        candidate.score_breakdown["diversity_dampener_contribution"] = round(
+            -diversity_penalty_contribution,
+            6,
+        )
+        candidate.final_score = round(diversified_score, 6)
+        bucket_counts[bucket_key] = bucket_seen_count + 1
+
+    candidates.sort(
+        key=lambda candidate: (
+            candidate.final_score if candidate.final_score is not None else -1.0,
+            float(candidate.score_breakdown.get("phase_fit", -1.0)),
+            float(candidate.score_breakdown.get("hot_recency", -1.0)),
+            float(candidate.score_breakdown.get("rewatch_bonus", -1.0)),
+        ),
+        reverse=True,
+    )
+    era_counts: dict[int, int] = {}
+    legacy_count = 0
+    for index, candidate in enumerate(candidates[: MAX_ITEMS_PER_ROW * 2]):
+        candidate.score_breakdown["era_opening_slot"] = 1.0 if index < COMFORT_ERA_OPENING_WINDOW else 0.0
+        candidate.score_breakdown["era_opening_multiplier"] = 1.0
+        candidate.score_breakdown["era_base_multiplier"] = 1.0
+        candidate.score_breakdown.setdefault("era_multiplier", 1.0)
+        candidate.score_breakdown.setdefault("era_penalty_contribution", 0.0)
+        candidate.score_breakdown["era_base_penalty_contribution"] = 0.0
+        candidate.score_breakdown["era_opening_penalty_contribution"] = 0.0
+        candidate.score_breakdown["era_dampener_contribution"] = 0.0
+        candidate.score_breakdown["opening_era_dampener_contribution"] = 0.0
+        release_year = _candidate_release_year(candidate)
+        if release_year is None:
+            continue
+        era_bucket = (release_year // 10) * 10
+        era_seen_count = era_counts.get(era_bucket, 0)
+        base_multiplier = COMFORT_ERA_DECAY ** era_seen_count
+        if index < COMFORT_ERA_OPENING_WINDOW:
+            opening_multiplier = COMFORT_ERA_OPENING_DECAY ** era_seen_count
+        else:
+            opening_multiplier = 1.0
+        if release_year < 2000:
+            base_multiplier *= COMFORT_LEGACY_ERA_DECAY ** legacy_count
+            if index < COMFORT_ERA_OPENING_WINDOW:
+                opening_multiplier *= COMFORT_LEGACY_OPENING_DECAY ** legacy_count
+            legacy_count += 1
+        era_multiplier = base_multiplier * opening_multiplier
+        before_era = float(candidate.final_score or 0.0)
+        after_base = _clamp_unit(before_era * base_multiplier)
+        era_base_penalty = max(0.0, before_era - after_base)
+        era_adjusted_score = _clamp_unit(after_base * opening_multiplier)
+        opening_era_penalty = max(0.0, after_base - era_adjusted_score)
+        era_penalty_contribution = era_base_penalty + opening_era_penalty
+        candidate.score_breakdown["era_multiplier"] = round(era_multiplier, 6)
+        candidate.score_breakdown["era_base_multiplier"] = round(base_multiplier, 6)
+        candidate.score_breakdown["era_opening_multiplier"] = round(opening_multiplier, 6)
+        candidate.score_breakdown["era_penalty_contribution"] = round(era_penalty_contribution, 6)
+        candidate.score_breakdown["era_base_penalty_contribution"] = round(
+            era_base_penalty,
+            6,
+        )
+        candidate.score_breakdown["era_opening_penalty_contribution"] = round(
+            opening_era_penalty,
+            6,
+        )
+        candidate.score_breakdown["era_dampener_contribution"] = round(
+            -era_base_penalty,
+            6,
+        )
+        candidate.score_breakdown["opening_era_dampener_contribution"] = round(
+            -opening_era_penalty,
+            6,
+        )
+        candidate.score_breakdown["era_bucket"] = float(era_bucket)
+        candidate.final_score = round(era_adjusted_score, 6)
+        era_counts[era_bucket] = era_seen_count + 1
+
+    for candidate in candidates:
+        seasonality_dampener_contribution = float(
+            candidate.score_breakdown.get("seasonality_dampener_contribution", 0.0),
+        )
+        diversity_dampener_contribution = float(
+            candidate.score_breakdown.get("diversity_dampener_contribution", 0.0),
+        )
+        era_dampener_contribution = float(
+            candidate.score_breakdown.get("era_dampener_contribution", 0.0),
+        )
+        opening_era_dampener_contribution = float(
+            candidate.score_breakdown.get("opening_era_dampener_contribution", 0.0),
+        )
+        dampeners_contribution = (
+            seasonality_dampener_contribution
+            + diversity_dampener_contribution
+            + era_dampener_contribution
+            + opening_era_dampener_contribution
+        )
+        candidate.score_breakdown["dampeners_contribution"] = round(
+            dampeners_contribution,
+            6,
+        )
+
+    candidates.sort(
+        key=lambda candidate: (
+            candidate.final_score if candidate.final_score is not None else -1.0,
+            float(candidate.score_breakdown.get("phase_fit", -1.0)),
+            float(candidate.score_breakdown.get("hot_recency", -1.0)),
+            float(candidate.score_breakdown.get("rewatch_bonus", -1.0)),
+        ),
+        reverse=True,
+    )
+    _promote_phase_lane_candidates(
+        candidates,
+        phase_genre_affinity=phase_genre_affinity,
+        phase_tag_affinity=phase_tag_affinity,
+    )
+    _prefer_strong_phase_opening_window(candidates)
+    _calibrate_comfort_display_scores(candidates)
     return candidates
+
+
+def _calibrate_comfort_display_scores(candidates: list[CandidateItem]) -> list[CandidateItem]:
+    if not candidates:
+        return candidates
+
+    raw_scores = [_clamp_unit(float(candidate.final_score or 0.0)) for candidate in candidates]
+    min_raw = min(raw_scores)
+    max_raw = max(raw_scores)
+    spread = max_raw - min_raw
+    rank_denom = max(1, len(candidates) - 1)
+
+    calibrated: list[float] = []
+    for index, candidate in enumerate(candidates):
+        raw_score = _clamp_unit(float(candidate.final_score or 0.0))
+        spread_norm = (
+            (raw_score - min_raw) / spread
+            if spread > 0.0
+            else 0.5
+        )
+        rank_norm = 1.0 - (index / rank_denom)
+        display_score = _clamp_unit(
+            0.58
+            + (raw_score * 0.22)
+            + (spread_norm * 0.12)
+            + (rank_norm * 0.08),
+        )
+        candidate.score_breakdown["raw_final_score"] = round(raw_score, 6)
+        candidate.score_breakdown["display_spread_norm"] = round(spread_norm, 6)
+        candidate.score_breakdown["display_rank_norm"] = round(rank_norm, 6)
+        candidate.score_breakdown["display_pre_monotonic"] = round(display_score, 6)
+        calibrated.append(display_score)
+
+    # Ensure top-to-bottom confidence never increases, while preserving ranking order.
+    ceiling = 1.0
+    for index, candidate in enumerate(candidates):
+        monotonic_score = min(ceiling, calibrated[index])
+        candidate.display_score = round(monotonic_score, 6)
+        candidate.score_breakdown["display_score"] = round(monotonic_score, 6)
+        ceiling = monotonic_score
+
+    return candidates
+
+
+def _build_comfort_debug_payload(
+    candidates: list[CandidateItem],
+    *,
+    top_n: int = COMFORT_DEBUG_TOP_N,
+) -> dict:
+    if not candidates:
+        return {
+            "top_n": top_n,
+            "top_candidates": [],
+            "score_distribution": {
+                "raw_min": 0.0,
+                "raw_max": 0.0,
+                "raw_spread": 0.0,
+                "display_min": 0.0,
+                "display_max": 0.0,
+                "display_spread": 0.0,
+                "compressed_raw": True,
+            },
+            "penalty_stack": {
+                "multi_penalty_count": 0,
+                "multi_penalty_media_ids": [],
+            },
+            "contribution_totals": {
+                "phase_family": 0.0,
+                "hot_recency": 0.0,
+                "rating": 0.0,
+                "rewatch": 0.0,
+                "dampeners": 0.0,
+            },
+            "dampener_totals": {
+                "seasonality": 0.0,
+                "diversity": 0.0,
+                "era": 0.0,
+                "opening_era": 0.0,
+            },
+            "tag_signal": {
+                "mode": "tag_sparse",
+                "candidate_tag_coverage_top_n": 0.0,
+                "candidate_tag_coverage_pool": 0.0,
+                "recent_history_tag_coverage": 0.0,
+                "recent_history_window_days": COMFORT_RECENT_HISTORY_TAG_WINDOW_DAYS,
+                "hot_recency_mode_multiplier": COMFORT_HOT_RECENCY_TAG_SPARSE_MULTIPLIER,
+            },
+        }
+
+    raw_scores = [
+        _clamp_unit(
+            float(
+                candidate.score_breakdown.get("raw_final_score", candidate.final_score or 0.0),
+            ),
+        )
+        for candidate in candidates
+    ]
+    display_scores = [
+        _clamp_unit(float(candidate.display_score or 0.0))
+        for candidate in candidates
+    ]
+
+    raw_min = min(raw_scores)
+    raw_max = max(raw_scores)
+    raw_spread = raw_max - raw_min
+    display_min = min(display_scores)
+    display_max = max(display_scores)
+    display_spread = display_max - display_min
+
+    effective_top_n = min(len(candidates), max(1, top_n))
+    top_slice = candidates[:effective_top_n]
+    top_tagged_count = sum(1 for candidate in top_slice if candidate.tags)
+    pool_tagged_count = sum(1 for candidate in candidates if candidate.tags)
+    recent_history_coverages = [
+        float(candidate.score_breakdown.get("recent_history_tag_coverage", 0.0))
+        for candidate in candidates
+        if "recent_history_tag_coverage" in candidate.score_breakdown
+    ]
+    recent_history_tag_coverage = _clamp_unit(
+        (sum(recent_history_coverages) / len(recent_history_coverages))
+        if recent_history_coverages
+        else 0.0,
+    )
+    tag_signal_mode = str(candidates[0].score_breakdown.get("tag_signal_mode", "tag_sparse"))
+    hot_recency_mode_multiplier = _clamp_unit(
+        float(
+            candidates[0].score_breakdown.get(
+                "hot_recency_mode_multiplier",
+                COMFORT_HOT_RECENCY_TAG_SPARSE_MULTIPLIER,
+            ),
+        ),
+    )
+
+    multi_penalty_ids: list[str] = []
+    top_candidates: list[dict] = []
+    contribution_totals = {
+        "phase_family": 0.0,
+        "hot_recency": 0.0,
+        "rating": 0.0,
+        "rewatch": 0.0,
+        "dampeners": 0.0,
+    }
+    dampener_totals = {
+        "seasonality": 0.0,
+        "diversity": 0.0,
+        "era": 0.0,
+        "opening_era": 0.0,
+    }
+    for index, candidate in enumerate(top_slice, start=1):
+        score = candidate.score_breakdown
+        seasonal_adjustment = float(score.get("seasonal_adjustment", 0.0))
+        diversity_multiplier = float(score.get("diversity_multiplier", 1.0))
+        era_multiplier = float(score.get("era_multiplier", 1.0))
+        phase_family_contribution = float(score.get("phase_family_contribution", 0.0))
+        hot_recency_contribution = float(score.get("hot_recency_contribution", 0.0))
+        rating_contribution = float(score.get("rating_contribution", 0.0))
+        rewatch_contribution = float(score.get("rewatch_contribution", 0.0))
+        dampeners_contribution = float(score.get("dampeners_contribution", 0.0))
+        seasonality_dampener_contribution = float(
+            score.get("seasonality_dampener_contribution", 0.0),
+        )
+        diversity_dampener_contribution = float(
+            score.get("diversity_dampener_contribution", 0.0),
+        )
+        era_dampener_contribution = float(
+            score.get("era_dampener_contribution", 0.0),
+        )
+        opening_era_dampener_contribution = float(
+            score.get("opening_era_dampener_contribution", 0.0),
+        )
+        phase_pool_source = _phase_pool_source(candidate)
+        phase_lane_promoted = float(score.get("phase_lane_promoted", 0.0)) >= 1.0
+
+        contribution_totals["phase_family"] += phase_family_contribution
+        contribution_totals["hot_recency"] += hot_recency_contribution
+        contribution_totals["rating"] += rating_contribution
+        contribution_totals["rewatch"] += rewatch_contribution
+        contribution_totals["dampeners"] += dampeners_contribution
+        dampener_totals["seasonality"] += seasonality_dampener_contribution
+        dampener_totals["diversity"] += diversity_dampener_contribution
+        dampener_totals["era"] += era_dampener_contribution
+        dampener_totals["opening_era"] += opening_era_dampener_contribution
+
+        penalty_count = 0
+        if seasonal_adjustment < 0.0:
+            penalty_count += 1
+        if diversity_multiplier < 0.999:
+            penalty_count += 1
+        if era_multiplier < 0.999:
+            penalty_count += 1
+        if phase_pool_source in {"weak_backfill", "weak_only"}:
+            penalty_count += 1
+
+        if penalty_count >= 2:
+            multi_penalty_ids.append(str(candidate.media_id))
+
+        top_candidates.append(
+            {
+                "rank": index,
+                "media_id": str(candidate.media_id),
+                "title": candidate.title,
+                "raw_final_score": round(
+                    _clamp_unit(float(score.get("raw_final_score", candidate.final_score or 0.0))),
+                    6,
+                ),
+                "display_score": round(_clamp_unit(float(candidate.display_score or 0.0)), 6),
+                "phase_fit": round(float(score.get("phase_fit", 0.0)), 6),
+                "hot_recency_base": round(float(score.get("hot_recency_base", 0.0)), 6),
+                "genre_overlap_ratio": round(float(score.get("genre_overlap_ratio", 0.0)), 6),
+                "tag_overlap_ratio": round(float(score.get("tag_overlap_ratio", 0.0)), 6),
+                "hot_recency_incremental": round(float(score.get("hot_recency_incremental", 0.0)), 6),
+                "hot_recency_specificity": round(float(score.get("hot_recency_specificity", 0.0)), 6),
+                "phase_hot_overlap_ratio": round(float(score.get("phase_hot_overlap_ratio", 0.0)), 6),
+                "hot_recency": round(float(score.get("hot_recency", 0.0)), 6),
+                "phase_evidence": round(float(score.get("phase_evidence", 0.0)), 6),
+                "tag_signal_mode": str(score.get("tag_signal_mode", "tag_sparse")),
+                "hot_recency_mode_multiplier": round(
+                    float(score.get("hot_recency_mode_multiplier", 0.0)),
+                    6,
+                ),
+                "candidate_tag_coverage_pool": round(
+                    float(score.get("candidate_tag_coverage_pool", 0.0)),
+                    6,
+                ),
+                "recent_history_tag_coverage": round(
+                    float(score.get("recent_history_tag_coverage", 0.0)),
+                    6,
+                ),
+                "rating_confidence": round(float(score.get("rating_confidence", 0.0)), 6),
+                "rewatch_bonus": round(float(score.get("rewatch_bonus", 0.0)), 6),
+                "phase_family_contribution": round(phase_family_contribution, 6),
+                "hot_recency_contribution": round(hot_recency_contribution, 6),
+                "rating_contribution": round(rating_contribution, 6),
+                "rewatch_contribution": round(rewatch_contribution, 6),
+                "dampeners_contribution": round(dampeners_contribution, 6),
+                "seasonality_dampener_contribution": round(
+                    seasonality_dampener_contribution,
+                    6,
+                ),
+                "diversity_dampener_contribution": round(
+                    diversity_dampener_contribution,
+                    6,
+                ),
+                "era_dampener_contribution": round(era_dampener_contribution, 6),
+                "opening_era_dampener_contribution": round(
+                    opening_era_dampener_contribution,
+                    6,
+                ),
+                "seasonal_adjustment": round(seasonal_adjustment, 6),
+                "diversity_multiplier": round(diversity_multiplier, 6),
+                "era_multiplier": round(era_multiplier, 6),
+                "medium_phase_held_opening": float(
+                    score.get("medium_phase_held_opening", 0.0),
+                ) >= 1.0,
+                "strong_phase_promoted_opening": float(
+                    score.get("strong_phase_promoted_opening", 0.0),
+                ) >= 1.0,
+                "medium_phase_demoted_opening": float(
+                    score.get("medium_phase_demoted_opening", 0.0),
+                ) >= 1.0,
+                "phase_lane_promoted": phase_lane_promoted,
+                "phase_pool_source": phase_pool_source,
+                "penalty_count": penalty_count,
+            },
+        )
+
+    return {
+        "top_n": effective_top_n,
+        "top_candidates": top_candidates,
+        "score_distribution": {
+            "raw_min": round(raw_min, 6),
+            "raw_max": round(raw_max, 6),
+            "raw_spread": round(raw_spread, 6),
+            "display_min": round(display_min, 6),
+            "display_max": round(display_max, 6),
+            "display_spread": round(display_spread, 6),
+            "compressed_raw": raw_spread < COMFORT_SPREAD_COMPRESSION_THRESHOLD,
+        },
+        "penalty_stack": {
+            "multi_penalty_count": len(multi_penalty_ids),
+            "multi_penalty_media_ids": multi_penalty_ids,
+        },
+        "contribution_totals": {
+            "phase_family": round(contribution_totals["phase_family"], 6),
+            "hot_recency": round(contribution_totals["hot_recency"], 6),
+            "rating": round(contribution_totals["rating"], 6),
+            "rewatch": round(contribution_totals["rewatch"], 6),
+            "dampeners": round(contribution_totals["dampeners"], 6),
+        },
+        "dampener_totals": {
+            "seasonality": round(dampener_totals["seasonality"], 6),
+            "diversity": round(dampener_totals["diversity"], 6),
+            "era": round(dampener_totals["era"], 6),
+            "opening_era": round(dampener_totals["opening_era"], 6),
+        },
+        "tag_signal": {
+            "mode": tag_signal_mode,
+            "candidate_tag_coverage_top_n": round(
+                _clamp_unit(top_tagged_count / max(1, effective_top_n)),
+                6,
+            ),
+            "candidate_tag_coverage_pool": round(
+                _clamp_unit(pool_tagged_count / max(1, len(candidates))),
+                6,
+            ),
+            "recent_history_tag_coverage": round(recent_history_tag_coverage, 6),
+            "recent_history_window_days": COMFORT_RECENT_HISTORY_TAG_WINDOW_DAYS,
+            "hot_recency_mode_multiplier": round(hot_recency_mode_multiplier, 6),
+        },
+    }
+
+
+def _comfort_match_signal(profile_payload: dict) -> str:
+    """Build a row-level signal string from phase tag/genre activity."""
+    payload = profile_payload or {}
+    phase_tags = payload.get("phase_tag_affinity") or payload.get("recent_tag_affinity") or {}
+    phase_genres = payload.get("phase_genre_affinity") or payload.get("recent_genre_affinity") or {}
+
+    top_labels = _top_phase_labels(
+        phase_tags,
+        limit=3,
+        allow_generic_terms=False,
+    )
+    if len(top_labels) < 3:
+        for label in _top_phase_labels(
+            phase_tags,
+            limit=3,
+            allow_generic_terms=True,
+        ):
+            if label not in top_labels:
+                top_labels.append(label)
+            if len(top_labels) >= 3:
+                break
+
+    if len(top_labels) < 3:
+        for label in _top_phase_labels(
+            phase_genres,
+            limit=3,
+            allow_generic_terms=True,
+        ):
+            if label not in top_labels:
+                top_labels.append(label)
+            if len(top_labels) >= 3:
+                break
+
+    if not top_labels:
+        return ""
+    return "Driven by your current " + ", ".join(top_labels[:3]) + " phase"
 
 
 def _wildcard_genres(profile_payload: dict) -> list[str]:
@@ -883,6 +2229,7 @@ def _build_row_candidates(
                 source_reason="Past favorite",
                 older_than_days=min_days,
                 min_score=min_score,
+                profile_payload=profile_payload,
             )
             for candidate in tier_candidates:
                 identity = candidate.identity()
@@ -895,11 +2242,8 @@ def _build_row_candidates(
 
         score_candidates(candidates, profile_payload)
         if row_key == "comfort_rewatches":
-            _apply_comfort_confidence(candidates)
+            _apply_comfort_confidence(candidates, profile_payload)
         return candidates
-
-    if row_key == "wildcard_for_you":
-        return _wildcard_candidates(user, media_type, row_key, profile_payload)
 
     if row_key == "movie_night":
         candidates = _movie_night_candidates(user, media_type, row_key=row_key)
@@ -975,13 +2319,6 @@ def _hydrate_trending_movie_artwork(candidates: list[CandidateItem]) -> None:
 
 
 def _blocked_statuses_for_row(row_definition: RowDefinition) -> set[str] | None:
-    if row_definition.key == "wildcard_for_you":
-        return {
-            Status.COMPLETED.value,
-            Status.DROPPED.value,
-            Status.IN_PROGRESS.value,
-        }
-
     if row_definition.key in {"trending_right_now", "all_time_greats_unseen", "coming_soon"}:
         return {
             Status.COMPLETED.value,
@@ -1078,6 +2415,17 @@ def _build_and_cache_row(
     }:
         _hydrate_trending_movie_artwork(candidates)
 
+    match_signal = None
+    if row_definition.key in {
+        "top_picks_for_you",
+        "comfort_rewatches",
+        "comfort_binge",
+        "comfort",
+        "comfort_replay",
+        "comfort_picks",
+    }:
+        match_signal = _comfort_match_signal(profile_payload)
+
     buffered_limit = MAX_ITEMS_PER_ROW * ROW_CANDIDATE_BUFFER_MULTIPLIER
     row = RowResult(
         key=row_definition.key,
@@ -1088,6 +2436,7 @@ def _build_and_cache_row(
         items=candidates[:buffered_limit],
         show_more=row_definition.show_more,
         source_state="live",
+        match_signal=match_signal or None,
     )
 
     cache_payload = row.to_dict()
@@ -1174,7 +2523,13 @@ def _required_row_cache_schema_version(media_type: str, row_key: str) -> int | N
     return None
 
 
-def get_discover_rows(user, media_type: str, *, show_more: bool = False) -> list[RowResult]:
+def get_discover_rows(
+    user,
+    media_type: str,
+    *,
+    show_more: bool = False,
+    include_debug: bool = False,
+) -> list[RowResult]:
     """Return discover rows for selected media type."""
     media_type = _coerce_media_type(media_type)
     row_definitions = get_rows(media_type, include_show_more=show_more)
@@ -1232,12 +2587,20 @@ def get_discover_rows(user, media_type: str, *, show_more: bool = False) -> list
 
             prior_seen_identities = set(seen_identities)
             before_count = len(row.items)
-            row.items = dedupe_candidates(row.items, seen_identities=seen_identities)
+            all_time_row = (
+                media_type == MediaTypes.MOVIE.value
+                and row_definition.key == "all_time_greats_unseen"
+            )
+            if all_time_row:
+                row.items = dedupe_candidates(row.items, seen_identities=set())
+                seen_identities.update(item.identity() for item in row.items)
+            else:
+                row.items = dedupe_candidates(row.items, seen_identities=seen_identities)
             dedupe_removed = before_count - len(row.items)
 
             if (
                 media_type == MediaTypes.MOVIE.value
-                and row_definition.key in {"all_time_greats_unseen", "coming_soon"}
+                and row_definition.key == "coming_soon"
                 and len(row.items) < MAX_ITEMS_PER_ROW
                 and dedupe_removed > 0
             ):
@@ -1263,6 +2626,9 @@ def get_discover_rows(user, media_type: str, *, show_more: bool = False) -> list
             if len(row.items) < row_definition.min_items and row_definition.key not in ALWAYS_VISIBLE_EMPTY_ROWS:
                 continue
 
+            if include_debug and row_definition.key in {"comfort_rewatches", "top_picks_for_you"}:
+                row.debug_payload = _build_comfort_debug_payload(row.items, top_n=COMFORT_DEBUG_TOP_N)
+
             logger.info(
                 "discover_row_render user_id=%s media_type=%s row_key=%s result_count=%s source=%s filtered_count=%s",
                 user.id,
@@ -1286,10 +2652,21 @@ def get_discover_rows(user, media_type: str, *, show_more: bool = False) -> list
     return rows
 
 
-def get_discover_payload(user, media_type: str, *, show_more: bool = False) -> DiscoverPayload:
+def get_discover_payload(
+    user,
+    media_type: str,
+    *,
+    show_more: bool = False,
+    include_debug: bool = False,
+) -> DiscoverPayload:
     """Return top-level discover payload for selected media type."""
     media_type = _coerce_media_type(media_type)
-    rows = get_discover_rows(user, media_type, show_more=show_more)
+    rows = get_discover_rows(
+        user,
+        media_type,
+        show_more=show_more,
+        include_debug=include_debug,
+    )
     return DiscoverPayload(
         media_type=media_type,
         rows=rows,
