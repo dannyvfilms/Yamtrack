@@ -9,7 +9,7 @@
 {% block content %}
   <div class="flex items-center gap-3 mb-6">
     <h1 class="text-3xl font-bold">{{ media_type|media_type_readable_plural }}</h1>
-    <div class="result-count-badge result-count-mobile px-4 py-2 bg-[#2a2f35] rounded-md text-gray-200 text-sm font-semibold">
+    <div data-result-count class="result-count-badge result-count-mobile px-4 py-2 bg-[#2a2f35] rounded-md text-gray-200 text-sm font-semibold">
       {% if media_list.paginator %}
         {{ media_list.paginator.count }}
       {% else %}
@@ -980,7 +980,7 @@
           </div>
         </div>
 
-        <div id="result-count" class="result-count-badge result-count-desktop px-4 py-2 bg-[#2a2f35] rounded-md text-gray-200 text-sm font-semibold">
+        <div id="result-count" data-result-count class="result-count-badge result-count-desktop px-4 py-2 bg-[#2a2f35] rounded-md text-gray-200 text-sm font-semibold">
           {% if media_list.paginator %}
             {{ media_list.paginator.count }}
           {% else %}
@@ -1745,10 +1745,10 @@
       if (count === undefined || count === null) {
         return;
       }
-      const el = document.getElementById('result-count');
-      if (el) {
-        el.textContent = String(count);
-      }
+      const countBadges = document.querySelectorAll('[data-result-count]');
+      countBadges.forEach((badge) => {
+        badge.textContent = String(count);
+      });
     });
   </script>
 {% endblock content %}
