@@ -229,7 +229,7 @@ class User(AbstractUser):
     home_sort = models.CharField(
         max_length=20,
         default=HomeSortChoices.UPCOMING,
-        choices=HomeSortChoices.choices,
+        choices=HomeSortChoices,
     )
 
     # Media type preferences: TV Shows
@@ -237,7 +237,7 @@ class User(AbstractUser):
     tv_layout = models.CharField(
         max_length=20,
         default=LayoutChoices.GRID,
-        choices=LayoutChoices.choices,
+        choices=LayoutChoices,
     )
     tv_direction = models.CharField(
         max_length=4,
@@ -247,12 +247,12 @@ class User(AbstractUser):
     tv_sort = models.CharField(
         max_length=20,
         default=MediaSortChoices.SCORE,
-        choices=MediaSortChoices.choices,
+        choices=MediaSortChoices,
     )
     tv_status = models.CharField(
         max_length=20,
         default=MediaStatusChoices.ALL,
-        choices=MediaStatusChoices.choices,
+        choices=MediaStatusChoices,
     )
 
     # Media type preferences: TV Seasons
@@ -260,7 +260,7 @@ class User(AbstractUser):
     season_layout = models.CharField(
         max_length=20,
         default=LayoutChoices.GRID,
-        choices=LayoutChoices.choices,
+        choices=LayoutChoices,
     )
     season_direction = models.CharField(
         max_length=4,
@@ -270,12 +270,12 @@ class User(AbstractUser):
     season_sort = models.CharField(
         max_length=20,
         default=MediaSortChoices.SCORE,
-        choices=MediaSortChoices.choices,
+        choices=MediaSortChoices,
     )
     season_status = models.CharField(
         max_length=20,
         default=MediaStatusChoices.ALL,
-        choices=MediaStatusChoices.choices,
+        choices=MediaStatusChoices,
     )
 
     # Media type preferences: Movies
@@ -283,7 +283,7 @@ class User(AbstractUser):
     movie_layout = models.CharField(
         max_length=20,
         default=LayoutChoices.GRID,
-        choices=LayoutChoices.choices,
+        choices=LayoutChoices,
     )
     movie_direction = models.CharField(
         max_length=4,
@@ -293,12 +293,12 @@ class User(AbstractUser):
     movie_sort = models.CharField(
         max_length=20,
         default=MediaSortChoices.SCORE,
-        choices=MediaSortChoices.choices,
+        choices=MediaSortChoices,
     )
     movie_status = models.CharField(
         max_length=20,
         default=MediaStatusChoices.ALL,
-        choices=MediaStatusChoices.choices,
+        choices=MediaStatusChoices,
     )
 
     # Media type preferences: Anime
@@ -306,7 +306,7 @@ class User(AbstractUser):
     anime_layout = models.CharField(
         max_length=20,
         default=LayoutChoices.TABLE,
-        choices=LayoutChoices.choices,
+        choices=LayoutChoices,
     )
     anime_direction = models.CharField(
         max_length=4,
@@ -316,12 +316,12 @@ class User(AbstractUser):
     anime_sort = models.CharField(
         max_length=20,
         default=MediaSortChoices.SCORE,
-        choices=MediaSortChoices.choices,
+        choices=MediaSortChoices,
     )
     anime_status = models.CharField(
         max_length=20,
         default=MediaStatusChoices.ALL,
-        choices=MediaStatusChoices.choices,
+        choices=MediaStatusChoices,
     )
 
     # Media type preferences: Manga
@@ -329,7 +329,7 @@ class User(AbstractUser):
     manga_layout = models.CharField(
         max_length=20,
         default=LayoutChoices.TABLE,
-        choices=LayoutChoices.choices,
+        choices=LayoutChoices,
     )
     manga_direction = models.CharField(
         max_length=4,
@@ -339,12 +339,12 @@ class User(AbstractUser):
     manga_sort = models.CharField(
         max_length=20,
         default=MediaSortChoices.SCORE,
-        choices=MediaSortChoices.choices,
+        choices=MediaSortChoices,
     )
     manga_status = models.CharField(
         max_length=20,
         default=MediaStatusChoices.ALL,
-        choices=MediaStatusChoices.choices,
+        choices=MediaStatusChoices,
     )
 
     # Media type preferences: Games
@@ -352,7 +352,7 @@ class User(AbstractUser):
     game_layout = models.CharField(
         max_length=20,
         default=LayoutChoices.GRID,
-        choices=LayoutChoices.choices,
+        choices=LayoutChoices,
     )
     game_direction = models.CharField(
         max_length=4,
@@ -362,12 +362,12 @@ class User(AbstractUser):
     game_sort = models.CharField(
         max_length=20,
         default=MediaSortChoices.SCORE,
-        choices=MediaSortChoices.choices,
+        choices=MediaSortChoices,
     )
     game_status = models.CharField(
         max_length=20,
         default=MediaStatusChoices.ALL,
-        choices=MediaStatusChoices.choices,
+        choices=MediaStatusChoices,
     )
 
     # Media type preferences: Board Games
@@ -398,7 +398,7 @@ class User(AbstractUser):
     book_layout = models.CharField(
         max_length=20,
         default=LayoutChoices.GRID,
-        choices=LayoutChoices.choices,
+        choices=LayoutChoices,
     )
     book_direction = models.CharField(
         max_length=4,
@@ -408,12 +408,12 @@ class User(AbstractUser):
     book_sort = models.CharField(
         max_length=20,
         default=MediaSortChoices.SCORE,
-        choices=MediaSortChoices.choices,
+        choices=MediaSortChoices,
     )
     book_status = models.CharField(
         max_length=20,
         default=MediaStatusChoices.ALL,
-        choices=MediaStatusChoices.choices,
+        choices=MediaStatusChoices,
     )
 
     # Media type preferences: Comics
@@ -421,7 +421,7 @@ class User(AbstractUser):
     comic_layout = models.CharField(
         max_length=20,
         default=LayoutChoices.GRID,
-        choices=LayoutChoices.choices,
+        choices=LayoutChoices,
     )
     comic_direction = models.CharField(
         max_length=4,
@@ -431,12 +431,12 @@ class User(AbstractUser):
     comic_sort = models.CharField(
         max_length=20,
         default=MediaSortChoices.SCORE,
-        choices=MediaSortChoices.choices,
+        choices=MediaSortChoices,
     )
     comic_status = models.CharField(
         max_length=20,
         default=MediaStatusChoices.ALL,
-        choices=MediaStatusChoices.choices,
+        choices=MediaStatusChoices,
     )
 
     # Media type preferences: Music
@@ -444,7 +444,7 @@ class User(AbstractUser):
     music_layout = models.CharField(
         max_length=20,
         default=LayoutChoices.GRID,
-        choices=LayoutChoices.choices,
+        choices=LayoutChoices,
     )
     music_direction = models.CharField(
         max_length=4,
@@ -454,7 +454,7 @@ class User(AbstractUser):
     music_sort = models.CharField(
         max_length=20,
         default=MediaSortChoices.SCORE,
-        choices=MediaSortChoices.choices,
+        choices=MediaSortChoices,
     )
     music_status = models.CharField(
         max_length=20,
@@ -482,7 +482,7 @@ class User(AbstractUser):
     podcast_status = models.CharField(
         max_length=20,
         default=MediaStatusChoices.ALL,
-        choices=MediaStatusChoices.choices,
+        choices=MediaStatusChoices,
     )
 
     # UI preferences
@@ -507,7 +507,7 @@ class User(AbstractUser):
     quick_watch_date = models.CharField(
         max_length=20,
         default=QuickWatchDateChoices.CURRENT_DATE,
-        choices=QuickWatchDateChoices.choices,
+        choices=QuickWatchDateChoices,
         help_text="Date to use when bulk-marking media as completed",
     )
     rating_scale = models.CharField(
@@ -542,24 +542,24 @@ class User(AbstractUser):
     calendar_layout = models.CharField(
         max_length=20,
         default=CalendarLayoutChoices.GRID,
-        choices=CalendarLayoutChoices.choices,
+        choices=CalendarLayoutChoices,
     )
 
     # Lists preferences
     lists_sort = models.CharField(
         max_length=20,
         default=ListSortChoices.LAST_ITEM_ADDED,
-        choices=ListSortChoices.choices,
+        choices=ListSortChoices,
     )
     list_detail_sort = models.CharField(
         max_length=20,
         default=ListDetailSortChoices.DATE_ADDED,
-        choices=ListDetailSortChoices.choices,
+        choices=ListDetailSortChoices,
     )
     list_detail_status = models.CharField(
         max_length=20,
         default=MediaStatusChoices.ALL,
-        choices=MediaStatusChoices.choices,
+        choices=MediaStatusChoices,
     )
 
     # Notification settings

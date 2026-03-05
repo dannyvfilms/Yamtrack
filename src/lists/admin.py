@@ -8,6 +8,7 @@ from lists.models import (
 )
 
 
+@admin.register(CustomList)
 class CustomListAdmin(admin.ModelAdmin):
     """Admin configuration for CustomList model."""
 
@@ -25,20 +26,19 @@ class CustomListAdmin(admin.ModelAdmin):
     autocomplete_fields = ["collaborators"]
     filter_horizontal = ["collaborators"]
 
+    @admin.display(description="Number of items")
     def item_count(self, obj):
         """Return the number of items in the list."""
         return obj.items.count()
 
-    item_count.short_description = "Number of items"
-
+    @admin.display(description="Last updated")
     def get_last_update(self, obj):
         """Return the date of the last item added."""
         last_update = CustomListItem.objects.get_last_added_date(obj)
         return last_update or "-"
 
-    get_last_update.short_description = "Last updated"
 
-
+@admin.register(CustomListItem)
 class CustomListItemAdmin(admin.ModelAdmin):
     """Admin configuration for CustomListItem model."""
 
@@ -54,13 +54,13 @@ class CustomListItemAdmin(admin.ModelAdmin):
     autocomplete_fields = ["item", "custom_list"]
     readonly_fields = ["date_added"]
 
+    @admin.display(description="Media Type")
     def get_media_type(self, obj):
         """Return the media type of the item."""
         return obj.item.get_media_type_display()
 
-    get_media_type.short_description = "Media Type"
 
-
+@admin.register(ListRecommendation)
 class ListRecommendationAdmin(admin.ModelAdmin):
     """Admin configuration for ListRecommendation model."""
 
@@ -82,20 +82,18 @@ class ListRecommendationAdmin(admin.ModelAdmin):
     raw_id_fields = ["item", "custom_list", "recommended_by"]
     readonly_fields = ["date_recommended"]
 
+    @admin.display(description="Recommended by")
     def get_recommender(self, obj):
         """Return the display name of the recommender."""
         return obj.recommender_display_name
 
-    get_recommender.short_description = "Recommended by"
-
+    @admin.display(boolean=True, description="Has Note")
     def has_note(self, obj):
         """Return whether the recommendation has a note."""
         return bool(obj.note)
 
-    has_note.boolean = True
-    has_note.short_description = "Has Note"
 
-
+@admin.register(ListActivity)
 class ListActivityAdmin(admin.ModelAdmin):
     """Admin configuration for ListActivity model."""
 
@@ -109,9 +107,3 @@ class ListActivityAdmin(admin.ModelAdmin):
     list_filter = ["activity_type", "custom_list", "user"]
     raw_id_fields = ["custom_list", "user", "item"]
     readonly_fields = ["timestamp"]
-
-
-admin.site.register(CustomList, CustomListAdmin)
-admin.site.register(CustomListItem, CustomListItemAdmin)
-admin.site.register(ListRecommendation, ListRecommendationAdmin)
-admin.site.register(ListActivity, ListActivityAdmin)

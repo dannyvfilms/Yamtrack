@@ -77,11 +77,11 @@ class Item(CalendarTriggerMixin, models.Model):
     media_id = models.CharField(max_length=20)
     source = models.CharField(
         max_length=20,
-        choices=Sources.choices,
+        choices=Sources,
     )
     media_type = models.CharField(
         max_length=10,
-        choices=MediaTypes.choices,
+        choices=MediaTypes,
         default=MediaTypes.MOVIE.value,
     )
     title = models.TextField()
@@ -1768,7 +1768,7 @@ class Media(models.Model):
     progressed_at = MonitorField(monitor="progress")
     status = models.CharField(
         max_length=20,
-        choices=Status.choices,
+        choices=Status,
         default=Status.COMPLETED.value,
     )
     start_date = models.DateTimeField(null=True, blank=True)
