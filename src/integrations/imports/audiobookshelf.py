@@ -2,20 +2,31 @@
 
 import hashlib
 import logging
+import re
 from collections import defaultdict
 from datetime import UTC, datetime
+from difflib import SequenceMatcher
 from typing import Any
+from urllib.parse import urljoin, urlparse
 
 import requests
+from django.conf import settings
 from django.utils import timezone
 
 import app
+from app import helpers as app_helpers
 from app.models import MediaTypes, Sources, Status
+from app.providers import services
 from integrations.imports.helpers import MediaImportError, decrypt
 from integrations.models import AudiobookshelfAccount
 
 logger = logging.getLogger(__name__)
 HTTP_BAD_REQUEST = 400
+BOOK_METADATA_PROVIDER_ORDER = (
+    Sources.HARDCOVER.value,
+    Sources.OPENLIBRARY.value,
+)
+TITLE_MATCH_THRESHOLD = 0.72
 
 
 class AudiobookshelfClientError(Exception):
@@ -81,6 +92,7 @@ class AudiobookshelfImporter:
         token = decrypt(self.account.api_token)
         self.client = AudiobookshelfClient(self.account.base_url, token)
         self.warnings = []
+        self.enable_provider_enrichment = not settings.TESTING
 
     def import_data(self):
         """Import changed progress entries since the cursor."""
@@ -163,20 +175,72 @@ class AudiobookshelfImporter:
         fallback_title = f"Audiobookshelf {library_item_id}"
         title = metadata.get("title") or item_metadata.get("title") or fallback_title
 
-        authors = metadata.get("authors") or []
-        if isinstance(authors, list):
-            authors_list = []
-            for author in authors:
-                if isinstance(author, dict):
-                    normalized = author.get("name", "").strip()
-                else:
-                    normalized = str(author).strip()
-                if normalized:
-                    authors_list.append(normalized)
-        else:
-            authors_list = []
+        authors_list = self._extract_author_names(metadata)
+        isbn_values = self._extract_isbns(metadata)
+        publishers = self._extract_publisher(metadata)
+        genres = self._extract_genres(metadata)
+        series_name, series_position = self._extract_series_info(metadata)
 
-        image = item_metadata.get("coverPath") or ""
+        image = self._normalize_cover_url(item_metadata.get("coverPath"))
+        should_enrich = (
+            self._should_prefer_provider_cover(image)
+            or not authors_list
+        )
+        provider_metadata = (
+            self._resolve_provider_metadata(
+                title=title,
+                authors=authors_list,
+                isbns=isbn_values,
+            )
+            if should_enrich and self.enable_provider_enrichment
+            else None
+        )
+
+        if self._should_prefer_provider_cover(image):
+            image = provider_metadata.get("image") if isinstance(provider_metadata, dict) else image
+        if not image:
+            image = settings.IMG_NONE
+
+        provider_authors = self._extract_provider_authors(provider_metadata)
+        if not authors_list and provider_authors:
+            authors_list = provider_authors
+
+        provider_isbns = self._extract_provider_isbns(provider_metadata)
+        if not isbn_values and provider_isbns:
+            isbn_values = provider_isbns
+
+        if not publishers:
+            publishers = self._extract_provider_publisher(provider_metadata)
+        if not genres:
+            genres = self._extract_provider_genres(provider_metadata)
+        release_datetime = (
+            app_helpers.extract_release_datetime(provider_metadata)
+            if isinstance(provider_metadata, dict)
+            else None
+        )
+        if not series_name:
+            series_name = provider_metadata.get("series_name") if isinstance(provider_metadata, dict) else None
+        if series_position is None:
+            series_position = provider_metadata.get("series_position") if isinstance(provider_metadata, dict) else None
+
+        provider_title = provider_metadata.get("title") if isinstance(provider_metadata, dict) else None
+        title_fields = app.models.Item.title_fields_from_metadata(
+            {
+                "title": title,
+                "original_title": provider_metadata.get("original_title")
+                if isinstance(provider_metadata, dict)
+                else None,
+                "localized_title": provider_metadata.get("localized_title")
+                if isinstance(provider_metadata, dict)
+                else None,
+            },
+            fallback_title=provider_title or title,
+        )
+
+        if not title_fields.get("original_title"):
+            title_fields["original_title"] = title_fields.get("title") or title
+        if not title_fields.get("localized_title"):
+            title_fields["localized_title"] = title_fields.get("title") or title
         duration_seconds = (
             media_info.get("duration")
             or progress_entry.get("duration")
@@ -184,10 +248,6 @@ class AudiobookshelfImporter:
         )
         runtime_minutes = int(duration_seconds // 60) if duration_seconds else None
 
-        title_fields = app.models.Item.title_fields_from_metadata(
-            {"title": title},
-            fallback_title=title,
-        )
         item, _ = app.models.Item.objects.update_or_create(
             media_id=media_id,
             source=Sources.AUDIOBOOKSHELF.value,
@@ -197,7 +257,13 @@ class AudiobookshelfImporter:
                 "title": title,
                 "image": image,
                 "authors": authors_list,
+                "isbn": isbn_values,
+                "publishers": publishers,
+                "genres": genres,
                 "runtime_minutes": runtime_minutes,
+                "release_datetime": release_datetime,
+                "series_name": series_name,
+                "series_position": series_position,
                 "format": "audiobook",
             },
         )
@@ -235,6 +301,338 @@ class AudiobookshelfImporter:
     def _stable_media_id(self, base_url: str, library_item_id: str):
         value = f"{base_url.strip().lower()}::{library_item_id}"
         return hashlib.sha256(value.encode("utf-8")).hexdigest()[:20]
+
+    def _extract_author_names(self, metadata: dict[str, Any]):
+        raw_authors = metadata.get("authors")
+        if not raw_authors:
+            fallback_author = metadata.get("authorName") or metadata.get("author")
+            raw_authors = [fallback_author] if fallback_author else []
+        if not isinstance(raw_authors, list):
+            raw_authors = [raw_authors]
+
+        authors = []
+        for raw_author in raw_authors:
+            if isinstance(raw_author, dict):
+                value = raw_author.get("name") or raw_author.get("author")
+            else:
+                value = raw_author
+            normalized = str(value or "").strip()
+            if normalized:
+                authors.append(normalized)
+        return list(dict.fromkeys(authors))
+
+    def _extract_isbns(self, metadata: dict[str, Any]):
+        candidates = []
+        for key in ("isbn", "isbn10", "isbn13", "isbn_10", "isbn_13"):
+            value = metadata.get(key)
+            if isinstance(value, list):
+                candidates.extend(value)
+            elif value:
+                candidates.append(value)
+
+        identifiers = metadata.get("identifiers")
+        if isinstance(identifiers, dict):
+            for key in ("isbn", "isbn10", "isbn13", "isbn_10", "isbn_13"):
+                value = identifiers.get(key)
+                if isinstance(value, list):
+                    candidates.extend(value)
+                elif value:
+                    candidates.append(value)
+
+        normalized = []
+        for candidate in candidates:
+            value = candidate
+            if isinstance(candidate, dict):
+                value = (
+                    candidate.get("value")
+                    or candidate.get("identifier")
+                    or candidate.get("isbn")
+                )
+            isbn = self._normalize_isbn(value)
+            if isbn:
+                normalized.append(isbn)
+
+        return list(dict.fromkeys(normalized))
+
+    def _normalize_isbn(self, value):
+        if not value:
+            return ""
+        candidate = re.sub(r"[^0-9Xx]", "", str(value)).upper()
+        if len(candidate) in (10, 13):
+            return candidate
+        return ""
+
+    def _extract_publisher(self, metadata: dict[str, Any]):
+        raw = metadata.get("publisher") or metadata.get("publishers")
+        if isinstance(raw, list):
+            raw = raw[0] if raw else ""
+        return str(raw or "").strip()
+
+    def _extract_genres(self, metadata: dict[str, Any]):
+        raw_genres = metadata.get("genres") or metadata.get("genre") or []
+        if not isinstance(raw_genres, list):
+            raw_genres = [raw_genres] if raw_genres else []
+        normalized = [str(value).strip() for value in raw_genres if str(value).strip()]
+        return list(dict.fromkeys(normalized))
+
+    def _extract_series_info(self, metadata: dict[str, Any]):
+        series_name = metadata.get("seriesName")
+        series_position = metadata.get("seriesSequence")
+        if not series_name:
+            raw_series = metadata.get("series")
+            if isinstance(raw_series, list) and raw_series:
+                first_series = raw_series[0]
+                if isinstance(first_series, dict):
+                    series_name = first_series.get("name")
+                    if series_position is None:
+                        series_position = (
+                            first_series.get("sequence")
+                            or first_series.get("position")
+                            or first_series.get("seriesSequence")
+                        )
+                else:
+                    series_name = first_series
+        normalized_name = str(series_name).strip() if series_name else None
+        try:
+            normalized_position = float(series_position) if series_position is not None else None
+        except (TypeError, ValueError):
+            normalized_position = None
+        return normalized_name, normalized_position
+
+    def _normalize_cover_url(self, cover_value):
+        if not cover_value:
+            return ""
+        cover = str(cover_value).strip()
+        if not cover:
+            return ""
+
+        parsed = urlparse(cover)
+        if parsed.scheme in {"http", "https"}:
+            return cover
+        if parsed.scheme:
+            return ""
+        if cover.startswith("/"):
+            return f"{self.account.base_url.rstrip('/')}{cover}"
+        return urljoin(f"{self.account.base_url.rstrip('/')}/", cover)
+
+    def _should_prefer_provider_cover(self, image_url):
+        if not image_url or image_url == settings.IMG_NONE:
+            return True
+        parsed_image = urlparse(image_url)
+        if parsed_image.scheme not in {"http", "https"}:
+            return True
+
+        abs_host = urlparse(self.account.base_url).netloc.lower()
+        image_host = parsed_image.netloc.lower()
+        is_abs_api_cover = (
+            image_host == abs_host
+            and "/api/items/" in parsed_image.path
+            and "/cover" in parsed_image.path
+        )
+        return is_abs_api_cover
+
+    def _resolve_provider_metadata(self, title: str, authors: list[str], isbns: list[str]):
+        if not title:
+            return None
+
+        search_plan = []
+        for isbn in isbns:
+            search_plan.append((isbn, True))
+
+        author_hint = authors[0] if authors else ""
+        if author_hint:
+            search_plan.append((f"{title} {author_hint}".strip(), False))
+        search_plan.append((title, False))
+
+        seen_queries = set()
+        for provider_source in BOOK_METADATA_PROVIDER_ORDER:
+            for query, is_isbn_query in search_plan:
+                normalized_query = query.strip()
+                if not normalized_query:
+                    continue
+                dedupe_key = (provider_source, normalized_query)
+                if dedupe_key in seen_queries:
+                    continue
+                seen_queries.add(dedupe_key)
+
+                try:
+                    response = services.search(
+                        MediaTypes.BOOK.value,
+                        normalized_query,
+                        1,
+                        provider_source,
+                    )
+                except Exception as error:  # noqa: BLE001
+                    logger.debug(
+                        "Audiobookshelf metadata search failed provider=%s query=%s error=%s",
+                        provider_source,
+                        normalized_query,
+                        error,
+                    )
+                    continue
+
+                results = response.get("results", []) if isinstance(response, dict) else []
+                if not results:
+                    continue
+
+                candidate = (
+                    results[0]
+                    if is_isbn_query
+                    else self._pick_best_title_match(results, title)
+                )
+                if not candidate:
+                    continue
+
+                try:
+                    provider_metadata = services.get_media_metadata(
+                        MediaTypes.BOOK.value,
+                        str(candidate.get("media_id")),
+                        provider_source,
+                    )
+                except Exception as error:  # noqa: BLE001
+                    logger.debug(
+                        "Audiobookshelf metadata fetch failed provider=%s media_id=%s error=%s",
+                        provider_source,
+                        candidate.get("media_id"),
+                        error,
+                    )
+                    continue
+
+                if self._provider_metadata_matches(
+                    provider_metadata,
+                    title=title,
+                    authors=authors,
+                    isbns=isbns,
+                ):
+                    return provider_metadata
+
+        return None
+
+    def _pick_best_title_match(self, results: list[dict[str, Any]], title: str):
+        best_result = None
+        best_score = 0.0
+
+        for result in results[:5]:
+            candidate_title = str(result.get("title") or "").strip()
+            score = self._title_similarity(title, candidate_title)
+            if score > best_score:
+                best_score = score
+                best_result = result
+
+        if best_result and best_score >= TITLE_MATCH_THRESHOLD:
+            return best_result
+        return None
+
+    def _provider_metadata_matches(
+        self,
+        provider_metadata: dict[str, Any] | None,
+        title: str,
+        authors: list[str],
+        isbns: list[str],
+    ):
+        if not isinstance(provider_metadata, dict):
+            return False
+
+        provider_isbns = set(self._extract_provider_isbns(provider_metadata))
+        if provider_isbns and set(isbns).intersection(provider_isbns):
+            return True
+
+        provider_title = str(provider_metadata.get("title") or "").strip()
+        title_score = self._title_similarity(title, provider_title)
+        if title_score < TITLE_MATCH_THRESHOLD:
+            return False
+
+        provider_authors = self._extract_provider_authors(provider_metadata)
+        if not authors or not provider_authors:
+            return True
+
+        normalized_target_authors = {
+            self._normalize_name(author)
+            for author in authors
+            if self._normalize_name(author)
+        }
+        normalized_provider_authors = {
+            self._normalize_name(author)
+            for author in provider_authors
+            if self._normalize_name(author)
+        }
+        if normalized_target_authors.intersection(normalized_provider_authors):
+            return True
+        return title_score >= 0.88
+
+    def _title_similarity(self, left: str, right: str):
+        normalized_left = self._normalize_name(left)
+        normalized_right = self._normalize_name(right)
+        if not normalized_left or not normalized_right:
+            return 0.0
+        return SequenceMatcher(None, normalized_left, normalized_right).ratio()
+
+    def _normalize_name(self, value):
+        normalized = re.sub(r"[^a-z0-9]+", " ", str(value or "").lower())
+        return re.sub(r"\s+", " ", normalized).strip()
+
+    def _extract_provider_authors(self, provider_metadata: dict[str, Any] | None):
+        if not isinstance(provider_metadata, dict):
+            return []
+
+        details = provider_metadata.get("details", {})
+        if not isinstance(details, dict):
+            details = {}
+
+        raw_authors = details.get("authors") or details.get("author") or []
+        if isinstance(raw_authors, str):
+            raw_authors = [part.strip() for part in raw_authors.split(",") if part.strip()]
+        elif not isinstance(raw_authors, list):
+            raw_authors = [raw_authors] if raw_authors else []
+
+        authors = []
+        for raw_author in raw_authors:
+            if isinstance(raw_author, dict):
+                value = raw_author.get("name") or raw_author.get("person")
+            else:
+                value = raw_author
+            normalized = str(value or "").strip()
+            if normalized:
+                authors.append(normalized)
+        return list(dict.fromkeys(authors))
+
+    def _extract_provider_isbns(self, provider_metadata: dict[str, Any] | None):
+        if not isinstance(provider_metadata, dict):
+            return []
+        details = provider_metadata.get("details", {})
+        if not isinstance(details, dict):
+            details = {}
+
+        raw_isbns = details.get("isbn") or []
+        if not isinstance(raw_isbns, list):
+            raw_isbns = [raw_isbns] if raw_isbns else []
+
+        normalized = []
+        for raw_isbn in raw_isbns:
+            isbn = self._normalize_isbn(raw_isbn)
+            if isbn:
+                normalized.append(isbn)
+        return list(dict.fromkeys(normalized))
+
+    def _extract_provider_publisher(self, provider_metadata: dict[str, Any] | None):
+        if not isinstance(provider_metadata, dict):
+            return ""
+        details = provider_metadata.get("details", {})
+        if not isinstance(details, dict):
+            details = {}
+        raw = details.get("publishers") or details.get("publisher") or ""
+        if isinstance(raw, list):
+            raw = raw[0] if raw else ""
+        return str(raw or "").strip()
+
+    def _extract_provider_genres(self, provider_metadata: dict[str, Any] | None):
+        if not isinstance(provider_metadata, dict):
+            return []
+        raw_genres = provider_metadata.get("genres") or []
+        if not isinstance(raw_genres, list):
+            raw_genres = [raw_genres] if raw_genres else []
+        normalized = [str(value).strip() for value in raw_genres if str(value).strip()]
+        return list(dict.fromkeys(normalized))
 
     def _parse_datetime(self, value):
         if not value:

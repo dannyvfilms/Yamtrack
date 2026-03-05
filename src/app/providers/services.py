@@ -47,6 +47,14 @@ def _audiobookshelf_book(media_id):
     runtime_minutes = item.runtime_minutes if item else None
     authors = item.authors if item else []
     isbn = item.isbn if item else []
+    genres = item.genres if item else []
+    publishers = item.publishers if item else ""
+    publish_date = (
+        item.release_datetime.date().isoformat()
+        if item and item.release_datetime
+        else None
+    )
+    format_name = item.format if item and item.format else "audiobook"
 
     return {
         "media_id": str(media_id),
@@ -56,12 +64,14 @@ def _audiobookshelf_book(media_id):
         "image": image,
         "max_progress": runtime_minutes,
         "synopsis": "",
-        "genres": [],
+        "genres": genres,
         "related": {},
         "details": {
             "author": authors,
             "isbn": isbn,
-            "format": "audiobook",
+            "publisher": publishers,
+            "publish_date": publish_date,
+            "format": format_name,
             "runtime_minutes": runtime_minutes,
         },
     }

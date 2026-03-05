@@ -247,6 +247,131 @@ class AudiobookshelfImporterTests(TestCase):
         self.assertEqual(item.title, "Fallback Title")
         self.assertEqual(item.authors, ["Author One", "Author Two"])
 
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_library_item")
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_me")
+    def test_normalizes_relative_abs_cover_paths(self, mock_me, mock_item):
+        """Relative Audiobookshelf cover paths should be converted to absolute URLs."""
+        mock_me.return_value = {
+            "mediaProgress": [
+                {
+                    "libraryItemId": "item-4",
+                    "currentTime": 1_200,
+                    "lastUpdate": 6_000,
+                },
+            ],
+        }
+        mock_item.return_value = {
+            "media": {
+                "duration": 3_600,
+                "metadata": {
+                    "title": "Words of Radiance",
+                    "authors": [{"name": "Brandon Sanderson"}],
+                },
+            },
+            "coverPath": "/api/items/item-4/cover",
+        }
+
+        importer = AudiobookshelfImporter(self.user)
+        counts, warnings = importer.import_data()
+
+        self.assertEqual(counts.get(MediaTypes.BOOK.value), 1)
+        self.assertEqual(warnings, "")
+        item = Book.objects.get(user=self.user).item
+        self.assertEqual(
+            item.image,
+            "https://abs.example.com/api/items/item-4/cover",
+        )
+
+    @patch("integrations.imports.audiobookshelf.services.get_media_metadata")
+    @patch("integrations.imports.audiobookshelf.services.search")
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_library_item")
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_me")
+    def test_enriches_missing_cover_from_book_provider(
+        self,
+        mock_me,
+        mock_item,
+        mock_search,
+        mock_get_media_metadata,
+    ):
+        """Importer should enrich ABS books with provider metadata when cover is missing."""
+        mock_me.return_value = {
+            "mediaProgress": [
+                {
+                    "libraryItemId": "item-5",
+                    "currentTime": 2_400,
+                    "lastUpdate": 7_000,
+                },
+            ],
+        }
+        mock_item.return_value = {
+            "media": {
+                "duration": 4_800,
+                "metadata": {
+                    "title": "Mistborn",
+                    "isbn": "978-0-7653-1178-8",
+                },
+            },
+            "coverPath": "",
+        }
+
+        mock_search.return_value = {
+            "results": [
+                {
+                    "media_id": "314",
+                    "source": Sources.HARDCOVER.value,
+                    "title": "Mistborn: The Final Empire",
+                },
+            ],
+        }
+        mock_get_media_metadata.return_value = {
+            "media_id": "314",
+            "source": Sources.HARDCOVER.value,
+            "media_type": MediaTypes.BOOK.value,
+            "title": "Mistborn: The Final Empire",
+            "image": "https://covers.example/mistborn.jpg",
+            "max_progress": 541,
+            "genres": ["Fantasy"],
+            "series_name": "Mistborn",
+            "series_position": 1,
+            "details": {
+                "author": "Brandon Sanderson",
+                "publisher": "Tor",
+                "isbn": ["9780765311788"],
+                "publish_date": "2006-07-17",
+            },
+        }
+
+        importer = AudiobookshelfImporter(self.user)
+        importer.enable_provider_enrichment = True
+        counts, warnings = importer.import_data()
+
+        self.assertEqual(counts.get(MediaTypes.BOOK.value), 1)
+        self.assertEqual(warnings, "")
+        item = Book.objects.get(user=self.user).item
+        self.assertEqual(item.image, "https://covers.example/mistborn.jpg")
+        self.assertEqual(item.authors, ["Brandon Sanderson"])
+        self.assertEqual(item.isbn, ["9780765311788"])
+        self.assertEqual(item.publishers, "Tor")
+        self.assertEqual(item.genres, ["Fantasy"])
+        self.assertEqual(item.series_name, "Mistborn")
+        self.assertEqual(item.series_position, 1)
+        self.assertEqual(
+            item.release_datetime,
+            datetime(2006, 7, 17, tzinfo=UTC),
+        )
+
+        mock_search.assert_called_once_with(
+            MediaTypes.BOOK.value,
+            "9780765311788",
+            1,
+            Sources.HARDCOVER.value,
+        )
+        mock_get_media_metadata.assert_any_call(
+            MediaTypes.BOOK.value,
+            "314",
+            Sources.HARDCOVER.value,
+        )
+
     @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_me")
     def test_marks_connection_broken_on_auth_error(self, mock_me):
         """Auth failures should mark the account as broken and raise import error."""
