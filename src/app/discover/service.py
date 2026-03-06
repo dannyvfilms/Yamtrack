@@ -92,8 +92,8 @@ PROVIDER_ARTWORK_HYDRATION_ROW_KEYS = {
     "all_time_greats_unseen",
     "coming_soon",
 }
-HOLIDAY_STRONG_TERMS = {"christmas", "xmas", "noel"}
-HOLIDAY_SOFT_TERMS = {"holiday", "holidays", "new year", "new years"}
+HOLIDAY_STRONG_TERMS = {"christmas", "xmas", "noel", "grinch", "krampus", "nutcracker"}
+HOLIDAY_SOFT_TERMS = {"holiday", "holidays", "new year", "new years", "jack frost", "santa claus"}
 COMFORT_DIVERSITY_DECAY = 0.92
 COMFORT_PHASE_LANE_QUOTA = 4
 COMFORT_PHASE_LANE_WINDOW = 6
@@ -2550,7 +2550,7 @@ def _apply_comfort_confidence(
             seasonal_adjustment = (
                 0.06 * holiday_strength
                 if holiday_window_active
-                else -0.14 * holiday_strength
+                else -0.40 * holiday_strength
             )
 
         phase_family_contribution = (
