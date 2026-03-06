@@ -11,6 +11,8 @@ class CacheUpdater {
         this.cacheType = cacheType;
         this.rangeName = options.rangeName || null;
         this.loggingStyle = options.loggingStyle || 'repeats';
+        this.mediaType = options.mediaType || null;
+        this.showMore = Boolean(options.showMore);
         this.pollInterval = options.pollInterval || 2500; // 2.5 seconds
         this.timeout = options.timeout || 120000; // 120 seconds (increased to handle longer refreshes)
         this.startTime = Date.now();
@@ -74,6 +76,9 @@ class CacheUpdater {
                 params.append('range_name', this.rangeName);
             } else if (this.cacheType === 'history' && this.loggingStyle) {
                 params.append('logging_style', this.loggingStyle);
+            } else if (this.cacheType === 'discover' && this.mediaType) {
+                params.append('media_type', this.mediaType);
+                params.append('show_more', this.showMore ? '1' : '0');
             }
 
             const response = await fetch(`/api/cache-status/?${params.toString()}`);

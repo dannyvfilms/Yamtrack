@@ -19,6 +19,7 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_POST
 
 from app import helpers
+from app.discover import tab_cache as discover_tab_cache
 from app.models import Item, MediaManager, MediaTypes
 from app.providers import services
 from integrations.imports import helpers as import_helpers
@@ -1410,6 +1411,10 @@ def list_item_toggle(request):
     custom_list_id = request.POST["custom_list_id"]
 
     item = get_object_or_404(Item, id=item_id)
+    discover_tab_cache.mark_active_from_request(
+        request,
+        fallback_media_type=item.media_type,
+    )
     custom_list = get_object_or_404(
         CustomList.objects.filter(
             Q(owner=request.user) | Q(collaborators=request.user),
@@ -1773,6 +1778,11 @@ def submit_recommendation(request, list_id):
             release_datetime=release_datetime,
         )
 
+    discover_tab_cache.mark_active_from_request(
+        request,
+        fallback_media_type=item.media_type,
+    )
+
     # Check if item is already in the list
     if custom_list.items.filter(id=item.id).exists():
         messages.info(request, f'"{item.title}" is already in this list.')
@@ -1872,6 +1882,10 @@ def approve_recommendation(request, list_id, recommendation_id):
         id=recommendation_id,
         custom_list=custom_list,
     )
+    discover_tab_cache.mark_active_from_request(
+        request,
+        fallback_media_type=recommendation.item.media_type,
+    )
 
     # Add item to the list if not already there
     if not custom_list.items.filter(id=recommendation.item.id).exists():
@@ -1920,6 +1934,10 @@ def deny_recommendation(request, list_id, recommendation_id):
         ListRecommendation,
         id=recommendation_id,
         custom_list=custom_list,
+    )
+    discover_tab_cache.mark_active_from_request(
+        request,
+        fallback_media_type=recommendation.item.media_type,
     )
 
     item_title = recommendation.item.title

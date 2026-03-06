@@ -21,31 +21,7 @@ DISCOVER_MEDIA_TYPES = [
 ]
 
 ROW_REGISTRY: dict[str, list[RowDefinition]] = {
-    ALL_MEDIA_KEY: [
-        RowDefinition(
-            key="continue_all",
-            title="Continue Across All Media",
-            mission="Next Action",
-            why="Pick up where you left off",
-            source="local",
-            min_items=1,
-            allow_tracked=True,
-        ),
-        RowDefinition(
-            key="trending_all",
-            title="Trending Across All Media",
-            mission="Cultural Moment",
-            why="What people are talking about now",
-            source="hybrid",
-        ),
-        RowDefinition(
-            key="top_picks_all",
-            title="Top Picks For You",
-            mission="Personal Taste Match",
-            why="Best fit based on your recent activity",
-            source="hybrid",
-        ),
-    ],
+    ALL_MEDIA_KEY: [],
     MediaTypes.MOVIE.value: [
         RowDefinition("trending_right_now", "Trending Right Now", "Cultural Moment", "What everyone has been watching this week.", "trakt"),
         RowDefinition("all_time_greats_unseen", "All-Time Greats You Haven't Seen", "Canon", "Must-watch classics still missing", "trakt"),

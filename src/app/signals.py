@@ -11,6 +11,7 @@ from django_celery_results.models import TaskResult
 
 from app import statistics_cache
 from app import history_cache
+from app.discover import tab_cache as discover_tab_cache
 from app.models import (
     TV,
     Anime,
@@ -40,6 +41,10 @@ logger = logging.getLogger(__name__)
 
 RUNTIME_BACKFILL_SOURCES = ("tmdb", "mal", "simkl")
 GENRE_BACKFILL_SOURCES = ("tmdb", "mal", "simkl", "igdb", "bgg")
+DISCOVER_PRIORITY_HISTORY_DEBOUNCE_SECONDS = 15
+DISCOVER_PRIORITY_HISTORY_COUNTDOWN = 15
+DISCOVER_PRIORITY_STATISTICS_DEBOUNCE_SECONDS = 20
+DISCOVER_PRIORITY_STATISTICS_COUNTDOWN = 20
 
 
 @receiver(connection_created)
@@ -158,51 +163,166 @@ def sync_smart_lists_on_item_tag_change(sender, instance, **kwargs):  # noqa: AR
     _sync_owner_smart_lists_for_items(owner, [item])
 
 
+def _invalidate_history_for_media_change(
+    user_id: int,
+    *,
+    day_keys,
+    logging_styles,
+    reason: str,
+    prioritized: bool,
+) -> None:
+    normalized_day_keys = [day_key for day_key in (day_keys or []) if day_key]
+    if not normalized_day_keys:
+        return
+
+    history_cache.invalidate_history_days(
+        user_id,
+        day_keys=normalized_day_keys,
+        logging_styles=logging_styles,
+        reason=reason,
+        refresh_index=not prioritized,
+    )
+    if not prioritized:
+        return
+
+    for logging_style in logging_styles or ("sessions", "repeats"):
+        history_cache.schedule_history_refresh(
+            user_id,
+            logging_style,
+            debounce_seconds=DISCOVER_PRIORITY_HISTORY_DEBOUNCE_SECONDS,
+            countdown=DISCOVER_PRIORITY_HISTORY_COUNTDOWN,
+            warm_days=0,
+            day_keys=normalized_day_keys,
+            allow_inline=False,
+        )
+
+
+def _schedule_statistics_refresh_for_media_change(user_id: int, *, prioritized: bool) -> None:
+    if prioritized:
+        statistics_cache.schedule_all_ranges_refresh(
+            user_id,
+            debounce_seconds=DISCOVER_PRIORITY_STATISTICS_DEBOUNCE_SECONDS,
+            countdown=DISCOVER_PRIORITY_STATISTICS_COUNTDOWN,
+        )
+        return
+
+    statistics_cache.schedule_all_ranges_refresh(user_id)
+
+
+def _handle_media_cache_change(
+    user_id: int | None,
+    changed_media_type: str,
+    *,
+    reason: str,
+    history_specs=None,
+    statistics_day_values=None,
+    schedule_statistics: bool = True,
+) -> None:
+    if not user_id:
+        return
+
+    active_context = discover_tab_cache.get_active_context(user_id)
+    prioritized = discover_tab_cache.should_prioritize(active_context, changed_media_type)
+    discover_tab_cache.invalidate_for_media_change(user_id, changed_media_type)
+
+    for day_keys, logging_styles in history_specs or []:
+        _invalidate_history_for_media_change(
+            user_id,
+            day_keys=day_keys,
+            logging_styles=logging_styles,
+            reason=reason,
+            prioritized=prioritized,
+        )
+
+    normalized_stat_days = [day_value for day_value in (statistics_day_values or []) if day_value]
+    if normalized_stat_days:
+        statistics_cache.invalidate_statistics_days(
+            user_id,
+            day_values=normalized_stat_days,
+            reason=reason,
+        )
+
+    if schedule_statistics:
+        _schedule_statistics_refresh_for_media_change(user_id, prioritized=prioritized)
+
+
+def _invalidate_discover_from_item_tag(instance) -> None:
+    owner = getattr(getattr(instance, "tag", None), "user", None)
+    item = getattr(instance, "item", None)
+    if not owner or not item:
+        return
+    discover_tab_cache.invalidate_for_media_change(owner.id, item.media_type)
+
+
+def _discover_user_ids_for_credit_item(item) -> tuple[set[int], str | None]:
+    if not item:
+        return set(), None
+
+    if item.media_type == MediaTypes.MOVIE.value:
+        user_ids = Movie.objects.filter(item_id=item.id).values_list("user_id", flat=True).distinct()
+        return set(user_ids), MediaTypes.MOVIE.value
+
+    if item.media_type == MediaTypes.TV.value:
+        user_ids = TV.objects.filter(item_id=item.id).values_list("user_id", flat=True).distinct()
+        return set(user_ids), MediaTypes.TV.value
+
+    if item.media_type == MediaTypes.EPISODE.value:
+        user_ids = (
+            Episode.objects.filter(item_id=item.id)
+            .values_list("related_season__user_id", flat=True)
+            .distinct()
+        )
+        return set(user_ids), MediaTypes.TV.value
+
+    return set(), None
+
+
+@receiver([post_save, post_delete], sender=ItemTag)
+def refresh_discover_cache_on_item_tag_change(sender, instance, **kwargs):  # noqa: ARG001
+    """Refresh Discover when item tags change, since they affect taste profiles."""
+    _invalidate_discover_from_item_tag(instance)
+
+
+@receiver([post_save, post_delete], sender=ItemPersonCredit)
+def refresh_discover_cache_on_item_person_credit_change(sender, instance, **kwargs):  # noqa: ARG001
+    """Refresh Discover when credited people change on tracked movie/TV items."""
+    item = getattr(instance, "item", None)
+    if item is None and getattr(instance, "item_id", None):
+        item = Item.objects.filter(id=instance.item_id).only("id", "media_type").first()
+    user_ids, media_type = _discover_user_ids_for_credit_item(item)
+    if not media_type:
+        return
+    for user_id in user_ids:
+        discover_tab_cache.invalidate_for_media_change(user_id, media_type)
+
+
 @receiver([post_save, post_delete], sender=Episode)
 def refresh_history_cache_on_episode_change(sender, instance, **kwargs):  # noqa: ARG001
     """Schedule history cache refresh when episode activity changes."""
     user_id = getattr(getattr(instance, "related_season", None), "user_id", None)
-    if user_id:
-        day_key = history_cache.history_day_key(getattr(instance, "end_date", None))
-        if day_key:
-            history_cache.invalidate_history_days(
-                user_id,
-                day_keys=[day_key],
-                logging_styles=("sessions", "repeats"),
-                reason="episode_change",
-            )
-            statistics_cache.invalidate_statistics_days(
-                user_id,
-                day_values=[day_key],
-                reason="episode_change",
-            )
-        # Schedule statistics cache refresh but don't delete cache immediately
-        # This allows users to see old data with notification while refresh happens
-        statistics_cache.schedule_all_ranges_refresh(user_id)
+    day_key = history_cache.history_day_key(getattr(instance, "end_date", None))
+    _handle_media_cache_change(
+        user_id,
+        MediaTypes.EPISODE.value,
+        reason="episode_change",
+        history_specs=[([day_key] if day_key else [], ("sessions", "repeats"))],
+        statistics_day_values=[day_key] if day_key else [],
+    )
 
 
 @receiver([post_save, post_delete], sender=Movie)
 def refresh_history_cache_on_movie_change(sender, instance, **kwargs):  # noqa: ARG001
     """Schedule history cache refresh when movie activity changes."""
     user_id = getattr(instance, "user_id", None)
-    if user_id:
-        activity_dt = getattr(instance, "end_date", None) or getattr(instance, "start_date", None)
-        day_key = history_cache.history_day_key(activity_dt)
-        if day_key:
-            history_cache.invalidate_history_days(
-                user_id,
-                day_keys=[day_key],
-                logging_styles=("sessions", "repeats"),
-                reason="movie_change",
-            )
-            statistics_cache.invalidate_statistics_days(
-                user_id,
-                day_values=[day_key],
-                reason="movie_change",
-            )
-        # Schedule statistics cache refresh but don't delete cache immediately
-        # This allows users to see old data with notification while refresh happens
-        statistics_cache.schedule_all_ranges_refresh(user_id)
+    activity_dt = getattr(instance, "end_date", None) or getattr(instance, "start_date", None)
+    day_key = history_cache.history_day_key(activity_dt)
+    _handle_media_cache_change(
+        user_id,
+        MediaTypes.MOVIE.value,
+        reason="movie_change",
+        history_specs=[([day_key] if day_key else [], ("sessions", "repeats"))],
+        statistics_day_values=[day_key] if day_key else [],
+    )
 
 
 def _schedule_credits_backfill_if_needed(item_id):
@@ -264,23 +384,14 @@ def refresh_history_cache_on_music_change(sender, instance, **kwargs):  # noqa: 
     so users can see the old data with a notification while refresh happens.
     """
     user_id = getattr(instance, "user_id", None)
-    if user_id:
-        day_key = history_cache.history_day_key(getattr(instance, "end_date", None))
-        if day_key:
-            history_cache.invalidate_history_days(
-                user_id,
-                day_keys=[day_key],
-                logging_styles=("sessions", "repeats"),
-                reason="music_change",
-            )
-            statistics_cache.invalidate_statistics_days(
-                user_id,
-                day_values=[day_key],
-                reason="music_change",
-            )
-        # Schedule statistics cache refresh but don't delete cache immediately
-        # This allows users to see old data with notification while refresh happens
-        statistics_cache.schedule_all_ranges_refresh(user_id)
+    day_key = history_cache.history_day_key(getattr(instance, "end_date", None))
+    _handle_media_cache_change(
+        user_id,
+        MediaTypes.MUSIC.value,
+        reason="music_change",
+        history_specs=[([day_key] if day_key else [], ("sessions", "repeats"))],
+        statistics_day_values=[day_key] if day_key else [],
+    )
 
 
 @receiver([post_save, post_delete], sender=Podcast)
@@ -291,23 +402,14 @@ def refresh_history_cache_on_podcast_change(sender, instance, **kwargs):  # noqa
     so users can see the old data with a notification while refresh happens.
     """
     user_id = getattr(instance, "user_id", None)
-    if user_id:
-        day_key = history_cache.history_day_key(getattr(instance, "end_date", None))
-        if day_key:
-            history_cache.invalidate_history_days(
-                user_id,
-                day_keys=[day_key],
-                logging_styles=("sessions", "repeats"),
-                reason="podcast_change",
-            )
-            statistics_cache.invalidate_statistics_days(
-                user_id,
-                day_values=[day_key],
-                reason="podcast_change",
-            )
-        # Schedule statistics cache refresh but don't delete cache immediately
-        # This allows users to see old data with notification while refresh happens
-        statistics_cache.schedule_all_ranges_refresh(user_id)
+    day_key = history_cache.history_day_key(getattr(instance, "end_date", None))
+    _handle_media_cache_change(
+        user_id,
+        MediaTypes.PODCAST.value,
+        reason="podcast_change",
+        history_specs=[([day_key] if day_key else [], ("sessions", "repeats"))],
+        statistics_day_values=[day_key] if day_key else [],
+    )
 
 
 @receiver([post_save, post_delete], sender=TV)
@@ -317,10 +419,11 @@ def refresh_statistics_cache_on_tv_change(sender, instance, **kwargs):  # noqa: 
     We schedule a refresh but don't delete the cache immediately,
     so users can see the old data with a notification while refresh happens.
     """
-    user_id = getattr(instance, "user_id", None)
-    if user_id:
-        # Schedule refresh but don't delete cache - old data will show with notification
-        statistics_cache.schedule_all_ranges_refresh(user_id)
+    _handle_media_cache_change(
+        getattr(instance, "user_id", None),
+        MediaTypes.TV.value,
+        reason="tv_change",
+    )
 
 
 @receiver(post_delete, sender=TV)
@@ -344,10 +447,11 @@ def refresh_statistics_cache_on_season_change(sender, instance, **kwargs):  # no
     We schedule a refresh but don't delete the cache immediately,
     so users can see the old data with a notification while refresh happens.
     """
-    user_id = getattr(instance, "user_id", None)
-    if user_id:
-        # Schedule refresh but don't delete cache - old data will show with notification
-        statistics_cache.schedule_all_ranges_refresh(user_id)
+    _handle_media_cache_change(
+        getattr(instance, "user_id", None),
+        MediaTypes.SEASON.value,
+        reason="season_change",
+    )
 
 
 @receiver(post_delete, sender=Season)
@@ -371,10 +475,11 @@ def refresh_statistics_cache_on_anime_change(sender, instance, **kwargs):  # noq
     We schedule a refresh but don't delete the cache immediately,
     so users can see the old data with a notification while refresh happens.
     """
-    user_id = getattr(instance, "user_id", None)
-    if user_id:
-        # Schedule refresh but don't delete cache - old data will show with notification
-        statistics_cache.schedule_all_ranges_refresh(user_id)
+    _handle_media_cache_change(
+        getattr(instance, "user_id", None),
+        MediaTypes.ANIME.value,
+        reason="anime_change",
+    )
 
 
 def _collect_reading_statistics_day_keys(instance):
@@ -399,16 +504,13 @@ def refresh_statistics_cache_on_manga_change(sender, instance, **kwargs):  # noq
     so users can see the old data with a notification while refresh happens.
     """
     user_id = getattr(instance, "user_id", None)
-    if user_id:
-        day_keys = _collect_reading_statistics_day_keys(instance)
-        if day_keys:
-            statistics_cache.invalidate_statistics_days(
-                user_id,
-                day_values=day_keys,
-                reason="manga_change",
-            )
-        # Schedule refresh but don't delete cache - old data will show with notification
-        statistics_cache.schedule_all_ranges_refresh(user_id)
+    day_keys = _collect_reading_statistics_day_keys(instance)
+    _handle_media_cache_change(
+        user_id,
+        MediaTypes.MANGA.value,
+        reason="manga_change",
+        statistics_day_values=day_keys,
+    )
 
 
 @receiver([post_save, post_delete], sender=Book)
@@ -419,16 +521,13 @@ def refresh_statistics_cache_on_book_change(sender, instance, **kwargs):  # noqa
     so users can see the old data with a notification while refresh happens.
     """
     user_id = getattr(instance, "user_id", None)
-    if user_id:
-        day_keys = _collect_reading_statistics_day_keys(instance)
-        if day_keys:
-            statistics_cache.invalidate_statistics_days(
-                user_id,
-                day_values=day_keys,
-                reason="book_change",
-            )
-        # Schedule refresh but don't delete cache - old data will show with notification
-        statistics_cache.schedule_all_ranges_refresh(user_id)
+    day_keys = _collect_reading_statistics_day_keys(instance)
+    _handle_media_cache_change(
+        user_id,
+        MediaTypes.BOOK.value,
+        reason="book_change",
+        statistics_day_values=day_keys,
+    )
 
 
 @receiver([post_save, post_delete], sender=Comic)
@@ -439,16 +538,13 @@ def refresh_statistics_cache_on_comic_change(sender, instance, **kwargs):  # noq
     so users can see the old data with a notification while refresh happens.
     """
     user_id = getattr(instance, "user_id", None)
-    if user_id:
-        day_keys = _collect_reading_statistics_day_keys(instance)
-        if day_keys:
-            statistics_cache.invalidate_statistics_days(
-                user_id,
-                day_values=day_keys,
-                reason="comic_change",
-            )
-        # Schedule refresh but don't delete cache - old data will show with notification
-        statistics_cache.schedule_all_ranges_refresh(user_id)
+    day_keys = _collect_reading_statistics_day_keys(instance)
+    _handle_media_cache_change(
+        user_id,
+        MediaTypes.COMIC.value,
+        reason="comic_change",
+        statistics_day_values=day_keys,
+    )
 
 
 @receiver([post_save, post_delete], sender=Game)
@@ -459,36 +555,23 @@ def refresh_statistics_cache_on_game_change(sender, instance, **kwargs):  # noqa
     so users can see the old data with a notification while refresh happens.
     """
     user_id = getattr(instance, "user_id", None)
-    if user_id:
-        start_dt = getattr(instance, "start_date", None) or getattr(instance, "end_date", None)
-        end_dt = getattr(instance, "end_date", None) or getattr(instance, "start_date", None)
-        range_keys = history_cache.history_day_keys_for_range(start_dt, end_dt)
-        session_key = history_cache.history_day_key(end_dt or start_dt)
-        stats_day_keys = set(range_keys or [])
-        if session_key:
-            stats_day_keys.add(session_key)
-        if range_keys:
-            history_cache.invalidate_history_days(
-                user_id,
-                day_keys=range_keys,
-                logging_styles=("repeats",),
-                reason="game_change_repeats",
-            )
-        if session_key:
-            history_cache.invalidate_history_days(
-                user_id,
-                day_keys=[session_key],
-                logging_styles=("sessions",),
-                reason="game_change_sessions",
-            )
-        if stats_day_keys:
-            statistics_cache.invalidate_statistics_days(
-                user_id,
-                day_values=stats_day_keys,
-                reason="game_change",
-            )
-        # Schedule refresh but don't delete cache - old data will show with notification
-        statistics_cache.schedule_all_ranges_refresh(user_id)
+    start_dt = getattr(instance, "start_date", None) or getattr(instance, "end_date", None)
+    end_dt = getattr(instance, "end_date", None) or getattr(instance, "start_date", None)
+    range_keys = history_cache.history_day_keys_for_range(start_dt, end_dt)
+    session_key = history_cache.history_day_key(end_dt or start_dt)
+    stats_day_keys = set(range_keys or [])
+    if session_key:
+        stats_day_keys.add(session_key)
+    _handle_media_cache_change(
+        user_id,
+        MediaTypes.GAME.value,
+        reason="game_change",
+        history_specs=[
+            (range_keys, ("repeats",)),
+            ([session_key] if session_key else [], ("sessions",)),
+        ],
+        statistics_day_values=stats_day_keys,
+    )
 
 
 @receiver([post_save, post_delete], sender=BoardGame)
@@ -499,36 +582,23 @@ def refresh_statistics_cache_on_boardgame_change(sender, instance, **kwargs):  #
     so users can see the old data with a notification while refresh happens.
     """
     user_id = getattr(instance, "user_id", None)
-    if user_id:
-        start_dt = getattr(instance, "start_date", None) or getattr(instance, "end_date", None)
-        end_dt = getattr(instance, "end_date", None) or getattr(instance, "start_date", None)
-        range_keys = history_cache.history_day_keys_for_range(start_dt, end_dt)
-        session_key = history_cache.history_day_key(end_dt or start_dt)
-        stats_day_keys = set(range_keys or [])
-        if session_key:
-            stats_day_keys.add(session_key)
-        if range_keys:
-            history_cache.invalidate_history_days(
-                user_id,
-                day_keys=range_keys,
-                logging_styles=("repeats",),
-                reason="boardgame_change_repeats",
-            )
-        if session_key:
-            history_cache.invalidate_history_days(
-                user_id,
-                day_keys=[session_key],
-                logging_styles=("sessions",),
-                reason="boardgame_change_sessions",
-            )
-        if stats_day_keys:
-            statistics_cache.invalidate_statistics_days(
-                user_id,
-                day_values=stats_day_keys,
-                reason="boardgame_change",
-            )
-        # Schedule refresh but don't delete cache - old data will show with notification
-        statistics_cache.schedule_all_ranges_refresh(user_id)
+    start_dt = getattr(instance, "start_date", None) or getattr(instance, "end_date", None)
+    end_dt = getattr(instance, "end_date", None) or getattr(instance, "start_date", None)
+    range_keys = history_cache.history_day_keys_for_range(start_dt, end_dt)
+    session_key = history_cache.history_day_key(end_dt or start_dt)
+    stats_day_keys = set(range_keys or [])
+    if session_key:
+        stats_day_keys.add(session_key)
+    _handle_media_cache_change(
+        user_id,
+        MediaTypes.BOARDGAME.value,
+        reason="boardgame_change",
+        history_specs=[
+            (range_keys, ("repeats",)),
+            ([session_key] if session_key else [], ("sessions",)),
+        ],
+        statistics_day_values=stats_day_keys,
+    )
 
 
 @receiver(post_save, sender=Item)

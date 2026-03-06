@@ -83,7 +83,6 @@ PROVIDER_COMING_SOON_WINDOW_DAYS = 180
 
 ALWAYS_VISIBLE_EMPTY_ROWS = {
     "continue",
-    "continue_all",
     "continue_up_next",
     "next_episode",
 }
@@ -3435,52 +3434,6 @@ def _short_runs_candidates(user, media_type: str, *, row_key: str) -> list[Candi
     return filtered
 
 
-def _build_all_media_row(user, row_definition: RowDefinition, profile_payload: dict) -> list[CandidateItem]:
-    if row_definition.key == "continue_all":
-        combined: list[CandidateItem] = []
-        for media_type in DISCOVER_MEDIA_TYPES:
-            combined.extend(
-                _in_progress_candidates(
-                    user,
-                    media_type,
-                    row_key=row_definition.key,
-                    source_reason="In progress",
-                ),
-            )
-        combined.sort(
-            key=lambda candidate: candidate.activity_at or "",
-            reverse=True,
-        )
-        return combined[:MAX_ITEMS_PER_ROW]
-
-    if row_definition.key == "trending_all":
-        combined: list[CandidateItem] = []
-        combined.extend(TMDB_ADAPTER.trending(MediaTypes.MOVIE.value, limit=20))
-        combined.extend(TMDB_ADAPTER.trending(MediaTypes.TV.value, limit=20))
-        combined.sort(
-            key=lambda candidate: candidate.popularity if candidate.popularity is not None else -1,
-            reverse=True,
-        )
-        return combined[:MAX_ITEMS_PER_ROW]
-
-    if row_definition.key == "top_picks_all":
-        combined: list[CandidateItem] = []
-        for media_type in DISCOVER_MEDIA_TYPES:
-            combined.extend(
-                _planning_candidates(
-                    user,
-                    media_type,
-                    row_key=row_definition.key,
-                    source_reason="Top local planning fit",
-                ),
-            )
-
-        score_candidates(combined, profile_payload)
-        return combined[:MAX_ITEMS_PER_ROW]
-
-    return []
-
-
 def _build_row_candidates(
     user,
     media_type: str,
@@ -3488,9 +3441,6 @@ def _build_row_candidates(
     profile_payload: dict,
 ) -> list[CandidateItem]:
     row_key = row_definition.key
-
-    if media_type == ALL_MEDIA_KEY:
-        return _build_all_media_row(user, row_definition, profile_payload)
 
     if row_key in {"continue_up_next", "next_episode", "continue"}:
         return _in_progress_candidates(
@@ -4003,6 +3953,75 @@ def _allow_empty_row(
     return False
 
 
+def _media_type_readable_plural(media_type: str) -> str:
+    """Return a human-readable plural label for a Discover media type."""
+    label = MediaTypes(media_type).label
+    if media_type in {
+        MediaTypes.ANIME.value,
+        MediaTypes.MANGA.value,
+        MediaTypes.MUSIC.value,
+    }:
+        return label
+    return f"{label}s"
+
+
+def _get_all_media_component_rows(
+    user,
+    media_type: str,
+    *,
+    show_more: bool,
+    include_debug: bool,
+    defer_artwork: bool,
+) -> list[RowResult]:
+    """Return the rendered rows for a single media type tab."""
+    return get_discover_rows(
+        user,
+        media_type,
+        show_more=show_more,
+        include_debug=include_debug,
+        defer_artwork=defer_artwork,
+    )
+
+
+def _compose_all_media_rows(
+    user,
+    *,
+    show_more: bool,
+    include_debug: bool,
+    defer_artwork: bool,
+) -> list[RowResult]:
+    """Compose the all-media tab from the user's enabled Discover media types."""
+    enabled_media_types = [
+        media_type
+        for media_type in user.get_enabled_media_types()
+        if media_type in DISCOVER_MEDIA_TYPES
+    ]
+    target_media_types = enabled_media_types or DISCOVER_MEDIA_TYPES
+    rows: list[RowResult] = []
+
+    for component_media_type in target_media_types:
+        component_rows = _get_all_media_component_rows(
+            user,
+            component_media_type,
+            show_more=show_more,
+            include_debug=include_debug,
+            defer_artwork=defer_artwork,
+        )
+        if not show_more:
+            component_rows = [
+                row
+                for row in component_rows
+                if row.key == "trending_right_now"
+            ]
+
+        row_prefix = _media_type_readable_plural(component_media_type)
+        for row in component_rows:
+            row.title = f"{row_prefix}: {row.title}"
+            rows.append(row)
+
+    return rows
+
+
 def get_discover_rows(
     user,
     media_type: str,
@@ -4013,6 +4032,14 @@ def get_discover_rows(
 ) -> list[RowResult]:
     """Return discover rows for selected media type."""
     media_type = _coerce_media_type(media_type)
+    if media_type == ALL_MEDIA_KEY:
+        return _compose_all_media_rows(
+            user,
+            show_more=show_more,
+            include_debug=include_debug,
+            defer_artwork=defer_artwork,
+        )
+
     row_definitions = get_rows(media_type, include_show_more=show_more)
     profile_payload = get_or_compute_taste_profile(user, media_type)
 

@@ -9,7 +9,7 @@ from django.utils import timezone
 from app.discover import cache_repo
 from app.discover.providers.trakt_adapter import TraktDiscoverAdapter
 from app.discover.registry import ALL_MEDIA_KEY
-from app.discover.schemas import CandidateItem
+from app.discover.schemas import CandidateItem, RowResult
 from app.discover.service import (
     _apply_comfort_confidence,
     _apply_wildcard_novelty,
@@ -43,41 +43,163 @@ class DiscoverServiceTests(TestCase):
             for row in rows
         }
 
-    @patch("app.discover.service.get_or_compute_taste_profile", return_value={})
-    @patch("app.discover.service.TMDB_ADAPTER.trending", return_value=[])
-    def test_continue_all_includes_tv_in_progress_without_progressed_at_field_errors(
+    @patch("app.discover.service._get_all_media_component_rows")
+    def test_all_media_default_uses_trending_row_from_each_enabled_media_type(
         self,
-        _mock_trending,
-        _mock_profile,
+        mock_component_rows,
     ):
-        item = Item.objects.create(
-            media_id="tv-in-progress",
-            source=Sources.TMDB.value,
-            media_type=MediaTypes.TV.value,
-            title="In Progress TV",
-            image="https://example.com/tv-in-progress.jpg",
-        )
-        TV.objects.create(
-            user=self.user,
-            item=item,
-            status=Status.IN_PROGRESS.value,
-        )
+        def build_row(media_type: str, key: str, title: str) -> RowResult:
+            return RowResult(
+                key=key,
+                title=title,
+                mission="Test Mission",
+                why="Test explanation",
+                source="test",
+                items=[
+                    CandidateItem(
+                        media_type=media_type,
+                        source="tmdb",
+                        media_id=f"{media_type}-{key}",
+                        title=f"{media_type}-{title}",
+                        image="https://example.com/poster.jpg",
+                    ),
+                ],
+            )
 
-        rows = get_discover_rows(self.user, ALL_MEDIA_KEY, show_more=False)
-        continue_row = next(row for row in rows if row.key == "continue_all")
+        mock_component_rows.side_effect = [
+            [
+                build_row(
+                    MediaTypes.MOVIE.value,
+                    "trending_right_now",
+                    "Trending Right Now",
+                ),
+                build_row(
+                    MediaTypes.MOVIE.value,
+                    "all_time_greats_unseen",
+                    "All-Time Greats You Haven't Seen",
+                ),
+            ],
+            [
+                build_row(
+                    MediaTypes.TV.value,
+                    "trending_right_now",
+                    "Trending Right Now",
+                ),
+                build_row(
+                    MediaTypes.TV.value,
+                    "all_time_greats_unseen",
+                    "All-Time Greats You Haven't Seen",
+                ),
+            ],
+        ]
+
+        with patch.object(
+            self.user,
+            "get_enabled_media_types",
+            return_value=[MediaTypes.MOVIE.value, MediaTypes.TV.value],
+        ):
+            rows = get_discover_rows(self.user, ALL_MEDIA_KEY, show_more=False)
 
         self.assertEqual(
-            continue_row.source_state,
-            "live",
-            msg=f"continue_all should not fail. rows={self._row_snapshot(rows)}",
+            [row.key for row in rows],
+            ["trending_right_now", "trending_right_now"],
         )
-        self.assertTrue(
-            any(
-                candidate.media_type == MediaTypes.TV.value
-                and candidate.media_id == "tv-in-progress"
-                for candidate in continue_row.items
-            ),
-            msg=f"continue_all missing TV in-progress item. rows={self._row_snapshot(rows)}",
+        self.assertEqual(
+            [row.title for row in rows],
+            [
+                "Movies: Trending Right Now",
+                "TV Shows: Trending Right Now",
+            ],
+        )
+        mock_component_rows.assert_any_call(
+            self.user,
+            MediaTypes.MOVIE.value,
+            show_more=False,
+            include_debug=False,
+            defer_artwork=False,
+        )
+        mock_component_rows.assert_any_call(
+            self.user,
+            MediaTypes.TV.value,
+            show_more=False,
+            include_debug=False,
+            defer_artwork=False,
+        )
+
+    @patch("app.discover.service._get_all_media_component_rows")
+    def test_all_media_show_more_includes_all_rows_from_each_enabled_media_type(
+        self,
+        mock_component_rows,
+    ):
+        def build_row(media_type: str, key: str, title: str) -> RowResult:
+            return RowResult(
+                key=key,
+                title=title,
+                mission="Test Mission",
+                why="Test explanation",
+                source="test",
+                items=[
+                    CandidateItem(
+                        media_type=media_type,
+                        source="tmdb",
+                        media_id=f"{media_type}-{key}",
+                        title=f"{media_type}-{title}",
+                        image="https://example.com/poster.jpg",
+                    ),
+                ],
+            )
+
+        mock_component_rows.side_effect = [
+            [
+                build_row(
+                    MediaTypes.MOVIE.value,
+                    "trending_right_now",
+                    "Trending Right Now",
+                ),
+                build_row(
+                    MediaTypes.MOVIE.value,
+                    "all_time_greats_unseen",
+                    "All-Time Greats You Haven't Seen",
+                ),
+            ],
+            [
+                build_row(
+                    MediaTypes.TV.value,
+                    "trending_right_now",
+                    "Trending Right Now",
+                ),
+                build_row(
+                    MediaTypes.TV.value,
+                    "all_time_greats_unseen",
+                    "All-Time Greats You Haven't Seen",
+                ),
+            ],
+        ]
+
+        with patch.object(
+            self.user,
+            "get_enabled_media_types",
+            return_value=[MediaTypes.MOVIE.value, MediaTypes.TV.value],
+        ):
+            rows = get_discover_rows(self.user, ALL_MEDIA_KEY, show_more=True)
+
+        self.assertEqual(
+            [row.key for row in rows],
+            [
+                "trending_right_now",
+                "all_time_greats_unseen",
+                "trending_right_now",
+                "all_time_greats_unseen",
+            ],
+        )
+        self.assertEqual(
+            [row.title for row in rows],
+            [
+                "Movies: Trending Right Now",
+                "Movies: All-Time Greats You Haven't Seen",
+                "TV Shows: Trending Right Now",
+                "TV Shows: All-Time Greats You Haven't Seen",
+            ],
         )
 
     @patch("app.discover.service.TMDB_ADAPTER.top_rated", return_value=[])

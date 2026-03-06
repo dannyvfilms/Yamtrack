@@ -87,6 +87,66 @@
   - Signals (`src/app/signals.py`) invalidate day caches on media changes and schedule all ranges.
   - `delete_history_record` invalidates stats days and schedules all ranges.
 
+## Discover cache (Redis tab cache over DB row/profile caches)
+- Files: `src/app/discover/tab_cache.py`, `src/app/discover/cache_repo.py`, `src/app/discover/service.py`, `src/app/views.py`, `src/templates/app/discover.html`, `src/static/js/cache-updater.js`.
+- Redis tab keys:
+  - Tab payload: `discover_tab_v1_{user_id}_{media_type}_{show_more}`.
+  - Refresh lock: `discover_tab_v1_refresh_lock_{user_id}_{media_type}_{show_more}`.
+  - Activity version: `discover_tab_v1_activity_version_{user_id}_{media_type}`.
+  - Schedule dedupe: `discover_tab_v1_refresh_scheduled_{user_id}_{activity_version}_{media_type}_{show_more}`.
+  - Active-page context: `discover_tab_v1_active_{user_id}`.
+  - Request warmup throttle: `discover_tab_v1_request_warm_{user_id}`.
+- Tab payload fields:
+  - `built_at`
+  - `activity_version`
+  - `media_type`
+  - `show_more`
+  - serialized `rows`
+- TTL/stale:
+  - Tab payload TTL: 6h.
+  - Stale after: 15m.
+  - Refresh lock TTL: 5m.
+  - Active Discover context TTL: 45s.
+  - Request warmup throttle TTL: 15m.
+  - Recently-built window for UI polling: 60s.
+- Lower cache layers kept in DB:
+  - `DiscoverRowCache` for row payloads.
+  - `DiscoverTasteProfile` for per-user taste vectors.
+  - `DiscoverApiCache` for provider payloads.
+- Behavior:
+  - `get_tab_rows()` serves Redis-backed tab payloads in steady state.
+  - `discover_debug=1` bypasses the tab cache and renders rows inline from the service layer.
+  - Discover views call `get_tab_rows(..., allow_inline_bootstrap=False)`, so page loads never block on a cold rebuild.
+  - Cold miss: queue an immediate background refresh, render the loading placeholder, and let the polling loop swap fresh rows in once the build finishes.
+  - Stale hit: serve stale rows, mark them stale in the UI, and queue an immediate rebuild for the active tab.
+  - Discover page loads also warm missing sibling tabs in the background at low priority.
+  - App startup schedules `warm_discover_startup_tabs` once per day via `discover_tab_startup_scheduled`; it warms the default `all` tab for active users if that cache is missing or stale.
+  - `DiscoverWarmupMiddleware` schedules per-user warmup on the first eligible authenticated HTML request every 15 minutes; it prioritizes `all` and then warms enabled Discover media tabs without blocking the response.
+  - Existing Redis tab payloads are intentionally kept during invalidation so the last built rows can keep rendering while background refresh work runs.
+- Manual refresh semantics:
+  - Refresh button invalidates the active tab and also `all` when the active tab is not `all`.
+  - Lower-level row/profile caches are cleared immediately.
+  - Provider API cache is cleared only for manual refreshes (`DiscoverApiCache` is not cleared for automatic invalidation).
+  - The UI polls `cache_status?cache_type=discover&media_type=...&show_more=...` and re-fetches only `#discover-rows` when the rebuild completes.
+- Invalidation triggers:
+  - Tracked-media saves/deletes invalidate the affected media type plus `all`.
+    - `movie -> movie + all`
+    - `tv/season/episode -> tv + all`
+    - `anime -> anime + all`
+    - `music -> music + all`
+    - `podcast -> podcast + all`
+    - `book/comic/manga/game/boardgame -> same type + all`
+  - `ItemTag` changes invalidate the tagged item's mapped Discover media type plus `all`.
+  - `ItemPersonCredit` changes invalidate `movie + all` or `tv + all` for users tracking the credited item.
+  - Invalidation bumps `activity_version` and clears only the lower-level DB caches, so stale Redis tab payloads can still render while the rebuild runs.
+- Active Discover priority mode:
+  - Requests that originated from Discover store a short-lived active-tab context from `next` first, then `Referer`.
+  - When a later tracked-media mutation affects that active Discover tab:
+    - Discover refresh queues immediately (`countdown=0`, `debounce=0`).
+    - History refresh is delayed to 15s.
+    - Statistics refresh is delayed to 20s.
+  - This is queue prioritization and dedupe, not task cancellation.
+
 ## Metadata refresh overlay (runtime + genre backfill)
 - Statistics day builds detect missing runtime/genres and enqueue backfills:
   - Runtime backfill queue: `runtime_backfill_items_queue` + `runtime_backfill_items_scheduled`.
@@ -107,6 +167,7 @@
 - `src/app/views.py` `cache_status()`:
   - History: returns `exists`, `built_at`, `is_stale`, `is_refreshing`, `recently_built`.
   - Statistics: adds `any_range_refreshing`, `refresh_scheduled`, and metadata refresh fields.
+  - Discover: returns the same tab status shape used by history (`exists`, `built_at`, `is_stale`, `is_refreshing`, `recently_built`, `refresh_scheduled`) for the active `media_type` + `show_more`.
   - Clears stale locks to avoid "refreshing" stuck states.
   - If stats cache is stale and no lock exists, it schedules a refresh during polling.
 - `src/static/js/cache-updater.js`:
@@ -116,6 +177,7 @@
 - Templates:
   - `src/templates/app/history.html`: polling is skipped for filtered views (bypass cache).
   - `src/templates/app/statistics.html`: polling only for predefined ranges.
+  - `src/templates/app/discover.html`: shows a top-level background-refresh banner, polls Discover cache status on load/tab switch, and refreshes only `#discover-rows` when a rebuild completes.
 
 ## Known failure modes (symptoms -> suspects)
 - Page 1 works, pages 2+ blank: page miss schedules refresh, but task warms newest days instead of requested `day_keys`.

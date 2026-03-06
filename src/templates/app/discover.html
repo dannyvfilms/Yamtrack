@@ -6,7 +6,9 @@
 {% endblock title %}
 
 {% block content %}
-  <div x-data="discoverPage('{{ selected_media_type }}', {{ show_more|yesno:'true,false' }}, {{ discover_debug|yesno:'true,false' }})" class="space-y-6">
+  <div x-data="discoverPage('{{ selected_media_type }}', {{ show_more|yesno:'true,false' }}, {{ discover_debug|yesno:'true,false' }}, {{ discover_loading|yesno:'true,false' }})"
+       x-init="init()"
+       class="space-y-6">
     <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div>
         <h1 class="text-3xl font-bold text-white">Discover</h1>
@@ -45,20 +47,83 @@
       {% endfor %}
     </div>
 
+    <div x-cloak
+         x-show="cacheRefreshing"
+         class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+      Refreshing recommendations in background...
+    </div>
+
     <div id="discover-rows">
-      {% include "app/components/discover_rows.html" with rows=rows selected_media_type=selected_media_type show_more=show_more discover_debug=discover_debug %}
+      {% include "app/components/discover_rows.html" with rows=rows selected_media_type=selected_media_type show_more=show_more discover_debug=discover_debug discover_loading=discover_loading %}
     </div>
   </div>
 {% endblock content %}
 
 {% block js %}
   <script>
-    function discoverPage(initialMedia, initialShowMore, initialDebug) {
+    function discoverPage(initialMedia, initialShowMore, initialDebug, initialCacheRefreshing) {
       return {
         selectedMedia: initialMedia || "all",
         showMore: Boolean(initialShowMore),
         discoverDebug: Boolean(initialDebug),
         refreshing: false,
+        cacheRefreshing: Boolean(initialCacheRefreshing),
+        cacheUpdater: null,
+        rowsSwapHandler: null,
+        init() {
+          this.updateUrl();
+          if (this.discoverDebug) {
+            return;
+          }
+          this.syncCacheUpdater();
+          this.checkCacheStatus();
+        },
+        resetRefreshState() {
+          this.refreshing = false;
+          this.cacheRefreshing = false;
+        },
+        stopCacheUpdater() {
+          if (this.cacheUpdater) {
+            this.cacheUpdater.stop();
+          }
+        },
+        syncCacheUpdater() {
+          this.stopCacheUpdater();
+          if (this.discoverDebug || typeof CacheUpdater === "undefined") {
+            this.cacheUpdater = null;
+            return;
+          }
+          this.cacheUpdater = CacheUpdater.init("discover", {
+            mediaType: this.selectedMedia,
+            showMore: this.showMore,
+            onUpdate: () => this.fetchRows(),
+            onRefreshComplete: () => {
+              this.resetRefreshState();
+            },
+          });
+        },
+        attachAfterSwap(callback) {
+          const target = document.getElementById("discover-rows");
+          if (!target) {
+            if (callback) {
+              callback();
+            }
+            return;
+          }
+          if (this.rowsSwapHandler) {
+            target.removeEventListener("htmx:afterSwap", this.rowsSwapHandler);
+            this.rowsSwapHandler = null;
+          }
+          if (!callback) {
+            return;
+          }
+          this.rowsSwapHandler = () => {
+            target.removeEventListener("htmx:afterSwap", this.rowsSwapHandler);
+            this.rowsSwapHandler = null;
+            callback();
+          };
+          target.addEventListener("htmx:afterSwap", this.rowsSwapHandler);
+        },
         updateUrl() {
           const params = new URLSearchParams();
           params.set("media_type", this.selectedMedia);
@@ -69,6 +134,44 @@
           const query = params.toString();
           window.history.replaceState({}, "", `${window.location.pathname}?${query}`);
         },
+        async checkCacheStatus() {
+          if (this.discoverDebug) {
+            return;
+          }
+          if (!this.cacheUpdater) {
+            this.syncCacheUpdater();
+          }
+          if (!this.cacheUpdater) {
+            return;
+          }
+
+          const params = new URLSearchParams();
+          params.set("cache_type", "discover");
+          params.set("media_type", this.selectedMedia);
+          params.set("show_more", this.showMore ? "1" : "0");
+
+          try {
+            const response = await fetch(`/api/cache-status/?${params.toString()}`);
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status}`);
+            }
+            const data = await response.json();
+            const pendingRefresh = Boolean(
+              data.is_refreshing || data.refresh_scheduled || data.is_stale,
+            );
+            this.cacheRefreshing = pendingRefresh;
+            this.refreshing = pendingRefresh;
+            this.cacheUpdater.lastBuiltAt = data.built_at || null;
+            this.cacheUpdater.wasRefreshing = pendingRefresh;
+            if (pendingRefresh) {
+              this.cacheUpdater.start();
+            } else {
+              this.cacheUpdater.stop();
+            }
+          } catch (error) {
+            console.error("Discover cache status check failed:", error);
+          }
+        },
         fetchRows() {
           const params = new URLSearchParams();
           params.set("media_type", this.selectedMedia);
@@ -76,6 +179,13 @@
           if (this.discoverDebug) {
             params.set("discover_debug", "1");
           }
+          this.attachAfterSwap(() => {
+            if (this.discoverDebug) {
+              this.resetRefreshState();
+              return;
+            }
+            this.checkCacheStatus();
+          });
           htmx.ajax("GET", `{% url 'discover_rows' %}?${params.toString()}`, {
             target: "#discover-rows",
             swap: "innerHTML",
@@ -83,29 +193,50 @@
           this.updateUrl();
         },
         switchMedia(mediaType) {
+          if (this.selectedMedia === mediaType) {
+            return;
+          }
           this.selectedMedia = mediaType;
+          this.resetRefreshState();
+          this.syncCacheUpdater();
           this.fetchRows();
         },
         toggleShowMore() {
           this.showMore = !this.showMore;
+          this.resetRefreshState();
+          this.syncCacheUpdater();
           this.fetchRows();
         },
         async refreshRows() {
           this.refreshing = true;
+          this.cacheRefreshing = !this.discoverDebug;
+          this.syncCacheUpdater();
+          if (this.cacheUpdater) {
+            this.cacheUpdater.wasRefreshing = true;
+            this.cacheUpdater.lastBuiltAt = null;
+          }
+
           const body = new FormData();
           body.append("media_type", this.selectedMedia);
-          await fetch("{% url 'refresh_discover' %}", {
+          body.append("show_more", this.showMore ? "1" : "0");
+
+          const response = await fetch("{% url 'refresh_discover' %}", {
             method: "POST",
             headers: {"X-CSRFToken": "{{ csrf_token }}"},
             body,
           });
-          const target = document.getElementById("discover-rows");
-          const self = this;
-          target.addEventListener("htmx:afterSwap", function onSwap() {
-            target.removeEventListener("htmx:afterSwap", onSwap);
-            self.refreshing = false;
-          });
-          this.fetchRows();
+
+          if (!response.ok) {
+            this.resetRefreshState();
+            return;
+          }
+
+          if (this.discoverDebug) {
+            this.fetchRows();
+            return;
+          }
+
+          this.checkCacheStatus();
         },
       };
     }

@@ -2,8 +2,10 @@ import logging
 import time
 
 from django.db.utils import OperationalError
+from django.http import HttpRequest
 from django.shortcuts import render
 
+from app.discover import tab_cache as discover_tab_cache
 from app.providers import services
 from integrations.imports.helpers import is_retryable_error
 
@@ -11,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class DatabaseRetryMiddleware:
-    """Middleware to retry requests when database operations fail with retryable errors."""
+    """Retry requests when database operations fail with retryable errors."""
 
     def __init__(self, get_response):
         """Initialize the middleware with the get_response callable."""
@@ -28,24 +30,21 @@ class DatabaseRetryMiddleware:
             try:
                 return self.get_response(request)
             except OperationalError as error:
-                # Only retry if it's a retryable error and we haven't exceeded max retries
+                # Only retry retryable errors while under the retry cap.
                 if not is_retryable_error(error) or attempt >= max_retries:
-                    # Re-raise if not retryable or max retries exceeded
                     raise
 
-                # Only retry GET requests to avoid side effects
                 if request.method != "GET":
-                    logger.error(
-                        "Database error on %s request, not retrying: %s",
+                    logger.exception(
+                        "Database error on %s request, not retrying",
                         request.method,
-                        error,
                     )
                     raise
 
                 error_type = "disk I/O" if "i/o" in str(error).lower() else "lock"
                 sleep_for = base_delay * (backoff**attempt)
                 logger.warning(
-                    "Retrying %s request due to %s error (attempt %s/%s, sleeping %.2fs)",
+                    "Retrying %s after %s error (attempt %s/%s, sleeping %.2fs)",
                     request.path,
                     error_type,
                     attempt + 1,
@@ -58,7 +57,6 @@ class DatabaseRetryMiddleware:
     def process_exception(self, request, exception):
         """Handle exceptions that weren't caught in __call__."""
         if isinstance(exception, OperationalError) and is_retryable_error(exception):
-            # If we get here, retries were exhausted or it was a non-GET request
             error_type = "disk I/O" if "i/o" in str(exception).lower() else "lock"
             logger.error(
                 "Database %s error on %s %s: %s",
@@ -104,3 +102,50 @@ class ProviderAPIErrorMiddleware:
                 status=500,
             )
         return None
+
+
+class DiscoverWarmupMiddleware:
+    """Schedule Discover warmup in the background for active users."""
+
+    def __init__(self, get_response):
+        """Initialize the middleware with the get_response callable."""
+        self.get_response = get_response
+
+    def __call__(self, request):
+        """Queue Discover warmup for eligible authenticated page requests."""
+        if self._should_warm_discover(request):
+            try:
+                discover_tab_cache.maybe_schedule_user_warmup(request.user)
+            except Exception as error:  # noqa: BLE001
+                logger.debug(
+                    "Skipping Discover warmup for %s due to error: %s",
+                    request.path,
+                    error,
+                )
+        return self.get_response(request)
+
+    def _should_warm_discover(self, request: HttpRequest) -> bool:
+        if (
+            request.method not in {"GET", "HEAD"}
+            or request.headers.get("HX-Request") == "true"
+        ):
+            return False
+
+        user = getattr(request, "user", None)
+        if not getattr(user, "is_authenticated", False) or not getattr(
+            user,
+            "id",
+            None,
+        ):
+            return False
+
+        path = request.path_info or ""
+        if path == "/serviceworker.js" or path.startswith(
+            ("/api/", "/admin/", "/static/", "/media/", "/_debug/"),
+        ):
+            return False
+        if request.GET.get("discover_debug") in {"1", "true", "True"}:
+            return False
+
+        accept = request.headers.get("Accept", "")
+        return not accept or "text/html" in accept or "*/*" in accept

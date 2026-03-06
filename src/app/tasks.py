@@ -2780,6 +2780,7 @@ def backfill_item_metadata_task(batch_size: int = 10):
 def refresh_discover_rows(user_id: int, media_type: str, row_keys: list[str], show_more: bool = False):
     """Refresh selected Discover rows for a user."""
     from app.discover.service import refresh_rows_for_user
+    from app.discover.tab_cache import refresh_tab_cache
 
     user_model = get_user_model()
     user = user_model.objects.filter(id=user_id).first()
@@ -2793,10 +2794,81 @@ def refresh_discover_rows(user_id: int, media_type: str, row_keys: list[str], sh
         row_keys or [],
         show_more=show_more,
     )
+    # Keep the higher-level tab cache aligned with refreshed row caches.
+    refresh_tab_cache(
+        user,
+        media_type,
+        show_more=show_more,
+        force=False,
+        clear_provider_cache=False,
+    )
     return {
         "refreshed": refreshed,
         "user_id": user_id,
         "media_type": media_type,
+    }
+
+
+@shared_task(name="Refresh Discover Tab Cache")
+def refresh_discover_tab_cache(
+    user_id: int,
+    media_type: str,
+    show_more: bool = False,
+    force: bool = False,
+    clear_provider_cache: bool = False,
+):
+    """Refresh the Redis-backed Discover tab cache for a user/media type."""
+    from app.discover.tab_cache import refresh_tab_cache
+
+    user_model = get_user_model()
+    user = user_model.objects.filter(id=user_id).first()
+    if not user:
+        logger.warning("discover_tab_refresh_user_missing user_id=%s", user_id)
+        return {"refreshed": False, "reason": "missing_user"}
+
+    rows = refresh_tab_cache(
+        user,
+        media_type,
+        show_more=show_more,
+        force=force,
+        clear_provider_cache=clear_provider_cache,
+    )
+    return {
+        "refreshed": True,
+        "row_count": len(rows),
+        "user_id": user_id,
+        "media_type": media_type,
+        "show_more": bool(show_more),
+        "force": bool(force),
+        "clear_provider_cache": bool(clear_provider_cache),
+    }
+
+
+@shared_task(name="Warm Discover Startup Tabs")
+def warm_discover_startup_tabs(user_ids: list[int] | None = None):
+    """Warm the default Discover tab cache for users after app startup."""
+    from app.discover.registry import ALL_MEDIA_KEY
+    from app.discover.tab_cache import schedule_user_tab_warmup
+
+    user_model = get_user_model()
+    users = user_model.objects.filter(is_active=True)
+    if user_ids:
+        users = users.filter(id__in=user_ids)
+
+    scheduled = 0
+    users_count = 0
+    for user in users.iterator(chunk_size=200):
+        users_count += 1
+        scheduled += schedule_user_tab_warmup(
+            user,
+            media_types=[ALL_MEDIA_KEY],
+            prioritize_media_type=ALL_MEDIA_KEY,
+            show_more=False,
+        )
+
+    return {
+        "scheduled": scheduled,
+        "users_count": users_count,
     }
 
 

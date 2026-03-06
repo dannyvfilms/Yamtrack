@@ -5,16 +5,8 @@ from app.models import MediaTypes
 
 
 class DiscoverRegistryTests(SimpleTestCase):
-    def test_all_media_row_layout_is_unchanged(self):
-        keys = [row.key for row in get_rows(ALL_MEDIA_KEY)]
-        self.assertEqual(
-            keys,
-            [
-                "continue_all",
-                "trending_all",
-                "top_picks_all",
-            ],
-        )
+    def test_all_media_rows_are_composed_in_service(self):
+        self.assertEqual(get_rows(ALL_MEDIA_KEY), [])
 
     def test_each_media_type_uses_standard_five_row_layout(self):
         expected_keys = [

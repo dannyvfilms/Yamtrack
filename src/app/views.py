@@ -40,6 +40,7 @@ from app import (
     live_playback,
     statistics_cache,
 )
+from app.discover import tab_cache as discover_tab_cache
 from app.columns import (
     resolve_column_config,
     resolve_columns,
@@ -530,19 +531,36 @@ def discover_page(request):
     selected_media_type = _coerce_discover_media_type(request.GET.get("media_type"))
     show_more = request.GET.get("show_more") in {"1", "true", "True"}
     discover_debug = _coerce_discover_debug(request.GET.get("discover_debug"))
-    payload = discover.get_discover_payload(
+    rows = discover_tab_cache.get_tab_rows(
         request.user,
         selected_media_type,
         show_more=show_more,
         include_debug=discover_debug,
         defer_artwork=True,
+        allow_inline_bootstrap=False,
+    )
+    if not discover_debug:
+        discover_tab_cache.warm_sibling_tabs(
+            request.user,
+            selected_media_type,
+            show_more=show_more,
+        )
+    discover_status = (
+        discover_tab_cache.get_tab_status(
+            request.user.id,
+            selected_media_type,
+            show_more=show_more,
+        )
+        if not discover_debug
+        else None
     )
 
     context = {
-        "selected_media_type": payload.media_type,
-        "show_more": payload.show_more,
-        "rows": payload.rows,
+        "selected_media_type": selected_media_type,
+        "show_more": show_more,
+        "rows": rows,
         "discover_debug": discover_debug,
+        "discover_loading": bool(discover_status and discover_status["is_refreshing"]),
         "discover_media_options": _discover_media_options(request.user),
     }
     return render(request, "app/discover.html", context)
@@ -555,17 +573,28 @@ def discover_rows(request):
     selected_media_type = _coerce_discover_media_type(request.GET.get("media_type"))
     show_more = request.GET.get("show_more") in {"1", "true", "True"}
     discover_debug = _coerce_discover_debug(request.GET.get("discover_debug"))
-    rows = discover.get_discover_rows(
+    rows = discover_tab_cache.get_tab_rows(
         request.user,
         selected_media_type,
         show_more=show_more,
         include_debug=discover_debug,
         defer_artwork=True,
+        allow_inline_bootstrap=False,
+    )
+    discover_status = (
+        discover_tab_cache.get_tab_status(
+            request.user.id,
+            selected_media_type,
+            show_more=show_more,
+        )
+        if not discover_debug
+        else None
     )
     context = {
         "selected_media_type": selected_media_type,
         "show_more": show_more,
         "discover_debug": discover_debug,
+        "discover_loading": bool(discover_status and discover_status["is_refreshing"]),
         "rows": rows,
     }
     return render(request, "app/components/discover_rows.html", context)
@@ -574,19 +603,40 @@ def discover_rows(request):
 @login_required
 @require_POST
 def refresh_discover(request):
-    """Clear Discover caches for the current user/media type and rebuild."""
-    from django.http import JsonResponse
-
-    from app.models import DiscoverRowCache, DiscoverTasteProfile
-
+    """Invalidate Discover caches for the active tab and queue a background refresh."""
     media_type = _coerce_discover_media_type(request.POST.get("media_type"))
-    DiscoverRowCache.objects.filter(
-        user=request.user, media_type=media_type,
-    ).delete()
-    DiscoverTasteProfile.objects.filter(
-        user=request.user, media_type=media_type,
-    ).delete()
-    return JsonResponse({"ok": True})
+    show_more = request.POST.get("show_more") in {"1", "true", "True"}
+    discover_tab_cache.mark_active(
+        request.user.id,
+        media_type,
+        show_more=show_more,
+    )
+
+    target_media_types = [media_type]
+    if media_type != "all":
+        target_media_types.append("all")
+
+    for target_media_type in target_media_types:
+        discover_tab_cache.bump_activity_version(request.user.id, target_media_type)
+        discover_tab_cache.clear_lower_level_cache(request.user.id, target_media_type)
+        discover_tab_cache.schedule_tab_refresh(
+            request.user.id,
+            target_media_type,
+            show_more=show_more,
+            debounce_seconds=discover_tab_cache.DISCOVER_PRIORITY_REFRESH_DEBOUNCE_SECONDS,
+            countdown=discover_tab_cache.DISCOVER_PRIORITY_REFRESH_COUNTDOWN,
+            force=True,
+            clear_provider_cache=True,
+        )
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "media_type": media_type,
+            "show_more": show_more,
+            "targets": target_media_types,
+        },
+    )
 
 
 def active_playback_fragment(request):
@@ -4660,6 +4710,10 @@ def media_save(request):
     media_type = request.POST["media_type"]
     season_number = request.POST.get("season_number")
     instance_id = request.POST.get("instance_id")
+    discover_tab_cache.mark_active_from_request(
+        request,
+        fallback_media_type=media_type,
+    )
     
     # Handle percentage conversion for books/comics/manga
     progress_value = request.POST.get("progress")
@@ -5046,6 +5100,10 @@ def media_delete(request):
     """Delete media data from the database."""
     instance_id = request.POST["instance_id"]
     media_type = request.POST["media_type"]
+    discover_tab_cache.mark_active_from_request(
+        request,
+        fallback_media_type=media_type,
+    )
     model = apps.get_model(app_label="app", model_name=media_type)
 
     try:
@@ -5070,6 +5128,10 @@ def episode_save(request):
     season_number = int(request.POST["season_number"])
     episode_number = int(request.POST["episode_number"])
     source = request.POST["source"]
+    discover_tab_cache.mark_active_from_request(
+        request,
+        fallback_media_type=MediaTypes.TV.value,
+    )
 
     form = EpisodeForm(request.POST)
     if not form.is_valid():
@@ -7323,6 +7385,10 @@ def artist_save(request):
 
     artist_id = request.POST.get("artist_id")
     artist = get_object_or_404(Artist, id=artist_id)
+    discover_tab_cache.mark_active_from_request(
+        request,
+        fallback_media_type=MediaTypes.MUSIC.value,
+    )
 
     # Get existing tracker or None
     tracker = ArtistTracker.objects.filter(user=request.user, artist=artist).first()
@@ -7352,6 +7418,10 @@ def artist_delete(request):
 
     artist_id = request.POST.get("artist_id")
     artist = get_object_or_404(Artist, id=artist_id)
+    discover_tab_cache.mark_active_from_request(
+        request,
+        fallback_media_type=MediaTypes.MUSIC.value,
+    )
 
     tracker = ArtistTracker.objects.filter(user=request.user, artist=artist).first()
     if tracker:
@@ -7740,6 +7810,10 @@ def podcast_show_save(request):
 
     show_id = request.POST.get("show_id")
     show = get_object_or_404(PodcastShow, id=show_id)
+    discover_tab_cache.mark_active_from_request(
+        request,
+        fallback_media_type=MediaTypes.PODCAST.value,
+    )
 
     # Get existing tracker or None
     tracker = PodcastShowTracker.objects.filter(user=request.user, show=show).first()
@@ -7769,6 +7843,10 @@ def podcast_show_delete(request):
 
     show_id = request.POST.get("show_id")
     show = get_object_or_404(PodcastShow, id=show_id)
+    discover_tab_cache.mark_active_from_request(
+        request,
+        fallback_media_type=MediaTypes.PODCAST.value,
+    )
 
     tracker = PodcastShowTracker.objects.filter(user=request.user, show=show).first()
     if tracker:
@@ -7991,6 +8069,10 @@ def album_save(request):
 
     album_id = request.POST.get("album_id")
     album = get_object_or_404(Album, id=album_id)
+    discover_tab_cache.mark_active_from_request(
+        request,
+        fallback_media_type=MediaTypes.MUSIC.value,
+    )
 
     # Get existing tracker or None
     tracker = AlbumTracker.objects.filter(user=request.user, album=album).first()
@@ -8020,6 +8102,10 @@ def album_delete(request):
 
     album_id = request.POST.get("album_id")
     album = get_object_or_404(Album, id=album_id)
+    discover_tab_cache.mark_active_from_request(
+        request,
+        fallback_media_type=MediaTypes.MUSIC.value,
+    )
 
     tracker = AlbumTracker.objects.filter(user=request.user, album=album).first()
     if tracker:
@@ -8045,6 +8131,10 @@ def song_save(request):
     album_id = request.POST.get("album_id")
     track_id = request.POST.get("track_id")
     end_date_str = request.POST.get("end_date")
+    discover_tab_cache.mark_active_from_request(
+        request,
+        fallback_media_type=MediaTypes.MUSIC.value,
+    )
 
     # Parse the end date
     end_date = None
@@ -8151,6 +8241,10 @@ def podcast_save(request):
     show_id = request.POST.get("show_id")
     episode_id = request.POST.get("episode_id")
     end_date_str = request.POST.get("end_date")
+    discover_tab_cache.mark_active_from_request(
+        request,
+        fallback_media_type=MediaTypes.PODCAST.value,
+    )
 
     # Parse the end date
     end_date = None
@@ -8788,10 +8882,10 @@ def update_top_talent_sort(request):
 
 @require_GET
 def cache_status(request):
-    """Return cache status metadata for history or statistics cache.
+    """Return cache status metadata for history, statistics, or discover cache.
     
     Query params:
-        cache_type: 'history' or 'statistics'
+        cache_type: 'history', 'statistics', or 'discover'
         range_name: Required for statistics, ignored for history
         logging_style: Optional for history, defaults to 'repeats'
     
@@ -8803,8 +8897,11 @@ def cache_status(request):
         recently_built: bool - Whether cache was built in the last 30 seconds
     """
     cache_type = request.GET.get("cache_type")
-    if cache_type not in ("history", "statistics"):
-        return JsonResponse({"error": "Invalid cache_type. Must be 'history' or 'statistics'"}, status=400)
+    if cache_type not in ("history", "statistics", "discover"):
+        return JsonResponse(
+            {"error": "Invalid cache_type. Must be 'history', 'statistics', or 'discover'"},
+            status=400,
+        )
 
     if cache_type == "history":
         logging_style = request.GET.get("logging_style")
@@ -8957,6 +9054,16 @@ def cache_status(request):
             "metadata_built_at": metadata_built_at.isoformat() if metadata_built_at else None,
             "metadata_recently_built": metadata_recently_built,
         })
+
+    media_type = _coerce_discover_media_type(request.GET.get("media_type"))
+    show_more = request.GET.get("show_more") in {"1", "true", "True"}
+    return JsonResponse(
+        discover_tab_cache.get_tab_status(
+            request.user.id,
+            media_type,
+            show_more=show_more,
+        ),
+    )
 
 
 @require_GET
