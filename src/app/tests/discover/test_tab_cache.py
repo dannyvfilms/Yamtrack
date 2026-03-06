@@ -5,6 +5,7 @@ from unittest.mock import call, patch
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.conf import settings
 from django.test import RequestFactory, TestCase, override_settings
 from django.utils import timezone
 
@@ -216,6 +217,36 @@ class DiscoverTabCacheTests(TestCase):
         self.assertIsNotNone(rows)
         self.assertEqual(rows[0].items[0].title, "Promoted Movie")
         self.assertEqual(rows[0].reserve_items, [])
+
+    @patch("app.discover.service.hydrate_visible_row_artwork")
+    def test_apply_cached_action_hydrates_promoted_reserve_artwork(
+        self,
+        mock_hydrate_visible_row_artwork,
+    ):
+        row = self._row(title="Remove Me", reserve_title="Promoted Movie")
+        row.key = "all_time_greats_unseen"
+        row.source = "provider"
+        row.reserve_items[0].image = settings.IMG_NONE
+
+        def hydrate(row_to_hydrate):
+            row_to_hydrate.items[0].image = "https://example.com/hydrated.jpg"
+
+        mock_hydrate_visible_row_artwork.side_effect = hydrate
+        tab_cache.set_tab_cache(self.user.id, "movie", [row])
+
+        rows = tab_cache.apply_cached_action(
+            self.user.id,
+            "movie",
+            "movie",
+            media_id="101",
+            source="tmdb",
+            show_more=False,
+        )
+
+        self.assertIsNotNone(rows)
+        self.assertEqual(rows[0].items[0].title, "Promoted Movie")
+        self.assertEqual(rows[0].items[0].image, "https://example.com/hydrated.jpg")
+        mock_hydrate_visible_row_artwork.assert_called_once()
 
     def test_store_and_restore_undo_snapshot_restores_prior_rows(self):
         original_rows = [self._row(title="Before Undo", reserve_title="Undo Reserve")]

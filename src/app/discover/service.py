@@ -3690,6 +3690,46 @@ def _hydrate_trakt_ranked_artwork(
             candidate.image = image
 
 
+def hydrate_visible_row_artwork(row: RowResult) -> None:
+    """Hydrate missing artwork for currently visible row items.
+
+    This is used by the optimistic Discover tab-cache patching path so a
+    reserve item promoted into the visible 12 can render with poster artwork
+    immediately instead of waiting for a later full row rebuild.
+    """
+    if not row.items:
+        return
+
+    if not any(_is_missing_image(item) for item in row.items[:MAX_ITEMS_PER_ROW]):
+        return
+
+    effective_media_type = next(
+        (
+            candidate.media_type
+            for candidate in [*row.items, *row.reserve_items]
+            if candidate.media_type
+        ),
+        None,
+    )
+    if not effective_media_type:
+        return
+
+    if effective_media_type in {
+        MediaTypes.MOVIE.value,
+        MediaTypes.TV.value,
+        MediaTypes.ANIME.value,
+    } and row.key in {
+        "trending_right_now",
+        "all_time_greats_unseen",
+        "coming_soon",
+    }:
+        _hydrate_trakt_ranked_artwork(effective_media_type, row.items)
+        return
+
+    if row.source == "provider" and row.key in PROVIDER_ARTWORK_HYDRATION_ROW_KEYS:
+        _hydrate_provider_ranked_artwork(row.items)
+
+
 def _blocked_statuses_for_row(row_definition: RowDefinition) -> set[str] | None:
     if row_definition.key in {"trending_right_now", "all_time_greats_unseen", "coming_soon"}:
         return {

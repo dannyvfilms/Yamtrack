@@ -640,6 +640,8 @@ def apply_cached_action(
     show_more: bool = False,
 ) -> list[RowResult] | None:
     """Optimistically patch cached Discover tabs after a card action."""
+    from app.discover.service import hydrate_visible_row_artwork
+
     identity = (
         _normalize_media_type(candidate_media_type),
         str(source),
@@ -666,6 +668,8 @@ def apply_cached_action(
             ]
 
         rows = _rebalance_rows(rows)
+        for row in rows:
+            hydrate_visible_row_artwork(row)
         set_tab_cache(
             user_id,
             entry["media_type"],

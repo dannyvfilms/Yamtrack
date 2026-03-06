@@ -22,9 +22,13 @@
           {% else %}
             <a href="{% if media.album %}{% url 'album_detail' media.album.id %}{% elif use_podcast_show|default:False and podcast_show %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=podcast_show.podcast_uuid title=podcast_show.slug|default:podcast_show.title|default:podcast_show.podcast_uuid|slug %}{% elif public_view|default:False %}{{ item|media_url }}?public_view=1{% else %}{{ item|media_url }}{% endif %}">
               <img alt="{% if use_podcast_show|default:False and podcast_show %}{{ podcast_show.title }}{% elif resolved_media_type == MediaTypes.SEASON.value and item.season_number %}Season {{ item.season_number }}{% else %}{{ resolved_item_title|default:title }}{% endif %}"
-                   class="media-card-poster lazyload w-full {% if from_grid %}{% if resolved_media_type == 'podcast' or resolved_media_type == 'music' %}aspect-[1/1]{% else %}aspect-[2/3] aspect-2/3{% endif %}{% else %}h-48{% endif %} bg-[#3e454d] {% if item.image != IMG_NONE %}object-cover{% endif %}"
+                   class="media-card-poster {% if hover_action_mode != 'discover' %}lazyload{% endif %} w-full {% if from_grid %}{% if resolved_media_type == 'podcast' or resolved_media_type == 'music' %}aspect-[1/1]{% else %}aspect-[2/3] aspect-2/3{% endif %}{% else %}h-48{% endif %} bg-[#3e454d] {% if item.image != IMG_NONE %}object-cover{% endif %}"
+                   {% if hover_action_mode == 'discover' %}
+                   src="{% if use_podcast_show|default:False and podcast_show and podcast_show.image %}{{ podcast_show.image }}{% else %}{{ item.image|default:IMG_NONE }}{% endif %}"
+                   {% else %}
                    data-src="{% if use_podcast_show|default:False and podcast_show and podcast_show.image %}{{ podcast_show.image }}{% else %}{{ item.image|default:IMG_NONE }}{% endif %}"
-                   src="{{ IMG_NONE }}">
+                   src="{{ IMG_NONE }}"
+                   {% endif %}>
             </a>
           {% endif %}
 

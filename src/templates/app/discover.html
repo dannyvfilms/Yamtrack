@@ -53,22 +53,27 @@
       Refreshing recommendations in background...
     </div>
 
-    <div x-cloak
-         x-show="toastVisible"
-         class="fixed bottom-4 right-4 z-50 w-[min(26rem,calc(100vw-2rem))] rounded-lg border border-gray-700 bg-[#1f2429] px-4 py-3 shadow-2xl">
-      <div class="flex items-start gap-3">
-        <p class="flex-1 text-sm text-gray-100" x-text="toastMessage"></p>
-        <button x-show="undoToken"
-                type="button"
-                @click="undoAction()"
-                class="shrink-0 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-indigo-500 cursor-pointer">
-          Undo
-        </button>
-        <button type="button"
-                @click="dismissToast()"
-                class="shrink-0 text-gray-400 transition-colors hover:text-white cursor-pointer">
-          &times;
-        </button>
+    <div x-show="toastVisible"
+         x-cloak
+         x-transition
+         class="fixed top-24 right-0 left-0 {% block messages_sidebar_offset %}lg:left-64{% endblock messages_sidebar_offset %} z-50 flex justify-center pointer-events-none mb-4">
+      <div class="w-full max-w-xl px-4 pointer-events-auto">
+        <div class="flex items-center gap-2 rounded-md border px-3 py-2 shadow-lg text-white toast-info"
+             x-init="$watch('toastVisible', v => { if (v) { $el.classList.remove('opacity-100','transform-none'); $el.classList.add('opacity-0','translate-y-[-1rem]'); setTimeout(() => $el.classList.add('opacity-100','transform-none'), 10); } })"
+             :class="{ 'transition-all duration-300 ease-out': true }">
+          {% include "app/icons/checkmark.svg" with classes="w-4 h-4 text-indigo-300 shrink-0" %}
+          <p class="text-sm font-medium flex-1" x-text="toastMessage"></p>
+          <button x-show="undoToken"
+                  type="button"
+                  @click="undoAction()"
+                  class="shrink-0 rounded-md bg-indigo-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-indigo-400 cursor-pointer">
+            Undo
+          </button>
+          <button class="text-current opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
+                  @click="dismissToast()">
+            {% include "app/icons/x.svg" with classes="w-4 h-4" %}
+          </button>
+        </div>
       </div>
     </div>
 
@@ -137,7 +142,7 @@
           this.toastMessage = detail.message || "";
           this.undoToken = detail.undo_token || "";
           this.toastVisible = Boolean(this.toastMessage || this.undoToken);
-          this.toastTimer = setTimeout(() => this.dismissToast(), 60000);
+          this.toastTimer = setTimeout(() => this.dismissToast(), 8000);
         },
         dismissToast() {
           this.clearToastTimer();
@@ -284,6 +289,9 @@
             target.innerHTML = html;
             if (window.htmx) {
               window.htmx.process(target);
+            }
+            if (typeof initMediaCardHover === 'function') {
+              initMediaCardHover();
             }
           }
           this.dismissToast();
