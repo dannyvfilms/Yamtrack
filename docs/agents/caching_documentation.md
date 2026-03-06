@@ -96,18 +96,22 @@
   - Schedule dedupe: `discover_tab_v1_refresh_scheduled_{user_id}_{activity_version}_{media_type}_{show_more}`.
   - Active-page context: `discover_tab_v1_active_{user_id}`.
   - Request warmup throttle: `discover_tab_v1_request_warm_{user_id}`.
+  - Discover action undo snapshot: `discover_action_undo_v1_{user_id}_{token}`.
 - Tab payload fields:
   - `built_at`
   - `activity_version`
   - `media_type`
   - `show_more`
   - serialized `rows`
+  - per-row `reserve_items` used for immediate card replacement after a quick action
+  - `optimistic_refreshing` when the cached tab was locally patched and a background rebuild is still pending
 - TTL/stale:
   - Tab payload TTL: 6h.
   - Stale after: 15m.
   - Refresh lock TTL: 5m.
   - Active Discover context TTL: 45s.
   - Request warmup throttle TTL: 15m.
+  - Undo snapshot TTL: 60s.
   - Recently-built window for UI polling: 60s.
 - Lower cache layers kept in DB:
   - `DiscoverRowCache` for row payloads.
@@ -128,6 +132,17 @@
   - Lower-level row/profile caches are cleared immediately.
   - Provider API cache is cleared only for manual refreshes (`DiscoverApiCache` is not cleared for automatic invalidation).
   - The UI polls `cache_status?cache_type=discover&media_type=...&show_more=...` and re-fetches only `#discover-rows` when the rebuild completes.
+- Discover quick-action fast path:
+  - Discover cards can post `planning`, `dismiss`, or `undo` to `discover_action`.
+  - `planning` creates a visible tracked row only if the user does not already track that concrete media item; existing tracked rows are treated as a no-op success and do not create duplicates or undo state.
+  - `dismiss` writes `DiscoverFeedback(not_interested)` and never creates a visible library entry.
+  - Cached tabs are patched optimistically via `apply_cached_action()`:
+    - remove the acted-on identity from visible `items` and hidden `reserve_items`
+    - rebalance rows immediately from `reserve_items`
+    - preserve existing cross-row dedupe semantics
+    - mark the tab payload with `optimistic_refreshing=True`
+  - Undo uses the Redis snapshot key above to restore the prior cached tab payloads and reverse the side effect for up to 60 seconds.
+  - The optimistic patch is only a UI fast path; the normal background rebuild still runs afterward to refill reserves, recompute profiles, and rerank rows.
 - Invalidation triggers:
   - Tracked-media saves/deletes invalidate the affected media type plus `all`.
     - `movie -> movie + all`
@@ -146,6 +161,12 @@
     - History refresh is delayed to 15s.
     - Statistics refresh is delayed to 20s.
   - This is queue prioritization and dedupe, not task cancellation.
+- Discover feedback model:
+  - Hidden dismiss feedback is stored in `DiscoverFeedback`, not in the global visible `Status` enum.
+  - Recommendation suppression and negative-learning are same-media-type only, plus the `all` tab through that media type's contribution.
+  - Exact-item filtering excludes hidden feedback from all Discover rows, including provider-backed rows.
+  - Similarity downranking currently applies only to local/personalized Discover rows using negative genre/tag/person affinities derived from dismissed items.
+  - When a user later tracks the same item normally, the matching `DiscoverFeedback(not_interested)` row is deleted automatically.
 
 ## Metadata refresh overlay (runtime + genre backfill)
 - Statistics day builds detect missing runtime/genres and enqueue backfills:

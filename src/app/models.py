@@ -3845,6 +3845,52 @@ class ItemTag(models.Model):
         return f"{self.tag.name} -> {self.item.title}"
 
 
+class DiscoverFeedbackType(models.TextChoices):
+    """Choices for hidden Discover feedback on an item."""
+
+    NOT_INTERESTED = "not_interested", "Not interested"
+
+
+class DiscoverFeedback(models.Model):
+    """Hidden per-item Discover feedback used for recommendation suppression."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="discover_feedback",
+    )
+    item = models.ForeignKey(
+        Item,
+        on_delete=models.CASCADE,
+        related_name="discover_feedback",
+    )
+    feedback_type = models.CharField(
+        max_length=32,
+        choices=DiscoverFeedbackType,
+        default=DiscoverFeedbackType.NOT_INTERESTED,
+    )
+    source_context = models.CharField(max_length=32, default="discover")
+    row_key = models.CharField(max_length=100, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["user_id", "feedback_type", "-updated_at"]
+        constraints = [
+            UniqueConstraint(
+                fields=["user", "item", "feedback_type"],
+                name="discover_feedback_unique_user_item_feedback_type",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["user", "feedback_type", "updated_at"]),
+            models.Index(fields=["item"]),
+        ]
+
+    def __str__(self):
+        return f"{self.user_id}:{self.item_id}:{self.feedback_type}"
+
+
 class DiscoverApiCache(models.Model):
     """DB-backed cache for external Discover endpoint payloads."""
 
@@ -3888,6 +3934,9 @@ class DiscoverTasteProfile(models.Model):
     recent_tag_affinity = models.JSONField(default=dict, blank=True)
     phase_tag_affinity = models.JSONField(default=dict, blank=True)
     person_affinity = models.JSONField(default=dict, blank=True)
+    negative_genre_affinity = models.JSONField(default=dict, blank=True)
+    negative_tag_affinity = models.JSONField(default=dict, blank=True)
+    negative_person_affinity = models.JSONField(default=dict, blank=True)
     activity_snapshot_at = models.DateTimeField(null=True, blank=True)
     computed_at = models.DateTimeField(auto_now=True)
     expires_at = models.DateTimeField()

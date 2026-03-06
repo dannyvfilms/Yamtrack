@@ -2,15 +2,37 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from unittest.mock import patch
 
-from app.discover.filters import dedupe_candidates, exclude_tracked_items, get_tracked_keys_by_media_type
+from app.discover.filters import (
+    dedupe_candidates,
+    exclude_tracked_items,
+    get_feedback_keys_by_media_type,
+    get_tracked_keys_by_media_type,
+)
 from app.discover.schemas import CandidateItem
-from app.models import Item, MediaTypes, Movie, Sources, Status
+from app.models import (
+    DiscoverFeedback,
+    DiscoverFeedbackType,
+    Item,
+    MediaTypes,
+    Movie,
+    Sources,
+    Status,
+)
 
 
 class DiscoverFilterTests(TestCase):
     """Tests for Discover candidate filtering helpers."""
 
     def setUp(self):
+        self.signal_patches = [
+            patch("app.signals._handle_media_cache_change"),
+            patch("app.signals._sync_owner_smart_lists_for_items"),
+            patch("app.signals._schedule_credits_backfill_if_needed"),
+            patch("app.models.Item.fetch_releases"),
+        ]
+        for patcher in self.signal_patches:
+            patcher.start()
+
         self.user = get_user_model().objects.create_user(username="discover-user", password="testpass")
         self.item = Item.objects.create(
             media_id="100",
@@ -37,6 +59,10 @@ class DiscoverFilterTests(TestCase):
                 user=self.user,
                 status=Status.PLANNING.value,
             )
+
+    def tearDown(self):
+        for patcher in reversed(self.signal_patches):
+            patcher.stop()
 
     def test_get_tracked_keys_by_media_type(self):
         tracked = get_tracked_keys_by_media_type(self.user, MediaTypes.MOVIE.value)
@@ -72,6 +98,30 @@ class DiscoverFilterTests(TestCase):
         filtered = exclude_tracked_items(candidates, tracked)
         self.assertEqual(len(filtered), 1)
         self.assertEqual(filtered[0].media_id, "101")
+
+    def test_get_feedback_keys_by_media_type_returns_hidden_items(self):
+        feedback_item = Item.objects.create(
+            media_id="202",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Dismissed Movie",
+            image="http://example.com/dismissed.jpg",
+        )
+        DiscoverFeedback.objects.create(
+            user=self.user,
+            item=feedback_item,
+            feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
+        )
+
+        feedback_keys = get_feedback_keys_by_media_type(
+            self.user,
+            MediaTypes.MOVIE.value,
+        )
+
+        self.assertEqual(
+            feedback_keys,
+            {(MediaTypes.MOVIE.value, Sources.TMDB.value, "202")},
+        )
 
     def test_dedupe_candidates_respects_seen_set(self):
         seen = {(MediaTypes.MOVIE.value, Sources.TMDB.value, "100")}

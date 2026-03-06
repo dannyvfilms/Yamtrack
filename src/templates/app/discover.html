@@ -53,6 +53,25 @@
       Refreshing recommendations in background...
     </div>
 
+    <div x-cloak
+         x-show="toastVisible"
+         class="fixed bottom-4 right-4 z-50 w-[min(26rem,calc(100vw-2rem))] rounded-lg border border-gray-700 bg-[#1f2429] px-4 py-3 shadow-2xl">
+      <div class="flex items-start gap-3">
+        <p class="flex-1 text-sm text-gray-100" x-text="toastMessage"></p>
+        <button x-show="undoToken"
+                type="button"
+                @click="undoAction()"
+                class="shrink-0 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-indigo-500 cursor-pointer">
+          Undo
+        </button>
+        <button type="button"
+                @click="dismissToast()"
+                class="shrink-0 text-gray-400 transition-colors hover:text-white cursor-pointer">
+          &times;
+        </button>
+      </div>
+    </div>
+
     <div id="discover-rows">
       {% include "app/components/discover_rows.html" with rows=rows selected_media_type=selected_media_type show_more=show_more discover_debug=discover_debug discover_loading=discover_loading %}
     </div>
@@ -70,17 +89,61 @@
         cacheRefreshing: Boolean(initialCacheRefreshing),
         cacheUpdater: null,
         rowsSwapHandler: null,
+        rowsRefreshListener: null,
+        discoverActionListener: null,
+        toastMessage: "",
+        undoToken: "",
+        toastVisible: false,
+        toastTimer: null,
         init() {
           this.updateUrl();
+          this.bindEvents();
           if (this.discoverDebug) {
             return;
           }
           this.syncCacheUpdater();
           this.checkCacheStatus();
         },
+        bindEvents() {
+          this.rowsRefreshListener = (event) => {
+            if (!event.target || event.target.id !== "discover-rows") {
+              return;
+            }
+            if (this.discoverDebug) {
+              this.resetRefreshState();
+              return;
+            }
+            this.checkCacheStatus();
+          };
+          document.body.addEventListener("htmx:afterSwap", this.rowsRefreshListener);
+
+          this.discoverActionListener = (event) => {
+            this.showToast(event.detail || {});
+          };
+          document.body.addEventListener("discoverActionComplete", this.discoverActionListener);
+        },
         resetRefreshState() {
           this.refreshing = false;
           this.cacheRefreshing = false;
+        },
+        clearToastTimer() {
+          if (this.toastTimer) {
+            clearTimeout(this.toastTimer);
+            this.toastTimer = null;
+          }
+        },
+        showToast(detail) {
+          this.clearToastTimer();
+          this.toastMessage = detail.message || "";
+          this.undoToken = detail.undo_token || "";
+          this.toastVisible = Boolean(this.toastMessage || this.undoToken);
+          this.toastTimer = setTimeout(() => this.dismissToast(), 60000);
+        },
+        dismissToast() {
+          this.clearToastTimer();
+          this.toastVisible = false;
+          this.toastMessage = "";
+          this.undoToken = "";
         },
         stopCacheUpdater() {
           if (this.cacheUpdater) {
@@ -191,6 +254,44 @@
             swap: "innerHTML",
           });
           this.updateUrl();
+        },
+        async undoAction() {
+          if (!this.undoToken) {
+            return;
+          }
+
+          const body = new FormData();
+          body.append("action", "undo");
+          body.append("undo_token", this.undoToken);
+          body.append("active_media_type", this.selectedMedia);
+          body.append("show_more", this.showMore ? "1" : "0");
+          if (this.discoverDebug) {
+            body.append("discover_debug", "1");
+          }
+
+          const response = await fetch("{% url 'discover_action' %}", {
+            method: "POST",
+            headers: {"X-CSRFToken": "{{ csrf_token }}"},
+            body,
+          });
+          if (!response.ok) {
+            return;
+          }
+
+          const html = await response.text();
+          const target = document.getElementById("discover-rows");
+          if (target) {
+            target.innerHTML = html;
+            if (window.htmx) {
+              window.htmx.process(target);
+            }
+          }
+          this.dismissToast();
+          if (this.discoverDebug) {
+            this.resetRefreshState();
+            return;
+          }
+          this.checkCacheStatus();
         },
         switchMedia(mediaType) {
           if (this.selectedMedia === mediaType) {

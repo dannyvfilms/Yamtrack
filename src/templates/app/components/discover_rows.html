@@ -3,7 +3,7 @@
 {% if rows %}
   <div class="space-y-8">
     {% for row in rows %}
-      {% include "app/components/discover_row.html" with row=row discover_debug=discover_debug %}
+      {% include "app/components/discover_row.html" with row=row discover_debug=discover_debug selected_media_type=selected_media_type show_more=show_more %}
     {% endfor %}
   </div>
 {% elif discover_loading %}

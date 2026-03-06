@@ -8,14 +8,16 @@ import logging
 from dataclasses import dataclass
 from datetime import timedelta
 from urllib.parse import parse_qsl, urlparse
+from uuid import uuid4
 
+from django.conf import settings
 from django.core.cache import cache
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 
 from app.discover.registry import ALL_MEDIA_KEY, DISCOVER_MEDIA_TYPES
-from app.discover.schemas import RowResult
+from app.discover.schemas import CandidateItem, RowResult
 from app.models import (
     DiscoverApiCache,
     DiscoverRowCache,
@@ -32,11 +34,13 @@ DISCOVER_TAB_REFRESH_LOCK_PREFIX = f"{DISCOVER_TAB_PREFIX}_refresh_lock"
 DISCOVER_TAB_ACTIVITY_VERSION_PREFIX = f"{DISCOVER_TAB_PREFIX}_activity_version"
 DISCOVER_TAB_REFRESH_SCHEDULED_PREFIX = f"{DISCOVER_TAB_PREFIX}_refresh_scheduled"
 DISCOVER_TAB_ACTIVE_PREFIX = f"{DISCOVER_TAB_PREFIX}_active"
+DISCOVER_ACTION_UNDO_PREFIX = "discover_action_undo_v1"
 DISCOVER_TAB_TIMEOUT = 60 * 60 * 6
 DISCOVER_TAB_STALE_AFTER = timedelta(minutes=15)
 DISCOVER_TAB_REFRESH_LOCK_TTL = 60 * 5
 DISCOVER_TAB_REFRESH_SCHEDULED_TTL = 60 * 10
 DISCOVER_TAB_ACTIVE_TTL = 45
+DISCOVER_ACTION_UNDO_TTL = 60
 DISCOVER_TAB_RECENTLY_BUILT_SECONDS = 60
 DISCOVER_REQUEST_WARMUP_PREFIX = f"{DISCOVER_TAB_PREFIX}_request_warm"
 DISCOVER_REQUEST_WARMUP_TTL = 60 * 15
@@ -46,6 +50,7 @@ DISCOVER_PRIORITY_REFRESH_DEBOUNCE_SECONDS = 0
 DISCOVER_PRIORITY_REFRESH_COUNTDOWN = 0
 DISCOVER_WARM_SIBLING_DEBOUNCE_SECONDS = 60
 DISCOVER_WARM_SIBLING_COUNTDOWN = 10
+DISCOVER_VISIBLE_ITEMS_PER_ROW = 12
 
 DISCOVER_PROVIDER_BY_MEDIA_TYPE = {
     ALL_MEDIA_KEY: {Sources.TMDB.value},
@@ -125,6 +130,10 @@ def _request_warmup_key(user_id: int) -> str:
     return f"{DISCOVER_REQUEST_WARMUP_PREFIX}_{user_id}"
 
 
+def _action_undo_key(user_id: int, token: str) -> str:
+    return f"{DISCOVER_ACTION_UNDO_PREFIX}_{user_id}_{token}"
+
+
 def _parse_cached_datetime(value):
     if not value:
         return None
@@ -156,8 +165,15 @@ def _lock_is_stale(value) -> bool:
     )
 
 
-def _serialize_rows(rows: list[RowResult]) -> list[dict]:
-    return [row.to_dict() for row in rows]
+def _should_enqueue_refresh_tasks() -> bool:
+    """Return whether Discover refreshes should hit Celery in this process."""
+    if getattr(settings, "TESTING", False):
+        return bool(getattr(settings, "DISCOVER_TASKS_EAGER_REFRESH", False))
+    return True
+
+
+def _serialize_rows(rows: list[RowResult], *, include_reserve: bool = False) -> list[dict]:
+    return [row.to_dict(include_reserve=include_reserve) for row in rows]
 
 
 def _deserialize_rows(payload_rows) -> list[RowResult]:
@@ -196,6 +212,8 @@ def get_tab_cache(user_id: int, media_type: str, *, show_more: bool = False):
     current_version = _get_activity_version(user_id, media_type)
     cached_version = str(payload.get("activity_version") or "")
     is_stale = cached_version != current_version
+    if payload.get("optimistic_refreshing"):
+        is_stale = True
     if built_at:
         is_stale = is_stale or (timezone.now() - built_at > DISCOVER_TAB_STALE_AFTER)
 
@@ -227,6 +245,7 @@ def set_tab_cache(
     *,
     show_more: bool = False,
     activity_version: str | None = None,
+    optimistic_refreshing: bool = False,
 ) -> dict:
     """Persist a serialized Discover tab payload."""
     media_type = _normalize_media_type(media_type)
@@ -236,7 +255,8 @@ def set_tab_cache(
         or _get_activity_version(user_id, media_type),
         "media_type": media_type,
         "show_more": bool(show_more),
-        "rows": _serialize_rows(rows),
+        "rows": _serialize_rows(rows, include_reserve=True),
+        "optimistic_refreshing": bool(optimistic_refreshing),
     }
     cache.set(
         _tab_cache_key(user_id, media_type, show_more=show_more),
@@ -411,6 +431,68 @@ def should_prioritize(
     return active_context.media_type in target_media_types
 
 
+def _action_target_media_types(
+    active_media_type: str,
+    candidate_media_type: str,
+) -> list[str]:
+    targets = {
+        _normalize_media_type(active_media_type),
+        _normalize_media_type(candidate_media_type),
+        ALL_MEDIA_KEY,
+    }
+    return [
+        media_type
+        for media_type in targets
+        if media_type == ALL_MEDIA_KEY or media_type in DISCOVER_MEDIA_TYPES
+    ]
+
+
+def _candidate_matches(item: CandidateItem, identity: tuple[str, str, str]) -> bool:
+    return item.identity() == identity
+
+
+def _row_pool_without_identity(
+    row: RowResult,
+    identity: tuple[str, str, str],
+) -> list[CandidateItem]:
+    return [
+        candidate
+        for candidate in [*row.items, *row.reserve_items]
+        if not _candidate_matches(candidate, identity)
+    ]
+
+
+def _rebalance_rows(rows: list[RowResult]) -> list[RowResult]:
+    seen_visible_identities: set[tuple[str, str, str]] = set()
+    for row in rows:
+        pool = [*row.items, *row.reserve_items]
+        unique_pool: list[CandidateItem] = []
+        seen_row_identities: set[tuple[str, str, str]] = set()
+        for candidate in pool:
+            identity = candidate.identity()
+            if identity in seen_row_identities:
+                continue
+            seen_row_identities.add(identity)
+            unique_pool.append(candidate)
+
+        if row.key == "all_time_greats_unseen":
+            visible_items = unique_pool[:DISCOVER_VISIBLE_ITEMS_PER_ROW]
+            reserve_items = unique_pool[DISCOVER_VISIBLE_ITEMS_PER_ROW:]
+        else:
+            allowed_pool = [
+                candidate
+                for candidate in unique_pool
+                if candidate.identity() not in seen_visible_identities
+            ]
+            visible_items = allowed_pool[:DISCOVER_VISIBLE_ITEMS_PER_ROW]
+            reserve_items = allowed_pool[DISCOVER_VISIBLE_ITEMS_PER_ROW:]
+
+        row.items = visible_items
+        row.reserve_items = reserve_items
+        seen_visible_identities.update(item.identity() for item in row.items)
+    return rows
+
+
 def schedule_tab_refresh(
     user_id: int,
     media_type: str,
@@ -453,6 +535,9 @@ def schedule_tab_refresh(
         if not cache.add(scheduled_key, 1, timeout=DISCOVER_TAB_REFRESH_SCHEDULED_TTL):
             cache.delete(lock_key)
             return False
+
+    if not _should_enqueue_refresh_tasks():
+        return True
 
     try:
         from app.tasks import refresh_discover_tab_cache
@@ -517,6 +602,175 @@ def refresh_tab_cache(
         return rows
     finally:
         cache.delete(_refresh_lock_key(user.id, media_type, show_more=show_more))
+
+
+def _collect_cached_action_payloads(
+    user_id: int,
+    active_media_type: str,
+    candidate_media_type: str,
+) -> list[dict]:
+    payloads: list[dict] = []
+    seen_keys: set[str] = set()
+    for media_type in _action_target_media_types(active_media_type, candidate_media_type):
+        for show_more in (False, True):
+            cache_key = _tab_cache_key(user_id, media_type, show_more=show_more)
+            if cache_key in seen_keys:
+                continue
+            seen_keys.add(cache_key)
+            payload = cache.get(cache_key)
+            if not payload:
+                continue
+            payloads.append(
+                {
+                    "media_type": media_type,
+                    "show_more": bool(show_more),
+                    "payload": payload,
+                },
+            )
+    return payloads
+
+
+def apply_cached_action(
+    user_id: int,
+    active_media_type: str,
+    candidate_media_type: str,
+    *,
+    media_id: str,
+    source: str,
+    show_more: bool = False,
+) -> list[RowResult] | None:
+    """Optimistically patch cached Discover tabs after a card action."""
+    identity = (
+        _normalize_media_type(candidate_media_type),
+        str(source),
+        str(media_id),
+    )
+    active_rows: list[RowResult] | None = None
+
+    for entry in _collect_cached_action_payloads(
+        user_id,
+        active_media_type,
+        candidate_media_type,
+    ):
+        rows = _deserialize_rows(entry["payload"].get("rows"))
+        for row in rows:
+            row.items = [
+                candidate
+                for candidate in row.items
+                if not _candidate_matches(candidate, identity)
+            ]
+            row.reserve_items = [
+                candidate
+                for candidate in row.reserve_items
+                if not _candidate_matches(candidate, identity)
+            ]
+
+        rows = _rebalance_rows(rows)
+        set_tab_cache(
+            user_id,
+            entry["media_type"],
+            rows,
+            show_more=bool(entry["show_more"]),
+            activity_version=_get_activity_version(user_id, entry["media_type"]),
+            optimistic_refreshing=True,
+        )
+        if (
+            entry["media_type"] == _normalize_media_type(active_media_type)
+            and bool(entry["show_more"]) == bool(show_more)
+        ):
+            active_rows = rows
+
+    return active_rows
+
+
+def store_undo_snapshot(
+    user_id: int,
+    *,
+    action: str,
+    active_media_type: str,
+    candidate_media_type: str,
+    show_more: bool = False,
+    side_effect: dict | None = None,
+) -> str | None:
+    """Persist a short-lived undo snapshot for Discover card actions."""
+    tabs = _collect_cached_action_payloads(
+        user_id,
+        active_media_type,
+        candidate_media_type,
+    )
+    if not tabs and not side_effect:
+        return None
+
+    token = uuid4().hex
+    cache.set(
+        _action_undo_key(user_id, token),
+        {
+            "action": action,
+            "active_media_type": _normalize_media_type(active_media_type),
+            "candidate_media_type": _normalize_media_type(candidate_media_type),
+            "show_more": bool(show_more),
+            "side_effect": side_effect or {},
+            "tabs": tabs,
+        },
+        timeout=DISCOVER_ACTION_UNDO_TTL,
+    )
+    return token
+
+
+def get_undo_snapshot(user_id: int, token: str) -> dict | None:
+    """Return an undo snapshot without restoring cached payloads."""
+    snapshot = cache.get(_action_undo_key(user_id, token))
+    return snapshot if isinstance(snapshot, dict) else None
+
+
+def update_undo_snapshot(
+    user_id: int,
+    token: str,
+    *,
+    side_effect: dict,
+) -> bool:
+    """Attach side-effect metadata to an existing undo snapshot."""
+    cache_key = _action_undo_key(user_id, token)
+    snapshot = cache.get(cache_key)
+    if not isinstance(snapshot, dict):
+        return False
+    snapshot["side_effect"] = side_effect
+    cache.set(cache_key, snapshot, timeout=DISCOVER_ACTION_UNDO_TTL)
+    return True
+
+
+def restore_undo_snapshot(
+    user_id: int,
+    token: str,
+) -> dict | None:
+    """Restore cached Discover payloads from an undo snapshot."""
+    cache_key = _action_undo_key(user_id, token)
+    snapshot = cache.get(cache_key)
+    if not isinstance(snapshot, dict):
+        return None
+
+    for entry in snapshot.get("tabs") or []:
+        media_type = _normalize_media_type(entry.get("media_type"))
+        show_more = bool(entry.get("show_more"))
+        payload = entry.get("payload")
+        if not payload:
+            continue
+        cache.set(
+            _tab_cache_key(user_id, media_type, show_more=show_more),
+            payload,
+            timeout=DISCOVER_TAB_TIMEOUT,
+        )
+
+    cache.delete(cache_key)
+    active_payload = cache.get(
+        _tab_cache_key(
+            user_id,
+            snapshot.get("active_media_type"),
+            show_more=bool(snapshot.get("show_more")),
+        ),
+    )
+    snapshot["rows"] = _deserialize_rows((active_payload or {}).get("rows"))
+    return snapshot
 
 
 def get_tab_rows(
@@ -710,8 +964,13 @@ def maybe_schedule_user_warmup(
     )
 
 
-def invalidate_for_media_change(user_id: int, media_type: str) -> list[str]:
-    """Invalidate affected Discover tabs for a tracked media change."""
+def _invalidate_targets(
+    user_id: int,
+    media_type: str,
+    *,
+    debounce_seconds: int,
+    countdown: int,
+) -> list[str]:
     active_context = get_active_context(user_id)
     targets = target_media_types_for_change(media_type)
     for target_media_type in targets:
@@ -730,12 +989,12 @@ def invalidate_for_media_change(user_id: int, media_type: str) -> list[str]:
             debounce_seconds=(
                 DISCOVER_PRIORITY_REFRESH_DEBOUNCE_SECONDS
                 if prioritized
-                else DISCOVER_DEFAULT_REFRESH_DEBOUNCE_SECONDS
+                else debounce_seconds
             ),
             countdown=(
                 DISCOVER_PRIORITY_REFRESH_COUNTDOWN
                 if prioritized
-                else DISCOVER_DEFAULT_REFRESH_COUNTDOWN
+                else countdown
             ),
         )
         if prioritized_show_more:
@@ -743,8 +1002,27 @@ def invalidate_for_media_change(user_id: int, media_type: str) -> list[str]:
                 user_id,
                 target_media_type,
                 show_more=False,
-                debounce_seconds=DISCOVER_DEFAULT_REFRESH_DEBOUNCE_SECONDS,
-                countdown=DISCOVER_DEFAULT_REFRESH_COUNTDOWN,
+                debounce_seconds=debounce_seconds,
+                countdown=countdown,
             )
-
     return targets
+
+
+def invalidate_for_media_change(user_id: int, media_type: str) -> list[str]:
+    """Invalidate affected Discover tabs for a tracked media change."""
+    return _invalidate_targets(
+        user_id,
+        media_type,
+        debounce_seconds=DISCOVER_DEFAULT_REFRESH_DEBOUNCE_SECONDS,
+        countdown=DISCOVER_DEFAULT_REFRESH_COUNTDOWN,
+    )
+
+
+def invalidate_for_feedback_change(user_id: int, media_type: str) -> list[str]:
+    """Invalidate Discover immediately after hidden feedback changes."""
+    return _invalidate_targets(
+        user_id,
+        media_type,
+        debounce_seconds=DISCOVER_PRIORITY_REFRESH_DEBOUNCE_SECONDS,
+        countdown=DISCOVER_PRIORITY_REFRESH_COUNTDOWN,
+    )

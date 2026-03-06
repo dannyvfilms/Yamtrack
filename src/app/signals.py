@@ -1,4 +1,6 @@
 import logging
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from celery import states
 from celery.signals import before_task_publish
@@ -19,6 +21,8 @@ from app.models import (
     Book,
     Comic,
     CollectionEntry,
+    DiscoverFeedback,
+    DiscoverFeedbackType,
     Episode,
     Game,
     Item,
@@ -45,6 +49,25 @@ DISCOVER_PRIORITY_HISTORY_DEBOUNCE_SECONDS = 15
 DISCOVER_PRIORITY_HISTORY_COUNTDOWN = 15
 DISCOVER_PRIORITY_STATISTICS_DEBOUNCE_SECONDS = 20
 DISCOVER_PRIORITY_STATISTICS_COUNTDOWN = 20
+_SUPPRESS_MEDIA_CACHE_CHANGE_SIGNALS: ContextVar[bool] = ContextVar(
+    "suppress_media_cache_change_signals",
+    default=False,
+)
+
+
+@contextmanager
+def suppress_media_cache_change_signals():
+    """Temporarily skip tracked-media cache invalidation signal work."""
+    token = _SUPPRESS_MEDIA_CACHE_CHANGE_SIGNALS.set(True)
+    try:
+        yield
+    finally:
+        _SUPPRESS_MEDIA_CACHE_CHANGE_SIGNALS.reset(token)
+
+
+def media_cache_change_signals_suppressed() -> bool:
+    """Return whether tracked-media cache invalidation signals are suppressed."""
+    return bool(_SUPPRESS_MEDIA_CACHE_CHANGE_SIGNALS.get())
 
 
 @receiver(connection_created)
@@ -220,6 +243,8 @@ def _handle_media_cache_change(
 ) -> None:
     if not user_id:
         return
+    if media_cache_change_signals_suppressed():
+        return
 
     active_context = discover_tab_cache.get_active_context(user_id)
     prioritized = discover_tab_cache.should_prioritize(active_context, changed_media_type)
@@ -252,6 +277,30 @@ def _invalidate_discover_from_item_tag(instance) -> None:
     if not owner or not item:
         return
     discover_tab_cache.invalidate_for_media_change(owner.id, item.media_type)
+
+
+@receiver(post_save, sender=TV)
+@receiver(post_save, sender=Season)
+@receiver(post_save, sender=Anime)
+@receiver(post_save, sender=Movie)
+@receiver(post_save, sender=Manga)
+@receiver(post_save, sender=Book)
+@receiver(post_save, sender=Comic)
+@receiver(post_save, sender=Game)
+@receiver(post_save, sender=BoardGame)
+@receiver(post_save, sender=Music)
+@receiver(post_save, sender=Podcast)
+def clear_discover_feedback_on_media_save(sender, instance, **kwargs):  # noqa: ARG001
+    """Clear hidden Discover feedback when a user explicitly tracks an item."""
+    user_id = getattr(instance, "user_id", None)
+    item_id = getattr(instance, "item_id", None)
+    if not user_id or not item_id:
+        return
+    DiscoverFeedback.objects.filter(
+        user_id=user_id,
+        item_id=item_id,
+        feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
+    ).delete()
 
 
 def _discover_user_ids_for_credit_item(item) -> tuple[set[int], str | None]:

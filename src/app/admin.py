@@ -91,6 +91,7 @@ SpecialModels = [
     "CollectionEntry",
     "Tag",
     "ItemTag",
+    "DiscoverFeedback",
     "DiscoverApiCache",
     "DiscoverTasteProfile",
     "DiscoverRowCache",
@@ -240,6 +241,15 @@ class DiscoverTasteProfileAdmin(admin.ModelAdmin):
     raw_id_fields = ["user"]
 
 
+class DiscoverFeedbackAdmin(admin.ModelAdmin):
+    """Admin for DiscoverFeedback model."""
+
+    list_display = ["user", "item", "feedback_type", "source_context", "updated_at"]
+    list_filter = ["feedback_type", "source_context", "updated_at"]
+    search_fields = ["user__username", "item__title", "item__media_id"]
+    raw_id_fields = ["user", "item"]
+
+
 class DiscoverRowCacheAdmin(admin.ModelAdmin):
     """Admin for DiscoverRowCache model."""
 
@@ -249,8 +259,14 @@ class DiscoverRowCacheAdmin(admin.ModelAdmin):
     raw_id_fields = ["user"]
 
 
-from app.models import DiscoverApiCache, DiscoverRowCache, DiscoverTasteProfile  # noqa: E402
+from app.models import (  # noqa: E402
+    DiscoverApiCache,
+    DiscoverFeedback,
+    DiscoverRowCache,
+    DiscoverTasteProfile,
+)
 
+admin.site.register(DiscoverFeedback, DiscoverFeedbackAdmin)
 admin.site.register(DiscoverApiCache, DiscoverApiCacheAdmin)
 admin.site.register(DiscoverTasteProfile, DiscoverTasteProfileAdmin)
 admin.site.register(DiscoverRowCache, DiscoverRowCacheAdmin)

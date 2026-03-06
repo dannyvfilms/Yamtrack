@@ -5,7 +5,7 @@ from __future__ import annotations
 from django.apps import apps
 
 from app.discover.schemas import CandidateItem
-from app.models import MediaTypes, Status
+from app.models import DiscoverFeedback, DiscoverFeedbackType, MediaTypes, Status
 
 DEFAULT_BLOCKED_STATUSES = {
     Status.COMPLETED.value,
@@ -48,6 +48,39 @@ def get_tracked_keys_by_media_type(
             "item__source",
             "item__media_id",
             "status",
+        )
+    )
+
+    return {
+        (
+            str(row.item.media_type),
+            str(row.item.source),
+            str(row.item.media_id),
+        )
+        for row in rows
+        if row.item_id
+    }
+
+
+def get_feedback_keys_by_media_type(
+    user,
+    media_type: str,
+    *,
+    feedback_type: str = DiscoverFeedbackType.NOT_INTERESTED.value,
+) -> set[tuple[str, str, str]]:
+    """Return hidden Discover feedback identities for a media type."""
+    rows = (
+        DiscoverFeedback.objects.filter(
+            user=user,
+            item__media_type=media_type,
+            feedback_type=feedback_type,
+        )
+        .select_related("item")
+        .only(
+            "item__media_type",
+            "item__source",
+            "item__media_id",
+            "feedback_type",
         )
     )
 

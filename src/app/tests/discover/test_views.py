@@ -1,5 +1,6 @@
 # ruff: noqa: D102
 
+import json
 from unittest.mock import call, patch
 
 from django.contrib.auth import get_user_model
@@ -7,6 +8,16 @@ from django.test import TestCase
 from django.urls import reverse
 
 from app.discover.schemas import CandidateItem, RowResult
+from app.models import (
+    DiscoverFeedback,
+    DiscoverFeedbackType,
+    Item,
+    MediaTypes,
+    Movie,
+    Sources,
+    Status,
+)
+from app.services.tracking_hydration import HydratedItemResult
 from users.models import DateFormatChoices
 
 
@@ -21,11 +32,20 @@ class DiscoverViewTests(TestCase):
         self.user = get_user_model().objects.create_user(**self.credentials)
         self.user.date_format = DateFormatChoices.ISO_8601
         self.user.save(update_fields=["date_format"])
+        self.warmup_patcher = patch(
+            "app.middleware.discover_tab_cache.maybe_schedule_user_warmup",
+            return_value=0,
+        )
+        self.warmup_patcher.start()
         self.client.login(**self.credentials)
+
+    def tearDown(self):
+        self.warmup_patcher.stop()
 
     def _row(
         self,
         *,
+        title="Match Test Movie",
         final_score=None,
         release_date=None,
         row_key="top_picks_for_you",
@@ -35,7 +55,7 @@ class DiscoverViewTests(TestCase):
             media_type="movie",
             source="tmdb",
             media_id="9999",
-            title="Match Test Movie",
+            title=title,
             image="https://example.com/9999.jpg",
             release_date=release_date,
             final_score=final_score,
@@ -59,6 +79,15 @@ class DiscoverViewTests(TestCase):
             ),
             source=source,
             items=[candidate],
+        )
+
+    def _movie_item(self, media_id="9001", title="Action Movie"):
+        return Item.objects.create(
+            media_id=media_id,
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title=title,
+            image="https://example.com/movie.jpg",
         )
 
     @patch("app.views.discover_tab_cache.get_tab_status")
@@ -101,14 +130,14 @@ class DiscoverViewTests(TestCase):
 
     @patch("app.views.discover_tab_cache.get_tab_status")
     @patch("app.views.discover_tab_cache.warm_sibling_tabs")
-    @patch("app.views.discover_tab_cache.get_tab_rows")
+    @patch("app.views.discover.get_discover_rows")
     def test_discover_page_skips_sibling_warmup_in_debug_mode(
         self,
-        mock_get_tab_rows,
+        mock_get_discover_rows,
         mock_warm_sibling_tabs,
         mock_get_tab_status,
     ):
-        mock_get_tab_rows.return_value = []
+        mock_get_discover_rows.return_value = []
 
         response = self.client.get(
             reverse("discover"),
@@ -116,13 +145,12 @@ class DiscoverViewTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        mock_get_tab_rows.assert_called_once_with(
+        mock_get_discover_rows.assert_called_once_with(
             self.user,
             "movie",
             show_more=True,
             include_debug=True,
             defer_artwork=True,
-            allow_inline_bootstrap=False,
         )
         mock_get_tab_status.assert_not_called()
         mock_warm_sibling_tabs.assert_not_called()
@@ -287,3 +315,306 @@ class DiscoverViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "2026-03-04")
         self.assertNotContains(response, "% match")
+
+    @patch("app.views.discover_tab_cache.get_tab_status")
+    @patch("app.views.discover_tab_cache.warm_sibling_tabs")
+    @patch("app.views.discover_tab_cache.get_tab_rows")
+    def test_discover_page_renders_discover_quick_actions(
+        self,
+        mock_get_tab_rows,
+        _mock_warm_sibling_tabs,
+        mock_get_tab_status,
+    ):
+        mock_get_tab_rows.return_value = [self._row()]
+        mock_get_tab_status.return_value = {"is_refreshing": False}
+
+        response = self.client.get(reverse("discover"), {"media_type": "movie"})
+
+        self.assertContains(response, "Add to Planning")
+        self.assertContains(response, "Hide from Discover")
+        self.assertNotContains(response, "View your activity history")
+
+    @patch("app.models.Item.fetch_releases")
+    @patch("app.views.discover_tab_cache.invalidate_for_media_change")
+    @patch("app.views.discover_tab_cache.update_undo_snapshot")
+    @patch("app.views.discover_tab_cache.apply_cached_action")
+    @patch("app.views.discover_tab_cache.store_undo_snapshot", return_value="undo-123")
+    @patch("app.views.ensure_item_metadata")
+    def test_discover_action_planning_returns_rows_and_trigger(
+        self,
+        mock_ensure_item_metadata,
+        _mock_store_undo_snapshot,
+        mock_apply_cached_action,
+        mock_update_undo_snapshot,
+        mock_invalidate_for_media_change,
+        _mock_fetch_releases,
+    ):
+        item = self._movie_item()
+        mock_ensure_item_metadata.return_value = HydratedItemResult(
+            item=item,
+            metadata={},
+            created=False,
+        )
+        mock_apply_cached_action.return_value = [self._row(title="Updated Movie")]
+
+        response = self.client.post(
+            reverse("discover_action"),
+            {
+                "action": "planning",
+                "candidate_media_type": MediaTypes.MOVIE.value,
+                "source": Sources.TMDB.value,
+                "media_id": item.media_id,
+                "active_media_type": MediaTypes.MOVIE.value,
+                "show_more": "0",
+                "row_key": "top_picks_for_you",
+                "title": item.title,
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            Movie.objects.filter(
+                user=self.user,
+                item=item,
+                status=Status.PLANNING.value,
+            ).exists(),
+        )
+        trigger = json.loads(response["HX-Trigger"])
+        self.assertEqual(trigger["discoverActionComplete"]["action"], "planning")
+        self.assertEqual(trigger["discoverActionComplete"]["undo_token"], "undo-123")
+        mock_update_undo_snapshot.assert_called_once()
+        mock_invalidate_for_media_change.assert_called_once_with(
+            self.user.id,
+            MediaTypes.MOVIE.value,
+        )
+
+    @patch("app.views.discover_tab_cache.update_undo_snapshot")
+    @patch("app.views.discover_tab_cache.apply_cached_action")
+    @patch("app.views.discover_tab_cache.invalidate_for_feedback_change")
+    @patch("app.views.discover_tab_cache.store_undo_snapshot", return_value="undo-dismiss")
+    @patch("app.views.ensure_item_metadata")
+    def test_discover_action_dismiss_returns_rows_and_trigger(
+        self,
+        mock_ensure_item_metadata,
+        _mock_store_undo_snapshot,
+        mock_invalidate_for_feedback_change,
+        mock_apply_cached_action,
+        mock_update_undo_snapshot,
+    ):
+        item = self._movie_item(media_id="9002", title="Dismiss Me")
+        mock_ensure_item_metadata.return_value = HydratedItemResult(
+            item=item,
+            metadata={},
+            created=False,
+        )
+        mock_apply_cached_action.return_value = [self._row(title="Dismissed Replacement")]
+
+        response = self.client.post(
+            reverse("discover_action"),
+            {
+                "action": "dismiss",
+                "candidate_media_type": MediaTypes.MOVIE.value,
+                "source": Sources.TMDB.value,
+                "media_id": item.media_id,
+                "active_media_type": MediaTypes.MOVIE.value,
+                "show_more": "0",
+                "row_key": "top_picks_for_you",
+                "title": item.title,
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            DiscoverFeedback.objects.filter(
+                user=self.user,
+                item=item,
+                feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
+            ).exists(),
+        )
+        trigger = json.loads(response["HX-Trigger"])
+        self.assertEqual(trigger["discoverActionComplete"]["action"], "dismiss")
+        self.assertEqual(trigger["discoverActionComplete"]["undo_token"], "undo-dismiss")
+        mock_invalidate_for_feedback_change.assert_called_once_with(
+            self.user.id,
+            MediaTypes.MOVIE.value,
+        )
+        mock_update_undo_snapshot.assert_called_once()
+
+    @patch("app.views.discover_tab_cache.restore_undo_snapshot")
+    @patch("app.views.discover_tab_cache.get_undo_snapshot")
+    @patch("app.views.discover_tab_cache.invalidate_for_feedback_change")
+    def test_discover_action_undo_deletes_feedback_and_restores_rows(
+        self,
+        mock_invalidate_for_feedback_change,
+        mock_get_undo_snapshot,
+        mock_restore_undo_snapshot,
+    ):
+        item = self._movie_item(media_id="9003", title="Undo Movie")
+        feedback = DiscoverFeedback.objects.create(
+            user=self.user,
+            item=item,
+            feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
+        )
+        mock_get_undo_snapshot.return_value = {
+            "side_effect": {
+                "kind": "dismiss",
+                "feedback_id": feedback.id,
+            },
+        }
+        mock_restore_undo_snapshot.return_value = {"rows": [self._row(title="Restored Movie")]}
+
+        response = self.client.post(
+            reverse("discover_action"),
+            {
+                "action": "undo",
+                "undo_token": "undo-dismiss",
+                "active_media_type": MediaTypes.MOVIE.value,
+                "show_more": "0",
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(
+            DiscoverFeedback.objects.filter(id=feedback.id).exists(),
+        )
+        trigger = json.loads(response["HX-Trigger"])
+        self.assertEqual(trigger["discoverActionComplete"]["action"], "undo")
+        mock_invalidate_for_feedback_change.assert_called_once_with(
+            self.user.id,
+            MediaTypes.MOVIE.value,
+        )
+
+    @patch("app.views.discover.get_discover_rows")
+    @patch("app.views.discover_tab_cache.clear_lower_level_cache")
+    @patch("app.views.discover_tab_cache.bump_activity_version")
+    @patch("app.views.discover_tab_cache.apply_cached_action")
+    @patch("app.views.discover_tab_cache.invalidate_for_feedback_change")
+    @patch("app.views.ensure_item_metadata")
+    def test_discover_action_debug_bypasses_cache_fast_path(
+        self,
+        mock_ensure_item_metadata,
+        mock_invalidate_for_feedback_change,
+        mock_apply_cached_action,
+        mock_bump_activity_version,
+        mock_clear_lower_level_cache,
+        mock_get_discover_rows,
+    ):
+        item = self._movie_item(media_id="9004", title="Debug Dismiss")
+        mock_ensure_item_metadata.return_value = HydratedItemResult(
+            item=item,
+            metadata={},
+            created=False,
+        )
+        mock_get_discover_rows.return_value = [self._row(title="Debug Replacement")]
+
+        response = self.client.post(
+            reverse("discover_action"),
+            {
+                "action": "dismiss",
+                "candidate_media_type": MediaTypes.MOVIE.value,
+                "source": Sources.TMDB.value,
+                "media_id": item.media_id,
+                "active_media_type": MediaTypes.MOVIE.value,
+                "show_more": "0",
+                "discover_debug": "1",
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        mock_apply_cached_action.assert_not_called()
+        mock_invalidate_for_feedback_change.assert_not_called()
+        mock_bump_activity_version.assert_has_calls(
+            [
+                call(self.user.id, MediaTypes.MOVIE.value),
+                call(self.user.id, "all"),
+            ],
+            any_order=False,
+        )
+        mock_clear_lower_level_cache.assert_has_calls(
+            [
+                call(self.user.id, MediaTypes.MOVIE.value),
+                call(self.user.id, "all"),
+            ],
+            any_order=False,
+        )
+        mock_get_discover_rows.assert_called_once_with(
+            self.user,
+            MediaTypes.MOVIE.value,
+            show_more=False,
+            include_debug=True,
+            defer_artwork=True,
+        )
+
+    @patch("app.models.Item.fetch_releases")
+    @patch("app.views.discover_tab_cache.update_undo_snapshot")
+    @patch("app.views.discover_tab_cache.store_undo_snapshot", return_value="undo-debug")
+    @patch("app.views.discover.get_discover_rows")
+    @patch("app.views.discover_tab_cache.clear_lower_level_cache")
+    @patch("app.views.discover_tab_cache.bump_activity_version")
+    @patch("app.views.discover_tab_cache.invalidate_for_media_change")
+    @patch("app.views.discover_tab_cache.apply_cached_action")
+    @patch("app.views.ensure_item_metadata")
+    def test_discover_action_planning_debug_marks_discover_stale_without_enqueuing_refresh(
+        self,
+        mock_ensure_item_metadata,
+        mock_apply_cached_action,
+        mock_invalidate_for_media_change,
+        mock_bump_activity_version,
+        mock_clear_lower_level_cache,
+        mock_get_discover_rows,
+        _mock_store_undo_snapshot,
+        mock_update_undo_snapshot,
+        _mock_fetch_releases,
+    ):
+        item = self._movie_item(media_id="9005", title="Debug Planning")
+        mock_ensure_item_metadata.return_value = HydratedItemResult(
+            item=item,
+            metadata={},
+            created=False,
+        )
+        mock_get_discover_rows.return_value = [self._row(title="Debug Planning Replacement")]
+
+        response = self.client.post(
+            reverse("discover_action"),
+            {
+                "action": "planning",
+                "candidate_media_type": MediaTypes.MOVIE.value,
+                "source": Sources.TMDB.value,
+                "media_id": item.media_id,
+                "active_media_type": MediaTypes.MOVIE.value,
+                "show_more": "0",
+                "discover_debug": "1",
+                "title": item.title,
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        mock_apply_cached_action.assert_not_called()
+        mock_invalidate_for_media_change.assert_not_called()
+        mock_bump_activity_version.assert_has_calls(
+            [
+                call(self.user.id, MediaTypes.MOVIE.value),
+                call(self.user.id, "all"),
+            ],
+            any_order=False,
+        )
+        mock_clear_lower_level_cache.assert_has_calls(
+            [
+                call(self.user.id, MediaTypes.MOVIE.value),
+                call(self.user.id, "all"),
+            ],
+            any_order=False,
+        )
+        mock_get_discover_rows.assert_called_once_with(
+            self.user,
+            MediaTypes.MOVIE.value,
+            show_more=False,
+            include_debug=True,
+            defer_artwork=True,
+        )
+        mock_update_undo_snapshot.assert_called_once()

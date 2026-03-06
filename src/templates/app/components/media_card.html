@@ -6,6 +6,7 @@
     {% with media_type|default:item.media_type as resolved_media_type %}
       {% with item|display_title:user as resolved_item_title %}
         {% with item|alternative_title:user as resolved_alt_title %}
+          {% with hover_action_mode|default:'standard' as resolved_hover_action_mode %}
       <div class="media-card {% if secondary_color %}bg-[#39404b]{% else %}bg-[#2a2f35]{% endif %} rounded-lg overflow-hidden shadow-lg relative {% if active %}ring-2 ring-indigo-700{% endif %} {% if from_grid %}hover:ring-2 hover:ring-indigo-500 transition-all {% if resolved_media_type == 'podcast' or resolved_media_type == 'music' %}search-result-card-square{% else %}search-result-card{% endif %}{% endif %} {% if user.media_card_subtitle_display == 'always' %}media-card-subtitle-always{% endif %} {% if recommend_mode %}cursor-pointer{% endif %} group"
            data-media-type="{{ item.media_type }}"
            {% if recommend_mode %}hx-get="{% url 'recommend_search' recommend_list_id %}?show_preview=true&media_id={{ item.media_id }}&media_type={{ item.media_type }}&source={{ item.source }}&title={{ resolved_item_title|default:title|urlencode }}&image={{ item.image|urlencode }}&q={{ query|urlencode }}&search_media_type={{ media_type|urlencode }}&page={{ page }}" hx-target="#recommend-modal-container" hx-swap="innerHTML"{% endif %}
@@ -166,7 +167,36 @@
                    {% if list_ordering_enabled|default:False %}
                      x-show="!isOrderEditing"
                    {% endif %}>
-                {% if item.media_type == MediaTypes.EPISODE.value %}
+                {% if resolved_hover_action_mode == 'discover' %}
+                  <button class="p-2.5 bg-indigo-600 text-white rounded-full hover:bg-indigo-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(99,102,241,0.5)] transition-all duration-200 cursor-pointer"
+                          title="Add to Planning"
+                          hx-post="{% url 'discover_action' %}"
+                          hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+                          hx-target="#discover-rows"
+                          hx-swap="innerHTML"
+                          hx-vals='{"action":"planning","candidate_media_type":"{{ item.media_type|escapejs }}","source":"{{ item.source|escapejs }}","media_id":"{{ item.media_id|escapejs }}","season_number":"{{ item.season_number|default_if_none:"" }}","active_media_type":"{{ discover_active_media_type|default:"all"|escapejs }}","show_more":"{% if discover_show_more %}1{% else %}0{% endif %}","row_key":"{{ discover_row_key|default:""|escapejs }}","title":"{{ resolved_item_title|default:title|escapejs }}","image":"{{ item.image|default:IMG_NONE|escapejs }}","release_date":"{{ item.release_date|default:""|escapejs }}","discover_debug":"{% if discover_debug %}1{% else %}0{% endif %}"}'>
+                    {% include "app/icons/states/planning.svg" with classes="w-4 h-4" %}
+                  </button>
+                  <button class="p-2.5 bg-rose-600 text-white rounded-full hover:bg-rose-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(244,63,94,0.45)] transition-all duration-200 cursor-pointer"
+                          title="Hide from Discover"
+                          hx-post="{% url 'discover_action' %}"
+                          hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+                          hx-target="#discover-rows"
+                          hx-swap="innerHTML"
+                          hx-vals='{"action":"dismiss","candidate_media_type":"{{ item.media_type|escapejs }}","source":"{{ item.source|escapejs }}","media_id":"{{ item.media_id|escapejs }}","season_number":"{{ item.season_number|default_if_none:"" }}","active_media_type":"{{ discover_active_media_type|default:"all"|escapejs }}","show_more":"{% if discover_show_more %}1{% else %}0{% endif %}","row_key":"{{ discover_row_key|default:""|escapejs }}","title":"{{ resolved_item_title|default:title|escapejs }}","image":"{{ item.image|default:IMG_NONE|escapejs }}","release_date":"{{ item.release_date|default:""|escapejs }}","discover_debug":"{% if discover_debug %}1{% else %}0{% endif %}"}'>
+                    {% include "app/icons/eye-closed.svg" with classes="w-4 h-4" %}
+                  </button>
+
+                  <button class="p-2.5 bg-emerald-600 text-white rounded-full hover:bg-emerald-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(16,185,129,0.5)] transition-all duration-200 cursor-pointer"
+                          title="Add to custom lists"
+                          hx-get="{% media_view_url 'lists_modal' item %}"
+                          hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
+                          hx-target="#{% component_id 'lists' item %}"
+                          hx-trigger="click once"
+                          @click="listsOpen = true">
+                    {% include "app/icons/list-add.svg" with classes="w-4 h-4" %}
+                  </button>
+                {% elif item.media_type == MediaTypes.EPISODE.value %}
                   <button @click="trackOpen = true"
                           class="p-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full hover:scale-110 hover:shadow-[0_0_15px_rgba(99,102,241,0.5)] transition-all duration-200 cursor-pointer">
                     {% if media %}
@@ -198,25 +228,24 @@
                       {% include "app/icons/edit.svg" with classes="w-4 h-4" %}
                     </button>
                   {% endif %}
+                  {# Lists Button #}
+                  <button class="p-2.5 bg-emerald-600 text-white rounded-full hover:bg-emerald-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(16,185,129,0.5)] transition-all duration-200 cursor-pointer"
+                          title="Add to custom lists"
+                          hx-get="{% media_view_url 'lists_modal' item %}"
+                          hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
+                          hx-target="#{% component_id 'lists' item %}"
+                          hx-trigger="click once"
+                          @click="listsOpen = true">
+                    {% include "app/icons/list-add.svg" with classes="w-4 h-4" %}
+                  </button>
+
+                  {# History Button #}
+                  <a class="p-2.5 bg-amber-600 text-white rounded-full hover:bg-amber-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(245,158,11,0.5)] transition-all duration-200 cursor-pointer"
+                     title="View your activity history"
+                     href="{% url 'history' %}?{% if item.media_type == MediaTypes.SEASON.value or item.media_type == MediaTypes.EPISODE.value %}media_type={{ MediaTypes.TV.value }}&media_id={{ item.media_id|urlencode }}&source={{ item.source|urlencode }}{% if item.season_number %}&season_number={{ item.season_number }}{% endif %}{% elif item.media_type == MediaTypes.TV.value %}media_type={{ MediaTypes.TV.value }}&media_id={{ item.media_id|urlencode }}&source={{ item.source|urlencode }}{% elif item.media_type == MediaTypes.PODCAST.value and media.show %}media_type={{ MediaTypes.PODCAST.value }}&podcast_show={{ media.show.id }}{% elif item.media_type == MediaTypes.PODCAST.value and media.tracker.show %}media_type={{ MediaTypes.PODCAST.value }}&podcast_show={{ media.tracker.show.id }}{% else %}media_type={{ item.media_type }}&media_id={{ item.media_id|urlencode }}&source={{ item.source|urlencode }}{% endif %}{% if item.media_type == MediaTypes.GAME.value or item.media_type == MediaTypes.BOARDGAME.value %}&logging_style=sessions{% endif %}">
+                    {% include "app/icons/history.svg" with classes="w-4 h-4" %}
+                  </a>
                 {% endif %}
-
-                {# Lists Button #}
-                <button class="p-2.5 bg-emerald-600 text-white rounded-full hover:bg-emerald-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(16,185,129,0.5)] transition-all duration-200 cursor-pointer"
-                        title="Add to custom lists"
-                        hx-get="{% media_view_url 'lists_modal' item %}"
-                        hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
-                        hx-target="#{% component_id 'lists' item %}"
-                        hx-trigger="click once"
-                        @click="listsOpen = true">
-                  {% include "app/icons/list-add.svg" with classes="w-4 h-4" %}
-                </button>
-
-                {# History Button #}
-                <a class="p-2.5 bg-amber-600 text-white rounded-full hover:bg-amber-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(245,158,11,0.5)] transition-all duration-200 cursor-pointer"
-                   title="View your activity history"
-                   href="{% url 'history' %}?{% if item.media_type == MediaTypes.SEASON.value or item.media_type == MediaTypes.EPISODE.value %}media_type={{ MediaTypes.TV.value }}&media_id={{ item.media_id|urlencode }}&source={{ item.source|urlencode }}{% if item.season_number %}&season_number={{ item.season_number }}{% endif %}{% elif item.media_type == MediaTypes.TV.value %}media_type={{ MediaTypes.TV.value }}&media_id={{ item.media_id|urlencode }}&source={{ item.source|urlencode }}{% elif item.media_type == MediaTypes.PODCAST.value and media.show %}media_type={{ MediaTypes.PODCAST.value }}&podcast_show={{ media.show.id }}{% elif item.media_type == MediaTypes.PODCAST.value and media.tracker.show %}media_type={{ MediaTypes.PODCAST.value }}&podcast_show={{ media.tracker.show.id }}{% else %}media_type={{ item.media_type }}&media_id={{ item.media_id|urlencode }}&source={{ item.source|urlencode }}{% endif %}{% if item.media_type == MediaTypes.GAME.value or item.media_type == MediaTypes.BOARDGAME.value %}&logging_style=sessions{% endif %}">
-                  {% include "app/icons/history.svg" with classes="w-4 h-4" %}
-                </a>
               </div>
 
               {% if list_ordering_enabled|default:False %}
@@ -512,6 +541,7 @@
         </div>
 
       </div>
+          {% endwith %}
         {% endwith %}
       {% endwith %}
     {% endwith %}

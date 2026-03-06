@@ -67,6 +67,8 @@ from app.models import (
     CollectionEntry,
     Comic,
     CreditRoleType,
+    DiscoverFeedback,
+    DiscoverFeedbackType,
     Episode,
     Game,
     Item,
@@ -85,7 +87,9 @@ from app.models import (
 )
 from app.providers import comicvine, hardcover, mangaupdates, manual, openlibrary, services, tmdb
 from app.services import music as sync_services
+from app.services.tracking_hydration import ensure_item_metadata
 from app.templatetags import app_tags
+from app.signals import suppress_media_cache_change_signals
 from lists.models import CustomList
 from users.models import HomeSortChoices, MediaSortChoices, MediaStatusChoices
 from users.models import TopTalentSortChoices
@@ -524,27 +528,14 @@ def _discover_media_options(user):
     ]
 
 
-@login_required
-@require_GET
-def discover_page(request):
-    """Render Discover page with selected media rows."""
-    selected_media_type = _coerce_discover_media_type(request.GET.get("media_type"))
-    show_more = request.GET.get("show_more") in {"1", "true", "True"}
-    discover_debug = _coerce_discover_debug(request.GET.get("discover_debug"))
-    rows = discover_tab_cache.get_tab_rows(
-        request.user,
-        selected_media_type,
-        show_more=show_more,
-        include_debug=discover_debug,
-        defer_artwork=True,
-        allow_inline_bootstrap=False,
-    )
-    if not discover_debug:
-        discover_tab_cache.warm_sibling_tabs(
-            request.user,
-            selected_media_type,
-            show_more=show_more,
-        )
+def _discover_rows_context(
+    request,
+    *,
+    selected_media_type: str,
+    show_more: bool,
+    discover_debug: bool,
+    rows,
+):
     discover_status = (
         discover_tab_cache.get_tab_status(
             request.user.id,
@@ -554,15 +545,129 @@ def discover_page(request):
         if not discover_debug
         else None
     )
-
-    context = {
+    return {
         "selected_media_type": selected_media_type,
         "show_more": show_more,
-        "rows": rows,
         "discover_debug": discover_debug,
         "discover_loading": bool(discover_status and discover_status["is_refreshing"]),
-        "discover_media_options": _discover_media_options(request.user),
+        "rows": rows,
     }
+
+
+def _render_discover_rows_fragment(
+    request,
+    *,
+    selected_media_type: str,
+    show_more: bool,
+    discover_debug: bool,
+    rows,
+):
+    return render(
+        request,
+        "app/components/discover_rows.html",
+        _discover_rows_context(
+            request,
+            selected_media_type=selected_media_type,
+            show_more=show_more,
+            discover_debug=discover_debug,
+            rows=rows,
+        ),
+    )
+
+
+def _discover_response_rows(
+    user,
+    *,
+    selected_media_type: str,
+    show_more: bool,
+    discover_debug: bool,
+):
+    if discover_debug:
+        return discover.get_discover_rows(
+            user,
+            selected_media_type,
+            show_more=show_more,
+            include_debug=True,
+            defer_artwork=True,
+        )
+    return discover_tab_cache.get_tab_rows(
+        user,
+        selected_media_type,
+        show_more=show_more,
+        include_debug=False,
+        defer_artwork=True,
+        allow_inline_bootstrap=False,
+    )
+
+
+def _discover_candidate_seed(request) -> dict:
+    return {
+        "fallback_title": request.POST.get("title", "").strip(),
+        "fallback_image": request.POST.get("image", "").strip() or None,
+        "fallback_release_date": request.POST.get("release_date", "").strip() or None,
+    }
+
+
+def _discover_model_for_media_type(media_type: str):
+    return apps.get_model(app_label="app", model_name=media_type)
+
+
+def _discover_planning_instance(user, media_type: str, item: Item):
+    model = _discover_model_for_media_type(media_type)
+    return model.objects.filter(user=user, item=item).select_related("item").first()
+
+
+def _mark_discover_stale_without_refresh(user_id: int, media_type: str) -> list[str]:
+    """Mark Discover payloads stale without enqueueing background rebuilds."""
+    targets = discover_tab_cache.target_media_types_for_change(media_type)
+    for target_media_type in targets:
+        discover_tab_cache.bump_activity_version(user_id, target_media_type)
+        discover_tab_cache.clear_lower_level_cache(user_id, target_media_type)
+    return targets
+
+
+def _invalidate_discover_after_action(
+    user_id: int,
+    media_type: str,
+    *,
+    discover_debug: bool,
+    feedback_change: bool,
+) -> list[str]:
+    """Invalidate Discover after a quick action, avoiding debug-mode task overlap."""
+    if discover_debug:
+        return _mark_discover_stale_without_refresh(user_id, media_type)
+    if feedback_change:
+        return discover_tab_cache.invalidate_for_feedback_change(user_id, media_type)
+    return discover_tab_cache.invalidate_for_media_change(user_id, media_type)
+
+
+@login_required
+@require_GET
+def discover_page(request):
+    """Render Discover page with selected media rows."""
+    selected_media_type = _coerce_discover_media_type(request.GET.get("media_type"))
+    show_more = request.GET.get("show_more") in {"1", "true", "True"}
+    discover_debug = _coerce_discover_debug(request.GET.get("discover_debug"))
+    rows = _discover_response_rows(
+        request.user,
+        selected_media_type=selected_media_type,
+        show_more=show_more,
+        discover_debug=discover_debug,
+    )
+    if not discover_debug:
+        discover_tab_cache.warm_sibling_tabs(
+            request.user,
+            selected_media_type,
+            show_more=show_more,
+        )
+    context = _discover_rows_context(
+        request,
+        selected_media_type=selected_media_type,
+        show_more=show_more,
+        discover_debug=discover_debug,
+        rows=rows,
+    )
+    context["discover_media_options"] = _discover_media_options(request.user)
     return render(request, "app/discover.html", context)
 
 
@@ -573,31 +678,19 @@ def discover_rows(request):
     selected_media_type = _coerce_discover_media_type(request.GET.get("media_type"))
     show_more = request.GET.get("show_more") in {"1", "true", "True"}
     discover_debug = _coerce_discover_debug(request.GET.get("discover_debug"))
-    rows = discover_tab_cache.get_tab_rows(
+    rows = _discover_response_rows(
         request.user,
-        selected_media_type,
+        selected_media_type=selected_media_type,
         show_more=show_more,
-        include_debug=discover_debug,
-        defer_artwork=True,
-        allow_inline_bootstrap=False,
+        discover_debug=discover_debug,
     )
-    discover_status = (
-        discover_tab_cache.get_tab_status(
-            request.user.id,
-            selected_media_type,
-            show_more=show_more,
-        )
-        if not discover_debug
-        else None
+    return _render_discover_rows_fragment(
+        request,
+        selected_media_type=selected_media_type,
+        show_more=show_more,
+        discover_debug=discover_debug,
+        rows=rows,
     )
-    context = {
-        "selected_media_type": selected_media_type,
-        "show_more": show_more,
-        "discover_debug": discover_debug,
-        "discover_loading": bool(discover_status and discover_status["is_refreshing"]),
-        "rows": rows,
-    }
-    return render(request, "app/components/discover_rows.html", context)
 
 
 @login_required
@@ -637,6 +730,265 @@ def refresh_discover(request):
             "targets": target_media_types,
         },
     )
+
+
+@login_required
+@require_POST
+def discover_action(request):
+    """Handle Discover quick actions and return the updated rows fragment."""
+    action = (request.POST.get("action") or "").strip().lower()
+    active_media_type = _coerce_discover_media_type(request.POST.get("active_media_type"))
+    show_more = request.POST.get("show_more") in {"1", "true", "True"}
+    discover_debug = _coerce_discover_debug(request.POST.get("discover_debug"))
+    discover_tab_cache.mark_active(
+        request.user.id,
+        active_media_type,
+        show_more=show_more,
+    )
+
+    if action == "undo":
+        undo_token = (request.POST.get("undo_token") or "").strip()
+        snapshot = discover_tab_cache.get_undo_snapshot(request.user.id, undo_token)
+        if not snapshot:
+            return HttpResponseBadRequest("Invalid undo token")
+
+        side_effect = snapshot.get("side_effect") or {}
+        side_effect_kind = side_effect.get("kind")
+        if side_effect_kind == "planning" and side_effect.get("instance_id"):
+            model = _discover_model_for_media_type(side_effect.get("media_type"))
+            instance = model.objects.filter(
+                id=side_effect["instance_id"],
+                user=request.user,
+            ).first()
+            if instance:
+                with suppress_media_cache_change_signals():
+                    instance.delete()
+                _invalidate_discover_after_action(
+                    request.user.id,
+                    side_effect.get("media_type"),
+                    discover_debug=discover_debug,
+                    feedback_change=False,
+                )
+        elif side_effect_kind == "dismiss" and side_effect.get("feedback_id"):
+            feedback = DiscoverFeedback.objects.filter(
+                id=side_effect["feedback_id"],
+                user=request.user,
+            ).first()
+            if feedback:
+                media_type = feedback.item.media_type
+                feedback.delete()
+                _invalidate_discover_after_action(
+                    request.user.id,
+                    media_type,
+                    discover_debug=discover_debug,
+                    feedback_change=True,
+                )
+
+        restored_snapshot = discover_tab_cache.restore_undo_snapshot(
+            request.user.id,
+            undo_token,
+        )
+        rows = (
+            restored_snapshot.get("rows")
+            if restored_snapshot and not discover_debug
+            else None
+        )
+        if rows is None:
+            rows = _discover_response_rows(
+                request.user,
+                selected_media_type=active_media_type,
+                show_more=show_more,
+                discover_debug=discover_debug,
+            )
+
+        response = _render_discover_rows_fragment(
+            request,
+            selected_media_type=active_media_type,
+            show_more=show_more,
+            discover_debug=discover_debug,
+            rows=rows,
+        )
+        response["HX-Trigger"] = json.dumps(
+            {
+                "discoverActionComplete": {
+                    "action": "undo",
+                    "message": "Discover action undone.",
+                },
+            },
+        )
+        return response
+
+    if action not in {"planning", "dismiss"}:
+        return HttpResponseBadRequest("Invalid action")
+
+    candidate_media_type = (request.POST.get("candidate_media_type") or "").strip().lower()
+    source = (request.POST.get("source") or "").strip()
+    media_id = (request.POST.get("media_id") or "").strip()
+    if (
+        candidate_media_type not in DISCOVER_ALLOWED_MEDIA_TYPES
+        or not source
+        or not media_id
+    ):
+        return HttpResponseBadRequest("Missing candidate fields")
+
+    season_number = request.POST.get("season_number")
+    season_number = int(season_number) if season_number not in (None, "") else None
+    row_key = (request.POST.get("row_key") or "").strip()
+    candidate_seed = _discover_candidate_seed(request)
+    hydrated = ensure_item_metadata(
+        request.user,
+        candidate_media_type,
+        media_id,
+        source,
+        season_number,
+        **candidate_seed,
+    )
+
+    undo_token: str | None = None
+    message = ""
+    if action == "planning":
+        existing_instance = _discover_planning_instance(
+            request.user,
+            candidate_media_type,
+            hydrated.item,
+        )
+        if existing_instance:
+            DiscoverFeedback.objects.filter(
+                user=request.user,
+                item=hydrated.item,
+                feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
+            ).delete()
+            _invalidate_discover_after_action(
+                request.user.id,
+                candidate_media_type,
+                discover_debug=discover_debug,
+                feedback_change=True,
+            )
+            message = f'"{hydrated.item.title}" is already in your library.'
+        else:
+            undo_token = discover_tab_cache.store_undo_snapshot(
+                request.user.id,
+                action="planning",
+                active_media_type=active_media_type,
+                candidate_media_type=candidate_media_type,
+                show_more=show_more,
+            )
+            model = _discover_model_for_media_type(candidate_media_type)
+            instance = model(
+                item=hydrated.item,
+                user=request.user,
+                status=Status.PLANNING.value,
+                score=None,
+                progress=0,
+                start_date=None,
+                end_date=None,
+                notes="",
+            )
+            if candidate_media_type == MediaTypes.MUSIC.value:
+                instance.artist = hydrated.artist
+                instance.album = hydrated.album
+                instance.track = hydrated.track
+            if candidate_media_type == MediaTypes.PODCAST.value and hydrated.podcast_show is not None:
+                instance.show = hydrated.podcast_show
+            with suppress_media_cache_change_signals():
+                instance.save()
+            _invalidate_discover_after_action(
+                request.user.id,
+                candidate_media_type,
+                discover_debug=discover_debug,
+                feedback_change=False,
+            )
+            if undo_token:
+                discover_tab_cache.update_undo_snapshot(
+                    request.user.id,
+                    undo_token,
+                    side_effect={
+                        "kind": "planning",
+                        "media_type": candidate_media_type,
+                        "instance_id": instance.id,
+                    },
+                )
+            message = f'Added "{hydrated.item.title}" to Planning.'
+    else:
+        existing_feedback = DiscoverFeedback.objects.filter(
+            user=request.user,
+            item=hydrated.item,
+            feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
+        ).first()
+        if existing_feedback is None:
+            undo_token = discover_tab_cache.store_undo_snapshot(
+                request.user.id,
+                action="dismiss",
+                active_media_type=active_media_type,
+                candidate_media_type=candidate_media_type,
+                show_more=show_more,
+            )
+        feedback, created = DiscoverFeedback.objects.update_or_create(
+            user=request.user,
+            item=hydrated.item,
+            feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
+            defaults={
+                "source_context": "discover",
+                "row_key": row_key,
+            },
+        )
+        _invalidate_discover_after_action(
+            request.user.id,
+            candidate_media_type,
+            discover_debug=discover_debug,
+            feedback_change=True,
+        )
+        if undo_token and created:
+            discover_tab_cache.update_undo_snapshot(
+                request.user.id,
+                undo_token,
+                side_effect={
+                    "kind": "dismiss",
+                    "media_type": candidate_media_type,
+                    "feedback_id": feedback.id,
+                },
+            )
+        elif not created:
+            undo_token = None
+        message = f'Hidden "{hydrated.item.title}" from Discover.'
+
+    rows = None
+    if not discover_debug:
+        rows = discover_tab_cache.apply_cached_action(
+            request.user.id,
+            active_media_type,
+            candidate_media_type,
+            media_id=media_id,
+            source=source,
+            show_more=show_more,
+        )
+    if rows is None:
+        rows = _discover_response_rows(
+            request.user,
+            selected_media_type=active_media_type,
+            show_more=show_more,
+            discover_debug=discover_debug,
+        )
+
+    response = _render_discover_rows_fragment(
+        request,
+        selected_media_type=active_media_type,
+        show_more=show_more,
+        discover_debug=discover_debug,
+        rows=rows,
+    )
+    trigger_payload = {
+        "action": action,
+        "message": message,
+    }
+    if undo_token:
+        trigger_payload["undo_token"] = undo_token
+    response["HX-Trigger"] = json.dumps(
+        {
+            "discoverActionComplete": trigger_payload,
+        },
+    )
+    return response
 
 
 def active_playback_fragment(request):
@@ -4677,34 +5029,9 @@ def track_modal(
     response["Expires"] = "0"
     return response
 
-
-def _parse_release_date_str(release_date_value):
-    """Parse provider release dates into a date object for Album.release_date."""
-    if not release_date_value:
-        return None
-
-    if isinstance(release_date_value, date):
-        return release_date_value
-
-    if hasattr(release_date_value, "date"):
-        return release_date_value.date()
-
-    if isinstance(release_date_value, str):
-        return parse_date(release_date_value[:10])
-
-    return None
-
-
 @require_POST
 def media_save(request):
     """Save or update media data to the database."""
-    def _coerce_text(value):
-        if value is None:
-            return ""
-        if isinstance(value, str):
-            return value
-        return str(value)
-
     media_id = request.POST["media_id"]
     source = request.POST["source"]
     media_type = request.POST["media_type"]
@@ -4801,281 +5128,22 @@ def media_save(request):
             instance_id,
         )
     else:
-        metadata = services.get_media_metadata(
+        hydrated = ensure_item_metadata(
+            request.user,
             media_type,
             media_id,
             source,
-            [season_number],
+            season_number,
         )
-        # Extract runtime from metadata
-        runtime_minutes = None
-        if metadata.get("details", {}).get("runtime"):
-            from app.statistics import parse_runtime_to_minutes
-            runtime_minutes = parse_runtime_to_minutes(metadata["details"]["runtime"])
-        release_datetime = helpers.extract_release_datetime(metadata)
-
-        # Extract number_of_pages for books
-        number_of_pages = None
-        if media_type == MediaTypes.BOOK.value:
-            # Try max_progress first (from metadata dict), then details.number_of_pages
-            number_of_pages = metadata.get("max_progress") or metadata.get("details", {}).get("number_of_pages")
-
-        # Extract all metadata fields from details
-        details = metadata.get("details", {})
-        if not isinstance(details, dict):
-            details = {}
-        metadata_genres = stats._coerce_genre_list(
-            metadata.get("genres")
-            or details.get("genres")
-            or metadata.get("genre")
-            or details.get("genre"),
-        )
-
-        country = _coerce_text(details.get("country"))
-        languages = details.get("languages", [])
-        if not isinstance(languages, list):
-            languages = [languages] if languages else []
-
-        platforms = details.get("platforms", [])
-        if not isinstance(platforms, list):
-            platforms = [platforms] if platforms else []
-
-        format_type = _coerce_text(details.get("format"))
-        status = _coerce_text(details.get("status"))
-
-        studios = details.get("studios", [])
-        if not isinstance(studios, list):
-            studios = [studios] if studios else []
-
-        themes = details.get("themes", [])
-        if not isinstance(themes, list):
-            themes = [themes] if themes else []
-
-        raw_authors = (
-            details.get("authors")
-            or details.get("author")
-            or details.get("people")
-        )
-        if not isinstance(raw_authors, list):
-            raw_authors = [raw_authors] if raw_authors else []
-        authors = []
-        for raw_author in raw_authors:
-            if isinstance(raw_author, dict):
-                author_name = (
-                    raw_author.get("name")
-                    or raw_author.get("person")
-                    or raw_author.get("author")
-                )
-            else:
-                author_name = raw_author
-            author_text = _coerce_text(author_name)
-            if author_text:
-                authors.append(author_text)
-
-        publishers = details.get("publishers", "") or details.get("publisher", "")
-        if isinstance(publishers, list):
-            publishers = publishers[0] if publishers else ""
-        publishers = _coerce_text(publishers)
-
-        isbn = details.get("isbn", [])
-        if not isinstance(isbn, list):
-            isbn = []
-
-        source_material = _coerce_text(details.get("source"))
-
-        creators = details.get("people", [])
-        if not isinstance(creators, list):
-            creators = []
-        runtime = _coerce_text(details.get("runtime"))
-
-        item, created = Item.objects.get_or_create(
-            media_id=media_id,
-            source=source,
-            media_type=media_type,
-            season_number=season_number,
-            defaults={
-                **Item.title_fields_from_metadata(metadata),
-                "image": metadata["image"],
-                "runtime_minutes": runtime_minutes,
-                "number_of_pages": number_of_pages,
-                "release_datetime": release_datetime,
-                "genres": metadata_genres,
-                # Add all new metadata fields
-                "country": country,
-                "languages": languages,
-                "platforms": platforms,
-                "format": format_type,
-                "status": status,
-                "studios": studios,
-                "themes": themes,
-                "authors": authors,
-                "publishers": publishers,
-                "isbn": isbn,
-                "source_material": source_material,
-                "creators": creators,
-                "runtime": runtime,
-                "metadata_fetched_at": timezone.now(),
-            },
-        )
-
-        # Update image, runtime, and number_of_pages if they're not set and we have them now
-        needs_save = False
-
-        # Always update metadata_fetched_at timestamp
-        if not created:
-            item.metadata_fetched_at = timezone.now()
-            needs_save = True
-        if item.image == settings.IMG_NONE and metadata.get("image"):
-            item.image = metadata["image"]
-            needs_save = True
-        if not item.runtime_minutes and runtime_minutes:
-            item.runtime_minutes = runtime_minutes
-            needs_save = True
-        if not item.number_of_pages and number_of_pages:
-            item.number_of_pages = number_of_pages
-            needs_save = True
-        if not item.release_datetime and release_datetime:
-            item.release_datetime = release_datetime
-            needs_save = True
-        if metadata_genres and metadata_genres != item.genres:
-            item.genres = metadata_genres
-            needs_save = True
-
-        # Update metadata fields if they're not set and we have them now
-        if not item.country and country:
-            item.country = country
-            needs_save = True
-        if not item.languages and languages:
-            item.languages = languages
-            needs_save = True
-        if not item.platforms and platforms:
-            item.platforms = platforms
-            needs_save = True
-        if not item.format and format_type:
-            item.format = format_type
-            needs_save = True
-        if not item.status and status:
-            item.status = status
-            needs_save = True
-        if not item.studios and studios:
-            item.studios = studios
-            needs_save = True
-        if not item.themes and themes:
-            item.themes = themes
-            needs_save = True
-        if not item.authors and authors:
-            item.authors = authors
-            needs_save = True
-        if not item.publishers and publishers:
-            item.publishers = publishers
-            needs_save = True
-        if not item.isbn and isbn:
-            item.isbn = isbn
-            needs_save = True
-        if not item.source_material and source_material:
-            item.source_material = source_material
-            needs_save = True
-        if not item.creators and creators:
-            item.creators = creators
-            needs_save = True
-        if not item.runtime and runtime:
-            item.runtime = runtime
-            needs_save = True
-        title_fields = Item.title_fields_from_metadata(metadata)
-        if not item.original_title and title_fields["original_title"]:
-            item.original_title = title_fields["original_title"]
-            needs_save = True
-        if not item.localized_title and title_fields["localized_title"]:
-            item.localized_title = title_fields["localized_title"]
-            needs_save = True
-
-        if needs_save:
-            item.save()
-
-        if source == Sources.TMDB.value and media_type in (MediaTypes.MOVIE.value, MediaTypes.TV.value):
-            credits.sync_item_credits_from_metadata(item, metadata)
-
         model = apps.get_model(app_label="app", model_name=media_type)
-        instance = model(item=item, user=request.user)
+        instance = model(item=hydrated.item, user=request.user)
 
-        # For music tracks, create/link Artist and Album
         if media_type == MediaTypes.MUSIC.value:
-            artist_instance = None
-            album_instance = None
-            track_genres = metadata.get("genres", [])
-
-            # Create or get Artist
-            artist_id = metadata.get("_artist_id") or metadata.get("details", {}).get("artist_id")
-            artist_name = metadata.get("_artist_name") or metadata.get("details", {}).get("artist")
-            if artist_id and artist_name:
-                artist_instance, _ = Artist.objects.get_or_create(
-                    musicbrainz_id=artist_id,
-                    defaults={"name": artist_name},
-                )
-            elif artist_name:
-                # Try to find by name if no ID
-                artist_instance = Artist.objects.filter(name=artist_name).first()
-                if not artist_instance:
-                    artist_instance = Artist.objects.create(name=artist_name)
-
-            # Create or get Album
-            album_id = metadata.get("_album_id") or metadata.get("details", {}).get("album_id")
-            album_title = metadata.get("_album_title") or metadata.get("details", {}).get("album")
-            image_url = metadata.get("image", "")
-            release_date = None
-            release_date_str = metadata.get("details", {}).get("release_date")
-            if release_date_str:
-                release_date = _parse_release_date_str(release_date_str)
-
-            if album_id and album_title:
-                album_instance, created = Album.objects.get_or_create(
-                    musicbrainz_release_id=album_id,
-                    defaults={
-                        "title": album_title,
-                        "artist": artist_instance,
-                        "image": image_url,
-                        "release_date": release_date,
-                        "genres": track_genres,
-                    },
-                )
-                # Update album image if it's missing
-                if not created and image_url and image_url != settings.IMG_NONE:
-                    if not album_instance.image or album_instance.image == settings.IMG_NONE:
-                        album_instance.image = image_url
-                        album_instance.save(update_fields=["image"])
-                # Fill release_date/genres if missing
-                if not album_instance.release_date and release_date:
-                    album_instance.release_date = release_date
-                    album_instance.save(update_fields=["release_date"])
-                if not album_instance.genres and track_genres:
-                    album_instance.genres = track_genres
-                    album_instance.save(update_fields=["genres"])
-            elif album_title:
-                # Try to find by title and artist if no ID
-                album_instance = Album.objects.filter(
-                    title=album_title,
-                    artist=artist_instance,
-                ).first()
-                if not album_instance:
-                    album_instance = Album.objects.create(
-                        title=album_title,
-                        artist=artist_instance,
-                        image=image_url,
-                        release_date=release_date,
-                        genres=track_genres,
-                    )
-
-            instance.artist = artist_instance
-            instance.album = album_instance
-
-            # Link to Track if it exists (for album-based additions)
-            if album_instance:
-                track_instance = Track.objects.filter(
-                    album=album_instance,
-                    musicbrainz_recording_id=media_id,
-                ).first()
-                if track_instance:
-                    instance.track = track_instance
+            instance.artist = hydrated.artist
+            instance.album = hydrated.album
+            instance.track = hydrated.track
+        if media_type == MediaTypes.PODCAST.value and hydrated.podcast_show is not None:
+            instance.show = hydrated.podcast_show
 
     # Validate the form and save the instance if it's valid
     form_class = get_form_class(media_type)

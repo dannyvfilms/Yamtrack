@@ -16,7 +16,12 @@ from django.db.models import Count, Q
 from django.utils import timezone
 
 from app.discover import cache_repo
-from app.discover.filters import dedupe_candidates, exclude_tracked_items, get_tracked_keys_by_media_type
+from app.discover.filters import (
+    dedupe_candidates,
+    exclude_tracked_items,
+    get_feedback_keys_by_media_type,
+    get_tracked_keys_by_media_type,
+)
 from app.discover.profile import MODEL_BY_MEDIA_TYPE, get_or_compute_taste_profile
 from app.discover.providers.trakt_adapter import TraktDiscoverAdapter
 from app.discover.providers.tmdb_adapter import TMDbDiscoverAdapter
@@ -1847,6 +1852,7 @@ def _trakt_ranked_candidates(
         statuses=blocked_statuses,
     )
     blocked_identities = set(tracked_keys)
+    blocked_identities.update(get_feedback_keys_by_media_type(user, media_type))
     if seen_identities and row_key != "all_time_greats_unseen":
         blocked_identities.update(seen_identities)
 
@@ -3776,6 +3782,10 @@ def _build_and_cache_row(
                 )
         candidates = exclude_tracked_items(candidates, tracked_keys)
 
+    feedback_keys = _discover_feedback_keys(user, media_type)
+    if feedback_keys:
+        candidates = exclude_tracked_items(candidates, feedback_keys)
+
     needs_async_artwork_refresh = False
     is_trakt_ranked_row = media_type in {
         MediaTypes.MOVIE.value,
@@ -4022,6 +4032,16 @@ def _compose_all_media_rows(
     return rows
 
 
+def _discover_feedback_keys(user, media_type: str) -> set[tuple[str, str, str]]:
+    if media_type != ALL_MEDIA_KEY:
+        return get_feedback_keys_by_media_type(user, media_type)
+
+    feedback_keys: set[tuple[str, str, str]] = set()
+    for media_type_key in DISCOVER_MEDIA_TYPES:
+        feedback_keys.update(get_feedback_keys_by_media_type(user, media_type_key))
+    return feedback_keys
+
+
 def get_discover_rows(
     user,
     media_type: str,
@@ -4109,16 +4129,16 @@ def get_discover_rows(
             before_count = len(row.items)
             all_time_row = row_definition.key == "all_time_greats_unseen"
             if all_time_row:
-                row.items = dedupe_candidates(row.items, seen_identities=set())
-                seen_identities.update(item.identity() for item in row.items)
+                deduped_items = dedupe_candidates(row.items, seen_identities=set())
+                seen_identities.update(item.identity() for item in deduped_items[:MAX_ITEMS_PER_ROW])
             else:
-                row.items = dedupe_candidates(row.items, seen_identities=seen_identities)
-            dedupe_removed = before_count - len(row.items)
+                deduped_items = dedupe_candidates(row.items, seen_identities=seen_identities)
+            dedupe_removed = before_count - len(deduped_items)
 
             if (
                 media_type in {MediaTypes.MOVIE.value, MediaTypes.TV.value, MediaTypes.ANIME.value}
                 and row_definition.key == "coming_soon"
-                and len(row.items) < MAX_ITEMS_PER_ROW
+                and len(deduped_items) < MAX_ITEMS_PER_ROW
                 and dedupe_removed > 0
             ):
                 seen_identities.clear()
@@ -4133,10 +4153,11 @@ def get_discover_rows(
                     show_more=show_more,
                 )
                 before_count = len(row.items)
-                row.items = dedupe_candidates(row.items, seen_identities=seen_identities)
-                dedupe_removed = before_count - len(row.items)
+                deduped_items = dedupe_candidates(row.items, seen_identities=seen_identities)
+                dedupe_removed = before_count - len(deduped_items)
 
-            row.items = row.items[:MAX_ITEMS_PER_ROW]
+            row.items = deduped_items[:MAX_ITEMS_PER_ROW]
+            row.reserve_items = deduped_items[MAX_ITEMS_PER_ROW:]
             filtered_count = before_count - len(row.items)
             match_signal, match_signal_details = _row_match_signal_with_details(
                 row_definition.key,

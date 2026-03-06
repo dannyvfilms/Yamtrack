@@ -114,13 +114,14 @@ class RowResult:
     why: str
     source: str
     items: list[CandidateItem]
+    reserve_items: list[CandidateItem] = field(default_factory=list)
     is_stale: bool = False
     show_more: bool = False
     source_state: str = "live"
     match_signal: str | None = None
     debug_payload: dict[str, Any] | None = None
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, *, include_reserve: bool = False) -> dict[str, Any]:
         """Serialize row payload for DB row cache."""
         data: dict[str, Any] = {
             "key": self.key,
@@ -133,6 +134,8 @@ class RowResult:
             "show_more": self.show_more,
             "source_state": self.source_state,
         }
+        if include_reserve and self.reserve_items:
+            data["reserve_items"] = [item.to_dict() for item in self.reserve_items]
         if self.match_signal:
             data["match_signal"] = self.match_signal
         if self.debug_payload:
@@ -151,6 +154,10 @@ class RowResult:
             items=[
                 CandidateItem.from_dict(item_payload)
                 for item_payload in (payload.get("items") or [])
+            ],
+            reserve_items=[
+                CandidateItem.from_dict(item_payload)
+                for item_payload in (payload.get("reserve_items") or [])
             ],
             is_stale=bool(payload.get("is_stale", False)),
             show_more=bool(payload.get("show_more", False)),

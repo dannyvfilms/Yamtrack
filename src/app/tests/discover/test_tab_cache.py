@@ -5,7 +5,7 @@ from unittest.mock import call, patch
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from django.test import RequestFactory, TestCase
+from django.test import RequestFactory, TestCase, override_settings
 from django.utils import timezone
 
 from app.discover import tab_cache
@@ -27,7 +27,7 @@ class DiscoverTabCacheTests(TestCase):
     def tearDown(self):
         cache.clear()
 
-    def _row(self, title="Cached Movie"):
+    def _row(self, title="Cached Movie", *, reserve_title=None):
         return RowResult(
             key="top_picks_for_you",
             title="Top Picks For You",
@@ -44,6 +44,18 @@ class DiscoverTabCacheTests(TestCase):
                     final_score=0.91,
                 ),
             ],
+            reserve_items=[
+                CandidateItem(
+                    media_type="movie",
+                    source="tmdb",
+                    media_id="102",
+                    title=reserve_title or "Reserve Movie",
+                    image="https://example.com/reserve.jpg",
+                    final_score=0.74,
+                ),
+            ]
+            if reserve_title is not None
+            else [],
         )
 
     @patch("app.discover.service.get_discover_rows")
@@ -119,6 +131,17 @@ class DiscoverTabCacheTests(TestCase):
             defer_artwork=True,
         )
 
+    def test_set_tab_cache_preserves_reserve_items(self):
+        tab_cache.set_tab_cache(
+            self.user.id,
+            "movie",
+            [self._row(reserve_title="Backfill Movie")],
+        )
+
+        rows = tab_cache.get_tab_rows(self.user, "movie", show_more=False)
+
+        self.assertEqual(rows[0].reserve_items[0].title, "Backfill Movie")
+
     @patch("app.discover.tab_cache.schedule_tab_refresh", return_value=True)
     def test_get_tab_status_schedules_refresh_for_stale_payload(self, mock_schedule):
         tab_cache.set_tab_cache(self.user.id, "movie", [self._row()])
@@ -139,6 +162,7 @@ class DiscoverTabCacheTests(TestCase):
         )
 
     @patch("app.tasks.refresh_discover_tab_cache.apply_async")
+    @override_settings(DISCOVER_TASKS_EAGER_REFRESH=True)
     def test_schedule_tab_refresh_deduplicates_requests(self, mock_apply_async):
         first = tab_cache.schedule_tab_refresh(self.user.id, "movie", show_more=False)
         second = tab_cache.schedule_tab_refresh(self.user.id, "movie", show_more=False)
@@ -148,6 +172,7 @@ class DiscoverTabCacheTests(TestCase):
         mock_apply_async.assert_called_once()
 
     @patch("app.tasks.refresh_discover_tab_cache.apply_async")
+    @override_settings(DISCOVER_TASKS_EAGER_REFRESH=True)
     def test_schedule_tab_refresh_replaces_stale_lock_when_forced(
         self, mock_apply_async
     ):
@@ -171,6 +196,50 @@ class DiscoverTabCacheTests(TestCase):
 
         self.assertTrue(scheduled)
         mock_apply_async.assert_called_once()
+
+    def test_apply_cached_action_removes_item_and_promotes_reserve(self):
+        tab_cache.set_tab_cache(
+            self.user.id,
+            "movie",
+            [self._row(title="Remove Me", reserve_title="Promoted Movie")],
+        )
+
+        rows = tab_cache.apply_cached_action(
+            self.user.id,
+            "movie",
+            "movie",
+            media_id="101",
+            source="tmdb",
+            show_more=False,
+        )
+
+        self.assertIsNotNone(rows)
+        self.assertEqual(rows[0].items[0].title, "Promoted Movie")
+        self.assertEqual(rows[0].reserve_items, [])
+
+    def test_store_and_restore_undo_snapshot_restores_prior_rows(self):
+        original_rows = [self._row(title="Before Undo", reserve_title="Undo Reserve")]
+        tab_cache.set_tab_cache(self.user.id, "movie", original_rows)
+        token = tab_cache.store_undo_snapshot(
+            self.user.id,
+            action="dismiss",
+            active_media_type="movie",
+            candidate_media_type="movie",
+            show_more=False,
+            side_effect={"kind": "dismiss", "feedback_id": 1},
+        )
+        tab_cache.set_tab_cache(
+            self.user.id,
+            "movie",
+            [self._row(title="After Action", reserve_title="Changed Reserve")],
+            optimistic_refreshing=True,
+        )
+
+        restored = tab_cache.restore_undo_snapshot(self.user.id, token)
+
+        self.assertIsNotNone(restored)
+        self.assertEqual(restored["rows"][0].items[0].title, "Before Undo")
+        self.assertEqual(restored["rows"][0].reserve_items[0].title, "Undo Reserve")
 
     def test_mark_active_from_request_reads_discover_next_url(self):
         request = self.factory.post(

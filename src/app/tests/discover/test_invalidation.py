@@ -12,6 +12,8 @@ from app import history_cache
 from app.discover import tab_cache as discover_tab_cache
 from app.models import (
     TV,
+    DiscoverFeedback,
+    DiscoverFeedbackType,
     Item,
     ItemPersonCredit,
     ItemTag,
@@ -20,6 +22,7 @@ from app.models import (
     Person,
     Season,
     Sources,
+    Status,
     Tag,
 )
 
@@ -273,4 +276,32 @@ class DiscoverInvalidationSignalTests(TestCase):
             self.user.id,
             debounce_seconds=20,
             countdown=20,
+        )
+
+    @patch("app.signals._handle_media_cache_change")
+    @patch("app.models.Item.fetch_releases")
+    def test_media_save_clears_prior_dismiss_feedback(
+        self,
+        _mock_fetch_releases,
+        _mock_handle_media_cache_change,
+    ):
+        item = self._item(MediaTypes.MOVIE.value, "movie-feedback-clear")
+        DiscoverFeedback.objects.create(
+            user=self.user,
+            item=item,
+            feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
+        )
+
+        Movie.objects.create(
+            user=self.user,
+            item=item,
+            status=Status.PLANNING.value,
+        )
+
+        self.assertFalse(
+            DiscoverFeedback.objects.filter(
+                user=self.user,
+                item=item,
+                feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
+            ).exists(),
         )

@@ -6,14 +6,40 @@ from django.utils import timezone
 from unittest.mock import patch
 
 from app.discover.profile import compute_taste_profile
-from app.models import Item, ItemTag, MediaTypes, Movie, Sources, Status, TV, Tag
+from app.models import (
+    DiscoverFeedback,
+    DiscoverFeedbackType,
+    Item,
+    ItemPersonCredit,
+    ItemTag,
+    MediaTypes,
+    Movie,
+    Person,
+    Sources,
+    Status,
+    TV,
+    Tag,
+)
 
 
 class DiscoverProfileTests(TestCase):
     """Tests for taste profile computation."""
 
     def setUp(self):
+        self.signal_patches = [
+            patch("app.signals._handle_media_cache_change"),
+            patch("app.signals._sync_owner_smart_lists_for_items"),
+            patch("app.signals._schedule_credits_backfill_if_needed"),
+            patch("app.models.Item.fetch_releases"),
+        ]
+        for patcher in self.signal_patches:
+            patcher.start()
+
         self.user = get_user_model().objects.create_user(username="profile-user", password="testpass")
+
+    def tearDown(self):
+        for patcher in reversed(self.signal_patches):
+            patcher.stop()
 
     def test_compute_taste_profile_prefers_recent_high_weight_genres(self):
         recent_item = Item.objects.create(
@@ -147,3 +173,51 @@ class DiscoverProfileTests(TestCase):
         self.assertIn("cozy", profile.phase_tag_affinity)
         self.assertIn("singalong", profile.phase_tag_affinity)
         self.assertNotIn("classic", profile.phase_tag_affinity)
+
+    def test_compute_taste_profile_includes_negative_affinities_for_same_media_type(self):
+        movie_item = Item.objects.create(
+            media_id="701",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Dismissed Sci-Fi",
+            image="http://example.com/dismissed-sci-fi.jpg",
+            genres=["Sci-Fi"],
+        )
+        tv_item = Item.objects.create(
+            media_id="702",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Dismissed TV",
+            image="http://example.com/dismissed-tv.jpg",
+            genres=["Mystery"],
+        )
+        tag = Tag.objects.create(user=self.user, name="Too Slow")
+        ItemTag.objects.create(tag=tag, item=movie_item)
+        person = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="person-negative",
+            name="Actor Negative",
+        )
+        ItemPersonCredit.objects.create(
+            item=movie_item,
+            person=person,
+            role_type="cast",
+            role="Lead",
+        )
+        DiscoverFeedback.objects.create(
+            user=self.user,
+            item=movie_item,
+            feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
+        )
+        DiscoverFeedback.objects.create(
+            user=self.user,
+            item=tv_item,
+            feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
+        )
+
+        profile = compute_taste_profile(self.user, MediaTypes.MOVIE.value)
+
+        self.assertIn("sci-fi", profile.negative_genre_affinity)
+        self.assertIn("too slow", profile.negative_tag_affinity)
+        self.assertIn("actor negative", profile.negative_person_affinity)
+        self.assertNotIn("mystery", profile.negative_genre_affinity)

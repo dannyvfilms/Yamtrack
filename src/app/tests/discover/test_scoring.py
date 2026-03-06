@@ -66,3 +66,25 @@ class DiscoverScoringTests(SimpleTestCase):
         self.assertEqual(scored[0].score_breakdown["user_score"], 9.0)
         self.assertEqual(scored[0].score_breakdown["days_since_activity"], 180.0)
         self.assertIn("genre_match", scored[0].score_breakdown)
+
+    def test_score_candidates_applies_negative_penalty(self):
+        candidate = CandidateItem(
+            media_type="movie",
+            source="tmdb",
+            media_id="1",
+            title="Penalty Test",
+            genres=["Action"],
+            tags=["heist"],
+            people=["Actor A"],
+        )
+        profile = {
+            "genre_affinity": {"action": 1.0},
+            "negative_genre_affinity": {"action": 1.0},
+            "negative_tag_affinity": {"heist": 1.0},
+            "negative_person_affinity": {"actor a": 1.0},
+        }
+
+        scored = score_candidates([candidate], profile)
+
+        self.assertLess(scored[0].final_score, 0.4)
+        self.assertGreater(scored[0].score_breakdown["negative_total_penalty"], 0.0)

@@ -76,6 +76,7 @@ def score_candidates(
     profile: dict,
     *,
     include_tag_weight: bool = True,
+    apply_negative_penalty: bool = True,
 ) -> list[CandidateItem]:
     """Apply weighted scoring formula to candidate list in place."""
     if not candidates:
@@ -108,10 +109,23 @@ def score_candidates(
         str(key).lower(): float(value)
         for key, value in (profile.get("phase_tag_affinity") or {}).items()
     }
+    negative_genre_profile = {
+        str(key).lower(): float(value)
+        for key, value in (profile.get("negative_genre_affinity") or {}).items()
+    }
+    negative_tag_profile = {
+        str(key).lower(): float(value)
+        for key, value in (profile.get("negative_tag_affinity") or {}).items()
+    }
+    negative_person_profile = {
+        str(key).lower(): float(value)
+        for key, value in (profile.get("negative_person_affinity") or {}).items()
+    }
 
     for index, candidate in enumerate(candidates):
         genre_vector = _profile_vector(candidate.genres)
         tag_vector = _profile_vector(candidate.tags)
+        person_vector = _profile_vector(candidate.people)
 
         genre_match = cosine_similarity(genre_vector, genre_profile)
         tag_match = cosine_similarity(tag_vector, tag_profile) if include_tag_weight else 0.0
@@ -121,6 +135,25 @@ def score_candidates(
         phase_tag_bonus = cosine_similarity(tag_vector, phase_tag_profile)
         popularity = popularity_norm[index]
         rating = rating_norm[index]
+        negative_genre_penalty = (
+            cosine_similarity(genre_vector, negative_genre_profile) * 0.18
+            if apply_negative_penalty
+            else 0.0
+        )
+        negative_tag_penalty = (
+            cosine_similarity(tag_vector, negative_tag_profile) * 0.04
+            if apply_negative_penalty
+            else 0.0
+        )
+        negative_person_penalty = (
+            cosine_similarity(person_vector, negative_person_profile) * 0.06
+            if apply_negative_penalty
+            else 0.0
+        )
+        total_negative_penalty = min(
+            0.22,
+            negative_genre_penalty + negative_tag_penalty + negative_person_penalty,
+        )
 
         final_score = (
             (genre_match * 0.4)
@@ -128,6 +161,7 @@ def score_candidates(
             + (popularity * 0.15)
             + (rating * 0.15)
             + (recency_bonus * 0.1)
+            - total_negative_penalty
         )
 
         candidate.score_breakdown.update(
@@ -140,6 +174,10 @@ def score_candidates(
                 "phase_genre_bonus": round(phase_genre_bonus, 6),
                 "recency_tag_bonus": round(recency_tag_bonus, 6),
                 "phase_tag_bonus": round(phase_tag_bonus, 6),
+                "negative_genre_penalty": round(negative_genre_penalty, 6),
+                "negative_tag_penalty": round(negative_tag_penalty, 6),
+                "negative_person_penalty": round(negative_person_penalty, 6),
+                "negative_total_penalty": round(total_negative_penalty, 6),
             },
         )
         candidate.final_score = round(final_score, 6)
