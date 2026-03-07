@@ -123,6 +123,25 @@ class Item(CalendarTriggerMixin, models.Model):
         blank=True,
         help_text="Rating count from provider metadata",
     )
+    provider_keywords = models.JSONField(default=list, blank=True, help_text="Provider keywords")
+    provider_certification = models.CharField(
+        max_length=20,
+        blank=True,
+        default="",
+        help_text="Primary provider certification/content rating",
+    )
+    provider_collection_id = models.CharField(
+        max_length=32,
+        blank=True,
+        default="",
+        help_text="Provider collection/franchise id",
+    )
+    provider_collection_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        help_text="Provider collection/franchise name",
+    )
     metadata_fetched_at = models.DateTimeField(null=True, blank=True, help_text="When metadata was last fetched")
     series_name = models.TextField(null=True, blank=True)
     series_position = models.FloatField(null=True, blank=True)
@@ -383,9 +402,11 @@ class MetadataBackfillField(models.TextChoices):
     GENRES = "genres", "Genres"
     CREDITS = "credits", "Credits"
     RELEASE = "release", "Release Date"
+    DISCOVER = "discover", "Discover Metadata"
 
 
 CREDITS_BACKFILL_VERSION = 2
+DISCOVER_MOVIE_METADATA_BACKFILL_VERSION = 1
 
 
 class MetadataBackfillState(models.Model):
@@ -3933,6 +3954,30 @@ class DiscoverTasteProfile(models.Model):
     tag_affinity = models.JSONField(default=dict, blank=True)
     recent_tag_affinity = models.JSONField(default=dict, blank=True)
     phase_tag_affinity = models.JSONField(default=dict, blank=True)
+    keyword_affinity = models.JSONField(default=dict, blank=True)
+    recent_keyword_affinity = models.JSONField(default=dict, blank=True)
+    phase_keyword_affinity = models.JSONField(default=dict, blank=True)
+    studio_affinity = models.JSONField(default=dict, blank=True)
+    recent_studio_affinity = models.JSONField(default=dict, blank=True)
+    phase_studio_affinity = models.JSONField(default=dict, blank=True)
+    collection_affinity = models.JSONField(default=dict, blank=True)
+    recent_collection_affinity = models.JSONField(default=dict, blank=True)
+    phase_collection_affinity = models.JSONField(default=dict, blank=True)
+    director_affinity = models.JSONField(default=dict, blank=True)
+    recent_director_affinity = models.JSONField(default=dict, blank=True)
+    phase_director_affinity = models.JSONField(default=dict, blank=True)
+    lead_cast_affinity = models.JSONField(default=dict, blank=True)
+    recent_lead_cast_affinity = models.JSONField(default=dict, blank=True)
+    phase_lead_cast_affinity = models.JSONField(default=dict, blank=True)
+    certification_affinity = models.JSONField(default=dict, blank=True)
+    recent_certification_affinity = models.JSONField(default=dict, blank=True)
+    phase_certification_affinity = models.JSONField(default=dict, blank=True)
+    runtime_bucket_affinity = models.JSONField(default=dict, blank=True)
+    recent_runtime_bucket_affinity = models.JSONField(default=dict, blank=True)
+    phase_runtime_bucket_affinity = models.JSONField(default=dict, blank=True)
+    decade_affinity = models.JSONField(default=dict, blank=True)
+    recent_decade_affinity = models.JSONField(default=dict, blank=True)
+    phase_decade_affinity = models.JSONField(default=dict, blank=True)
     person_affinity = models.JSONField(default=dict, blank=True)
     negative_genre_affinity = models.JSONField(default=dict, blank=True)
     negative_tag_affinity = models.JSONField(default=dict, blank=True)

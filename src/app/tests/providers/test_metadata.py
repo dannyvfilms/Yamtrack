@@ -319,6 +319,65 @@ class Metadata(TestCase):
         self.assertEqual(response["details"]["release_date"].date().isoformat(), "1998-02-28")
         self.assertEqual(response["details"]["status"], "Released")
 
+    @patch("app.providers.tmdb.services.api_request")
+    def test_movie_includes_keywords_certification_and_collection_metadata(self, mock_api_request):
+        cache_key = f"{Sources.TMDB.value}_{MediaTypes.MOVIE.value}_999"
+        tmdb.cache.delete(cache_key)
+        mock_api_request.side_effect = [
+            {
+                "id": 999,
+                "title": "Comfort Mystery",
+                "original_title": "Comfort Mystery",
+                "poster_path": "/comfort.jpg",
+                "overview": "A mystery.",
+                "genres": [{"id": 1, "name": "Mystery"}],
+                "popularity": 77.5,
+                "vote_average": 7.7,
+                "vote_count": 1200,
+                "status": "Released",
+                "runtime": 102,
+                "production_companies": [{"id": 44, "name": "Pixar Animation Studios", "logo_path": None}],
+                "production_countries": [{"iso_3166_1": "US", "name": "United States of America"}],
+                "spoken_languages": [{"english_name": "English"}],
+                "credits": {"cast": [], "crew": []},
+                "recommendations": {"results": []},
+                "external_ids": {},
+                "watch/providers": {"results": {}},
+                "alternative_titles": {"titles": []},
+                "keywords": {
+                    "keywords": [
+                        {"id": 10, "name": "Whodunit"},
+                        {"id": 11, "name": "Holiday"},
+                    ],
+                },
+                "release_dates": {
+                    "results": [
+                        {
+                            "iso_3166_1": "US",
+                            "release_dates": [{"certification": "PG"}],
+                        },
+                    ],
+                },
+                "belongs_to_collection": {"id": 321, "name": "Mystery Collection"},
+            },
+            {
+                "id": 321,
+                "name": "Mystery Collection",
+                "parts": [],
+            },
+        ]
+
+        response = tmdb.movie("999")
+
+        self.assertEqual(response["provider_popularity"], 77.5)
+        self.assertEqual(response["provider_rating"], 7.7)
+        self.assertEqual(response["provider_rating_count"], 1200)
+        self.assertEqual(response["provider_keywords"], ["Whodunit", "Holiday"])
+        self.assertEqual(response["provider_certification"], "PG")
+        self.assertEqual(response["provider_collection_id"], "321")
+        self.assertEqual(response["provider_collection_name"], "Mystery Collection")
+        self.assertEqual(response["details"]["certification"], "PG")
+
     @patch("requests.Session.get")
     def test_movie_unknown(self, mock_data):
         """Test the metadata method for movies with mostly unknown data."""

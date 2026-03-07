@@ -7,16 +7,19 @@ from unittest.mock import patch
 
 from app.discover.profile import compute_taste_profile
 from app.models import (
+    CreditRoleType,
     DiscoverFeedback,
     DiscoverFeedbackType,
     Item,
     ItemPersonCredit,
+    ItemStudioCredit,
     ItemTag,
     MediaTypes,
     Movie,
     Person,
     Sources,
     Status,
+    Studio,
     TV,
     Tag,
 )
@@ -221,3 +224,71 @@ class DiscoverProfileTests(TestCase):
         self.assertIn("too slow", profile.negative_tag_affinity)
         self.assertIn("actor negative", profile.negative_person_affinity)
         self.assertNotIn("mystery", profile.negative_genre_affinity)
+
+    def test_compute_taste_profile_populates_movie_metadata_affinities(self):
+        item = Item.objects.create(
+            media_id="801",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Family Mystery",
+            image="http://example.com/family-mystery.jpg",
+            genres=["Animation", "Mystery"],
+            provider_keywords=["Whodunit", "Holiday"],
+            provider_certification="PG",
+            provider_collection_id="123",
+            provider_collection_name="Mystery Collection",
+            runtime_minutes=102,
+            release_datetime=timezone.now() - timedelta(days=365 * 2),
+            studios=["Pixar Animation Studios"],
+        )
+        director = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="director-1",
+            name="Greta Gerwig",
+        )
+        lead = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="actor-1",
+            name="Amy Poehler",
+        )
+        studio = Studio.objects.create(
+            source=Sources.TMDB.value,
+            source_studio_id="studio-1",
+            name="Pixar Animation Studios",
+        )
+        ItemPersonCredit.objects.create(
+            item=item,
+            person=director,
+            role_type=CreditRoleType.CREW.value,
+            role="Director",
+            department="Directing",
+        )
+        ItemPersonCredit.objects.create(
+            item=item,
+            person=lead,
+            role_type=CreditRoleType.CAST.value,
+            role="Lead",
+            sort_order=0,
+        )
+        ItemStudioCredit.objects.create(item=item, studio=studio)
+
+        with patch("app.models.providers.services.get_media_metadata", return_value={"max_progress": 1}):
+            Movie.objects.create(
+                item=item,
+                user=self.user,
+                score=9,
+                status=Status.COMPLETED.value,
+                end_date=timezone.now() - timedelta(days=12),
+            )
+
+        profile = compute_taste_profile(self.user, MediaTypes.MOVIE.value)
+
+        self.assertIn("whodunit", profile.keyword_affinity)
+        self.assertIn("pixar", profile.studio_affinity)
+        self.assertIn("mystery collection", profile.collection_affinity)
+        self.assertIn("greta gerwig", profile.director_affinity)
+        self.assertIn("amy poehler", profile.lead_cast_affinity)
+        self.assertIn("PG", profile.certification_affinity)
+        self.assertIn("90_109", profile.runtime_bucket_affinity)
+        self.assertIn("2020s", profile.decade_affinity)
+        self.assertIn("whodunit", profile.phase_keyword_affinity)

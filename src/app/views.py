@@ -38,6 +38,7 @@ from app import (
     history_cache,
     history_processor,
     live_playback,
+    metadata_utils,
     statistics_cache,
 )
 from app.discover import tab_cache as discover_tab_cache
@@ -3332,6 +3333,11 @@ def media_details(
         and isinstance(media_metadata, dict)
     ):
         if detail_item:
+            metadata_update_fields = metadata_utils.apply_item_metadata(detail_item, media_metadata)
+            if metadata_update_fields:
+                detail_item.metadata_fetched_at = timezone.now()
+                metadata_update_fields.append("metadata_fetched_at")
+                detail_item.save(update_fields=metadata_update_fields)
             missing_people = not detail_item.person_credits.exists()
             missing_studios = not detail_item.studio_credits.exists()
             if missing_people or missing_studios:
@@ -4350,6 +4356,12 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
         if media_type == MediaTypes.BOOK.value and not item.number_of_pages and number_of_pages:
             item.number_of_pages = number_of_pages
             item.save(update_fields=["number_of_pages"])
+
+        metadata_update_fields = metadata_utils.apply_item_metadata(item, metadata)
+        if metadata_update_fields:
+            item.metadata_fetched_at = timezone.now()
+            metadata_update_fields.append("metadata_fetched_at")
+            item.save(update_fields=metadata_update_fields)
 
         if source == Sources.TMDB.value and media_type in (MediaTypes.MOVIE.value, MediaTypes.TV.value):
             credits.sync_item_credits_from_metadata(item, metadata)

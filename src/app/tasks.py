@@ -12,9 +12,10 @@ from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from app import helpers, history_cache
+from app import helpers, history_cache, metadata_utils
 from app.models import (
     CREDITS_BACKFILL_VERSION,
+    DISCOVER_MOVIE_METADATA_BACKFILL_VERSION,
     Item,
     ItemPersonCredit,
     ItemStudioCredit,
@@ -88,6 +89,8 @@ NIGHTLY_METADATA_QUALITY_GENRE_COUNTDOWN = 5
 NIGHTLY_METADATA_QUALITY_RUNTIME_COUNTDOWN = 15
 NIGHTLY_METADATA_QUALITY_EPISODE_COUNTDOWN = 30
 NIGHTLY_METADATA_QUALITY_CREDITS_COUNTDOWN = 45
+DISCOVER_METADATA_REFRESH_DEBOUNCE_SECONDS = 60 * 10
+DISCOVER_METADATA_REFRESH_COUNTDOWN_SECONDS = 60
 
 
 def _apply_backfill_state_filters(queryset, field: str):
@@ -385,6 +388,81 @@ def _release_items_queryset():
 
 def count_release_backfill_items() -> int:
     return _release_items_queryset().count()
+
+
+def _discover_movie_metadata_items_queryset():
+    queryset = Item.objects.filter(
+        source=Sources.TMDB.value,
+        media_type=MediaTypes.MOVIE.value,
+        metadata_fetched_at__isnull=False,
+    )
+    queryset = _apply_backfill_state_filters(queryset, MetadataBackfillField.DISCOVER)
+    completed_ids = MetadataBackfillState.objects.filter(
+        field=MetadataBackfillField.DISCOVER,
+        give_up=False,
+        fail_count=0,
+        last_success_at__isnull=False,
+        strategy_version__gte=DISCOVER_MOVIE_METADATA_BACKFILL_VERSION,
+    ).values("item_id")
+    return queryset.exclude(id__in=completed_ids)
+
+
+def count_discover_movie_metadata_backfill_items() -> int:
+    return _discover_movie_metadata_items_queryset().count()
+
+
+def _schedule_discover_refresh_for_movie_items(items: list[Item]) -> None:
+    movie_item_ids = [
+        item.id
+        for item in items
+        if item.source == Sources.TMDB.value and item.media_type == MediaTypes.MOVIE.value
+    ]
+    if not movie_item_ids:
+        return
+
+    from app.discover import cache_repo
+    from app.discover.registry import ALL_MEDIA_KEY
+    from app.models import Movie
+
+    user_ids = sorted(
+        set(
+            Movie.objects.filter(item_id__in=movie_item_ids).values_list("user_id", flat=True),
+        ),
+    )
+    if not user_ids:
+        return
+
+    target_media_types = [MediaTypes.MOVIE.value, ALL_MEDIA_KEY]
+    cache_repo.delete_taste_profiles(user_ids, target_media_types)
+    cache_repo.delete_row_caches(user_ids, target_media_types)
+
+    refresh_discover_profiles.apply_async(
+        kwargs={
+            "user_ids": user_ids,
+            "media_types": target_media_types,
+        },
+        countdown=DISCOVER_METADATA_REFRESH_COUNTDOWN_SECONDS,
+    )
+
+    for user_id in user_ids:
+        refresh_key = f"discover_movie_metadata_refresh:{user_id}"
+        if not cache.add(
+            refresh_key,
+            True,
+            timeout=DISCOVER_METADATA_REFRESH_DEBOUNCE_SECONDS,
+        ):
+            continue
+        for media_type in target_media_types:
+            refresh_discover_tab_cache.apply_async(
+                kwargs={
+                    "user_id": user_id,
+                    "media_type": media_type,
+                    "show_more": False,
+                    "force": True,
+                    "clear_provider_cache": False,
+                },
+                countdown=DISCOVER_METADATA_REFRESH_COUNTDOWN_SECONDS,
+            )
 
 
 def _metadata_cache_keys_for_item(item: Item):
@@ -2610,6 +2688,7 @@ def backfill_item_metadata_task(batch_size: int = 10):
     initial_item_ids = [item.id for item in initial_items]
     remaining_slots = max(batch_size - len(initial_items), 0)
     release_backfill_items = []
+    discover_backfill_items = []
 
     if remaining_slots > 0:
         release_backfill_items = list(
@@ -2618,112 +2697,66 @@ def backfill_item_metadata_task(batch_size: int = 10):
             .exclude(id__in=initial_item_ids)
             .order_by("metadata_fetched_at", "id")[:remaining_slots],
         )
+        remaining_slots = max(remaining_slots - len(release_backfill_items), 0)
 
-    items = initial_items + release_backfill_items
+    if remaining_slots > 0:
+        release_item_ids = [item.id for item in release_backfill_items]
+        discover_backfill_items = list(
+            _discover_movie_metadata_items_queryset()
+            .exclude(id__in=initial_item_ids + release_item_ids)
+            .order_by("metadata_fetched_at", "id")[:remaining_slots],
+        )
+
+    items = initial_items + release_backfill_items + discover_backfill_items
     if not items:
         return {
             "success_count": 0,
             "error_count": 0,
             "remaining_metadata": 0,
             "remaining_release": 0,
-            "message": "No items need metadata or release-date backfill",
+            "remaining_discover_movie_metadata": 0,
+            "message": "No items need metadata, release-date, or Discover metadata backfill",
         }
 
     success_count = 0
     error_count = 0
     release_updated_count = 0
+    processed_movie_discover_items: list[Item] = []
+    discover_item_ids = {item.id for item in discover_backfill_items}
 
     for item in items:
         initial_metadata_backfill = item.metadata_fetched_at is None
+        discover_metadata_backfill = item.id in discover_item_ids
         try:
             if item.release_datetime is None:
                 _clear_item_metadata_cache(item)
 
             metadata = _fetch_item_metadata(item)
-            details = metadata.get("details", {}) if isinstance(metadata, dict) else {}
-            if not isinstance(details, dict):
-                details = {}
-            release_datetime = helpers.extract_release_datetime(metadata or {})
-
-            # Extract all metadata fields (same logic as media_save)
-            country = details.get("country") or ""
-
-            languages = details.get("languages") or []
-            if not isinstance(languages, list):
-                languages = [languages] if languages else []
-
-            platforms = details.get("platforms") or []
-            if not isinstance(platforms, list):
-                platforms = []
-
-            format_type = details.get("format") or ""
-            status = details.get("status") or ""
-
-            studios = details.get("studios") or []
-            if not isinstance(studios, list):
-                studios = []
-
-            themes = details.get("themes") or []
-            if not isinstance(themes, list):
-                themes = []
-
-            authors = details.get("authors") or details.get("author") or []
-            if isinstance(authors, str):
-                authors = [authors] if authors else []
-            elif not isinstance(authors, list):
-                authors = []
-
-            publishers = details.get("publishers") or details.get("publisher") or ""
-            if isinstance(publishers, list):
-                publishers = publishers[0] if publishers else ""
-
-            isbn = details.get("isbn") or []
-            if not isinstance(isbn, list):
-                isbn = []
-
-            source_material = details.get("source") or ""
-
-            creators = details.get("people") or []
-            if not isinstance(creators, list):
-                creators = []
-
-            runtime = details.get("runtime") or ""
 
             update_fields = []
 
             if initial_metadata_backfill:
-                item.country = country
-                item.languages = languages
-                item.platforms = platforms
-                item.format = format_type
-                item.status = status
-                item.studios = studios
-                item.themes = themes
-                item.authors = authors
-                item.publishers = publishers
-                item.isbn = isbn
-                item.source_material = source_material
-                item.creators = creators
-                item.runtime = runtime
-                update_fields.extend([
-                    "country",
-                    "languages",
-                    "platforms",
-                    "format",
-                    "status",
-                    "studios",
-                    "themes",
-                    "authors",
-                    "publishers",
-                    "isbn",
-                    "source_material",
-                    "creators",
-                    "runtime",
-                ])
+                update_fields.extend(
+                    metadata_utils.apply_item_metadata(
+                        item,
+                        metadata,
+                        include_core=True,
+                        include_provider=True,
+                        include_release=True,
+                    ),
+                )
+            else:
+                update_fields.extend(
+                    metadata_utils.apply_item_metadata(
+                        item,
+                        metadata,
+                        include_core=False,
+                        include_provider=True,
+                        include_release=True,
+                    ),
+                )
 
-            if release_datetime and item.release_datetime != release_datetime:
-                item.release_datetime = release_datetime
-                update_fields.append("release_datetime")
+            if "release_datetime" in update_fields:
                 release_updated_count += 1
 
             item.metadata_fetched_at = timezone.now()
@@ -2731,22 +2764,37 @@ def backfill_item_metadata_task(batch_size: int = 10):
 
             item.save(update_fields=update_fields)
 
+            if item.source == Sources.TMDB.value and item.media_type == MediaTypes.MOVIE.value:
+                _record_backfill_success(
+                    item,
+                    MetadataBackfillField.DISCOVER,
+                    strategy_version=DISCOVER_MOVIE_METADATA_BACKFILL_VERSION,
+                )
+                processed_movie_discover_items.append(item)
+
             success_count += 1
             logger.info(
                 (
                     "metadata_backfill_success item_id=%s media_type=%s "
-                    "country=%s format=%s release_datetime=%s initial=%s"
+                    "country=%s format=%s release_datetime=%s initial=%s discover=%s"
                 ),
                 item.id,
                 item.media_type,
-                country,
-                format_type,
+                item.country,
+                item.format,
                 item.release_datetime.isoformat() if item.release_datetime else None,
                 initial_metadata_backfill,
+                discover_metadata_backfill,
             )
 
         except Exception as e:
             error_count += 1
+            if item.source == Sources.TMDB.value and item.media_type == MediaTypes.MOVIE.value:
+                _record_backfill_failure(
+                    item,
+                    MetadataBackfillField.DISCOVER,
+                    f"exception: {e}",
+                )
             # Still mark as fetched even if there was an error, to avoid retrying infinitely
             item.metadata_fetched_at = timezone.now()
             item.save(update_fields=["metadata_fetched_at"])
@@ -2760,6 +2808,10 @@ def backfill_item_metadata_task(batch_size: int = 10):
 
     remaining_metadata = Item.objects.filter(metadata_fetched_at__isnull=True).count()
     remaining_release = count_release_backfill_items()
+    remaining_discover_movie_metadata = count_discover_movie_metadata_backfill_items()
+
+    if processed_movie_discover_items:
+        _schedule_discover_refresh_for_movie_items(processed_movie_discover_items)
 
     return {
         "success_count": success_count,
@@ -2767,11 +2819,13 @@ def backfill_item_metadata_task(batch_size: int = 10):
         "error_count": error_count,
         "remaining_metadata": remaining_metadata,
         "remaining_release": remaining_release,
+        "remaining_discover_movie_metadata": remaining_discover_movie_metadata,
         "remaining": remaining_metadata,
         "message": (
             f"Processed {success_count + error_count} items, "
             f"{remaining_metadata} metadata items remaining, "
-            f"{remaining_release} release items remaining"
+            f"{remaining_release} release items remaining, "
+            f"{remaining_discover_movie_metadata} Discover movie items remaining"
         ),
     }
 

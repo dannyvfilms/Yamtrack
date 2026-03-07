@@ -808,6 +808,11 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(hour=3, minute=0),  # every day at 3 AM
         "kwargs": {"batch_size": 1000},  # Process 1000 items per run (cleanup mode)
     },
+    "backfill_item_metadata_incremental": {
+        "task": "Backfill item metadata",
+        "schedule": crontab(minute="*/15"),  # every 15 minutes for gradual convergence
+        "kwargs": {"batch_size": 150},
+    },
     "nightly_metadata_quality_backfill": {
         "task": "Nightly metadata quality backfill",
         "schedule": crontab(hour=3, minute=30),  # every day at 3:30 AM

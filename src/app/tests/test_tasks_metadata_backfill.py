@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 from unittest.mock import patch
 
+from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.test import TestCase
 from django.utils import timezone
@@ -19,6 +20,8 @@ from app.models import (
     Sources,
     Studio,
 )
+
+User = get_user_model()
 
 
 class MetadataBackfillTaskTests(TestCase):
@@ -87,6 +90,132 @@ class MetadataBackfillTaskTests(TestCase):
         self.assertEqual(result["success_count"], 1)
         self.assertEqual(result["release_updated_count"], 1)
         self.assertEqual(result["error_count"], 0)
+
+    @patch("app.tasks.services.get_media_metadata")
+    def test_backfill_updates_movie_provider_recommendation_metadata(self, mock_get_media_metadata):
+        item = Item.objects.create(
+            media_id="501",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Movie",
+            image="https://example.com/movie.jpg",
+        )
+
+        mock_get_media_metadata.return_value = {
+            "provider_popularity": 77.5,
+            "provider_rating": 7.7,
+            "provider_rating_count": 1200,
+            "provider_keywords": ["Whodunit", "Holiday"],
+            "provider_certification": "PG",
+            "provider_collection_id": "321",
+            "provider_collection_name": "Mystery Collection",
+            "details": {
+                "country": "US",
+            },
+        }
+
+        result = tasks.backfill_item_metadata_task(batch_size=10)
+
+        item.refresh_from_db()
+        self.assertEqual(item.provider_popularity, 77.5)
+        self.assertEqual(item.provider_rating, 7.7)
+        self.assertEqual(item.provider_rating_count, 1200)
+        self.assertEqual(item.provider_keywords, ["Whodunit", "Holiday"])
+        self.assertEqual(item.provider_certification, "PG")
+        self.assertEqual(item.provider_collection_id, "321")
+        self.assertEqual(item.provider_collection_name, "Mystery Collection")
+        self.assertEqual(result["success_count"], 1)
+
+    def test_discover_movie_metadata_queryset_includes_existing_tmdb_movies_until_version_marked(self):
+        item = Item.objects.create(
+            media_id="601",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Existing Movie",
+            image="https://example.com/movie.jpg",
+            metadata_fetched_at=timezone.now() - timedelta(days=30),
+        )
+
+        candidate_ids = set(
+            tasks._discover_movie_metadata_items_queryset().values_list("id", flat=True),
+        )
+        self.assertIn(item.id, candidate_ids)
+
+        MetadataBackfillState.objects.create(
+            item=item,
+            field=MetadataBackfillField.DISCOVER,
+            strategy_version=tasks.DISCOVER_MOVIE_METADATA_BACKFILL_VERSION,
+            last_success_at=timezone.now(),
+        )
+
+        candidate_ids = set(
+            tasks._discover_movie_metadata_items_queryset().values_list("id", flat=True),
+        )
+        self.assertNotIn(item.id, candidate_ids)
+
+    @patch("app.tasks.refresh_discover_tab_cache.apply_async")
+    @patch("app.tasks.refresh_discover_profiles.apply_async")
+    @patch("app.tasks.services.get_media_metadata")
+    def test_backfill_existing_tmdb_movies_schedules_discover_refresh(
+        self,
+        mock_get_media_metadata,
+        mock_refresh_profiles,
+        mock_refresh_tab_cache,
+    ):
+        user = User.objects.create_user(username="discover-user", password="pw")
+        old_fetched_at = timezone.now() - timedelta(days=30)
+        item = Item.objects.create(
+            media_id="701",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Discover Movie",
+            image="https://example.com/discover-movie.jpg",
+            metadata_fetched_at=old_fetched_at,
+            release_datetime=timezone.now() - timedelta(days=365),
+        )
+        from app.models import Movie
+
+        with patch(
+            "app.models.providers.services.get_media_metadata",
+            return_value={"max_progress": 1},
+        ):
+            Movie.objects.create(
+                item=item,
+                user=user,
+                status="Completed",
+            )
+
+        mock_get_media_metadata.return_value = {
+            "provider_popularity": 88.0,
+            "provider_rating": 8.1,
+            "provider_rating_count": 1400,
+            "provider_keywords": ["Whodunit"],
+            "provider_certification": "PG",
+            "provider_collection_id": "88",
+            "provider_collection_name": "Mystery Collection",
+            "details": {"country": "US"},
+        }
+
+        result = tasks.backfill_item_metadata_task(batch_size=1)
+
+        item.refresh_from_db()
+        state = MetadataBackfillState.objects.get(
+            item=item,
+            field=MetadataBackfillField.DISCOVER,
+        )
+
+        self.assertEqual(item.provider_keywords, ["Whodunit"])
+        self.assertEqual(item.provider_popularity, 88.0)
+        self.assertEqual(item.provider_rating, 8.1)
+        self.assertEqual(item.provider_rating_count, 1400)
+        self.assertEqual(item.provider_certification, "PG")
+        self.assertEqual(state.strategy_version, tasks.DISCOVER_MOVIE_METADATA_BACKFILL_VERSION)
+        self.assertIsNotNone(state.last_success_at)
+        self.assertEqual(result["success_count"], 1)
+        self.assertIn("remaining_discover_movie_metadata", result)
+
+        mock_refresh_profiles.assert_called_once()
+        self.assertEqual(mock_refresh_tab_cache.call_count, 2)
 
     @patch("app.tasks.services.get_media_metadata")
     def test_backfill_prioritizes_never_fetched_items(self, mock_get_media_metadata):

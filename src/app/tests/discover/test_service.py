@@ -16,6 +16,7 @@ from app.discover.service import (
     _build_comfort_debug_payload,
     _comfort_candidates,
     _comfort_match_signal,
+    _entries_to_candidates,
     _provider_row_candidates,
     _row_match_signal,
     _row_match_signal_with_details,
@@ -24,7 +25,21 @@ from app.discover.service import (
     _top_picks_candidates,
     get_discover_rows,
 )
-from app.models import Episode, Item, MediaTypes, Movie, Season, Sources, Status, TV
+from app.models import (
+    CreditRoleType,
+    Episode,
+    Item,
+    ItemPersonCredit,
+    ItemStudioCredit,
+    MediaTypes,
+    Movie,
+    Person,
+    Season,
+    Sources,
+    Status,
+    Studio,
+    TV,
+)
 
 
 class DiscoverServiceTests(TestCase):
@@ -842,6 +857,135 @@ class DiscoverServiceTests(TestCase):
 
         self.assertNotEqual([item.title for item in canon_row.items], ["Old Cached Canon"])
         self.assertGreaterEqual(mock_popular.call_count, 1)
+
+    @patch("app.discover.service.get_or_compute_taste_profile", return_value={})
+    @patch("app.discover.service.TMDB_ADAPTER.top_rated", return_value=[])
+    @patch("app.discover.service.TMDB_ADAPTER.upcoming", return_value=[])
+    @patch("app.discover.service.TMDB_ADAPTER.current_cycle", return_value=[])
+    @patch("app.discover.service.TRAKT_ADAPTER.movie_anticipated", return_value=[])
+    @patch("app.discover.service.TRAKT_ADAPTER.movie_popular", side_effect=RuntimeError("trakt down"))
+    @patch("app.discover.service.TRAKT_ADAPTER.movie_watched_weekly", return_value=[])
+    def test_all_time_greats_unseen_uses_cached_row_when_rebuild_fails(
+        self,
+        _mock_trending,
+        mock_popular,
+        _mock_anticipated,
+        _mock_current_cycle,
+        _mock_upcoming,
+        mock_top_rated,
+        _mock_profile,
+    ):
+        cached_payload = {
+            "key": "all_time_greats_unseen",
+            "title": "All-Time Greats You Haven't Seen",
+            "mission": "Canon",
+            "why": "Must-watch classics still missing",
+            "source": "trakt",
+            "items": [
+                CandidateItem(
+                    media_type=MediaTypes.MOVIE.value,
+                    source="tmdb",
+                    media_id="999",
+                    title="Old Cached Canon",
+                    image="https://example.com/999.jpg",
+                ).to_dict(),
+                CandidateItem(
+                    media_type=MediaTypes.MOVIE.value,
+                    source="tmdb",
+                    media_id="1000",
+                    title="Old Cached Canon Two",
+                    image="https://example.com/1000.jpg",
+                ).to_dict(),
+                CandidateItem(
+                    media_type=MediaTypes.MOVIE.value,
+                    source="tmdb",
+                    media_id="1001",
+                    title="Old Cached Canon Three",
+                    image="https://example.com/1001.jpg",
+                ).to_dict(),
+            ],
+            "is_stale": False,
+            "show_more": False,
+            "source_state": "cache",
+            "meta": {"adaptive_pull_target": 100, "schema_version": 1},
+        }
+        cache_repo.set_row_cache(
+            self.user.id,
+            MediaTypes.MOVIE.value,
+            "all_time_greats_unseen",
+            cached_payload,
+            ttl_seconds=3600,
+        )
+
+        rows = get_discover_rows(self.user, MediaTypes.MOVIE.value, show_more=False)
+        canon_row = next(row for row in rows if row.key == "all_time_greats_unseen")
+
+        self.assertEqual(
+            [item.title for item in canon_row.items],
+            [
+                "Old Cached Canon",
+                "Old Cached Canon Two",
+                "Old Cached Canon Three",
+            ],
+        )
+        self.assertTrue(canon_row.is_stale)
+        self.assertEqual(canon_row.source_state, "stale")
+        self.assertGreaterEqual(mock_popular.call_count, 1)
+        mock_top_rated.assert_not_called()
+
+    @patch("app.discover.service.get_or_compute_taste_profile", return_value={})
+    @patch("app.discover.service.TMDB_ADAPTER.upcoming", return_value=[])
+    @patch("app.discover.service.TMDB_ADAPTER.current_cycle", return_value=[])
+    @patch("app.discover.service.TRAKT_ADAPTER.movie_anticipated", return_value=[])
+    @patch("app.discover.service.TRAKT_ADAPTER.movie_popular", side_effect=RuntimeError("trakt down"))
+    @patch("app.discover.service.TRAKT_ADAPTER.movie_watched_weekly", return_value=[])
+    @patch("app.discover.service.TMDB_ADAPTER.top_rated")
+    def test_all_time_greats_unseen_falls_back_to_tmdb_when_trakt_fails_without_cache(
+        self,
+        mock_top_rated,
+        _mock_trending,
+        _mock_popular,
+        _mock_anticipated,
+        _mock_current_cycle,
+        _mock_upcoming,
+        _mock_profile,
+    ):
+        mock_top_rated.return_value = [
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source="tmdb",
+                media_id="1001",
+                title="Fallback Canon One",
+                image="https://example.com/1001.jpg",
+            ),
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source="tmdb",
+                media_id="1002",
+                title="Fallback Canon Two",
+                image="https://example.com/1002.jpg",
+            ),
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source="tmdb",
+                media_id="1003",
+                title="Fallback Canon Three",
+                image="https://example.com/1003.jpg",
+            ),
+        ]
+
+        rows = get_discover_rows(self.user, MediaTypes.MOVIE.value, show_more=False)
+        canon_row = next(row for row in rows if row.key == "all_time_greats_unseen")
+
+        self.assertEqual(
+            [item.title for item in canon_row.items],
+            [
+                "Fallback Canon One",
+                "Fallback Canon Two",
+                "Fallback Canon Three",
+            ],
+        )
+        self.assertEqual(canon_row.source_state, "fallback")
 
     @patch("app.discover.service.get_or_compute_taste_profile", return_value={})
     @patch("app.discover.service.TMDB_ADAPTER.top_rated", return_value=[])
@@ -2518,6 +2662,201 @@ class DiscoverServiceTests(TestCase):
         self.assertEqual(top_two, phase_media_ids)
         self.assertEqual(len(candidates), 8)
         self.assertEqual(weak_count, 6)
+
+    def test_entries_to_candidates_include_richer_movie_metadata(self):
+        item = Item.objects.create(
+            media_id="7001",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Rich Metadata",
+            image="http://example.com/rich.jpg",
+            genres=["Animation", "Mystery"],
+            provider_keywords=["Whodunit", "Holiday"],
+            provider_certification="PG",
+            provider_collection_id="44",
+            provider_collection_name="Mystery Collection",
+            runtime_minutes=102,
+            release_datetime=timezone.now() - timedelta(days=365),
+            studios=["Pixar Animation Studios"],
+        )
+        director = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="director-rich",
+            name="Greta Gerwig",
+        )
+        lead = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="actor-rich",
+            name="Amy Poehler",
+        )
+        studio = Studio.objects.create(
+            source=Sources.TMDB.value,
+            source_studio_id="studio-rich",
+            name="Pixar Animation Studios",
+        )
+        ItemPersonCredit.objects.create(
+            item=item,
+            person=director,
+            role_type=CreditRoleType.CREW.value,
+            role="Director",
+            department="Directing",
+        )
+        ItemPersonCredit.objects.create(
+            item=item,
+            person=lead,
+            role_type=CreditRoleType.CAST.value,
+            role="Lead",
+            sort_order=0,
+        )
+        ItemStudioCredit.objects.create(item=item, studio=studio)
+
+        with patch("app.models.providers.services.get_media_metadata", return_value={"max_progress": 1}):
+            entry = Movie.objects.create(
+                item=item,
+                user=self.user,
+                score=9,
+                status=Status.COMPLETED.value,
+                end_date=timezone.now() - timedelta(days=120),
+            )
+
+        candidates = _entries_to_candidates(
+            [entry],
+            user=self.user,
+            row_key="comfort_rewatches",
+            source_reason="Past favorite",
+        )
+
+        self.assertEqual(len(candidates), 1)
+        candidate = candidates[0]
+        self.assertEqual(candidate.keywords, ["whodunit", "holiday"])
+        self.assertEqual(candidate.studios, ["pixar"])
+        self.assertEqual(candidate.directors, ["greta gerwig"])
+        self.assertEqual(candidate.lead_cast, ["amy poehler"])
+        self.assertEqual(candidate.collection_name, "Mystery Collection")
+        self.assertEqual(candidate.certification, "PG")
+        self.assertEqual(candidate.runtime_bucket, "90_109")
+        self.assertEqual(candidate.release_decade, "2020s")
+
+    def test_movie_comfort_confidence_prefers_richer_metadata_and_filters_weak_unrated(self):
+        candidates = [
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source="tmdb",
+                media_id="family",
+                title="Family Comfort",
+                genres=["Animation", "Family"],
+                keywords=["holiday", "whodunit"],
+                studios=["pixar"],
+                collection_name="Mystery Collection",
+                certification="PG",
+                runtime_bucket="90_109",
+                release_decade="2020s",
+                popularity=90.0,
+                rating_count=9000,
+                score_breakdown={
+                    "user_score": 8.0,
+                    "days_since_activity": 220.0,
+                    "rewatch_count": 2.0,
+                    "recent_history_tag_coverage": 0.0,
+                },
+            ),
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source="tmdb",
+                media_id="classic",
+                title="Classic Suspense",
+                genres=["Thriller"],
+                directors=["alfred hitchcock"],
+                certification="PG",
+                runtime_bucket="90_109",
+                release_decade="1950s",
+                popularity=70.0,
+                rating_count=5000,
+                score_breakdown={
+                    "user_score": 8.0,
+                    "days_since_activity": 260.0,
+                    "rewatch_count": 1.0,
+                    "recent_history_tag_coverage": 0.0,
+                },
+            ),
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source="tmdb",
+                media_id="apollo",
+                title="Apollo 11",
+                genres=["Documentary"],
+                keywords=["space program"],
+                studios=["neon"],
+                certification="G",
+                runtime_bucket="90_109",
+                release_decade="2010s",
+                popularity=85.0,
+                rating_count=7000,
+                score_breakdown={
+                    "days_since_activity": 240.0,
+                    "rewatch_count": 1.0,
+                    "recent_history_tag_coverage": 0.0,
+                },
+            ),
+        ]
+
+        reranked = _apply_comfort_confidence(
+            candidates,
+            {
+                "phase_keyword_affinity": {"holiday": 1.0, "whodunit": 0.9},
+                "phase_studio_affinity": {"pixar": 1.0},
+                "phase_collection_affinity": {"mystery collection": 0.9},
+                "phase_director_affinity": {"alfred hitchcock": 0.6},
+                "phase_certification_affinity": {"pg": 1.0},
+                "phase_runtime_bucket_affinity": {"90_109": 1.0},
+                "phase_decade_affinity": {"2020s": 0.7},
+                "phase_genre_affinity": {"animation": 0.8, "family": 0.7},
+            },
+            use_movie_rewatch_model=True,
+        )
+
+        reranked_ids = [candidate.media_id for candidate in reranked]
+        self.assertEqual(reranked_ids[0], "family")
+        self.assertNotIn("apollo", reranked_ids)
+        self.assertGreater(
+            reranked[0].score_breakdown["recent_shape_fit"],
+            reranked[1].score_breakdown["recent_shape_fit"],
+        )
+
+    def test_row_match_signal_prefers_richer_movie_phase_labels(self):
+        profile = {
+            "phase_keyword_affinity": {"whodunit": 1.0},
+            "phase_studio_affinity": {"pixar": 0.9},
+            "phase_genre_affinity": {"drama": 0.8},
+        }
+        candidates = [
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source="tmdb",
+                media_id="signal-1",
+                title="Signal Movie",
+                genres=["Drama"],
+                keywords=["whodunit"],
+                studios=["pixar"],
+                score_breakdown={"phase_fit": 0.9},
+                final_score=0.85,
+            ),
+        ]
+
+        signal, details = _row_match_signal_with_details(
+            "comfort_rewatches",
+            candidates,
+            profile,
+        )
+
+        self.assertIsNotNone(signal)
+        self.assertIn("Whodunit", signal or "")
+        self.assertIn("Pixar", signal or "")
+        self.assertIsNotNone(details)
+        details = details or {}
+        self.assertEqual(details["mode"], "row_candidates")
+        self.assertIn("Signal evidence:", details["explanation"])
+        self.assertGreaterEqual(len(details.get("match_signal_label_sources", [])), 1)
 
     @patch("app.discover.service._is_holiday_window", return_value=False)
     def test_comfort_confidence_applies_out_of_season_holiday_penalty(self, _mock_window):

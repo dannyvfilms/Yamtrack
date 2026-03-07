@@ -114,6 +114,30 @@ def set_taste_profile(
     tag_affinity: dict[str, float],
     recent_tag_affinity: dict[str, float],
     phase_tag_affinity: dict[str, float],
+    keyword_affinity: dict[str, float],
+    recent_keyword_affinity: dict[str, float],
+    phase_keyword_affinity: dict[str, float],
+    studio_affinity: dict[str, float],
+    recent_studio_affinity: dict[str, float],
+    phase_studio_affinity: dict[str, float],
+    collection_affinity: dict[str, float],
+    recent_collection_affinity: dict[str, float],
+    phase_collection_affinity: dict[str, float],
+    director_affinity: dict[str, float],
+    recent_director_affinity: dict[str, float],
+    phase_director_affinity: dict[str, float],
+    lead_cast_affinity: dict[str, float],
+    recent_lead_cast_affinity: dict[str, float],
+    phase_lead_cast_affinity: dict[str, float],
+    certification_affinity: dict[str, float],
+    recent_certification_affinity: dict[str, float],
+    phase_certification_affinity: dict[str, float],
+    runtime_bucket_affinity: dict[str, float],
+    recent_runtime_bucket_affinity: dict[str, float],
+    phase_runtime_bucket_affinity: dict[str, float],
+    decade_affinity: dict[str, float],
+    recent_decade_affinity: dict[str, float],
+    phase_decade_affinity: dict[str, float],
     person_affinity: dict[str, float],
     negative_genre_affinity: dict[str, float],
     negative_tag_affinity: dict[str, float],
@@ -133,6 +157,30 @@ def set_taste_profile(
             "tag_affinity": tag_affinity,
             "recent_tag_affinity": recent_tag_affinity,
             "phase_tag_affinity": phase_tag_affinity,
+            "keyword_affinity": keyword_affinity,
+            "recent_keyword_affinity": recent_keyword_affinity,
+            "phase_keyword_affinity": phase_keyword_affinity,
+            "studio_affinity": studio_affinity,
+            "recent_studio_affinity": recent_studio_affinity,
+            "phase_studio_affinity": phase_studio_affinity,
+            "collection_affinity": collection_affinity,
+            "recent_collection_affinity": recent_collection_affinity,
+            "phase_collection_affinity": phase_collection_affinity,
+            "director_affinity": director_affinity,
+            "recent_director_affinity": recent_director_affinity,
+            "phase_director_affinity": phase_director_affinity,
+            "lead_cast_affinity": lead_cast_affinity,
+            "recent_lead_cast_affinity": recent_lead_cast_affinity,
+            "phase_lead_cast_affinity": phase_lead_cast_affinity,
+            "certification_affinity": certification_affinity,
+            "recent_certification_affinity": recent_certification_affinity,
+            "phase_certification_affinity": phase_certification_affinity,
+            "runtime_bucket_affinity": runtime_bucket_affinity,
+            "recent_runtime_bucket_affinity": recent_runtime_bucket_affinity,
+            "phase_runtime_bucket_affinity": phase_runtime_bucket_affinity,
+            "decade_affinity": decade_affinity,
+            "recent_decade_affinity": recent_decade_affinity,
+            "phase_decade_affinity": phase_decade_affinity,
             "person_affinity": person_affinity,
             "negative_genre_affinity": negative_genre_affinity,
             "negative_tag_affinity": negative_tag_affinity,
@@ -143,3 +191,25 @@ def set_taste_profile(
         },
     )
     return entry
+
+
+def delete_row_caches(user_ids: list[int], media_types: list[str]) -> int:
+    """Delete cached row payloads for the selected user/media pairs."""
+    if not user_ids or not media_types:
+        return 0
+    deleted, _details = DiscoverRowCache.objects.filter(
+        user_id__in=user_ids,
+        media_type__in=media_types,
+    ).delete()
+    return int(deleted)
+
+
+def delete_taste_profiles(user_ids: list[int], media_types: list[str]) -> int:
+    """Delete cached taste profiles for the selected user/media pairs."""
+    if not user_ids or not media_types:
+        return 0
+    deleted, _details = DiscoverTasteProfile.objects.filter(
+        user_id__in=user_ids,
+        media_type__in=media_types,
+    ).delete()
+    return int(deleted)

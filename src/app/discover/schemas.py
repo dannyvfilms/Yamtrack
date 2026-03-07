@@ -22,6 +22,15 @@ class CandidateItem:
     genres: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     people: list[str] = field(default_factory=list)
+    keywords: list[str] = field(default_factory=list)
+    studios: list[str] = field(default_factory=list)
+    directors: list[str] = field(default_factory=list)
+    lead_cast: list[str] = field(default_factory=list)
+    collection_id: str | None = None
+    collection_name: str | None = None
+    certification: str | None = None
+    runtime_bucket: str | None = None
+    release_decade: str | None = None
     popularity: float | None = None
     rating: float | None = None
     rating_count: int | None = None
@@ -51,6 +60,15 @@ class CandidateItem:
             "genres": list(self.genres),
             "tags": list(self.tags),
             "people": list(self.people),
+            "keywords": list(self.keywords),
+            "studios": list(self.studios),
+            "directors": list(self.directors),
+            "lead_cast": list(self.lead_cast),
+            "collection_id": self.collection_id,
+            "collection_name": self.collection_name,
+            "certification": self.certification,
+            "runtime_bucket": self.runtime_bucket,
+            "release_decade": self.release_decade,
             "popularity": self.popularity,
             "rating": self.rating,
             "rating_count": self.rating_count,
@@ -78,6 +96,15 @@ class CandidateItem:
             genres=list(payload.get("genres") or []),
             tags=list(payload.get("tags") or []),
             people=list(payload.get("people") or []),
+            keywords=list(payload.get("keywords") or []),
+            studios=list(payload.get("studios") or []),
+            directors=list(payload.get("directors") or []),
+            lead_cast=list(payload.get("lead_cast") or []),
+            collection_id=payload.get("collection_id"),
+            collection_name=payload.get("collection_name"),
+            certification=payload.get("certification"),
+            runtime_bucket=payload.get("runtime_bucket"),
+            release_decade=payload.get("release_decade"),
             popularity=payload.get("popularity"),
             rating=payload.get("rating"),
             rating_count=payload.get("rating_count"),

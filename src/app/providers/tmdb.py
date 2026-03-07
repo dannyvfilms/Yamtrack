@@ -159,7 +159,15 @@ def movie(media_id):
 
     if data is None:
         url = f"{base_url}/movie/{media_id}"
-        appends = ["recommendations", "external_ids", "credits", "watch/providers", "alternative_titles"]
+        appends = [
+            "recommendations",
+            "external_ids",
+            "credits",
+            "watch/providers",
+            "alternative_titles",
+            "keywords",
+            "release_dates",
+        ]
         params = {
             **base_params,
             "append_to_response": ",".join(appends),
@@ -201,6 +209,8 @@ def movie(media_id):
         filtered_recommendations = [
             item for item in recommended_items if item["id"] not in collection_ids
         ]
+        collection_info = response.get("belongs_to_collection") or {}
+        provider_certification = get_movie_certification(response.get("release_dates", {}))
         data = {
             "media_id": media_id,
             "source": Sources.TMDB.value,
@@ -208,23 +218,31 @@ def movie(media_id):
             "media_type": MediaTypes.MOVIE.value,
             **get_title_fields(response),
             "max_progress": 1,
-            "image": get_image_url(response["poster_path"]),
-            "synopsis": get_synopsis(response["overview"]),
-            "genres": get_genres(response["genres"]),
-            "score": get_score(response["vote_average"]),
-            "score_count": response["vote_count"],
+            "image": get_image_url(response.get("poster_path")),
+            "synopsis": get_synopsis(response.get("overview")),
+            "genres": get_genres(response.get("genres", [])),
+            "score": get_score(response.get("vote_average")),
+            "score_count": response.get("vote_count"),
+            "provider_popularity": response.get("popularity"),
+            "provider_rating": get_score(response.get("vote_average")),
+            "provider_rating_count": response.get("vote_count"),
             "details": {
                 "format": "Movie",
-                "release_date": get_start_date(response["release_date"]),
-                "status": response["status"],
-                "runtime": get_readable_duration(response["runtime"]),
-                "studios": get_companies(response["production_companies"]),
-                "country": get_country(response["production_countries"]),
-                "languages": get_languages(response["spoken_languages"]),
+                "release_date": get_start_date(response.get("release_date")),
+                "status": response.get("status"),
+                "runtime": get_readable_duration(response.get("runtime")),
+                "studios": get_companies(response.get("production_companies", [])),
+                "country": get_country(response.get("production_countries", [])),
+                "languages": get_languages(response.get("spoken_languages", [])),
+                "certification": provider_certification,
             },
             "cast": get_cast_credits(response.get("credits", {})),
             "crew": get_crew_credits(response.get("credits", {})),
             "studios_full": get_companies_full(response.get("production_companies")),
+            "provider_keywords": get_keyword_names(response.get("keywords", {})),
+            "provider_certification": provider_certification,
+            "provider_collection_id": str(collection_info.get("id") or ""),
+            "provider_collection_name": collection_info.get("name") or "",
             "related": {
                 collection_response.get("name", "collection"): collection_items,
                 "recommendations": get_related(
@@ -718,6 +736,47 @@ def get_companies(companies):
     if companies:
         return [company["name"] for company in companies[:3]]
     return None
+
+
+def get_keyword_names(keyword_payload):
+    """Return normalized keyword names from a TMDB keyword payload."""
+    keyword_rows = []
+    if isinstance(keyword_payload, dict):
+        keyword_rows = keyword_payload.get("keywords") or keyword_payload.get("results") or []
+    elif isinstance(keyword_payload, list):
+        keyword_rows = keyword_payload
+
+    keywords = []
+    for row in keyword_rows:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("name") or "").strip()
+        if name:
+            keywords.append(name)
+    return keywords
+
+
+def get_movie_certification(release_dates_payload):
+    """Return the preferred movie certification from TMDB release dates."""
+    results = []
+    if isinstance(release_dates_payload, dict):
+        results = release_dates_payload.get("results") or []
+    fallback = ""
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        release_rows = result.get("release_dates") or []
+        for release in release_rows:
+            if not isinstance(release, dict):
+                continue
+            certification = str(release.get("certification") or "").strip()
+            if not certification:
+                continue
+            if str(result.get("iso_3166_1") or "").upper() == "US":
+                return certification
+            if not fallback:
+                fallback = certification
+    return fallback
 
 
 def get_profile_image_url(path, size="w185"):

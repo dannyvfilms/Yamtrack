@@ -1,7 +1,7 @@
 """Management command to backfill metadata fields for existing Items."""
 from django.core.management.base import BaseCommand
 from django.utils import timezone
-from app import helpers
+from app import metadata_utils
 from app.models import Item
 from app.providers import services
 
@@ -62,81 +62,21 @@ class Command(BaseCommand):
                     item.source
                 )
 
-                details = metadata.get("details", {})
-
-                # Extract all metadata fields (same logic as media_save)
-                country = details.get("country") or ""
-
-                languages = details.get("languages") or []
-                if not isinstance(languages, list):
-                    languages = [languages] if languages else []
-
-                platforms = details.get("platforms") or []
-                if not isinstance(platforms, list):
-                    platforms = []
-
-                format_type = details.get("format") or ""
-                status = details.get("status") or ""
-
-                studios = details.get("studios") or []
-                if not isinstance(studios, list):
-                    studios = []
-
-                themes = details.get("themes") or []
-                if not isinstance(themes, list):
-                    themes = []
-
-                authors = details.get("authors") or details.get("author") or []
-                if isinstance(authors, str):
-                    authors = [authors] if authors else []
-                elif not isinstance(authors, list):
-                    authors = []
-
-                publishers = details.get("publishers") or details.get("publisher") or ""
-                if isinstance(publishers, list):
-                    publishers = publishers[0] if publishers else ""
-
-                isbn = details.get("isbn") or []
-                if not isinstance(isbn, list):
-                    isbn = []
-
-                source_material = details.get("source") or ""
-
-                creators = details.get("people") or []
-                if not isinstance(creators, list):
-                    creators = []
-
-                runtime = details.get("runtime") or ""
-                release_datetime = helpers.extract_release_datetime(metadata)
-
-                # Update item
-                item.country = country
-                item.languages = languages
-                item.platforms = platforms
-                item.format = format_type
-                item.status = status
-                item.studios = studios
-                item.themes = themes
-                item.authors = authors
-                item.publishers = publishers
-                item.isbn = isbn
-                item.source_material = source_material
-                item.creators = creators
-                item.runtime = runtime
-                if release_datetime:
-                    item.release_datetime = release_datetime
+                update_fields = metadata_utils.apply_item_metadata(
+                    item,
+                    metadata,
+                    include_core=True,
+                    include_provider=True,
+                    include_release=True,
+                )
                 item.metadata_fetched_at = timezone.now()
-
-                item.save(update_fields=[
-                    'country', 'languages', 'platforms', 'format', 'status',
-                    'studios', 'themes', 'authors', 'publishers', 'isbn',
-                    'source_material', 'creators', 'runtime', 'release_datetime', 'metadata_fetched_at'
-                ])
+                update_fields.append("metadata_fetched_at")
+                item.save(update_fields=update_fields)
 
                 success_count += 1
                 self.stdout.write(
                     f"[{i}/{total}] ✓ {item.title} ({item.media_type}): "
-                    f"country={country}, format={format_type}"
+                    f"country={item.country}, format={item.format}"
                 )
 
             except Exception as e:

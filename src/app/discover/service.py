@@ -16,6 +16,18 @@ from django.db.models import Count, Q
 from django.utils import timezone
 
 from app.discover import cache_repo
+from app.discover.feature_metadata import (
+    SIGNAL_LABEL_STOPLIST,
+    is_director_credit,
+    normalize_certification,
+    normalize_collection,
+    normalize_features,
+    normalize_keyword,
+    normalize_person_name,
+    normalize_studio,
+    release_decade_label,
+    runtime_bucket_label,
+)
 from app.discover.filters import (
     dedupe_candidates,
     exclude_tracked_items,
@@ -27,8 +39,19 @@ from app.discover.providers.trakt_adapter import TraktDiscoverAdapter
 from app.discover.providers.tmdb_adapter import TMDbDiscoverAdapter
 from app.discover.registry import ALL_MEDIA_KEY, DISCOVER_MEDIA_TYPES, get_rows
 from app.discover.schemas import CandidateItem, DiscoverPayload, RowDefinition, RowResult
-from app.discover.scoring import score_candidates
-from app.models import Episode, Item, ItemPersonCredit, ItemTag, MediaTypes, Season, Sources, Status
+from app.discover.scoring import cosine_similarity, normalize_values, score_candidates
+from app.models import (
+    CreditRoleType,
+    Episode,
+    Item,
+    ItemPersonCredit,
+    ItemStudioCredit,
+    ItemTag,
+    MediaTypes,
+    Season,
+    Sources,
+    Status,
+)
 from app.providers import bgg, comicvine, igdb, mal, musicbrainz, openlibrary, services
 
 logger = logging.getLogger(__name__)
@@ -168,17 +191,72 @@ def _item_tag_map(user, item_ids: list[int]) -> dict[int, list[str]]:
     return mapping
 
 
-def _item_people_map(item_ids: list[int]) -> dict[int, list[str]]:
+def _item_credit_feature_maps(item_ids: list[int]) -> tuple[dict[int, list[str]], dict[int, list[str]], dict[int, list[str]]]:
+    people_map: dict[int, list[str]] = defaultdict(list)
+    directors_map: dict[int, list[str]] = defaultdict(list)
+    lead_cast_map: dict[int, list[str]] = defaultdict(list)
+    if not item_ids:
+        return people_map, directors_map, lead_cast_map
+
+    people_seen: dict[int, set[str]] = defaultdict(set)
+    directors_seen: dict[int, set[str]] = defaultdict(set)
+    lead_cast_seen: dict[int, set[str]] = defaultdict(set)
+    lead_cast_counts: dict[int, int] = defaultdict(int)
+    credits = (
+        ItemPersonCredit.objects.filter(item_id__in=item_ids)
+        .select_related("person")
+        .order_by("item_id", "role_type", "sort_order", "person__name")
+    )
+    for credit in credits:
+        person_name = normalize_person_name(credit.person.name if credit.person_id else "")
+        if not person_name:
+            continue
+        if person_name not in people_seen[credit.item_id]:
+            people_seen[credit.item_id].add(person_name)
+            people_map[credit.item_id].append(person_name)
+        if is_director_credit(credit.role_type, credit.role, credit.department):
+            if person_name not in directors_seen[credit.item_id]:
+                directors_seen[credit.item_id].add(person_name)
+                directors_map[credit.item_id].append(person_name)
+        if (
+            credit.role_type == CreditRoleType.CAST.value
+            and lead_cast_counts[credit.item_id] < 3
+            and person_name not in lead_cast_seen[credit.item_id]
+        ):
+            lead_cast_seen[credit.item_id].add(person_name)
+            lead_cast_map[credit.item_id].append(person_name)
+            lead_cast_counts[credit.item_id] += 1
+    return people_map, directors_map, lead_cast_map
+
+
+def _item_studio_map(item_ids: list[int]) -> dict[int, list[str]]:
     mapping: dict[int, list[str]] = defaultdict(list)
     if not item_ids:
         return mapping
 
-    for credit in ItemPersonCredit.objects.filter(item_id__in=item_ids).select_related("person"):
-        person_name = (credit.person.name or "").strip() if credit.person_id else ""
-        if person_name:
-            mapping[credit.item_id].append(person_name)
-
+    seen: dict[int, set[str]] = defaultdict(set)
+    credits = (
+        ItemStudioCredit.objects.filter(item_id__in=item_ids)
+        .select_related("studio")
+        .order_by("item_id", "sort_order", "studio__name")
+    )
+    for credit in credits:
+        studio_name = normalize_studio(credit.studio.name if credit.studio_id else "")
+        if not studio_name or studio_name in seen[credit.item_id]:
+            continue
+        seen[credit.item_id].add(studio_name)
+        mapping[credit.item_id].append(studio_name)
     return mapping
+
+
+def _feature_vector(values: list[str]) -> dict[str, float]:
+    vector: dict[str, float] = {}
+    for value in values:
+        key = str(value).strip().lower()
+        if not key:
+            continue
+        vector[key] = 1.0
+    return vector
 
 
 def _entry_activity_datetime(entry):
@@ -277,7 +355,13 @@ def _entries_to_candidates(
         override_media_type in {MediaTypes.MOVIE.value, MediaTypes.TV.value}
         or (entries and entries[0].item.media_type in {MediaTypes.MOVIE.value, MediaTypes.TV.value})
     )
-    people_map = _item_people_map(item_ids) if include_people else {}
+    people_map: dict[int, list[str]] = defaultdict(list)
+    directors_map: dict[int, list[str]] = defaultdict(list)
+    lead_cast_map: dict[int, list[str]] = defaultdict(list)
+    studio_map: dict[int, list[str]] = defaultdict(list)
+    if include_people:
+        people_map, directors_map, lead_cast_map = _item_credit_feature_maps(item_ids)
+        studio_map = _item_studio_map(item_ids)
 
     candidates: list[CandidateItem] = []
     for entry in entries:
@@ -298,6 +382,15 @@ def _entries_to_candidates(
             genres=[str(genre).strip() for genre in (item.genres or []) if str(genre).strip()],
             tags=tag_map.get(item.id, []),
             people=people_map.get(item.id, []),
+            keywords=normalize_features(item.provider_keywords or [], normalize_keyword),
+            studios=studio_map.get(item.id) or normalize_features(item.studios or [], normalize_studio),
+            directors=directors_map.get(item.id, []),
+            lead_cast=lead_cast_map.get(item.id, []),
+            collection_id=str(item.provider_collection_id or "").strip() or None,
+            collection_name=str(item.provider_collection_name or "").strip() or None,
+            certification=normalize_certification(item.provider_certification) or None,
+            runtime_bucket=runtime_bucket_label(item.runtime_minutes) or None,
+            release_decade=release_decade_label(item.release_datetime) or None,
             popularity=item.provider_popularity,
             rating=item.provider_rating,
             rating_count=item.provider_rating_count,
@@ -2216,6 +2309,107 @@ def _phase_affinity_maps(profile_payload: dict | None) -> tuple[dict[str, float]
     return phase_genre_affinity, phase_tag_affinity
 
 
+def _profile_affinity_map(profile_payload: dict | None, *keys: str) -> dict[str, float]:
+    profile = profile_payload or {}
+    for key in keys:
+        values = profile.get(key) or {}
+        if not values:
+            continue
+        return {
+            str(raw_key).strip().lower(): float(raw_value)
+            for raw_key, raw_value in values.items()
+            if str(raw_key).strip()
+        }
+    return {}
+
+
+def _movie_comfort_affinity_maps(profile_payload: dict | None) -> dict[str, dict[str, float]]:
+    return {
+        "keyword": _profile_affinity_map(
+            profile_payload,
+            "phase_keyword_affinity",
+            "recent_keyword_affinity",
+            "keyword_affinity",
+        ),
+        "studio": _profile_affinity_map(
+            profile_payload,
+            "phase_studio_affinity",
+            "recent_studio_affinity",
+            "studio_affinity",
+        ),
+        "collection": _profile_affinity_map(
+            profile_payload,
+            "phase_collection_affinity",
+            "recent_collection_affinity",
+            "collection_affinity",
+        ),
+        "director": _profile_affinity_map(
+            profile_payload,
+            "phase_director_affinity",
+            "recent_director_affinity",
+            "director_affinity",
+        ),
+        "lead_cast": _profile_affinity_map(
+            profile_payload,
+            "phase_lead_cast_affinity",
+            "recent_lead_cast_affinity",
+            "lead_cast_affinity",
+        ),
+        "certification": _profile_affinity_map(
+            profile_payload,
+            "phase_certification_affinity",
+            "recent_certification_affinity",
+            "certification_affinity",
+        ),
+        "runtime_bucket": _profile_affinity_map(
+            profile_payload,
+            "phase_runtime_bucket_affinity",
+            "recent_runtime_bucket_affinity",
+            "runtime_bucket_affinity",
+        ),
+        "decade": _profile_affinity_map(
+            profile_payload,
+            "phase_decade_affinity",
+            "recent_decade_affinity",
+            "decade_affinity",
+        ),
+        "genre": _profile_affinity_map(
+            profile_payload,
+            "phase_genre_affinity",
+            "recent_genre_affinity",
+            "genre_affinity",
+        ),
+    }
+
+
+def _candidate_collection_labels(candidate: CandidateItem) -> list[str]:
+    return normalize_features(
+        [candidate.collection_name or candidate.collection_id],
+        normalize_collection,
+    )
+
+
+def _candidate_has_extended_movie_metadata(candidate: CandidateItem) -> bool:
+    return any(
+        [
+            candidate.keywords,
+            candidate.studios,
+            candidate.directors,
+            candidate.lead_cast,
+            _candidate_collection_labels(candidate),
+            normalize_features([candidate.certification], normalize_certification),
+            normalize_features([candidate.runtime_bucket], normalize_person_name),
+            normalize_features([candidate.release_decade], normalize_person_name),
+        ],
+    )
+
+
+def _affinity_fit(values: list[str], affinity_map: dict[str, float]) -> float:
+    if not values or not affinity_map:
+        return 0.0
+    return cosine_similarity(_feature_vector(values), affinity_map)
+
+
 def _entry_phase_evidence(
     entry,
     *,
@@ -2284,6 +2478,8 @@ def _top_phase_labels(
     for key, _score in ranked:
         if not allow_generic_terms and key in GENERIC_PHASE_TERMS:
             continue
+        if key in SIGNAL_LABEL_STOPLIST:
+            continue
         label = _format_phase_label(key)
         if not label:
             continue
@@ -2295,6 +2491,44 @@ def _top_phase_labels(
         if len(labels) >= limit:
             break
     return labels
+
+
+def _signal_phase_feature_maps(profile_payload: dict | None) -> list[tuple[str, dict[str, float]]]:
+    return [
+        ("keywords", _profile_affinity_map(profile_payload, "phase_keyword_affinity")),
+        ("collections", _profile_affinity_map(profile_payload, "phase_collection_affinity")),
+        ("studios", _profile_affinity_map(profile_payload, "phase_studio_affinity")),
+        ("directors", _profile_affinity_map(profile_payload, "phase_director_affinity")),
+        ("lead_cast", _profile_affinity_map(profile_payload, "phase_lead_cast_affinity")),
+        ("certifications", _profile_affinity_map(profile_payload, "phase_certification_affinity")),
+        ("runtime_buckets", _profile_affinity_map(profile_payload, "phase_runtime_bucket_affinity")),
+        ("decades", _profile_affinity_map(profile_payload, "phase_decade_affinity")),
+        ("tags", _profile_affinity_map(profile_payload, "phase_tag_affinity")),
+        ("genres", _profile_affinity_map(profile_payload, "phase_genre_affinity")),
+    ]
+
+
+def _candidate_signal_labels(candidate: CandidateItem) -> dict[str, set[str]]:
+    return {
+        "keywords": set(candidate.keywords or []),
+        "collections": set(_candidate_collection_labels(candidate)),
+        "studios": set(candidate.studios or []),
+        "directors": set(candidate.directors or []),
+        "lead_cast": set(candidate.lead_cast or []),
+        "certifications": set(normalize_features([candidate.certification], normalize_certification)),
+        "runtime_buckets": set(normalize_features([candidate.runtime_bucket], normalize_person_name)),
+        "decades": set(normalize_features([candidate.release_decade], normalize_person_name)),
+        "tags": {
+            str(tag).strip().lower()
+            for tag in (candidate.tags or [])
+            if str(tag).strip()
+        },
+        "genres": {
+            str(genre).strip().lower()
+            for genre in (candidate.genres or [])
+            if str(genre).strip()
+        },
+    }
 
 
 def _phase_pool_source(candidate: CandidateItem) -> str:
@@ -2434,14 +2668,330 @@ def _prefer_strong_phase_opening_window(
     return candidates
 
 
+def _apply_movie_comfort_confidence(
+    candidates: list[CandidateItem],
+    profile_payload: dict | None,
+    *,
+    phase_genre_affinity: dict[str, float],
+) -> list[CandidateItem]:
+    affinity_maps = _movie_comfort_affinity_maps(profile_payload)
+    extended_coverage = _clamp_unit(
+        sum(1 for candidate in candidates if _candidate_has_extended_movie_metadata(candidate))
+        / max(1, len(candidates)),
+    )
+    if extended_coverage < 0.35 or not any(affinity_maps.values()):
+        return candidates
+
+    phase_top = sorted(phase_genre_affinity, key=phase_genre_affinity.get, reverse=True)[:5]
+    holiday_window_active = _is_holiday_window()
+    candidate_tag_coverage_pool = _clamp_unit(
+        sum(1 for candidate in candidates if candidate.tags) / max(1, len(candidates)),
+    )
+    history_tag_coverages = [
+        float(candidate.score_breakdown.get("recent_history_tag_coverage", 0.0))
+        for candidate in candidates
+        if "recent_history_tag_coverage" in candidate.score_breakdown
+    ]
+    recent_history_tag_coverage = _clamp_unit(
+        (sum(history_tag_coverages) / len(history_tag_coverages))
+        if history_tag_coverages
+        else 0.0,
+    )
+    tag_signal_mode = (
+        "tag_rich"
+        if (
+            candidate_tag_coverage_pool >= COMFORT_TAG_RICH_CANDIDATE_COVERAGE_THRESHOLD
+            and recent_history_tag_coverage >= COMFORT_TAG_RICH_HISTORY_COVERAGE_THRESHOLD
+        )
+        else "tag_sparse"
+    )
+    hot_recency_mode_multiplier = 1.0 if tag_signal_mode == "tag_rich" else 0.05
+    popularity_norm = normalize_values([candidate.popularity for candidate in candidates])
+    rating_count_norm = normalize_values([candidate.rating_count for candidate in candidates])
+
+    for index, candidate in enumerate(candidates):
+        keyword_values = candidate.keywords
+        studio_values = candidate.studios
+        collection_values = _candidate_collection_labels(candidate)
+        director_values = candidate.directors
+        lead_cast_values = candidate.lead_cast
+        certification_values = normalize_features([candidate.certification], normalize_certification)
+        runtime_values = normalize_features([candidate.runtime_bucket], normalize_person_name)
+        decade_values = normalize_features([candidate.release_decade], normalize_person_name)
+        genre_values = normalize_features(candidate.genres, normalize_person_name)
+
+        keyword_fit = _affinity_fit(keyword_values, affinity_maps["keyword"])
+        studio_fit = _affinity_fit(studio_values, affinity_maps["studio"])
+        collection_fit = _affinity_fit(collection_values, affinity_maps["collection"])
+        director_fit = _affinity_fit(director_values, affinity_maps["director"])
+        lead_cast_fit = _affinity_fit(lead_cast_values, affinity_maps["lead_cast"])
+        certification_fit = _affinity_fit(certification_values, affinity_maps["certification"])
+        runtime_fit = _affinity_fit(runtime_values, affinity_maps["runtime_bucket"])
+        decade_fit = _affinity_fit(decade_values, affinity_maps["decade"])
+        genre_backstop_fit = _affinity_fit(genre_values, affinity_maps["genre"])
+        recent_shape_fit = _clamp_unit(
+            (keyword_fit * 0.30)
+            + (collection_fit * 0.18)
+            + (studio_fit * 0.16)
+            + (director_fit * 0.10)
+            + (lead_cast_fit * 0.06)
+            + (certification_fit * 0.06)
+            + (runtime_fit * 0.05)
+            + (decade_fit * 0.04)
+            + (genre_backstop_fit * 0.05)
+        )
+
+        user_score = candidate.score_breakdown.get("user_score")
+        if user_score is not None:
+            rating_confidence = _clamp_unit(
+                1.0 - (0.5 ** ((float(user_score) - 5.0) / 2.5)),
+            )
+        else:
+            rating_confidence = 0.5
+        provider_support = _clamp_unit((popularity_norm[index] + rating_count_norm[index]) / 2.0)
+        mainstream_quality = _clamp_unit((rating_confidence * 0.6) + (provider_support * 0.4))
+        comfort_safety = _clamp_unit(
+            (certification_fit * 0.45)
+            + (runtime_fit * 0.30)
+            + (mainstream_quality * 0.25),
+        )
+
+        rewatch_count = max(
+            1.0,
+            float(candidate.score_breakdown.get("rewatch_count", 1.0)),
+        )
+        raw_rewatch_bonus = _clamp_unit(
+            math.log1p(rewatch_count - 1) / math.log(8)
+            if rewatch_count > 1
+            else 0.0
+        )
+        rewatch_gate = _clamp_unit(0.35 + (recent_shape_fit * 0.65))
+        rewatch_bonus = min(0.85, raw_rewatch_bonus) * rewatch_gate
+        inactivity_days = float(candidate.score_breakdown.get("days_since_activity", 0.0))
+        inactivity_norm = _clamp_unit(inactivity_days / 730.0)
+        holiday_strength = _holiday_seasonal_strength(candidate)
+        seasonal_adjustment = 0.0
+        if holiday_strength > 0.0:
+            seasonal_adjustment = (
+                0.06 * holiday_strength
+                if holiday_window_active
+                else -0.14 * holiday_strength
+            )
+
+        phase_family_contribution = round(recent_shape_fit * 0.44, 6)
+        hot_recency_base = 0.0
+        hot_recency = 0.0
+        hot_recency_contribution = 0.0
+        rating_contribution = round(
+            (rating_confidence * 0.10) + (mainstream_quality * 0.05),
+            6,
+        )
+        rewatch_contribution = round(rewatch_bonus * 0.10, 6)
+        background_contribution = round(
+            (comfort_safety * 0.18)
+            + (inactivity_norm * 0.08)
+            + (genre_backstop_fit * 0.05)
+            + (mainstream_quality * 0.05),
+            6,
+        )
+        comfort_score = _clamp_unit(
+            phase_family_contribution
+            + hot_recency_contribution
+            + rating_contribution
+            + rewatch_contribution
+            + background_contribution
+            + seasonal_adjustment,
+        )
+
+        candidate.score_breakdown["phase_fit"] = round(recent_shape_fit, 6)
+        candidate.score_breakdown["keyword_fit"] = round(keyword_fit, 6)
+        candidate.score_breakdown["studio_fit"] = round(studio_fit, 6)
+        candidate.score_breakdown["collection_fit"] = round(collection_fit, 6)
+        candidate.score_breakdown["director_fit"] = round(director_fit, 6)
+        candidate.score_breakdown["lead_cast_fit"] = round(lead_cast_fit, 6)
+        candidate.score_breakdown["certification_fit"] = round(certification_fit, 6)
+        candidate.score_breakdown["runtime_fit"] = round(runtime_fit, 6)
+        candidate.score_breakdown["decade_fit"] = round(decade_fit, 6)
+        candidate.score_breakdown["genre_backstop_fit"] = round(genre_backstop_fit, 6)
+        candidate.score_breakdown["recent_shape_fit"] = round(recent_shape_fit, 6)
+        candidate.score_breakdown["mainstream_quality"] = round(mainstream_quality, 6)
+        candidate.score_breakdown["comfort_safety"] = round(comfort_safety, 6)
+        candidate.score_breakdown["provider_support"] = round(provider_support, 6)
+        candidate.score_breakdown["candidate_has_extended_metadata"] = (
+            1.0 if _candidate_has_extended_movie_metadata(candidate) else 0.0
+        )
+        candidate.score_breakdown["candidate_is_unrated"] = 1.0 if user_score is None else 0.0
+        candidate.score_breakdown["phase_evidence"] = round(
+            max(float(candidate.score_breakdown.get("phase_evidence", 0.0)), recent_shape_fit),
+            6,
+        )
+        candidate.score_breakdown["hot_recency_base"] = round(hot_recency_base, 6)
+        candidate.score_breakdown["hot_recency"] = round(hot_recency, 6)
+        candidate.score_breakdown["hot_recency_mode_multiplier"] = round(
+            hot_recency_mode_multiplier,
+            6,
+        )
+        candidate.score_breakdown["tag_signal_mode"] = tag_signal_mode
+        candidate.score_breakdown["candidate_tag_coverage_pool"] = round(
+            candidate_tag_coverage_pool,
+            6,
+        )
+        candidate.score_breakdown["recent_history_tag_coverage"] = round(
+            recent_history_tag_coverage,
+            6,
+        )
+        candidate.score_breakdown["candidate_has_tags"] = 1.0 if candidate.tags else 0.0
+        candidate.score_breakdown["rewatch_gate"] = round(rewatch_gate, 6)
+        candidate.score_breakdown["rewatch_bonus"] = round(rewatch_bonus, 6)
+        candidate.score_breakdown["rating_confidence"] = round(rating_confidence, 6)
+        candidate.score_breakdown["inactivity_norm"] = round(inactivity_norm, 6)
+        candidate.score_breakdown["holiday_strength"] = round(holiday_strength, 6)
+        candidate.score_breakdown["seasonal_adjustment"] = round(seasonal_adjustment, 6)
+        candidate.score_breakdown["phase_family_contribution"] = phase_family_contribution
+        candidate.score_breakdown["hot_recency_contribution"] = round(hot_recency_contribution, 6)
+        candidate.score_breakdown["rating_contribution"] = rating_contribution
+        candidate.score_breakdown["rewatch_contribution"] = rewatch_contribution
+        candidate.score_breakdown["background_contribution"] = background_contribution
+        candidate.score_breakdown["dampeners_contribution"] = round(seasonal_adjustment, 6)
+        candidate.score_breakdown["diversity_penalty_contribution"] = 0.0
+        candidate.score_breakdown["diversity_dampener_contribution"] = 0.0
+        candidate.score_breakdown["era_penalty_contribution"] = 0.0
+        candidate.score_breakdown["era_base_penalty_contribution"] = 0.0
+        candidate.score_breakdown["era_opening_penalty_contribution"] = 0.0
+        candidate.score_breakdown["seasonality_dampener_contribution"] = round(
+            seasonal_adjustment,
+            6,
+        )
+        candidate.score_breakdown["era_dampener_contribution"] = 0.0
+        candidate.score_breakdown["opening_era_dampener_contribution"] = 0.0
+        candidate.score_breakdown["comfort_score"] = round(comfort_score, 6)
+        candidate.final_score = round(comfort_score, 6)
+
+        if phase_top:
+            cand_genres = {g.strip().lower() for g in (candidate.genres or []) if g}
+            overlap = [g for g in phase_top if g in cand_genres]
+            if overlap:
+                candidate.score_breakdown["match_genres"] = ", ".join(
+                    g.title() for g in overlap[:3]
+                )
+
+    candidates.sort(
+        key=lambda candidate: (
+            candidate.final_score if candidate.final_score is not None else -1.0,
+            float(candidate.score_breakdown.get("recent_shape_fit", -1.0)),
+            float(candidate.score_breakdown.get("comfort_safety", -1.0)),
+            float(candidate.score_breakdown.get("rewatch_bonus", -1.0)),
+        ),
+        reverse=True,
+    )
+
+    filtered_candidates: list[CandidateItem] = []
+    for candidate in candidates:
+        is_unrated = float(candidate.score_breakdown.get("candidate_is_unrated", 0.0)) >= 1.0
+        if is_unrated:
+            if (
+                float(candidate.score_breakdown.get("rewatch_count", 1.0)) <= 1.0
+                and float(candidate.score_breakdown.get("recent_shape_fit", 0.0)) < 0.55
+                and float(candidate.score_breakdown.get("collection_fit", 0.0)) < 0.70
+                and float(candidate.score_breakdown.get("studio_fit", 0.0)) < 0.70
+            ):
+                candidate.score_breakdown["filtered_unrated_weak_shape"] = 1.0
+                continue
+        filtered_candidates.append(candidate)
+    candidates[:] = filtered_candidates
+    if not candidates:
+        return candidates
+
+    candidates.sort(
+        key=lambda candidate: (
+            candidate.final_score if candidate.final_score is not None else -1.0,
+            float(candidate.score_breakdown.get("recent_shape_fit", -1.0)),
+            float(candidate.score_breakdown.get("comfort_safety", -1.0)),
+            float(candidate.score_breakdown.get("rewatch_bonus", -1.0)),
+        ),
+        reverse=True,
+    )
+
+    for candidate in candidates[:5]:
+        if (
+            float(candidate.score_breakdown.get("recent_shape_fit", 0.0)) < 0.45
+            and float(candidate.score_breakdown.get("rewatch_bonus", 0.0)) == 0.0
+            and max(
+                float(candidate.score_breakdown.get("keyword_fit", 0.0)),
+                float(candidate.score_breakdown.get("studio_fit", 0.0)),
+                float(candidate.score_breakdown.get("collection_fit", 0.0)),
+                float(candidate.score_breakdown.get("director_fit", 0.0)),
+                float(candidate.score_breakdown.get("lead_cast_fit", 0.0)),
+            ) < 0.40
+        ):
+            candidate.final_score = round(_clamp_unit(float(candidate.final_score or 0.0) * 0.78), 6)
+            candidate.score_breakdown["weak_shape_outlier"] = 1.0
+
+    candidates.sort(
+        key=lambda candidate: (
+            candidate.final_score if candidate.final_score is not None else -1.0,
+            float(candidate.score_breakdown.get("recent_shape_fit", -1.0)),
+            float(candidate.score_breakdown.get("comfort_safety", -1.0)),
+            float(candidate.score_breakdown.get("rewatch_bonus", -1.0)),
+        ),
+        reverse=True,
+    )
+
+    unrated_seen = 0
+    for candidate in candidates[:12]:
+        if float(candidate.score_breakdown.get("candidate_is_unrated", 0.0)) < 1.0:
+            continue
+        unrated_seen += 1
+        if unrated_seen <= 2:
+            continue
+        candidate.final_score = round(_clamp_unit(float(candidate.final_score or 0.0) * 0.75), 6)
+        candidate.score_breakdown["unrated_top_cap_demoted"] = 1.0
+
+    candidates.sort(
+        key=lambda candidate: (
+            candidate.final_score if candidate.final_score is not None else -1.0,
+            float(candidate.score_breakdown.get("recent_shape_fit", -1.0)),
+            float(candidate.score_breakdown.get("comfort_safety", -1.0)),
+            float(candidate.score_breakdown.get("rewatch_bonus", -1.0)),
+        ),
+        reverse=True,
+    )
+    return candidates
+
+
 def _apply_comfort_confidence(
     candidates: list[CandidateItem],
     profile_payload: dict | None = None,
+    *,
+    use_movie_rewatch_model: bool = False,
 ) -> list[CandidateItem]:
     if not candidates:
         return candidates
 
     phase_genre_affinity, phase_tag_affinity = _phase_affinity_maps(profile_payload)
+    if (
+        use_movie_rewatch_model
+        and candidates
+        and all(candidate.media_type == MediaTypes.MOVIE.value for candidate in candidates)
+    ):
+        movie_candidates = _apply_movie_comfort_confidence(
+            candidates,
+            profile_payload,
+            phase_genre_affinity=phase_genre_affinity,
+        )
+        if movie_candidates is not candidates or any(
+            "recent_shape_fit" in candidate.score_breakdown for candidate in candidates
+        ):
+            candidates = movie_candidates
+            _promote_phase_lane_candidates(
+                candidates,
+                phase_genre_affinity=phase_genre_affinity,
+                phase_tag_affinity=phase_tag_affinity,
+            )
+            _prefer_strong_phase_opening_window(candidates)
+            _calibrate_comfort_display_scores(candidates)
+            return candidates
+
     phase_affinity = phase_genre_affinity
     phase_top = sorted(phase_affinity, key=phase_affinity.get, reverse=True)[:5]
     holiday_window_active = _is_holiday_window()
@@ -3011,6 +3561,18 @@ def _build_comfort_debug_payload(
                 ),
                 "rating_confidence": round(float(score.get("rating_confidence", 0.0)), 6),
                 "rewatch_bonus": round(float(score.get("rewatch_bonus", 0.0)), 6),
+                "keyword_fit": round(float(score.get("keyword_fit", 0.0)), 6),
+                "studio_fit": round(float(score.get("studio_fit", 0.0)), 6),
+                "collection_fit": round(float(score.get("collection_fit", 0.0)), 6),
+                "director_fit": round(float(score.get("director_fit", 0.0)), 6),
+                "lead_cast_fit": round(float(score.get("lead_cast_fit", 0.0)), 6),
+                "certification_fit": round(float(score.get("certification_fit", 0.0)), 6),
+                "runtime_fit": round(float(score.get("runtime_fit", 0.0)), 6),
+                "decade_fit": round(float(score.get("decade_fit", 0.0)), 6),
+                "recent_shape_fit": round(float(score.get("recent_shape_fit", 0.0)), 6),
+                "comfort_safety": round(float(score.get("comfort_safety", 0.0)), 6),
+                "weak_shape_outlier": float(score.get("weak_shape_outlier", 0.0)) >= 1.0,
+                "candidate_is_unrated": float(score.get("candidate_is_unrated", 0.0)) >= 1.0,
                 "phase_family_contribution": round(phase_family_contribution, 6),
                 "hot_recency_contribution": round(hot_recency_contribution, 6),
                 "rating_contribution": round(rating_contribution, 6),
@@ -3093,41 +3655,38 @@ def _build_comfort_debug_payload(
     }
     if match_signal_details:
         payload["match_signal"] = dict(match_signal_details)
+        payload["match_signal_label_sources"] = match_signal_details.get("match_signal_label_sources", [])
     return payload
 
 
 def _comfort_match_signal(profile_payload: dict) -> str:
     """Build a row-level signal string from phase tag/genre activity."""
-    payload = profile_payload or {}
-    phase_tags = payload.get("phase_tag_affinity") or payload.get("recent_tag_affinity") or {}
-    phase_genres = payload.get("phase_genre_affinity") or payload.get("recent_genre_affinity") or {}
+    feature_maps = _signal_phase_feature_maps(profile_payload)
+    top_labels: list[str] = []
 
-    top_labels = _top_phase_labels(
-        phase_tags,
-        limit=3,
-        allow_generic_terms=False,
-    )
-    if len(top_labels) < 3:
-        for label in _top_phase_labels(
-            phase_tags,
-            limit=3,
-            allow_generic_terms=True,
-        ):
-            if label not in top_labels:
-                top_labels.append(label)
+    # Prefer specific labels first, then broader generic tags/metadata, and use
+    # plain genres only as the final fallback.
+    for allow_generic_terms, allowed_sources in (
+        (False, {source_name for source_name, _map in feature_maps if source_name != "genres"}),
+        (True, {source_name for source_name, _map in feature_maps if source_name != "genres"}),
+        (True, {"genres"}),
+    ):
+        for source_name, affinity_map in feature_maps:
+            if source_name not in allowed_sources:
+                continue
+            for label in _top_phase_labels(
+                affinity_map,
+                limit=3,
+                allow_generic_terms=allow_generic_terms,
+            ):
+                if label not in top_labels:
+                    top_labels.append(label)
+                if len(top_labels) >= 3:
+                    break
             if len(top_labels) >= 3:
                 break
-
-    if len(top_labels) < 3:
-        for label in _top_phase_labels(
-            phase_genres,
-            limit=3,
-            allow_generic_terms=True,
-        ):
-            if label not in top_labels:
-                top_labels.append(label)
-            if len(top_labels) >= 3:
-                break
+        if len(top_labels) >= 3:
+            break
 
     if not top_labels:
         return ""
@@ -3142,17 +3701,16 @@ def _row_match_signal_with_details(
     if row_key not in ROW_MATCH_SIGNAL_ROWS:
         return None, None
 
-    phase_genres, phase_tags = _phase_affinity_maps(profile_payload)
     label_scores: dict[str, float] = defaultdict(float)
     label_source_scores: dict[str, dict[str, dict[str, float] | int]] = defaultdict(
         lambda: {
-            "tags": defaultdict(float),
-            "genres": defaultdict(float),
+            "sources": defaultdict(float),
             "matches": 0,
         },
     )
     candidates_window = candidates[:ROW_MATCH_SIGNAL_CANDIDATE_LIMIT]
     window_size = max(1, len(candidates_window))
+    feature_maps = _signal_phase_feature_maps(profile_payload)
 
     for index, candidate in enumerate(candidates_window):
         rank_weight = 1.0 - ((index / window_size) * 0.35)
@@ -3165,36 +3723,22 @@ def _row_match_signal_with_details(
             ),
         )
         evidence_weight = max(0.2, phase_weight) * rank_weight
-        candidate_tags = {
-            str(tag).strip().lower()
-            for tag in (candidate.tags or [])
-            if str(tag).strip()
-        }
-        candidate_genres = {
-            str(genre).strip().lower()
-            for genre in (candidate.genres or [])
-            if str(genre).strip()
-        }
+        candidate_labels = _candidate_signal_labels(candidate)
 
-        for tag, affinity in phase_tags.items():
-            if tag in candidate_tags:
-                label = _format_phase_label(tag)
+        for source_name, affinity_map in feature_maps:
+            source_values = candidate_labels.get(source_name) or set()
+            if not source_values or not affinity_map:
+                continue
+            for raw_label, affinity in affinity_map.items():
+                if raw_label not in source_values:
+                    continue
+                label = _format_phase_label(raw_label)
                 if not label:
                     continue
                 contribution = evidence_weight * max(0.2, float(affinity))
                 label_scores[label] += contribution
                 source_bucket = label_source_scores[label]
-                source_bucket["tags"][tag] += contribution
-                source_bucket["matches"] += 1
-        for genre, affinity in phase_genres.items():
-            if genre in candidate_genres:
-                label = _format_phase_label(genre)
-                if not label:
-                    continue
-                contribution = evidence_weight * max(0.2, float(affinity))
-                label_scores[label] += contribution
-                source_bucket = label_source_scores[label]
-                source_bucket["genres"][genre] += contribution
+                source_bucket["sources"][source_name] += contribution
                 source_bucket["matches"] += 1
 
     if not label_scores:
@@ -3223,20 +3767,11 @@ def _row_match_signal_with_details(
     explanation_parts: list[str] = []
     for label, score_value in ranked_labels:
         source_bucket = label_source_scores[label]
-        tag_scores = source_bucket["tags"]
-        genre_scores = source_bucket["genres"]
-        top_tags = [
-            _format_phase_label(key)
+        source_scores = source_bucket["sources"]
+        top_sources = [
+            str(key)
             for key, _value in sorted(
-                tag_scores.items(),
-                key=lambda item: item[1],
-                reverse=True,
-            )[:2]
-        ]
-        top_genres = [
-            _format_phase_label(key)
-            for key, _value in sorted(
-                genre_scores.items(),
+                source_scores.items(),
                 key=lambda item: item[1],
                 reverse=True,
             )[:2]
@@ -3246,16 +3781,13 @@ def _row_match_signal_with_details(
                 "label": label,
                 "score": round(float(score_value), 6),
                 "matches": int(source_bucket["matches"]),
-                "top_tags": top_tags,
-                "top_genres": top_genres,
+                "top_sources": top_sources,
             },
         )
 
         source_phrases: list[str] = []
-        if top_genres:
-            source_phrases.append("genres: " + ", ".join(top_genres))
-        if top_tags:
-            source_phrases.append("tags: " + ", ".join(top_tags))
+        if top_sources:
+            source_phrases.append("sources: " + ", ".join(top_sources))
         if source_phrases:
             explanation_parts.append(f"{label} ({'; '.join(source_phrases)})")
         else:
@@ -3268,6 +3800,7 @@ def _row_match_signal_with_details(
         "candidate_window": len(candidates_window),
         "labels": debug_labels,
         "explanation": explanation,
+        "match_signal_label_sources": debug_labels,
     }
 
 
@@ -3533,7 +4066,11 @@ def _build_row_candidates(
 
         score_candidates(candidates, profile_payload)
         if row_key == "comfort_rewatches":
-            _apply_comfort_confidence(candidates, profile_payload)
+            _apply_comfort_confidence(
+                candidates,
+                profile_payload,
+                use_movie_rewatch_model=(media_type == MediaTypes.MOVIE.value),
+            )
         return candidates
 
     if row_key == "movie_night":
@@ -3762,44 +4299,17 @@ def _queue_stale_refresh(user_id: int, media_type: str, row_key: str, show_more:
         )
 
 
-def _build_and_cache_row(
+def _prepare_row_from_candidates(
     user,
     media_type: str,
     row_definition: RowDefinition,
     profile_payload: dict,
+    candidates: list[CandidateItem],
     *,
-    seen_identities: set[tuple[str, str, str]] | None = None,
     defer_artwork: bool = False,
     show_more: bool = False,
-) -> RowResult:
-    started = timezone.now()
-    row_meta: dict | None = None
-    if media_type in {MediaTypes.MOVIE.value, MediaTypes.TV.value, MediaTypes.ANIME.value} and row_definition.key in {
-        "all_time_greats_unseen",
-        "coming_soon",
-    }:
-        if row_definition.key == "all_time_greats_unseen":
-            candidates, row_meta = _trakt_canon_candidates(
-                user,
-                media_type,
-                row_key=row_definition.key,
-                seen_identities=seen_identities,
-            )
-        else:
-            candidates, row_meta = _trakt_anticipated_candidates(
-                user,
-                media_type,
-                row_key=row_definition.key,
-                seen_identities=seen_identities,
-            )
-    else:
-        candidates = _build_row_candidates(user, media_type, row_definition, profile_payload)
-
-    required_schema_version = _required_row_cache_schema_version(media_type, row_definition.key)
-    if required_schema_version is not None:
-        row_meta = dict(row_meta or {})
-        row_meta[ROW_CACHE_SCHEMA_META_KEY] = required_schema_version
-
+    source_state: str = "live",
+) -> tuple[RowResult, bool]:
     if not row_definition.allow_tracked:
         blocked_statuses = _blocked_statuses_for_row(row_definition)
         tracked_keys = (
@@ -3877,8 +4387,114 @@ def _build_and_cache_row(
         source=row_definition.source,
         items=candidates[:buffered_limit],
         show_more=row_definition.show_more,
-        source_state="live",
+        source_state=source_state,
         match_signal=match_signal or None,
+    )
+    return row, needs_async_artwork_refresh
+
+
+def _trakt_row_provider_fallback_candidates(media_type: str, row_key: str) -> list[CandidateItem]:
+    if media_type not in {MediaTypes.MOVIE.value, MediaTypes.TV.value}:
+        return []
+
+    if row_key == "trending_right_now":
+        return TMDB_ADAPTER.current_cycle(media_type, limit=100)
+    if row_key == "all_time_greats_unseen":
+        return TMDB_ADAPTER.top_rated(media_type, limit=100)
+    if row_key == "coming_soon":
+        return TMDB_ADAPTER.upcoming(media_type, limit=100)
+    return []
+
+
+def _build_row_error_fallback(
+    user,
+    media_type: str,
+    row_definition: RowDefinition,
+    profile_payload: dict,
+    *,
+    cached_payload: dict | None,
+    defer_artwork: bool = False,
+    show_more: bool = False,
+) -> RowResult | None:
+    if cached_payload:
+        row = RowResult.from_dict(cached_payload)
+        row = _apply_row_definition_metadata(row, row_definition)
+        row.is_stale = True
+        row.source_state = "stale"
+        return row
+
+    if row_definition.source != "trakt":
+        return None
+
+    fallback_candidates = _trakt_row_provider_fallback_candidates(
+        media_type,
+        row_definition.key,
+    )
+    if not fallback_candidates:
+        return None
+
+    fallback_row, needs_async_artwork_refresh = _prepare_row_from_candidates(
+        user,
+        media_type,
+        row_definition,
+        profile_payload,
+        fallback_candidates,
+        defer_artwork=defer_artwork,
+        show_more=show_more,
+        source_state="fallback",
+    )
+    if needs_async_artwork_refresh:
+        _queue_stale_refresh(user.id, media_type, row_definition.key, show_more)
+    return fallback_row
+
+
+def _build_and_cache_row(
+    user,
+    media_type: str,
+    row_definition: RowDefinition,
+    profile_payload: dict,
+    *,
+    seen_identities: set[tuple[str, str, str]] | None = None,
+    defer_artwork: bool = False,
+    show_more: bool = False,
+) -> RowResult:
+    started = timezone.now()
+    row_meta: dict | None = None
+    if media_type in {MediaTypes.MOVIE.value, MediaTypes.TV.value, MediaTypes.ANIME.value} and row_definition.key in {
+        "all_time_greats_unseen",
+        "coming_soon",
+    }:
+        if row_definition.key == "all_time_greats_unseen":
+            candidates, row_meta = _trakt_canon_candidates(
+                user,
+                media_type,
+                row_key=row_definition.key,
+                seen_identities=seen_identities,
+            )
+        else:
+            candidates, row_meta = _trakt_anticipated_candidates(
+                user,
+                media_type,
+                row_key=row_definition.key,
+                seen_identities=seen_identities,
+            )
+    else:
+        candidates = _build_row_candidates(user, media_type, row_definition, profile_payload)
+
+    required_schema_version = _required_row_cache_schema_version(media_type, row_definition.key)
+    if required_schema_version is not None:
+        row_meta = dict(row_meta or {})
+        row_meta[ROW_CACHE_SCHEMA_META_KEY] = required_schema_version
+
+    row, needs_async_artwork_refresh = _prepare_row_from_candidates(
+        user,
+        media_type,
+        row_definition,
+        profile_payload,
+        candidates,
+        defer_artwork=defer_artwork,
+        show_more=show_more,
+        source_state="live",
     )
 
     cache_payload = row.to_dict()
@@ -4107,6 +4723,9 @@ def get_discover_rows(
     rows: list[RowResult] = []
 
     for row_definition in row_definitions:
+        cached_payload: dict | None = None
+        is_stale = False
+        row: RowResult | None = None
         try:
             cached_payload, is_stale = cache_repo.get_row_cache(user.id, media_type, row_definition.key)
 
@@ -4165,83 +4784,6 @@ def get_discover_rows(
                     show_more=show_more,
                 )
 
-            prior_seen_identities = set(seen_identities)
-            before_count = len(row.items)
-            all_time_row = row_definition.key == "all_time_greats_unseen"
-            if all_time_row:
-                deduped_items = dedupe_candidates(row.items, seen_identities=set())
-                seen_identities.update(item.identity() for item in deduped_items[:MAX_ITEMS_PER_ROW])
-            else:
-                deduped_items = dedupe_candidates(row.items, seen_identities=seen_identities)
-            dedupe_removed = before_count - len(deduped_items)
-
-            if (
-                media_type in {MediaTypes.MOVIE.value, MediaTypes.TV.value, MediaTypes.ANIME.value}
-                and row_definition.key == "coming_soon"
-                and len(deduped_items) < MAX_ITEMS_PER_ROW
-                and dedupe_removed > 0
-            ):
-                seen_identities.clear()
-                seen_identities.update(prior_seen_identities)
-                row = _build_and_cache_row(
-                    user,
-                    media_type,
-                    row_definition,
-                    profile_payload,
-                    seen_identities=prior_seen_identities,
-                    defer_artwork=defer_artwork,
-                    show_more=show_more,
-                )
-                before_count = len(row.items)
-                deduped_items = dedupe_candidates(row.items, seen_identities=seen_identities)
-                dedupe_removed = before_count - len(deduped_items)
-
-            row.items = deduped_items[:MAX_ITEMS_PER_ROW]
-            row.reserve_items = deduped_items[MAX_ITEMS_PER_ROW:]
-            filtered_count = before_count - len(row.items)
-            match_signal, match_signal_details = _row_match_signal_with_details(
-                row_definition.key,
-                row.items,
-                profile_payload,
-            )
-            row.match_signal = match_signal
-
-            if not row.items and not _allow_empty_row(media_type, row_definition.key):
-                continue
-
-            if len(row.items) < row_definition.min_items and not _allow_empty_row(
-                media_type,
-                row_definition.key,
-            ):
-                continue
-
-            if include_debug and row_definition.key in {"comfort_rewatches", "top_picks_for_you"}:
-                row.debug_payload = _build_comfort_debug_payload(
-                    row.items,
-                    top_n=COMFORT_DEBUG_TOP_N,
-                    match_signal_details=match_signal_details,
-                )
-
-            if match_signal_details:
-                logger.info(
-                    "discover_row_match_signal user_id=%s media_type=%s row_key=%s signal=%s explanation=%s",
-                    user.id,
-                    media_type,
-                    row_definition.key,
-                    row.match_signal or "",
-                    str(match_signal_details.get("explanation", "")),
-                )
-
-            logger.info(
-                "discover_row_render user_id=%s media_type=%s row_key=%s result_count=%s source=%s filtered_count=%s",
-                user.id,
-                media_type,
-                row_definition.key,
-                len(row.items),
-                row.source_state,
-                filtered_count,
-            )
-            rows.append(row)
         except Exception as error:  # noqa: BLE001
             logger.exception(
                 "discover_row_failed user_id=%s media_type=%s row_key=%s error=%s",
@@ -4250,7 +4792,24 @@ def get_discover_rows(
                 row_definition.key,
                 error,
             )
-            if _allow_empty_row(media_type, row_definition.key):
+            row = _build_row_error_fallback(
+                user,
+                media_type,
+                row_definition,
+                profile_payload,
+                cached_payload=cached_payload,
+                defer_artwork=defer_artwork,
+                show_more=show_more,
+            )
+            if row is not None:
+                logger.warning(
+                    "discover_row_error_fallback user_id=%s media_type=%s row_key=%s source_state=%s",
+                    user.id,
+                    media_type,
+                    row_definition.key,
+                    row.source_state,
+                )
+            elif _allow_empty_row(media_type, row_definition.key):
                 fallback_signal, _fallback_details = _row_match_signal_with_details(
                     row_definition.key,
                     [],
@@ -4277,7 +4836,90 @@ def get_discover_rows(
                     0,
                 )
                 rows.append(fallback_row)
+                continue
+            else:
+                continue
+
+        if row is None:
             continue
+
+        prior_seen_identities = set(seen_identities)
+        before_count = len(row.items)
+        all_time_row = row_definition.key == "all_time_greats_unseen"
+        if all_time_row:
+            deduped_items = dedupe_candidates(row.items, seen_identities=set())
+            seen_identities.update(item.identity() for item in deduped_items[:MAX_ITEMS_PER_ROW])
+        else:
+            deduped_items = dedupe_candidates(row.items, seen_identities=seen_identities)
+        dedupe_removed = before_count - len(deduped_items)
+
+        if (
+            media_type in {MediaTypes.MOVIE.value, MediaTypes.TV.value, MediaTypes.ANIME.value}
+            and row_definition.key == "coming_soon"
+            and len(deduped_items) < MAX_ITEMS_PER_ROW
+            and dedupe_removed > 0
+        ):
+            seen_identities.clear()
+            seen_identities.update(prior_seen_identities)
+            row = _build_and_cache_row(
+                user,
+                media_type,
+                row_definition,
+                profile_payload,
+                seen_identities=prior_seen_identities,
+                defer_artwork=defer_artwork,
+                show_more=show_more,
+            )
+            before_count = len(row.items)
+            deduped_items = dedupe_candidates(row.items, seen_identities=seen_identities)
+            dedupe_removed = before_count - len(deduped_items)
+
+        row.items = deduped_items[:MAX_ITEMS_PER_ROW]
+        row.reserve_items = deduped_items[MAX_ITEMS_PER_ROW:]
+        filtered_count = before_count - len(row.items)
+        match_signal, match_signal_details = _row_match_signal_with_details(
+            row_definition.key,
+            row.items,
+            profile_payload,
+        )
+        row.match_signal = match_signal
+
+        if not row.items and not _allow_empty_row(media_type, row_definition.key):
+            continue
+
+        if len(row.items) < row_definition.min_items and not _allow_empty_row(
+            media_type,
+            row_definition.key,
+        ):
+            continue
+
+        if include_debug and row_definition.key in {"comfort_rewatches", "top_picks_for_you"}:
+            row.debug_payload = _build_comfort_debug_payload(
+                row.items,
+                top_n=COMFORT_DEBUG_TOP_N,
+                match_signal_details=match_signal_details,
+            )
+
+        if match_signal_details:
+            logger.info(
+                "discover_row_match_signal user_id=%s media_type=%s row_key=%s signal=%s explanation=%s",
+                user.id,
+                media_type,
+                row_definition.key,
+                row.match_signal or "",
+                str(match_signal_details.get("explanation", "")),
+            )
+
+        logger.info(
+            "discover_row_render user_id=%s media_type=%s row_key=%s result_count=%s source=%s filtered_count=%s",
+            user.id,
+            media_type,
+            row_definition.key,
+            len(row.items),
+            row.source_state,
+            filtered_count,
+        )
+        rows.append(row)
 
     return rows
 

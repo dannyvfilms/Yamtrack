@@ -70,6 +70,54 @@ class MediaDetailsViewTests(TestCase):
         )
 
     @patch("app.providers.services.get_media_metadata")
+    def test_media_details_persists_movie_recommendation_metadata(self, mock_get_metadata):
+        item = Item.objects.create(
+            media_id="238",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Test Movie",
+            image="http://example.com/image.jpg",
+        )
+        mock_get_metadata.return_value = {
+            "media_id": "238",
+            "title": "Test Movie",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "image": "http://example.com/image.jpg",
+            "provider_keywords": ["Whodunit", "Holiday"],
+            "provider_certification": "PG",
+            "provider_collection_id": "44",
+            "provider_collection_name": "Mystery Collection",
+            "details": {
+                "country": "US",
+                "studios": ["Pixar Animation Studios"],
+                "certification": "PG",
+            },
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "238",
+                    "title": "test-movie",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        item.refresh_from_db()
+        self.assertEqual(item.provider_keywords, ["Whodunit", "Holiday"])
+        self.assertEqual(item.provider_certification, "PG")
+        self.assertEqual(item.provider_collection_id, "44")
+        self.assertEqual(item.provider_collection_name, "Mystery Collection")
+
+    @patch("app.providers.services.get_media_metadata")
     @patch("app.providers.tmdb.process_episodes")
     def test_season_details_view(self, mock_process_episodes, mock_get_metadata):
         """Test the season details view."""
@@ -646,4 +694,3 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "The Blade Itself")
         mock_openlibrary_book.assert_not_called()
-

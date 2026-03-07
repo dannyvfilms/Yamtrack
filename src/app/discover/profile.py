@@ -12,12 +12,25 @@ from django.db.models import Q
 from django.utils import timezone
 
 from app.discover import cache_repo
+from app.discover.feature_metadata import (
+    is_director_credit,
+    normalize_certification,
+    normalize_collection,
+    normalize_features,
+    normalize_keyword,
+    normalize_person_name,
+    normalize_studio,
+    release_decade_label,
+    runtime_bucket_label,
+)
 from app.discover.registry import ALL_MEDIA_KEY, DISCOVER_MEDIA_TYPES
 from app.discover.scoring import normalize_numeric_map
 from app.models import (
+    CreditRoleType,
     DiscoverFeedback,
     DiscoverFeedbackType,
     ItemPersonCredit,
+    ItemStudioCredit,
     ItemTag,
     MediaTypes,
 )
@@ -48,6 +61,30 @@ class ProfilePayload:
     tag_affinity: dict[str, float]
     recent_tag_affinity: dict[str, float]
     phase_tag_affinity: dict[str, float]
+    keyword_affinity: dict[str, float]
+    recent_keyword_affinity: dict[str, float]
+    phase_keyword_affinity: dict[str, float]
+    studio_affinity: dict[str, float]
+    recent_studio_affinity: dict[str, float]
+    phase_studio_affinity: dict[str, float]
+    collection_affinity: dict[str, float]
+    recent_collection_affinity: dict[str, float]
+    phase_collection_affinity: dict[str, float]
+    director_affinity: dict[str, float]
+    recent_director_affinity: dict[str, float]
+    phase_director_affinity: dict[str, float]
+    lead_cast_affinity: dict[str, float]
+    recent_lead_cast_affinity: dict[str, float]
+    phase_lead_cast_affinity: dict[str, float]
+    certification_affinity: dict[str, float]
+    recent_certification_affinity: dict[str, float]
+    phase_certification_affinity: dict[str, float]
+    runtime_bucket_affinity: dict[str, float]
+    recent_runtime_bucket_affinity: dict[str, float]
+    phase_runtime_bucket_affinity: dict[str, float]
+    decade_affinity: dict[str, float]
+    recent_decade_affinity: dict[str, float]
+    phase_decade_affinity: dict[str, float]
     person_affinity: dict[str, float]
     negative_genre_affinity: dict[str, float]
     negative_tag_affinity: dict[str, float]
@@ -62,6 +99,30 @@ class ProfilePayload:
             "tag_affinity": self.tag_affinity,
             "recent_tag_affinity": self.recent_tag_affinity,
             "phase_tag_affinity": self.phase_tag_affinity,
+            "keyword_affinity": self.keyword_affinity,
+            "recent_keyword_affinity": self.recent_keyword_affinity,
+            "phase_keyword_affinity": self.phase_keyword_affinity,
+            "studio_affinity": self.studio_affinity,
+            "recent_studio_affinity": self.recent_studio_affinity,
+            "phase_studio_affinity": self.phase_studio_affinity,
+            "collection_affinity": self.collection_affinity,
+            "recent_collection_affinity": self.recent_collection_affinity,
+            "phase_collection_affinity": self.phase_collection_affinity,
+            "director_affinity": self.director_affinity,
+            "recent_director_affinity": self.recent_director_affinity,
+            "phase_director_affinity": self.phase_director_affinity,
+            "lead_cast_affinity": self.lead_cast_affinity,
+            "recent_lead_cast_affinity": self.recent_lead_cast_affinity,
+            "phase_lead_cast_affinity": self.phase_lead_cast_affinity,
+            "certification_affinity": self.certification_affinity,
+            "recent_certification_affinity": self.recent_certification_affinity,
+            "phase_certification_affinity": self.phase_certification_affinity,
+            "runtime_bucket_affinity": self.runtime_bucket_affinity,
+            "recent_runtime_bucket_affinity": self.recent_runtime_bucket_affinity,
+            "phase_runtime_bucket_affinity": self.phase_runtime_bucket_affinity,
+            "decade_affinity": self.decade_affinity,
+            "recent_decade_affinity": self.recent_decade_affinity,
+            "phase_decade_affinity": self.phase_decade_affinity,
             "person_affinity": self.person_affinity,
             "negative_genre_affinity": self.negative_genre_affinity,
             "negative_tag_affinity": self.negative_tag_affinity,
@@ -117,6 +178,84 @@ def _feedback_weight(entry, now):
     return max(0.35, 1.0 - (min(days_old, 365) / 365.0))
 
 
+def _item_credit_feature_maps(item_ids: list[int]) -> tuple[dict[int, list[str]], dict[int, list[str]], dict[int, list[str]]]:
+    people_map: dict[int, list[str]] = defaultdict(list)
+    directors_map: dict[int, list[str]] = defaultdict(list)
+    lead_cast_map: dict[int, list[str]] = defaultdict(list)
+    if not item_ids:
+        return people_map, directors_map, lead_cast_map
+
+    people_seen: dict[int, set[str]] = defaultdict(set)
+    directors_seen: dict[int, set[str]] = defaultdict(set)
+    lead_cast_seen: dict[int, set[str]] = defaultdict(set)
+    lead_cast_count: dict[int, int] = defaultdict(int)
+
+    credits = (
+        ItemPersonCredit.objects.filter(item_id__in=item_ids)
+        .select_related("person")
+        .order_by("item_id", "role_type", "sort_order", "person__name")
+    )
+    for credit in credits:
+        person_name = normalize_person_name(credit.person.name if credit.person_id else "")
+        if not person_name:
+            continue
+        if person_name not in people_seen[credit.item_id]:
+            people_seen[credit.item_id].add(person_name)
+            people_map[credit.item_id].append(person_name)
+        if is_director_credit(credit.role_type, credit.role, credit.department):
+            if person_name not in directors_seen[credit.item_id]:
+                directors_seen[credit.item_id].add(person_name)
+                directors_map[credit.item_id].append(person_name)
+        if (
+            credit.role_type == CreditRoleType.CAST.value
+            and lead_cast_count[credit.item_id] < 3
+        ):
+            if person_name not in lead_cast_seen[credit.item_id]:
+                lead_cast_seen[credit.item_id].add(person_name)
+                lead_cast_map[credit.item_id].append(person_name)
+                lead_cast_count[credit.item_id] += 1
+
+    return people_map, directors_map, lead_cast_map
+
+
+def _item_studio_feature_map(item_ids: list[int]) -> dict[int, list[str]]:
+    studio_map: dict[int, list[str]] = defaultdict(list)
+    if not item_ids:
+        return studio_map
+
+    seen: dict[int, set[str]] = defaultdict(set)
+    credits = (
+        ItemStudioCredit.objects.filter(item_id__in=item_ids)
+        .select_related("studio")
+        .order_by("item_id", "sort_order", "studio__name")
+    )
+    for credit in credits:
+        studio_name = normalize_studio(credit.studio.name if credit.studio_id else "")
+        if not studio_name or studio_name in seen[credit.item_id]:
+            continue
+        seen[credit.item_id].add(studio_name)
+        studio_map[credit.item_id].append(studio_name)
+    return studio_map
+
+
+def _update_affinity_maps(
+    all_weights: dict[str, float],
+    recent_weights: dict[str, float],
+    phase_weights: dict[str, float],
+    values: list[str],
+    *,
+    weight: float,
+    activity_dt,
+    now,
+) -> None:
+    for value in values:
+        all_weights[value] += weight
+        if activity_dt and activity_dt >= now - timedelta(days=30):
+            recent_weights[value] += weight
+        if activity_dt and activity_dt >= now - timedelta(days=90):
+            phase_weights[value] += weight
+
+
 def has_new_activity(user, media_type: str, snapshot_at) -> bool:
     """Return whether user has new activity after profile snapshot."""
     if snapshot_at is None:
@@ -150,6 +289,30 @@ def compute_taste_profile(user, media_type: str) -> ProfilePayload:
     tag_weights: dict[str, float] = defaultdict(float)
     recent_tag_weights: dict[str, float] = defaultdict(float)
     phase_tag_weights: dict[str, float] = defaultdict(float)
+    keyword_weights: dict[str, float] = defaultdict(float)
+    recent_keyword_weights: dict[str, float] = defaultdict(float)
+    phase_keyword_weights: dict[str, float] = defaultdict(float)
+    studio_weights: dict[str, float] = defaultdict(float)
+    recent_studio_weights: dict[str, float] = defaultdict(float)
+    phase_studio_weights: dict[str, float] = defaultdict(float)
+    collection_weights: dict[str, float] = defaultdict(float)
+    recent_collection_weights: dict[str, float] = defaultdict(float)
+    phase_collection_weights: dict[str, float] = defaultdict(float)
+    director_weights: dict[str, float] = defaultdict(float)
+    recent_director_weights: dict[str, float] = defaultdict(float)
+    phase_director_weights: dict[str, float] = defaultdict(float)
+    lead_cast_weights: dict[str, float] = defaultdict(float)
+    recent_lead_cast_weights: dict[str, float] = defaultdict(float)
+    phase_lead_cast_weights: dict[str, float] = defaultdict(float)
+    certification_weights: dict[str, float] = defaultdict(float)
+    recent_certification_weights: dict[str, float] = defaultdict(float)
+    phase_certification_weights: dict[str, float] = defaultdict(float)
+    runtime_bucket_weights: dict[str, float] = defaultdict(float)
+    recent_runtime_bucket_weights: dict[str, float] = defaultdict(float)
+    phase_runtime_bucket_weights: dict[str, float] = defaultdict(float)
+    decade_weights: dict[str, float] = defaultdict(float)
+    recent_decade_weights: dict[str, float] = defaultdict(float)
+    phase_decade_weights: dict[str, float] = defaultdict(float)
     person_weights: dict[str, float] = defaultdict(float)
     negative_genre_weights: dict[str, float] = defaultdict(float)
     negative_tag_weights: dict[str, float] = defaultdict(float)
@@ -172,6 +335,13 @@ def compute_taste_profile(user, media_type: str) -> ProfilePayload:
             "created_at",
             "item__genres",
             "item__media_type",
+            "item__provider_keywords",
+            "item__provider_certification",
+            "item__provider_collection_id",
+            "item__provider_collection_name",
+            "item__runtime_minutes",
+            "item__release_datetime",
+            "item__studios",
         ]
         if has_progressed_at:
             only_fields.append("progressed_at")
@@ -196,11 +366,12 @@ def compute_taste_profile(user, media_type: str) -> ProfilePayload:
                 tag_map[item_tag.item_id].append(tag_name)
 
         person_map: dict[int, list[str]] = defaultdict(list)
+        directors_map: dict[int, list[str]] = defaultdict(list)
+        lead_cast_map: dict[int, list[str]] = defaultdict(list)
+        studio_map: dict[int, list[str]] = defaultdict(list)
         if media_type_key in {MediaTypes.MOVIE.value, MediaTypes.TV.value}:
-            for credit in ItemPersonCredit.objects.filter(item_id__in=item_ids).select_related("person"):
-                person_name = (credit.person.name or "").strip() if credit.person_id else ""
-                if person_name:
-                    person_map[credit.item_id].append(person_name)
+            person_map, directors_map, lead_cast_map = _item_credit_feature_maps(item_ids)
+            studio_map = _item_studio_feature_map(item_ids)
 
         for entry in entries:
             activity_dt = (
@@ -216,26 +387,125 @@ def compute_taste_profile(user, media_type: str) -> ProfilePayload:
                 activity_snapshot = activity_dt
 
             weight = _entry_weight(entry, now, activity_dt=activity_dt)
-            genres = [str(genre).strip() for genre in (entry.item.genres or []) if str(genre).strip()]
+            genres = normalize_features(entry.item.genres or [], normalize_person_name)
+            tags = normalize_features(tag_map.get(entry.item_id, []), normalize_person_name)
+            keywords = normalize_features(entry.item.provider_keywords or [], normalize_keyword)
+            collections = normalize_features(
+                [entry.item.provider_collection_name or entry.item.provider_collection_id],
+                normalize_collection,
+            )
+            studios = studio_map.get(entry.item_id) or normalize_features(
+                entry.item.studios or [],
+                normalize_studio,
+            )
+            directors = directors_map.get(entry.item_id, [])
+            lead_cast = lead_cast_map.get(entry.item_id, [])
+            people = person_map.get(entry.item_id, [])
+            certification = normalize_features(
+                [entry.item.provider_certification],
+                normalize_certification,
+            )
+            runtime_buckets = normalize_features(
+                [runtime_bucket_label(entry.item.runtime_minutes)],
+                normalize_person_name,
+            )
+            decades = normalize_features(
+                [release_decade_label(entry.item.release_datetime)],
+                normalize_person_name,
+            )
 
-            for genre in genres:
-                genre_key = genre.lower()
-                genre_weights[genre_key] += weight
-                if activity_dt and activity_dt >= now - timedelta(days=30):
-                    recent_genre_weights[genre_key] += weight
-                if activity_dt and activity_dt >= now - timedelta(days=90):
-                    phase_genre_weights[genre_key] += weight
-
-            for tag in tag_map.get(entry.item_id, []):
-                tag_key = tag.lower()
-                tag_weights[tag_key] += weight
-                if activity_dt and activity_dt >= now - timedelta(days=30):
-                    recent_tag_weights[tag_key] += weight
-                if activity_dt and activity_dt >= now - timedelta(days=90):
-                    phase_tag_weights[tag_key] += weight
-
-            for person in person_map.get(entry.item_id, []):
-                person_weights[person.lower()] += weight
+            _update_affinity_maps(
+                genre_weights,
+                recent_genre_weights,
+                phase_genre_weights,
+                genres,
+                weight=weight,
+                activity_dt=activity_dt,
+                now=now,
+            )
+            _update_affinity_maps(
+                tag_weights,
+                recent_tag_weights,
+                phase_tag_weights,
+                tags,
+                weight=weight,
+                activity_dt=activity_dt,
+                now=now,
+            )
+            _update_affinity_maps(
+                keyword_weights,
+                recent_keyword_weights,
+                phase_keyword_weights,
+                keywords,
+                weight=weight,
+                activity_dt=activity_dt,
+                now=now,
+            )
+            _update_affinity_maps(
+                studio_weights,
+                recent_studio_weights,
+                phase_studio_weights,
+                studios,
+                weight=weight,
+                activity_dt=activity_dt,
+                now=now,
+            )
+            _update_affinity_maps(
+                collection_weights,
+                recent_collection_weights,
+                phase_collection_weights,
+                collections,
+                weight=weight,
+                activity_dt=activity_dt,
+                now=now,
+            )
+            _update_affinity_maps(
+                director_weights,
+                recent_director_weights,
+                phase_director_weights,
+                directors,
+                weight=weight,
+                activity_dt=activity_dt,
+                now=now,
+            )
+            _update_affinity_maps(
+                lead_cast_weights,
+                recent_lead_cast_weights,
+                phase_lead_cast_weights,
+                lead_cast,
+                weight=weight,
+                activity_dt=activity_dt,
+                now=now,
+            )
+            _update_affinity_maps(
+                certification_weights,
+                recent_certification_weights,
+                phase_certification_weights,
+                certification,
+                weight=weight,
+                activity_dt=activity_dt,
+                now=now,
+            )
+            _update_affinity_maps(
+                runtime_bucket_weights,
+                recent_runtime_bucket_weights,
+                phase_runtime_bucket_weights,
+                runtime_buckets,
+                weight=weight,
+                activity_dt=activity_dt,
+                now=now,
+            )
+            _update_affinity_maps(
+                decade_weights,
+                recent_decade_weights,
+                phase_decade_weights,
+                decades,
+                weight=weight,
+                activity_dt=activity_dt,
+                now=now,
+            )
+            for person in people:
+                person_weights[person] += weight
 
         feedback_rows = list(
             DiscoverFeedback.objects.filter(
@@ -268,7 +538,7 @@ def compute_taste_profile(user, media_type: str) -> ProfilePayload:
         feedback_person_map: dict[int, list[str]] = defaultdict(list)
         if media_type_key in {MediaTypes.MOVIE.value, MediaTypes.TV.value}:
             for credit in ItemPersonCredit.objects.filter(item_id__in=feedback_item_ids).select_related("person"):
-                person_name = (credit.person.name or "").strip() if credit.person_id else ""
+                person_name = normalize_person_name(credit.person.name if credit.person_id else "")
                 if person_name:
                     feedback_person_map[credit.item_id].append(person_name)
 
@@ -284,7 +554,7 @@ def compute_taste_profile(user, media_type: str) -> ProfilePayload:
             for tag in feedback_tag_map.get(feedback.item_id, []):
                 negative_tag_weights[tag.lower()] += weight
             for person in feedback_person_map.get(feedback.item_id, []):
-                negative_person_weights[person.lower()] += weight
+                negative_person_weights[person] += weight
 
     return ProfilePayload(
         genre_affinity=normalize_numeric_map(dict(genre_weights)),
@@ -293,6 +563,30 @@ def compute_taste_profile(user, media_type: str) -> ProfilePayload:
         tag_affinity=normalize_numeric_map(dict(tag_weights)),
         recent_tag_affinity=normalize_numeric_map(dict(recent_tag_weights)),
         phase_tag_affinity=normalize_numeric_map(dict(phase_tag_weights)),
+        keyword_affinity=normalize_numeric_map(dict(keyword_weights)),
+        recent_keyword_affinity=normalize_numeric_map(dict(recent_keyword_weights)),
+        phase_keyword_affinity=normalize_numeric_map(dict(phase_keyword_weights)),
+        studio_affinity=normalize_numeric_map(dict(studio_weights)),
+        recent_studio_affinity=normalize_numeric_map(dict(recent_studio_weights)),
+        phase_studio_affinity=normalize_numeric_map(dict(phase_studio_weights)),
+        collection_affinity=normalize_numeric_map(dict(collection_weights)),
+        recent_collection_affinity=normalize_numeric_map(dict(recent_collection_weights)),
+        phase_collection_affinity=normalize_numeric_map(dict(phase_collection_weights)),
+        director_affinity=normalize_numeric_map(dict(director_weights)),
+        recent_director_affinity=normalize_numeric_map(dict(recent_director_weights)),
+        phase_director_affinity=normalize_numeric_map(dict(phase_director_weights)),
+        lead_cast_affinity=normalize_numeric_map(dict(lead_cast_weights)),
+        recent_lead_cast_affinity=normalize_numeric_map(dict(recent_lead_cast_weights)),
+        phase_lead_cast_affinity=normalize_numeric_map(dict(phase_lead_cast_weights)),
+        certification_affinity=normalize_numeric_map(dict(certification_weights)),
+        recent_certification_affinity=normalize_numeric_map(dict(recent_certification_weights)),
+        phase_certification_affinity=normalize_numeric_map(dict(phase_certification_weights)),
+        runtime_bucket_affinity=normalize_numeric_map(dict(runtime_bucket_weights)),
+        recent_runtime_bucket_affinity=normalize_numeric_map(dict(recent_runtime_bucket_weights)),
+        phase_runtime_bucket_affinity=normalize_numeric_map(dict(phase_runtime_bucket_weights)),
+        decade_affinity=normalize_numeric_map(dict(decade_weights)),
+        recent_decade_affinity=normalize_numeric_map(dict(recent_decade_weights)),
+        phase_decade_affinity=normalize_numeric_map(dict(phase_decade_weights)),
         person_affinity=normalize_numeric_map(dict(person_weights)),
         negative_genre_affinity=normalize_numeric_map(dict(negative_genre_weights)),
         negative_tag_affinity=normalize_numeric_map(dict(negative_tag_weights)),
@@ -318,6 +612,30 @@ def get_or_compute_taste_profile(user, media_type: str, *, force: bool = False) 
             "tag_affinity": getattr(cached_entry, "tag_affinity", None) or {},
             "recent_tag_affinity": getattr(cached_entry, "recent_tag_affinity", None) or {},
             "phase_tag_affinity": getattr(cached_entry, "phase_tag_affinity", None) or {},
+            "keyword_affinity": getattr(cached_entry, "keyword_affinity", None) or {},
+            "recent_keyword_affinity": getattr(cached_entry, "recent_keyword_affinity", None) or {},
+            "phase_keyword_affinity": getattr(cached_entry, "phase_keyword_affinity", None) or {},
+            "studio_affinity": getattr(cached_entry, "studio_affinity", None) or {},
+            "recent_studio_affinity": getattr(cached_entry, "recent_studio_affinity", None) or {},
+            "phase_studio_affinity": getattr(cached_entry, "phase_studio_affinity", None) or {},
+            "collection_affinity": getattr(cached_entry, "collection_affinity", None) or {},
+            "recent_collection_affinity": getattr(cached_entry, "recent_collection_affinity", None) or {},
+            "phase_collection_affinity": getattr(cached_entry, "phase_collection_affinity", None) or {},
+            "director_affinity": getattr(cached_entry, "director_affinity", None) or {},
+            "recent_director_affinity": getattr(cached_entry, "recent_director_affinity", None) or {},
+            "phase_director_affinity": getattr(cached_entry, "phase_director_affinity", None) or {},
+            "lead_cast_affinity": getattr(cached_entry, "lead_cast_affinity", None) or {},
+            "recent_lead_cast_affinity": getattr(cached_entry, "recent_lead_cast_affinity", None) or {},
+            "phase_lead_cast_affinity": getattr(cached_entry, "phase_lead_cast_affinity", None) or {},
+            "certification_affinity": getattr(cached_entry, "certification_affinity", None) or {},
+            "recent_certification_affinity": getattr(cached_entry, "recent_certification_affinity", None) or {},
+            "phase_certification_affinity": getattr(cached_entry, "phase_certification_affinity", None) or {},
+            "runtime_bucket_affinity": getattr(cached_entry, "runtime_bucket_affinity", None) or {},
+            "recent_runtime_bucket_affinity": getattr(cached_entry, "recent_runtime_bucket_affinity", None) or {},
+            "phase_runtime_bucket_affinity": getattr(cached_entry, "phase_runtime_bucket_affinity", None) or {},
+            "decade_affinity": getattr(cached_entry, "decade_affinity", None) or {},
+            "recent_decade_affinity": getattr(cached_entry, "recent_decade_affinity", None) or {},
+            "phase_decade_affinity": getattr(cached_entry, "phase_decade_affinity", None) or {},
             "person_affinity": getattr(cached_entry, "person_affinity", None) or {},
             "negative_genre_affinity": getattr(cached_entry, "negative_genre_affinity", None) or {},
             "negative_tag_affinity": getattr(cached_entry, "negative_tag_affinity", None) or {},
@@ -335,6 +653,30 @@ def get_or_compute_taste_profile(user, media_type: str, *, force: bool = False) 
         tag_affinity=profile.tag_affinity,
         recent_tag_affinity=profile.recent_tag_affinity,
         phase_tag_affinity=profile.phase_tag_affinity,
+        keyword_affinity=profile.keyword_affinity,
+        recent_keyword_affinity=profile.recent_keyword_affinity,
+        phase_keyword_affinity=profile.phase_keyword_affinity,
+        studio_affinity=profile.studio_affinity,
+        recent_studio_affinity=profile.recent_studio_affinity,
+        phase_studio_affinity=profile.phase_studio_affinity,
+        collection_affinity=profile.collection_affinity,
+        recent_collection_affinity=profile.recent_collection_affinity,
+        phase_collection_affinity=profile.phase_collection_affinity,
+        director_affinity=profile.director_affinity,
+        recent_director_affinity=profile.recent_director_affinity,
+        phase_director_affinity=profile.phase_director_affinity,
+        lead_cast_affinity=profile.lead_cast_affinity,
+        recent_lead_cast_affinity=profile.recent_lead_cast_affinity,
+        phase_lead_cast_affinity=profile.phase_lead_cast_affinity,
+        certification_affinity=profile.certification_affinity,
+        recent_certification_affinity=profile.recent_certification_affinity,
+        phase_certification_affinity=profile.phase_certification_affinity,
+        runtime_bucket_affinity=profile.runtime_bucket_affinity,
+        recent_runtime_bucket_affinity=profile.recent_runtime_bucket_affinity,
+        phase_runtime_bucket_affinity=profile.phase_runtime_bucket_affinity,
+        decade_affinity=profile.decade_affinity,
+        recent_decade_affinity=profile.recent_decade_affinity,
+        phase_decade_affinity=profile.phase_decade_affinity,
         person_affinity=profile.person_affinity,
         negative_genre_affinity=profile.negative_genre_affinity,
         negative_tag_affinity=profile.negative_tag_affinity,
