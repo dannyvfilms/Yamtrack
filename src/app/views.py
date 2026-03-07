@@ -646,7 +646,14 @@ def _invalidate_discover_after_action(
 @require_GET
 def discover_page(request):
     """Render Discover page with selected media rows."""
-    selected_media_type = _coerce_discover_media_type(request.GET.get("media_type"))
+    raw_param = request.GET.get("media_type")
+    if raw_param is not None:
+        selected_media_type = _coerce_discover_media_type(raw_param)
+        request.user.update_preference("last_discover_type", selected_media_type)
+    else:
+        selected_media_type = _coerce_discover_media_type(
+            request.user.last_discover_type
+        )
     show_more = request.GET.get("show_more") in {"1", "true", "True"}
     discover_debug = _coerce_discover_debug(request.GET.get("discover_debug"))
     rows = _discover_response_rows(
@@ -677,6 +684,7 @@ def discover_page(request):
 def discover_rows(request):
     """Render Discover rows partial for HTMX row switching."""
     selected_media_type = _coerce_discover_media_type(request.GET.get("media_type"))
+    request.user.update_preference("last_discover_type", selected_media_type)
     show_more = request.GET.get("show_more") in {"1", "true", "True"}
     discover_debug = _coerce_discover_debug(request.GET.get("discover_debug"))
     rows = _discover_response_rows(

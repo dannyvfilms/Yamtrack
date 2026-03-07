@@ -226,6 +226,12 @@ class User(AbstractUser):
         choices=MediaTypes.choices,
     )
 
+    last_discover_type = models.CharField(
+        max_length=10,
+        default="",
+        blank=True,
+    )
+
     home_sort = models.CharField(
         max_length=20,
         default=HomeSortChoices.UPCOMING,
