@@ -3978,6 +3978,8 @@ class DiscoverTasteProfile(models.Model):
     decade_affinity = models.JSONField(default=dict, blank=True)
     recent_decade_affinity = models.JSONField(default=dict, blank=True)
     phase_decade_affinity = models.JSONField(default=dict, blank=True)
+    comfort_library_affinity = models.JSONField(default=dict, blank=True)
+    comfort_rewatch_affinity = models.JSONField(default=dict, blank=True)
     person_affinity = models.JSONField(default=dict, blank=True)
     negative_genre_affinity = models.JSONField(default=dict, blank=True)
     negative_tag_affinity = models.JSONField(default=dict, blank=True)

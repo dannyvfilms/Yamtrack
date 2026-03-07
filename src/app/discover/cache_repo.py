@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import random
+import time
 from datetime import timedelta
 from typing import Any
 
+from django.db import OperationalError
 from django.utils import timezone
 
 from app.models import DiscoverApiCache, DiscoverRowCache, DiscoverTasteProfile
@@ -138,6 +141,8 @@ def set_taste_profile(
     decade_affinity: dict[str, float],
     recent_decade_affinity: dict[str, float],
     phase_decade_affinity: dict[str, float],
+    comfort_library_affinity: dict[str, dict[str, float]],
+    comfort_rewatch_affinity: dict[str, dict[str, float]],
     person_affinity: dict[str, float],
     negative_genre_affinity: dict[str, float],
     negative_tag_affinity: dict[str, float],
@@ -147,50 +152,66 @@ def set_taste_profile(
 ) -> DiscoverTasteProfile:
     """Persist taste profile to DB-backed profile cache."""
     now = timezone.now()
-    entry, _ = DiscoverTasteProfile.objects.update_or_create(
-        user_id=user_id,
-        media_type=media_type,
-        defaults={
-            "genre_affinity": genre_affinity,
-            "recent_genre_affinity": recent_genre_affinity,
-            "phase_genre_affinity": phase_genre_affinity,
-            "tag_affinity": tag_affinity,
-            "recent_tag_affinity": recent_tag_affinity,
-            "phase_tag_affinity": phase_tag_affinity,
-            "keyword_affinity": keyword_affinity,
-            "recent_keyword_affinity": recent_keyword_affinity,
-            "phase_keyword_affinity": phase_keyword_affinity,
-            "studio_affinity": studio_affinity,
-            "recent_studio_affinity": recent_studio_affinity,
-            "phase_studio_affinity": phase_studio_affinity,
-            "collection_affinity": collection_affinity,
-            "recent_collection_affinity": recent_collection_affinity,
-            "phase_collection_affinity": phase_collection_affinity,
-            "director_affinity": director_affinity,
-            "recent_director_affinity": recent_director_affinity,
-            "phase_director_affinity": phase_director_affinity,
-            "lead_cast_affinity": lead_cast_affinity,
-            "recent_lead_cast_affinity": recent_lead_cast_affinity,
-            "phase_lead_cast_affinity": phase_lead_cast_affinity,
-            "certification_affinity": certification_affinity,
-            "recent_certification_affinity": recent_certification_affinity,
-            "phase_certification_affinity": phase_certification_affinity,
-            "runtime_bucket_affinity": runtime_bucket_affinity,
-            "recent_runtime_bucket_affinity": recent_runtime_bucket_affinity,
-            "phase_runtime_bucket_affinity": phase_runtime_bucket_affinity,
-            "decade_affinity": decade_affinity,
-            "recent_decade_affinity": recent_decade_affinity,
-            "phase_decade_affinity": phase_decade_affinity,
-            "person_affinity": person_affinity,
-            "negative_genre_affinity": negative_genre_affinity,
-            "negative_tag_affinity": negative_tag_affinity,
-            "negative_person_affinity": negative_person_affinity,
-            "activity_snapshot_at": activity_snapshot_at,
-            "computed_at": now,
-            "expires_at": now + timedelta(seconds=ttl_seconds),
-        },
-    )
-    return entry
+    defaults = {
+        "genre_affinity": genre_affinity,
+        "recent_genre_affinity": recent_genre_affinity,
+        "phase_genre_affinity": phase_genre_affinity,
+        "tag_affinity": tag_affinity,
+        "recent_tag_affinity": recent_tag_affinity,
+        "phase_tag_affinity": phase_tag_affinity,
+        "keyword_affinity": keyword_affinity,
+        "recent_keyword_affinity": recent_keyword_affinity,
+        "phase_keyword_affinity": phase_keyword_affinity,
+        "studio_affinity": studio_affinity,
+        "recent_studio_affinity": recent_studio_affinity,
+        "phase_studio_affinity": phase_studio_affinity,
+        "collection_affinity": collection_affinity,
+        "recent_collection_affinity": recent_collection_affinity,
+        "phase_collection_affinity": phase_collection_affinity,
+        "director_affinity": director_affinity,
+        "recent_director_affinity": recent_director_affinity,
+        "phase_director_affinity": phase_director_affinity,
+        "lead_cast_affinity": lead_cast_affinity,
+        "recent_lead_cast_affinity": recent_lead_cast_affinity,
+        "phase_lead_cast_affinity": phase_lead_cast_affinity,
+        "certification_affinity": certification_affinity,
+        "recent_certification_affinity": recent_certification_affinity,
+        "phase_certification_affinity": phase_certification_affinity,
+        "runtime_bucket_affinity": runtime_bucket_affinity,
+        "recent_runtime_bucket_affinity": recent_runtime_bucket_affinity,
+        "phase_runtime_bucket_affinity": phase_runtime_bucket_affinity,
+        "decade_affinity": decade_affinity,
+        "recent_decade_affinity": recent_decade_affinity,
+        "phase_decade_affinity": phase_decade_affinity,
+        "comfort_library_affinity": comfort_library_affinity,
+        "comfort_rewatch_affinity": comfort_rewatch_affinity,
+        "person_affinity": person_affinity,
+        "negative_genre_affinity": negative_genre_affinity,
+        "negative_tag_affinity": negative_tag_affinity,
+        "negative_person_affinity": negative_person_affinity,
+        "activity_snapshot_at": activity_snapshot_at,
+        "computed_at": now,
+        "expires_at": now + timedelta(seconds=ttl_seconds),
+    }
+    # SQLite only allows one writer at a time. Concurrent Celery workers can
+    # race on this upsert and receive OperationalError("database is locked")
+    # even with busy_timeout set, because select_for_update() inside
+    # update_or_create() can trigger SQLITE_LOCKED (same-process lock) rather
+    # than SQLITE_BUSY, which the timeout doesn't retry.  Back off and retry.
+    max_attempts = 5
+    for attempt in range(max_attempts):
+        try:
+            entry, _ = DiscoverTasteProfile.objects.update_or_create(
+                user_id=user_id,
+                media_type=media_type,
+                defaults=defaults,
+            )
+            return entry
+        except OperationalError as exc:
+            if "database is locked" not in str(exc) or attempt >= max_attempts - 1:
+                raise
+            time.sleep(0.2 * (attempt + 1) + random.random() * 0.3)
+    raise RuntimeError("unreachable")
 
 
 def delete_row_caches(user_ids: list[int], media_types: list[str]) -> int:

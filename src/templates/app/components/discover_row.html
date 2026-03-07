@@ -44,6 +44,79 @@
     <details class="mt-3 rounded-md border border-gray-700 bg-[#1f2429] p-3 text-xs text-gray-300">
       <summary class="cursor-pointer font-medium text-gray-200">{{ row.title }} debug</summary>
       <div class="mt-2 space-y-2">
+        {% if row.debug_payload.score_model == "movie_behavior_first" %}
+          <p>
+            Raw spread: {{ row.debug_payload.score_distribution.raw_spread|floatformat:3 }}
+            (compressed={{ row.debug_payload.score_distribution.compressed_raw|yesno:'yes,no' }})
+            • Display spread: {{ row.debug_payload.score_distribution.display_spread|floatformat:3 }}
+            • Multi-penalty picks: {{ row.debug_payload.penalty_stack.multi_penalty_count }}
+          </p>
+          <p>
+            Contributions (top {{ row.debug_payload.top_n }}):
+            library {{ row.debug_payload.contribution_totals.library|floatformat:3 }},
+            recency-phase {{ row.debug_payload.contribution_totals.recency_phase|floatformat:3 }},
+            behavior {{ row.debug_payload.contribution_totals.behavior|floatformat:3 }},
+            comfort-safety {{ row.debug_payload.contribution_totals.comfort_safety|floatformat:3 }},
+            quality {{ row.debug_payload.contribution_totals.quality|floatformat:3 }},
+            shape {{ row.debug_payload.contribution_totals.shape_coverage|floatformat:3 }},
+            ready-now {{ row.debug_payload.contribution_totals.ready_now|floatformat:3 }}
+          </p>
+          <p>
+            Profile layers:
+            phase {{ row.debug_payload.profile_layer_weights.phase|floatformat:3 }},
+            recent {{ row.debug_payload.profile_layer_weights.recent|floatformat:3 }},
+            library {{ row.debug_payload.profile_layer_weights.library|floatformat:3 }},
+            rewatch {{ row.debug_payload.profile_layer_weights.rewatch|floatformat:3 }}
+          </p>
+          {% if row.debug_payload.match_signal %}
+            <p>
+              Match signal: {{ row.debug_payload.match_signal.signal }}
+              • mode {{ row.debug_payload.match_signal.mode }}
+              • candidates {{ row.debug_payload.match_signal.candidate_window }}
+            </p>
+            <p>{{ row.debug_payload.match_signal.explanation }}</p>
+          {% endif %}
+          <div class="space-y-1">
+            {% for debug_item in row.debug_payload.top_candidates %}
+              <p>
+                #{{ debug_item.rank }} {{ debug_item.title }} —
+                raw {{ debug_item.raw_final_score|floatformat:3 }},
+                display {{ debug_item.display_score|floatformat:3 }},
+                library {{ debug_item.library_fit|floatformat:3 }},
+                recency-phase {{ debug_item.recency_phase_fit|floatformat:3 }},
+                behavior {{ debug_item.behavior_score|floatformat:3 }},
+                comfort-safety {{ debug_item.comfort_safety|floatformat:3 }},
+                quality {{ debug_item.quality_score|floatformat:3 }},
+                shape {{ debug_item.shape_coverage|floatformat:3 }},
+                core {{ debug_item.core_affinity_score|floatformat:3 }},
+                ready-now {{ debug_item.ready_now_score|floatformat:3 }},
+                cooldown {{ debug_item.cooldown_penalty|floatformat:3 }},
+                title-cooldown {{ debug_item.title_cooldown_penalty|floatformat:3 }},
+                burst-allowance {{ debug_item.burst_replay_allowance|floatformat:3 }},
+                title-days {{ debug_item.days_since_title_watch|floatformat:1 }},
+                gap {{ debug_item.title_repeat_gap_days|floatformat:1 }},
+                title-burst {{ debug_item.title_burstiness|floatformat:3 }},
+                lane-burst {{ debug_item.lane_burstiness|floatformat:3 }},
+                rating {{ debug_item.rating_confidence|floatformat:3 }},
+                rewatch {{ debug_item.rewatch_strength|floatformat:3 }},
+                provider {{ debug_item.provider_support|floatformat:3 }},
+                generic-only {{ debug_item.generic_only_match|yesno:'yes,no' }},
+                bucket {{ debug_item.primary_reason_bucket }},
+                quota {{ debug_item.reason_bucket_quota_action }},
+                contrib library {{ debug_item.library_contribution|floatformat:3 }},
+                contrib recency {{ debug_item.recency_phase_contribution|floatformat:3 }},
+                contrib behavior {{ debug_item.behavior_contribution|floatformat:3 }},
+                contrib safety {{ debug_item.comfort_safety_contribution|floatformat:3 }},
+                contrib quality {{ debug_item.quality_contribution|floatformat:3 }},
+                contrib shape {{ debug_item.shape_coverage_contribution|floatformat:3 }},
+                contrib ready-now {{ debug_item.ready_now_contribution|floatformat:3 }},
+                active [{% for family in debug_item.active_signal_families %}{{ family }}{% if not forloop.last %}, {% endif %}{% endfor %}],
+                suppressed [{% for entry in debug_item.suppressed_signal_families %}{{ entry.family }}:{{ entry.reason }}{% if not forloop.last %}, {% endif %}{% endfor %}],
+                penalties {{ debug_item.penalty_count }}
+              </p>
+            {% endfor %}
+          </div>
+        {% else %}
         <p>
           Raw spread: {{ row.debug_payload.score_distribution.raw_spread|floatformat:3 }}
           (compressed={{ row.debug_payload.score_distribution.compressed_raw|yesno:'yes,no' }})
@@ -117,6 +190,7 @@
             </p>
           {% endfor %}
         </div>
+        {% endif %}
       </div>
     </details>
   {% endif %}

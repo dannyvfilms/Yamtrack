@@ -589,14 +589,14 @@ def _discover_response_rows(
             selected_media_type,
             show_more=show_more,
             include_debug=True,
-            defer_artwork=True,
+            defer_artwork=False,
         )
     return discover_tab_cache.get_tab_rows(
         user,
         selected_media_type,
         show_more=show_more,
         include_debug=False,
-        defer_artwork=True,
+        defer_artwork=False,
         allow_inline_bootstrap=False,
     )
 

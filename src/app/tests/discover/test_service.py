@@ -2737,7 +2737,7 @@ class DiscoverServiceTests(TestCase):
         self.assertEqual(candidate.runtime_bucket, "90_109")
         self.assertEqual(candidate.release_decade, "2020s")
 
-    def test_movie_comfort_confidence_prefers_richer_metadata_and_filters_weak_unrated(self):
+    def test_movie_comfort_confidence_prefers_behavior_first_fits_and_filters_weak_unrated(self):
         candidates = [
             CandidateItem(
                 media_type=MediaTypes.MOVIE.value,
@@ -2795,7 +2795,6 @@ class DiscoverServiceTests(TestCase):
                 score_breakdown={
                     "days_since_activity": 240.0,
                     "rewatch_count": 1.0,
-                    "recent_history_tag_coverage": 0.0,
                 },
             ),
         ]
@@ -2804,13 +2803,43 @@ class DiscoverServiceTests(TestCase):
             candidates,
             {
                 "phase_keyword_affinity": {"holiday": 1.0, "whodunit": 0.9},
+                "recent_keyword_affinity": {"holiday": 0.9, "whodunit": 0.8},
                 "phase_studio_affinity": {"pixar": 1.0},
+                "recent_studio_affinity": {"pixar": 0.9},
                 "phase_collection_affinity": {"mystery collection": 0.9},
+                "recent_collection_affinity": {"mystery collection": 0.8},
                 "phase_director_affinity": {"alfred hitchcock": 0.6},
+                "recent_director_affinity": {"alfred hitchcock": 0.3},
                 "phase_certification_affinity": {"pg": 1.0},
+                "recent_certification_affinity": {"pg": 0.9},
                 "phase_runtime_bucket_affinity": {"90_109": 1.0},
-                "phase_decade_affinity": {"2020s": 0.7},
+                "recent_runtime_bucket_affinity": {"90_109": 0.9},
+                "phase_decade_affinity": {"2020s": 0.7, "1950s": 0.5},
+                "recent_decade_affinity": {"2020s": 0.8},
                 "phase_genre_affinity": {"animation": 0.8, "family": 0.7},
+                "recent_genre_affinity": {"animation": 0.9, "family": 0.8},
+                "comfort_library_affinity": {
+                    "keywords": {"holiday": 1.0, "whodunit": 0.95},
+                    "collections": {"mystery collection": 0.9},
+                    "studios": {"pixar": 1.0},
+                    "genres": {"animation": 0.9, "family": 0.8},
+                    "directors": {"alfred hitchcock": 0.4},
+                    "lead_cast": {},
+                    "certifications": {"PG": 1.0},
+                    "runtime_buckets": {"90_109": 1.0},
+                    "decades": {"2020s": 0.9},
+                },
+                "comfort_rewatch_affinity": {
+                    "keywords": {"holiday": 1.0},
+                    "collections": {"mystery collection": 0.9},
+                    "studios": {"pixar": 1.0},
+                    "genres": {"animation": 0.9},
+                    "directors": {},
+                    "lead_cast": {},
+                    "certifications": {"PG": 1.0},
+                    "runtime_buckets": {"90_109": 1.0},
+                    "decades": {"2020s": 0.9},
+                },
             },
             use_movie_rewatch_model=True,
         )
@@ -2819,16 +2848,15 @@ class DiscoverServiceTests(TestCase):
         self.assertEqual(reranked_ids[0], "family")
         self.assertNotIn("apollo", reranked_ids)
         self.assertGreater(
-            reranked[0].score_breakdown["recent_shape_fit"],
-            reranked[1].score_breakdown["recent_shape_fit"],
+            reranked[0].score_breakdown["library_fit"],
+            reranked[1].score_breakdown["library_fit"],
+        )
+        self.assertGreater(reranked[0].score_breakdown["recency_phase_fit"], 0.0)
+        self.assertTrue(
+            reranked[0].score_breakdown["primary_reason_bucket"].startswith("keywords:"),
         )
 
-    def test_row_match_signal_prefers_richer_movie_phase_labels(self):
-        profile = {
-            "phase_keyword_affinity": {"whodunit": 1.0},
-            "phase_studio_affinity": {"pixar": 0.9},
-            "phase_genre_affinity": {"drama": 0.8},
-        }
+    def test_row_match_signal_prefers_movie_reason_bucket_labels_over_runtime_and_decade(self):
         candidates = [
             CandidateItem(
                 media_type=MediaTypes.MOVIE.value,
@@ -2838,25 +2866,460 @@ class DiscoverServiceTests(TestCase):
                 genres=["Drama"],
                 keywords=["whodunit"],
                 studios=["pixar"],
-                score_breakdown={"phase_fit": 0.9},
+                runtime_bucket="90_109",
+                release_decade="2010s",
+                score_breakdown={
+                    "phase_fit": 0.9,
+                    "library_fit": 0.8,
+                    "recency_phase_fit": 0.75,
+                    "keyword_fit": 0.9,
+                    "studio_fit": 0.8,
+                    "runtime_fit": 0.7,
+                    "decade_fit": 0.6,
+                    "primary_reason_bucket": "keywords:whodunit",
+                },
                 final_score=0.85,
+            ),
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source="tmdb",
+                media_id="signal-2",
+                title="Signal Movie Two",
+                studios=["pixar"],
+                runtime_bucket="90_109",
+                release_decade="2010s",
+                score_breakdown={
+                    "phase_fit": 0.8,
+                    "library_fit": 0.7,
+                    "recency_phase_fit": 0.7,
+                    "studio_fit": 0.85,
+                    "runtime_fit": 0.65,
+                    "decade_fit": 0.55,
+                    "primary_reason_bucket": "studios:pixar",
+                },
+                final_score=0.8,
             ),
         ]
 
         signal, details = _row_match_signal_with_details(
             "comfort_rewatches",
             candidates,
-            profile,
+            {},
         )
 
         self.assertIsNotNone(signal)
         self.assertIn("Whodunit", signal or "")
         self.assertIn("Pixar", signal or "")
+        self.assertNotIn("2010s", signal or "")
+        self.assertNotIn("90 109", signal or "")
         self.assertIsNotNone(details)
         details = details or {}
-        self.assertEqual(details["mode"], "row_candidates")
+        self.assertEqual(details["mode"], "movie_reason_buckets")
         self.assertIn("Signal evidence:", details["explanation"])
         self.assertGreaterEqual(len(details.get("match_signal_label_sources", [])), 1)
+
+    def test_movie_comfort_debug_payload_exposes_behavior_first_fields(self):
+        candidates = [
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source="tmdb",
+                media_id="family",
+                title="Family Comfort",
+                genres=["Animation", "Family"],
+                keywords=["holiday", "whodunit"],
+                studios=["pixar"],
+                collection_name="Mystery Collection",
+                certification="PG",
+                runtime_bucket="90_109",
+                release_decade="2020s",
+                popularity=90.0,
+                rating_count=9000,
+                score_breakdown={
+                    "user_score": 8.0,
+                    "days_since_activity": 220.0,
+                    "rewatch_count": 2.0,
+                },
+            ),
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source="tmdb",
+                media_id="classic",
+                title="Classic Suspense",
+                genres=["Thriller"],
+                directors=["alfred hitchcock"],
+                certification="PG",
+                runtime_bucket="90_109",
+                release_decade="1950s",
+                popularity=70.0,
+                rating_count=5000,
+                score_breakdown={
+                    "user_score": 8.0,
+                    "days_since_activity": 260.0,
+                    "rewatch_count": 1.0,
+                },
+            ),
+        ]
+
+        reranked = _apply_comfort_confidence(
+            candidates,
+            {
+                "phase_keyword_affinity": {"holiday": 1.0, "whodunit": 0.9},
+                "recent_keyword_affinity": {"holiday": 0.9},
+                "phase_studio_affinity": {"pixar": 1.0},
+                "recent_studio_affinity": {"pixar": 0.9},
+                "phase_collection_affinity": {"mystery collection": 0.9},
+                "phase_certification_affinity": {"pg": 1.0},
+                "recent_certification_affinity": {"pg": 0.9},
+                "phase_runtime_bucket_affinity": {"90_109": 1.0},
+                "recent_runtime_bucket_affinity": {"90_109": 0.9},
+                "phase_decade_affinity": {"2020s": 0.7},
+                "recent_decade_affinity": {"2020s": 0.8},
+                "phase_genre_affinity": {"animation": 0.8, "family": 0.7},
+                "recent_genre_affinity": {"animation": 0.9, "family": 0.8},
+                "comfort_library_affinity": {
+                    "keywords": {"holiday": 1.0, "whodunit": 0.95},
+                    "collections": {"mystery collection": 0.9},
+                    "studios": {"pixar": 1.0},
+                    "genres": {"animation": 0.9, "family": 0.8},
+                    "directors": {"alfred hitchcock": 0.4},
+                    "lead_cast": {},
+                    "certifications": {"PG": 1.0},
+                    "runtime_buckets": {"90_109": 1.0},
+                    "decades": {"2020s": 0.9},
+                },
+                "comfort_rewatch_affinity": {
+                    "keywords": {"holiday": 1.0},
+                    "collections": {"mystery collection": 0.9},
+                    "studios": {"pixar": 1.0},
+                    "genres": {"animation": 0.9},
+                    "directors": {},
+                    "lead_cast": {},
+                    "certifications": {"PG": 1.0},
+                    "runtime_buckets": {"90_109": 1.0},
+                    "decades": {"2020s": 0.9},
+                },
+            },
+            use_movie_rewatch_model=True,
+        )
+        payload = _build_comfort_debug_payload(reranked, top_n=2)
+
+        self.assertEqual(payload["score_model"], "movie_behavior_first")
+        self.assertIn("library", payload["contribution_totals"])
+        self.assertIn("recency_phase", payload["contribution_totals"])
+        self.assertIn("behavior", payload["contribution_totals"])
+        self.assertIn("profile_layer_weights", payload)
+        self.assertIn("primary_reason_bucket", payload["top_candidates"][0])
+        self.assertIn("library_fit", payload["top_candidates"][0])
+        self.assertIn("recency_phase_fit", payload["top_candidates"][0])
+        self.assertIn("ready_now", payload["contribution_totals"])
+        self.assertIn("ready_now_score", payload["top_candidates"][0])
+        self.assertIn("cooldown_penalty", payload["top_candidates"][0])
+        self.assertIn("burst_replay_allowance", payload["top_candidates"][0])
+        self.assertIn("active_signal_families", payload["top_candidates"][0])
+        self.assertIn("suppressed_signal_families", payload["top_candidates"][0])
+
+    def test_movie_comfort_confidence_softly_cools_recent_exact_title(self):
+        zootopia_item = Item.objects.create(
+            media_id="cooldown-zootopia",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Zootopia",
+            image="http://example.com/zootopia.jpg",
+            genres=["Animation", "Adventure", "Comedy"],
+            provider_keywords=["Buddy Comedy", "Animal"],
+            provider_certification="PG",
+            provider_collection_name="Disney Animation",
+            runtime_minutes=108,
+            release_datetime=timezone.now() - timedelta(days=365 * 8),
+            studios=["Walt Disney Animation Studios"],
+        )
+        encanto_item = Item.objects.create(
+            media_id="cooldown-encanto",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Encanto",
+            image="http://example.com/encanto.jpg",
+            genres=["Animation", "Adventure", "Comedy"],
+            provider_keywords=["Family", "Musical"],
+            provider_certification="PG",
+            provider_collection_name="Disney Animation",
+            runtime_minutes=102,
+            release_datetime=timezone.now() - timedelta(days=365 * 4),
+            studios=["Walt Disney Animation Studios"],
+        )
+
+        with patch("app.models.providers.services.get_media_metadata", return_value={"max_progress": 1}):
+            Movie.objects.create(
+                item=zootopia_item,
+                user=self.user,
+                score=9,
+                status=Status.COMPLETED.value,
+                end_date=timezone.now() - timedelta(days=4),
+            )
+            Movie.objects.create(
+                item=zootopia_item,
+                user=self.user,
+                score=9,
+                status=Status.COMPLETED.value,
+                end_date=timezone.now() - timedelta(days=180),
+            )
+            Movie.objects.create(
+                item=encanto_item,
+                user=self.user,
+                score=9,
+                status=Status.COMPLETED.value,
+                end_date=timezone.now() - timedelta(days=70),
+            )
+
+        candidates = [
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source=Sources.TMDB.value,
+                media_id="cooldown-zootopia",
+                title="Zootopia",
+                genres=["Animation", "Adventure", "Comedy"],
+                keywords=["buddy comedy", "animal"],
+                studios=["walt disney animation studios"],
+                collection_name="Disney Animation",
+                certification="PG",
+                runtime_bucket="90_109",
+                release_decade="2010s",
+                popularity=90.0,
+                rating_count=12000,
+                score_breakdown={
+                    "user_score": 9.0,
+                    "days_since_activity": 4.0,
+                    "rewatch_count": 2.0,
+                },
+            ),
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source=Sources.TMDB.value,
+                media_id="cooldown-encanto",
+                title="Encanto",
+                genres=["Animation", "Adventure", "Comedy"],
+                keywords=["family", "musical"],
+                studios=["walt disney animation studios"],
+                collection_name="Disney Animation",
+                certification="PG",
+                runtime_bucket="90_109",
+                release_decade="2020s",
+                popularity=88.0,
+                rating_count=11000,
+                score_breakdown={
+                    "user_score": 9.0,
+                    "days_since_activity": 70.0,
+                    "rewatch_count": 1.0,
+                },
+            ),
+        ]
+
+        reranked = _apply_comfort_confidence(
+            candidates,
+            {
+                "phase_keyword_affinity": {"family": 1.0, "musical": 0.9, "animal": 0.8},
+                "recent_keyword_affinity": {"family": 1.0, "musical": 0.9},
+                "phase_studio_affinity": {"walt disney animation studios": 1.0},
+                "recent_studio_affinity": {"walt disney animation studios": 1.0},
+                "phase_collection_affinity": {"disney animation": 1.0},
+                "recent_collection_affinity": {"disney animation": 0.9},
+                "phase_certification_affinity": {"PG": 1.0},
+                "recent_certification_affinity": {"PG": 1.0},
+                "phase_runtime_bucket_affinity": {"90_109": 1.0},
+                "recent_runtime_bucket_affinity": {"90_109": 1.0},
+                "phase_decade_affinity": {"2010s": 0.8, "2020s": 0.8},
+                "recent_decade_affinity": {"2020s": 0.9},
+                "phase_genre_affinity": {"animation": 1.0, "adventure": 0.8, "comedy": 0.7},
+                "recent_genre_affinity": {"animation": 1.0, "adventure": 0.9, "comedy": 0.8},
+                "comfort_library_affinity": {
+                    "keywords": {"family": 1.0, "musical": 0.9, "animal": 0.8},
+                    "collections": {"disney animation": 1.0},
+                    "studios": {"walt disney animation studios": 1.0},
+                    "genres": {"animation": 1.0, "adventure": 0.9, "comedy": 0.8},
+                    "directors": {},
+                    "lead_cast": {},
+                    "certifications": {"PG": 1.0},
+                    "runtime_buckets": {"90_109": 1.0},
+                    "decades": {"2010s": 0.8, "2020s": 0.8},
+                },
+                "comfort_rewatch_affinity": {
+                    "keywords": {"family": 1.0, "animal": 0.9},
+                    "collections": {"disney animation": 1.0},
+                    "studios": {"walt disney animation studios": 1.0},
+                    "genres": {"animation": 1.0, "adventure": 0.8},
+                    "directors": {},
+                    "lead_cast": {},
+                    "certifications": {"PG": 1.0},
+                    "runtime_buckets": {"90_109": 1.0},
+                    "decades": {"2010s": 0.9},
+                },
+            },
+            use_movie_rewatch_model=True,
+            user=self.user,
+        )
+
+        self.assertEqual(reranked[0].media_id, "cooldown-encanto")
+        zootopia = next(candidate for candidate in reranked if candidate.media_id == "cooldown-zootopia")
+        encanto = next(candidate for candidate in reranked if candidate.media_id == "cooldown-encanto")
+        self.assertGreater(zootopia.score_breakdown["cooldown_penalty"], 0.0)
+        self.assertGreater(
+            zootopia.score_breakdown["cooldown_penalty"],
+            encanto.score_breakdown["cooldown_penalty"],
+        )
+        self.assertLess(
+            zootopia.score_breakdown["ready_now_score"],
+            encanto.score_breakdown["ready_now_score"],
+        )
+
+    def test_movie_comfort_confidence_softens_cooldown_for_bursty_title_repeats(self):
+        bursty_item = Item.objects.create(
+            media_id="burst-title",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Bursty Favorite",
+            image="http://example.com/bursty.jpg",
+            genres=["Animation", "Adventure"],
+            provider_keywords=["Family", "Adventure"],
+            provider_certification="PG",
+            provider_collection_name="Family Comfort",
+            runtime_minutes=101,
+            release_datetime=timezone.now() - timedelta(days=365 * 3),
+            studios=["Disney"],
+        )
+        steady_item = Item.objects.create(
+            media_id="steady-title",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Steady Favorite",
+            image="http://example.com/steady.jpg",
+            genres=["Animation", "Adventure"],
+            provider_keywords=["Family", "Adventure"],
+            provider_certification="PG",
+            provider_collection_name="Family Comfort",
+            runtime_minutes=101,
+            release_datetime=timezone.now() - timedelta(days=365 * 3),
+            studios=["Disney"],
+        )
+
+        with patch("app.models.providers.services.get_media_metadata", return_value={"max_progress": 1}):
+            for days_ago in (4, 11, 20):
+                Movie.objects.create(
+                    item=bursty_item,
+                    user=self.user,
+                    score=8,
+                    status=Status.COMPLETED.value,
+                    end_date=timezone.now() - timedelta(days=days_ago),
+                )
+            for days_ago in (4, 140, 280):
+                Movie.objects.create(
+                    item=steady_item,
+                    user=self.user,
+                    score=8,
+                    status=Status.COMPLETED.value,
+                    end_date=timezone.now() - timedelta(days=days_ago),
+                )
+
+        candidates = [
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source=Sources.TMDB.value,
+                media_id="burst-title",
+                title="Bursty Favorite",
+                genres=["Animation", "Adventure"],
+                keywords=["family", "adventure"],
+                studios=["disney"],
+                collection_name="Family Comfort",
+                certification="PG",
+                runtime_bucket="90_109",
+                release_decade="2020s",
+                popularity=70.0,
+                rating_count=5000,
+                score_breakdown={
+                    "user_score": 8.0,
+                    "days_since_activity": 4.0,
+                    "rewatch_count": 3.0,
+                },
+            ),
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source=Sources.TMDB.value,
+                media_id="steady-title",
+                title="Steady Favorite",
+                genres=["Animation", "Adventure"],
+                keywords=["family", "adventure"],
+                studios=["disney"],
+                collection_name="Family Comfort",
+                certification="PG",
+                runtime_bucket="90_109",
+                release_decade="2020s",
+                popularity=70.0,
+                rating_count=5000,
+                score_breakdown={
+                    "user_score": 8.0,
+                    "days_since_activity": 4.0,
+                    "rewatch_count": 3.0,
+                },
+            ),
+        ]
+
+        reranked = _apply_comfort_confidence(
+            candidates,
+            {
+                "phase_keyword_affinity": {"family": 1.0, "adventure": 0.8},
+                "recent_keyword_affinity": {"family": 1.0, "adventure": 0.8},
+                "phase_studio_affinity": {"disney": 1.0},
+                "recent_studio_affinity": {"disney": 1.0},
+                "phase_collection_affinity": {"family comfort": 1.0},
+                "recent_collection_affinity": {"family comfort": 0.9},
+                "phase_certification_affinity": {"PG": 1.0},
+                "recent_certification_affinity": {"PG": 1.0},
+                "phase_runtime_bucket_affinity": {"90_109": 1.0},
+                "recent_runtime_bucket_affinity": {"90_109": 1.0},
+                "phase_decade_affinity": {"2020s": 1.0},
+                "recent_decade_affinity": {"2020s": 1.0},
+                "phase_genre_affinity": {"animation": 1.0, "adventure": 0.8},
+                "recent_genre_affinity": {"animation": 1.0, "adventure": 0.8},
+                "comfort_library_affinity": {
+                    "keywords": {"family": 1.0, "adventure": 0.9},
+                    "collections": {"family comfort": 1.0},
+                    "studios": {"disney": 1.0},
+                    "genres": {"animation": 1.0, "adventure": 0.8},
+                    "directors": {},
+                    "lead_cast": {},
+                    "certifications": {"PG": 1.0},
+                    "runtime_buckets": {"90_109": 1.0},
+                    "decades": {"2020s": 1.0},
+                },
+                "comfort_rewatch_affinity": {
+                    "keywords": {"family": 1.0, "adventure": 0.9},
+                    "collections": {"family comfort": 1.0},
+                    "studios": {"disney": 1.0},
+                    "genres": {"animation": 1.0, "adventure": 0.8},
+                    "directors": {},
+                    "lead_cast": {},
+                    "certifications": {"PG": 1.0},
+                    "runtime_buckets": {"90_109": 1.0},
+                    "decades": {"2020s": 1.0},
+                },
+            },
+            use_movie_rewatch_model=True,
+            user=self.user,
+        )
+
+        bursty = next(candidate for candidate in reranked if candidate.media_id == "burst-title")
+        steady = next(candidate for candidate in reranked if candidate.media_id == "steady-title")
+        self.assertGreater(
+            bursty.score_breakdown["burst_replay_allowance"],
+            steady.score_breakdown["burst_replay_allowance"],
+        )
+        self.assertLess(
+            bursty.score_breakdown["cooldown_penalty"],
+            steady.score_breakdown["cooldown_penalty"],
+        )
+        self.assertGreater(
+            bursty.score_breakdown["ready_now_score"],
+            steady.score_breakdown["ready_now_score"],
+        )
 
     @patch("app.discover.service._is_holiday_window", return_value=False)
     def test_comfort_confidence_applies_out_of_season_holiday_penalty(self, _mock_window):

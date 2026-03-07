@@ -292,3 +292,77 @@ class DiscoverProfileTests(TestCase):
         self.assertIn("90_109", profile.runtime_bucket_affinity)
         self.assertIn("2020s", profile.decade_affinity)
         self.assertIn("whodunit", profile.phase_keyword_affinity)
+
+    def test_compute_taste_profile_builds_movie_comfort_library_and_rewatch_bundles(self):
+        item = Item.objects.create(
+            media_id="802",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Repeat Comfort",
+            image="http://example.com/repeat-comfort.jpg",
+            genres=["Animation", "Family"],
+            provider_keywords=["Whodunit", "Holiday"],
+            provider_certification="PG",
+            provider_collection_id="124",
+            provider_collection_name="Mystery Collection",
+            runtime_minutes=99,
+            release_datetime=timezone.now() - timedelta(days=365 * 3),
+            studios=["Pixar Animation Studios"],
+        )
+        director = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="director-2",
+            name="Pete Docter",
+        )
+        lead = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="actor-2",
+            name="Amy Poehler",
+        )
+        studio = Studio.objects.create(
+            source=Sources.TMDB.value,
+            source_studio_id="studio-2",
+            name="Pixar Animation Studios",
+        )
+        ItemPersonCredit.objects.create(
+            item=item,
+            person=director,
+            role_type=CreditRoleType.CREW.value,
+            role="Director",
+            department="Directing",
+        )
+        ItemPersonCredit.objects.create(
+            item=item,
+            person=lead,
+            role_type=CreditRoleType.CAST.value,
+            role="Lead",
+            sort_order=0,
+        )
+        ItemStudioCredit.objects.create(item=item, studio=studio)
+
+        with patch("app.models.providers.services.get_media_metadata", return_value={"max_progress": 1}):
+            Movie.objects.create(
+                item=item,
+                user=self.user,
+                score=10,
+                status=Status.COMPLETED.value,
+                end_date=timezone.now() - timedelta(days=30),
+            )
+            Movie.objects.create(
+                item=item,
+                user=self.user,
+                score=9,
+                status=Status.COMPLETED.value,
+                end_date=timezone.now() - timedelta(days=180),
+            )
+
+        profile = compute_taste_profile(self.user, MediaTypes.MOVIE.value)
+
+        self.assertIn("whodunit", profile.comfort_library_affinity["keywords"])
+        self.assertIn("pixar", profile.comfort_library_affinity["studios"])
+        self.assertIn("mystery collection", profile.comfort_library_affinity["collections"])
+        self.assertIn("pete docter", profile.comfort_library_affinity["directors"])
+        self.assertIn("PG", profile.comfort_library_affinity["certifications"])
+        self.assertIn("90_109", profile.comfort_library_affinity["runtime_buckets"])
+        self.assertIn("whodunit", profile.comfort_rewatch_affinity["keywords"])
+        self.assertIn("pixar", profile.comfort_rewatch_affinity["studios"])

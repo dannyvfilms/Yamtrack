@@ -108,21 +108,30 @@ def search(query, page):
 
 
 def _fetch_thumbnails(game_ids):
-    """Fetch thumbnail images for a list of game IDs."""
+    """Fetch thumbnail images for a list of game IDs.
+
+    BGG's /thing endpoint accepts at most RESULTS_PER_PAGE IDs per request,
+    so we chunk the list and merge the results.
+    """
     if not game_ids:
         return {}
 
-    try:
-        root = services.api_request(
-            Sources.BGG.value,
-            "GET",
-            f"{base_url}/thing",
-            params={"id": ",".join(game_ids)},
-            headers={"Authorization": f"Bearer {settings.BGG_API_TOKEN}"},
-            response_format="xml",
-        )
+    thumbnails = {}
+    id_list = list(game_ids)
+    for start in range(0, len(id_list), RESULTS_PER_PAGE):
+        batch = id_list[start : start + RESULTS_PER_PAGE]
+        try:
+            root = services.api_request(
+                Sources.BGG.value,
+                "GET",
+                f"{base_url}/thing?id={','.join(batch)}",
+                headers={"Authorization": f"Bearer {settings.BGG_API_TOKEN}"},
+                response_format="xml",
+            )
+        except (requests.exceptions.HTTPError, services.ProviderAPIError):
+            logger.exception("Failed to fetch thumbnails from BGG")
+            continue
 
-        thumbnails = {}
         for item in root.findall(".//item"):
             game_id = item.get("id")
             thumbnail_elem = item.find("thumbnail")
@@ -132,11 +141,8 @@ def _fetch_thumbnails(game_ids):
                 image_elem = item.find("image")
                 if image_elem is not None and image_elem.text:
                     thumbnails[game_id] = image_elem.text
-    except (requests.exceptions.HTTPError, services.ProviderAPIError):
-        logger.exception("Failed to fetch thumbnails from BGG")
-        return {}
-    else:
-        return thumbnails
+
+    return thumbnails
 
 
 def boardgame(media_id):

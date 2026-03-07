@@ -590,7 +590,7 @@ def refresh_tab_cache(
             media_type,
             show_more=show_more,
             include_debug=False,
-            defer_artwork=True,
+            defer_artwork=False,
         )
         set_tab_cache(
             user.id,

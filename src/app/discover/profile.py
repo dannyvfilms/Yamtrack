@@ -33,9 +33,21 @@ from app.models import (
     ItemStudioCredit,
     ItemTag,
     MediaTypes,
+    Status,
 )
 
 PROFILE_TTL_SECONDS = 60 * 60 * 24
+COMFORT_PROFILE_FAMILIES = (
+    "genres",
+    "keywords",
+    "studios",
+    "collections",
+    "directors",
+    "lead_cast",
+    "certifications",
+    "runtime_buckets",
+    "decades",
+)
 
 MODEL_BY_MEDIA_TYPE = {
     MediaTypes.MOVIE.value: "movie",
@@ -85,6 +97,8 @@ class ProfilePayload:
     decade_affinity: dict[str, float]
     recent_decade_affinity: dict[str, float]
     phase_decade_affinity: dict[str, float]
+    comfort_library_affinity: dict[str, dict[str, float]]
+    comfort_rewatch_affinity: dict[str, dict[str, float]]
     person_affinity: dict[str, float]
     negative_genre_affinity: dict[str, float]
     negative_tag_affinity: dict[str, float]
@@ -123,6 +137,8 @@ class ProfilePayload:
             "decade_affinity": self.decade_affinity,
             "recent_decade_affinity": self.recent_decade_affinity,
             "phase_decade_affinity": self.phase_decade_affinity,
+            "comfort_library_affinity": self.comfort_library_affinity,
+            "comfort_rewatch_affinity": self.comfort_rewatch_affinity,
             "person_affinity": self.person_affinity,
             "negative_genre_affinity": self.negative_genre_affinity,
             "negative_tag_affinity": self.negative_tag_affinity,
@@ -256,6 +272,144 @@ def _update_affinity_maps(
             phase_weights[value] += weight
 
 
+def _empty_comfort_affinity_bundle() -> dict[str, dict[str, float]]:
+    return {family: {} for family in COMFORT_PROFILE_FAMILIES}
+
+
+def _normalize_comfort_affinity_bundle(
+    bundle_weights: dict[str, defaultdict[str, float]],
+) -> dict[str, dict[str, float]]:
+    return {
+        family: normalize_numeric_map(dict(bundle_weights.get(family) or {}))
+        for family in COMFORT_PROFILE_FAMILIES
+    }
+
+
+def _movie_feature_families_for_entry(
+    entry,
+    *,
+    studio_map: dict[int, list[str]],
+    directors_map: dict[int, list[str]],
+    lead_cast_map: dict[int, list[str]],
+) -> dict[str, list[str]]:
+    return {
+        "genres": normalize_features(entry.item.genres or [], normalize_person_name),
+        "keywords": normalize_features(entry.item.provider_keywords or [], normalize_keyword),
+        "studios": studio_map.get(entry.item_id) or normalize_features(
+            entry.item.studios or [],
+            normalize_studio,
+        ),
+        "collections": normalize_features(
+            [entry.item.provider_collection_name or entry.item.provider_collection_id],
+            normalize_collection,
+        ),
+        "directors": directors_map.get(entry.item_id, []),
+        "lead_cast": lead_cast_map.get(entry.item_id, []),
+        "certifications": normalize_features(
+            [entry.item.provider_certification],
+            normalize_certification,
+        ),
+        "runtime_buckets": normalize_features(
+            [runtime_bucket_label(entry.item.runtime_minutes)],
+            normalize_person_name,
+        ),
+        "decades": normalize_features(
+            [release_decade_label(entry.item.release_datetime)],
+            normalize_person_name,
+        ),
+    }
+
+
+def _build_movie_comfort_affinity_bundles(
+    entries: list,
+    *,
+    now,
+    studio_map: dict[int, list[str]],
+    directors_map: dict[int, list[str]],
+    lead_cast_map: dict[int, list[str]],
+) -> tuple[dict[str, dict[str, float]], dict[str, dict[str, float]]]:
+    library_weights: dict[str, defaultdict[str, float]] = {
+        family: defaultdict(float)
+        for family in COMFORT_PROFILE_FAMILIES
+    }
+    rewatch_weights: dict[str, defaultdict[str, float]] = {
+        family: defaultdict(float)
+        for family in COMFORT_PROFILE_FAMILIES
+    }
+    aggregated: dict[int, dict[str, object]] = {}
+
+    for entry in entries:
+        if getattr(entry, "status", None) != Status.COMPLETED.value or not entry.item_id:
+            continue
+        activity_dt = _entry_activity_datetime(entry)
+        aggregate = aggregated.setdefault(
+            entry.item_id,
+            {
+                "watch_count": 0,
+                "latest_activity_dt": activity_dt,
+                "latest_score": getattr(entry, "score", None),
+                "features": _movie_feature_families_for_entry(
+                    entry,
+                    studio_map=studio_map,
+                    directors_map=directors_map,
+                    lead_cast_map=lead_cast_map,
+                ),
+            },
+        )
+        aggregate["watch_count"] = int(aggregate["watch_count"]) + 1
+        latest_activity_dt = aggregate.get("latest_activity_dt")
+        if latest_activity_dt is None or (
+            activity_dt is not None and activity_dt >= latest_activity_dt
+        ):
+            aggregate["latest_activity_dt"] = activity_dt
+            aggregate["latest_score"] = getattr(entry, "score", None)
+
+    if not aggregated:
+        return _empty_comfort_affinity_bundle(), _empty_comfort_affinity_bundle()
+
+    for aggregate in aggregated.values():
+        watch_count = int(aggregate.get("watch_count") or 0)
+        if watch_count <= 0:
+            continue
+        latest_activity_dt = aggregate.get("latest_activity_dt")
+        latest_score = aggregate.get("latest_score")
+        days_since_latest_watch = (
+            max(0, (now - latest_activity_dt).days)
+            if latest_activity_dt
+            else 1825
+        )
+        score_weight = max(
+            0.45,
+            min(
+                1.0,
+                (
+                    float(latest_score)
+                    if latest_score is not None
+                    else 6.0
+                )
+                / 10.0,
+            ),
+        )
+        repeat_weight = 1.0 + min(1.0, 0.30 * (watch_count - 1))
+        library_age_weight = max(
+            0.70,
+            1.0 - (min(days_since_latest_watch, 1825) / 1825.0),
+        )
+        library_weight = score_weight * repeat_weight * library_age_weight
+        rewatch_weight = library_weight * 1.35 if watch_count >= 2 else 0.0
+        feature_map = aggregate.get("features") or {}
+        for family, values in feature_map.items():
+            for value in values:
+                library_weights[family][value] += library_weight
+                if rewatch_weight > 0.0:
+                    rewatch_weights[family][value] += rewatch_weight
+
+    return (
+        _normalize_comfort_affinity_bundle(library_weights),
+        _normalize_comfort_affinity_bundle(rewatch_weights),
+    )
+
+
 def has_new_activity(user, media_type: str, snapshot_at) -> bool:
     """Return whether user has new activity after profile snapshot."""
     if snapshot_at is None:
@@ -313,6 +467,8 @@ def compute_taste_profile(user, media_type: str) -> ProfilePayload:
     decade_weights: dict[str, float] = defaultdict(float)
     recent_decade_weights: dict[str, float] = defaultdict(float)
     phase_decade_weights: dict[str, float] = defaultdict(float)
+    comfort_library_affinity = _empty_comfort_affinity_bundle()
+    comfort_rewatch_affinity = _empty_comfort_affinity_bundle()
     person_weights: dict[str, float] = defaultdict(float)
     negative_genre_weights: dict[str, float] = defaultdict(float)
     negative_tag_weights: dict[str, float] = defaultdict(float)
@@ -332,6 +488,7 @@ def compute_taste_profile(user, media_type: str) -> ProfilePayload:
             "id",
             "item_id",
             "score",
+            "status",
             "created_at",
             "item__genres",
             "item__media_type",
@@ -372,6 +529,17 @@ def compute_taste_profile(user, media_type: str) -> ProfilePayload:
         if media_type_key in {MediaTypes.MOVIE.value, MediaTypes.TV.value}:
             person_map, directors_map, lead_cast_map = _item_credit_feature_maps(item_ids)
             studio_map = _item_studio_feature_map(item_ids)
+        if media_type_key == MediaTypes.MOVIE.value:
+            (
+                comfort_library_affinity,
+                comfort_rewatch_affinity,
+            ) = _build_movie_comfort_affinity_bundles(
+                entries,
+                now=now,
+                studio_map=studio_map,
+                directors_map=directors_map,
+                lead_cast_map=lead_cast_map,
+            )
 
         for entry in entries:
             activity_dt = (
@@ -587,6 +755,8 @@ def compute_taste_profile(user, media_type: str) -> ProfilePayload:
         decade_affinity=normalize_numeric_map(dict(decade_weights)),
         recent_decade_affinity=normalize_numeric_map(dict(recent_decade_weights)),
         phase_decade_affinity=normalize_numeric_map(dict(phase_decade_weights)),
+        comfort_library_affinity=comfort_library_affinity,
+        comfort_rewatch_affinity=comfort_rewatch_affinity,
         person_affinity=normalize_numeric_map(dict(person_weights)),
         negative_genre_affinity=normalize_numeric_map(dict(negative_genre_weights)),
         negative_tag_affinity=normalize_numeric_map(dict(negative_tag_weights)),
@@ -636,6 +806,8 @@ def get_or_compute_taste_profile(user, media_type: str, *, force: bool = False) 
             "decade_affinity": getattr(cached_entry, "decade_affinity", None) or {},
             "recent_decade_affinity": getattr(cached_entry, "recent_decade_affinity", None) or {},
             "phase_decade_affinity": getattr(cached_entry, "phase_decade_affinity", None) or {},
+            "comfort_library_affinity": getattr(cached_entry, "comfort_library_affinity", None) or {},
+            "comfort_rewatch_affinity": getattr(cached_entry, "comfort_rewatch_affinity", None) or {},
             "person_affinity": getattr(cached_entry, "person_affinity", None) or {},
             "negative_genre_affinity": getattr(cached_entry, "negative_genre_affinity", None) or {},
             "negative_tag_affinity": getattr(cached_entry, "negative_tag_affinity", None) or {},
@@ -677,6 +849,8 @@ def get_or_compute_taste_profile(user, media_type: str, *, force: bool = False) 
         decade_affinity=profile.decade_affinity,
         recent_decade_affinity=profile.recent_decade_affinity,
         phase_decade_affinity=profile.phase_decade_affinity,
+        comfort_library_affinity=profile.comfort_library_affinity,
+        comfort_rewatch_affinity=profile.comfort_rewatch_affinity,
         person_affinity=profile.person_affinity,
         negative_genre_affinity=profile.negative_genre_affinity,
         negative_tag_affinity=profile.negative_tag_affinity,
