@@ -7,7 +7,7 @@ from django.core.cache import cache
 logger = logging.getLogger(__name__)
 
 
-TIME_LEFT_CACHE_PREFIX = "time_left_sorted_v15"
+TIME_LEFT_CACHE_PREFIX = "time_left_sorted_v16"
 _REGISTRY_TEMPLATE = f"{TIME_LEFT_CACHE_PREFIX}_registry_{{user_id}}"
 
 
@@ -27,6 +27,8 @@ def build_time_left_cache_key(
     country_filter: str = "",
     platform_filter: str = "",
     origin_filter: str = "",
+    tag_filter: str = "",
+    tag_exclude_filter: str = "",
 ) -> str:
     """Create the cache key used for time-left sorted TV lists."""
     normalized_status = status_filter or ""
@@ -42,11 +44,14 @@ def build_time_left_cache_key(
     normalized_country = country_filter or ""
     normalized_platform = platform_filter or ""
     normalized_origin = origin_filter or ""
+    normalized_tag = tag_filter or ""
+    normalized_tag_exclude = tag_exclude_filter or ""
     return (
         f"{TIME_LEFT_CACHE_PREFIX}_{user_id}_{media_type}_{normalized_status}_"
         f"{normalized_query}_{normalized_direction}_{normalized_rating}_{normalized_collection}_"
         f"{normalized_genre}_{normalized_year}_{normalized_release}_{normalized_source}_"
-        f"{normalized_language}_{normalized_country}_{normalized_platform}_{normalized_origin}"
+        f"{normalized_language}_{normalized_country}_{normalized_platform}_{normalized_origin}_"
+        f"{normalized_tag}_{normalized_tag_exclude}"
     )
 
 
