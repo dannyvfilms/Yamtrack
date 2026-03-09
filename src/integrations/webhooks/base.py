@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import UTC, datetime
 
 from django.core.cache import cache
@@ -230,12 +231,44 @@ class BaseWebhookProcessor:
                             search_exc,
                         )
 
-            if not tv_metadata:
-                logger.warning(
-                    "All TMDB lookup attempts failed for show (original ID: %s)",
-                    ids.get("tmdb_id"),
-                )
-                return
+        if not tv_metadata:
+            logger.warning(
+                "All TMDB lookup attempts failed for show (original ID: %s)",
+                ids.get("tmdb_id"),
+            )
+            return
+
+        if self._should_recover_tv_show_from_external_ids(
+            payload,
+            ids,
+            media_id,
+            tv_metadata,
+        ):
+            alt_ids = dict(ids)
+            alt_ids["tmdb_id"] = None
+            fallback_media_id, alt_season, alt_episode = self._find_tv_media_id(
+                alt_ids,
+            )
+            if fallback_media_id and str(fallback_media_id) != str(media_id):
+                media_id = fallback_media_id
+                season_number = season_number or alt_season
+                episode_number = episode_number or alt_episode
+                try:
+                    tv_metadata = app.providers.tmdb.tv_with_seasons(
+                        media_id,
+                        [season_number],
+                    )
+                    logger.info(
+                        "Recovered TMDB lookup after suspicious raw TMDB match: TMDB show %s",
+                        media_id,
+                    )
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.warning(
+                        "Recovery tmdb.tv_with_seasons failed for show %s: %s",
+                        media_id,
+                        exc,
+                    )
+                    return
 
         tvdb_id = tv_metadata.get("tvdb_id") if tv_metadata else None
 
@@ -267,6 +300,60 @@ class BaseWebhookProcessor:
             episode_number,
         )
         self._handle_tv_episode(media_id, season_number, episode_number, payload, user)
+
+    def _normalize_series_title(self, title):
+        """Normalize series titles for loose webhook-vs-TMDB comparisons."""
+        if not title:
+            return None
+        return re.sub(r"\s*\(\d{4}\)$", "", str(title)).strip().casefold()
+
+    def _should_recover_tv_show_from_external_ids(
+        self,
+        payload,
+        ids,
+        media_id,
+        tv_metadata,
+    ):
+        """Detect when a raw Plex TMDB GUID appears to map to the wrong show."""
+        if not tv_metadata:
+            return False
+
+        raw_tmdb_id = ids.get("tmdb_id")
+        if not raw_tmdb_id or str(media_id) != str(raw_tmdb_id):
+            return False
+
+        if not (ids.get("tvdb_id") or ids.get("imdb_id")):
+            return False
+
+        expected_tvdb_id = ids.get("tvdb_id")
+        actual_tvdb_id = tv_metadata.get("tvdb_id")
+        if (
+            expected_tvdb_id
+            and actual_tvdb_id
+            and str(expected_tvdb_id) != str(actual_tvdb_id)
+        ):
+            logger.info(
+                "TV metadata mismatch for raw TMDB ID %s: expected TVDB %s, got %s",
+                media_id,
+                expected_tvdb_id,
+                actual_tvdb_id,
+            )
+            return True
+
+        expected_title = self._normalize_series_title(
+            self._extract_series_title(payload),
+        )
+        actual_title = self._normalize_series_title(tv_metadata.get("title"))
+        if expected_title and actual_title and expected_title != actual_title:
+            logger.info(
+                "TV metadata mismatch for raw TMDB ID %s: expected title '%s', got '%s'",
+                media_id,
+                expected_title,
+                actual_title,
+            )
+            return True
+
+        return False
 
     def _process_movie(self, payload, user, ids):
         tmdb_id = ids["tmdb_id"]

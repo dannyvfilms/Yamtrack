@@ -96,6 +96,29 @@ class PlexWebhookTests(TestCase):
             side_effect=fake_tv_with_seasons,
         )
         self.tv_with_seasons_patcher.start()
+        def fake_tmdb_find(external_id, external_source):
+            key = (str(external_id), external_source)
+            if key in {
+                ("303821", "tvdb_id"),
+                ("tt0583459", "imdb_id"),
+            }:
+                return {
+                    "tv_episode_results": [
+                        {
+                            "show_id": 1668,
+                            "season_number": 1,
+                            "episode_number": 1,
+                        },
+                    ],
+                    "tv_results": [],
+                }
+            return {"tv_episode_results": [], "tv_results": [], "movie_results": []}
+
+        self.tmdb_find_patcher = patch(
+            "app.providers.tmdb.find",
+            side_effect=fake_tmdb_find,
+        )
+        self.tmdb_find_patcher.start()
         self.movie_patcher = patch(
             "app.providers.tmdb.movie",
             return_value={
@@ -152,6 +175,7 @@ class PlexWebhookTests(TestCase):
         live_playback.clear_user_playback_state(self.user.id)
         self.fetch_mapping_patcher.stop()
         self.tv_with_seasons_patcher.stop()
+        self.tmdb_find_patcher.stop()
         self.movie_patcher.stop()
         self.metadata_patcher.stop()
         self.mal_anime_patcher.stop()
@@ -437,6 +461,101 @@ class PlexWebhookTests(TestCase):
         self.assertEqual(str(mock_tv_with_seasons.call_args_list[1].args[0]), "73586")
         mock_find.assert_called()
         mock_tmdb_search.assert_not_called()
+
+    @patch("app.providers.tmdb.find")
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_tv_episode_tmdb_episode_id_collision_prefers_find_resolved_show(
+        self,
+        mock_tv_with_seasons,
+        mock_find,
+    ):
+        """Episode-level TMDB IDs should not attach history to an unrelated valid show."""
+
+        def fake_tv_with_seasons(media_id, season_numbers):
+            if str(media_id) == "62085":
+                return {
+                    "tvdb_id": "999999",
+                    "title": "Shades of Guilt",
+                    "image": "",
+                    "season/1": {
+                        "image": "",
+                        "episodes": [{"episode_number": 1, "runtime": 42}],
+                    },
+                    "related": {"seasons": [{"season_number": 1}]},
+                }
+            if str(media_id) == "1396":
+                return {
+                    "tvdb_id": "81189",
+                    "title": "Breaking Bad",
+                    "image": "",
+                    "season/1": {
+                        "image": "",
+                        "episodes": [{"episode_number": 1, "runtime": 42}],
+                    },
+                    "related": {"seasons": [{"season_number": 1}]},
+                }
+            raise AssertionError(f"Unexpected TMDB ID requested: {media_id}")
+
+        mock_tv_with_seasons.side_effect = fake_tv_with_seasons
+
+        def fake_find(external_id, external_source):
+            if external_source in {"tvdb_id", "imdb_id"}:
+                return {
+                    "tv_episode_results": [
+                        {
+                            "show_id": 1396,
+                            "season_number": 1,
+                            "episode_number": 1,
+                        },
+                    ],
+                    "tv_results": [],
+                }
+            raise AssertionError(
+                f"Unexpected find lookup: {external_source}={external_id}",
+            )
+
+        mock_find.side_effect = fake_find
+
+        payload = {
+            "event": "media.scrobble",
+            "Account": {"title": "testuser"},
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "Breaking Bad",
+                "title": "Pilot",
+                "index": 1,
+                "parentIndex": 1,
+                "Guid": [
+                    {"id": "imdb://tt0959621"},
+                    {"id": "tmdb://62085"},
+                    {"id": "tvdb://349232"},
+                ],
+            },
+        }
+
+        response = self.client.post(
+            self.url,
+            data={"payload": json.dumps(payload)},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        episode = Episode.objects.get(
+            item__media_id="1396",
+            item__season_number=1,
+            item__episode_number=1,
+        )
+        self.assertIsNotNone(episode.end_date)
+        self.assertFalse(
+            Episode.objects.filter(
+                item__media_id="62085",
+                item__season_number=1,
+                item__episode_number=1,
+            ).exists(),
+        )
+        self.assertEqual(str(mock_tv_with_seasons.call_args_list[0].args[0]), "62085")
+        self.assertEqual(str(mock_tv_with_seasons.call_args_list[1].args[0]), "1396")
 
     def test_movie_mark_played(self):
         """Test webhook handles movie mark played event."""
