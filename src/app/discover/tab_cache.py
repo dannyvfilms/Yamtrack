@@ -35,7 +35,7 @@ DISCOVER_TAB_ACTIVITY_VERSION_PREFIX = f"{DISCOVER_TAB_PREFIX}_activity_version"
 DISCOVER_TAB_REFRESH_SCHEDULED_PREFIX = f"{DISCOVER_TAB_PREFIX}_refresh_scheduled"
 DISCOVER_TAB_ACTIVE_PREFIX = f"{DISCOVER_TAB_PREFIX}_active"
 DISCOVER_ACTION_UNDO_PREFIX = "discover_action_undo_v1"
-DISCOVER_TAB_TIMEOUT = 60 * 60 * 6
+DISCOVER_TAB_TIMEOUT = 60 * 60 * 24 * 7  # 7 days; staleness is tracked separately
 DISCOVER_TAB_STALE_AFTER = timedelta(minutes=15)
 DISCOVER_TAB_REFRESH_LOCK_TTL = 60 * 5
 DISCOVER_TAB_REFRESH_SCHEDULED_TTL = 60 * 10
@@ -630,6 +630,19 @@ def _collect_cached_action_payloads(
     return payloads
 
 
+def collect_action_payloads(
+    user_id: int,
+    active_media_type: str,
+    candidate_media_type: str,
+) -> list[dict]:
+    """Public wrapper around _collect_cached_action_payloads.
+
+    Callers that need to pass the same payloads to both store_undo_snapshot and
+    apply_cached_action can collect them once here and pass via preloaded_payloads.
+    """
+    return _collect_cached_action_payloads(user_id, active_media_type, candidate_media_type)
+
+
 def apply_cached_action(
     user_id: int,
     active_media_type: str,
@@ -638,6 +651,7 @@ def apply_cached_action(
     media_id: str,
     source: str,
     show_more: bool = False,
+    preloaded_payloads: list[dict] | None = None,
 ) -> list[RowResult] | None:
     """Optimistically patch cached Discover tabs after a card action."""
     from app.discover.service import hydrate_visible_row_artwork
@@ -649,11 +663,12 @@ def apply_cached_action(
     )
     active_rows: list[RowResult] | None = None
 
-    for entry in _collect_cached_action_payloads(
+    entries = preloaded_payloads if preloaded_payloads is not None else _collect_cached_action_payloads(
         user_id,
         active_media_type,
         candidate_media_type,
-    ):
+    )
+    for entry in entries:
         rows = _deserialize_rows(entry["payload"].get("rows"))
         for row in rows:
             row.items = [
@@ -695,9 +710,10 @@ def store_undo_snapshot(
     candidate_media_type: str,
     show_more: bool = False,
     side_effect: dict | None = None,
+    preloaded_payloads: list[dict] | None = None,
 ) -> str | None:
     """Persist a short-lived undo snapshot for Discover card actions."""
-    tabs = _collect_cached_action_payloads(
+    tabs = preloaded_payloads if preloaded_payloads is not None else _collect_cached_action_payloads(
         user_id,
         active_media_type,
         candidate_media_type,

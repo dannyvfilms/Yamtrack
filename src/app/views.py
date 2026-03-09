@@ -597,7 +597,7 @@ def _discover_response_rows(
         show_more=show_more,
         include_debug=False,
         defer_artwork=False,
-        allow_inline_bootstrap=False,
+        allow_inline_bootstrap=True,
     )
 
 
@@ -607,6 +607,22 @@ def _discover_candidate_seed(request) -> dict:
         "fallback_image": request.POST.get("image", "").strip() or None,
         "fallback_release_date": request.POST.get("release_date", "").strip() or None,
     }
+
+
+def _get_or_create_discover_item(media_type, media_id, source, season_number, seed):
+    """Get or create a minimal Item for a dismiss action — no external API call."""
+    item, _ = Item.objects.get_or_create(
+        media_id=media_id,
+        source=source,
+        media_type=media_type,
+        season_number=season_number,
+        episode_number=None,
+        defaults={
+            "title": seed.get("fallback_title") or "",
+            "image": seed.get("fallback_image") or "",
+        },
+    )
+    return item
 
 
 def _discover_model_for_media_type(media_type: str):
@@ -844,18 +860,19 @@ def discover_action(request):
     season_number = int(season_number) if season_number not in (None, "") else None
     row_key = (request.POST.get("row_key") or "").strip()
     candidate_seed = _discover_candidate_seed(request)
-    hydrated = ensure_item_metadata(
-        request.user,
-        candidate_media_type,
-        media_id,
-        source,
-        season_number,
-        **candidate_seed,
-    )
 
     undo_token: str | None = None
     message = ""
+    _action_payloads: list[dict] | None = None
     if action == "planning":
+        hydrated = ensure_item_metadata(
+            request.user,
+            candidate_media_type,
+            media_id,
+            source,
+            season_number,
+            **candidate_seed,
+        )
         existing_instance = _discover_planning_instance(
             request.user,
             candidate_media_type,
@@ -919,9 +936,23 @@ def discover_action(request):
                 )
             message = f'Added "{hydrated.item.title}" to Planning.'
     else:
+        item = _get_or_create_discover_item(
+            candidate_media_type,
+            media_id,
+            source,
+            season_number,
+            candidate_seed,
+        )
+        item_title = item.title or candidate_seed.get("fallback_title", "")
+        # Collect tab payloads once; reused by store_undo_snapshot and apply_cached_action.
+        _action_payloads = discover_tab_cache.collect_action_payloads(
+            request.user.id,
+            active_media_type,
+            candidate_media_type,
+        )
         existing_feedback = DiscoverFeedback.objects.filter(
             user=request.user,
-            item=hydrated.item,
+            item=item,
             feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
         ).first()
         if existing_feedback is None:
@@ -931,10 +962,11 @@ def discover_action(request):
                 active_media_type=active_media_type,
                 candidate_media_type=candidate_media_type,
                 show_more=show_more,
+                preloaded_payloads=_action_payloads,
             )
         feedback, created = DiscoverFeedback.objects.update_or_create(
             user=request.user,
-            item=hydrated.item,
+            item=item,
             feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
             defaults={
                 "source_context": "discover",
@@ -959,7 +991,7 @@ def discover_action(request):
             )
         elif not created:
             undo_token = None
-        message = f'Hidden "{hydrated.item.title}" from Discover.'
+        message = f'Hidden "{item_title}" from Discover.'
 
     rows = None
     if not discover_debug:
@@ -970,6 +1002,7 @@ def discover_action(request):
             media_id=media_id,
             source=source,
             show_more=show_more,
+            preloaded_payloads=_action_payloads,
         )
     if rows is None:
         rows = _discover_response_rows(

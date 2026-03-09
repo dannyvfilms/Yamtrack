@@ -408,6 +408,11 @@ class Metadata(TestCase):
             ["Action", "Fantasy", "Open world"],
         )
 
+    def test_game_non_numeric_id_raises_value_error(self):
+        """Non-numeric IGDB IDs should raise ValueError before any API call."""
+        with self.assertRaises(ValueError, msg="IGDB game IDs must be numeric"):
+            igdb.game("game-123")
+
     def test_external_game_steam(self):
         """Test the external_game method for Steam games."""
         igdb_game_id = igdb.external_game("292030", igdb.ExternalGameSource.STEAM)

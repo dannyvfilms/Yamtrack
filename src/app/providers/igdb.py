@@ -282,6 +282,11 @@ def search(query, page):
 
 def game(media_id):
     """Return the metadata for the selected game from IGDB."""
+    if not str(media_id).strip().isdigit():
+        raise ValueError(
+            f"IGDB game IDs must be numeric integers, got {media_id!r}. "
+            "Non-numeric IDs cannot be looked up directly on IGDB."
+        )
     cache_key = f"{Sources.IGDB.value}_{MediaTypes.GAME.value}_{media_id}"
     data = cache.get(cache_key)
     if data is None:
