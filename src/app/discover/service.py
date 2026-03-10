@@ -79,6 +79,7 @@ MOVIE_PERSONALIZED_ROW_KEYS = {
 }
 TV_ANIME_PERSONALIZED_ROW_KEYS = {
     "top_picks_for_you",
+    "clear_out_next",
     "comfort_rewatches",
 }
 TV_ANIME_ROW_KEYS = {
@@ -86,6 +87,7 @@ TV_ANIME_ROW_KEYS = {
     "all_time_greats_unseen",
     "coming_soon",
     "top_picks_for_you",
+    "clear_out_next",
     "comfort_rewatches",
 }
 BEHAVIOR_FIRST_MEDIA_TYPES = {
@@ -98,6 +100,7 @@ FIVE_ROW_DISCOVER_KEYS = {
     "all_time_greats_unseen",
     "coming_soon",
     "top_picks_for_you",
+    "clear_out_next",
     "comfort_rewatches",
 }
 FIVE_ROW_MEDIA_TYPES = {
@@ -236,6 +239,7 @@ COMFORT_SPREAD_COMPRESSION_THRESHOLD = 0.08
 ROW_MATCH_SIGNAL_CANDIDATE_LIMIT = 12
 ROW_MATCH_SIGNAL_ROWS = {
     "top_picks_for_you",
+    "clear_out_next",
     "comfort_rewatches",
     "comfort_binge",
     "comfort",
@@ -2292,6 +2296,39 @@ def _top_picks_candidates(user, media_type: str, row_key: str, profile_payload: 
         )
 
     _apply_top_picks_confidence(candidates, profile_payload, media_type=media_type, user=user)
+    return candidates
+
+
+def _clear_out_next_candidates(
+    user,
+    media_type: str,
+    row_key: str,
+    profile_payload: dict,
+) -> list[CandidateItem]:
+    candidates = _in_progress_candidates(
+        user,
+        media_type,
+        row_key=row_key,
+        source_reason="Ranked from your in-progress list",
+    )
+    score_candidates(candidates, profile_payload)
+    recent_history_tag_coverage = _recent_completed_tag_coverage(
+        user,
+        media_type,
+        window_days=COMFORT_RECENT_HISTORY_TAG_WINDOW_DAYS,
+    )
+    for candidate in candidates:
+        candidate.score_breakdown["recent_history_tag_coverage"] = round(
+            recent_history_tag_coverage,
+            6,
+        )
+
+    _apply_top_picks_confidence(
+        candidates,
+        profile_payload,
+        media_type=media_type,
+        user=user,
+    )
     return candidates
 
 
@@ -4960,6 +4997,9 @@ def _build_row_candidates(
     if row_key == "top_picks_for_you":
         return _top_picks_candidates(user, media_type, row_key, profile_payload)
 
+    if row_key == "clear_out_next":
+        return _clear_out_next_candidates(user, media_type, row_key, profile_payload)
+
     if row_key in {"backlog_ranked", "backlog", "great_tonight"}:
         candidates = _planning_candidates(
             user,
@@ -5836,7 +5876,11 @@ def get_discover_rows(
         ):
             continue
 
-        if include_debug and row_definition.key in {"comfort_rewatches", "top_picks_for_you"}:
+        if include_debug and row_definition.key in {
+            "comfort_rewatches",
+            "top_picks_for_you",
+            "clear_out_next",
+        }:
             row.debug_payload = _build_comfort_debug_payload(
                 row.items,
                 top_n=COMFORT_DEBUG_TOP_N,

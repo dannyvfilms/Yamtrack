@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from app.models import MediaTypes
-
 from app.discover.schemas import RowDefinition
+from app.models import MediaTypes
 
 ALL_MEDIA_KEY = "all"
 DISCOVER_MEDIA_TYPES = [
@@ -34,6 +33,7 @@ ROW_REGISTRY: dict[str, list[RowDefinition]] = {
         RowDefinition("all_time_greats_unseen", "All-Time Greats You Haven't Seen", "Canon", "Must-watch classics still missing", "trakt"),
         RowDefinition("coming_soon", "Coming Soon", "Anticipation", "Upcoming releases to watchlist", "trakt"),
         RowDefinition("top_picks_for_you", "Top Picks For You", "Personal Taste Match", "New-to-you shows tailored to your taste.", "local", allow_tracked=True),
+        RowDefinition("clear_out_next", "Clear Out Next", "Momentum", "Your in-progress shows ranked by what best fits your current phase.", "local", allow_tracked=True),
         RowDefinition("comfort_rewatches", "Comfort Rewatches", "Comfort", "Favorites you loved, ready for a revisit.", "local", allow_tracked=True),
     ],
     MediaTypes.ANIME.value: [
@@ -41,6 +41,7 @@ ROW_REGISTRY: dict[str, list[RowDefinition]] = {
         RowDefinition("all_time_greats_unseen", "All-Time Greats You Haven't Seen", "Canon", "Must-watch anime still missing", "trakt"),
         RowDefinition("coming_soon", "Coming Soon", "Anticipation", "Upcoming anime to watchlist", "trakt"),
         RowDefinition("top_picks_for_you", "Top Picks For You", "Personal Taste Match", "New-to-you anime tailored to your taste.", "local", allow_tracked=True),
+        RowDefinition("clear_out_next", "Clear Out Next", "Momentum", "Your in-progress anime ranked by what best fits your current phase.", "local", allow_tracked=True),
         RowDefinition("comfort_rewatches", "Comfort Rewatches", "Comfort", "Favorites you loved, ready for a revisit.", "local", allow_tracked=True),
     ],
     MediaTypes.MUSIC.value: [

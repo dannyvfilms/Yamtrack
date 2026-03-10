@@ -14,6 +14,7 @@ from app.discover.service import (
     _apply_comfort_confidence,
     _apply_wildcard_novelty,
     _build_comfort_debug_payload,
+    _clear_out_next_candidates,
     _comfort_candidates,
     _comfort_match_signal,
     _entries_to_candidates,
@@ -1188,7 +1189,7 @@ class DiscoverServiceTests(TestCase):
     @patch("app.discover.service.TRAKT_ADAPTER.show_anticipated")
     @patch("app.discover.service.TRAKT_ADAPTER.show_popular")
     @patch("app.discover.service.TRAKT_ADAPTER.show_watched_weekly")
-    def test_tv_rows_render_exactly_five_in_expected_order(
+    def test_tv_rows_render_in_expected_order(
         self,
         mock_trending,
         mock_popular,
@@ -1226,6 +1227,7 @@ class DiscoverServiceTests(TestCase):
                 "all_time_greats_unseen",
                 "coming_soon",
                 "top_picks_for_you",
+                "clear_out_next",
                 "comfort_rewatches",
             ],
         )
@@ -1239,7 +1241,7 @@ class DiscoverServiceTests(TestCase):
     @patch("app.discover.service.TRAKT_ADAPTER.show_anticipated")
     @patch("app.discover.service.TRAKT_ADAPTER.show_popular")
     @patch("app.discover.service.TRAKT_ADAPTER.show_watched_weekly")
-    def test_anime_rows_render_exactly_five_in_expected_order_and_uses_anime_filter(
+    def test_anime_rows_render_in_expected_order_and_uses_anime_filter(
         self,
         mock_trending,
         mock_popular,
@@ -1277,6 +1279,7 @@ class DiscoverServiceTests(TestCase):
                 "all_time_greats_unseen",
                 "coming_soon",
                 "top_picks_for_you",
+                "clear_out_next",
                 "comfort_rewatches",
             ],
         )
@@ -1304,7 +1307,7 @@ class DiscoverServiceTests(TestCase):
     @patch("app.discover.service.TRAKT_ADAPTER.show_anticipated", return_value=[])
     @patch("app.discover.service.TRAKT_ADAPTER.show_popular", return_value=[])
     @patch("app.discover.service.TRAKT_ADAPTER.show_watched_weekly", return_value=[])
-    def test_tv_and_anime_rows_keep_all_five_slots_when_personalized_rows_empty(
+    def test_tv_and_anime_rows_keep_all_slots_when_personalized_rows_empty(
         self,
         _mock_trending,
         _mock_popular,
@@ -1321,6 +1324,7 @@ class DiscoverServiceTests(TestCase):
             "all_time_greats_unseen",
             "coming_soon",
             "top_picks_for_you",
+            "clear_out_next",
             "comfort_rewatches",
         ]
         self.assertEqual([row.key for row in tv_rows], expected_order)
@@ -1591,11 +1595,14 @@ class DiscoverServiceTests(TestCase):
                 "all_time_greats_unseen",
                 "coming_soon",
                 "top_picks_for_you",
+                "clear_out_next",
                 "comfort_rewatches",
             ],
         )
         self.assertEqual(row_map["top_picks_for_you"].items, [])
         self.assertEqual(row_map["top_picks_for_you"].source_state, "error")
+        self.assertEqual(row_map["clear_out_next"].items, [])
+        self.assertEqual(row_map["clear_out_next"].source_state, "live")
         self.assertEqual(row_map["comfort_rewatches"].items, [])
         self.assertEqual(row_map["comfort_rewatches"].source_state, "error")
 
@@ -1821,7 +1828,7 @@ class DiscoverServiceTests(TestCase):
     @patch("app.discover.service.TRAKT_ADAPTER.show_anticipated")
     @patch("app.discover.service.TRAKT_ADAPTER.show_popular")
     @patch("app.discover.service.TRAKT_ADAPTER.show_watched_weekly")
-    def test_tv_rows_four_and_five_return_local_results(
+    def test_tv_personalized_rows_return_local_results(
         self,
         mock_trending,
         mock_popular,
@@ -1904,6 +1911,7 @@ class DiscoverServiceTests(TestCase):
             return item
 
         planning_item = build_item("tv-plan-1", "Planned Cozy Mystery")
+        in_progress_item = build_item("tv-progress-1", "In Progress Cozy Mystery")
         comfort_item = build_item("tv-comfort-1", "Comfort Mystery Show")
         recent_item = build_item("tv-recent-1", "Recent Mystery Show")
 
@@ -1912,6 +1920,11 @@ class DiscoverServiceTests(TestCase):
                 user=self.user,
                 item=planning_item,
                 status=Status.PLANNING.value,
+            )
+            TV.objects.create(
+                user=self.user,
+                item=in_progress_item,
+                status=Status.IN_PROGRESS.value,
             )
             comfort_entry = TV.objects.create(
                 user=self.user,
@@ -1935,28 +1948,38 @@ class DiscoverServiceTests(TestCase):
         self.assertGreaterEqual(
             len(row_map["top_picks_for_you"].items),
             1,
-            msg=f"TV row 4 blank: {self._row_snapshot(rows)}",
+            msg=f"TV top picks blank: {self._row_snapshot(rows)}",
+        )
+        self.assertGreaterEqual(
+            len(row_map["clear_out_next"].items),
+            1,
+            msg=f"TV clear-out-next blank: {self._row_snapshot(rows)}",
         )
         self.assertGreaterEqual(
             len(row_map["comfort_rewatches"].items),
             1,
-            msg=f"TV row 5 blank: {self._row_snapshot(rows)}",
+            msg=f"TV comfort row blank: {self._row_snapshot(rows)}",
         )
         self.assertIn(
             "tv-plan-1",
             {item.media_id for item in row_map["top_picks_for_you"].items},
-            msg=f"TV row 4 missing planning item: {self._row_snapshot(rows)}",
+            msg=f"TV top picks missing planning item: {self._row_snapshot(rows)}",
+        )
+        self.assertIn(
+            "tv-progress-1",
+            {item.media_id for item in row_map["clear_out_next"].items},
+            msg=f"TV clear-out-next missing in-progress item: {self._row_snapshot(rows)}",
         )
         self.assertIn(
             "tv-comfort-1",
             {item.media_id for item in row_map["comfort_rewatches"].items},
-            msg=f"TV row 5 missing comfort item: {self._row_snapshot(rows)}",
+            msg=f"TV comfort row missing comfort item: {self._row_snapshot(rows)}",
         )
 
     @patch("app.discover.service.TRAKT_ADAPTER.show_anticipated")
     @patch("app.discover.service.TRAKT_ADAPTER.show_popular")
     @patch("app.discover.service.TRAKT_ADAPTER.show_watched_weekly")
-    def test_anime_rows_four_and_five_return_local_results(
+    def test_anime_personalized_rows_return_local_results(
         self,
         mock_trending,
         mock_popular,
@@ -2039,6 +2062,7 @@ class DiscoverServiceTests(TestCase):
             return item
 
         planning_item = build_item("anime-plan-1", "Planned Comfort Anime")
+        in_progress_item = build_item("anime-progress-1", "In Progress Comfort Anime")
         comfort_item = build_item("anime-comfort-1", "Comfort Rewatch Anime")
         recent_item = build_item("anime-recent-1", "Recent Comfort Anime")
 
@@ -2047,6 +2071,11 @@ class DiscoverServiceTests(TestCase):
                 user=self.user,
                 item=planning_item,
                 status=Status.PLANNING.value,
+            )
+            Anime.objects.create(
+                user=self.user,
+                item=in_progress_item,
+                status=Status.IN_PROGRESS.value,
             )
             Anime.objects.create(
                 user=self.user,
@@ -2074,22 +2103,32 @@ class DiscoverServiceTests(TestCase):
         self.assertGreaterEqual(
             len(row_map["top_picks_for_you"].items),
             1,
-            msg=f"Anime row 4 blank: {self._row_snapshot(rows)}",
+            msg=f"Anime top picks blank: {self._row_snapshot(rows)}",
+        )
+        self.assertGreaterEqual(
+            len(row_map["clear_out_next"].items),
+            1,
+            msg=f"Anime clear-out-next blank: {self._row_snapshot(rows)}",
         )
         self.assertGreaterEqual(
             len(row_map["comfort_rewatches"].items),
             1,
-            msg=f"Anime row 5 blank: {self._row_snapshot(rows)}",
+            msg=f"Anime comfort row blank: {self._row_snapshot(rows)}",
         )
         self.assertIn(
             "anime-plan-1",
             {item.media_id for item in row_map["top_picks_for_you"].items},
-            msg=f"Anime row 4 missing planning item: {self._row_snapshot(rows)}",
+            msg=f"Anime top picks missing planning item: {self._row_snapshot(rows)}",
+        )
+        self.assertIn(
+            "anime-progress-1",
+            {item.media_id for item in row_map["clear_out_next"].items},
+            msg=f"Anime clear-out-next missing in-progress item: {self._row_snapshot(rows)}",
         )
         self.assertIn(
             "anime-comfort-1",
             {item.media_id for item in row_map["comfort_rewatches"].items},
-            msg=f"Anime row 5 missing comfort item: {self._row_snapshot(rows)}",
+            msg=f"Anime comfort row missing comfort item: {self._row_snapshot(rows)}",
         )
 
     @patch("app.discover.service.get_or_compute_taste_profile", return_value={})
@@ -2479,6 +2518,60 @@ class DiscoverServiceTests(TestCase):
             self.assertIn("tag_signal_mode", candidate.score_breakdown)
         mock_related.assert_not_called()
         mock_genre_discovery.assert_not_called()
+
+    @patch("app.discover.service._in_progress_candidates")
+    def test_clear_out_next_candidates_use_local_in_progress_pool(
+        self,
+        mock_in_progress,
+    ):
+        mock_in_progress.return_value = [
+            CandidateItem(
+                media_type=MediaTypes.TV.value,
+                source="tmdb",
+                media_id="2001",
+                title="Current Pick",
+                genres=["Mystery"],
+                popularity=75.0,
+                rating=8.5,
+                score_breakdown={"days_since_activity": 4.0},
+            ),
+            CandidateItem(
+                media_type=MediaTypes.TV.value,
+                source="tmdb",
+                media_id="2002",
+                title="Second Pick",
+                genres=["Drama"],
+                popularity=68.0,
+                rating=7.8,
+                score_breakdown={"days_since_activity": 12.0},
+            ),
+        ]
+
+        profile_payload = {
+            "genre_affinity": {"mystery": 1.0, "drama": 0.5},
+            "recent_genre_affinity": {"mystery": 1.0},
+        }
+        candidates = _clear_out_next_candidates(
+            self.user,
+            MediaTypes.TV.value,
+            "clear_out_next",
+            profile_payload,
+        )
+
+        self.assertEqual([item.media_id for item in candidates], ["2001", "2002"])
+        self.assertTrue(all(item.display_score is not None for item in candidates))
+        for candidate in candidates:
+            self.assertGreaterEqual(candidate.display_score, 0.0)
+            self.assertLessEqual(candidate.display_score, 1.0)
+            self.assertIn("rewatch_bonus", candidate.score_breakdown)
+            self.assertIn("inactivity_norm", candidate.score_breakdown)
+            self.assertIn("tag_signal_mode", candidate.score_breakdown)
+        mock_in_progress.assert_called_once_with(
+            self.user,
+            MediaTypes.TV.value,
+            row_key="clear_out_next",
+            source_reason="Ranked from your in-progress list",
+        )
 
     def test_comfort_confidence_ranks_by_recent_watch_similarity(self):
         candidates = [
