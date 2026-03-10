@@ -9271,20 +9271,32 @@ def _sort_tv_media_by_time_left(media_list, direction="asc"):
 
     logger = logging.getLogger(__name__)
 
-    def _calc_unwatched_runtime_total(media, episodes_left_count):
+    def _calc_unwatched_runtime_total(
+        media,
+        episodes_left_count,
+        *,
+        breakdown_override=None,
+        progress_override=None,
+    ):
         """Sum actual runtimes for unwatched episodes instead of using averages.
 
         Returns (total_runtime, episodes_with_data) or (None, 0) if no data available.
         """
         from app.models import Item, MediaTypes
 
-        breakdown = getattr(media, "released_episode_breakdown", {})
+        breakdown = (
+            breakdown_override
+            if breakdown_override is not None
+            else getattr(media, "released_episode_breakdown", {})
+        )
         if not breakdown:
             return None, 0
 
         total_runtime = 0
         episodes_with_runtime_data = 0
-        remaining_progress = media.progress
+        remaining_progress = (
+            media.progress if progress_override is None else progress_override
+        )
 
         # Process seasons in order to determine which episodes are unwatched
         for season_num in sorted(breakdown.keys()):
@@ -9390,10 +9402,21 @@ def _sort_tv_media_by_time_left(media_list, direction="asc"):
             logger.debug(f"Using fallback runtime for {media.item.title}: {runtime_minutes}min")
         return runtime_minutes
 
-    def _get_total_time_left(media, episodes_left):
+    def _get_total_time_left(
+        media,
+        episodes_left,
+        *,
+        breakdown_override=None,
+        progress_override=None,
+    ):
         """Get total time left by summing actual unwatched episode runtimes, with fallback."""
         # First, try to sum actual unwatched episode runtimes
-        total_runtime, eps_with_data = _calc_unwatched_runtime_total(media, episodes_left)
+        total_runtime, eps_with_data = _calc_unwatched_runtime_total(
+            media,
+            episodes_left,
+            breakdown_override=breakdown_override,
+            progress_override=progress_override,
+        )
 
         if total_runtime is not None and eps_with_data == episodes_left:
             # We have runtime data for all unwatched episodes - use exact sum
@@ -9443,6 +9466,59 @@ def _sort_tv_media_by_time_left(media_list, direction="asc"):
             return max(annotated, total_from_db)
         return annotated
 
+    def _build_time_left_sort_context(media, effective_max):
+        """Build a sort-only remaining-episodes view for TV time-left ordering."""
+        base_progress = media.progress
+        breakdown = getattr(media, "released_episode_breakdown", {}) or {}
+        context = {
+            "episodes_left": max(effective_max - base_progress, 0),
+            "progress": base_progress,
+            "breakdown": breakdown,
+        }
+
+        if getattr(media, "status", Status.IN_PROGRESS.value) == Status.DROPPED.value:
+            return context
+
+        seasons = [
+            season
+            for season in media.seasons.all()
+            if getattr(season.item, "season_number", 0)
+        ]
+        if not seasons or not breakdown:
+            return context
+
+        dropped_season_numbers = {
+            season.item.season_number
+            for season in seasons
+            if season.status == Status.DROPPED.value
+        }
+        if not dropped_season_numbers:
+            return context
+
+        filtered_breakdown = {
+            season_num: count
+            for season_num, count in breakdown.items()
+            if season_num not in dropped_season_numbers
+        }
+        if filtered_breakdown == breakdown:
+            return context
+
+        included_progress = sum(
+            season.progress
+            for season in seasons
+            if season.status != Status.DROPPED.value
+        )
+        logger.debug(
+            "%s: excluding dropped seasons from time_left sort: %s",
+            media.item.title,
+            sorted(dropped_season_numbers),
+        )
+        return {
+            "episodes_left": max(sum(filtered_breakdown.values()) - included_progress, 0),
+            "progress": included_progress,
+            "breakdown": filtered_breakdown,
+        }
+
     # Explicit bucketing for deterministic grouping
     active_statuses = {Status.IN_PROGRESS.value, Status.PLANNING.value, Status.PAUSED.value}
     group_active = []           # episodes_left > 0 and status in active_statuses
@@ -9465,8 +9541,8 @@ def _sort_tv_media_by_time_left(media_list, direction="asc"):
         effective_max = max(annotated_max or 0, fallback_max, media.progress)
 
         media.max_progress = effective_max
-        episodes_left = effective_max - media.progress
-        episodes_left = max(episodes_left, 0)
+        time_left_context = _build_time_left_sort_context(media, effective_max)
+        episodes_left = time_left_context["episodes_left"]
 
         # Debug shows that should have episodes left but show 0
         if media.progress > 0 and episodes_left == 0 and media.item.title in ["Taskmaster", "Rent-a-Girlfriend", "The Last of Us"]:
@@ -9487,7 +9563,7 @@ def _sort_tv_media_by_time_left(media_list, direction="asc"):
             continue
 
         if episodes_left > 0 and status in active_statuses:
-            group_active.append((media, episodes_left))
+            group_active.append((media, time_left_context))
             continue
 
         group_tail.append(media)
@@ -9495,9 +9571,15 @@ def _sort_tv_media_by_time_left(media_list, direction="asc"):
     # Sort each group
     # 1) Active by least total minutes left
     def _active_key(entry):
-        media, episodes_left = entry
+        media, time_left_context = entry
+        episodes_left = time_left_context["episodes_left"]
         # Use sum of actual unwatched episode runtimes instead of average
-        total = _get_total_time_left(media, episodes_left)
+        total = _get_total_time_left(
+            media,
+            episodes_left,
+            breakdown_override=time_left_context["breakdown"],
+            progress_override=time_left_context["progress"],
+        )
         # Store the display values using non-property attributes
         media.episodes_left_display = episodes_left
         if total > 0:
