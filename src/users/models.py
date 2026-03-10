@@ -1152,7 +1152,7 @@ class User(AbstractUser):
 
     def get_import_tasks(self):
         """Return import tasks history and schedules for the user."""
-        import_tasks = {
+        result_task_names = {
             "trakt": ["Import from Trakt"],
             "simkl": ["Import from SIMKL"],
             "myanimelist": ["Import from MyAnimeList"],
@@ -1164,18 +1164,29 @@ class User(AbstractUser):
             "imdb": ["Import from IMDB"],
             "goodreads": ["Import from GoodReads"],
             "plex": ["Import from Plex", "Sync Plex Watchlist"],
+            "audiobookshelf": ["Import from Audiobookshelf"],
+            "pocketcasts": ["Import from Pocket Casts"],
+        }
+        schedule_task_names = {
+            **result_task_names,
             "audiobookshelf": ["Import from Audiobookshelf (Recurring)"],
             "pocketcasts": ["Import from Pocket Casts (Recurring)"],
             "lastfm": ["Poll Last.fm for all users"],
         }
 
         # Reverse mapping to get source from task name
-        task_to_source = {
+        result_task_to_source = {
             task_name: source
-            for source, task_names in import_tasks.items()
+            for source, task_names in result_task_names.items()
             for task_name in task_names
         }
-        import_task_names = list(task_to_source)
+        result_import_task_names = list(result_task_to_source)
+        schedule_task_to_source = {
+            task_name: source
+            for source, task_names in schedule_task_names.items()
+            for task_name in task_names
+        }
+        schedule_import_task_names = list(schedule_task_to_source)
 
         task_result_filters = (
             Q(task_kwargs__contains=f"'user_id': {self.id},")
@@ -1187,7 +1198,7 @@ class User(AbstractUser):
         # Get all task results for this user
         task_results = TaskResult.objects.filter(
             task_result_filters,
-            task_name__in=import_task_names,
+            task_name__in=result_import_task_names,
         ).order_by(
             "-date_done",
         )  # Most recent first
@@ -1195,7 +1206,7 @@ class User(AbstractUser):
         # Build results list
         results = []
         for task in task_results:
-            source = task_to_source[task.task_name]
+            source = result_task_to_source[task.task_name]
             processed_task = helpers.process_task_result(task)
             results.append(
                 {
@@ -1218,14 +1229,14 @@ class User(AbstractUser):
         )
         periodic_tasks = PeriodicTask.objects.filter(
             periodic_tasks_filter,
-            task__in=import_task_names,
+            task__in=schedule_import_task_names,
             enabled=True,
         ).select_related("crontab", "interval")
 
         # Build schedules list
         schedules = []
         for periodic_task in periodic_tasks:
-            source = task_to_source.get(periodic_task.task, "unknown")
+            source = schedule_task_to_source.get(periodic_task.task, "unknown")
 
             # Skip if source is unknown (task not in our mapping)
             if source == "unknown":

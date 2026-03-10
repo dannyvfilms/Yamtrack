@@ -75,6 +75,36 @@ class HelpersTest(TestCase):
         self.assertEqual(processed_task.summary, "Summary text only")
         self.assertIsNone(processed_task.errors)
 
+    def test_process_task_result_success_with_structured_list_payload(self):
+        """Structured list payloads should not crash import history rendering."""
+        task = Mock()
+        task.status = "SUCCESS"
+        task.result = json.dumps(["child-task-id", None])
+        task.traceback = None
+
+        processed_task = helpers.process_task_result(task)
+
+        self.assertEqual(processed_task.summary, "Queued follow-up import task.")
+        self.assertIsNone(processed_task.errors)
+
+    def test_process_task_result_success_with_structured_dict_payload(self):
+        """Structured dict payloads should be summarized for the UI."""
+        task = Mock()
+        task.status = "SUCCESS"
+        task.result = json.dumps(
+            {
+                "processed": 2,
+                "errors": 1,
+                "total_accounts": 3,
+            },
+        )
+        task.traceback = None
+
+        processed_task = helpers.process_task_result(task)
+
+        self.assertEqual(processed_task.summary, "Processed 2 of 3 account(s).")
+        self.assertEqual(processed_task.errors, "1 account(s) reported errors.")
+
     def test_process_task_result_started(self):
         """Test processing a task that's currently running."""
         task = Mock()

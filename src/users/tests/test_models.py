@@ -470,6 +470,41 @@ class UserGetImportTasksTests(TestCase):
         # Check results
         self.assertEqual(len(import_tasks["results"]), 0)
 
+    @patch("users.helpers.process_task_result")
+    def test_get_import_tasks_uses_direct_audiobookshelf_results(
+        self,
+        mock_process_task_result,
+    ):
+        """Recurring wrapper results should not replace real Audiobookshelf imports."""
+        mock_task = MagicMock()
+        mock_task.summary = "Imported 1 book"
+        mock_task.errors = None
+        mock_process_task_result.return_value = mock_task
+
+        TaskResult.objects.create(
+            task_id="task-direct",
+            task_name="Import from Audiobookshelf",
+            task_kwargs=(f'{{"user_id": {self.user.id}}}'),
+            status="SUCCESS",
+            date_done=timezone.now(),
+            result='"Imported 1 book"',
+        )
+        TaskResult.objects.create(
+            task_id="task-recurring",
+            task_name="Import from Audiobookshelf (Recurring)",
+            task_kwargs=(f'{{"user_id": {self.user.id}}}'),
+            status="SUCCESS",
+            date_done=timezone.now() - timedelta(minutes=1),
+            result='["child-task-id", null]',
+        )
+
+        import_tasks = self.user.get_import_tasks()
+
+        self.assertEqual(len(import_tasks["results"]), 1)
+        self.assertEqual(import_tasks["results"][0]["source"], "audiobookshelf")
+        self.assertEqual(import_tasks["results"][0]["summary"], "Imported 1 book")
+        mock_process_task_result.assert_called_once()
+
 
 class UserResolveWatchDateTests(TestCase):
     """Tests for the User.resolve_watch_date method."""

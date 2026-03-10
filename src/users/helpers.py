@@ -1,9 +1,78 @@
+import importlib
 import json
 import zoneinfo
 from datetime import datetime, timedelta
 
 import croniter
 from django.utils import timezone
+
+
+def _deserialize_task_result(result):
+    """Return the stored task result in its native Python shape when possible."""
+    if not isinstance(result, str):
+        return result
+
+    try:
+        return json.loads(result)
+    except json.JSONDecodeError:
+        return result
+
+
+def _split_success_result(result_text):
+    """Split a string success payload into summary and error details."""
+    error_title = importlib.import_module("integrations.tasks").ERROR_TITLE.strip()
+    parts = result_text.split(error_title)
+    if len(parts) > 1:
+        return parts[0].strip(), parts[1].strip()
+    return result_text.strip(), None
+
+
+def _format_dict_success_result(result):
+    """Render a dict-based Celery success payload."""
+    message = result.get("message")
+    if isinstance(message, str) and message.strip():
+        return message.strip(), None
+
+    if "processed" in result:
+        processed = result.get("processed", 0)
+        total_accounts = result.get("total_accounts")
+        if total_accounts is None:
+            summary = f"Processed {processed} account(s)."
+        else:
+            summary = f"Processed {processed} of {total_accounts} account(s)."
+
+        errors = result.get("errors")
+        if errors:
+            return summary, f"{errors} account(s) reported errors."
+        return summary, None
+
+    return json.dumps(result, sort_keys=True), None
+
+
+def _format_list_success_result(result):
+    """Render a list-based Celery success payload."""
+    if result and all(isinstance(item, str) for item in result):
+        summary = result[0].strip() or "Task completed successfully."
+        error_lines = [
+            item.strip() for item in result[1:] if item and item.strip()
+        ]
+        return summary, "\n".join(error_lines) or None
+
+    return "Queued follow-up import task.", None
+
+
+def _format_structured_success_result(result):
+    """Render a user-facing summary for non-string Celery success payloads."""
+    if isinstance(result, dict):
+        return _format_dict_success_result(result)
+
+    if isinstance(result, list):
+        return _format_list_success_result(result)
+
+    if result is None:
+        return "Task completed successfully.", None
+
+    return str(result), None
 
 
 def get_client_ip(request):
@@ -24,8 +93,12 @@ def get_client_ip(request):
 def process_task_result(task):
     """Process task result based on status and format appropriately."""
     if task.status == "FAILURE":
-        result_json = json.loads(task.result)
-        if result_json["exc_type"] == "MediaImportError":
+        result_json = _deserialize_task_result(task.result)
+        if (
+            isinstance(result_json, dict)
+            and result_json.get("exc_type") == "MediaImportError"
+            and result_json.get("exc_message")
+        ):
             task.summary = result_json["exc_message"][0]
             task.errors = task.traceback
         else:
@@ -35,21 +108,11 @@ def process_task_result(task):
         task.summary = "This task is currently running."
         task.errors = None
     elif task.status == "SUCCESS":
-        import integrations.tasks as integration_tasks
-
-        result_json = json.loads(task.result)
-        # Split by the error indicator
-        parts = result_json.split(integration_tasks.ERROR_TITLE.strip())
-        if len(parts) > 1:
-            # We have both summary and errors
-            task.summary = parts[0].strip()
-
-            # Keep errors as a single string with newlines
-            task.errors = parts[1].strip()
+        result_json = _deserialize_task_result(task.result)
+        if isinstance(result_json, str):
+            task.summary, task.errors = _split_success_result(result_json)
         else:
-            # Only summary, no errors
-            task.summary = result_json.strip()
-            task.errors = None
+            task.summary, task.errors = _format_structured_success_result(result_json)
     elif task.status == "PENDING":
         task.summary = "This task has been queued and is waiting to run."
         task.errors = None
