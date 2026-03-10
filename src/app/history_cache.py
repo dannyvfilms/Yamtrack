@@ -2435,6 +2435,46 @@ def build_history_day(user, day_key, logging_style_override=None):
     }
 
 
+def _empty_history_day(day_date):
+    return {
+        "date": day_date,
+        "weekday": formats.date_format(day_date, "l"),
+        "date_display": formats.date_format(day_date, "F j, Y"),
+        "entries": [],
+        "total_minutes": 0,
+        "total_runtime_display": "0min",
+    }
+
+
+def _cache_history_day_payload(user_id: int, logging_style: str, day_key: str, day_payload):
+    cache.set(
+        _day_cache_key(user_id, logging_style, day_key),
+        _serialize_history_day(day_payload),
+        timeout=HISTORY_CACHE_TIMEOUT,
+    )
+    return day_payload
+
+
+def _build_and_cache_history_day(user, day_key, logging_style_override=None):
+    logging_style = _normalize_logging_style(logging_style_override, user)
+    normalized_day_key = _day_key_from_value(day_key)
+    if not normalized_day_key:
+        return None
+    day_payload = build_history_day(
+        user,
+        normalized_day_key,
+        logging_style_override=logging_style,
+    )
+    if day_payload is None:
+        day_payload = _empty_history_day(_date_from_day_key(normalized_day_key))
+    return _cache_history_day_payload(
+        user.id,
+        logging_style,
+        normalized_day_key,
+        day_payload,
+    )
+
+
 def get_month_history(user, year: int, month: int, logging_style_override=None):
     """Get history days for a specific calendar month.
 
@@ -2442,9 +2482,9 @@ def get_month_history(user, year: int, month: int, logging_style_override=None):
     Month-based pagination provides stable caching - same days always belong
     to the same month, unlike rolling day-count pagination.
 
-    If per-day caches are cold (no cache hits), schedules a background refresh
-    and returns empty immediately with refreshing=True. The frontend will poll
-    for completion and auto-refresh.
+    If per-day caches are cold (no cache hits), this prefers a background
+    refresh and lets the frontend poll for completion. If queueing the refresh
+    fails, it falls back to building the requested month inline.
 
     Args:
         user: User instance
@@ -2495,7 +2535,7 @@ def get_month_history(user, year: int, month: int, logging_style_override=None):
         refresh_lock is not None,
     )
 
-    # If cache is completely cold, schedule background refresh and return empty
+    # If cache is completely cold, prefer a background refresh.
     if cache_hits == 0:
         if refresh_lock is not None:
             # Already refreshing - return empty with refreshing flag
@@ -2524,8 +2564,31 @@ def get_month_history(user, year: int, month: int, logging_style_override=None):
             month,
             scheduled,
         )
-        cache_meta.update({"refreshing": True, "refresh_reason": "month_cold"})
-        return [], cache_meta
+        if scheduled:
+            cache_meta.update({"refreshing": True, "refresh_reason": "month_cold"})
+            return [], cache_meta
+
+        logger.warning(
+            "history_month_cache_inline_fallback user_id=%s year=%s month=%s reason=schedule_failed",
+            user.id,
+            year,
+            month,
+        )
+        history_days = [
+            _build_and_cache_history_day(user, day_key, logging_style)
+            for day_key in reversed(day_keys)
+        ]
+        history_days = [day for day in history_days if day is not None]
+        logger.info(
+            "history_month_result user_id=%s year=%s month=%s days_with_activity=%s "
+            "source=inline elapsed_ms=%.2f",
+            user.id,
+            year,
+            month,
+            len(history_days),
+            (time.perf_counter() - start) * 1000,
+        )
+        return history_days, cache_meta
 
     # Build history days from cached data (most recent first)
     history_days = []
@@ -2585,6 +2648,22 @@ def get_month_history(user, year: int, month: int, logging_style_override=None):
             )
             if scheduled:
                 cache_meta.update({"refreshing": True, "refresh_reason": "month_partial_miss"})
+            else:
+                logger.warning(
+                    "history_month_partial_miss_inline_fallback user_id=%s year=%s month=%s missing=%s",
+                    user.id,
+                    year,
+                    month,
+                    len(missing_days),
+                )
+                for day_key in missing_days:
+                    payload = _build_and_cache_history_day(user, day_key, logging_style)
+                    if payload is not None:
+                        history_days.append(payload)
+                history_days.sort(
+                    key=lambda day: day.get("date") if isinstance(day, dict) else None,
+                    reverse=True,
+                )
         else:
             # Main refresh lock exists but not for these specific days
             # Still set refreshing flag since a refresh is happening
@@ -3110,33 +3189,13 @@ def refresh_history_cache(
             elif warm_days:
                 warm_targets = day_keys[:warm_days]
         for day_key in warm_targets:
-            day_payload = build_history_day(user, day_key, logging_style_override=logging_style)
-            if day_payload:
-                # Day has activity - cache it
-                cache.set(
-                    _day_cache_key(user_id, logging_style, day_key),
-                    _serialize_history_day(day_payload),
-                    timeout=HISTORY_CACHE_TIMEOUT,
-                )
+            day_payload = _build_and_cache_history_day(
+                user,
+                day_key,
+                logging_style,
+            )
+            if day_payload and day_payload.get("entries"):
                 warmed += 1
-            else:
-                # Day has no activity - cache empty day to prevent refresh loops
-                # This marks the day as "checked" so we don't keep trying to refresh it
-                day_date = _date_from_day_key(day_key)
-                if day_date:
-                    empty_day = {
-                        "date": day_date,
-                        "weekday": formats.date_format(day_date, "l"),
-                        "date_display": formats.date_format(day_date, "F j, Y"),
-                        "entries": [],
-                        "total_minutes": 0,
-                        "total_runtime_display": "0min",
-                    }
-                    cache.set(
-                        _day_cache_key(user_id, logging_style, day_key),
-                        _serialize_history_day(empty_day),
-                        timeout=HISTORY_CACHE_TIMEOUT,
-                    )
         logger.info(
             "history_cache_refresh_done user_id=%s logging_style=%s days=%s warmed=%s",
             user_id,
@@ -3252,6 +3311,9 @@ def schedule_history_refresh(
         return True
     except Exception as exc:  # pragma: no cover - Celery not available
         if not allow_inline:
+            cache.delete(dedupe_key)
+            if dedupe_key != lock_key:
+                cache.delete(lock_key)
             logger.warning(
                 "Failed to schedule history cache refresh for user %s: %s",
                 user_id,
