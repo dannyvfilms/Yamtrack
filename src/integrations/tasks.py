@@ -11,6 +11,7 @@ from app.collection_helpers import (
     extract_collection_metadata_from_plex,
 )
 from app.helpers import is_item_collected
+from app.log_safety import exception_summary, safe_url
 from app.mixins import disable_fetch_releases
 from app.models import CollectionEntry, Item, MediaTypes
 from app.templatetags import app_tags
@@ -591,11 +592,10 @@ def update_collection_metadata_from_plex_webhook(
     from integrations import plex as plex_api
 
     logger.info(
-        "Starting collection metadata update task (user_id=%s, item_id=%s, rating_key=%s, uri=%s)",
+        "Starting collection metadata update task (user_id=%s item_id=%s uri=%s)",
         user_id,
         item_id,
-        rating_key,
-        plex_uri,
+        safe_url(plex_uri),
     )
 
     User = get_user_model()
@@ -615,7 +615,10 @@ def update_collection_metadata_from_plex_webhook(
 
     # Fetch detailed metadata from Plex
     try:
-        logger.debug("Fetching Plex metadata for rating_key=%s from uri=%s", rating_key, plex_uri)
+        logger.debug(
+            "Fetching Plex metadata for collection update via %s",
+            safe_url(plex_uri),
+        )
         plex_metadata = plex_api.fetch_metadata(plex_token, plex_uri, rating_key)
     except Exception as exc:
         # Check if this is a timeout (expected network issue)
@@ -628,37 +631,38 @@ def update_collection_metadata_from_plex_webhook(
         if is_timeout:
             # Timeouts are expected - log at debug level
             logger.debug(
-                "Timeout fetching Plex metadata for rating_key=%s from uri=%s: %s",
-                rating_key,
-                plex_uri,
-                exc,
+                "Timeout fetching Plex metadata via %s: %s",
+                safe_url(plex_uri),
+                exception_summary(exc),
             )
         else:
             # Other errors are more serious - log as warning
             logger.warning(
-                "Failed to fetch Plex metadata for collection update: %s (rating_key=%s, uri=%s). "
+                "Failed to fetch Plex metadata for collection update via %s: %s. "
                 "This may indicate the URI is incorrect or the server is unreachable.",
-                exc,
-                rating_key,
-                plex_uri,
+                safe_url(plex_uri),
+                exception_summary(exc),
                 exc_info=True,
             )
         
         # If HTTP failed, try HTTPS (some servers require HTTPS)
         if plex_uri.startswith("http://") and "500" in str(exc):
             https_uri = plex_uri.replace("http://", "https://")
-            logger.debug("Retrying with HTTPS: %s", https_uri)
+            logger.debug("Retrying collection update with HTTPS: %s", safe_url(https_uri))
             try:
                 plex_metadata = plex_api.fetch_metadata(plex_token, https_uri, rating_key)
                 logger.info("Successfully fetched metadata using HTTPS URI")
             except Exception as https_exc:
-                logger.debug("HTTPS retry also failed: %s", https_exc)
+                logger.debug(
+                    "HTTPS retry for collection update also failed: %s",
+                    exception_summary(https_exc),
+                )
                 return None
         else:
             return None
 
     if not plex_metadata:
-        logger.debug("No Plex metadata returned for rating_key=%s", rating_key)
+        logger.debug("No Plex metadata returned for collection update")
         return None
 
     logger.debug("Received Plex metadata with keys: %s", list(plex_metadata.keys()))
@@ -711,14 +715,14 @@ def update_collection_metadata_from_plex_webhook(
             if updated_fields:
                 logger.debug("Updated collection entry fields: %s", ", ".join(updated_fields))
             if rating_key_updated:
-                logger.debug("Updated cached rating key: %s (uri=%s)", rating_key, plex_uri)
+                logger.debug("Updated cached Plex collection lookup details")
         else:
             logger.debug("No changes to collection entry")
     else:
         # New entry - save initial metadata and rating key cache.
         entry.save()
         if rating_key_updated:
-            logger.debug("Stored cached rating key for new entry: %s (uri=%s)", rating_key, plex_uri)
+            logger.debug("Stored cached Plex collection lookup details for new entry")
 
     logger.info(
         "Collection metadata update completed for %s - %s (created=%s, entry_id=%s)",
@@ -893,7 +897,7 @@ def fetch_collection_metadata_for_item(user_id, item_id):
     if show_cached_entry and show_cached_entry.plex_rating_key and show_cached_entry.plex_uri:
         rating_key = show_cached_entry.plex_rating_key
         plex_uri = show_cached_entry.plex_uri
-        logger.info("Using cached show-level rating key for %s - %s (rating_key=%s)", user.username, item.title, rating_key)
+        logger.info("Using cached show-level Plex lookup for %s - %s", user.username, item.title)
     elif item.media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
         # Check for cached rating key in any episode's collection entry
         from app.models import Item as ItemModel
@@ -917,7 +921,7 @@ def fetch_collection_metadata_for_item(user_id, item_id):
                 episode_rating_key = cached_episode_entry.plex_rating_key
                 episode_plex_uri = cached_episode_entry.plex_uri
                 
-                logger.info("Found cached episode rating key, deriving show rating key from episode %s", episode_rating_key)
+                logger.info("Found cached episode-level Plex lookup, deriving show-level key")
                 try:
                     episode_metadata = plex_api.fetch_metadata(
                         plex_account.plex_token,
@@ -940,15 +944,18 @@ def fetch_collection_metadata_for_item(user_id, item_id):
                                     try:
                                         rating_key = str(int(show_rating_key_str))
                                         plex_uri = episode_plex_uri
-                                        logger.info("Derived show rating key %s from episode %s", rating_key, episode_rating_key)
+                                        logger.info("Derived show-level Plex lookup from cached episode metadata")
                                     except (ValueError, TypeError):
                                         pass
                 except Exception as exc:
-                    logger.debug("Failed to derive show rating key from episode: %s", exc)
+                    logger.debug(
+                        "Failed to derive show-level Plex lookup from episode metadata: %s",
+                        exception_summary(exc),
+                    )
     
     # If we found a cached rating key, use it directly
     if rating_key and plex_uri:
-        logger.info("Using cached rating key for %s - %s (rating_key=%s)", user.username, item.title, rating_key)
+        logger.info("Using cached Plex lookup for %s - %s", user.username, item.title)
         return update_collection_metadata_from_plex_webhook(
             user_id=user_id,
             item_id=item_id,
@@ -992,7 +999,11 @@ def fetch_collection_metadata_for_item(user_id, item_id):
         
         # Use first URI as primary, others as fallbacks
         primary_uri = available_uris[0]
-        logger.info("Using primary Plex URI: %s (have %d total URIs available)", primary_uri, len(available_uris))
+        logger.info(
+            "Using primary Plex URI %s (have %d total URIs available)",
+            safe_url(primary_uri),
+            len(available_uris),
+        )
         
         # Search for the item in Plex sections
         for section in sections:
@@ -1033,17 +1044,30 @@ def fetch_collection_metadata_for_item(user_id, item_id):
                     section_uri = uri_to_try
                     break
                 except Exception as uri_exc:
-                    logger.debug("Failed to connect to Plex URI %s: %s", uri_to_try, uri_exc)
+                    logger.debug(
+                        "Failed to connect to Plex URI %s: %s",
+                        safe_url(uri_to_try),
+                        exception_summary(uri_exc),
+                    )
                     if uri_to_try == available_uris[-1]:
                         # Last URI failed, log and continue to next section
-                        logger.warning("All Plex URIs failed for section '%s': %s", section.get("title"), uri_exc)
+                        logger.warning(
+                            "All Plex URIs failed for section '%s': %s",
+                            section.get("title"),
+                            exception_summary(uri_exc),
+                        )
                         raise
             
             if not section_uri:
                 continue
             
             try:
-                logger.info("Section '%s' has %d total items (using URI: %s)", section.get("title"), total, section_uri)
+                logger.info(
+                    "Section '%s' has %d total items (using URI: %s)",
+                    section.get("title"),
+                    total,
+                    safe_url(section_uri),
+                )
                 
                 found_match = False
                 rating_key = None
@@ -1198,8 +1222,12 @@ def fetch_collection_metadata_for_item(user_id, item_id):
                             continue
                 
                 if found_match and rating_key and section_uri:
-                    logger.info("Found matching Plex item for %s - %s (rating_key=%s) in section '%s'", 
-                               user.username, item.title, rating_key, section.get("title"))
+                    logger.info(
+                        "Found matching Plex item for %s - %s in section '%s'",
+                        user.username,
+                        item.title,
+                        section.get("title"),
+                    )
                     # Trigger webhook-style update
                     result = update_collection_metadata_from_plex_webhook(
                         user_id=user_id,
@@ -1263,7 +1291,7 @@ def _find_plex_rating_key_for_item(
     ).first()
     
     if cached_entry and cached_entry.plex_rating_key and cached_entry.plex_uri:
-        logger.debug("Using cached rating key for %s - %s", user.username, item.title)
+        logger.debug("Using cached Plex lookup for %s - %s", user.username, item.title)
         return (cached_entry.plex_rating_key, cached_entry.plex_uri, "cached")
     
     # For TV shows, also check episode-level cached entries
@@ -1301,12 +1329,15 @@ def _find_plex_rating_key_for_item(
                             show_rating_key_str = show_key.split("/")[-1]
                             try:
                                 rating_key = str(int(show_rating_key_str))
-                                logger.debug("Derived show rating key %s from episode %s", rating_key, episode_rating_key)
+                                logger.debug("Derived show-level Plex lookup from episode metadata")
                                 return (rating_key, episode_plex_uri, "cached")
                             except (ValueError, TypeError):
                                 pass
                 except Exception as exc:
-                    logger.debug("Failed to derive show rating key from episode: %s", exc)
+                    logger.debug(
+                        "Failed to derive show-level Plex lookup from episode metadata: %s",
+                        exception_summary(exc),
+                    )
     
     # Step 2: If no cached rating key, search Plex library
     if available_uris is None:
@@ -1363,7 +1394,11 @@ def _find_plex_rating_key_for_item(
                 section_uri = uri_to_try
                 break
             except Exception as uri_exc:
-                logger.debug("Failed to connect to Plex URI %s: %s", uri_to_try, uri_exc)
+                logger.debug(
+                    "Failed to connect to Plex URI %s: %s",
+                    safe_url(uri_to_try),
+                    exception_summary(uri_exc),
+                )
                 if uri_to_try == available_uris[-1]:
                     continue
         
@@ -1514,7 +1549,7 @@ def _aggregate_tv_show_collection_metadata(
     
     show_key = show_metadata.get("key")
     if not show_key:
-        logger.debug("No key found for show rating_key %s", show_rating_key)
+        logger.debug("No key found in Plex show metadata")
         return result, []
     
     # The show key may already include /children, so check before appending
@@ -1533,7 +1568,10 @@ def _aggregate_tv_show_collection_metadata(
             verify=settings.PLEX_SSL_VERIFY,
         )
         if not response.ok:
-            logger.debug("Failed to fetch seasons for show %s: %s", show_rating_key, response.status_code)
+            logger.debug(
+                "Failed to fetch Plex show seasons (status=%s)",
+                response.status_code,
+            )
             return result, []
         
         content_type = response.headers.get("Content-Type", "")
@@ -1554,11 +1592,14 @@ def _aggregate_tv_show_collection_metadata(
             logger.debug("XML response not yet supported for season children")
             return result, []
     except Exception as exc:
-        logger.debug("Error fetching seasons for show %s: %s", show_rating_key, exc)
+        logger.debug(
+            "Error fetching Plex show seasons: %s",
+            exception_summary(exc),
+        )
         return result, []
     
     if not seasons:
-        logger.debug("No seasons found for show rating_key %s", show_rating_key)
+        logger.debug("No seasons found in Plex show metadata")
         return result, []
     
     # Collect metadata from all episodes across all seasons
@@ -1618,7 +1659,7 @@ def _aggregate_tv_show_collection_metadata(
                 # For episodes, the index is the episode number
                 episode_number = episode.get("index")
                 if episode_number is None:
-                    logger.debug("No episode number found for episode rating_key %s", episode_rating_key)
+                    logger.debug("No episode number found in Plex episode metadata")
                     continue
                 
                 episode_collection = {}
@@ -1640,7 +1681,10 @@ def _aggregate_tv_show_collection_metadata(
                         if episode_metadata:
                             episode_collection = extract_collection_metadata_from_plex(episode_metadata)
                     except Exception as exc:
-                        logger.debug("Failed to fetch episode metadata for %s: %s", episode_rating_key, exc)
+                        logger.debug(
+                            "Failed to fetch Plex episode metadata: %s",
+                            exception_summary(exc),
+                        )
                         continue
                 
                 # Add to lists if we have collection metadata
@@ -1658,7 +1702,7 @@ def _aggregate_tv_show_collection_metadata(
             continue
     
     if not all_episode_metadata:
-        logger.debug("No episode metadata found for show rating_key %s", show_rating_key)
+        logger.debug("No Plex episode metadata found for aggregation")
         return result, []
     
     # Aggregate metadata - find most common values (like music album aggregation)
@@ -1692,9 +1736,8 @@ def _aggregate_tv_show_collection_metadata(
     result["media_type"] = max(media_types.items(), key=lambda x: x[1])[0] if media_types else ""
     
     logger.debug(
-        "Aggregated collection metadata from %d episodes for show rating_key %s: %s",
+        "Aggregated collection metadata from %d episodes for Plex show: %s",
         len(all_episode_metadata),
-        show_rating_key,
         {k: v for k, v in result.items() if v},
     )
     
@@ -2044,7 +2087,10 @@ def update_collection_metadata_from_plex(library, user_id):
                                             detailed_guids = [{"id": single_guid}]
                                     external_ids = extract_external_ids_from_guids(detailed_guids)
                             except Exception as exc:
-                                logger.debug("Failed to fetch detailed metadata for ratingKey %s: %s", rating_key, exc)
+                                logger.debug(
+                                    "Failed to fetch detailed Plex metadata during collection scan: %s",
+                                    exception_summary(exc),
+                                )
                     
                     # Try to match this Plex item with our items
                     matched_item = None

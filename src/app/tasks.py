@@ -13,6 +13,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from app import helpers, history_cache, metadata_utils
+from app.log_safety import exception_summary
 from app.models import (
     CREDITS_BACKFILL_VERSION,
     DISCOVER_MOVIE_METADATA_BACKFILL_VERSION,
@@ -128,25 +129,24 @@ def _record_backfill_failure(item: Item, field: str, error_message: str | None =
         "last_error",
         "give_up",
     ])
-    reason = error_message or state.last_error or "unknown"
     if state.give_up:
         logger.warning(
-            "metadata_backfill_give_up item_id=%s media_type=%s field=%s fail_count=%s reason=%s",
+            "metadata_backfill_give_up item_id=%s media_type=%s field=%s fail_count=%s has_reason=%s",
             item.id,
             item.media_type,
             field,
             state.fail_count,
-            reason,
+            bool(error_message or state.last_error),
         )
     else:
         logger.info(
-            "metadata_backfill_retry_later item_id=%s media_type=%s field=%s fail_count=%s next_retry_at=%s reason=%s",
+            "metadata_backfill_retry_later item_id=%s media_type=%s field=%s fail_count=%s next_retry_at=%s has_reason=%s",
             item.id,
             item.media_type,
             field,
             state.fail_count,
             state.next_retry_at.isoformat() if state.next_retry_at else None,
-            reason,
+            bool(error_message or state.last_error),
         )
     return state.give_up
 
@@ -2518,8 +2518,7 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
 
             if not season_metadata or f"season/{season_number}" not in season_metadata:
                 logger.warning(
-                    "No season metadata for %s S%s - skipping %s episodes needing runtime",
-                    media_id,
+                    "No season metadata during runtime backfill season=%s missing_episodes=%s",
                     season_number,
                     len(eligible_missing),
                 )
@@ -2539,8 +2538,7 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
             episodes_metadata = tmdb.process_episodes(season_data, [])
             if not episodes_metadata:
                 logger.warning(
-                    "No episode metadata after processing for %s S%s - skipping %s episodes needing runtime",
-                    media_id,
+                    "No episode metadata during runtime backfill season=%s missing_episodes=%s",
                     season_number,
                     len(eligible_missing),
                 )
@@ -2557,8 +2555,7 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
                 episode_number = ep_data.get("episode_number")
                 if episode_number is None:
                     logger.debug(
-                        "Skipping episode in metadata for %s S%s - missing episode_number",
-                        media_id,
+                        "Skipping episode metadata row without episode_number during runtime backfill season=%s",
                         season_number,
                     )
                     continue
@@ -2567,8 +2564,7 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
                     missing_item = missing_by_number.pop(episode_number, None)
                     if missing_item:
                         logger.debug(
-                            "Episode %s S%sE%s has no runtime in TMDB metadata",
-                            media_id,
+                            "Episode metadata has no runtime during backfill season=%s episode=%s",
                             season_number,
                             episode_number,
                         )
@@ -2584,9 +2580,7 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
                     missing_item = missing_by_number.pop(episode_number, None)
                     if missing_item:
                         logger.warning(
-                            "Failed to parse runtime '%s' for %s S%sE%s",
-                            runtime_value,
-                            media_id,
+                            "Failed to parse runtime during backfill season=%s episode=%s",
                             season_number,
                             episode_number,
                         )
@@ -2621,16 +2615,14 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
                             updated_items.append(existing_item)
                             _record_backfill_success(existing_item, MetadataBackfillField.RUNTIME)
                             logger.info(
-                                "Updated runtime for %s S%sE%s: %s minutes",
-                                existing_item.title,
+                                "Updated episode runtime during backfill season=%s episode=%s minutes=%s",
                                 season_number,
                                 episode_number,
                                 runtime_minutes,
                             )
                 else:
                     logger.debug(
-                        "Skipping runtime backfill item creation for %s S%sE%s; only existing episodes are updated",
-                        media_id,
+                        "Skipping runtime backfill item creation for season=%s episode=%s; only existing episodes are updated",
                         season_number,
                         episode_number,
                     )
@@ -2648,7 +2640,12 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
             time.sleep(0.1)
 
         except Exception as e:
-            logger.error("Error processing episode season %s %s S%s: %s", media_id, source, season_number, e)
+            logger.error(
+                "Episode runtime backfill failed source=%s season=%s error=%s",
+                source,
+                season_number,
+                exception_summary(e),
+            )
             error_count += 1
             continue
 
@@ -2806,7 +2803,7 @@ def backfill_item_metadata_task(batch_size: int = 10):
                 _record_backfill_failure(
                     item,
                     MetadataBackfillField.DISCOVER,
-                    f"exception: {e}",
+                    f"exception: {exception_summary(e)}",
                 )
             # Still mark as fetched even if there was an error, to avoid retrying infinitely
             item.metadata_fetched_at = timezone.now()
@@ -2816,7 +2813,7 @@ def backfill_item_metadata_task(batch_size: int = 10):
                 "metadata_backfill_error item_id=%s media_type=%s error=%s",
                 item.id,
                 item.media_type,
-                str(e),
+                exception_summary(e),
             )
 
     remaining_metadata = Item.objects.filter(metadata_fetched_at__isnull=True).count()

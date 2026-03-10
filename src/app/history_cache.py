@@ -1,6 +1,5 @@
 """Utilities for caching the History page."""
 
-import hashlib
 import logging
 import time
 from collections import defaultdict
@@ -15,6 +14,7 @@ from django.db.models.functions import TruncDate
 from django.utils import formats, timezone
 
 from app import helpers
+from app.log_safety import stable_hmac
 from app.models import (
     Album,
     BoardGame,
@@ -2608,7 +2608,11 @@ def get_month_history(user, year: int, month: int, logging_style_override=None):
         # by computing the dedupe_key that schedule_history_refresh would use
         missing_normalized = [dk for dk in missing_days]  # Already normalized
         dedupe_seed = ",".join(sorted(missing_normalized))
-        dedupe_hash = hashlib.sha1(dedupe_seed.encode("utf-8")).hexdigest()[:10]
+        dedupe_hash = stable_hmac(
+            dedupe_seed,
+            namespace="history_refresh_days",
+            length=10,
+        )
         dedupe_key = f"{lock_key}_days_{dedupe_hash}"
         existing_dedupe_lock = cache.get(dedupe_key)
         
@@ -3273,7 +3277,11 @@ def schedule_history_refresh(
             normalized_day_keys.append(day_key)
     if normalized_day_keys:
         dedupe_seed = ",".join(normalized_day_keys)
-        dedupe_hash = hashlib.sha1(dedupe_seed.encode("utf-8")).hexdigest()[:10]
+        dedupe_hash = stable_hmac(
+            dedupe_seed,
+            namespace="history_refresh_days",
+            length=10,
+        )
         dedupe_key = f"{lock_key}_days_{dedupe_hash}"
     else:
         dedupe_key = lock_key

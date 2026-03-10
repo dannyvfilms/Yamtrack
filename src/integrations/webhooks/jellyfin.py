@@ -1,7 +1,7 @@
-import json
 import logging
 
 from app import live_playback
+from app.log_safety import mapping_keys, presence_map
 from app.models import MediaTypes, Sources
 
 from .base import BaseWebhookProcessor
@@ -31,8 +31,9 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
     def process_payload(self, payload, user):
         """Process the incoming Jellyfin webhook payload."""
         logger.debug(
-            "Processing Jellyfin webhook payload: %s",
-            json.dumps(payload, indent=2),
+            "Processing Jellyfin webhook payload keys=%s item_keys=%s",
+            mapping_keys(payload),
+            mapping_keys(payload.get("Item")),
         )
 
         event_type = payload.get("Event")
@@ -41,7 +42,10 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
             return
 
         ids = self._extract_external_ids(payload)
-        logger.info("Extracted IDs from payload: %s", ids)
+        logger.info(
+            "Extracted Jellyfin ID presence from payload: %s",
+            presence_map(ids, ("tmdb_id", "imdb_id", "tvdb_id")),
+        )
 
         # Update live playback state (before media tracking)
         playback_media_type = self._get_live_playback_media_type(payload)

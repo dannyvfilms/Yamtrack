@@ -73,12 +73,24 @@ class GoodReadsImporter:
                 error_msg = f"Error processing entry: {row}"
                 raise MediaImportUnexpectedError(error_msg) from error
 
-        logger.debug("processed %s", self.bulk_media)
+        logger.debug(
+            "Prepared Goodreads import batches: %s",
+            {
+                media_type: len(media_list)
+                for media_type, media_list in self.bulk_media.items()
+            },
+        )
 
         helpers.cleanup_existing_media(self.to_delete, self.user)
         helpers.bulk_create_media(self.bulk_media, self.user)
 
-        logger.debug("processed %s", self.bulk_media)
+        logger.debug(
+            "Created Goodreads import batches: %s",
+            {
+                media_type: len(media_list)
+                for media_type, media_list in self.bulk_media.items()
+            },
+        )
 
         imported_counts = {
             media_type: len(media_list)
@@ -100,7 +112,7 @@ class GoodReadsImporter:
             )
             return
 
-        logger.debug("Found book %s", book)
+        logger.debug("Resolved Goodreads book metadata from search")
 
         media_id = book["media_id"]
 

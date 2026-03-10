@@ -10,6 +10,8 @@ import xml.etree.ElementTree as ET
 import requests
 from django.core.cache import cache
 
+from app.log_safety import exception_summary, safe_url
+
 logger = logging.getLogger(__name__)
 
 PODCAST_INDEX_API_BASE = "https://api.podcastindex.org/api/1.0"
@@ -196,7 +198,11 @@ def _fetch_from_rss_feed(rss_feed_url: str) -> str | None:
             return atom_logo.text.strip()
 
     except Exception as e:
-        logger.debug("Failed to fetch artwork from RSS feed %s: %s", rss_feed_url, e)
+        logger.debug(
+            "Failed to fetch artwork from RSS feed %s: %s",
+            safe_url(rss_feed_url),
+            exception_summary(e),
+        )
 
     return None
 
@@ -292,4 +298,3 @@ def _fetch_from_itunes(show_title: str, author: str | None = None) -> str | None
         logger.debug("Failed to fetch artwork from iTunes for %s: %s", show_title, e)
 
     return None
-

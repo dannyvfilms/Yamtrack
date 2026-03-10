@@ -24,6 +24,7 @@ from app.providers import (
     pocketcasts,
     tmdb,
 )
+from app.log_safety import exception_summary, mapping_keys
 
 logger = logging.getLogger(__name__)
 
@@ -144,10 +145,42 @@ class ProviderAPIError(Exception):
         except ValueError:
             provider = provider.title()
 
-        if self.status_code == 404:
-            logger.warning("%s error: %s", provider, error.response.text)
+        response = error.response
+        response_keys = []
+        content_type = None
+        if response is not None:
+            raw_headers = getattr(response, "headers", None)
+            headers = raw_headers if isinstance(raw_headers, dict) else {}
+            raw_content_type = headers.get("Content-Type")
+            if isinstance(raw_content_type, str):
+                content_type = raw_content_type.split(";", 1)[0]
+
+            if content_type and "json" in content_type:
+                json_loader = getattr(response, "json", None)
+                if callable(json_loader):
+                    try:
+                        response_keys = mapping_keys(json_loader())
+                    except (TypeError, ValueError):
+                        response_keys = []
+
+        log_method = logger.warning if self.status_code == 404 else logger.error
+        if response_keys:
+            log_method(
+                "%s api error status=%s response_keys=%s",
+                provider,
+                self.status_code,
+                response_keys,
+            )
         else:
-            logger.error("%s error: %s", provider, error.response.text)
+            response_text = getattr(response, "text", "") if response is not None else ""
+            body_length = len(response_text) if isinstance(response_text, str) else 0
+            log_method(
+                "%s api error status=%s content_type=%s body_length=%s",
+                provider,
+                self.status_code,
+                content_type or None,
+                body_length,
+            )
 
         message = (
             f"There was an error contacting the {provider} API "
@@ -169,7 +202,7 @@ def raise_not_found_error(provider, media_id, media_type="item"):
         media_type: The type of media (e.g., "comic", "game", "book")
     """
     error_msg = f"{media_type.capitalize()} with ID {media_id} not found"
-    logger.error("%s: %s", provider, error_msg)
+    logger.error("%s %s lookup failed with 404", provider, media_type)
 
     # Create a mock 404 error response
     mock_response = type(
@@ -177,7 +210,9 @@ def raise_not_found_error(provider, media_id, media_type="item"):
         (object,),
         {
             "status_code": 404,
+            "headers": {},
             "text": error_msg,
+            "json": lambda self: {},
         },
     )()
     mock_error = requests.exceptions.HTTPError(response=mock_response)
@@ -365,7 +400,11 @@ def get_media_metadata(
         try:
             return _ensure_title_fields(metadata_retrievers[media_type]())
         except Exception as exc:  # pragma: no cover - defensive guard for bad IDs
-            logger.debug("Music metadata lookup failed for %s: %s", media_id, exc)
+            logger.debug(
+                "Music metadata lookup failed source=%s error=%s",
+                source,
+                exception_summary(exc),
+            )
             return _ensure_title_fields(
                 {
                     "max_progress": None,

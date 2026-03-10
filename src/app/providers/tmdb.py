@@ -5,6 +5,7 @@ from django.conf import settings
 from django.core.cache import cache
 
 from app import helpers
+from app.log_safety import exception_summary
 from app.models import MediaTypes, Sources
 from app.providers import services
 
@@ -192,9 +193,8 @@ def movie(media_id):
                     )
                 except requests.exceptions.HTTPError as error:
                     logger.warning(
-                        "Failed to fetch TMDB collection %s: %s",
-                        collection_id,
-                        error,
+                        "Failed to fetch TMDB collection metadata: %s",
+                        exception_summary(error),
                     )
                     collection_response = {}
             else:
@@ -347,10 +347,9 @@ def fetch_and_cache_seasons(media_id, season_numbers, tv_data):
             season_key = f"season/{season_number}"
             if season_key not in response:
                 logger.warning(
-                    "Season %s not found in %s with ID %s; skipping season",
+                    "Season %s not found in %s response; skipping cache update",
                     season_number,
                     Sources.TMDB.label,
-                    media_id,
                 )
                 continue
 

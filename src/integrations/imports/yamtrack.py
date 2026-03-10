@@ -8,6 +8,7 @@ from django.conf import settings
 from django.utils.dateparse import parse_datetime
 
 import app
+from app.log_safety import mapping_keys
 from app import config
 from app import forms as app_forms
 from app.models import MediaTypes, Sources, Status
@@ -279,7 +280,11 @@ class YamtrackImporter:
         else:
             error_msg = f"{row['title']} ({media_type}): {form.errors.as_json()}"
             self.warnings.append(error_msg)
-            logger.error(error_msg)
+            logger.error(
+                "Yamtrack import validation failed media_type=%s error_fields=%s",
+                media_type,
+                mapping_keys(form.errors),
+            )
 
     def _process_list_row(self, row):
         """Process a list definition row."""
@@ -463,8 +468,10 @@ class YamtrackImporter:
             row["media_type"] = media_type
             row["image"] = first_result["image"]
 
-            logger.info("Added title from %s: %s", source, row["title"])
-            logger.info("Obtained media id: %s", row["media_id"])
+            logger.info(
+                "Resolved missing metadata for Yamtrack import row from %s",
+                source,
+            )
             return
 
         msg = f"Missing metadata for: {row}"

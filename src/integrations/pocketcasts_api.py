@@ -194,10 +194,14 @@ def validate_token(access_token: str) -> bool:
         # 401 means invalid token
         if response.status_code == 401:
             try:
-                error_body = response.text[:500]  # Limit to first 500 chars
-                logger.warning("Access token validation failed with 401. Response: %s", error_body)
+                response_text = response.text
+                body_length = len(response_text) if isinstance(response_text, str) else 0
+                logger.warning(
+                    "Access token validation failed with 401 (response_length=%d)",
+                    body_length,
+                )
             except Exception:
-                logger.warning("Access token validation failed with 401 (could not read response body)")
+                logger.warning("Access token validation failed with 401")
             return False
         # Other errors might be temporary, but we'll consider token potentially valid
         # if it's not an auth error
@@ -252,4 +256,3 @@ def get_podcast_image_url(podcast_uuid: str, size: int = 130) -> str:
         URL to the podcast artwork image
     """
     return f"{POCKETCASTS_API_BASE_URL}/discover/images/{size}/{podcast_uuid}.jpg"
-

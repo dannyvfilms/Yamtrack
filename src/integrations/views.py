@@ -786,7 +786,7 @@ def pocketcasts_connect(request):
 
     # Attempt to login with credentials
     try:
-        logger.debug("Attempting Pocket Casts login for email: %s", email)
+        logger.debug("Attempting Pocket Casts login with configured credentials")
         login_response = pocketcasts_api.login(email, password)
         access_token = login_response["accessToken"]
         refresh_token = login_response.get("refreshToken", "")
@@ -801,8 +801,7 @@ def pocketcasts_connect(request):
         )
         return redirect("import_data")
     except Exception as e:
-        logger.error("Failed to login to Pocket Casts: %s (type: %s, traceback: %s)",
-                   e, type(e).__name__, __import__("traceback").format_exc())
+        logger.exception("Failed to login to Pocket Casts")
         messages.error(request, f"Failed to connect to Pocket Casts: {e}")
         return redirect("import_data")
 

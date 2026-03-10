@@ -6,6 +6,7 @@ from django.core.cache import cache
 from django.utils import timezone
 
 import app
+from app.log_safety import exception_summary
 from app.models import MediaTypes, Sources, Status
 
 logger = logging.getLogger(__name__)
@@ -82,8 +83,7 @@ class BaseWebhookProcessor:
             logger.debug("Ignoring unsupported media type")
             return
 
-        title = self._get_media_title(payload)
-        logger.info("Received webhook for %s: %s", media_type, title)
+        logger.info("Received webhook for media_type=%s", media_type)
 
         if media_type == MediaTypes.TV.value:
             self._process_tv(payload, user, ids)
@@ -106,9 +106,7 @@ class BaseWebhookProcessor:
             matching_entry = mapping_data.get(anidb_id)
             if not matching_entry:
                 logger.info(
-                    "AniDB ID %s not found in mapping, "
-                    "falling through to TV processing",
-                    anidb_id,
+                    "AniDB mapping not found; falling through to TV processing",
                 )
             else:
                 resolved_episode = episode_number
@@ -119,14 +117,11 @@ class BaseWebhookProcessor:
 
                 if resolved_episode is None:
                     logger.warning(
-                        "No episode number found for AniDB ID: %s",
-                        anidb_id,
+                        "No episode number found for AniDB-mapped webhook payload",
                     )
                 else:
                     logger.info(
-                        "Detected anime via AniDB ID: %s. Matching MAL ID: %s, Episode: %s",
-                        anidb_id,
-                        matching_entry["mal_id"],
+                        "Detected anime via AniDB mapping for episode=%s",
                         resolved_episode,
                     )
                     self._handle_anime(
@@ -154,7 +149,7 @@ class BaseWebhookProcessor:
 
         if season_number is None or episode_number is None:
             logger.warning(
-                "Could not determine season/episode numbers for TMDB ID: %s", media_id,
+                "Could not determine season/episode numbers for webhook payload",
             )
             return
 
@@ -165,10 +160,9 @@ class BaseWebhookProcessor:
             tv_metadata = app.providers.tmdb.tv_with_seasons(media_id, [season_number])
         except Exception as exc:  # pragma: no cover - defensive network guard
             logger.warning(
-                "Failed tmdb.tv_with_seasons for TMDB ID %s (season %s): %s",
-                media_id,
+                "Failed tmdb.tv_with_seasons for season %s: %s",
                 season_number,
-                exc,
+                exception_summary(exc),
             )
 
             # If TMDB lookup failed, try resolving the show via TVDB/IMDB and retry.
@@ -189,15 +183,11 @@ class BaseWebhookProcessor:
                             media_id,
                             [season_number],
                         )
-                        logger.info(
-                            "Recovered TMDB lookup using TVDB/IMDB mapping: TMDB show %s",
-                            media_id,
-                        )
+                        logger.info("Recovered TMDB lookup using TVDB/IMDB mapping")
                     except Exception as fallback_exc:  # pragma: no cover - defensive
                         logger.warning(
-                            "Fallback tmdb.tv_with_seasons failed for show %s: %s",
-                            media_id,
-                            fallback_exc,
+                            "Fallback tmdb.tv_with_seasons failed: %s",
+                            exception_summary(fallback_exc),
                         )
                         fallback_media_id = None  # Mark as failed so title search runs
 
@@ -205,9 +195,7 @@ class BaseWebhookProcessor:
             if not fallback_media_id and not tv_metadata:
                 series_title = self._extract_series_title(payload)
                 if series_title:
-                    logger.info(
-                        "Attempting title-based TMDB search for: %s", series_title,
-                    )
+                    logger.info("Attempting title-based TMDB search for webhook payload")
                     try:
                         search_results = app.providers.tmdb.search(
                             MediaTypes.TV.value, series_title, page=1,
@@ -219,23 +207,15 @@ class BaseWebhookProcessor:
                                 tv_metadata = app.providers.tmdb.tv_with_seasons(
                                     media_id, [season_number],
                                 )
-                                logger.info(
-                                    "Recovered TMDB lookup using title search: %s -> TMDB %s",
-                                    series_title,
-                                    media_id,
-                                )
+                                logger.info("Recovered TMDB lookup using title search")
                     except Exception as search_exc:
                         logger.warning(
-                            "Title-based search failed for %s: %s",
-                            series_title,
-                            search_exc,
+                            "Title-based search failed: %s",
+                            exception_summary(search_exc),
                         )
 
         if not tv_metadata:
-            logger.warning(
-                "All TMDB lookup attempts failed for show (original ID: %s)",
-                ids.get("tmdb_id"),
-            )
+            logger.warning("All TMDB lookup attempts failed for webhook show payload")
             return
 
         if self._should_recover_tv_show_from_external_ids(

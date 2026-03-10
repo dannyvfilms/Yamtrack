@@ -15,6 +15,7 @@ from django.utils import timezone
 
 import app
 from app import helpers as app_helpers
+from app.log_safety import exception_summary
 from app.models import MediaTypes, Sources, Status
 from app.providers import services
 from integrations.imports.helpers import MediaImportError, decrypt
@@ -464,10 +465,10 @@ class AudiobookshelfImporter:
                     )
                 except Exception as error:  # noqa: BLE001
                     logger.debug(
-                        "Audiobookshelf metadata search failed provider=%s query=%s error=%s",
+                        "Audiobookshelf metadata search failed provider=%s isbn_query=%s error=%s",
                         provider_source,
-                        normalized_query,
-                        error,
+                        is_isbn_query,
+                        exception_summary(error),
                     )
                     continue
 
@@ -491,10 +492,9 @@ class AudiobookshelfImporter:
                     )
                 except Exception as error:  # noqa: BLE001
                     logger.debug(
-                        "Audiobookshelf metadata fetch failed provider=%s media_id=%s error=%s",
+                        "Audiobookshelf metadata fetch failed provider=%s error=%s",
                         provider_source,
-                        candidate.get("media_id"),
-                        error,
+                        exception_summary(error),
                     )
                     continue
 

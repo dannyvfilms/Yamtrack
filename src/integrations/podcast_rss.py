@@ -13,6 +13,8 @@ from datetime import datetime
 import requests
 from django.utils import timezone
 
+from app.log_safety import exception_summary, safe_url
+
 logger = logging.getLogger(__name__)
 
 USER_AGENT = "Yamtrack/1.0 (https://github.com/FuzzyGrim/Yamtrack)"
@@ -78,10 +80,19 @@ def fetch_show_metadata_from_rss(rss_feed_url: str) -> dict:
         return metadata
 
     except requests.RequestException as e:
-        logger.error("Failed to fetch RSS feed %s: %s", rss_feed_url, e)
+        logger.error(
+            "Failed to fetch RSS feed %s: %s",
+            safe_url(rss_feed_url),
+            exception_summary(e),
+        )
         return {}
     except Exception as e:
-        logger.error("Unexpected error parsing RSS feed %s: %s", rss_feed_url, e, exc_info=True)
+        logger.error(
+            "Unexpected error parsing RSS feed %s: %s",
+            safe_url(rss_feed_url),
+            exception_summary(e),
+            exc_info=True,
+        )
         return {}
 
 
@@ -122,14 +133,27 @@ def fetch_episodes_from_rss(rss_feed_url: str, limit: int | None = None) -> list
             # RSS 2.0 feed
             episodes = _parse_rss_feed(root, limit)
 
-        logger.info("Fetched %d episodes from RSS feed %s", len(episodes), rss_feed_url)
+        logger.info(
+            "Fetched %d episodes from RSS feed %s",
+            len(episodes),
+            safe_url(rss_feed_url),
+        )
         return episodes
 
     except requests.RequestException as e:
-        logger.error("Failed to fetch RSS feed %s: %s", rss_feed_url, e)
+        logger.error(
+            "Failed to fetch RSS feed %s: %s",
+            safe_url(rss_feed_url),
+            exception_summary(e),
+        )
         return []
     except Exception as e:
-        logger.error("Unexpected error parsing RSS feed %s: %s", rss_feed_url, e, exc_info=True)
+        logger.error(
+            "Unexpected error parsing RSS feed %s: %s",
+            safe_url(rss_feed_url),
+            exception_summary(e),
+            exc_info=True,
+        )
         return []
 
 
@@ -384,4 +408,3 @@ def _parse_duration(duration_str: str) -> int | None:
 
     logger.debug("Failed to parse duration: %s", duration_str)
     return None
-

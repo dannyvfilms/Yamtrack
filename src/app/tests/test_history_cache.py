@@ -1,4 +1,3 @@
-import hashlib
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -8,6 +7,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from app import history_cache
+from app.log_safety import stable_hmac
 from app.models import Item, MediaTypes, Movie, Sources, Status
 
 
@@ -93,7 +93,11 @@ class HistoryRefreshSchedulingTests(TestCase):
 
         normalized_day_key = history_cache.history_day_key(day_key)
         lock_key = history_cache._refresh_lock_key(self.user.id, "repeats")
-        dedupe_hash = hashlib.sha1(normalized_day_key.encode("utf-8")).hexdigest()[:10]
+        dedupe_hash = stable_hmac(
+            normalized_day_key,
+            namespace="history_refresh_days",
+            length=10,
+        )
         dedupe_key = f"{lock_key}_days_{dedupe_hash}"
 
         self.assertIsNone(cache.get(lock_key))

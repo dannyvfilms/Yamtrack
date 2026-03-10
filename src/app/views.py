@@ -59,6 +59,7 @@ from app.forms import (
     ManualItemForm,
     get_form_class,
 )
+from app.log_safety import exception_summary, safe_url
 from app.models import (
     TV,
     Album,
@@ -2728,7 +2729,7 @@ def media_search(request):
                     for media in local_media
                 ]
         except Exception as exc:  # pragma: no cover - defensive
-            logger.debug("Local search failed for %s: %s", query, exc)
+            logger.debug("Local search failed: %s", exception_summary(exc))
 
     # only receives source when searching with secondary source
     source = request.GET.get(
@@ -2879,7 +2880,10 @@ def media_details(
                                     if not itunes_data.get("language") and rss_metadata.get("language"):
                                         itunes_data["language"] = rss_metadata["language"]
                                 except Exception as e:
-                                    logger.debug("Failed to fetch show metadata from RSS: %s", e)
+                                    logger.debug(
+                                        "Failed to fetch show metadata from RSS: %s",
+                                        exception_summary(e),
+                                    )
 
                             # Create the show
                             show = PodcastShow.objects.create(
@@ -2937,7 +2941,10 @@ def media_details(
                                             season_number=episode_data.get("season_number"),
                                         )
                             except Exception as e:
-                                logger.warning("Failed to fetch episodes from RSS feed %s: %s", rss_feed_url, e)
+                                logger.warning(
+                                    "Failed to fetch episodes from RSS feed: %s",
+                                    exception_summary(e),
+                                )
                                 # Continue without episodes
 
                         # Redirect to the new/enriched show
@@ -2950,7 +2957,11 @@ def media_details(
                             title=slugify(show.title or "podcast"),
                         )
                 except Exception as e:
-                    logger.error("Failed to enrich podcast from iTunes ID %s: %s", media_id, e, exc_info=True)
+                    logger.error(
+                        "Failed to enrich podcast from iTunes metadata: %s",
+                        exception_summary(e),
+                        exc_info=True,
+                    )
                     messages.error(request, f"Failed to load podcast details: {e}")
                     # Fall through to empty metadata
             except ValueError:
@@ -3024,7 +3035,10 @@ def media_details(
                     if new_episodes_count > 0:
                         logger.info("Fetched %d additional episodes for show %s (ID: %d)", new_episodes_count, show.title, show.id)
                 except Exception as e:
-                    logger.debug("Failed to refresh episode list from RSS feed %s: %s", show.rss_feed_url, e)
+                    logger.debug(
+                        "Failed to refresh episode list from RSS feed: %s",
+                        exception_summary(e),
+                    )
                     # Continue with existing episodes
 
             # Get all episodes for this show, ordered by published date (newest first)
@@ -4591,7 +4605,7 @@ def _sync_plex_rating(request, item, media_type):
     if media_type not in (MediaTypes.MOVIE.value, MediaTypes.TV.value):
         return
     
-    logger.info("Attempting to sync Plex rating for %s - %s", request.user.username, item.title)
+    logger.info("Attempting to sync Plex rating for media_type=%s", media_type)
     
     # Try to get rating key from cached CollectionEntry
     rating_key = None
@@ -4607,13 +4621,16 @@ def _sync_plex_rating(request, item, media_type):
     if collection_entry:
         rating_key = collection_entry.plex_rating_key
         plex_uri = collection_entry.plex_uri
-        logger.debug("Using cached rating key %s for %s", rating_key, item.title)
+        logger.debug("Using cached Plex rating key for rating sync")
     else:
         # Search for item in Plex library
         try:
             resources = plex_api.list_resources(plex_account.plex_token)
         except Exception as exc:
-            logger.debug("Failed to list Plex resources for rating sync: %s", exc)
+            logger.debug(
+                "Failed to list Plex resources for rating sync: %s",
+                exception_summary(exc),
+            )
             return
         
         # Get sections
@@ -4622,7 +4639,10 @@ def _sync_plex_rating(request, item, media_type):
             try:
                 sections = plex_api.list_sections(plex_account.plex_token)
             except Exception as exc:
-                logger.debug("Failed to list Plex sections for rating sync: %s", exc)
+                logger.debug(
+                    "Failed to list Plex sections for rating sync: %s",
+                    exception_summary(exc),
+                )
                 return
         
         # Find matching item in Plex
@@ -4669,17 +4689,20 @@ def _sync_plex_rating(request, item, media_type):
                     if matches:
                         rating_key = plex_item.get("ratingKey") or plex_item.get("ratingkey")
                         plex_uri = section_uri
-                        logger.info("Found matching Plex item for %s (rating_key=%s)", item.title, rating_key)
+                        logger.info("Found matching Plex item for rating sync")
                         break
                 
                 if rating_key:
                     break
             except Exception as exc:
-                logger.debug("Failed to search Plex section %s for rating: %s", section.get("title"), exc)
+                logger.debug(
+                    "Failed to search Plex section for rating sync: %s",
+                    exception_summary(exc),
+                )
                 continue
     
     if not rating_key or not plex_uri:
-        logger.debug("Could not find Plex rating key for %s", item.title)
+        logger.debug("Could not find Plex rating key for rating sync")
         return
     
     # Fetch metadata from Plex to get user rating
@@ -4692,11 +4715,14 @@ def _sync_plex_rating(request, item, media_type):
             timeout=30,
         )
     except Exception as exc:
-        logger.warning("Failed to fetch Plex metadata for rating sync: %s", exc)
+        logger.warning(
+            "Failed to fetch Plex metadata for rating sync: %s",
+            exception_summary(exc),
+        )
         # Try HTTPS if HTTP failed, or vice versa
         if plex_uri.startswith("http://"):
             https_uri = plex_uri.replace("http://", "https://")
-            logger.debug("Retrying with HTTPS: %s", https_uri)
+            logger.debug("Retrying Plex rating sync with HTTPS: %s", safe_url(https_uri))
             try:
                 plex_metadata = plex_api.fetch_metadata(
                     plex_account.plex_token,
@@ -4705,11 +4731,14 @@ def _sync_plex_rating(request, item, media_type):
                     timeout=30,
                 )
             except Exception as https_exc:
-                logger.debug("HTTPS retry also failed: %s", https_exc)
+                logger.debug(
+                    "HTTPS retry also failed during Plex rating sync: %s",
+                    exception_summary(https_exc),
+                )
                 return
         elif plex_uri.startswith("https://"):
             http_uri = plex_uri.replace("https://", "http://")
-            logger.debug("Retrying with HTTP: %s", http_uri)
+            logger.debug("Retrying Plex rating sync with HTTP: %s", safe_url(http_uri))
             try:
                 plex_metadata = plex_api.fetch_metadata(
                     plex_account.plex_token,
@@ -4718,25 +4747,28 @@ def _sync_plex_rating(request, item, media_type):
                     timeout=30,
                 )
             except Exception as http_exc:
-                logger.debug("HTTP retry also failed: %s", http_exc)
+                logger.debug(
+                    "HTTP retry also failed during Plex rating sync: %s",
+                    exception_summary(http_exc),
+                )
                 return
         else:
             return
     
     if not plex_metadata:
-        logger.debug("No Plex metadata returned for rating_key %s", rating_key)
+        logger.debug("No Plex metadata returned for rating sync")
         return
     
     user_rating = plex_metadata.get("userRating")
     if user_rating is None:
-        logger.debug("No userRating found in Plex metadata for %s", item.title)
+        logger.debug("No userRating found in Plex metadata for rating sync")
         return
     
     # Check if this is a rating removal event (-1.0)
     try:
         rating_float = float(user_rating)
         if rating_float == -1.0:
-            logger.info("Detected rating removal event for %s: %s", media_type, item.title)
+            logger.info("Detected Plex rating removal event for media_type=%s", media_type)
             # Remove rating from existing instances only
             if media_type == MediaTypes.MOVIE.value:
                 from app.models import Movie
@@ -4744,21 +4776,21 @@ def _sync_plex_rating(request, item, media_type):
                 if movie_instance:
                     movie_instance.score = None
                     movie_instance.save(update_fields=["score"])
-                    logger.info("Removed rating for movie: %s", item.title)
+                    logger.info("Removed movie rating from Plex sync")
                 else:
-                    logger.debug("No movie instance found to remove rating for %s", item.title)
+                    logger.debug("No movie instance found to remove Plex rating")
             elif media_type == MediaTypes.TV.value:
                 from app.models import TV
                 tv_instance = TV.objects.filter(item=item, user=request.user).first()
                 if tv_instance:
                     tv_instance.score = None
                     tv_instance.save(update_fields=["score"])
-                    logger.info("Removed rating for TV show: %s", item.title)
+                    logger.info("Removed TV rating from Plex sync")
                 else:
-                    logger.debug("No TV instance found to remove rating for %s", item.title)
+                    logger.debug("No TV instance found to remove Plex rating")
             return
     except (TypeError, ValueError):
-        logger.debug("Invalid rating value '%s' for %s", user_rating, item.title)
+        logger.debug("Invalid rating value returned during Plex sync")
         return
     
     # Normalize rating (Plex userRating is typically 0-10, Yamtrack uses 0-10)
@@ -4767,16 +4799,16 @@ def _sync_plex_rating(request, item, media_type):
     elif rating_float <= 100:
         normalized_rating = rating_float / 10
     else:
-        logger.debug("Rating out of expected range: %s", user_rating)
+        logger.debug("Rating from Plex sync was out of expected range")
         return
     
     normalized_rating = round(normalized_rating, 1)
     if normalized_rating < 0 or normalized_rating > 10:
-        logger.debug("Normalized rating out of range: %s", normalized_rating)
+        logger.debug("Normalized Plex rating was out of range")
         return
     
     if normalized_rating is None:
-        logger.debug("Invalid rating value '%s' for %s", user_rating, item.title)
+        logger.debug("Invalid normalized rating returned during Plex sync")
         return
     
     # Apply rating to media instance
@@ -4786,7 +4818,7 @@ def _sync_plex_rating(request, item, media_type):
         if movie_instance:
             movie_instance.score = normalized_rating
             movie_instance.save(update_fields=["score"])
-            logger.info("Synced Plex rating %.1f for movie %s", normalized_rating, item.title)
+            logger.info("Synced Plex movie rating")
         else:
             # Create movie instance if it doesn't exist
             Movie.objects.create(
@@ -4796,14 +4828,14 @@ def _sync_plex_rating(request, item, media_type):
                 progress=1,
                 score=normalized_rating,
             )
-            logger.info("Created movie instance with Plex rating %.1f for %s", normalized_rating, item.title)
+            logger.info("Created movie instance from Plex rating sync")
     elif media_type == MediaTypes.TV.value:
         from app.models import TV
         tv_instance = TV.objects.filter(item=item, user=request.user).first()
         if tv_instance:
             tv_instance.score = normalized_rating
             tv_instance.save(update_fields=["score"])
-            logger.info("Synced Plex rating %.1f for TV show %s", normalized_rating, item.title)
+            logger.info("Synced Plex TV rating")
         else:
             # Create TV instance if it doesn't exist
             TV.objects.create(
@@ -4812,7 +4844,7 @@ def _sync_plex_rating(request, item, media_type):
                 status=Status.IN_PROGRESS.value,
                 score=normalized_rating,
             )
-            logger.info("Created TV instance with Plex rating %.1f for %s", normalized_rating, item.title)
+            logger.info("Created TV instance from Plex rating sync")
 
 
 @never_cache
@@ -8111,7 +8143,10 @@ def podcast_mark_all_played(request, show_id):
                         season_number=episode_data.get("season_number"),
                     )
         except Exception as e:
-            logger.warning("Failed to fetch full episode list from RSS feed %s: %s", show.rss_feed_url, e)
+            logger.warning(
+                "Failed to fetch full episode list from RSS feed: %s",
+                exception_summary(e),
+            )
             # Continue with existing episodes in database
 
     # Get all episodes for this show (now including any newly fetched ones)
@@ -9973,7 +10008,10 @@ def collection_modal(request, source, media_type, media_id):
                 episode_number=episode_number,
             )
         except Exception as exc:  # pragma: no cover - defensive
-            logger.debug("Collection modal metadata lookup failed for %s: %s", media_id, exc)
+            logger.debug(
+                "Collection modal metadata lookup failed: %s",
+                exception_summary(exc),
+            )
 
     if not item:
         item_defaults = {
@@ -10001,7 +10039,10 @@ def collection_modal(request, source, media_type, media_id):
                 if runtime_minutes:
                     item_defaults["runtime_minutes"] = runtime_minutes
         except Exception as exc:  # pragma: no cover - defensive
-            logger.debug("Collection modal metadata lookup failed for %s: %s", media_id, exc)
+            logger.debug(
+                "Collection modal metadata lookup failed while building defaults: %s",
+                exception_summary(exc),
+            )
 
         item, _ = Item.objects.get_or_create(
             **lookup,

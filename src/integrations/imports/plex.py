@@ -12,6 +12,7 @@ from django.conf import settings
 from django.utils import timezone
 
 import app
+from app.log_safety import exception_summary, presence_map
 from app.models import MediaTypes, Sources, Status
 from app.providers import services
 from app.services.music import prefetch_album_covers
@@ -182,7 +183,10 @@ class PlexHistoryImporter:
         except plex_api.PlexAuthError as exc:
             raise MediaImportError("Plex token expired; reconnect and try again.") from exc
         except plex_api.PlexClientError as exc:
-            logger.warning("Could not fetch Plex account id: %s", exc)
+            logger.warning(
+                "Could not fetch Plex account ID: %s",
+                exception_summary(exc),
+            )
             return
 
         account_id = account_info.get("id")
@@ -237,7 +241,10 @@ class PlexHistoryImporter:
             logger.warning("Could not fetch Plex users for history diagnostics: Token expired")
             plex_users = []
         except plex_api.PlexClientError as exc:
-            logger.warning("Could not fetch Plex users for history filtering: %s", exc)
+            logger.warning(
+                "Could not fetch Plex users for history filtering: %s",
+                exception_summary(exc),
+            )
             plex_users = []
 
         username_to_ids: dict[str, set[str]] = defaultdict(set)
@@ -324,7 +331,10 @@ class PlexHistoryImporter:
             except MediaImportError as exc:
                 self.warnings.append(str(exc))
             except Exception as exc:  # pragma: no cover - defensive
-                logger.warning("Failed to import Plex entry %s: %s", entry, exc)
+                logger.warning(
+                    "Failed to import a Plex history entry: %s",
+                    exception_summary(exc),
+                )
                 self.warnings.append(f"Failed to import a Plex entry: {exc}")
 
         logger.info(
@@ -340,9 +350,8 @@ class PlexHistoryImporter:
             self._import_ratings_from_library(section, uri_used)
         except Exception as exc:
             logger.warning(
-                "Failed to import ratings from library items for section %s: %s",
-                section.get("title") or section.get("id"),
-                exc,
+                "Failed to import ratings from Plex library items: %s",
+                exception_summary(exc),
             )
             self.warnings.append(
                 f"Failed to import ratings from library items: {exc}",
@@ -419,8 +428,11 @@ class PlexHistoryImporter:
         """Process a single history entry."""
         metadata = self._build_metadata(entry)
         media_type = metadata.get("type")
-        title = self._get_entry_title(metadata)
-        logger.debug("Processing entry '%s' (type=%s, section=%s)", title, media_type, section_type)
+        logger.debug(
+            "Processing Plex history entry type=%s section=%s",
+            media_type,
+            section_type,
+        )
         if not self._is_allowed_history_user(metadata):
             return
         metadata["Guid"] = self._normalize_guid_list(
@@ -452,14 +464,14 @@ class PlexHistoryImporter:
             return
 
         metadata, ids = self._ensure_external_ids(metadata, uri, section_type)
-        logger.debug("Resolved IDs for '%s': %s", title, ids)
+        logger.debug(
+            "Resolved Plex history ID presence: %s",
+            presence_map(ids, ("tmdb_id", "imdb_id", "tvdb_id", "anidb_id")),
+        )
 
         if not self._has_external_ids(ids):
             logger.debug(
-                "No external IDs found for '%s' (IDs=%s, GUIDs=%s)",
-                title,
-                ids,
-                metadata.get("Guid") or metadata.get("guid"),
+                "No external IDs found for Plex history entry",
             )
 
         if not self._has_external_ids(ids):
@@ -492,8 +504,7 @@ class PlexHistoryImporter:
                     # try recording as a movie. This handles cases like Anime Specials (Movies)
                     # that are in TV libraries but lack standard S/E numbering.
                     logger.debug(
-                        "Episode recording failed for '%s'; falling back to movie",
-                        title,
+                        "Episode recording failed during Plex import; falling back to movie",
                     )
                     self._record_movie_entry(metadata, ids)
             else:
@@ -532,7 +543,7 @@ class PlexHistoryImporter:
         """Return True when the history entry matches the selected Plex user."""
         account_id, username = self._extract_history_user(metadata)
         account_id_str = str(account_id) if account_id is not None else None
-        logger.debug("Checking user: account_id=%s, username=%s (connecting user: %s)", account_id_str, username, self._account_id)
+        logger.debug("Evaluating Plex history user against configured filters")
 
         if not self._allowed_usernames and not self._account_id:
             return True
@@ -541,9 +552,7 @@ class PlexHistoryImporter:
             if username:
                 matches = username.lower() in self._allowed_usernames
                 logger.debug(
-                    "Checking Plex history user '%s' in allowed usernames: %s",
-                    username,
-                    self._allowed_usernames,
+                    "Checking Plex history username against configured username filters",
                 )
                 if not matches:
                     resolved_name = self._account_id_to_username.get(
@@ -557,9 +566,7 @@ class PlexHistoryImporter:
                 if self._allowed_account_ids:
                     matches = account_id_str in self._allowed_account_ids
                     logger.debug(
-                        "Checking Plex history accountID '%s' in allowed account IDs: %s",
-                        account_id_str,
-                        sorted(self._allowed_account_ids),
+                        "Checking Plex history account ID against configured account filters",
                     )
                     if not matches:
                         resolved_name = self._account_id_to_username.get(
@@ -573,8 +580,7 @@ class PlexHistoryImporter:
                     return matches
 
                 logger.debug(
-                    "Skipping Plex history entry; no accountID mapping for usernames: %s",
-                    self._allowed_usernames,
+                    "Skipping Plex history entry; account ID mapping missing for configured usernames",
                 )
                 self._record_user_skip(username=username, account_id=account_id_str)
                 return False
@@ -582,9 +588,7 @@ class PlexHistoryImporter:
         if account_id_str and self._account_id:
             matches = account_id_str == str(self._account_id)
             logger.debug(
-                "Checking Plex history accountID '%s' against '%s': %s",
-                account_id_str,
-                self._account_id,
+                "Checking Plex history account ID against connected account: %s",
                 matches,
             )
             if not matches:
@@ -750,13 +754,16 @@ class PlexHistoryImporter:
     def _record_movie_entry(self, metadata: dict, ids: dict) -> bool:
         """Store a normalized movie history record for bulk import."""
         tmdb_id = self._resolve_movie_tmdb_id(ids)
-        logger.debug("Recording movie entry: tmdb_id=%s, ids=%s", tmdb_id, ids)
+        logger.debug(
+            "Recording Plex movie entry with ID presence=%s",
+            presence_map(ids, ("tmdb_id", "imdb_id")),
+        )
         imdb_id = ids.get("imdb_id")
         if not tmdb_id:
             # Try title search fallback for movies if TMDB ID is missing
             title = self._get_entry_title(metadata)
             if title:
-                logger.debug("Movie TMDB ID missing; attempting title search for '%s'", title)
+                logger.debug("Movie TMDB ID missing; attempting Plex title fallback search")
                 try:
                     from app.providers import services
                     search_results = services.search(
@@ -768,12 +775,13 @@ class PlexHistoryImporter:
                     if results:
                         tmdb_id = str(results[0].get("media_id"))
                         logger.info(
-                            "Resolved movie '%s' to TMDB ID %s via title search",
-                            title,
-                            tmdb_id,
+                            "Resolved Plex movie entry via title fallback search",
                         )
                 except Exception as exc:
-                    logger.warning("Movie title search failed for '%s': %s", title, exc)
+                    logger.warning(
+                        "Movie title fallback search failed during Plex import: %s",
+                        exception_summary(exc),
+                    )
 
         if not tmdb_id:
             self._track_missing_ids(metadata, "missing TMDB/IMDB ID")
@@ -791,7 +799,7 @@ class PlexHistoryImporter:
         # Plex history replays are treated as completed entries; partial progress is ignored.
         rating = self._normalize_rating(metadata.get("userRating"), metadata.get("title"))
 
-        logger.debug("Recording movie record: %s", tmdb_id)
+        logger.debug("Recording normalized Plex movie history record")
         self._movie_records.append(
             {
                 "tmdb_id": tmdb_id,
@@ -812,7 +820,10 @@ class PlexHistoryImporter:
             bool: True if the entry was successfully recorded, False otherwise.
         """
         tmdb_id = ids.get("tmdb_id")
-        logger.debug("Recording episode entry: tmdb_id=%s, ids=%s", tmdb_id, ids)
+        logger.debug(
+            "Recording Plex episode entry with ID presence=%s",
+            presence_map(ids, ("tmdb_id", "imdb_id", "tvdb_id")),
+        )
         try:
             # Use grandparentTitle (Series Title) for Tv search, falling back to title if needed
             series_search_title = metadata.get("grandparentTitle") or self._get_entry_title(metadata)
@@ -822,16 +833,16 @@ class PlexHistoryImporter:
                 allow_title_fallback=True,  # Ensure we try title search
             )
         except Exception as exc:
-            logger.warning("Title fallback search failed: %s", exc)
+            logger.warning(
+                "TV title fallback search failed during Plex import: %s",
+                exception_summary(exc),
+            )
             media_id = None
 
         if not media_id:
             logger.debug(
-                "Failed to find TV match for '%s' (series='%s'). IDs: %s. Metadata: %s",
-                self._get_entry_title(metadata),
-                metadata.get("grandparentTitle"),
-                ids,
-                metadata.get("guid") or metadata.get("Guid"),
+                "Failed to find TV match for Plex entry with ID presence=%s",
+                presence_map(ids, ("tmdb_id", "imdb_id", "tvdb_id")),
             )
             self._track_missing_ids(metadata, "missing TMDB/TVDB/IMDB ID")
             return False
@@ -927,7 +938,7 @@ class PlexHistoryImporter:
             except plex_api.PlexClientError as exc:
                 logger.warning(
                     "Failed to fetch library items for rating import: %s",
-                    exc,
+                    exception_summary(exc),
                 )
                 break
 
@@ -968,7 +979,7 @@ class PlexHistoryImporter:
             start += page_size
 
         if not ratings_map:
-            logger.debug("No ratings found in library items for section '%s'", section.get("title"))
+            logger.debug("No ratings found in Plex library items for the selected section")
             return
 
         logger.info(
@@ -1205,9 +1216,7 @@ class PlexHistoryImporter:
                         tv_obj.score = rating
                         tv_obj.save(update_fields=["score"])
                         logger.debug(
-                            "Applied library rating %.1f to existing TV show %s",
-                            rating,
-                            tv_obj.item.title,
+                            "Applied library rating to existing TV show during Plex import",
                         )
                     self.media_instances[MediaTypes.TV.value][tv_key] = [tv_obj]
                 else:
@@ -1425,9 +1434,7 @@ class PlexHistoryImporter:
                 # If ID lookup failed, try title search fallback if we have a title
                 if series_title:
                     logger.info(
-                        "Plex TMDB ID %s not found; trying title search for '%s'",
-                        tmdb_id,
-                        series_title,
+                        "Plex TMDB ID lookup failed; trying title fallback search",
                     )
                     try:
                         search_results = services.search(
@@ -1438,9 +1445,7 @@ class PlexHistoryImporter:
                         if search_results and search_results.get("results"):
                             new_tmdb_id = str(search_results["results"][0]["media_id"])
                             logger.info(
-                                "Resolved '%s' to new TMDB ID %s via title search",
-                                series_title,
-                                new_tmdb_id,
+                                "Resolved Plex TV metadata via title fallback search",
                             )
                             # Retry with new ID
                             return services.get_media_metadata(
@@ -1453,7 +1458,7 @@ class PlexHistoryImporter:
                         # If title has year in parenthesis like "Show (YYYY)", try stripping it
                         clean_title = re.sub(r'\s*\(\d{4}\)$', '', series_title)
                         if clean_title != series_title:
-                            logger.info("Retrying title search with cleaned title '%s'", clean_title)
+                            logger.info("Retrying Plex TV title fallback search with normalized title")
                             search_results = services.search(
                                 MediaTypes.TV.value,
                                 clean_title,
@@ -1462,9 +1467,7 @@ class PlexHistoryImporter:
                             if search_results and search_results.get("results"):
                                 new_tmdb_id = str(search_results["results"][0]["media_id"])
                                 logger.info(
-                                    "Resolved '%s' to new TMDB ID %s via title search",
-                                    clean_title,
-                                    new_tmdb_id,
+                                    "Resolved Plex TV metadata via normalized title fallback search",
                                 )
                                 return services.get_media_metadata(
                                     "tv_with_seasons",
@@ -1474,9 +1477,8 @@ class PlexHistoryImporter:
                                 )
                     except Exception as fallback_exc:
                         logger.warning(
-                            "Title fallback search failed for '%s': %s",
-                            series_title,
-                            fallback_exc,
+                            "Plex TV title fallback search failed: %s",
+                            exception_summary(fallback_exc),
                         )
 
                 self.warnings.append(
@@ -1623,7 +1625,10 @@ class PlexHistoryImporter:
         try:
             fast_runtime_backfill_task.delay(self.user.id)
         except Exception as exc:  # pragma: no cover - defensive
-            logger.debug("Could not enqueue fast runtime backfill task: %s", exc)
+            logger.debug(
+                "Could not enqueue fast runtime backfill task: %s",
+                exception_summary(exc),
+            )
 
     def _enqueue_music_enrichment(self):
         """Kick off a post-import enrichment/dedupe pass for this user's music."""
@@ -1641,7 +1646,10 @@ class PlexHistoryImporter:
             # This processes albums that don't have MBIDs (those that didn't match discography)
             enrich_albums_task.delay(self.user.id)
         except Exception as exc:  # pragma: no cover - defensive
-            logger.debug("Could not enqueue music enrichment task: %s", exc)
+            logger.debug(
+                "Could not enqueue music enrichment task: %s",
+                exception_summary(exc),
+            )
 
     def _prefetch_collected_album_covers(self):
         """Fetch missing album covers after the full import completes."""
@@ -1659,4 +1667,7 @@ class PlexHistoryImporter:
             try:
                 prefetch_album_covers(artist, limit=None)
             except Exception as exc:  # pragma: no cover - defensive network guard
-                logger.debug("Cover prefetch failed for artist %s: %s", artist_id, exc)
+                logger.debug(
+                    "Cover prefetch failed after Plex import: %s",
+                    exception_summary(exc),
+                )

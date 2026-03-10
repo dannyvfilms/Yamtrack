@@ -11,6 +11,7 @@ from django.db import transaction
 from django.utils import timezone
 
 import app
+from app.log_safety import exception_summary, safe_url
 from app.models import (
     Episode,
     MediaTypes,
@@ -190,10 +191,13 @@ class PocketCastsImporter:
         has_refresh_token = bool(self.account.refresh_token)
 
         if not has_credentials and not has_access_token and not has_refresh_token:
-            logger.error("Pocket Casts account has no credentials or tokens - email: %s, access_token: %s, refresh_token: %s",
-                        "exists" if self.account.email else "empty",
-                        "exists" if has_access_token else "empty",
-                        "exists" if has_refresh_token else "empty")
+            logger.error(
+                "Pocket Casts account has no usable credentials "
+                "(email_present=%s access_token_present=%s refresh_token_present=%s)",
+                bool(self.account.email),
+                has_access_token,
+                has_refresh_token,
+            )
             msg = "Pocket Casts account not connected"
             raise MediaImportError(msg)
 
@@ -1347,7 +1351,11 @@ class PocketCastsImporter:
                 )
                 if itunes_feed_url:
                     rss_feed_url = itunes_feed_url
-                    logger.info("Discovered RSS feed URL from iTunes for %s: %s", show.title, rss_feed_url)
+                    logger.info(
+                        "Discovered RSS feed URL from iTunes for %s: %s",
+                        show.title,
+                        safe_url(rss_feed_url),
+                    )
                 else:
                     logger.debug("No RSS feed URL found in iTunes results for %s", show.title)
 
@@ -2288,17 +2296,29 @@ class PocketCastsImporter:
                 ):
                     feed_url = result.get("feedUrl")
                     if feed_url:
-                        logger.debug("Discovered RSS feed URL from iTunes for %s: %s", show_title, feed_url)
+                        logger.debug(
+                            "Discovered RSS feed URL from iTunes for %s: %s",
+                            show_title,
+                            safe_url(feed_url),
+                        )
                         return feed_url
 
             # If no exact match, use first result's feed URL
             if results:
                 feed_url = results[0].get("feedUrl")
                 if feed_url:
-                    logger.debug("Discovered RSS feed URL from iTunes (first result) for %s: %s", show_title, feed_url)
+                    logger.debug(
+                        "Discovered RSS feed URL from iTunes (first result) for %s: %s",
+                        show_title,
+                        safe_url(feed_url),
+                    )
                     return feed_url
 
         except Exception as e:
-            logger.debug("Failed to discover RSS feed URL from iTunes for %s: %s", show_title, e)
+            logger.debug(
+                "Failed to discover RSS feed URL from iTunes for %s: %s",
+                show_title,
+                exception_summary(e),
+            )
 
         return None

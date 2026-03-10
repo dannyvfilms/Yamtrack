@@ -129,6 +129,28 @@ class PlexWebhookTests(TestCase):
         )
         self.movie_patcher.start()
 
+        def fake_tmdb_search(media_type, query, page):
+            if (
+                media_type == MediaTypes.MOVIE.value
+                and str(query).casefold() == "the matrix"
+                and page == 1
+            ):
+                return {
+                    "results": [
+                        {
+                            "media_id": "603",
+                            "title": "The Matrix",
+                        },
+                    ],
+                }
+            return {"results": []}
+
+        self.tmdb_search_patcher = patch(
+            "app.providers.tmdb.search",
+            side_effect=fake_tmdb_search,
+        )
+        self.tmdb_search_patcher.start()
+
         def fake_get_media_metadata(media_type, media_id, source, season_numbers=None):
             if media_type == "tv_with_seasons":
                 return fake_tv_with_seasons(media_id, season_numbers or [])
@@ -176,6 +198,7 @@ class PlexWebhookTests(TestCase):
         self.fetch_mapping_patcher.stop()
         self.tv_with_seasons_patcher.stop()
         self.tmdb_find_patcher.stop()
+        self.tmdb_search_patcher.stop()
         self.movie_patcher.stop()
         self.metadata_patcher.stop()
         self.mal_anime_patcher.stop()

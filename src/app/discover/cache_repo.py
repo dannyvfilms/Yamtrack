@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import random
 import time
@@ -12,12 +11,13 @@ from typing import Any
 from django.db import OperationalError
 from django.utils import timezone
 
+from app.log_safety import stable_hmac
 from app.models import DiscoverApiCache, DiscoverRowCache, DiscoverTasteProfile
 
 
 def _params_hash(params: dict[str, Any] | None) -> str:
     payload = json.dumps(params or {}, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return stable_hmac(payload, namespace="discover_api_cache")
 
 
 def get_api_cache(provider: str, endpoint: str, params: dict[str, Any] | None):
