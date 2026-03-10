@@ -10,12 +10,36 @@ from django.db.models import Exists, OuterRef, Q, Subquery
 from django.utils import timezone
 from simple_history.utils import bulk_update_with_history
 
-from app import config
-from app.models import TV, Item, MediaTypes, PodcastEpisode, Sources, Status
+from app import cache_utils, config
+from app.models import TV, Item, MediaTypes, PodcastEpisode, Season, Sources, Status
 from app.providers import comicvine, services, tmdb
 from events.models import Event, SentinelDatetime
 
 logger = logging.getLogger(__name__)
+
+
+def _clear_tv_time_left_cache(media_id, source, user_ids=None):
+    """Invalidate cached time-left views for users tracking a TV show."""
+    if not media_id or not source:
+        return
+
+    if user_ids is None:
+        tv_user_ids = TV.objects.filter(
+            item__media_id=media_id,
+            item__source=source,
+            item__media_type=MediaTypes.TV.value,
+        ).values_list("user_id", flat=True)
+        season_user_ids = Season.objects.filter(
+            item__media_id=media_id,
+            item__source=source,
+            item__media_type=MediaTypes.SEASON.value,
+        ).values_list("user_id", flat=True)
+        user_ids = sorted(set(tv_user_ids).union(season_user_ids))
+    else:
+        user_ids = sorted(set(user_ids))
+
+    for user_id in user_ids:
+        cache_utils.clear_time_left_cache_for_user(user_id)
 
 
 def fetch_releases(user=None, items_to_process=None):
@@ -115,6 +139,14 @@ def save_events(events_bulk):
         len(to_create),
         len(to_update),
     )
+
+    tv_keys_to_invalidate = {
+        (item.media_id, item.source)
+        for item in items_updated
+        if item.media_type == MediaTypes.SEASON.value
+    }
+    for media_id, source in tv_keys_to_invalidate:
+        _clear_tv_time_left_cache(media_id, source)
 
     return items_updated
 
@@ -436,7 +468,7 @@ def get_anime_schedule_bulk(media_ids):
     return all_data
 
 
-def process_tv(tv_item, events_bulk):
+def process_tv(tv_item, events_bulk, tv_metadata=None):
     """Process TV item and create events for all seasons and episodes.
 
     Only processes:
@@ -447,7 +479,7 @@ def process_tv(tv_item, events_bulk):
 
     try:
         # Get TV metadata and identify seasons to process
-        seasons_to_process = get_seasons_to_process(tv_item)
+        seasons_to_process = get_seasons_to_process(tv_item, tv_metadata=tv_metadata)
 
         if not seasons_to_process:
             logger.info("%s - No seasons need processing", tv_item)
@@ -465,9 +497,10 @@ def process_tv(tv_item, events_bulk):
         logger.exception("Error processing %s", tv_item)
 
 
-def get_seasons_to_process(tv_item):
+def get_seasons_to_process(tv_item, tv_metadata=None):
     """Identify which seasons of a TV show need to be processed."""
-    tv_metadata = tmdb.tv(tv_item.media_id)
+    if tv_metadata is None:
+        tv_metadata = tmdb.tv(tv_item.media_id)
 
     if not tv_metadata.get("related", {}).get("seasons"):
         logger.warning("No seasons found for TV show: %s", tv_item)
@@ -476,6 +509,7 @@ def get_seasons_to_process(tv_item):
     # Get all season numbers
     season_numbers = [
         season["season_number"] for season in tv_metadata["related"]["seasons"]
+        if season["season_number"] != 0
     ]
 
     if not season_numbers:
@@ -524,6 +558,7 @@ def process_tv_seasons(tv_item, seasons_to_process, events_bulk):
         tv_item.media_id,
         seasons_to_process,
     )
+    item_changes = False
 
     # Process each season that needs processing
     for season_number in seasons_to_process:
@@ -562,10 +597,15 @@ def process_tv_seasons(tv_item, seasons_to_process, events_bulk):
                 tv_item,
                 season_number,
             )
+            item_changes = True
         update_tv_status_for_new_season(tv_item, season_number)
 
         # Process episodes for this season
-        process_season_episodes(season_item, season_metadata, events_bulk)
+        if process_season_episodes(season_item, season_metadata, events_bulk):
+            item_changes = True
+
+    if item_changes:
+        _clear_tv_time_left_cache(tv_item.media_id, tv_item.source)
 
 
 def process_season_episodes(item, metadata, events_bulk):
@@ -587,7 +627,7 @@ def process_season_episodes(item, metadata, events_bulk):
     # Skip if no episodes
     if not metadata.get("episodes"):
         logger.warning("%s - No episodes found in metadata", item)
-        return
+        return False
 
     episode_numbers = [episode["episode_number"] for episode in metadata["episodes"]]
     existing_episode_items = {
@@ -655,31 +695,29 @@ def process_season_episodes(item, metadata, events_bulk):
         # Use 999998 to mark "aired but runtime unknown" vs None for "not aired yet"
         runtime_minutes = None
         if episode.get("runtime") is not None:
-            runtime_minutes = int(episode["runtime"]) if episode["runtime"] > 0 else None
+            runtime_minutes = (
+                int(episode["runtime"]) if episode["runtime"] > 0 else None
+            )
         elif release_datetime and release_datetime.year > 1900:
             # Episode has aired but no runtime - mark as unknown (use 999998)
             # This distinguishes from None which means "not aired yet"
             runtime_minutes = 999998
 
         updated = False
-        update_fields = []
-        
+
         if episode_item.image == settings.IMG_NONE and image != settings.IMG_NONE:
             episode_item.image = image
             updated = True
-            update_fields.append("image")
 
         if episode_item.release_datetime != release_datetime:
             episode_item.release_datetime = release_datetime
             updated = True
-            update_fields.append("release_datetime")
 
         # Only update runtime if it's actually new data (not just saving the same value)
         # This prevents unnecessary cache invalidations
         if episode_item.runtime_minutes != runtime_minutes:
             episode_item.runtime_minutes = runtime_minutes
             updated = True
-            update_fields.append("runtime_minutes")
 
         if updated and episode_item not in new_items:
             items_to_update.append(episode_item)
@@ -690,12 +728,18 @@ def process_season_episodes(item, metadata, events_bulk):
     if items_to_update:
         # Always include all fields that might be updated
         # Django's bulk_update is efficient and only updates changed values
-        Item.objects.bulk_update(items_to_update, ["image", "release_datetime", "runtime_minutes"], batch_size=100)
+        Item.objects.bulk_update(
+            items_to_update,
+            ["image", "release_datetime", "runtime_minutes"],
+            batch_size=100,
+        )
+
+    return bool(new_items or items_to_update)
 
 
 def update_tv_status_for_new_season(tv_item, season_number):
     """Update TV show status for users when a new season is detected.
-    
+
     Rules:
     - Dropped: Do nothing (user chose not to continue)
     - Planning: Leave as Planning (user hasn't started)
@@ -736,6 +780,16 @@ def update_tv_status_for_new_season(tv_item, season_number):
         tv.status = Status.IN_PROGRESS.value
 
     bulk_update_with_history(tv_to_update, TV, fields=["status"])
+
+    for tv in tv_to_update:
+        if not tv.seasons.filter(status=Status.IN_PROGRESS.value).exists():
+            tv._start_next_available_season()
+
+    _clear_tv_time_left_cache(
+        tv_item.media_id,
+        tv_item.source,
+        user_ids=[tv.user_id for tv in tv_to_update],
+    )
 
     logger.info(
         "Updated %d TV show(s) from Completed to In Progress for %s (season %s)",

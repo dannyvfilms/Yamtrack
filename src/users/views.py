@@ -25,6 +25,7 @@ from app.templatetags import app_tags
 from integrations import exports
 from integrations import plex
 from integrations.models import PlexAccount
+from integrations.plex_watchlist import WATCHLIST_TASK_NAME
 from users.forms import (
     AuthenticatorSetupForm,
     NotificationSettingsForm,
@@ -871,6 +872,10 @@ def delete_import_schedule(request):
             name=task_name,
             kwargs__contains=f'"user_id": {request.user.id}',
         )
+        if task.task == WATCHLIST_TASK_NAME:
+            PlexAccount.objects.filter(user=request.user).update(
+                watchlist_sync_enabled=False,
+            )
         task.delete()
         messages.success(request, "Import schedule deleted.")
     except PeriodicTask.DoesNotExist:

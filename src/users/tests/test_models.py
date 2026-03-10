@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.utils import timezone
-from django_celery_beat.models import CrontabSchedule, PeriodicTask
+from django_celery_beat.models import CrontabSchedule, IntervalSchedule, PeriodicTask
 from django_celery_results.models import TaskResult
 
 from users.models import (
@@ -395,6 +395,54 @@ class UserGetImportTasksTests(TestCase):
         # Check results
         self.assertEqual(len(import_tasks["results"]), 0)
         self.assertEqual(len(import_tasks["schedules"]), 0)
+
+    @patch("users.helpers.process_task_result")
+    @patch("users.helpers.get_next_run_info")
+    def test_get_import_tasks_watchlist_mapping(
+        self,
+        mock_get_next_run_info,
+        mock_process_task_result,
+    ):
+        """Watchlist sync results and schedules should map back to the Plex source."""
+        processed_task = MagicMock()
+        processed_task.summary = "Synced Plex watchlist."
+        processed_task.errors = None
+        mock_process_task_result.return_value = processed_task
+        mock_get_next_run_info.return_value = {
+            "next_run": timezone.now() + timedelta(minutes=15),
+            "frequency": "Every 15 minutes",
+            "mode": "Watchlist Sync",
+        }
+
+        TaskResult.objects.create(
+            task_id="task-watchlist",
+            task_name="Sync Plex Watchlist",
+            task_kwargs=(f"{{'user_id': {self.user.id}, 'mode': 'watchlist'}}"),
+            status="SUCCESS",
+            date_done=timezone.now(),
+            result="{}",
+        )
+
+        interval = IntervalSchedule.objects.create(
+            every=15,
+            period=IntervalSchedule.MINUTES,
+        )
+        periodic_task = PeriodicTask.objects.create(
+            name="Sync Plex Watchlist for test (every 15 minutes)",
+            task="Sync Plex Watchlist",
+            kwargs=(f'{{"user_id": {self.user.id}, "mode": "watchlist"}}'),
+            interval=interval,
+            enabled=True,
+        )
+
+        import_tasks = self.user.get_import_tasks()
+
+        self.assertEqual(len(import_tasks["results"]), 1)
+        self.assertEqual(import_tasks["results"][0]["source"], "plex")
+        self.assertEqual(len(import_tasks["schedules"]), 1)
+        self.assertEqual(import_tasks["schedules"][0]["task"], periodic_task)
+        self.assertEqual(import_tasks["schedules"][0]["source"], "plex")
+        self.assertEqual(import_tasks["schedules"][0]["mode"], "Watchlist Sync")
 
     @patch("users.helpers.process_task_result")
     def test_get_import_tasks_unknown_source(self, mock_process_task_result):

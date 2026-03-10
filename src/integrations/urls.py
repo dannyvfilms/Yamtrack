@@ -13,6 +13,11 @@ urlpatterns = [
     path("import/plex/connect", views.plex_connect, name="plex_connect"),
     path("import/plex/callback", views.plex_callback, name="plex_callback"),
     path("import/plex/disconnect", views.plex_disconnect, name="plex_disconnect"),
+    path(
+        "import/plex/watchlist/disable",
+        views.plex_disable_watchlist,
+        name="plex_disable_watchlist",
+    ),
     path("import/plex", views.import_plex, name="import_plex"),
     path("import/simkl-oauth", views.simkl_oauth, name="simkl_oauth"),
     path(

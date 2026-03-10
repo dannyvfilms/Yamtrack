@@ -231,6 +231,71 @@ def list_sections(token: str) -> list[dict[str, Any]]:
     return sections
 
 
+def fetch_watchlist(
+    token: str,
+    start: int = 0,
+    size: int = 100,
+) -> tuple[list[dict[str, Any]], int]:
+    """Fetch a page of Plex Discover watchlist items."""
+    params = {
+        "X-Plex-Container-Start": start,
+        "X-Plex-Container-Size": size,
+    }
+
+    try:
+        response = requests.get(
+            "https://discover.provider.plex.tv/library/sections/watchlist/all",
+            headers=_headers(token),
+            params=params,
+            timeout=20,
+            verify=settings.PLEX_SSL_VERIFY,
+        )
+    except RequestException as exc:
+        raise PlexClientError(str(exc)) from exc
+    _raise_for_auth(response)
+
+    content_type = response.headers.get("Content-Type", "")
+    if "json" not in content_type:
+        raise PlexClientError("Unexpected Plex watchlist response format")
+
+    payload = response.json()
+    container = payload.get("MediaContainer") or payload
+    entries = _extract_watchlist_entries(container)
+    total = (
+        container.get("totalSize")
+        or container.get("size")
+        or container.get("MetadataCount")
+        or len(entries)
+    )
+    return entries, _coerce_int(total, len(entries))
+
+
+def fetch_watchlist_metadata(token: str, rating_key: str) -> dict[str, Any]:
+    """Fetch the full Discover metadata payload for a watchlist item."""
+    try:
+        response = requests.get(
+            f"https://discover.provider.plex.tv/library/metadata/{rating_key}",
+            headers=_headers(token),
+            timeout=20,
+            verify=settings.PLEX_SSL_VERIFY,
+        )
+    except RequestException as exc:
+        raise PlexClientError(str(exc)) from exc
+    _raise_for_auth(response)
+
+    content_type = response.headers.get("Content-Type", "")
+    if "json" not in content_type:
+        raise PlexClientError("Unexpected Plex watchlist metadata response format")
+
+    payload = response.json()
+    container = payload.get("MediaContainer") or payload
+    metadata = container.get("Metadata")
+    if not isinstance(metadata, list) or not metadata:
+        raise PlexClientError("Plex watchlist metadata payload was empty")
+
+    return metadata[0]
+
+
 def fetch_history(
     token: str,
     uri: str,
@@ -579,7 +644,7 @@ def extract_external_ids_from_guids(guids: list[dict[str, Any] | str]) -> dict[s
         guids: List of GUID dictionaries or strings from Plex metadata
         
     Returns:
-        Dictionary with keys: 'tmdb_id', 'imdb_id', 'tvdb_id' (if found)
+        Dictionary with keys: 'tmdb_id', 'imdb_id', 'tvdb_id', 'plex_guid' (if found)
     """
     import re
     
@@ -591,6 +656,9 @@ def extract_external_ids_from_guids(guids: list[dict[str, Any] | str]) -> dict[s
             continue
             
         guid_lower = guid_value.lower()
+
+        if guid_lower.startswith("plex://") and "plex_guid" not in external_ids:
+            external_ids["plex_guid"] = guid_value.split("plex://", 1)[1]
         
         # Extract TMDB ID
         if "tmdb" in guid_lower or "themoviedb" in guid_lower:
@@ -611,6 +679,25 @@ def extract_external_ids_from_guids(guids: list[dict[str, Any] | str]) -> dict[s
                 external_ids["tvdb_id"] = match.group(0)
     
     return external_ids
+
+
+def _extract_watchlist_entries(container: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize common Plex watchlist payload shapes into entry dictionaries."""
+    metadata = container.get("Metadata")
+    if isinstance(metadata, list):
+        return metadata
+
+    hub_entries = container.get("Hub")
+    if isinstance(hub_entries, list):
+        collected: list[dict[str, Any]] = []
+        for hub in hub_entries:
+            hub_metadata = hub.get("Metadata")
+            if isinstance(hub_metadata, list):
+                collected.extend(hub_metadata)
+        if collected:
+            return collected
+
+    return []
 
 
 def _raise_for_auth(response: requests.Response):

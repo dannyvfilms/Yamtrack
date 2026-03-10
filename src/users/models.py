@@ -4,6 +4,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+from django.db.models import Q
 from django.utils import timezone
 from django_celery_beat.models import PeriodicTask
 from django_celery_results.models import TaskResult
@@ -1152,31 +1153,41 @@ class User(AbstractUser):
     def get_import_tasks(self):
         """Return import tasks history and schedules for the user."""
         import_tasks = {
-            "trakt": "Import from Trakt",
-            "simkl": "Import from SIMKL",
-            "myanimelist": "Import from MyAnimeList",
-            "anilist": "Import from AniList",
-            "kitsu": "Import from Kitsu",
-            "yamtrack": "Import from Yamtrack",
-            "hltb": "Import from HowLongToBeat",
-            "steam": "Import from Steam",
-            "imdb": "Import from IMDB",
-            "goodreads": "Import from GoodReads",
-            "plex": "Import from Plex",
-            "audiobookshelf": "Import from Audiobookshelf (Recurring)",
-            "pocketcasts": "Import from Pocket Casts (Recurring)",
-            "lastfm": "Poll Last.fm for all users",
+            "trakt": ["Import from Trakt"],
+            "simkl": ["Import from SIMKL"],
+            "myanimelist": ["Import from MyAnimeList"],
+            "anilist": ["Import from AniList"],
+            "kitsu": ["Import from Kitsu"],
+            "yamtrack": ["Import from Yamtrack"],
+            "hltb": ["Import from HowLongToBeat"],
+            "steam": ["Import from Steam"],
+            "imdb": ["Import from IMDB"],
+            "goodreads": ["Import from GoodReads"],
+            "plex": ["Import from Plex", "Sync Plex Watchlist"],
+            "audiobookshelf": ["Import from Audiobookshelf (Recurring)"],
+            "pocketcasts": ["Import from Pocket Casts (Recurring)"],
+            "lastfm": ["Poll Last.fm for all users"],
         }
 
         # Reverse mapping to get source from task name
-        task_to_source = {v: k for k, v in import_tasks.items()}
+        task_to_source = {
+            task_name: source
+            for source, task_names in import_tasks.items()
+            for task_name in task_names
+        }
+        import_task_names = list(task_to_source)
 
-        task_result_filter_text = f"'user_id': {self.id},"
+        task_result_filters = (
+            Q(task_kwargs__contains=f"'user_id': {self.id},")
+            | Q(task_kwargs__contains=f"'user_id': {self.id}" + "}")
+            | Q(task_kwargs__contains=f'"user_id": {self.id},')
+            | Q(task_kwargs__contains=f'"user_id": {self.id}' + "}")
+        )
 
         # Get all task results for this user
         task_results = TaskResult.objects.filter(
-            task_kwargs__contains=task_result_filter_text,
-            task_name__in=import_tasks.values(),
+            task_result_filters,
+            task_name__in=import_task_names,
         ).order_by(
             "-date_done",
         )  # Most recent first
@@ -1199,12 +1210,17 @@ class User(AbstractUser):
 
         # Get periodic tasks with their crontab schedules
         # Match both "user_id": X, (with comma) and "user_id": X} (without comma, last field)
-        periodic_tasks_filter_text = f'"user_id": {self.id}'
+        periodic_tasks_filter = (
+            Q(kwargs__contains=f"'user_id': {self.id},")
+            | Q(kwargs__contains=f"'user_id': {self.id}" + "}")
+            | Q(kwargs__contains=f'"user_id": {self.id},')
+            | Q(kwargs__contains=f'"user_id": {self.id}' + "}")
+        )
         periodic_tasks = PeriodicTask.objects.filter(
-            task__in=import_tasks.values(),
-            kwargs__contains=periodic_tasks_filter_text,
+            periodic_tasks_filter,
+            task__in=import_task_names,
             enabled=True,
-        ).select_related("crontab")
+        ).select_related("crontab", "interval")
 
         # Build schedules list
         schedules = []

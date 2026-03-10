@@ -1,6 +1,6 @@
 import json
 import zoneinfo
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import croniter
 from django.utils import timezone
@@ -59,16 +59,42 @@ def process_task_result(task):
 
 def get_next_run_info(periodic_task):
     """Calculate next run time and frequency for a periodic task."""
-    if not periodic_task.crontab:
-        return None
-
     try:
         kwargs = json.loads(periodic_task.kwargs)
         mode = kwargs.get("mode", "new")  # Default to 'new' if not specified
-    except json.JSONDecodeError:
+    except (AttributeError, TypeError, json.JSONDecodeError):
         mode = "new"
 
-    mode = "Only New Items" if mode == "new" else "Overwrite Existing"
+    mode_labels = {
+        "new": "Only New Items",
+        "overwrite": "Overwrite Existing",
+        "update_collection": "Collection Metadata Only",
+        "watchlist": "Watchlist Sync",
+    }
+    mode = mode_labels.get(mode, str(mode).replace("_", " ").title())
+
+    if getattr(periodic_task, "interval", None):
+        delta = _interval_to_timedelta(periodic_task.interval)
+        if delta is None:
+            return None
+
+        now = timezone.now()
+        base_time = periodic_task.last_run_at or periodic_task.start_time or now
+        if base_time > now:
+            next_run = base_time
+        else:
+            elapsed = now - base_time
+            steps = int(elapsed // delta) + 1
+            next_run = base_time + (delta * steps)
+
+        return {
+            "next_run": next_run,
+            "frequency": _interval_frequency_display(periodic_task.interval),
+            "mode": mode,
+        }
+
+    if not periodic_task.crontab:
+        return None
 
     cron = periodic_task.crontab
     tz = zoneinfo.ZoneInfo(str(cron.timezone))
@@ -114,6 +140,33 @@ def get_next_run_info(periodic_task):
         "frequency": frequency,
         "mode": mode,
     }
+
+
+def _interval_to_timedelta(interval):
+    """Convert a Celery beat interval schedule into a timedelta."""
+    multipliers = {
+        "days": "days",
+        "hours": "hours",
+        "minutes": "minutes",
+        "seconds": "seconds",
+    }
+    unit = multipliers.get(interval.period)
+    if unit is None:
+        return None
+    return timedelta(**{unit: interval.every})
+
+
+def _interval_frequency_display(interval):
+    """Render a human-readable label for an interval schedule."""
+    singular = {
+        "days": "day",
+        "hours": "hour",
+        "minutes": "minute",
+        "seconds": "second",
+    }
+    unit = singular.get(interval.period, interval.period)
+    suffix = "" if interval.every == 1 else "s"
+    return f"Every {interval.every} {unit}{suffix}"
 
 
 def get_export_next_run_info(periodic_task):

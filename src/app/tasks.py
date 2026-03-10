@@ -2764,6 +2764,19 @@ def backfill_item_metadata_task(batch_size: int = 10):
 
             item.save(update_fields=update_fields)
 
+            if item.source == Sources.TMDB.value and item.media_type == MediaTypes.TV.value:
+                from events import calendar as events_calendar
+
+                tv_events_bulk = []
+                events_calendar.process_tv(
+                    item,
+                    tv_events_bulk,
+                    tv_metadata=metadata,
+                )
+                if tv_events_bulk:
+                    events_calendar.save_events(tv_events_bulk)
+                    events_calendar.cleanup_invalid_events(tv_events_bulk)
+
             if item.source == Sources.TMDB.value and item.media_type == MediaTypes.MOVIE.value:
                 _record_backfill_success(
                     item,

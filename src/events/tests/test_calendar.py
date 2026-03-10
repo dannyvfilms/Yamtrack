@@ -334,6 +334,18 @@ class ReloadCalendarTaskTests(TestCase):
         self.assertIn(self.anime_item, all_items)
         self.assertIn(user2_item, all_items)
 
+    def test_get_items_to_process_excludes_tv_with_only_past_known_season_events(self):
+        """Ended TV shows rely on metadata backfill, not the daily calendar scan."""
+        Event.objects.create(
+            item=self.season_item,
+            content_number=1,
+            datetime=timezone.now() - timezone.timedelta(days=30),
+        )
+
+        items = get_items_to_process(self.user)
+
+        self.assertNotIn(self.tv_item, items)
+
     @patch("events.calendar.tmdb.tv")
     @patch("events.calendar.tmdb.tv_with_seasons")
     @patch("events.calendar.get_tvmaze_episode_map")

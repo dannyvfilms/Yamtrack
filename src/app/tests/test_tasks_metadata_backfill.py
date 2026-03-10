@@ -8,7 +8,9 @@ from django.utils import timezone
 
 from app import tasks
 from app.models import (
+    BasicMedia,
     CREDITS_BACKFILL_VERSION,
+    Episode,
     Item,
     ItemPersonCredit,
     ItemStudioCredit,
@@ -17,14 +19,187 @@ from app.models import (
     MetadataBackfillState,
     Person,
     PersonGender,
+    Season,
     Sources,
+    Status,
     Studio,
+    TV,
 )
+from events.models import Event
 
 User = get_user_model()
 
 
 class MetadataBackfillTaskTests(TestCase):
+    @patch("events.calendar.cache_utils.clear_time_left_cache_for_user")
+    @patch("app.models.providers.services.get_media_metadata")
+    @patch("events.calendar.get_tvmaze_episode_map")
+    @patch("events.calendar.tmdb.tv_with_seasons")
+    @patch("app.tasks.services.get_media_metadata")
+    def test_backfill_tmdb_tv_syncs_new_season_and_clears_time_left(
+        self,
+        mock_get_media_metadata,
+        mock_tv_with_seasons,
+        mock_tvmaze,
+        mock_model_metadata,
+        mock_clear_time_left_cache,
+    ):
+        user = User.objects.create_user(username="tv-user", password="pw")
+        old_fetched_at = timezone.now() - timedelta(days=30)
+        air_date = timezone.now() - timedelta(days=365)
+
+        tv_item = Item.objects.create(
+            media_id="201834",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Ted",
+            image="https://example.com/ted.jpg",
+            metadata_fetched_at=old_fetched_at,
+        )
+        tv = TV.objects.create(
+            item=tv_item,
+            user=user,
+            status=Status.COMPLETED.value,
+        )
+
+        season1_item = Item.objects.create(
+            media_id="201834",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            title="Ted",
+            image="https://example.com/season1.jpg",
+            metadata_fetched_at=old_fetched_at,
+            release_datetime=air_date,
+        )
+        season1 = Season.objects.create(
+            item=season1_item,
+            related_tv=tv,
+            user=user,
+            status=Status.COMPLETED.value,
+        )
+
+        episode_items = []
+        for episode_number in range(1, 8):
+            episode_item = Item.objects.create(
+                media_id="201834",
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.EPISODE.value,
+                season_number=1,
+                episode_number=episode_number,
+                title="Ted",
+                image="https://example.com/episode.jpg",
+                metadata_fetched_at=old_fetched_at,
+                release_datetime=air_date + timedelta(days=episode_number),
+                runtime_minutes=30,
+            )
+            episode_items.append(
+                Episode(
+                    item=episode_item,
+                    related_season=season1,
+                    end_date=air_date + timedelta(days=episode_number),
+                ),
+            )
+        Episode.objects.bulk_create(episode_items)
+
+        Event.objects.bulk_create(
+            [
+                Event(
+                    item=season1_item,
+                    content_number=episode_number,
+                    datetime=air_date + timedelta(days=episode_number),
+                )
+                for episode_number in range(1, 8)
+            ],
+        )
+
+        mock_tvmaze.return_value = {}
+        mock_get_media_metadata.return_value = {
+            "media_id": "201834",
+            "source": Sources.TMDB.value,
+            "media_type": MediaTypes.TV.value,
+            "title": "Ted",
+            "image": "https://example.com/ted.jpg",
+            "related": {
+                "seasons": [
+                    {"season_number": 1, "image": "https://example.com/season1.jpg"},
+                    {"season_number": 2, "image": "https://example.com/season2.jpg"},
+                ],
+            },
+            "next_episode_season": None,
+            "details": {
+                "country": "US",
+                "format": "TV",
+                "seasons": 2,
+                "episodes": 15,
+            },
+        }
+        mock_tv_with_seasons.return_value = {
+            "season/2": {
+                "image": "https://example.com/season2.jpg",
+                "season_number": 2,
+                "episodes": [
+                    {
+                        "episode_number": episode_number,
+                        "air_date": f"2025-01-{episode_number:02d}",
+                        "still_path": f"/s2e{episode_number}.jpg",
+                        "runtime": 30,
+                    }
+                    for episode_number in range(1, 9)
+                ],
+                "tvdb_id": None,
+            },
+        }
+        mock_model_metadata.return_value = {
+            "related": {
+                "seasons": [
+                    {"season_number": 1, "image": "https://example.com/season1.jpg"},
+                    {"season_number": 2, "image": "https://example.com/season2.jpg"},
+                ],
+            },
+            "details": {"seasons": 2},
+            "max_progress": 15,
+        }
+
+        result = tasks.backfill_item_metadata_task(batch_size=1)
+
+        tv.refresh_from_db()
+        self.assertEqual(tv.status, Status.IN_PROGRESS.value)
+        self.assertTrue(
+            tv.seasons.filter(item__season_number=2, status=Status.IN_PROGRESS.value).exists(),
+        )
+        self.assertEqual(
+            Item.objects.filter(
+                media_id="201834",
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.EPISODE.value,
+                season_number=2,
+            ).count(),
+            8,
+        )
+        self.assertEqual(
+            Event.objects.filter(
+                item__media_id="201834",
+                item__source=Sources.TMDB.value,
+                item__media_type=MediaTypes.SEASON.value,
+                item__season_number=2,
+            ).count(),
+            8,
+        )
+
+        tv_media = BasicMedia.objects.filter_media_prefetch(
+            user,
+            tv_item.media_id,
+            MediaTypes.TV.value,
+            tv_item.source,
+        ).first()
+        self.assertIsNotNone(tv_media)
+        self.assertEqual(tv_media.progress, 7)
+        self.assertEqual(tv_media.max_progress, 15)
+
+        mock_clear_time_left_cache.assert_any_call(user.id)
+        self.assertEqual(result["success_count"], 1)
+
     @patch("app.tasks.services.get_media_metadata")
     def test_backfill_updates_release_datetime_for_existing_items(self, mock_get_media_metadata):
         old_fetched_at = timezone.now() - timedelta(days=30)

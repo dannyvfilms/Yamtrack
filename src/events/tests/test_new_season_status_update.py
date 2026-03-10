@@ -129,13 +129,30 @@ class NewSeasonStatusUpdateTests(TestCase):
         self.assertEqual(self.season1.status, Status.COMPLETED.value)
         self.assertEqual(self.season1.episodes.count(), 8)
 
+    @patch("events.calendar.cache_utils.clear_time_left_cache_for_user")
     @patch("app.models.providers.services.get_media_metadata")
     @patch("events.calendar.get_tvmaze_episode_map")
     @patch("events.calendar.tmdb.tv_with_seasons")
-    def test_new_season_updates_completed_tv_status(self, mock_tv_with_seasons, mock_tvmaze, mock_get_metadata):
+    def test_new_season_updates_completed_tv_status(
+        self,
+        mock_tv_with_seasons,
+        mock_tvmaze,
+        mock_get_metadata,
+        mock_clear_time_left_cache,
+    ):
         """Test that a newly detected season updates Completed TV status to In Progress."""
         # Mock TVMaze (empty, not needed for this test)
         mock_tvmaze.return_value = {}
+        mock_get_metadata.return_value = {
+            "related": {
+                "seasons": [
+                    {"season_number": 1, "image": "http://example.com/season1.jpg"},
+                    {"season_number": 2, "image": "http://example.com/season2.jpg"},
+                ],
+            },
+            "details": {"seasons": 2},
+            "max_progress": 10,
+        }
 
         # Mock the provider to return Season 2 metadata (simulating new season detection)
         mock_tv_with_seasons.return_value = {
@@ -175,6 +192,12 @@ class NewSeasonStatusUpdateTests(TestCase):
         self.assertIsNotNone(season2_item)
         self.assertEqual(season2_item.title, "Test Show")
 
+        season2 = Season.objects.get(
+            item=season2_item,
+            user=self.user,
+        )
+        self.assertEqual(season2.status, Status.IN_PROGRESS.value)
+
         # Verify events were created for Season 2 episodes
         self.assertEqual(len(events_bulk), 2)  # 2 episodes
 
@@ -185,6 +208,7 @@ class NewSeasonStatusUpdateTests(TestCase):
             Status.IN_PROGRESS.value,
             "TV show status should have changed from Completed to In Progress",
         )
+        mock_clear_time_left_cache.assert_any_call(self.user.id)
 
     @patch("app.models.providers.services.get_media_metadata")
     @patch("events.calendar.get_tvmaze_episode_map")

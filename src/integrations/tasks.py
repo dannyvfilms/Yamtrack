@@ -32,6 +32,7 @@ from integrations.imports import (
     trakt,
     yamtrack,
 )
+from integrations.plex_watchlist import PlexWatchlistSyncService
 
 logger = logging.getLogger(__name__)
 ERROR_TITLE = "\n\n\n Couldn't import the following media: \n\n"
@@ -112,6 +113,52 @@ def format_import_message(imported_counts, warning_messages=None):
     ]
     for key, label in metric_mappings:
         value = imported_counts.get(key)
+        if value:
+            metric_parts.append(f"{value} {label}")
+
+    if metric_parts:
+        info_message = f"{info_message} {helpers.join_with_commas_and(metric_parts)}."
+
+    if warning_messages:
+        return f"{info_message} {ERROR_TITLE} {warning_messages}"
+    return info_message
+
+
+def format_watchlist_sync_message(sync_counts, warning_messages=None):
+    """Format the Plex watchlist sync result message."""
+    created_parts = []
+    movie_count = sync_counts.get(MediaTypes.MOVIE.value, 0)
+    tv_count = sync_counts.get(MediaTypes.TV.value, 0)
+
+    if movie_count:
+        created_parts.append(
+            f"{movie_count} movie{'s' if movie_count != 1 else ''}",
+        )
+    if tv_count:
+        created_parts.append(
+            f"{tv_count} TV show{'s' if tv_count != 1 else ''}",
+        )
+
+    if created_parts:
+        info_message = (
+            "Synced Plex watchlist. "
+            f"Imported {helpers.join_with_commas_and(created_parts)}."
+        )
+    else:
+        info_message = "Synced Plex watchlist. No new watchlist media was imported."
+
+    metric_parts = []
+    metric_mappings = [
+        ("created", "created"),
+        ("linked_existing", "linked to existing media"),
+        ("removed", "removed from Planning"),
+        ("deactivated", "deactivated"),
+        ("skipped_missing_ids", "skipped (missing IDs)"),
+        ("skipped_unknown_type", "skipped (unknown type)"),
+        ("skipped_metadata", "skipped (metadata errors)"),
+    ]
+    for key, label in metric_mappings:
+        value = sync_counts.get(key)
         if value:
             metric_parts.append(f"{value} {label}")
 
@@ -243,6 +290,43 @@ def import_hardcover(file, user_id, mode):
 def import_plex(library, user_id, mode, username=None):  # noqa: ARG001
     """Celery task for importing media data from Plex."""
     return import_media(plex.importer, library, user_id, mode)
+
+
+@shared_task(name="Sync Plex Watchlist")
+def sync_plex_watchlist(user_id, mode="watchlist"):  # noqa: ARG001
+    """Celery task for syncing Plex Discover watchlist items."""
+    from integrations.models import PlexAccount
+
+    user = get_user_model().objects.get(id=user_id)
+    account = getattr(user, "plex_account", None)
+    if not account:
+        raise helpers.MediaImportError("Connect Plex before syncing the watchlist.")
+
+    try:
+        sync_counts, warnings = PlexWatchlistSyncService(user, account).sync()
+    except helpers.MediaImportError as exc:
+        PlexAccount.objects.filter(user=user).update(
+            watchlist_last_error=str(exc),
+            watchlist_last_error_at=timezone.now(),
+        )
+        raise
+    except Exception as exc:  # pragma: no cover - defensive
+        PlexAccount.objects.filter(user=user).update(
+            watchlist_last_error=str(exc),
+            watchlist_last_error_at=timezone.now(),
+        )
+        raise
+
+    PlexAccount.objects.filter(user=user).update(
+        watchlist_last_synced_at=timezone.now(),
+        watchlist_last_error="",
+        watchlist_last_error_at=None,
+    )
+
+    if sync_counts.get("created") or sync_counts.get("removed"):
+        events.tasks.reload_calendar.delay()
+
+    return format_watchlist_sync_message(sync_counts, warnings)
 
 
 

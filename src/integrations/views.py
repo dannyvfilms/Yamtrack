@@ -3,11 +3,13 @@
 import json
 import logging
 import secrets
+from datetime import timedelta
 
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_not_required
 from django.core.exceptions import ObjectDoesNotExist
+from django.db.models import Q
 from django.http import HttpResponse, StreamingHttpResponse
 from django.shortcuts import redirect
 from django.urls import reverse
@@ -21,6 +23,7 @@ from integrations import plex as plex_api
 from integrations.imports import anilist, helpers, simkl, trakt
 from integrations.models import AudiobookshelfAccount, LastFMAccount, PlexAccount, PocketCastsAccount
 from integrations.lastfm_api import LastFMAPIError, LastFMClientError, LastFMRateLimitError
+from integrations.plex_watchlist import WATCHLIST_SYNC_INTERVAL_MINUTES, WATCHLIST_TASK_NAME
 from integrations.pocketcasts_api import PocketCastsAuthError
 from integrations.imports.audiobookshelf import AudiobookshelfAuthError, AudiobookshelfClient
 from integrations.webhooks import emby, jellyfin
@@ -34,6 +37,109 @@ def _read_uploaded_file(file):
     """Read uploaded file bytes for safe Celery serialization."""
     file.seek(0)
     return file.read()
+
+
+def _save_plex_usernames(user, raw_usernames):
+    """Persist de-duplicated Plex usernames for webhook filtering."""
+    if raw_usernames is None:
+        return
+
+    username_list = [u.strip() for u in raw_usernames.split(",") if u.strip()]
+    seen = set()
+    deduplicated = [u for u in username_list if not (u.lower() in seen or seen.add(u.lower()))]
+    cleaned_usernames = ", ".join(deduplicated)
+    if cleaned_usernames != user.plex_usernames:
+        user.plex_usernames = cleaned_usernames
+        user.save(update_fields=["plex_usernames"])
+
+
+def _plex_watchlist_task_filter(user_id):
+    """Match a user's watchlist task regardless of JSON spacing/quotes."""
+    return Q(kwargs__contains=f"'user_id': {user_id},") | Q(
+        kwargs__contains=f"'user_id': {user_id}" + "}",
+    ) | Q(
+        kwargs__contains=f'"user_id": {user_id},',
+    ) | Q(
+        kwargs__contains=f'"user_id": {user_id}' + "}",
+    )
+
+
+def _ensure_plex_watchlist_schedule(user, plex_account):
+    """Create or enable the per-user Plex watchlist interval schedule."""
+    from django_celery_beat.models import IntervalSchedule, PeriodicTask
+
+    next_interval_start = timezone.now() + timedelta(minutes=WATCHLIST_SYNC_INTERVAL_MINUTES)
+    interval, _ = IntervalSchedule.objects.get_or_create(
+        every=WATCHLIST_SYNC_INTERVAL_MINUTES,
+        period=IntervalSchedule.MINUTES,
+    )
+    task_filter = PeriodicTask.objects.filter(
+        _plex_watchlist_task_filter(user.id),
+        task=WATCHLIST_TASK_NAME,
+    )
+    existing_task = task_filter.first()
+    if existing_task:
+        was_enabled = existing_task.enabled
+        updated_fields = []
+        desired_name = (
+            f"{WATCHLIST_TASK_NAME} for "
+            f"{plex_account.plex_username or user.username} "
+            f"(every {WATCHLIST_SYNC_INTERVAL_MINUTES} minutes)"
+        )
+        desired_kwargs = json.dumps({"user_id": user.id, "mode": "watchlist"})
+        if existing_task.name != desired_name:
+            existing_task.name = desired_name
+            updated_fields.append("name")
+        if existing_task.interval_id != interval.id:
+            existing_task.interval = interval
+            updated_fields.append("interval")
+        if existing_task.crontab_id is not None:
+            existing_task.crontab = None
+            updated_fields.append("crontab")
+        if existing_task.clocked_id is not None:
+            existing_task.clocked = None
+            updated_fields.append("clocked")
+        if existing_task.solar_id is not None:
+            existing_task.solar = None
+            updated_fields.append("solar")
+        if existing_task.one_off:
+            existing_task.one_off = False
+            updated_fields.append("one_off")
+        if existing_task.kwargs != desired_kwargs:
+            existing_task.kwargs = desired_kwargs
+            updated_fields.append("kwargs")
+        if not existing_task.enabled:
+            existing_task.enabled = True
+            updated_fields.append("enabled")
+        if existing_task.start_time is None or not was_enabled:
+            existing_task.start_time = next_interval_start
+            updated_fields.append("start_time")
+        if updated_fields:
+            existing_task.save(update_fields=updated_fields)
+        return existing_task
+
+    return PeriodicTask.objects.create(
+        name=(
+            f"{WATCHLIST_TASK_NAME} for "
+            f"{plex_account.plex_username or user.username} "
+            f"(every {WATCHLIST_SYNC_INTERVAL_MINUTES} minutes)"
+        ),
+        task=WATCHLIST_TASK_NAME,
+        interval=interval,
+        kwargs=json.dumps({"user_id": user.id, "mode": "watchlist"}),
+        start_time=next_interval_start,
+        enabled=True,
+    )
+
+
+def _disable_plex_watchlist_schedule(user):
+    """Delete any per-user Plex watchlist periodic tasks."""
+    from django_celery_beat.models import PeriodicTask
+
+    return PeriodicTask.objects.filter(
+        _plex_watchlist_task_filter(user.id),
+        task=WATCHLIST_TASK_NAME,
+    ).delete()
 
 
 @require_POST
@@ -222,6 +328,7 @@ def plex_callback(request):
 @require_POST
 def plex_disconnect(request):
     """Remove stored Plex credentials."""
+    _disable_plex_watchlist_schedule(request.user)
     PlexAccount.objects.filter(user=request.user).delete()
     messages.info(request, "Disconnected Plex.")
     return redirect("import_data")
@@ -241,14 +348,24 @@ def import_plex(request):
     import_time = request.POST.get("time", "00:00")
     raw_usernames = request.POST.get("plex_usernames", "")
 
-    if raw_usernames is not None:
-        username_list = [u.strip() for u in raw_usernames.split(",") if u.strip()]
-        seen = set()
-        deduplicated = [u for u in username_list if not (u.lower() in seen or seen.add(u.lower()))]
-        cleaned_usernames = ", ".join(deduplicated)
-        if cleaned_usernames != request.user.plex_usernames:
-            request.user.plex_usernames = cleaned_usernames
-            request.user.save(update_fields=["plex_usernames"])
+    _save_plex_usernames(request.user, raw_usernames)
+
+    if mode == "watchlist":
+        _ensure_plex_watchlist_schedule(request.user, plex_account)
+        plex_account.watchlist_sync_enabled = True
+        plex_account.save(update_fields=["watchlist_sync_enabled"])
+        tasks.sync_plex_watchlist.delay(
+            user_id=request.user.id,
+            mode="watchlist",
+        )
+        messages.info(
+            request,
+            (
+                "Plex watchlist sync queued. "
+                f"Recurring syncs will run every {WATCHLIST_SYNC_INTERVAL_MINUTES} minutes."
+            ),
+        )
+        return redirect("import_data")
 
     # Handle "update_collection" mode separately
     if mode == "update_collection":
@@ -281,6 +398,23 @@ def import_plex(request):
         mode=mode,
     )
     messages.info(request, "The task to import media from Plex has been queued.")
+    return redirect("import_data")
+
+
+@require_POST
+def plex_disable_watchlist(request):
+    """Disable recurring Plex watchlist sync for the current user."""
+    plex_account = getattr(request.user, "plex_account", None)
+    if not plex_account:
+        messages.error(request, "Connect Plex before changing watchlist sync.")
+        return redirect("import_data")
+
+    _disable_plex_watchlist_schedule(request.user)
+    if plex_account.watchlist_sync_enabled:
+        plex_account.watchlist_sync_enabled = False
+        plex_account.save(update_fields=["watchlist_sync_enabled"])
+
+    messages.info(request, "Disabled Plex watchlist sync.")
     return redirect("import_data")
 
 

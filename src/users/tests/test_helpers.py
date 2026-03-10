@@ -4,7 +4,7 @@ from datetime import datetime
 from unittest.mock import Mock, patch
 
 from django.test import TestCase
-from django_celery_beat.models import CrontabSchedule, PeriodicTask
+from django_celery_beat.models import CrontabSchedule, IntervalSchedule, PeriodicTask
 
 from users import helpers
 
@@ -211,6 +211,56 @@ class HelpersTest(TestCase):
         """Test getting next run info for task without crontab."""
         periodic_task = Mock()
         periodic_task.crontab = None
+        periodic_task.interval = None
 
         next_run_info = helpers.get_next_run_info(periodic_task)
         self.assertIsNone(next_run_info)
+
+    @patch("django.utils.timezone.now")
+    def test_get_next_run_info_interval_watchlist(self, mock_now):
+        """Test getting next run info for interval-based watchlist sync."""
+        current_time = datetime(2025, 2, 6, 12, 0, tzinfo=zoneinfo.ZoneInfo("UTC"))
+        mock_now.return_value = current_time
+
+        interval = IntervalSchedule.objects.create(
+            every=15,
+            period=IntervalSchedule.MINUTES,
+        )
+        periodic_task = PeriodicTask.objects.create(
+            name="Sync Plex Watchlist for test (every 15 minutes)",
+            task="Sync Plex Watchlist",
+            interval=interval,
+            kwargs='{"user_id": 1, "mode": "watchlist"}',
+            start_time=current_time,
+        )
+
+        next_run_info = helpers.get_next_run_info(periodic_task)
+
+        expected_next_run = datetime(2025, 2, 6, 12, 15, tzinfo=zoneinfo.ZoneInfo("UTC"))
+        self.assertEqual(next_run_info["next_run"], expected_next_run)
+        self.assertEqual(next_run_info["frequency"], "Every 15 minutes")
+        self.assertEqual(next_run_info["mode"], "Watchlist Sync")
+
+    @patch("django.utils.timezone.now")
+    def test_get_next_run_info_interval_rolls_forward_from_past_run(self, mock_now):
+        """Test interval next-run calculation stays in the future."""
+        current_time = datetime(2025, 2, 6, 12, 44, tzinfo=zoneinfo.ZoneInfo("UTC"))
+        mock_now.return_value = current_time
+
+        interval = IntervalSchedule.objects.create(
+            every=15,
+            period=IntervalSchedule.MINUTES,
+        )
+        periodic_task = PeriodicTask.objects.create(
+            name="Sync Plex Watchlist for test (every 15 minutes)",
+            task="Sync Plex Watchlist",
+            interval=interval,
+            kwargs='{"user_id": 1, "mode": "watchlist"}',
+            start_time=datetime(2025, 2, 6, 11, 0, tzinfo=zoneinfo.ZoneInfo("UTC")),
+            last_run_at=datetime(2025, 2, 6, 12, 0, tzinfo=zoneinfo.ZoneInfo("UTC")),
+        )
+
+        next_run_info = helpers.get_next_run_info(periodic_task)
+
+        expected_next_run = datetime(2025, 2, 6, 12, 45, tzinfo=zoneinfo.ZoneInfo("UTC"))
+        self.assertEqual(next_run_info["next_run"], expected_next_run)

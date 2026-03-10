@@ -12,6 +12,8 @@
          importFrequency: 'once',
          importTime: '{% now "H:i" %}',
          importMode: 'new',
+         hasPlexSections: {% if plex_sections %}true{% else %}false{% endif %},
+         plexWatchlistSyncEnabled: {% if plex_account and plex_account.watchlist_sync_enabled %}true{% else %}false{% endif %},
          activeMediaTag: 'all',
          mediaTagLabels: {
            all: 'All Sources',
@@ -25,6 +27,24 @@
          },
          sourceSupports(tags) {
            return this.activeMediaTag === 'all' || tags.includes(this.activeMediaTag);
+         },
+         isWatchlistMode() {
+           return this.importMode === 'watchlist';
+         },
+         standardImportsDisabled() {
+           return this.importMode === 'update_collection' || this.importMode === 'watchlist';
+         },
+         plexSubmitDisabled() {
+           return !this.isWatchlistMode() && !this.hasPlexSections;
+         },
+         plexPrimaryActionLabel() {
+           if (this.importMode === 'update_collection') {
+             return 'Update';
+           }
+           if (this.isWatchlistMode()) {
+             return this.plexWatchlistSyncEnabled ? 'Sync Now' : 'Enable Sync';
+           }
+           return 'Import';
          }
        }">
 
@@ -62,6 +82,7 @@
                       class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 appearance-none">
                 <option value="new">Only Sync New Items</option>
                 <option value="overwrite">Sync New Items and Overwrite Existing</option>
+                <option value="watchlist">Import Watchlist Data Only</option>
                 <option value="update_collection">Update Collection Metadata Only</option>
               </select>
               {% include "app/icons/chevron-down.svg" with classes="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" %}
@@ -168,11 +189,37 @@
             {% endif %}
           </div>
           {% if plex_account %}
-            <p class="text-sm text-gray-400">Import Plex watch/listen history. Comma-separate username(s) to filter events sent to your webhook.</p>
+            <p x-show="!isWatchlistMode()" class="text-sm text-gray-400">
+              Import Plex watch/listen history. Comma-separate username(s) to filter events sent to your webhook.
+            </p>
+            <p x-show="isWatchlistMode()" class="text-sm text-gray-400">
+              Sync the connected Plex account's watchlist into Planning every 15 minutes. Plex usernames still control webhook filtering.
+            </p>
+
+            <div x-show="isWatchlistMode()" class="text-sm text-gray-400 space-y-1">
+              <div>
+                Recurring sync:
+                {% if plex_account.watchlist_sync_enabled %}
+                  Enabled
+                {% else %}
+                  Disabled
+                {% endif %}
+              </div>
+              {% if plex_account.watchlist_last_synced_at %}
+                <div>Last sync: {{ plex_account.watchlist_last_synced_at|user_datetime_format:user }}</div>
+              {% endif %}
+            </div>
 
             {% if plex_error %}
               <div class="text-xs text-amber-200 bg-amber-500/10 border border-amber-400/30 rounded p-2">
                 {{ plex_error }}
+              </div>
+            {% endif %}
+
+            {% if plex_account.watchlist_last_error %}
+              <div x-show="isWatchlistMode()"
+                   class="text-xs text-amber-200 bg-amber-500/10 border border-amber-400/30 rounded p-2">
+                <strong>Last watchlist sync error:</strong> {{ plex_account.watchlist_last_error }}
               </div>
             {% endif %}
 
@@ -183,12 +230,12 @@
               <input type="hidden" name="mode" x-model="importMode">
               <input type="hidden" name="next" value="import_data">
 
-              <div>
+              <div x-show="!isWatchlistMode()">
                 <label class="block text-sm text-gray-300 mb-2">Library</label>
                 <div class="relative">
                   <select name="library"
                           class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 appearance-none disabled:opacity-50"
-                          {% if not plex_sections %}disabled{% endif %}>
+                          :disabled="plexSubmitDisabled()">
                     <option value="all">All libraries</option>
                     {% for section in plex_sections %}
                       <option value="{{ section.machine_identifier }}::{{ section.id }}">
@@ -212,11 +259,22 @@
                        type="text">
                 <button type="submit"
                         class="px-4 py-2 rounded-r-md transition-colors text-sm border cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700"
-                        {% if not plex_sections %}disabled{% endif %}>
-                  <span x-text="importMode === 'update_collection' ? 'Update' : 'Import'"></span>
+                        style="min-width: 10rem; white-space: nowrap; flex-shrink: 0;"
+                        :disabled="plexSubmitDisabled()">
+                  <span x-text="plexPrimaryActionLabel()"></span>
                 </button>
               </div>
             </form>
+
+            {% if plex_account.watchlist_sync_enabled %}
+              <form x-show="isWatchlistMode()" method="post" action="{% url 'plex_disable_watchlist' %}">
+                {% csrf_token %}
+                <button type="submit"
+                        class="w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer bg-red-600 text-white hover:bg-red-700">
+                  Disable Watchlist Sync
+                </button>
+              </form>
+            {% endif %}
 
           {% else %}
             <p class="text-sm text-gray-400">Import watch and listening history from your Plex server.</p>
@@ -515,8 +573,8 @@
                      required>
               <button type="submit"
                       class="px-3 py-2 rounded-r-md transition-colors text-sm border cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                      :class="importMode === 'update_collection' ? 'bg-gray-600 text-gray-400 border-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700'"
-                      :disabled="importMode === 'update_collection'">
+                      :class="standardImportsDisabled() ? 'bg-gray-600 text-gray-400 border-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700'"
+                      :disabled="standardImportsDisabled()">
                 Import
               </button>
             </div>
@@ -533,8 +591,8 @@
 
             <button type="submit"
                     class="w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                    :class="importMode === 'update_collection' ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'"
-                    :disabled="importMode === 'update_collection'">
+                    :class="standardImportsDisabled() ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'"
+                    :disabled="standardImportsDisabled()">
               Connect with Trakt & Import
             </button>
           </form>
@@ -553,8 +611,8 @@
             <input type="hidden" name="mode" x-model="importMode">
             <button type="submit"
                     class="w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                    :class="importMode === 'update_collection' ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'"
-                    :disabled="importMode === 'update_collection'">
+                    :class="standardImportsDisabled() ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'"
+                    :disabled="standardImportsDisabled()">
               Connect with Simkl & Import
             </button>
           </form>
@@ -580,8 +638,8 @@
                      type="text">
               <button type="submit"
                       class="px-3 py-2 rounded-r-md transition-colors text-sm border cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                      :class="importMode === 'update_collection' ? 'bg-gray-600 text-gray-400 border-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700'"
-                      :disabled="importMode === 'update_collection'">
+                      :class="standardImportsDisabled() ? 'bg-gray-600 text-gray-400 border-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700'"
+                      :disabled="standardImportsDisabled()">
                 Import
               </button>
             </div>
@@ -622,8 +680,8 @@
                      required>
               <button type="submit"
                       class="px-3 py-2 rounded-r-md transition-colors text-sm border cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                      :class="importMode === 'update_collection' ? 'bg-gray-600 text-gray-400 border-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700'"
-                      :disabled="importMode === 'update_collection'">
+                      :class="standardImportsDisabled() ? 'bg-gray-600 text-gray-400 border-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700'"
+                      :disabled="standardImportsDisabled()">
                 Import
               </button>
             </div>
@@ -640,8 +698,8 @@
 
             <button type="submit"
                     class="w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                    :class="importMode === 'update_collection' ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'"
-                    :disabled="importMode === 'update_collection'">
+                    :class="standardImportsDisabled() ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'"
+                    :disabled="standardImportsDisabled()">
               Connect with AniList & Import
             </button>
           </form>
@@ -676,8 +734,8 @@
             </div>
             <button type="submit"
                     class="px-3 py-2 rounded-r-md transition-colors text-sm border cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                    :class="importMode === 'update_collection' ? 'bg-gray-600 text-gray-400 border-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700'"
-                    :disabled="importMode === 'update_collection'">
+                    :class="standardImportsDisabled() ? 'bg-gray-600 text-gray-400 border-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700'"
+                    :disabled="standardImportsDisabled()">
               Import
             </button>
           </form>
@@ -705,14 +763,14 @@
             <input type="hidden" name="time" x-model="importTime">
             <input type="hidden" name="mode" x-model="importMode">
             <label class="flex items-center justify-center w-full px-4 py-2 text-sm rounded-md transition-colors"
-                   :class="importFrequency === 'once' && importMode !== 'update_collection' ? 'bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer' : 'bg-gray-600 text-gray-400 cursor-not-allowed'"
-                   :disabled="importFrequency !== 'once' || importMode === 'update_collection'">
+                   :class="importFrequency === 'once' && !standardImportsDisabled() ? 'bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer' : 'bg-gray-600 text-gray-400 cursor-not-allowed'"
+                   :disabled="importFrequency !== 'once' || standardImportsDisabled()">
               <input name="yamtrack_csv"
                      accept=".csv"
                      class="hidden"
                      type="file"
-                     :disabled="importFrequency !== 'once' || importMode === 'update_collection'"
-                     @change="importFrequency === 'once' && importMode !== 'update_collection' && $el.form.submit()">
+                     :disabled="importFrequency !== 'once' || standardImportsDisabled()"
+                     @change="importFrequency === 'once' && !standardImportsDisabled() && $el.form.submit()">
               Select CSV File
             </label>
           </form>
@@ -734,14 +792,14 @@
             <input type="hidden" name="time" x-model="importTime">
             <input type="hidden" name="mode" x-model="importMode">
             <label class="flex items-center justify-center w-full px-4 py-2 text-sm rounded-md transition-colors"
-                   :class="importFrequency === 'once' && importMode !== 'update_collection' ? 'bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer' : 'bg-gray-600 text-gray-400 cursor-not-allowed'"
-                   :disabled="importFrequency !== 'once' || importMode === 'update_collection'">
+                   :class="importFrequency === 'once' && !standardImportsDisabled() ? 'bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer' : 'bg-gray-600 text-gray-400 cursor-not-allowed'"
+                   :disabled="importFrequency !== 'once' || standardImportsDisabled()">
               <input name="hltb_csv"
                      accept=".csv"
                      class="hidden"
                      type="file"
-                     :disabled="importFrequency !== 'once' || importMode === 'update_collection'"
-                     @change="importFrequency === 'once' && importMode !== 'update_collection' && $el.form.submit()">
+                     :disabled="importFrequency !== 'once' || standardImportsDisabled()"
+                     @change="importFrequency === 'once' && !standardImportsDisabled() && $el.form.submit()">
               Select CSV File
             </label>
           </form>
@@ -777,8 +835,8 @@
             </div>
             <button type="submit"
                     class="px-3 py-2 rounded-r-md transition-colors text-sm border cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                    :class="importMode === 'update_collection' ? 'bg-gray-600 text-gray-400 border-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700'"
-                    :disabled="importMode === 'update_collection'">
+                    :class="standardImportsDisabled() ? 'bg-gray-600 text-gray-400 border-gray-600 cursor-not-allowed' : 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700'"
+                    :disabled="standardImportsDisabled()">
               Import
             </button>
           </form>
@@ -802,14 +860,14 @@
             <input type="hidden" name="time" x-model="importTime">
             <input type="hidden" name="mode" x-model="importMode">
             <label class="flex items-center justify-center w-full px-4 py-2 text-sm rounded-md transition-colors"
-                   :class="importFrequency === 'once' && importMode !== 'update_collection' ? 'bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer' : 'bg-gray-600 text-gray-400 cursor-not-allowed'"
-                   :disabled="importFrequency !== 'once' || importMode === 'update_collection'">
+                   :class="importFrequency === 'once' && !standardImportsDisabled() ? 'bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer' : 'bg-gray-600 text-gray-400 cursor-not-allowed'"
+                   :disabled="importFrequency !== 'once' || standardImportsDisabled()">
               <input name="imdb_csv"
                      accept=".csv"
                      class="hidden"
                      type="file"
-                     :disabled="importFrequency !== 'once' || importMode === 'update_collection'"
-                     @change="importFrequency === 'once' && importMode !== 'update_collection' && $el.form.submit()">
+                     :disabled="importFrequency !== 'once' || standardImportsDisabled()"
+                     @change="importFrequency === 'once' && !standardImportsDisabled() && $el.form.submit()">
               Select CSV File
             </label>
           </form>
@@ -831,14 +889,14 @@
             <input type="hidden" name="time" x-model="importTime">
             <input type="hidden" name="mode" x-model="importMode">
             <label class="flex items-center justify-center w-full px-4 py-2 text-sm rounded-md transition-colors"
-                   :class="importFrequency === 'once' && importMode !== 'update_collection' ? 'bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer' : 'bg-gray-600 text-gray-400 cursor-not-allowed'"
-                   :disabled="importFrequency !== 'once' || importMode === 'update_collection'">
+                   :class="importFrequency === 'once' && !standardImportsDisabled() ? 'bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer' : 'bg-gray-600 text-gray-400 cursor-not-allowed'"
+                   :disabled="importFrequency !== 'once' || standardImportsDisabled()">
               <input name="goodreads_csv"
                      accept=".csv"
                      class="hidden"
                      type="file"
-                     :disabled="importFrequency !== 'once' || importMode === 'update_collection'"
-                     @change="importFrequency === 'once' && importMode !== 'update_collection' && $el.form.submit()">
+                     :disabled="importFrequency !== 'once' || standardImportsDisabled()"
+                     @change="importFrequency === 'once' && !standardImportsDisabled() && $el.form.submit()">
               Select CSV File
             </label>
           </form>
@@ -860,14 +918,14 @@
             <input type="hidden" name="time" x-model="importTime">
             <input type="hidden" name="mode" x-model="importMode">
             <label class="flex items-center justify-center w-full px-4 py-2 text-sm rounded-md transition-colors"
-                   :class="importFrequency === 'once' && importMode !== 'update_collection' ? 'bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer' : 'bg-gray-600 text-gray-400 cursor-not-allowed'"
-                   :disabled="importFrequency !== 'once' || importMode === 'update_collection'">
+                   :class="importFrequency === 'once' && !standardImportsDisabled() ? 'bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer' : 'bg-gray-600 text-gray-400 cursor-not-allowed'"
+                   :disabled="importFrequency !== 'once' || standardImportsDisabled()">
               <input name="hardcover_csv"
                      accept=".csv"
                      class="hidden"
                      type="file"
-                     :disabled="importFrequency !== 'once' || importMode === 'update_collection'"
-                     @change="importFrequency === 'once' && importMode !== 'update_collection' && $el.form.submit()">
+                     :disabled="importFrequency !== 'once' || standardImportsDisabled()"
+                     @change="importFrequency === 'once' && !standardImportsDisabled() && $el.form.submit()">
               Select CSV File
             </label>
           </form>
@@ -915,7 +973,7 @@
         {% empty %}
           <div class="bg-[#39404b] rounded-lg p-6 text-center">
             <p class="text-gray-400 text-sm">No periodic imports configured</p>
-            <p class="text-gray-500 text-xs mt-1">Set up an import with a daily or 2-day frequency to see it here</p>
+            <p class="text-gray-500 text-xs mt-1">Enable a recurring import or Plex watchlist sync to see it here</p>
           </div>
         {% endfor %}
       </div>

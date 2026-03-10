@@ -20,6 +20,17 @@ class PlexAccount(models.Model):
     machine_identifier = models.CharField(max_length=255, blank=True, null=True)
     sections = models.JSONField(default=list, blank=True)
     sections_refreshed_at = models.DateTimeField(blank=True, null=True)
+    watchlist_sync_enabled = models.BooleanField(
+        default=False,
+        help_text="Whether recurring Plex watchlist sync is enabled",
+    )
+    watchlist_last_synced_at = models.DateTimeField(blank=True, null=True)
+    watchlist_last_error = models.TextField(
+        blank=True,
+        default="",
+        help_text="Last Plex watchlist sync error",
+    )
+    watchlist_last_error_at = models.DateTimeField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -37,6 +48,53 @@ class PlexAccount(models.Model):
     def is_connected(self):
         """Return True when we have a token stored."""
         return bool(self.plex_token)
+
+
+class PlexWatchlistSyncItem(models.Model):
+    """Persist the last-known Plex watchlist state for a user/item pair."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="plex_watchlist_sync_items",
+    )
+    item = models.ForeignKey(
+        "app.Item",
+        on_delete=models.CASCADE,
+        related_name="plex_watchlist_sync_items",
+    )
+    source_username = models.CharField(max_length=255, blank=True, default="")
+    source_account_id = models.CharField(max_length=255, blank=True, default="")
+    plex_rating_key = models.CharField(max_length=50, blank=True, default="")
+    plex_guid = models.CharField(max_length=255, blank=True, default="")
+    tmdb_id = models.CharField(max_length=32, blank=True, default="")
+    tvdb_id = models.CharField(max_length=32, blank=True, default="")
+    imdb_id = models.CharField(max_length=32, blank=True, default="")
+    created_by_sync = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+    first_seen_at = models.DateTimeField(auto_now_add=True)
+    last_seen_at = models.DateTimeField(auto_now=True)
+    removed_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        """Model options."""
+
+        verbose_name = "Plex watchlist sync item"
+        verbose_name_plural = "Plex watchlist sync items"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "item", "source_username"],
+                name="integrations_plexwatchlistsyncitem_unique_user_item_source",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["user", "is_active"]),
+            models.Index(fields=["user", "source_username"]),
+        ]
+
+    def __str__(self):
+        """Readable representation."""
+        return f"PlexWatchlistSyncItem({self.user.username}, {self.item_id})"
 
 
 class PocketCastsAccount(models.Model):

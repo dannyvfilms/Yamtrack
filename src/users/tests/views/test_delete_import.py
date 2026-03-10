@@ -4,6 +4,8 @@ from django.test import TestCase
 from django.urls import reverse
 from django_celery_beat.models import CrontabSchedule, PeriodicTask
 
+from integrations.models import PlexAccount
+
 
 class DeleteImportScheduleTests(TestCase):
     """Tests for the delete_import_schedule view."""
@@ -91,3 +93,30 @@ class DeleteImportScheduleTests(TestCase):
         self.assertIn("Import schedule not found", str(messages[0]))
 
         self.assertTrue(PeriodicTask.objects.filter(id=self.other_task.id).exists())
+
+    def test_delete_import_schedule_disables_watchlist_sync(self):
+        """Deleting the Plex watchlist schedule should clear the account flag."""
+        PlexAccount.objects.create(
+            user=self.user,
+            plex_token="token",
+            plex_username="testuser",
+            watchlist_sync_enabled=True,
+        )
+        watchlist_task = PeriodicTask.objects.create(
+            name="Sync Plex Watchlist for testuser (every 15 minutes)",
+            task="Sync Plex Watchlist",
+            kwargs=f'{{"user_id": {self.user.id}, "mode": "watchlist"}}',
+            crontab=self.crontab,
+            enabled=True,
+        )
+
+        response = self.client.post(
+            reverse("delete_import_schedule"),
+            {"task_name": watchlist_task.name},
+        )
+
+        self.assertRedirects(response, reverse("import_data"))
+        self.assertFalse(PeriodicTask.objects.filter(id=watchlist_task.id).exists())
+
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.plex_account.watchlist_sync_enabled)
