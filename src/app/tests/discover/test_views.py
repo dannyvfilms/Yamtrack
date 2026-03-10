@@ -109,6 +109,7 @@ class DiscoverViewTests(TestCase):
         self.assertIn("discover_media_options", response.context)
         self.assertTrue(response.context["discover_loading"])
         self.assertContains(response, "Refreshing recommendations in background")
+        self.assertContains(response, "js/cache-updater.js")
         mock_get_tab_rows.assert_called_once_with(
             self.user,
             "all",
@@ -192,7 +193,7 @@ class DiscoverViewTests(TestCase):
     @patch("app.views.discover_tab_cache.clear_lower_level_cache")
     @patch("app.views.discover_tab_cache.bump_activity_version")
     @patch("app.views.discover_tab_cache.mark_active")
-    def test_refresh_discover_schedules_active_and_all_tabs(
+    def test_refresh_discover_schedules_only_active_tab(
         self,
         mock_mark_active,
         mock_bump_activity_version,
@@ -211,7 +212,7 @@ class DiscoverViewTests(TestCase):
                 "ok": True,
                 "media_type": "movie",
                 "show_more": True,
-                "targets": ["movie", "all"],
+                "targets": ["movie"],
             },
         )
         mock_mark_active.assert_called_once_with(
@@ -219,29 +220,22 @@ class DiscoverViewTests(TestCase):
             "movie",
             show_more=True,
         )
-        self.assertEqual(mock_bump_activity_version.call_count, 2)
-        self.assertEqual(mock_clear_lower_level_cache.call_count, 2)
-        mock_schedule_tab_refresh.assert_has_calls(
-            [
-                call(
-                    self.user.id,
-                    "movie",
-                    show_more=True,
-                    debounce_seconds=0,
-                    countdown=0,
-                    force=True,
-                    clear_provider_cache=True,
-                ),
-                call(
-                    self.user.id,
-                    "all",
-                    show_more=True,
-                    debounce_seconds=0,
-                    countdown=0,
-                    force=True,
-                    clear_provider_cache=True,
-                ),
-            ],
+        mock_bump_activity_version.assert_called_once_with(
+            self.user.id,
+            "movie",
+        )
+        mock_clear_lower_level_cache.assert_called_once_with(
+            self.user.id,
+            "movie",
+        )
+        mock_schedule_tab_refresh.assert_called_once_with(
+            self.user.id,
+            "movie",
+            show_more=True,
+            debounce_seconds=0,
+            countdown=0,
+            force=True,
+            clear_provider_cache=True,
         )
 
     @patch("app.views.discover_tab_cache.get_tab_status")

@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% load app_tags %}
+{% load static %}
 
 {% block title %}
   Discover - Yamtrack
@@ -53,6 +54,22 @@
       Refreshing recommendations in background...
     </div>
 
+    <div x-cloak
+         x-show="refreshStatusVisible"
+         x-transition
+         role="status"
+         aria-live="polite"
+         class="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100">
+      <div class="flex items-center justify-between gap-3">
+        <span x-text="refreshStatusMessage">Recommendations refreshed.</span>
+        <button type="button"
+                @click="dismissRefreshStatus()"
+                class="text-emerald-100/80 transition-colors hover:text-white cursor-pointer">
+          {% include "app/icons/x.svg" with classes="h-4 w-4" %}
+        </button>
+      </div>
+    </div>
+
     <div x-show="toastVisible"
          x-cloak
          x-transition
@@ -84,6 +101,7 @@
 {% endblock content %}
 
 {% block js %}
+  <script src="{% static 'js/cache-updater.js' %}"></script>
   <script>
     function discoverPage(initialMedia, initialShowMore, initialDebug, initialCacheRefreshing) {
       return {
@@ -96,6 +114,10 @@
         rowsSwapHandler: null,
         rowsRefreshListener: null,
         discoverActionListener: null,
+        refreshStatusMessage: "",
+        refreshStatusVisible: false,
+        refreshStatusTimer: null,
+        manualRefreshPending: false,
         toastMessage: "",
         undoToken: "",
         toastVisible: false,
@@ -106,8 +128,12 @@
           if (this.discoverDebug) {
             return;
           }
-          this.syncCacheUpdater();
-          this.checkCacheStatus();
+          requestAnimationFrame(() => {
+            setTimeout(() => {
+              this.syncCacheUpdater();
+              this.checkCacheStatus();
+            }, 200);
+          });
         },
         bindEvents() {
           this.rowsRefreshListener = (event) => {
@@ -130,6 +156,26 @@
         resetRefreshState() {
           this.refreshing = false;
           this.cacheRefreshing = false;
+        },
+        clearRefreshStatusTimer() {
+          if (this.refreshStatusTimer) {
+            clearTimeout(this.refreshStatusTimer);
+            this.refreshStatusTimer = null;
+          }
+        },
+        showRefreshStatus(message) {
+          this.clearRefreshStatusTimer();
+          this.refreshStatusMessage = message;
+          this.refreshStatusVisible = Boolean(message);
+          if (!this.refreshStatusVisible) {
+            return;
+          }
+          this.refreshStatusTimer = setTimeout(() => this.dismissRefreshStatus(), 5000);
+        },
+        dismissRefreshStatus() {
+          this.clearRefreshStatusTimer();
+          this.refreshStatusVisible = false;
+          this.refreshStatusMessage = "";
         },
         clearToastTimer() {
           if (this.toastTimer) {
@@ -157,15 +203,21 @@
         },
         syncCacheUpdater() {
           this.stopCacheUpdater();
-          if (this.discoverDebug || typeof CacheUpdater === "undefined") {
+          if (this.discoverDebug || !window.CacheUpdater) {
             this.cacheUpdater = null;
             return;
           }
-          this.cacheUpdater = CacheUpdater.init("discover", {
+          this.cacheUpdater = window.CacheUpdater.init("discover", {
             mediaType: this.selectedMedia,
             showMore: this.showMore,
-            onUpdate: () => this.fetchRows(),
-            onRefreshComplete: () => {
+            onUpdate: () => this.fetchRows({
+              showRefreshComplete: this.manualRefreshPending,
+            }),
+            onRefreshComplete: (success) => {
+              if (success) {
+                return;
+              }
+              this.manualRefreshPending = false;
               this.resetRefreshState();
             },
           });
@@ -224,14 +276,25 @@
               throw new Error(`HTTP ${response.status}`);
             }
             const data = await response.json();
-            const pendingRefresh = Boolean(
-              data.is_refreshing || data.refresh_scheduled || data.is_stale,
+            const refreshInProgress = Boolean(
+              data.is_refreshing || data.refresh_scheduled,
             );
-            this.cacheRefreshing = pendingRefresh;
-            this.refreshing = pendingRefresh;
+            if (
+              this.manualRefreshPending
+              && !refreshInProgress
+              && data.exists
+              && !data.is_stale
+              && data.recently_built
+            ) {
+              this.fetchRows({ showRefreshComplete: true });
+              return;
+            }
+
+            this.cacheRefreshing = refreshInProgress;
+            this.refreshing = refreshInProgress;
             this.cacheUpdater.lastBuiltAt = data.built_at || null;
-            this.cacheUpdater.wasRefreshing = pendingRefresh;
-            if (pendingRefresh) {
+            this.cacheUpdater.wasRefreshing = data.is_refreshing || false;
+            if (refreshInProgress) {
               this.cacheUpdater.start();
             } else {
               this.cacheUpdater.stop();
@@ -240,7 +303,7 @@
             console.error("Discover cache status check failed:", error);
           }
         },
-        fetchRows() {
+        fetchRows({ showRefreshComplete = false } = {}) {
           const params = new URLSearchParams();
           params.set("media_type", this.selectedMedia);
           params.set("show_more", this.showMore ? "1" : "0");
@@ -249,8 +312,14 @@
           }
           this.attachAfterSwap(() => {
             if (this.discoverDebug) {
+              this.manualRefreshPending = false;
               this.resetRefreshState();
               return;
+            }
+            if (showRefreshComplete) {
+              this.manualRefreshPending = false;
+              this.resetRefreshState();
+              this.showRefreshStatus("Recommendations refreshed.");
             }
             this.checkCacheStatus();
           });
@@ -306,17 +375,23 @@
             return;
           }
           this.selectedMedia = mediaType;
+          this.manualRefreshPending = false;
+          this.dismissRefreshStatus();
           this.resetRefreshState();
           this.syncCacheUpdater();
           this.fetchRows();
         },
         toggleShowMore() {
           this.showMore = !this.showMore;
+          this.manualRefreshPending = false;
+          this.dismissRefreshStatus();
           this.resetRefreshState();
           this.syncCacheUpdater();
           this.fetchRows();
         },
         async refreshRows() {
+          this.manualRefreshPending = true;
+          this.dismissRefreshStatus();
           this.refreshing = true;
           this.cacheRefreshing = !this.discoverDebug;
           this.syncCacheUpdater();

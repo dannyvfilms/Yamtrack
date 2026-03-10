@@ -48,6 +48,11 @@ COMFORT_PROFILE_FAMILIES = (
     "runtime_buckets",
     "decades",
 )
+VIDEO_COMFORT_PROFILE_MEDIA_TYPES = {
+    MediaTypes.MOVIE.value,
+    MediaTypes.TV.value,
+    MediaTypes.ANIME.value,
+}
 
 MODEL_BY_MEDIA_TYPE = {
     MediaTypes.MOVIE.value: "movie",
@@ -285,7 +290,7 @@ def _normalize_comfort_affinity_bundle(
     }
 
 
-def _movie_feature_families_for_entry(
+def _video_feature_families_for_entry(
     entry,
     *,
     studio_map: dict[int, list[str]],
@@ -320,7 +325,7 @@ def _movie_feature_families_for_entry(
     }
 
 
-def _build_movie_comfort_affinity_bundles(
+def _build_video_comfort_affinity_bundles(
     entries: list,
     *,
     now,
@@ -348,7 +353,7 @@ def _build_movie_comfort_affinity_bundles(
                 "watch_count": 0,
                 "latest_activity_dt": activity_dt,
                 "latest_score": getattr(entry, "score", None),
-                "features": _movie_feature_families_for_entry(
+                "features": _video_feature_families_for_entry(
                     entry,
                     studio_map=studio_map,
                     directors_map=directors_map,
@@ -526,14 +531,14 @@ def compute_taste_profile(user, media_type: str) -> ProfilePayload:
         directors_map: dict[int, list[str]] = defaultdict(list)
         lead_cast_map: dict[int, list[str]] = defaultdict(list)
         studio_map: dict[int, list[str]] = defaultdict(list)
-        if media_type_key in {MediaTypes.MOVIE.value, MediaTypes.TV.value}:
+        if media_type_key in VIDEO_COMFORT_PROFILE_MEDIA_TYPES:
             person_map, directors_map, lead_cast_map = _item_credit_feature_maps(item_ids)
             studio_map = _item_studio_feature_map(item_ids)
-        if media_type_key == MediaTypes.MOVIE.value:
+        if media_type_key in VIDEO_COMFORT_PROFILE_MEDIA_TYPES:
             (
                 comfort_library_affinity,
                 comfort_rewatch_affinity,
-            ) = _build_movie_comfort_affinity_bundles(
+            ) = _build_video_comfort_affinity_bundles(
                 entries,
                 now=now,
                 studio_map=studio_map,
@@ -704,7 +709,7 @@ def compute_taste_profile(user, media_type: str) -> ProfilePayload:
                 feedback_tag_map[item_tag.item_id].append(tag_name)
 
         feedback_person_map: dict[int, list[str]] = defaultdict(list)
-        if media_type_key in {MediaTypes.MOVIE.value, MediaTypes.TV.value}:
+        if media_type_key in VIDEO_COMFORT_PROFILE_MEDIA_TYPES:
             for credit in ItemPersonCredit.objects.filter(item_id__in=feedback_item_ids).select_related("person"):
                 person_name = normalize_person_name(credit.person.name if credit.person_id else "")
                 if person_name:
@@ -769,10 +774,28 @@ def get_or_compute_taste_profile(user, media_type: str, *, force: bool = False) 
     """Return profile payload from DB cache or recompute when stale."""
     cached_entry, is_stale = cache_repo.get_taste_profile(user.id, media_type)
 
+    missing_video_comfort_backfill = False
+    if cached_entry and media_type in VIDEO_COMFORT_PROFILE_MEDIA_TYPES - {MediaTypes.MOVIE.value}:
+        comfort_library_affinity = getattr(cached_entry, "comfort_library_affinity", None) or {}
+        comfort_rewatch_affinity = getattr(cached_entry, "comfort_rewatch_affinity", None) or {}
+        has_cached_video_comfort = any(
+            comfort_library_affinity.get(family) or comfort_rewatch_affinity.get(family)
+            for family in COMFORT_PROFILE_FAMILIES
+        )
+        if not has_cached_video_comfort:
+            model_name = MODEL_BY_MEDIA_TYPE.get(media_type)
+            if model_name:
+                model = apps.get_model("app", model_name)
+                missing_video_comfort_backfill = model.objects.filter(
+                    user=user,
+                    status=Status.COMPLETED.value,
+                ).exists()
+
     if (
         cached_entry
         and not force
         and not is_stale
+        and not missing_video_comfort_backfill
         and not has_new_activity(user, media_type, cached_entry.activity_snapshot_at)
     ):
         return {

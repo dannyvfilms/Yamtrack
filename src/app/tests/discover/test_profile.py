@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from app.discover.profile import compute_taste_profile
 from app.models import (
+    Anime,
     CreditRoleType,
     DiscoverFeedback,
     DiscoverFeedbackType,
@@ -366,3 +367,157 @@ class DiscoverProfileTests(TestCase):
         self.assertIn("90_109", profile.comfort_library_affinity["runtime_buckets"])
         self.assertIn("whodunit", profile.comfort_rewatch_affinity["keywords"])
         self.assertIn("pixar", profile.comfort_rewatch_affinity["studios"])
+
+    def test_compute_taste_profile_builds_tv_comfort_library_bundle(self):
+        item = Item.objects.create(
+            media_id="tv-802",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Repeat Comfort Show",
+            image="http://example.com/repeat-comfort-show.jpg",
+            genres=["Animation", "Family"],
+            provider_keywords=["Whodunit", "Holiday"],
+            provider_certification="PG",
+            provider_collection_id="224",
+            provider_collection_name="Mystery Collection",
+            runtime_minutes=52,
+            release_datetime=timezone.now() - timedelta(days=365 * 3),
+            studios=["Pixar Animation Studios"],
+        )
+        director = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="tv-director-2",
+            name="Pete Docter",
+        )
+        lead = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="tv-actor-2",
+            name="Amy Poehler",
+        )
+        studio = Studio.objects.create(
+            source=Sources.TMDB.value,
+            source_studio_id="tv-studio-2",
+            name="Pixar Animation Studios",
+        )
+        ItemPersonCredit.objects.create(
+            item=item,
+            person=director,
+            role_type=CreditRoleType.CREW.value,
+            role="Director",
+            department="Directing",
+        )
+        ItemPersonCredit.objects.create(
+            item=item,
+            person=lead,
+            role_type=CreditRoleType.CAST.value,
+            role="Lead",
+            sort_order=0,
+        )
+        ItemStudioCredit.objects.create(item=item, studio=studio)
+
+        with patch("app.models.providers.services.get_media_metadata", return_value={"max_progress": 1}):
+            TV.objects.create(
+                item=item,
+                user=self.user,
+                score=10,
+                status=Status.COMPLETED.value,
+            )
+
+        profile = compute_taste_profile(self.user, MediaTypes.TV.value)
+
+        self.assertIn("whodunit", profile.keyword_affinity)
+        self.assertIn("pixar", profile.studio_affinity)
+        self.assertIn("mystery collection", profile.collection_affinity)
+        self.assertIn("pete docter", profile.director_affinity)
+        self.assertIn("amy poehler", profile.lead_cast_affinity)
+        self.assertIn("PG", profile.certification_affinity)
+        self.assertIn("<90", profile.runtime_bucket_affinity)
+        self.assertIn("2020s", profile.decade_affinity)
+        self.assertIn("whodunit", profile.comfort_library_affinity["keywords"])
+        self.assertIn("pixar", profile.comfort_library_affinity["studios"])
+        self.assertIn("mystery collection", profile.comfort_library_affinity["collections"])
+        self.assertIn("pete docter", profile.comfort_library_affinity["directors"])
+        self.assertIn("PG", profile.comfort_library_affinity["certifications"])
+        self.assertIn("<90", profile.comfort_library_affinity["runtime_buckets"])
+
+    def test_compute_taste_profile_builds_anime_comfort_library_and_rewatch_bundles(self):
+        item = Item.objects.create(
+            media_id="anime-802",
+            source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME.value,
+            title="Repeat Comfort Anime",
+            image="http://example.com/repeat-comfort-anime.jpg",
+            genres=["Animation", "Fantasy"],
+            provider_keywords=["Found Family", "Holiday"],
+            provider_certification="PG",
+            provider_collection_id="324",
+            provider_collection_name="Magic Collection",
+            runtime_minutes=24,
+            release_datetime=timezone.now() - timedelta(days=365 * 4),
+            studios=["Studio Pierrot"],
+        )
+        director = Person.objects.create(
+            source=Sources.MAL.value,
+            source_person_id="anime-director-2",
+            name="Hayao Miyazaki",
+        )
+        lead = Person.objects.create(
+            source=Sources.MAL.value,
+            source_person_id="anime-actor-2",
+            name="Maaya Sakamoto",
+        )
+        studio = Studio.objects.create(
+            source=Sources.MAL.value,
+            source_studio_id="anime-studio-2",
+            name="Studio Pierrot",
+        )
+        ItemPersonCredit.objects.create(
+            item=item,
+            person=director,
+            role_type=CreditRoleType.CREW.value,
+            role="Director",
+            department="Directing",
+        )
+        ItemPersonCredit.objects.create(
+            item=item,
+            person=lead,
+            role_type=CreditRoleType.CAST.value,
+            role="Lead",
+            sort_order=0,
+        )
+        ItemStudioCredit.objects.create(item=item, studio=studio)
+
+        with patch("app.models.providers.services.get_media_metadata", return_value={"max_progress": 1}):
+            Anime.objects.create(
+                item=item,
+                user=self.user,
+                score=10,
+                status=Status.COMPLETED.value,
+                end_date=timezone.now() - timedelta(days=30),
+            )
+            Anime.objects.create(
+                item=item,
+                user=self.user,
+                score=9,
+                status=Status.COMPLETED.value,
+                end_date=timezone.now() - timedelta(days=180),
+            )
+
+        profile = compute_taste_profile(self.user, MediaTypes.ANIME.value)
+
+        self.assertIn("found family", profile.keyword_affinity)
+        self.assertIn("studio pierrot", profile.studio_affinity)
+        self.assertIn("magic collection", profile.collection_affinity)
+        self.assertIn("hayao miyazaki", profile.director_affinity)
+        self.assertIn("maaya sakamoto", profile.lead_cast_affinity)
+        self.assertIn("PG", profile.certification_affinity)
+        self.assertIn("<90", profile.runtime_bucket_affinity)
+        self.assertIn("2020s", profile.decade_affinity)
+        self.assertIn("found family", profile.comfort_library_affinity["keywords"])
+        self.assertIn("studio pierrot", profile.comfort_library_affinity["studios"])
+        self.assertIn("magic collection", profile.comfort_library_affinity["collections"])
+        self.assertIn("hayao miyazaki", profile.comfort_library_affinity["directors"])
+        self.assertIn("PG", profile.comfort_library_affinity["certifications"])
+        self.assertIn("<90", profile.comfort_library_affinity["runtime_buckets"])
+        self.assertIn("found family", profile.comfort_rewatch_affinity["keywords"])
+        self.assertIn("studio pierrot", profile.comfort_rewatch_affinity["studios"])

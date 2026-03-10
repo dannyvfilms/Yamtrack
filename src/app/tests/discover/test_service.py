@@ -26,6 +26,7 @@ from app.discover.service import (
     get_discover_rows,
 )
 from app.models import (
+    Anime,
     CreditRoleType,
     Episode,
     Item,
@@ -1212,7 +1213,12 @@ class DiscoverServiceTests(TestCase):
         mock_top_picks.return_value = [candidate("400", "Pick 1"), candidate("401", "Pick 2"), candidate("402", "Pick 3")]
         mock_comfort.return_value = [candidate("500", "Comfort 1"), candidate("501", "Comfort 2"), candidate("502", "Comfort 3")]
 
-        rows = get_discover_rows(self.user, MediaTypes.TV.value, show_more=False)
+        rows = get_discover_rows(
+            self.user,
+            MediaTypes.TV.value,
+            show_more=False,
+            defer_artwork=True,
+        )
         self.assertEqual(
             [row.key for row in rows],
             [
@@ -1258,7 +1264,12 @@ class DiscoverServiceTests(TestCase):
         mock_top_picks.return_value = [candidate("400", "Pick 1"), candidate("401", "Pick 2"), candidate("402", "Pick 3")]
         mock_comfort.return_value = [candidate("500", "Comfort 1"), candidate("501", "Comfort 2"), candidate("502", "Comfort 3")]
 
-        rows = get_discover_rows(self.user, MediaTypes.ANIME.value, show_more=False)
+        rows = get_discover_rows(
+            self.user,
+            MediaTypes.ANIME.value,
+            show_more=False,
+            defer_artwork=True,
+        )
         self.assertEqual(
             [row.key for row in rows],
             [
@@ -1565,7 +1576,12 @@ class DiscoverServiceTests(TestCase):
         mock_popular.return_value = [candidate("200", "Canon 1"), candidate("201", "Canon 2"), candidate("202", "Canon 3")]
         mock_anticipated.return_value = [candidate("300", "Soon 1"), candidate("301", "Soon 2"), candidate("302", "Soon 3")]
 
-        rows = get_discover_rows(self.user, MediaTypes.TV.value, show_more=False)
+        rows = get_discover_rows(
+            self.user,
+            MediaTypes.TV.value,
+            show_more=False,
+            defer_artwork=True,
+        )
         row_map = {row.key: row for row in rows}
 
         self.assertEqual(
@@ -1801,6 +1817,280 @@ class DiscoverServiceTests(TestCase):
             ),
         )
         self.assertNotIn("old-tv-pick", rendered_ids)
+
+    @patch("app.discover.service.TRAKT_ADAPTER.show_anticipated")
+    @patch("app.discover.service.TRAKT_ADAPTER.show_popular")
+    @patch("app.discover.service.TRAKT_ADAPTER.show_watched_weekly")
+    def test_tv_rows_four_and_five_return_local_results(
+        self,
+        mock_trending,
+        mock_popular,
+        mock_anticipated,
+    ):
+        def provider_candidate(media_id: str, title: str) -> CandidateItem:
+            return CandidateItem(
+                media_type=MediaTypes.TV.value,
+                source=Sources.TMDB.value,
+                media_id=media_id,
+                title=title,
+                image=f"https://example.com/{media_id}.jpg",
+            )
+
+        mock_trending.return_value = [
+            provider_candidate("100", "Trending 1"),
+            provider_candidate("101", "Trending 2"),
+            provider_candidate("102", "Trending 3"),
+        ]
+        mock_popular.return_value = [
+            provider_candidate("200", "Canon 1"),
+            provider_candidate("201", "Canon 2"),
+            provider_candidate("202", "Canon 3"),
+        ]
+        mock_anticipated.return_value = [
+            provider_candidate("300", "Soon 1"),
+            provider_candidate("301", "Soon 2"),
+            provider_candidate("302", "Soon 3"),
+        ]
+
+        director = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="tv-row-director",
+            name="Pete Docter",
+        )
+        lead = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="tv-row-lead",
+            name="Amy Poehler",
+        )
+        studio = Studio.objects.create(
+            source=Sources.TMDB.value,
+            source_studio_id="tv-row-studio",
+            name="Pixar Animation Studios",
+        )
+
+        def build_item(media_id: str, title: str) -> Item:
+            item = Item.objects.create(
+                media_id=media_id,
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.TV.value,
+                title=title,
+                image=f"https://example.com/{media_id}.jpg",
+                genres=["Animation", "Family"],
+                provider_keywords=["Holiday", "Whodunit"],
+                provider_certification="PG",
+                provider_collection_id="tv-row-collection",
+                provider_collection_name="Mystery Collection",
+                runtime_minutes=52,
+                release_datetime=timezone.now() - timedelta(days=365 * 2),
+                studios=["Pixar Animation Studios"],
+                provider_rating=8.6,
+                provider_rating_count=4800,
+            )
+            ItemPersonCredit.objects.create(
+                item=item,
+                person=director,
+                role_type=CreditRoleType.CREW.value,
+                role="Director",
+                department="Directing",
+            )
+            ItemPersonCredit.objects.create(
+                item=item,
+                person=lead,
+                role_type=CreditRoleType.CAST.value,
+                role="Lead",
+                sort_order=0,
+            )
+            ItemStudioCredit.objects.create(item=item, studio=studio)
+            return item
+
+        planning_item = build_item("tv-plan-1", "Planned Cozy Mystery")
+        comfort_item = build_item("tv-comfort-1", "Comfort Mystery Show")
+        recent_item = build_item("tv-recent-1", "Recent Mystery Show")
+
+        with patch("app.models.providers.services.get_media_metadata", return_value={"max_progress": 1}):
+            TV.objects.create(
+                user=self.user,
+                item=planning_item,
+                status=Status.PLANNING.value,
+            )
+            comfort_entry = TV.objects.create(
+                user=self.user,
+                item=comfort_item,
+                score=10,
+                status=Status.COMPLETED.value,
+            )
+            recent_entry = TV.objects.create(
+                user=self.user,
+                item=recent_item,
+                score=9,
+                status=Status.COMPLETED.value,
+            )
+
+        TV.objects.filter(pk=comfort_entry.pk).update(created_at=timezone.now() - timedelta(days=220))
+        TV.objects.filter(pk=recent_entry.pk).update(created_at=timezone.now() - timedelta(days=20))
+
+        rows = get_discover_rows(self.user, MediaTypes.TV.value, show_more=False)
+        row_map = {row.key: row for row in rows}
+
+        self.assertGreaterEqual(
+            len(row_map["top_picks_for_you"].items),
+            1,
+            msg=f"TV row 4 blank: {self._row_snapshot(rows)}",
+        )
+        self.assertGreaterEqual(
+            len(row_map["comfort_rewatches"].items),
+            1,
+            msg=f"TV row 5 blank: {self._row_snapshot(rows)}",
+        )
+        self.assertIn(
+            "tv-plan-1",
+            {item.media_id for item in row_map["top_picks_for_you"].items},
+            msg=f"TV row 4 missing planning item: {self._row_snapshot(rows)}",
+        )
+        self.assertIn(
+            "tv-comfort-1",
+            {item.media_id for item in row_map["comfort_rewatches"].items},
+            msg=f"TV row 5 missing comfort item: {self._row_snapshot(rows)}",
+        )
+
+    @patch("app.discover.service.TRAKT_ADAPTER.show_anticipated")
+    @patch("app.discover.service.TRAKT_ADAPTER.show_popular")
+    @patch("app.discover.service.TRAKT_ADAPTER.show_watched_weekly")
+    def test_anime_rows_four_and_five_return_local_results(
+        self,
+        mock_trending,
+        mock_popular,
+        mock_anticipated,
+    ):
+        def provider_candidate(media_id: str, title: str) -> CandidateItem:
+            return CandidateItem(
+                media_type=MediaTypes.ANIME.value,
+                source=Sources.TMDB.value,
+                media_id=media_id,
+                title=title,
+                image=f"https://example.com/{media_id}.jpg",
+            )
+
+        mock_trending.return_value = [
+            provider_candidate("100", "Trending 1"),
+            provider_candidate("101", "Trending 2"),
+            provider_candidate("102", "Trending 3"),
+        ]
+        mock_popular.return_value = [
+            provider_candidate("200", "Canon 1"),
+            provider_candidate("201", "Canon 2"),
+            provider_candidate("202", "Canon 3"),
+        ]
+        mock_anticipated.return_value = [
+            provider_candidate("300", "Soon 1"),
+            provider_candidate("301", "Soon 2"),
+            provider_candidate("302", "Soon 3"),
+        ]
+
+        director = Person.objects.create(
+            source=Sources.MAL.value,
+            source_person_id="anime-row-director",
+            name="Hayao Miyazaki",
+        )
+        lead = Person.objects.create(
+            source=Sources.MAL.value,
+            source_person_id="anime-row-lead",
+            name="Maaya Sakamoto",
+        )
+        studio = Studio.objects.create(
+            source=Sources.MAL.value,
+            source_studio_id="anime-row-studio",
+            name="Studio Pierrot",
+        )
+
+        def build_item(media_id: str, title: str) -> Item:
+            item = Item.objects.create(
+                media_id=media_id,
+                source=Sources.MAL.value,
+                media_type=MediaTypes.ANIME.value,
+                title=title,
+                image=f"https://example.com/{media_id}.jpg",
+                genres=["Animation", "Fantasy"],
+                provider_keywords=["Found Family", "Holiday"],
+                provider_certification="PG",
+                provider_collection_id="anime-row-collection",
+                provider_collection_name="Magic Collection",
+                runtime_minutes=24,
+                release_datetime=timezone.now() - timedelta(days=365 * 3),
+                studios=["Studio Pierrot"],
+                provider_rating=8.8,
+                provider_rating_count=7200,
+            )
+            ItemPersonCredit.objects.create(
+                item=item,
+                person=director,
+                role_type=CreditRoleType.CREW.value,
+                role="Director",
+                department="Directing",
+            )
+            ItemPersonCredit.objects.create(
+                item=item,
+                person=lead,
+                role_type=CreditRoleType.CAST.value,
+                role="Lead",
+                sort_order=0,
+            )
+            ItemStudioCredit.objects.create(item=item, studio=studio)
+            return item
+
+        planning_item = build_item("anime-plan-1", "Planned Comfort Anime")
+        comfort_item = build_item("anime-comfort-1", "Comfort Rewatch Anime")
+        recent_item = build_item("anime-recent-1", "Recent Comfort Anime")
+
+        with patch("app.models.providers.services.get_media_metadata", return_value={"max_progress": 1}):
+            Anime.objects.create(
+                user=self.user,
+                item=planning_item,
+                status=Status.PLANNING.value,
+            )
+            Anime.objects.create(
+                user=self.user,
+                item=comfort_item,
+                score=10,
+                status=Status.COMPLETED.value,
+                end_date=timezone.now() - timedelta(days=150),
+            )
+            Anime.objects.create(
+                user=self.user,
+                item=recent_item,
+                score=9,
+                status=Status.COMPLETED.value,
+                end_date=timezone.now() - timedelta(days=18),
+            )
+
+        rows = get_discover_rows(
+            self.user,
+            MediaTypes.ANIME.value,
+            show_more=False,
+            defer_artwork=True,
+        )
+        row_map = {row.key: row for row in rows}
+
+        self.assertGreaterEqual(
+            len(row_map["top_picks_for_you"].items),
+            1,
+            msg=f"Anime row 4 blank: {self._row_snapshot(rows)}",
+        )
+        self.assertGreaterEqual(
+            len(row_map["comfort_rewatches"].items),
+            1,
+            msg=f"Anime row 5 blank: {self._row_snapshot(rows)}",
+        )
+        self.assertIn(
+            "anime-plan-1",
+            {item.media_id for item in row_map["top_picks_for_you"].items},
+            msg=f"Anime row 4 missing planning item: {self._row_snapshot(rows)}",
+        )
+        self.assertIn(
+            "anime-comfort-1",
+            {item.media_id for item in row_map["comfort_rewatches"].items},
+            msg=f"Anime row 5 missing comfort item: {self._row_snapshot(rows)}",
+        )
 
     @patch("app.discover.service.get_or_compute_taste_profile", return_value={})
     @patch("app.discover.service._comfort_candidates", return_value=[])
@@ -2736,6 +3026,184 @@ class DiscoverServiceTests(TestCase):
         self.assertEqual(candidate.certification, "PG")
         self.assertEqual(candidate.runtime_bucket, "90_109")
         self.assertEqual(candidate.release_decade, "2020s")
+
+    def test_entries_to_candidates_include_richer_anime_metadata(self):
+        item = Item.objects.create(
+            media_id="anime-rich-7001",
+            source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME.value,
+            title="Rich Anime Metadata",
+            image="http://example.com/anime-rich.jpg",
+            genres=["Animation", "Fantasy"],
+            provider_keywords=["Found Family", "Holiday"],
+            provider_certification="PG",
+            provider_collection_id="54",
+            provider_collection_name="Magic Collection",
+            runtime_minutes=24,
+            release_datetime=timezone.now() - timedelta(days=365),
+            studios=["Studio Pierrot"],
+        )
+        director = Person.objects.create(
+            source=Sources.MAL.value,
+            source_person_id="anime-director-rich",
+            name="Hayao Miyazaki",
+        )
+        lead = Person.objects.create(
+            source=Sources.MAL.value,
+            source_person_id="anime-actor-rich",
+            name="Maaya Sakamoto",
+        )
+        studio = Studio.objects.create(
+            source=Sources.MAL.value,
+            source_studio_id="anime-studio-rich",
+            name="Studio Pierrot",
+        )
+        ItemPersonCredit.objects.create(
+            item=item,
+            person=director,
+            role_type=CreditRoleType.CREW.value,
+            role="Director",
+            department="Directing",
+        )
+        ItemPersonCredit.objects.create(
+            item=item,
+            person=lead,
+            role_type=CreditRoleType.CAST.value,
+            role="Lead",
+            sort_order=0,
+        )
+        ItemStudioCredit.objects.create(item=item, studio=studio)
+
+        with patch("app.models.providers.services.get_media_metadata", return_value={"max_progress": 1}):
+            entry = Anime.objects.create(
+                item=item,
+                user=self.user,
+                score=9,
+                status=Status.COMPLETED.value,
+                end_date=timezone.now() - timedelta(days=120),
+            )
+
+        candidates = _entries_to_candidates(
+            [entry],
+            user=self.user,
+            row_key="comfort_rewatches",
+            source_reason="Past favorite",
+        )
+
+        self.assertEqual(len(candidates), 1)
+        candidate = candidates[0]
+        self.assertEqual(candidate.keywords, ["found family", "holiday"])
+        self.assertEqual(candidate.studios, ["studio pierrot"])
+        self.assertEqual(candidate.directors, ["hayao miyazaki"])
+        self.assertEqual(candidate.lead_cast, ["maaya sakamoto"])
+        self.assertEqual(candidate.collection_name, "Magic Collection")
+        self.assertEqual(candidate.certification, "PG")
+        self.assertEqual(candidate.runtime_bucket, "<90")
+        self.assertEqual(candidate.release_decade, "2020s")
+
+    def test_behavior_first_confidence_applies_to_tv_and_anime(self):
+        base_profile = {
+            "phase_keyword_affinity": {"holiday": 1.0, "whodunit": 0.9},
+            "recent_keyword_affinity": {"holiday": 0.9, "whodunit": 0.8},
+            "phase_studio_affinity": {"pixar": 1.0},
+            "recent_studio_affinity": {"pixar": 0.9},
+            "phase_collection_affinity": {"mystery collection": 0.9},
+            "recent_collection_affinity": {"mystery collection": 0.8},
+            "phase_director_affinity": {"greta gerwig": 0.6},
+            "recent_director_affinity": {"greta gerwig": 0.4},
+            "phase_lead_cast_affinity": {"amy poehler": 0.6},
+            "recent_lead_cast_affinity": {"amy poehler": 0.4},
+            "phase_certification_affinity": {"pg": 1.0},
+            "recent_certification_affinity": {"pg": 0.9},
+            "phase_runtime_bucket_affinity": {"<90": 1.0},
+            "recent_runtime_bucket_affinity": {"<90": 0.9},
+            "phase_decade_affinity": {"2020s": 0.7},
+            "recent_decade_affinity": {"2020s": 0.8},
+            "phase_genre_affinity": {"animation": 0.8, "family": 0.7},
+            "recent_genre_affinity": {"animation": 0.9, "family": 0.8},
+            "comfort_library_affinity": {
+                "keywords": {"holiday": 1.0, "whodunit": 0.95},
+                "collections": {"mystery collection": 0.9},
+                "studios": {"pixar": 1.0},
+                "genres": {"animation": 0.9, "family": 0.8},
+                "directors": {"greta gerwig": 0.4},
+                "lead_cast": {"amy poehler": 0.3},
+                "certifications": {"PG": 1.0},
+                "runtime_buckets": {"<90": 1.0},
+                "decades": {"2020s": 0.9},
+            },
+            "comfort_rewatch_affinity": {
+                "keywords": {"holiday": 1.0},
+                "collections": {"mystery collection": 0.9},
+                "studios": {"pixar": 1.0},
+                "genres": {"animation": 0.9},
+                "directors": {},
+                "lead_cast": {},
+                "certifications": {"PG": 1.0},
+                "runtime_buckets": {"<90": 1.0},
+                "decades": {"2020s": 0.9},
+            },
+        }
+
+        for media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
+            with self.subTest(media_type=media_type):
+                candidates = [
+                    CandidateItem(
+                        media_type=media_type,
+                        source=Sources.TMDB.value,
+                        media_id=f"{media_type}-fit",
+                        title="Family Comfort",
+                        genres=["Animation", "Family"],
+                        keywords=["holiday", "whodunit"],
+                        studios=["pixar"],
+                        directors=["greta gerwig"],
+                        lead_cast=["amy poehler"],
+                        collection_name="Mystery Collection",
+                        certification="PG",
+                        runtime_bucket="<90",
+                        release_decade="2020s",
+                        popularity=90.0,
+                        rating_count=9000,
+                        score_breakdown={
+                            "user_score": 8.0,
+                            "days_since_activity": 220.0,
+                            "rewatch_count": 2.0,
+                            "recent_history_tag_coverage": 0.0,
+                        },
+                    ),
+                    CandidateItem(
+                        media_type=media_type,
+                        source=Sources.TMDB.value,
+                        media_id=f"{media_type}-weak",
+                        title="Broad Fit",
+                        genres=["Drama"],
+                        certification="PG",
+                        runtime_bucket="<90",
+                        release_decade="2010s",
+                        popularity=70.0,
+                        rating_count=5000,
+                        score_breakdown={
+                            "user_score": 8.0,
+                            "days_since_activity": 260.0,
+                            "rewatch_count": 1.0,
+                            "recent_history_tag_coverage": 0.0,
+                        },
+                    ),
+                ]
+
+                reranked = _apply_comfort_confidence(
+                    candidates,
+                    base_profile,
+                    use_movie_rewatch_model=True,
+                )
+
+                self.assertEqual(reranked[0].media_id, f"{media_type}-fit")
+                self.assertGreater(reranked[0].score_breakdown["library_fit"], 0.0)
+                self.assertGreater(reranked[0].score_breakdown["recency_phase_fit"], 0.0)
+                self.assertIn("ready_now_score", reranked[0].score_breakdown)
+                self.assertTrue(
+                    reranked[0].score_breakdown["primary_reason_bucket"].startswith("keywords:"),
+                )
 
     def test_movie_comfort_confidence_prefers_behavior_first_fits_and_filters_weak_unrated(self):
         candidates = [

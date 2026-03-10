@@ -721,7 +721,7 @@ def discover_rows(request):
 @login_required
 @require_POST
 def refresh_discover(request):
-    """Invalidate Discover caches for the active tab and queue a background refresh."""
+    """Invalidate the active Discover tab cache and queue a background refresh."""
     media_type = _coerce_discover_media_type(request.POST.get("media_type"))
     show_more = request.POST.get("show_more") in {"1", "true", "True"}
     discover_tab_cache.mark_active(
@@ -730,29 +730,24 @@ def refresh_discover(request):
         show_more=show_more,
     )
 
-    target_media_types = [media_type]
-    if media_type != "all":
-        target_media_types.append("all")
-
-    for target_media_type in target_media_types:
-        discover_tab_cache.bump_activity_version(request.user.id, target_media_type)
-        discover_tab_cache.clear_lower_level_cache(request.user.id, target_media_type)
-        discover_tab_cache.schedule_tab_refresh(
-            request.user.id,
-            target_media_type,
-            show_more=show_more,
-            debounce_seconds=discover_tab_cache.DISCOVER_PRIORITY_REFRESH_DEBOUNCE_SECONDS,
-            countdown=discover_tab_cache.DISCOVER_PRIORITY_REFRESH_COUNTDOWN,
-            force=True,
-            clear_provider_cache=True,
-        )
+    discover_tab_cache.bump_activity_version(request.user.id, media_type)
+    discover_tab_cache.clear_lower_level_cache(request.user.id, media_type)
+    discover_tab_cache.schedule_tab_refresh(
+        request.user.id,
+        media_type,
+        show_more=show_more,
+        debounce_seconds=discover_tab_cache.DISCOVER_PRIORITY_REFRESH_DEBOUNCE_SECONDS,
+        countdown=discover_tab_cache.DISCOVER_PRIORITY_REFRESH_COUNTDOWN,
+        force=True,
+        clear_provider_cache=True,
+    )
 
     return JsonResponse(
         {
             "ok": True,
             "media_type": media_type,
             "show_more": show_more,
-            "targets": target_media_types,
+            "targets": [media_type],
         },
     )
 

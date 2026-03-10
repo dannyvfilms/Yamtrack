@@ -71,7 +71,7 @@ MOVIE_CANON_ROW_SCHEMA_VERSION = 2
 MOVIE_COMING_SOON_ROW_SCHEMA_VERSION = 1
 MOVIE_PERSONALIZED_ROW_SCHEMA_VERSION = 3
 TV_ANIME_TRAKT_ROW_SCHEMA_VERSION = 1
-TV_ANIME_PERSONALIZED_ROW_SCHEMA_VERSION = 1
+TV_ANIME_PERSONALIZED_ROW_SCHEMA_VERSION = 2
 ROW_CANDIDATE_BUFFER_MULTIPLIER = 5
 MOVIE_PERSONALIZED_ROW_KEYS = {
     "top_picks_for_you",
@@ -87,6 +87,11 @@ TV_ANIME_ROW_KEYS = {
     "coming_soon",
     "top_picks_for_you",
     "comfort_rewatches",
+}
+BEHAVIOR_FIRST_MEDIA_TYPES = {
+    MediaTypes.MOVIE.value,
+    MediaTypes.TV.value,
+    MediaTypes.ANIME.value,
 }
 FIVE_ROW_DISCOVER_KEYS = {
     "trending_right_now",
@@ -440,8 +445,8 @@ def _entries_to_candidates(
     tag_map = _item_tag_map(user, item_ids)
 
     include_people = bool(
-        override_media_type in {MediaTypes.MOVIE.value, MediaTypes.TV.value}
-        or (entries and entries[0].item.media_type in {MediaTypes.MOVIE.value, MediaTypes.TV.value})
+        override_media_type in BEHAVIOR_FIRST_MEDIA_TYPES
+        or (entries and entries[0].item.media_type in BEHAVIOR_FIRST_MEDIA_TYPES)
     )
     people_map: dict[int, list[str]] = defaultdict(list)
     directors_map: dict[int, list[str]] = defaultdict(list)
@@ -2304,7 +2309,7 @@ def _apply_top_picks_confidence(
     return _apply_comfort_confidence(
         candidates,
         profile_payload,
-        use_movie_rewatch_model=(media_type == MediaTypes.MOVIE.value),
+        use_movie_rewatch_model=(media_type in BEHAVIOR_FIRST_MEDIA_TYPES),
         user=None,
     )
 
@@ -2663,31 +2668,46 @@ def _movie_comfort_cooldown_context(
     if not user or not candidates:
         return {"title": {}, "family": {}}
 
-    model = _model_for_media_type(MediaTypes.MOVIE.value)
+    candidate_media_types = {
+        candidate.media_type
+        for candidate in candidates
+        if candidate.media_type
+    }
+    if len(candidate_media_types) != 1:
+        return {"title": {}, "family": {}}
+    media_type = next(iter(candidate_media_types))
+    if media_type not in BEHAVIOR_FIRST_MEDIA_TYPES:
+        return {"title": {}, "family": {}}
+
+    model = _model_for_media_type(media_type)
     if not model:
         return {"title": {}, "family": {}}
+
+    entry_only_fields = [
+        "item_id",
+        "created_at",
+        "item__id",
+        "item__source",
+        "item__media_id",
+        "item__genres",
+        "item__provider_keywords",
+        "item__provider_certification",
+        "item__provider_collection_id",
+        "item__provider_collection_name",
+        "item__release_datetime",
+        "item__runtime_minutes",
+        "item__studios",
+    ]
+    if _model_has_field(model, "progressed_at"):
+        entry_only_fields.append("progressed_at")
+    if _model_has_field(model, "end_date"):
+        entry_only_fields.append("end_date")
 
     entries = list(
         model.objects.filter(user=user, status=Status.COMPLETED.value)
         .select_related("item")
-        .only(
-            "item_id",
-            "created_at",
-            "progressed_at",
-            "end_date",
-            "item__id",
-            "item__source",
-            "item__media_id",
-            "item__genres",
-            "item__provider_keywords",
-            "item__provider_certification",
-            "item__provider_collection_id",
-            "item__provider_collection_name",
-            "item__release_datetime",
-            "item__runtime_minutes",
-            "item__studios",
-        )
-        .order_by("-end_date", "-progressed_at", "-created_at")
+        .only(*entry_only_fields)
+        .order_by(*_activity_ordering(model))
     )
     if not entries:
         return {"title": {}, "family": {}}
@@ -3432,7 +3452,9 @@ def _apply_movie_comfort_confidence(
         candidate.score_breakdown["candidate_has_extended_metadata"] = (
             1.0 if _candidate_has_extended_movie_metadata(candidate) else 0.0
         )
-        candidate.score_breakdown["candidate_is_unrated"] = 1.0 if user_score is None else 0.0
+        candidate.score_breakdown["candidate_is_unrated"] = (
+            1.0 if user_score is None and candidate.rating is None else 0.0
+        )
         candidate.score_breakdown["tag_signal_mode"] = "behavior_first"
         candidate.score_breakdown["hot_recency"] = round(recency_phase_fit, 6)
         candidate.score_breakdown["hot_recency_base"] = round(recency_phase_fit, 6)
@@ -3544,18 +3566,18 @@ def _apply_comfort_confidence(
     if (
         use_movie_rewatch_model
         and candidates
-        and all(candidate.media_type == MediaTypes.MOVIE.value for candidate in candidates)
+        and all(candidate.media_type in BEHAVIOR_FIRST_MEDIA_TYPES for candidate in candidates)
     ):
-        movie_candidates = _apply_movie_comfort_confidence(
+        behavior_first_candidates = _apply_movie_comfort_confidence(
             candidates,
             profile_payload,
             user=user,
             phase_genre_affinity=phase_genre_affinity,
         )
-        if movie_candidates is not candidates or any(
+        if behavior_first_candidates is not candidates or any(
             "recent_shape_fit" in candidate.score_breakdown for candidate in candidates
         ):
-            candidates = movie_candidates
+            candidates = behavior_first_candidates
             _calibrate_comfort_display_scores(candidates)
             return candidates
 
@@ -4614,7 +4636,7 @@ def _row_match_signal_with_details(
     if (
         row_key == "comfort_rewatches"
         and candidates
-        and all(candidate.media_type == MediaTypes.MOVIE.value for candidate in candidates)
+        and all(candidate.media_type in BEHAVIOR_FIRST_MEDIA_TYPES for candidate in candidates)
         and any("primary_reason_bucket" in candidate.score_breakdown for candidate in candidates)
     ):
         movie_signal, movie_details = _movie_comfort_match_signal_with_details(candidates)
@@ -4989,7 +5011,7 @@ def _build_row_candidates(
             _apply_comfort_confidence(
                 candidates,
                 profile_payload,
-                use_movie_rewatch_model=(media_type == MediaTypes.MOVIE.value),
+                use_movie_rewatch_model=(media_type in BEHAVIOR_FIRST_MEDIA_TYPES),
                 user=user,
             )
         return candidates
