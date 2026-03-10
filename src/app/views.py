@@ -170,6 +170,54 @@ def _collect_reading_activity_day_keys(entries):
     return sorted(day_keys)
 
 
+def _get_tv_runtime_display_fallback(detail_item, media_metadata):
+    """Return a best-effort runtime string for TV details when provider runtime is missing."""
+    if not detail_item or detail_item.media_type != MediaTypes.TV.value:
+        return None
+
+    runtime_minutes = getattr(detail_item, "runtime_minutes", None)
+    if runtime_minutes and runtime_minutes < 999998:
+        return tmdb.get_readable_duration(runtime_minutes)
+
+    if detail_item.runtime:
+        parsed_runtime = stats.parse_runtime_to_minutes(detail_item.runtime)
+        if parsed_runtime and parsed_runtime > 0:
+            return tmdb.get_readable_duration(parsed_runtime)
+
+    episode_runtimes = list(
+        Item.objects.filter(
+            media_id=detail_item.media_id,
+            source=detail_item.source,
+            media_type=MediaTypes.EPISODE.value,
+            runtime_minutes__isnull=False,
+        ).exclude(
+            runtime_minutes__in=[999998, 999999],
+        ).values_list("runtime_minutes", flat=True),
+    )
+    if episode_runtimes:
+        return tmdb.get_readable_duration(round(sum(episode_runtimes) / len(episode_runtimes)))
+
+    details = media_metadata.get("details") if isinstance(media_metadata, dict) else {}
+    if not isinstance(details, dict):
+        details = {}
+
+    max_seasons = details.get("seasons")
+    try:
+        max_seasons = int(max_seasons)
+    except (TypeError, ValueError):
+        max_seasons = 5
+    max_seasons = max(1, min(max_seasons, 20))
+
+    for season_num in range(1, max_seasons + 1):
+        cached_season_data = cache.get(f"tmdb_season_{detail_item.media_id}_{season_num}")
+        runtime_str = ((cached_season_data or {}).get("details") or {}).get("runtime")
+        runtime_minutes = stats.parse_runtime_to_minutes(runtime_str)
+        if runtime_minutes and runtime_minutes > 0:
+            return tmdb.get_readable_duration(runtime_minutes)
+
+    return None
+
+
 @require_GET
 def home(request):
     """Home page with media items in progress."""
@@ -3460,6 +3508,16 @@ def media_details(
 
     # For TV shows, apply fallback for seasons without posters (handles cached metadata)
     if media_type == MediaTypes.TV.value and isinstance(media_metadata, dict):
+        details = media_metadata.get("details")
+        if not isinstance(details, dict):
+            details = {}
+            media_metadata["details"] = details
+
+        if not details.get("runtime"):
+            fallback_runtime = _get_tv_runtime_display_fallback(detail_item, media_metadata)
+            if fallback_runtime:
+                details["runtime"] = fallback_runtime
+
         tv_poster = media_metadata.get("image")
         if tv_poster:
             seasons = media_metadata.get("related", {}).get("seasons", [])

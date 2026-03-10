@@ -11,14 +11,17 @@ from app import statistics_cache
 from app.models import (
     Book,
     CreditRoleType,
+    Episode,
     Item,
     ItemPersonCredit,
     MediaTypes,
     Person,
     PodcastEpisode,
     PodcastShow,
+    Season,
     Sources,
     Status,
+    TV,
 )
 from integrations.models import PlexAccount
 
@@ -654,6 +657,176 @@ class MediaDetailsViewTests(TestCase):
         refreshed_stats = statistics_cache.refresh_statistics_cache(self.user.id, "All Time")
         refreshed_genres = [entry["name"] for entry in refreshed_stats["book_consumption"]["top_genres"]]
         self.assertIn("Fantasy", refreshed_genres)
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_tv_media_details_uses_episode_runtime_fallback_when_metadata_runtime_missing(
+        self,
+        mock_get_metadata,
+    ):
+        """TV details should show a derived runtime when provider runtime is missing."""
+        show_item = Item.objects.create(
+            media_id="91239",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Bridgerton",
+            image="http://example.com/show.jpg",
+            runtime_minutes=999999,
+        )
+        Item.objects.create(
+            media_id="91239",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=1,
+            title="Episode 1",
+            runtime_minutes=52,
+        )
+        Item.objects.create(
+            media_id="91239",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=2,
+            title="Episode 2",
+            runtime_minutes=54,
+        )
+
+        mock_get_metadata.return_value = {
+            "media_id": "91239",
+            "title": "Bridgerton",
+            "media_type": MediaTypes.TV.value,
+            "source": Sources.TMDB.value,
+            "source_url": "https://www.themoviedb.org/tv/91239",
+            "image": "http://example.com/show.jpg",
+            "synopsis": "Test synopsis",
+            "details": {
+                "format": "TV",
+                "runtime": None,
+                "seasons": 1,
+            },
+            "related": {},
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+            "providers": {},
+            "external_links": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "media_id": "91239",
+                    "title": "bridgerton",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["media"]["details"]["runtime"], "53m")
+        show_item.refresh_from_db()
+        self.assertEqual(show_item.runtime_minutes, 999999)
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_tv_media_details_play_stats_skip_placeholder_episode_runtimes(
+        self,
+        mock_get_metadata,
+    ):
+        """TV details totals should ignore placeholder episode runtimes."""
+        watched_at = timezone.now()
+        show_item = Item.objects.create(
+            media_id="91239",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Bridgerton",
+            image="http://example.com/show.jpg",
+        )
+        tv = TV.objects.create(
+            item=show_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        season_item = Item.objects.create(
+            media_id="91239",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            title="Bridgerton",
+            image="http://example.com/season.jpg",
+        )
+        season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=tv,
+            status=Status.IN_PROGRESS.value,
+        )
+        valid_episode_item = Item.objects.create(
+            media_id="91239",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=1,
+            title="Episode 1",
+            runtime_minutes=45,
+        )
+        placeholder_episode_item = Item.objects.create(
+            media_id="91239",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=2,
+            title="Episode 2",
+            runtime_minutes=999998,
+        )
+        Episode.objects.create(
+            item=valid_episode_item,
+            related_season=season,
+            end_date=watched_at,
+        )
+        Episode.objects.create(
+            item=placeholder_episode_item,
+            related_season=season,
+            end_date=watched_at + timedelta(minutes=1),
+        )
+
+        mock_get_metadata.return_value = {
+            "media_id": "91239",
+            "title": "Bridgerton",
+            "media_type": MediaTypes.TV.value,
+            "source": Sources.TMDB.value,
+            "source_url": "https://www.themoviedb.org/tv/91239",
+            "image": "http://example.com/show.jpg",
+            "synopsis": "Test synopsis",
+            "details": {
+                "format": "TV",
+                "runtime": None,
+                "seasons": 1,
+            },
+            "related": {},
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+            "providers": {},
+            "external_links": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "media_id": "91239",
+                    "title": "bridgerton",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["play_stats"]["total_minutes"], 45)
+        self.assertEqual(response.context["play_stats"]["episode_count"], 1)
 
     @patch("app.providers.openlibrary.book")
     def test_audiobookshelf_book_details_does_not_call_openlibrary(

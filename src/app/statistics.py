@@ -1410,11 +1410,20 @@ def _calculate_episode_time_from_data(episode_data, logger):
 
 def _calculate_episode_time_from_cache(episode, logger):
     """Calculate episode time from cached runtime data."""
-    if not hasattr(episode, "item") or not episode.item.runtime_minutes:
+    runtime_minutes = getattr(getattr(episode, "item", None), "runtime_minutes", None)
+    if not runtime_minutes:
         logger.warning(f"Runtime data missing for episode {episode.item.episode_number if episode.item else 'unknown'}, skipping")
         return 0  # Skip this episode instead of failing
 
-    return episode.item.runtime_minutes
+    if runtime_minutes >= 999998:
+        logger.warning(
+            "Runtime placeholder %s for episode %s, skipping",
+            runtime_minutes,
+            episode.item.episode_number if episode.item else "unknown",
+        )
+        return 0  # Skip this episode instead of failing
+
+    return runtime_minutes
 
 
 def _is_episode_in_range(episode, start_date, end_date):
