@@ -42,6 +42,7 @@ from app.discover.registry import ALL_MEDIA_KEY, DISCOVER_MEDIA_TYPES, get_rows
 from app.discover.schemas import CandidateItem, DiscoverPayload, RowDefinition, RowResult
 from app.discover.scoring import cosine_similarity, normalize_values, score_candidates
 from app.models import (
+    BasicMedia,
     CreditRoleType,
     Episode,
     Item,
@@ -71,7 +72,7 @@ MOVIE_CANON_ROW_SCHEMA_VERSION = 2
 MOVIE_COMING_SOON_ROW_SCHEMA_VERSION = 1
 MOVIE_PERSONALIZED_ROW_SCHEMA_VERSION = 3
 TV_ANIME_TRAKT_ROW_SCHEMA_VERSION = 1
-TV_ANIME_PERSONALIZED_ROW_SCHEMA_VERSION = 2
+TV_ANIME_PERSONALIZED_ROW_SCHEMA_VERSION = 3
 ROW_CANDIDATE_BUFFER_MULTIPLIER = 5
 MOVIE_PERSONALIZED_ROW_KEYS = {
     "top_picks_for_you",
@@ -587,6 +588,48 @@ def _in_progress_candidates(user, media_type: str, *, row_key: str, source_reaso
         row_key=row_key,
         source_reason=source_reason,
     )
+
+
+def _clear_out_next_entries(user, media_type: str):
+    model = _model_for_media_type(media_type)
+    if not model:
+        return []
+
+    entries = list(
+        model.objects.filter(user=user, status=Status.IN_PROGRESS.value)
+        .select_related("item")
+        .order_by(*_activity_ordering(model))
+    )
+    if not entries:
+        return []
+
+    BasicMedia.objects.annotate_max_progress(entries, media_type)
+    return [
+        entry
+        for entry in entries
+        if not _is_caught_up_in_progress_entry(entry)
+    ]
+
+
+def _is_caught_up_in_progress_entry(entry) -> bool:
+    max_progress = getattr(entry, "max_progress", None)
+    if max_progress is None:
+        return False
+
+    try:
+        max_progress_value = int(max_progress)
+    except (TypeError, ValueError):
+        return False
+
+    if max_progress_value <= 0:
+        return False
+
+    try:
+        progress_value = int(getattr(entry, "progress", 0) or 0)
+    except (TypeError, ValueError):
+        return False
+
+    return progress_value >= max_progress_value
 
 
 def _planning_candidates(user, media_type: str, *, row_key: str, source_reason: str) -> list[CandidateItem]:
@@ -2305,9 +2348,9 @@ def _clear_out_next_candidates(
     row_key: str,
     profile_payload: dict,
 ) -> list[CandidateItem]:
-    candidates = _in_progress_candidates(
-        user,
-        media_type,
+    candidates = _entries_to_candidates(
+        _clear_out_next_entries(user, media_type),
+        user=user,
         row_key=row_key,
         source_reason="Ranked from your in-progress list",
     )

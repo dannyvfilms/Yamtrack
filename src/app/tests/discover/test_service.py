@@ -42,6 +42,7 @@ from app.models import (
     Studio,
     TV,
 )
+from events.models import Event
 
 
 class DiscoverServiceTests(TestCase):
@@ -1912,6 +1913,7 @@ class DiscoverServiceTests(TestCase):
 
         planning_item = build_item("tv-plan-1", "Planned Cozy Mystery")
         in_progress_item = build_item("tv-progress-1", "In Progress Cozy Mystery")
+        caught_up_item = build_item("tv-caught-up-1", "Caught Up Mystery Show")
         comfort_item = build_item("tv-comfort-1", "Comfort Mystery Show")
         recent_item = build_item("tv-recent-1", "Recent Mystery Show")
 
@@ -1926,6 +1928,11 @@ class DiscoverServiceTests(TestCase):
                 item=in_progress_item,
                 status=Status.IN_PROGRESS.value,
             )
+            caught_up_entry = TV.objects.create(
+                user=self.user,
+                item=caught_up_item,
+                status=Status.IN_PROGRESS.value,
+            )
             comfort_entry = TV.objects.create(
                 user=self.user,
                 item=comfort_item,
@@ -1938,6 +1945,45 @@ class DiscoverServiceTests(TestCase):
                 score=9,
                 status=Status.COMPLETED.value,
             )
+
+        caught_up_season_item = Item.objects.create(
+            media_id="tv-caught-up-1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Caught Up Mystery Show",
+            image="https://example.com/tv-caught-up-season.jpg",
+            season_number=1,
+        )
+        caught_up_season = Season.objects.create(
+            user=self.user,
+            item=caught_up_season_item,
+            related_tv=caught_up_entry,
+            status=Status.IN_PROGRESS.value,
+        )
+        caught_up_episode_item = Item.objects.create(
+            media_id="tv-caught-up-1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Caught Up Mystery Show",
+            image="https://example.com/tv-caught-up-episode.jpg",
+            season_number=1,
+            episode_number=1,
+            release_datetime=timezone.now() - timedelta(days=7),
+        )
+        Episode.objects.bulk_create(
+            [
+                Episode(
+                    item=caught_up_episode_item,
+                    related_season=caught_up_season,
+                    end_date=timezone.now() - timedelta(days=1),
+                ),
+            ],
+        )
+        Event.objects.create(
+            item=caught_up_season_item,
+            content_number=1,
+            datetime=timezone.now() - timedelta(days=1),
+        )
 
         TV.objects.filter(pk=comfort_entry.pk).update(created_at=timezone.now() - timedelta(days=220))
         TV.objects.filter(pk=recent_entry.pk).update(created_at=timezone.now() - timedelta(days=20))
@@ -1969,6 +2015,11 @@ class DiscoverServiceTests(TestCase):
             "tv-progress-1",
             {item.media_id for item in row_map["clear_out_next"].items},
             msg=f"TV clear-out-next missing in-progress item: {self._row_snapshot(rows)}",
+        )
+        self.assertNotIn(
+            "tv-caught-up-1",
+            {item.media_id for item in row_map["clear_out_next"].items},
+            msg=f"TV clear-out-next should exclude caught-up shows: {self._row_snapshot(rows)}",
         )
         self.assertIn(
             "tv-comfort-1",
@@ -2063,10 +2114,11 @@ class DiscoverServiceTests(TestCase):
 
         planning_item = build_item("anime-plan-1", "Planned Comfort Anime")
         in_progress_item = build_item("anime-progress-1", "In Progress Comfort Anime")
+        caught_up_item = build_item("anime-caught-up-1", "Caught Up Comfort Anime")
         comfort_item = build_item("anime-comfort-1", "Comfort Rewatch Anime")
         recent_item = build_item("anime-recent-1", "Recent Comfort Anime")
 
-        with patch("app.models.providers.services.get_media_metadata", return_value={"max_progress": 1}):
+        with patch("app.models.providers.services.get_media_metadata", return_value={"max_progress": 10}):
             Anime.objects.create(
                 user=self.user,
                 item=planning_item,
@@ -2076,6 +2128,12 @@ class DiscoverServiceTests(TestCase):
                 user=self.user,
                 item=in_progress_item,
                 status=Status.IN_PROGRESS.value,
+            )
+            Anime.objects.create(
+                user=self.user,
+                item=caught_up_item,
+                status=Status.IN_PROGRESS.value,
+                progress=1,
             )
             Anime.objects.create(
                 user=self.user,
@@ -2091,6 +2149,12 @@ class DiscoverServiceTests(TestCase):
                 status=Status.COMPLETED.value,
                 end_date=timezone.now() - timedelta(days=18),
             )
+
+        Event.objects.create(
+            item=caught_up_item,
+            content_number=1,
+            datetime=timezone.now() - timedelta(days=1),
+        )
 
         rows = get_discover_rows(
             self.user,
@@ -2124,6 +2188,11 @@ class DiscoverServiceTests(TestCase):
             "anime-progress-1",
             {item.media_id for item in row_map["clear_out_next"].items},
             msg=f"Anime clear-out-next missing in-progress item: {self._row_snapshot(rows)}",
+        )
+        self.assertNotIn(
+            "anime-caught-up-1",
+            {item.media_id for item in row_map["clear_out_next"].items},
+            msg=f"Anime clear-out-next should exclude caught-up titles: {self._row_snapshot(rows)}",
         )
         self.assertIn(
             "anime-comfort-1",
@@ -2519,59 +2588,74 @@ class DiscoverServiceTests(TestCase):
         mock_related.assert_not_called()
         mock_genre_discovery.assert_not_called()
 
-    @patch("app.discover.service._in_progress_candidates")
-    def test_clear_out_next_candidates_use_local_in_progress_pool(
-        self,
-        mock_in_progress,
-    ):
-        mock_in_progress.return_value = [
-            CandidateItem(
-                media_type=MediaTypes.TV.value,
-                source="tmdb",
-                media_id="2001",
-                title="Current Pick",
-                genres=["Mystery"],
-                popularity=75.0,
-                rating=8.5,
-                score_breakdown={"days_since_activity": 4.0},
-            ),
-            CandidateItem(
-                media_type=MediaTypes.TV.value,
-                source="tmdb",
-                media_id="2002",
-                title="Second Pick",
-                genres=["Drama"],
-                popularity=68.0,
-                rating=7.8,
-                score_breakdown={"days_since_activity": 12.0},
-            ),
-        ]
+    def test_clear_out_next_candidates_exclude_caught_up_anime_entries(self):
+        open_item = Item.objects.create(
+            media_id="clear-open-1",
+            source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME.value,
+            title="Open Pick",
+            image="https://example.com/clear-open-1.jpg",
+            genres=["Mystery"],
+            provider_keywords=["Cozy"],
+            provider_popularity=75.0,
+            provider_rating=8.5,
+        )
+        caught_up_item = Item.objects.create(
+            media_id="clear-caught-up-1",
+            source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME.value,
+            title="Caught Up Pick",
+            image="https://example.com/clear-caught-up-1.jpg",
+            genres=["Mystery"],
+            provider_keywords=["Cozy"],
+            provider_popularity=68.0,
+            provider_rating=7.8,
+        )
+
+        with patch("app.models.providers.services.get_media_metadata", return_value={"max_progress": 10}):
+            Anime.objects.create(
+                user=self.user,
+                item=open_item,
+                status=Status.IN_PROGRESS.value,
+                progress=3,
+            )
+            Anime.objects.create(
+                user=self.user,
+                item=caught_up_item,
+                status=Status.IN_PROGRESS.value,
+                progress=1,
+            )
+
+        Event.objects.create(
+            item=open_item,
+            content_number=5,
+            datetime=timezone.now() - timedelta(days=1),
+        )
+        Event.objects.create(
+            item=caught_up_item,
+            content_number=1,
+            datetime=timezone.now() - timedelta(days=1),
+        )
 
         profile_payload = {
-            "genre_affinity": {"mystery": 1.0, "drama": 0.5},
+            "genre_affinity": {"mystery": 1.0},
             "recent_genre_affinity": {"mystery": 1.0},
         }
         candidates = _clear_out_next_candidates(
             self.user,
-            MediaTypes.TV.value,
+            MediaTypes.ANIME.value,
             "clear_out_next",
             profile_payload,
         )
 
-        self.assertEqual([item.media_id for item in candidates], ["2001", "2002"])
+        self.assertEqual([item.media_id for item in candidates], ["clear-open-1"])
         self.assertTrue(all(item.display_score is not None for item in candidates))
-        for candidate in candidates:
-            self.assertGreaterEqual(candidate.display_score, 0.0)
-            self.assertLessEqual(candidate.display_score, 1.0)
-            self.assertIn("rewatch_bonus", candidate.score_breakdown)
-            self.assertIn("inactivity_norm", candidate.score_breakdown)
-            self.assertIn("tag_signal_mode", candidate.score_breakdown)
-        mock_in_progress.assert_called_once_with(
-            self.user,
-            MediaTypes.TV.value,
-            row_key="clear_out_next",
-            source_reason="Ranked from your in-progress list",
-        )
+        candidate = candidates[0]
+        self.assertGreaterEqual(candidate.display_score, 0.0)
+        self.assertLessEqual(candidate.display_score, 1.0)
+        self.assertIn("rewatch_bonus", candidate.score_breakdown)
+        self.assertIn("inactivity_norm", candidate.score_breakdown)
+        self.assertIn("tag_signal_mode", candidate.score_breakdown)
 
     def test_comfort_confidence_ranks_by_recent_watch_similarity(self):
         candidates = [
