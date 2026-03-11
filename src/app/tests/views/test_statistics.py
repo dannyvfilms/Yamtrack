@@ -145,6 +145,12 @@ class StatisticsViewTests(TestCase):
         self.assertTrue(
             comparison["details"].endswith(response.context["comparison_range_dates_label"]),
         )
+        self.assertEqual(comparison["tooltip"]["current_label"], "Current Period")
+        self.assertEqual(comparison["tooltip"]["comparison_label"], "Previous Period")
+        self.assertEqual(
+            comparison["tooltip"]["current_total"],
+            response.context["hours_per_media_type"]["movie"],
+        )
 
     def test_statistics_view_supports_last_year_comparison(self):
         """Statistics comparison can target the same range last year."""
@@ -172,6 +178,12 @@ class StatisticsViewTests(TestCase):
         self.assertEqual(comparison["badge"], "Up 50%")
         self.assertTrue(
             comparison["details"].endswith(response.context["comparison_range_dates_label"]),
+        )
+        self.assertEqual(comparison["tooltip"]["current_label"], "Current Period")
+        self.assertEqual(comparison["tooltip"]["comparison_label"], "Last Year")
+        self.assertEqual(
+            comparison["tooltip"]["comparison_total"],
+            "1h 0min",
         )
 
     def test_statistics_view_uses_year_labels_for_ytd_last_year_comparison(self):
@@ -201,6 +213,8 @@ class StatisticsViewTests(TestCase):
         comparison = response.context["hours_per_media_type_comparison"]["movie"]
         self.assertTrue(comparison["details"].endswith("last year"))
         self.assertNotIn(response.context["comparison_range_dates_label"], comparison["details"])
+        self.assertEqual(comparison["tooltip"]["current_label"], "This Year")
+        self.assertEqual(comparison["tooltip"]["comparison_label"], "Last Year")
 
     def test_statistics_view_uses_month_labels_for_mtd_last_year_comparison(self):
         """Month-to-date cards should prefer semantic month labels over raw date spans."""
@@ -229,6 +243,8 @@ class StatisticsViewTests(TestCase):
         comparison = response.context["hours_per_media_type_comparison"]["movie"]
         self.assertTrue(comparison["details"].endswith("last year"))
         self.assertNotIn(response.context["comparison_range_dates_label"], comparison["details"])
+        self.assertEqual(comparison["tooltip"]["current_label"], "This Month")
+        self.assertEqual(comparison["tooltip"]["comparison_label"], "Last Year")
 
     def test_statistics_view_supports_no_comparison(self):
         """Statistics comparison can be turned off."""
@@ -249,10 +265,9 @@ class StatisticsViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["selected_compare_mode"], "none")
-        self.assertEqual(
-            response.context["hours_per_media_type_comparison"]["movie"]["details"],
-            "No comparison selected",
-        )
+        comparison = response.context["hours_per_media_type_comparison"]["movie"]
+        self.assertEqual(comparison["details"], "No comparison selected")
+        self.assertIsNone(comparison["tooltip"])
 
     def test_refresh_statistics_cache_game_daily_average_tooltip_uses_game_title(self):
         """Cached game daily-average tooltip payload should include resolved game titles."""

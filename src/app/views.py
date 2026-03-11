@@ -8879,6 +8879,20 @@ def _get_statistics_card_comparison_suffix(
     return f"in {_format_statistics_range_label(user, comparison_start_date, comparison_end_date)}"
 
 
+def _get_statistics_card_tooltip_labels(selected_range_name, compare_mode):
+    current_label = (selected_range_name or "Current period").title()
+
+    if compare_mode == STATISTICS_COMPARE_LAST_YEAR:
+        comparison_label = STATISTICS_CARD_LAST_YEAR_LABELS.get(
+            selected_range_name,
+            STATISTICS_COMPARE_LABELS[compare_mode],
+        )
+    else:
+        comparison_label = STATISTICS_COMPARE_LABELS.get(compare_mode, "")
+
+    return current_label, comparison_label.title()
+
+
 def _normalize_statistics_compare_mode(compare_mode, *, finite_range: bool):
     if not finite_range:
         return STATISTICS_COMPARE_NONE
@@ -8972,6 +8986,8 @@ def _build_hours_per_media_type_comparison(
     comparison_minutes_by_type,
     compare_mode,
     comparison_suffix,
+    current_period_label,
+    comparison_period_label,
 ):
     if compare_mode == STATISTICS_COMPARE_NONE:
         return {
@@ -8980,6 +8996,7 @@ def _build_hours_per_media_type_comparison(
                 "badge_classes": "",
                 "details": "No comparison selected",
                 "details_classes": "text-gray-500",
+                "tooltip": None,
             }
             for media_type in current_minutes_by_type
         }
@@ -8992,18 +9009,27 @@ def _build_hours_per_media_type_comparison(
         if current_total <= 0:
             continue
 
+        current_display = _format_statistics_total_for_media_type(media_type, current_total)
         previous_total = float(comparison_minutes_by_type.get(media_type, 0) or 0)
+        previous_display = _format_statistics_total_for_media_type(media_type, previous_total)
+        tooltip = {
+            "current_label": current_period_label,
+            "current_total": current_display,
+            "comparison_label": comparison_period_label,
+            "comparison_total": previous_display,
+        }
+
         if previous_total <= 0:
             comparisons[media_type] = {
                 "badge": "New",
                 "badge_classes": "stats-metric-delta-badge stats-metric-delta-badge-positive",
                 "details": f"No activity {comparison_suffix}".strip(),
                 "details_classes": "text-gray-400",
+                "tooltip": tooltip,
             }
             continue
 
         delta_percent = ((current_total - previous_total) / previous_total) * 100
-        previous_display = _format_statistics_total_for_media_type(media_type, previous_total)
 
         if abs(delta_percent) < 0.05:
             comparisons[media_type] = {
@@ -9011,6 +9037,7 @@ def _build_hours_per_media_type_comparison(
                 "badge_classes": "stats-metric-delta-badge stats-metric-delta-badge-neutral",
                 "details": f"vs {previous_display} {comparison_suffix}".strip(),
                 "details_classes": "text-gray-400",
+                "tooltip": tooltip,
             }
             continue
 
@@ -9026,6 +9053,7 @@ def _build_hours_per_media_type_comparison(
             "badge_classes": tone_class,
             "details": f"vs {previous_display} {comparison_suffix}".strip(),
             "details_classes": "text-gray-400",
+            "tooltip": tooltip,
         }
 
     return comparisons
@@ -9139,11 +9167,17 @@ def statistics(request):
             comparison_start_date,
             comparison_end_date,
         )
+        current_tooltip_label, comparison_tooltip_label = _get_statistics_card_tooltip_labels(
+            selected_range_name,
+            selected_compare_mode,
+        )
         hours_per_media_type_comparison = _build_hours_per_media_type_comparison(
             _get_statistics_minutes_by_type(statistics_data),
             _get_statistics_minutes_by_type(comparison_statistics_data),
             selected_compare_mode,
             comparison_card_suffix,
+            current_tooltip_label,
+            comparison_tooltip_label,
         )
 
         # Get top rated by media type for compact cards

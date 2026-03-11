@@ -179,11 +179,51 @@
       flex: 0 1 20rem;
       min-width: 0;
     }
-    .stats-media-card-range {
+    .stats-media-card-meta {
       margin-top: 0.35rem;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      min-width: 0;
+    }
+    .stats-media-card-range {
+      min-width: 0;
       font-size: 0.75rem;
       line-height: 1.35;
       color: #94a3b8;
+    }
+    .stats-media-card-tooltip-trigger {
+      color: #6b7280;
+      transition: color 150ms ease;
+      flex: 0 0 auto;
+    }
+    .stats-media-card-tooltip-trigger:hover {
+      color: #9ca3af;
+    }
+    .stats-tooltip {
+      background: #111827;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+    }
+    .stats-tooltip-arrow {
+      border-top-color: #111827;
+    }
+    .stats-tooltip-lines {
+      display: grid;
+      gap: 0.35rem;
+    }
+    .stats-tooltip-line {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.75rem;
+    }
+    .stats-tooltip-label {
+      color: #d1d5db;
+    }
+    .stats-tooltip-value {
+      color: #f9fafb;
+      font-weight: 600;
+      white-space: nowrap;
     }
     @media (min-width: 769px) {
       .stats-highlight-dots {
@@ -932,8 +972,8 @@
                          x-transition:leave="transition ease-in duration-150"
                          x-transition:leave-start="opacity-100 scale-100"
                          x-transition:leave-end="opacity-0 scale-95"
-                         class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-64 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10"
-                         style="display: none; background: rgba(0, 0, 0, 0.85); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);">
+                         class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-64 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10 stats-tooltip"
+                         style="display: none;">
                       <p>
                         {% if activity_data.stats.longest_streak_start == activity_data.stats.longest_streak_end %}
                           {{ activity_data.stats.longest_streak_start|date:"M j, Y" }}
@@ -941,7 +981,7 @@
                           {{ activity_data.stats.longest_streak_start|date:"M j, Y" }} - {{ activity_data.stats.longest_streak_end|date:"M j, Y" }}
                         {% endif %}
                       </p>
-                      <div class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent" style="border-top-color: rgba(0, 0, 0, 0.85);"></div>
+                      <div class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent stats-tooltip-arrow"></div>
                     </div>
                   </div>
                 {% endif %}
@@ -1093,9 +1133,39 @@
             <h3 class="text-xs sm:text-sm font-medium text-gray-400">TV Shows</h3>
             <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.tv }}</p>
             {% with compare=hours_per_media_type_comparison.tv %}
-              <p class="stats-media-card-range">
-                {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
-              </p>
+              <div class="stats-media-card-meta">
+                <p class="stats-media-card-range">
+                  {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+                </p>
+                {% if compare and compare.tooltip %}
+                  <div class="relative" x-data="{ tooltipOpen: false }">
+                    <button @mouseenter="tooltipOpen = true" @mouseleave="tooltipOpen = false" @click="tooltipOpen = !tooltipOpen" @click.outside="tooltipOpen = false" class="stats-media-card-tooltip-trigger inline-flex items-center cursor-pointer" type="button" aria-label="Show comparison totals">
+                      {% include "app/icons/info.svg" with classes="w-3.5 h-3.5" %}
+                    </button>
+                    <div x-show="tooltipOpen"
+                         x-transition:enter="transition ease-out duration-200"
+                         x-transition:enter-start="opacity-0 scale-95"
+                         x-transition:enter-end="opacity-100 scale-100"
+                         x-transition:leave="transition ease-in duration-150"
+                         x-transition:leave-start="opacity-100 scale-100"
+                         x-transition:leave-end="opacity-0 scale-95"
+                         class="absolute right-0 bottom-full mb-2 w-56 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10 stats-tooltip"
+                         style="display: none;">
+                      <div class="stats-tooltip-lines">
+                        <div class="stats-tooltip-line">
+                          <span class="stats-tooltip-label">{{ compare.tooltip.current_label }}</span>
+                          <span class="stats-tooltip-value">{{ compare.tooltip.current_total }}</span>
+                        </div>
+                        <div class="stats-tooltip-line">
+                          <span class="stats-tooltip-label">{{ compare.tooltip.comparison_label }}</span>
+                          <span class="stats-tooltip-value">{{ compare.tooltip.comparison_total }}</span>
+                        </div>
+                      </div>
+                      <div class="absolute right-3 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent stats-tooltip-arrow"></div>
+                    </div>
+                  </div>
+                {% endif %}
+              </div>
             {% endwith %}
           </div>
         </div>
@@ -1128,9 +1198,39 @@
             <h3 class="text-xs sm:text-sm font-medium text-gray-400">Movies</h3>
             <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.movie }}</p>
             {% with compare=hours_per_media_type_comparison.movie %}
-              <p class="stats-media-card-range">
-                {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
-              </p>
+              <div class="stats-media-card-meta">
+                <p class="stats-media-card-range">
+                  {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+                </p>
+                {% if compare and compare.tooltip %}
+                  <div class="relative" x-data="{ tooltipOpen: false }">
+                    <button @mouseenter="tooltipOpen = true" @mouseleave="tooltipOpen = false" @click="tooltipOpen = !tooltipOpen" @click.outside="tooltipOpen = false" class="stats-media-card-tooltip-trigger inline-flex items-center cursor-pointer" type="button" aria-label="Show comparison totals">
+                      {% include "app/icons/info.svg" with classes="w-3.5 h-3.5" %}
+                    </button>
+                    <div x-show="tooltipOpen"
+                         x-transition:enter="transition ease-out duration-200"
+                         x-transition:enter-start="opacity-0 scale-95"
+                         x-transition:enter-end="opacity-100 scale-100"
+                         x-transition:leave="transition ease-in duration-150"
+                         x-transition:leave-start="opacity-100 scale-100"
+                         x-transition:leave-end="opacity-0 scale-95"
+                         class="absolute right-0 bottom-full mb-2 w-56 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10 stats-tooltip"
+                         style="display: none;">
+                      <div class="stats-tooltip-lines">
+                        <div class="stats-tooltip-line">
+                          <span class="stats-tooltip-label">{{ compare.tooltip.current_label }}</span>
+                          <span class="stats-tooltip-value">{{ compare.tooltip.current_total }}</span>
+                        </div>
+                        <div class="stats-tooltip-line">
+                          <span class="stats-tooltip-label">{{ compare.tooltip.comparison_label }}</span>
+                          <span class="stats-tooltip-value">{{ compare.tooltip.comparison_total }}</span>
+                        </div>
+                      </div>
+                      <div class="absolute right-3 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent stats-tooltip-arrow"></div>
+                    </div>
+                  </div>
+                {% endif %}
+              </div>
             {% endwith %}
           </div>
         </div>
@@ -1160,9 +1260,39 @@
             <h3 class="text-xs sm:text-sm font-medium text-gray-400">Games</h3>
             <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.game }}</p>
             {% with compare=hours_per_media_type_comparison.game %}
-              <p class="stats-media-card-range">
-                {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
-              </p>
+              <div class="stats-media-card-meta">
+                <p class="stats-media-card-range">
+                  {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+                </p>
+                {% if compare and compare.tooltip %}
+                  <div class="relative" x-data="{ tooltipOpen: false }">
+                    <button @mouseenter="tooltipOpen = true" @mouseleave="tooltipOpen = false" @click="tooltipOpen = !tooltipOpen" @click.outside="tooltipOpen = false" class="stats-media-card-tooltip-trigger inline-flex items-center cursor-pointer" type="button" aria-label="Show comparison totals">
+                      {% include "app/icons/info.svg" with classes="w-3.5 h-3.5" %}
+                    </button>
+                    <div x-show="tooltipOpen"
+                         x-transition:enter="transition ease-out duration-200"
+                         x-transition:enter-start="opacity-0 scale-95"
+                         x-transition:enter-end="opacity-100 scale-100"
+                         x-transition:leave="transition ease-in duration-150"
+                         x-transition:leave-start="opacity-100 scale-100"
+                         x-transition:leave-end="opacity-0 scale-95"
+                         class="absolute right-0 bottom-full mb-2 w-56 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10 stats-tooltip"
+                         style="display: none;">
+                      <div class="stats-tooltip-lines">
+                        <div class="stats-tooltip-line">
+                          <span class="stats-tooltip-label">{{ compare.tooltip.current_label }}</span>
+                          <span class="stats-tooltip-value">{{ compare.tooltip.current_total }}</span>
+                        </div>
+                        <div class="stats-tooltip-line">
+                          <span class="stats-tooltip-label">{{ compare.tooltip.comparison_label }}</span>
+                          <span class="stats-tooltip-value">{{ compare.tooltip.comparison_total }}</span>
+                        </div>
+                      </div>
+                      <div class="absolute right-3 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent stats-tooltip-arrow"></div>
+                    </div>
+                  </div>
+                {% endif %}
+              </div>
             {% endwith %}
           </div>
         </div>
@@ -1191,9 +1321,39 @@
             <h3 class="text-xs sm:text-sm font-medium text-gray-400">Podcasts</h3>
             <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.podcast }}</p>
             {% with compare=hours_per_media_type_comparison.podcast %}
-              <p class="stats-media-card-range">
-                {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
-              </p>
+              <div class="stats-media-card-meta">
+                <p class="stats-media-card-range">
+                  {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+                </p>
+                {% if compare and compare.tooltip %}
+                  <div class="relative" x-data="{ tooltipOpen: false }">
+                    <button @mouseenter="tooltipOpen = true" @mouseleave="tooltipOpen = false" @click="tooltipOpen = !tooltipOpen" @click.outside="tooltipOpen = false" class="stats-media-card-tooltip-trigger inline-flex items-center cursor-pointer" type="button" aria-label="Show comparison totals">
+                      {% include "app/icons/info.svg" with classes="w-3.5 h-3.5" %}
+                    </button>
+                    <div x-show="tooltipOpen"
+                         x-transition:enter="transition ease-out duration-200"
+                         x-transition:enter-start="opacity-0 scale-95"
+                         x-transition:enter-end="opacity-100 scale-100"
+                         x-transition:leave="transition ease-in duration-150"
+                         x-transition:leave-start="opacity-100 scale-100"
+                         x-transition:leave-end="opacity-0 scale-95"
+                         class="absolute right-0 bottom-full mb-2 w-56 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10 stats-tooltip"
+                         style="display: none;">
+                      <div class="stats-tooltip-lines">
+                        <div class="stats-tooltip-line">
+                          <span class="stats-tooltip-label">{{ compare.tooltip.current_label }}</span>
+                          <span class="stats-tooltip-value">{{ compare.tooltip.current_total }}</span>
+                        </div>
+                        <div class="stats-tooltip-line">
+                          <span class="stats-tooltip-label">{{ compare.tooltip.comparison_label }}</span>
+                          <span class="stats-tooltip-value">{{ compare.tooltip.comparison_total }}</span>
+                        </div>
+                      </div>
+                      <div class="absolute right-3 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent stats-tooltip-arrow"></div>
+                    </div>
+                  </div>
+                {% endif %}
+              </div>
             {% endwith %}
           </div>
         </div>
@@ -1223,9 +1383,39 @@
             <h3 class="text-xs sm:text-sm font-medium text-gray-400">Board Games</h3>
             <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.boardgame }}</p>
             {% with compare=hours_per_media_type_comparison.boardgame %}
-              <p class="stats-media-card-range">
-                {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
-              </p>
+              <div class="stats-media-card-meta">
+                <p class="stats-media-card-range">
+                  {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+                </p>
+                {% if compare and compare.tooltip %}
+                  <div class="relative" x-data="{ tooltipOpen: false }">
+                    <button @mouseenter="tooltipOpen = true" @mouseleave="tooltipOpen = false" @click="tooltipOpen = !tooltipOpen" @click.outside="tooltipOpen = false" class="stats-media-card-tooltip-trigger inline-flex items-center cursor-pointer" type="button" aria-label="Show comparison totals">
+                      {% include "app/icons/info.svg" with classes="w-3.5 h-3.5" %}
+                    </button>
+                    <div x-show="tooltipOpen"
+                         x-transition:enter="transition ease-out duration-200"
+                         x-transition:enter-start="opacity-0 scale-95"
+                         x-transition:enter-end="opacity-100 scale-100"
+                         x-transition:leave="transition ease-in duration-150"
+                         x-transition:leave-start="opacity-100 scale-100"
+                         x-transition:leave-end="opacity-0 scale-95"
+                         class="absolute right-0 bottom-full mb-2 w-56 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10 stats-tooltip"
+                         style="display: none;">
+                      <div class="stats-tooltip-lines">
+                        <div class="stats-tooltip-line">
+                          <span class="stats-tooltip-label">{{ compare.tooltip.current_label }}</span>
+                          <span class="stats-tooltip-value">{{ compare.tooltip.current_total }}</span>
+                        </div>
+                        <div class="stats-tooltip-line">
+                          <span class="stats-tooltip-label">{{ compare.tooltip.comparison_label }}</span>
+                          <span class="stats-tooltip-value">{{ compare.tooltip.comparison_total }}</span>
+                        </div>
+                      </div>
+                      <div class="absolute right-3 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent stats-tooltip-arrow"></div>
+                    </div>
+                  </div>
+                {% endif %}
+              </div>
             {% endwith %}
           </div>
         </div>
@@ -1252,9 +1442,39 @@
             <h3 class="text-xs sm:text-sm font-medium text-gray-400">Anime</h3>
             <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.anime }}</p>
             {% with compare=hours_per_media_type_comparison.anime %}
-              <p class="stats-media-card-range">
-                {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
-              </p>
+              <div class="stats-media-card-meta">
+                <p class="stats-media-card-range">
+                  {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+                </p>
+                {% if compare and compare.tooltip %}
+                  <div class="relative" x-data="{ tooltipOpen: false }">
+                    <button @mouseenter="tooltipOpen = true" @mouseleave="tooltipOpen = false" @click="tooltipOpen = !tooltipOpen" @click.outside="tooltipOpen = false" class="stats-media-card-tooltip-trigger inline-flex items-center cursor-pointer" type="button" aria-label="Show comparison totals">
+                      {% include "app/icons/info.svg" with classes="w-3.5 h-3.5" %}
+                    </button>
+                    <div x-show="tooltipOpen"
+                         x-transition:enter="transition ease-out duration-200"
+                         x-transition:enter-start="opacity-0 scale-95"
+                         x-transition:enter-end="opacity-100 scale-100"
+                         x-transition:leave="transition ease-in duration-150"
+                         x-transition:leave-start="opacity-100 scale-100"
+                         x-transition:leave-end="opacity-0 scale-95"
+                         class="absolute right-0 bottom-full mb-2 w-56 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10 stats-tooltip"
+                         style="display: none;">
+                      <div class="stats-tooltip-lines">
+                        <div class="stats-tooltip-line">
+                          <span class="stats-tooltip-label">{{ compare.tooltip.current_label }}</span>
+                          <span class="stats-tooltip-value">{{ compare.tooltip.current_total }}</span>
+                        </div>
+                        <div class="stats-tooltip-line">
+                          <span class="stats-tooltip-label">{{ compare.tooltip.comparison_label }}</span>
+                          <span class="stats-tooltip-value">{{ compare.tooltip.comparison_total }}</span>
+                        </div>
+                      </div>
+                      <div class="absolute right-3 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent stats-tooltip-arrow"></div>
+                    </div>
+                  </div>
+                {% endif %}
+              </div>
             {% endwith %}
           </div>
         </div>
@@ -1282,9 +1502,39 @@
             <h3 class="text-xs sm:text-sm font-medium text-gray-400">Music</h3>
             <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.music }}</p>
             {% with compare=hours_per_media_type_comparison.music %}
-              <p class="stats-media-card-range">
-                {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
-              </p>
+              <div class="stats-media-card-meta">
+                <p class="stats-media-card-range">
+                  {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+                </p>
+                {% if compare and compare.tooltip %}
+                  <div class="relative" x-data="{ tooltipOpen: false }">
+                    <button @mouseenter="tooltipOpen = true" @mouseleave="tooltipOpen = false" @click="tooltipOpen = !tooltipOpen" @click.outside="tooltipOpen = false" class="stats-media-card-tooltip-trigger inline-flex items-center cursor-pointer" type="button" aria-label="Show comparison totals">
+                      {% include "app/icons/info.svg" with classes="w-3.5 h-3.5" %}
+                    </button>
+                    <div x-show="tooltipOpen"
+                         x-transition:enter="transition ease-out duration-200"
+                         x-transition:enter-start="opacity-0 scale-95"
+                         x-transition:enter-end="opacity-100 scale-100"
+                         x-transition:leave="transition ease-in duration-150"
+                         x-transition:leave-start="opacity-100 scale-100"
+                         x-transition:leave-end="opacity-0 scale-95"
+                         class="absolute right-0 bottom-full mb-2 w-56 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10 stats-tooltip"
+                         style="display: none;">
+                      <div class="stats-tooltip-lines">
+                        <div class="stats-tooltip-line">
+                          <span class="stats-tooltip-label">{{ compare.tooltip.current_label }}</span>
+                          <span class="stats-tooltip-value">{{ compare.tooltip.current_total }}</span>
+                        </div>
+                        <div class="stats-tooltip-line">
+                          <span class="stats-tooltip-label">{{ compare.tooltip.comparison_label }}</span>
+                          <span class="stats-tooltip-value">{{ compare.tooltip.comparison_total }}</span>
+                        </div>
+                      </div>
+                      <div class="absolute right-3 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent stats-tooltip-arrow"></div>
+                    </div>
+                  </div>
+                {% endif %}
+              </div>
             {% endwith %}
           </div>
         </div>
@@ -1993,10 +2243,10 @@
                        x-transition:leave="transition ease-in duration-150"
                        x-transition:leave-start="opacity-100 scale-100"
                        x-transition:leave-end="opacity-0 scale-95"
-                       class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-64 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10"
-                       style="display: none; background: rgba(0, 0, 0, 0.85); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);">
+                       class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-64 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10 stats-tooltip"
+                       style="display: none;">
                     <p>Play time per day (total hours ÷ days played) for games during the selected range.</p>
-                    <div class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent" style="border-top-color: rgba(0, 0, 0, 0.85);"></div>
+                    <div class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent stats-tooltip-arrow"></div>
                   </div>
                 </div>
               </div>
@@ -2029,10 +2279,10 @@
                        x-transition:leave="transition ease-in duration-150"
                        x-transition:leave-start="opacity-100 scale-100"
                        x-transition:leave-end="opacity-0 scale-95"
-                       class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-64 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10"
-                       style="display: none; background: rgba(0, 0, 0, 0.85); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);">
+                       class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-64 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10 stats-tooltip"
+                       style="display: none;">
                     <p>Highest total hours during the selected range (using average daily play time × days in period).</p>
-                    <div class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent" style="border-top-color: rgba(0, 0, 0, 0.85);"></div>
+                    <div class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent stats-tooltip-arrow"></div>
                   </div>
                 </div>
               </div>
@@ -2105,10 +2355,10 @@
                        x-transition:leave="transition ease-in duration-150"
                        x-transition:leave-start="opacity-100 scale-100"
                        x-transition:leave-end="opacity-0 scale-95"
-                       class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-64 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10"
-                       style="display: none; background: rgba(0, 0, 0, 0.85); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);">
+                       class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-64 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10 stats-tooltip"
+                       style="display: none;">
                     <p>Hours and unique games per platform during the selected range. Platform is determined from your collection data. For games with only one available platform, that platform is used automatically. Multi-platform games with no collection entry are not counted.</p>
-                    <div class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent" style="border-top-color: rgba(0, 0, 0, 0.85);"></div>
+                    <div class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent stats-tooltip-arrow"></div>
                   </div>
                 </div>
               </div>
@@ -2750,10 +3000,10 @@
                    x-transition:leave="transition ease-in duration-150"
                    x-transition:leave-start="opacity-100 scale-100"
                    x-transition:leave-end="opacity-0 scale-95"
-                   class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-64 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10"
-                   style="display: none; background: rgba(0, 0, 0, 0.85); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);">
+                   class="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-64 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10 stats-tooltip"
+                   style="display: none;">
                 <p>Share of total hours by media type for the selected range, based on runtime metadata and progress.</p>
-                <div class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent" style="border-top-color: rgba(0, 0, 0, 0.85);"></div>
+                <div class="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent stats-tooltip-arrow"></div>
               </div>
             </div>
           </div>
