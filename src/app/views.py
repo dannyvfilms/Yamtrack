@@ -1,6 +1,7 @@
 import calendar
 import json
 import logging
+import re
 import time
 from collections import defaultdict
 from decimal import Decimal, InvalidOperation
@@ -119,6 +120,20 @@ DISCOVER_ALLOWED_MEDIA_TYPES = {
     MediaTypes.GAME.value,
     MediaTypes.BOARDGAME.value,
 }
+
+STATISTICS_COMPARE_PREVIOUS_PERIOD = "previous_period"
+STATISTICS_COMPARE_LAST_YEAR = "last_year"
+STATISTICS_COMPARE_NONE = "none"
+STATISTICS_COMPARE_LABELS = {
+    STATISTICS_COMPARE_PREVIOUS_PERIOD: "Previous period",
+    STATISTICS_COMPARE_LAST_YEAR: "Last year",
+    STATISTICS_COMPARE_NONE: "No comparison",
+}
+STATISTICS_CARD_LAST_YEAR_LABELS = {
+    "This Year": "last year",
+    "This Month": "last year",
+}
+_STATISTICS_HOURS_DISPLAY_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)h\s+(\d+(?:\.\d+)?)min\s*$")
 
 
 class _EmptyHistoryProxy:
@@ -8817,6 +8832,204 @@ def sync_album_metadata_view(request, album_id):
     response["HX-Refresh"] = "true"
     return response
 
+def _statistics_day_boundary(day_value: date | None, *, end_of_day: bool = False):
+    if day_value is None:
+        return None
+    boundary_time = datetime.max.time() if end_of_day else datetime.min.time()
+    return timezone.make_aware(
+        datetime.combine(day_value, boundary_time),
+        timezone.get_current_timezone(),
+    )
+
+
+def _format_statistics_range_label(user, start_date, end_date):
+    if not start_date or not end_date:
+        return "All Time"
+
+    local_start = timezone.localdate(start_date)
+    local_end = timezone.localdate(end_date)
+    start_label = app_tags.date_format(_statistics_day_boundary(local_start), user)
+    end_label = app_tags.date_format(_statistics_day_boundary(local_end), user)
+    if local_start == local_end:
+        return start_label
+    return f"{start_label} - {end_label}"
+
+
+def _get_statistics_card_range_label(user, selected_range_name, start_date, end_date):
+    if selected_range_name:
+        return selected_range_name
+    return _format_statistics_range_label(user, start_date, end_date)
+
+
+def _get_statistics_card_comparison_suffix(
+    user,
+    selected_range_name,
+    compare_mode,
+    comparison_start_date,
+    comparison_end_date,
+):
+    if not comparison_start_date or not comparison_end_date:
+        return ""
+
+    if compare_mode == STATISTICS_COMPARE_LAST_YEAR:
+        card_label = STATISTICS_CARD_LAST_YEAR_LABELS.get(selected_range_name)
+        if card_label:
+            return card_label
+
+    return f"in {_format_statistics_range_label(user, comparison_start_date, comparison_end_date)}"
+
+
+def _normalize_statistics_compare_mode(compare_mode, *, finite_range: bool):
+    if not finite_range:
+        return STATISTICS_COMPARE_NONE
+    if compare_mode in STATISTICS_COMPARE_LABELS:
+        return compare_mode
+    return STATISTICS_COMPARE_PREVIOUS_PERIOD
+
+
+def _resolve_statistics_comparison_range(start_date, end_date, compare_mode):
+    if compare_mode == STATISTICS_COMPARE_NONE or not start_date or not end_date:
+        return None, None
+
+    local_start = timezone.localdate(start_date)
+    local_end = timezone.localdate(end_date)
+    if local_start > local_end:
+        local_start, local_end = local_end, local_start
+
+    if compare_mode == STATISTICS_COMPARE_PREVIOUS_PERIOD:
+        duration_days = (local_end - local_start).days + 1
+        compare_end = local_start - timedelta(days=1)
+        compare_start = compare_end - timedelta(days=duration_days - 1)
+    elif compare_mode == STATISTICS_COMPARE_LAST_YEAR:
+        compare_start = local_start - relativedelta(years=1)
+        compare_end = local_end - relativedelta(years=1)
+    else:
+        return None, None
+
+    return (
+        _statistics_day_boundary(compare_start),
+        _statistics_day_boundary(compare_end, end_of_day=True),
+    )
+
+
+def _parse_statistics_total_display_to_minutes(value):
+    if isinstance(value, (int, float)):
+        return float(value)
+    if not isinstance(value, str):
+        return 0.0
+
+    cleaned = value.strip()
+    if "play" in cleaned:
+        try:
+            return float(cleaned.split()[0])
+        except (IndexError, ValueError):
+            return 0.0
+
+    match = _STATISTICS_HOURS_DISPLAY_RE.match(cleaned)
+    if not match:
+        return 0.0
+
+    try:
+        hours = float(match.group(1))
+        minutes = float(match.group(2))
+    except ValueError:
+        return 0.0
+
+    return (hours * 60) + minutes
+
+
+def _get_statistics_minutes_by_type(statistics_data):
+    if not isinstance(statistics_data, dict):
+        return {}
+
+    raw_minutes = statistics_data.get("minutes_per_media_type")
+    if isinstance(raw_minutes, dict):
+        return {
+            media_type: float(total or 0)
+            for media_type, total in raw_minutes.items()
+        }
+
+    return {
+        media_type: _parse_statistics_total_display_to_minutes(total)
+        for media_type, total in (statistics_data.get("hours_per_media_type") or {}).items()
+    }
+
+
+def _format_statistics_total_for_media_type(media_type, total):
+    if media_type == MediaTypes.BOARDGAME.value:
+        rounded_total = int(round(total or 0))
+        return f"{rounded_total} play{'s' if rounded_total != 1 else ''}"
+    return stats._format_hours_minutes(total or 0)
+
+
+def _format_statistics_percent_change(delta_percent):
+    formatted = f"{round(abs(float(delta_percent)), 1):.1f}"
+    return formatted.rstrip("0").rstrip(".")
+
+
+def _build_hours_per_media_type_comparison(
+    current_minutes_by_type,
+    comparison_minutes_by_type,
+    compare_mode,
+    comparison_suffix,
+):
+    if compare_mode == STATISTICS_COMPARE_NONE:
+        return {
+            media_type: {
+                "badge": "",
+                "badge_classes": "",
+                "details": "No comparison selected",
+                "details_classes": "text-gray-500",
+            }
+            for media_type in current_minutes_by_type
+        }
+
+    media_types = list(dict.fromkeys([*stats.MEDIA_TYPE_HOURS_ORDER, *current_minutes_by_type.keys()]))
+    comparisons = {}
+
+    for media_type in media_types:
+        current_total = float(current_minutes_by_type.get(media_type, 0) or 0)
+        if current_total <= 0:
+            continue
+
+        previous_total = float(comparison_minutes_by_type.get(media_type, 0) or 0)
+        if previous_total <= 0:
+            comparisons[media_type] = {
+                "badge": "New",
+                "badge_classes": "stats-metric-delta-badge stats-metric-delta-badge-positive",
+                "details": f"No activity {comparison_suffix}".strip(),
+                "details_classes": "text-gray-400",
+            }
+            continue
+
+        delta_percent = ((current_total - previous_total) / previous_total) * 100
+        previous_display = _format_statistics_total_for_media_type(media_type, previous_total)
+
+        if abs(delta_percent) < 0.05:
+            comparisons[media_type] = {
+                "badge": "No change",
+                "badge_classes": "stats-metric-delta-badge stats-metric-delta-badge-neutral",
+                "details": f"vs {previous_display} {comparison_suffix}".strip(),
+                "details_classes": "text-gray-400",
+            }
+            continue
+
+        is_positive = delta_percent > 0
+        direction = "Up" if is_positive else "Down"
+        tone_class = (
+            "stats-metric-delta-badge stats-metric-delta-badge-positive"
+            if is_positive
+            else "stats-metric-delta-badge stats-metric-delta-badge-negative"
+        )
+        comparisons[media_type] = {
+            "badge": f"{direction} {_format_statistics_percent_change(delta_percent)}%",
+            "badge_classes": tone_class,
+            "details": f"vs {previous_display} {comparison_suffix}".strip(),
+            "details_classes": "text-gray-400",
+        }
+
+    return comparisons
+
 
 @require_GET
 def statistics(request):
@@ -8885,6 +9098,53 @@ def statistics(request):
         )
 
         show_year_charts = selected_range_name in (None, "All Time")
+        has_finite_range = start_date is not None and end_date is not None
+        selected_compare_mode = _normalize_statistics_compare_mode(
+            request.GET.get("compare"),
+            finite_range=has_finite_range,
+        )
+        comparison_start_date, comparison_end_date = _resolve_statistics_comparison_range(
+            start_date,
+            end_date,
+            selected_compare_mode,
+        )
+        comparison_range_name = _identify_predefined_range(
+            comparison_start_date,
+            comparison_end_date,
+        )
+        comparison_statistics_data = {}
+        if comparison_start_date and comparison_end_date:
+            comparison_statistics_data = statistics_cache.get_statistics_data(
+                request.user,
+                comparison_start_date,
+                comparison_end_date,
+                range_name=comparison_range_name,
+            )
+
+        selected_range_dates_label = _get_statistics_card_range_label(
+            request.user,
+            selected_range_name,
+            start_date,
+            end_date,
+        )
+        comparison_range_dates_label = _format_statistics_range_label(
+            request.user,
+            comparison_start_date,
+            comparison_end_date,
+        )
+        comparison_card_suffix = _get_statistics_card_comparison_suffix(
+            request.user,
+            selected_range_name,
+            selected_compare_mode,
+            comparison_start_date,
+            comparison_end_date,
+        )
+        hours_per_media_type_comparison = _build_hours_per_media_type_comparison(
+            _get_statistics_minutes_by_type(statistics_data),
+            _get_statistics_minutes_by_type(comparison_statistics_data),
+            selected_compare_mode,
+            comparison_card_suffix,
+        )
 
         # Get top rated by media type for compact cards
         top_rated = statistics_data["top_rated"]  # Keep for backward compatibility with "ALL MEDIA" section
@@ -8906,6 +9166,11 @@ def statistics(request):
             "start_date_str": start_date_str_for_url,
             "end_date_str": end_date_str_for_url,
             "selected_range_name": selected_range_name,
+            "selected_range_dates_label": selected_range_dates_label,
+            "selected_compare_mode": selected_compare_mode,
+            "selected_compare_label": STATISTICS_COMPARE_LABELS[selected_compare_mode],
+            "comparison_range_dates_label": comparison_range_dates_label,
+            "hours_per_media_type_comparison": hours_per_media_type_comparison,
             "media_count": statistics_data["media_count"],
             "activity_data": statistics_data["activity_data"],
             "media_type_distribution": statistics_data["media_type_distribution"],
@@ -8956,6 +9221,7 @@ def statistics(request):
             "media_count": {},
             "activity_data": [],
             "media_type_distribution": {},
+            "minutes_per_media_type": {},
             "hours_per_media_type": {},
             "media_type_colors": {
                 "tv": config.get_stats_color(MediaTypes.TV.value),
@@ -8983,10 +9249,39 @@ def statistics(request):
             "history_highlights": {},
         }
 
+        error_start_date = (
+            _statistics_day_boundary(parse_date(start_date_str))
+            if start_date_str != "all"
+            else None
+        )
+        error_end_date = (
+            _statistics_day_boundary(parse_date(end_date_str), end_of_day=True)
+            if end_date_str != "all"
+            else None
+        )
+        has_finite_range = error_start_date is not None and error_end_date is not None
+        selected_compare_mode = _normalize_statistics_compare_mode(
+            request.GET.get("compare"),
+            finite_range=has_finite_range,
+        )
+
         context = {
             "user": request.user,
             "start_date": parse_date(start_date_str) if start_date_str != "all" else None,
             "end_date": parse_date(end_date_str) if end_date_str != "all" else None,
+            "start_date_str": start_date_str,
+            "end_date_str": end_date_str,
+            "selected_range_name": _identify_predefined_range(error_start_date, error_end_date),
+            "selected_range_dates_label": _get_statistics_card_range_label(
+                request.user,
+                _identify_predefined_range(error_start_date, error_end_date),
+                error_start_date,
+                error_end_date,
+            ),
+            "selected_compare_mode": selected_compare_mode,
+            "selected_compare_label": STATISTICS_COMPARE_LABELS[selected_compare_mode],
+            "comparison_range_dates_label": "",
+            "hours_per_media_type_comparison": {},
             "media_count": empty_statistics_data["media_count"],
             "activity_data": empty_statistics_data["activity_data"],
             "media_type_distribution": empty_statistics_data["media_type_distribution"],

@@ -46,9 +46,158 @@
     .stats-highlight-dot.is-active {
       background: #818cf8;
     }
+    .stats-button-copy {
+      min-width: 0;
+      display: flex;
+      flex: 1 1 auto;
+      align-items: center;
+      gap: 0.75rem;
+      overflow: hidden;
+    }
+    .stats-button-title {
+      flex: 0 0 auto;
+      font-weight: 600;
+      color: #f9fafb;
+      white-space: nowrap;
+    }
+    .stats-button-divider {
+      width: 1px;
+      height: 1.25rem;
+      align-self: center;
+      background: #374151;
+      flex: 0 0 auto;
+    }
+    .stats-button-summary {
+      min-width: 0;
+      color: #9ca3af;
+      font-size: 0.95rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .stats-compare-copy {
+      min-width: 0;
+      display: flex;
+      flex: 1 1 auto;
+      align-items: center;
+      gap: 0.75rem;
+      overflow: hidden;
+    }
+    .stats-compare-prefix {
+      flex: 0 0 auto;
+      color: #9ca3af;
+      font-size: 0.95rem;
+      white-space: nowrap;
+    }
+    .stats-compare-value {
+      min-width: 0;
+      flex: 1 1 auto;
+      font-weight: 600;
+      color: #f9fafb;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-align: left;
+    }
+    .stats-dropdown-panel {
+      background: #2a2f35;
+      border: 1px solid #374151;
+      border-radius: 0.5rem;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.35);
+      overflow: hidden;
+    }
+    .stats-range-panel {
+      width: min(90vw, 420px);
+      max-width: calc(100vw - 2rem);
+    }
+    .stats-compare-panel {
+      width: min(90vw, 360px);
+      max-width: calc(100vw - 2rem);
+    }
+    .stats-option-row {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      padding: 0.75rem;
+      border-radius: 0.375rem;
+      text-align: left;
+      color: #e5e7eb;
+      transition: background-color 150ms ease, color 150ms ease;
+      cursor: pointer;
+    }
+    .stats-option-row:hover {
+      background: #39404b;
+    }
+    .stats-option-row.is-selected {
+      background: #4f46e5;
+      color: #fff;
+    }
+    .stats-option-row.is-disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    .stats-option-copy {
+      min-width: 0;
+      flex: 1 1 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+    }
+    .stats-option-title {
+      min-width: 0;
+      font-size: 0.95rem;
+      font-weight: 600;
+      line-height: 1.25;
+    }
+    .stats-option-summary {
+      min-width: 0;
+      font-size: 0.85rem;
+      color: #94a3b8;
+      line-height: 1.35;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-align: right;
+    }
+    .stats-option-row.is-selected .stats-option-summary {
+      color: rgba(255, 255, 255, 0.8);
+    }
+    .stats-compare-label {
+      font-size: 0.95rem;
+      font-weight: 500;
+      color: #94a3b8;
+      white-space: nowrap;
+    }
+    .stats-range-wrapper {
+      flex: 1 1 24rem;
+      min-width: 0;
+    }
+    .stats-compare-wrapper {
+      flex: 0 1 20rem;
+      min-width: 0;
+    }
+    .stats-media-card-range {
+      margin-top: 0.35rem;
+      font-size: 0.75rem;
+      line-height: 1.35;
+      color: #94a3b8;
+    }
     @media (min-width: 769px) {
       .stats-highlight-dots {
         display: none;
+      }
+      .stats-range-button,
+      .stats-compare-button,
+      .stats-refresh-button {
+        height: 2.75rem;
+      }
+      .stats-range-button,
+      .stats-compare-button {
+        padding-top: 0;
+        padding-bottom: 0;
       }
     }
     @media (max-width: 768px) {
@@ -66,19 +215,63 @@
         height: 0;
       }
       .stats-range-row {
+        flex-wrap: wrap;
         align-items: stretch;
       }
       .stats-range-wrapper {
-        flex: 1 1 auto;
+        flex: 1 1 100%;
       }
-      .stats-range-button,
-      .stats-refresh-button {
-        height: 2.75rem;
-        padding-top: 0;
-        padding-bottom: 0;
+      .stats-compare-wrapper {
+        flex: 1 1 auto;
       }
       .stats-range-button {
         width: 100%;
+      }
+      .stats-compare-label {
+        width: 100%;
+        margin-top: 0.25rem;
+      }
+      .stats-button-copy {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.125rem;
+      }
+      .stats-button-summary {
+        white-space: normal;
+      }
+      .stats-range-button .stats-button-copy {
+        flex-direction: row;
+        align-items: center;
+        gap: 0.5rem;
+      }
+      .stats-range-button .stats-button-summary {
+        font-size: 0.875rem;
+        white-space: nowrap;
+      }
+      .stats-compare-copy {
+        gap: 0.5rem;
+      }
+      .stats-compare-prefix {
+        font-size: 0.875rem;
+      }
+      .stats-range-panel,
+      .stats-compare-panel {
+        width: 100%;
+        max-width: none;
+      }
+      .stats-option-copy {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.15rem;
+      }
+      .stats-option-summary {
+        white-space: normal;
+        text-align: left;
+      }
+      .stats-refresh-button {
+        height: 2.75rem;
+        width: 2.75rem;
+        flex: 0 0 2.75rem;
       }
     }
   </style>
@@ -196,6 +389,7 @@
     initialRangeName: '{{ selected_range_name|default:""|escapejs }}',
     initialStartDate: '{{ start_date_str|default:""|escapejs }}',
     initialEndDate: '{{ end_date_str|default:""|escapejs }}',
+    initialCompareMode: '{{ selected_compare_mode|default:"previous_period"|escapejs }}',
     refreshUrl: '{% url "refresh_statistics" %}',
     csrfToken: '{{ csrf_token }}'
   })" x-init="init()">
@@ -203,10 +397,9 @@
       <h1 class="text-3xl font-bold mb-2">Statistics</h1>
       <p class="text-gray-400">Track your media consumption habits</p>
     </div>
-    <div class="stats-range-row flex items-center gap-2 mb-4 sm:mb-8">
-      <div class="stats-range-wrapper relative">
-        <!-- Trigger Button -->
-        <button @click="toggleDropdown()"
+    <div class="stats-range-row flex flex-wrap items-center gap-2 mb-4 sm:mb-8">
+      <div class="stats-range-wrapper relative min-w-0">
+        <button @click="toggleRangeDropdown()"
                 class="stats-range-button flex items-center gap-2 px-4 py-2.5 bg-[#2a2f35] hover:bg-[#343a40] rounded-lg transition-all duration-200 border border-gray-700 shadow-sm cursor-pointer">
           <svg xmlns="http://www.w3.org/2000/svg"
                width="24"
@@ -217,13 +410,17 @@
                stroke-width="2"
                stroke-linecap="round"
                stroke-linejoin="round"
-               class="w-5 h-5 text-indigo-400">
+               class="w-5 h-5 text-indigo-400 shrink-0">
             <path d="M8 2v4"></path>
             <path d="M16 2v4"></path>
             <rect width="18" height="18" x="3" y="4" rx="2"></rect>
             <path d="M3 10h18"></path>
           </svg>
-          <span class="font-medium" x-text="selectedRange"></span>
+          <div class="stats-button-copy">
+            <span class="stats-button-title" x-text="rangeTriggerLabel()"></span>
+            <span class="stats-button-divider hidden sm:block"></span>
+            <span class="stats-button-summary" x-text="currentRangeSummaryLabel()"></span>
+          </div>
           <svg xmlns="http://www.w3.org/2000/svg"
                width="24"
                height="24"
@@ -233,101 +430,79 @@
                stroke-width="2"
                stroke-linecap="round"
                stroke-linejoin="round"
-               class="w-4 h-4 ml-1 transition-transform duration-200"
-               :class="{'rotate-180': isOpen}">
+               class="w-4 h-4 text-gray-400 transition-transform duration-200 shrink-0"
+               :class="{'rotate-180': isRangeOpen}">
             <path d="m6 9 6 6 6-6"></path>
           </svg>
         </button>
 
-        <!-- Dropdown -->
         <div x-cloak
-           x-show="isOpen"
-           x-transition
-           @click.outside="isOpen = false"
-           class="absolute z-20 mt-2 w-[90vw] sm:w-[340px] bg-[#2a2f35] rounded-lg shadow-lg border border-gray-700 overflow-hidden transition-all duration-200 animate-in fade-in-50 slide-in-from-top-5">
-
-        <!-- Tabs -->
-        <div class="flex border-b border-gray-700">
-          <button @click="activeTab = 'predefined'"
-                  :class="{'text-white border-b-2 border-indigo-500': activeTab === 'predefined', 'text-gray-400 hover:text-gray-200': activeTab !== 'predefined'}"
-                  class="flex-1 py-3 text-sm font-medium transition-colors cursor-pointer">Predefined Ranges</button>
-          <button @click="activeTab = 'custom'"
-                  :class="{'text-white border-b-2 border-indigo-500': activeTab === 'custom', 'text-gray-400 hover:text-gray-200': activeTab !== 'custom'}"
-                  class="flex-1 py-3 text-sm font-medium transition-colors cursor-pointer">Custom Range</button>
-        </div>
-
-        <!-- Predefined Ranges Tab -->
-        <div x-show="activeTab === 'predefined'"
-             class="p-2 max-h-[320px] overflow-y-auto">
-          <div class="grid grid-cols-2 gap-2">
-            <template x-for="range in predefinedRanges" :key="range.name">
-              <button @click="selectPredefinedRange(range.name)"
-                      :class="{'bg-indigo-600 text-white': selectedRange === range.name, 'hover:bg-[#39404b] text-gray-200': selectedRange !== range.name}"
-                      class="flex items-center justify-between p-3 rounded-md text-left text-sm transition-all cursor-pointer">
-                <span x-text="range.name"></span>
-                <svg x-show="selectedRange === range.name"
-                     xmlns="http://www.w3.org/2000/svg"
-                     width="24"
-                     height="24"
-                     viewBox="0 0 24 24"
-                     fill="none"
-                     stroke="currentColor"
-                     stroke-width="2"
-                     stroke-linecap="round"
-                     stroke-linejoin="round"
-                     class="w-4 h-4">
-                  <path d="M20 6 9 17l-5-5"></path>
-                </svg>
-              </button>
-            </template>
+             x-show="isRangeOpen"
+             x-transition
+             @click.outside="isRangeOpen = false"
+             class="absolute left-0 z-20 mt-2 stats-dropdown-panel stats-range-panel">
+          <div class="flex border-b border-gray-700">
+            <button @click="activeTab = 'predefined'"
+                    :class="{'text-white border-b-2 border-indigo-500': activeTab === 'predefined', 'text-gray-400 hover:text-gray-200': activeTab !== 'predefined'}"
+                    class="flex-1 py-3 text-sm font-medium transition-colors cursor-pointer">
+              Predefined Ranges
+            </button>
+            <button @click="activeTab = 'custom'"
+                    :class="{'text-white border-b-2 border-indigo-500': activeTab === 'custom', 'text-gray-400 hover:text-gray-200': activeTab !== 'custom'}"
+                    class="flex-1 py-3 text-sm font-medium transition-colors cursor-pointer">
+              Custom Range
+            </button>
           </div>
-        </div>
 
-        <!-- Custom Range Tab -->
-        <div x-show="activeTab === 'custom'" class="p-4">
-          <div class="space-y-4">
-            <div class="grid grid-cols-2 gap-4">
-              <div>
-                <label class="block text-sm font-medium mb-2 text-gray-300">Start Date</label>
-                <input x-model="startDate"
-                       @change="updateDateRange()"
-                       class="w-full p-2.5 bg-[#39404b] rounded-md text-white border border-gray-600 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-sm [color-scheme:dark] scheme-dark"
-                       type="date">
-              </div>
-              <div>
-                <label class="block text-sm font-medium mb-2 text-gray-300">End Date</label>
-                <input x-model="endDate"
-                       @change="updateDateRange()"
-                       class="w-full p-2.5 bg-[#39404b] rounded-md text-white border border-gray-600 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-sm [color-scheme:dark] scheme-dark"
-                       type="date">
-              </div>
+          <div x-show="activeTab === 'predefined'" class="p-2 overflow-y-auto" style="max-height: 320px;">
+            <div class="space-y-1">
+              <template x-for="range in predefinedRanges" :key="range.name">
+                <button @click="selectPredefinedRange(range.name)"
+                        class="stats-option-row"
+                        :class="{'is-selected': selectedRange === range.name}">
+                  <div class="stats-option-copy">
+                    <span class="stats-option-title" x-text="range.displayName"></span>
+                    <span class="stats-option-summary" x-text="getPredefinedRangeDatesLabel(range.name)"></span>
+                  </div>
+                  <svg x-show="selectedRange === range.name"
+                       xmlns="http://www.w3.org/2000/svg"
+                       width="24"
+                       height="24"
+                       viewBox="0 0 24 24"
+                       fill="none"
+                       stroke="currentColor"
+                       stroke-width="2"
+                       stroke-linecap="round"
+                       stroke-linejoin="round"
+                       class="w-4 h-4 shrink-0 text-white">
+                    <path d="M20 6 9 17l-5-5"></path>
+                  </svg>
+                </button>
+              </template>
             </div>
+          </div>
 
-            <div class="flex items-center justify-center py-2 px-3 bg-[#343a40] rounded-md">
-              <span class="text-sm text-gray-300" x-text="formatDisplayDate(startDate)"></span>
-              <svg xmlns="http://www.w3.org/2000/svg"
-                   width="24"
-                   height="24"
-                   viewBox="0 0 24 24"
-                   fill="none"
-                   stroke="currentColor"
-                   stroke-width="2"
-                   stroke-linecap="round"
-                   stroke-linejoin="round"
-                   class="mx-2 w-4 h-4 text-gray-500">
-                <path d="M5 12h14"></path>
-                <path d="m12 5 7 7-7 7"></path>
-              </svg>
-              <span class="text-sm text-gray-300" x-text="formatDisplayDate(endDate)"></span>
-            </div>
+          <div x-show="activeTab === 'custom'" class="p-4">
+            <div class="space-y-4">
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="block text-sm font-medium mb-2 text-gray-300">Start Date</label>
+                  <input x-model="startDate"
+                         @change="updateDateRange()"
+                         class="w-full p-2.5 bg-[#39404b] rounded-md text-white border border-gray-600 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-sm [color-scheme:dark] scheme-dark"
+                         type="date">
+                </div>
+                <div>
+                  <label class="block text-sm font-medium mb-2 text-gray-300">End Date</label>
+                  <input x-model="endDate"
+                         @change="updateDateRange()"
+                         class="w-full p-2.5 bg-[#39404b] rounded-md text-white border border-gray-600 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-sm [color-scheme:dark] scheme-dark"
+                         type="date">
+                </div>
+              </div>
 
-            <div class="flex justify-end gap-2 pt-2">
-              <button @click="isOpen = false"
-                      class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm rounded-md transition-colors cursor-pointer">
-                Cancel
-              </button>
-              <button @click="applyCustomRange()"
-                      class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-md transition-colors cursor-pointer flex items-center gap-2">
+              <div class="flex items-center justify-center py-2 px-3 bg-[#343a40] rounded-md">
+                <span class="text-sm text-gray-300" x-text="formatDisplayDate(startDate)"></span>
                 <svg xmlns="http://www.w3.org/2000/svg"
                      width="24"
                      height="24"
@@ -337,18 +512,104 @@
                      stroke-width="2"
                      stroke-linecap="round"
                      stroke-linejoin="round"
-                     class="w-4 h-4">
-                  <path d="M20 6 9 17l-5-5"></path>
+                     class="mx-2 w-4 h-4 text-gray-500">
+                  <path d="M5 12h14"></path>
+                  <path d="m12 5 7 7-7 7"></path>
                 </svg>
-                Apply Range
-              </button>
+                <span class="text-sm text-gray-300" x-text="formatDisplayDate(endDate)"></span>
+              </div>
+
+              <div class="flex justify-end gap-2 pt-2">
+                <button @click="isRangeOpen = false"
+                        class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm rounded-md transition-colors cursor-pointer">
+                  Cancel
+                </button>
+                <button @click="applyCustomRange()"
+                        class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm rounded-md transition-colors cursor-pointer flex items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg"
+                       width="24"
+                       height="24"
+                       viewBox="0 0 24 24"
+                       fill="none"
+                       stroke="currentColor"
+                       stroke-width="2"
+                       stroke-linecap="round"
+                       stroke-linejoin="round"
+                       class="w-4 h-4">
+                    <path d="M20 6 9 17l-5-5"></path>
+                  </svg>
+                  Apply Range
+                </button>
+              </div>
             </div>
           </div>
         </div>
       </div>
+
+      <div class="stats-compare-wrapper relative min-w-0">
+        <button @click="toggleCompareDropdown()"
+                :disabled="!hasFiniteRange()"
+                class="stats-compare-button flex items-center gap-2 w-full px-4 py-2.5 bg-[#2a2f35] hover:bg-[#343a40] disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-all duration-200 border border-gray-700 shadow-sm cursor-pointer">
+          <div class="stats-compare-copy">
+            <span class="stats-compare-prefix">compared to</span>
+            <span class="stats-button-divider"></span>
+            <span class="stats-compare-value"
+                  x-text="comparisonTriggerLabel()"></span>
+          </div>
+          <svg xmlns="http://www.w3.org/2000/svg"
+               width="24"
+               height="24"
+               viewBox="0 0 24 24"
+               fill="none"
+               stroke="currentColor"
+               stroke-width="2"
+               stroke-linecap="round"
+               stroke-linejoin="round"
+               class="w-4 h-4 text-gray-400 transition-transform duration-200 shrink-0"
+               :class="{'rotate-180': isCompareOpen}">
+            <path d="m6 9 6 6 6-6"></path>
+          </svg>
+        </button>
+
+        <div x-cloak
+             x-show="isCompareOpen"
+             x-transition
+             @click.outside="isCompareOpen = false"
+             class="absolute right-0 z-20 mt-2 stats-dropdown-panel stats-compare-panel">
+          <div class="p-2 space-y-1">
+            <template x-for="option in comparisonOptions" :key="option.value">
+              <button @click="selectComparisonMode(option.value)"
+                      class="stats-option-row"
+                      :class="{
+                        'is-selected': compareMode === option.value,
+                        'is-disabled': isComparisonDisabled(option.value)
+                      }"
+                      :disabled="isComparisonDisabled(option.value)">
+                <div class="stats-option-copy">
+                  <span class="stats-option-title" x-text="option.label"></span>
+                  <span x-show="option.value !== 'none' && comparisonSummaryLabel(option.value)"
+                        class="stats-option-summary"
+                        x-text="comparisonSummaryLabel(option.value)"></span>
+                </div>
+                <svg x-show="compareMode === option.value"
+                     xmlns="http://www.w3.org/2000/svg"
+                     width="24"
+                     height="24"
+                     viewBox="0 0 24 24"
+                     fill="none"
+                     stroke="currentColor"
+                     stroke-width="2"
+                     stroke-linecap="round"
+                     stroke-linejoin="round"
+                     class="w-4 h-4 shrink-0 text-white">
+                  <path d="M20 6 9 17l-5-5"></path>
+                </svg>
+              </button>
+            </template>
+          </div>
+        </div>
       </div>
-      
-      <!-- Refresh Button -->
+
       <button @click="refreshStatistics()"
               :disabled="refreshing"
               class="stats-refresh-button flex items-center justify-center px-3 py-2.5 bg-[#2a2f35] hover:bg-[#343a40] disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-all duration-200 border border-gray-700 shadow-sm cursor-pointer"
@@ -828,10 +1089,14 @@
               <polyline points="17 2 12 7 7 2"/>
             </svg>
           </div>
-          <div>
+          <div class="min-w-0">
             <h3 class="text-xs sm:text-sm font-medium text-gray-400">TV Shows</h3>
             <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.tv }}</p>
-            <p class="text-xs sm:text-sm text-gray-500" x-text="selectedRange"></p>
+            {% with compare=hours_per_media_type_comparison.tv %}
+              <p class="stats-media-card-range">
+                {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+              </p>
+            {% endwith %}
           </div>
         </div>
         {% endif %}
@@ -859,10 +1124,14 @@
               <path d="M17 16.5h4"/>
             </svg>
           </div>
-          <div>
+          <div class="min-w-0">
             <h3 class="text-xs sm:text-sm font-medium text-gray-400">Movies</h3>
             <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.movie }}</p>
-            <p class="text-xs sm:text-sm text-gray-500" x-text="selectedRange"></p>
+            {% with compare=hours_per_media_type_comparison.movie %}
+              <p class="stats-media-card-range">
+                {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+              </p>
+            {% endwith %}
           </div>
         </div>
         {% endif %}
@@ -887,10 +1156,14 @@
               <path d="M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z"/>
             </svg>
           </div>
-          <div>
+          <div class="min-w-0">
             <h3 class="text-xs sm:text-sm font-medium text-gray-400">Games</h3>
             <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.game }}</p>
-            <p class="text-xs sm:text-sm text-gray-500" x-text="selectedRange"></p>
+            {% with compare=hours_per_media_type_comparison.game %}
+              <p class="stats-media-card-range">
+                {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+              </p>
+            {% endwith %}
           </div>
         </div>
         {% endif %}
@@ -914,10 +1187,14 @@
               <line x1="8" x2="16" y1="23" y2="23"/>
             </svg>
           </div>
-          <div>
+          <div class="min-w-0">
             <h3 class="text-xs sm:text-sm font-medium text-gray-400">Podcasts</h3>
             <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.podcast }}</p>
-            <p class="text-xs sm:text-sm text-gray-500" x-text="selectedRange"></p>
+            {% with compare=hours_per_media_type_comparison.podcast %}
+              <p class="stats-media-card-range">
+                {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+              </p>
+            {% endwith %}
           </div>
         </div>
         {% endif %}
@@ -942,10 +1219,14 @@
               <path d="M8 16v-2"/>
             </svg>
           </div>
-          <div>
+          <div class="min-w-0">
             <h3 class="text-xs sm:text-sm font-medium text-gray-400">Board Games</h3>
             <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.boardgame }}</p>
-            <p class="text-xs sm:text-sm text-gray-500" x-text="selectedRange"></p>
+            {% with compare=hours_per_media_type_comparison.boardgame %}
+              <p class="stats-media-card-range">
+                {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+              </p>
+            {% endwith %}
           </div>
         </div>
         {% endif %}
@@ -967,10 +1248,14 @@
               <polygon points="10 8 16 12 10 16 10 8"/>
             </svg>
           </div>
-          <div>
+          <div class="min-w-0">
             <h3 class="text-xs sm:text-sm font-medium text-gray-400">Anime</h3>
             <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.anime }}</p>
-            <p class="text-xs sm:text-sm text-gray-500" x-text="selectedRange"></p>
+            {% with compare=hours_per_media_type_comparison.anime %}
+              <p class="stats-media-card-range">
+                {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+              </p>
+            {% endwith %}
           </div>
         </div>
         {% endif %}
@@ -993,10 +1278,14 @@
               <circle cx="18" cy="16" r="3"/>
             </svg>
           </div>
-          <div>
+          <div class="min-w-0">
             <h3 class="text-xs sm:text-sm font-medium text-gray-400">Music</h3>
             <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.music }}</p>
-            <p class="text-xs sm:text-sm text-gray-500" x-text="selectedRange"></p>
+            {% with compare=hours_per_media_type_comparison.music %}
+              <p class="stats-media-card-range">
+                {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+              </p>
+            {% endwith %}
           </div>
         </div>
         {% endif %}

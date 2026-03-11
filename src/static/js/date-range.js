@@ -1,215 +1,281 @@
 function dateRangePicker(options = {}) {
-  const { initialRangeName = "", initialStartDate = "", initialEndDate = "", refreshUrl = "", csrfToken = "" } =
-    options;
-  const defaultStartDate = new Date(
-    new Date().setFullYear(new Date().getFullYear() - 1)
-  )
-    .toISOString()
-    .split("T")[0];
-  const defaultEndDate = new Date().toISOString().split("T")[0];
-  const hasInitialDates = Boolean(initialStartDate && initialEndDate);
+  const {
+    initialRangeName = "",
+    initialStartDate = "",
+    initialEndDate = "",
+    initialCompareMode = "previous_period",
+    refreshUrl = "",
+    csrfToken = "",
+  } = options;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const defaultStartDate = new Date(today);
+  defaultStartDate.setFullYear(defaultStartDate.getFullYear() - 1);
+
+  const predefinedRanges = [
+    { name: "Today", displayName: "Today" },
+    { name: "Yesterday", displayName: "Yesterday" },
+    { name: "This Week", displayName: "This week" },
+    { name: "Last 7 Days", displayName: "Last 7 days" },
+    { name: "This Month", displayName: "Month to date" },
+    { name: "Last 30 Days", displayName: "Last 30 days" },
+    { name: "Last 90 Days", displayName: "Last 90 days" },
+    { name: "This Year", displayName: "Year to date" },
+    { name: "Last 6 Months", displayName: "Last 6 months" },
+    { name: "Last 12 Months", displayName: "Last 12 months" },
+    { name: "All Time", displayName: "All time" },
+  ];
+
+  const comparisonOptions = [
+    { value: "previous_period", label: "Previous period" },
+    { value: "last_year", label: "Last year" },
+    { value: "none", label: "No comparison" },
+  ];
 
   return {
-    isOpen: false,
+    isRangeOpen: false,
+    isCompareOpen: false,
     activeTab: "predefined",
     selectedRange: initialRangeName || "Last 12 Months",
-    startDate: hasInitialDates ? initialStartDate : defaultStartDate,
-    endDate: hasInitialDates ? initialEndDate : defaultEndDate,
+    startDate: initialStartDate || formatDateForInput(defaultStartDate),
+    endDate: initialEndDate || formatDateForInput(today),
     customRangeLabel: "",
+    compareMode: initialCompareMode,
     refreshing: false,
-
-    predefinedRanges: [
-      { name: "Today" },
-      { name: "Yesterday" },
-      { name: "This Week" },
-      { name: "Last 7 Days" },
-      { name: "This Month" },
-      { name: "Last 30 Days" },
-      { name: "Last 90 Days" },
-      { name: "This Year" },
-      { name: "Last 6 Months" },
-      { name: "Last 12 Months" },
-      { name: "All Time" },
-    ],
+    predefinedRanges,
+    comparisonOptions,
 
     init() {
-      // Initialize dates from URL parameters if they exist
       const urlParams = new URLSearchParams(window.location.search);
       const startDateParam = urlParams.get("start-date");
       const endDateParam = urlParams.get("end-date");
+      const compareParam = urlParams.get("compare");
 
       if (startDateParam && endDateParam) {
         this.startDate = startDateParam;
         this.endDate = endDateParam;
-
-        // Try to determine which predefined range matches these dates
-        this.detectRangeFromDates();
-        return;
-      }
-
-      if (hasInitialDates) {
+      } else if (initialStartDate && initialEndDate) {
         this.startDate = initialStartDate;
         this.endDate = initialEndDate;
-        this.detectRangeFromDates();
-        return;
+      } else if (initialRangeName) {
+        this.updateDatesFromRange(initialRangeName);
       }
 
-      if (initialRangeName) {
-        this.selectedRange = initialRangeName;
-        this.updateDatesFromRange(initialRangeName);
+      this.detectRangeFromDates();
+      this.compareMode = this.normalizeCompareMode(compareParam || initialCompareMode);
+    },
+
+    toggleRangeDropdown() {
+      this.isRangeOpen = !this.isRangeOpen;
+      if (this.isRangeOpen) {
+        this.isCompareOpen = false;
       }
     },
 
-    toggleDropdown() {
-      this.isOpen = !this.isOpen;
+    toggleCompareDropdown() {
+      if (!this.hasFiniteRange()) {
+        return;
+      }
+
+      this.isCompareOpen = !this.isCompareOpen;
+      if (this.isCompareOpen) {
+        this.isRangeOpen = false;
+      }
+    },
+
+    hasFiniteRange() {
+      return Boolean(
+        this.startDate &&
+          this.endDate &&
+          this.startDate !== "all" &&
+          this.endDate !== "all",
+      );
+    },
+
+    normalizeCompareMode(mode) {
+      if (!this.hasFiniteRange()) {
+        return "none";
+      }
+
+      return this.comparisonOptions.some((option) => option.value === mode)
+        ? mode
+        : "previous_period";
+    },
+
+    getRangeDisplayName(rangeName = this.selectedRange) {
+      const range = this.predefinedRanges.find((entry) => entry.name === rangeName);
+      return range ? range.displayName : rangeName;
+    },
+
+    rangeTriggerLabel() {
+      return this.isKnownPredefinedRange(this.selectedRange)
+        ? this.getRangeDisplayName(this.selectedRange)
+        : "Custom range";
+    },
+
+    currentRangeSummaryLabel() {
+      if (!this.hasFiniteRange()) {
+        return "All activity";
+      }
+      return this.formatDateRange(this.startDate, this.endDate);
+    },
+
+    comparisonTriggerLabel() {
+      const option = this.comparisonOptions.find(
+        (entry) => entry.value === this.compareMode,
+      );
+      return option ? option.label : "Previous period";
+    },
+
+    comparisonSummaryLabel(mode = this.compareMode) {
+      if (mode === "none") {
+        return "";
+      }
+
+      const range = this.getComparisonRange(mode);
+      if (!range) {
+        return "";
+      }
+
+      return this.formatDateRange(range.start, range.end);
+    },
+
+    isComparisonDisabled(mode) {
+      return mode !== "none" && !this.hasFiniteRange();
+    },
+
+    selectComparisonMode(mode) {
+      if (this.isComparisonDisabled(mode) || this.compareMode === mode) {
+        this.isCompareOpen = false;
+        return;
+      }
+
+      this.compareMode = mode;
+      this.isCompareOpen = false;
+      this.applyDateFilter();
     },
 
     selectPredefinedRange(rangeName) {
       this.selectedRange = rangeName;
       this.updateDatesFromRange(rangeName);
-      this.isOpen = false;
+      this.isRangeOpen = false;
       this.applyDateFilter();
     },
 
     updateDatesFromRange(rangeName) {
-      const today = new Date();
-      // Set time to start of day to avoid timezone issues
-      today.setHours(0, 0, 0, 0);
-      let start = new Date(today);
-      let end = new Date(today);
+      const range = this.calculateRangeDates(rangeName);
+      if (!range) {
+        return;
+      }
 
-      let shouldFormatDates = true;
+      this.startDate = range.start;
+      this.endDate = range.end;
+      this.compareMode = this.normalizeCompareMode(this.compareMode);
+    },
+
+    calculateRangeDates(rangeName) {
+      const rangeToday = new Date();
+      rangeToday.setHours(0, 0, 0, 0);
+      let start = new Date(rangeToday);
+      let end = new Date(rangeToday);
 
       switch (rangeName) {
         case "Today":
-          // Both start and end are today
-          start = new Date(today);
-          end = new Date(today);
           break;
-
         case "Yesterday":
-          // Both start and end are yesterday
-          start = new Date(today);
           start.setDate(start.getDate() - 1);
           end = new Date(start);
           break;
-
-        case "This Week":
-          // Start from Monday of current week
-          const dayOfWeek = today.getDay(); // 0 is Sunday, 1 is Monday, etc.
-          const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // Adjust to make Monday the first day
-          start = new Date(today);
-          start.setDate(start.getDate() - diff);
-          end = new Date(today);
+        case "This Week": {
+          const dayOfWeek = rangeToday.getDay();
+          const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+          start.setDate(start.getDate() - diffToMonday);
           break;
-
+        }
         case "Last 7 Days":
-          start = new Date(today);
-          start.setDate(start.getDate() - 6); // 6 days ago + today = 7 days
-          end = new Date(today);
+          start.setDate(start.getDate() - 6);
           break;
-
         case "This Month":
-          // First day of current month to today
-          start = new Date(today.getFullYear(), today.getMonth(), 1);
-          end = new Date(today);
+          start = new Date(rangeToday.getFullYear(), rangeToday.getMonth(), 1);
           break;
-
         case "Last 30 Days":
-          start = new Date(today);
-          start.setDate(start.getDate() - 29); // 29 days ago + today = 30 days
-          end = new Date(today);
+          start.setDate(start.getDate() - 29);
           break;
-
         case "Last 90 Days":
-          start = new Date(today);
-          start.setDate(start.getDate() - 89); // 89 days ago + today = 90 days
-          end = new Date(today);
+          start.setDate(start.getDate() - 89);
           break;
-
         case "This Year":
-          // January 1st of current year to today
-          start = new Date(today.getFullYear(), 0, 1);
-          end = new Date(today);
+          start = new Date(rangeToday.getFullYear(), 0, 1);
           break;
-
         case "Last 6 Months":
-          start = new Date(today);
+          start = new Date(rangeToday);
           start.setMonth(start.getMonth() - 6);
-          // If the day doesn't exist in the target month, it will roll over
-          if (start.getDate() !== today.getDate()) {
-            // If the days don't match, we rolled over to the next month
-            // Set to the last day of the previous month
+          if (start.getDate() !== rangeToday.getDate()) {
             start = new Date(start.getFullYear(), start.getMonth() + 1, 0);
           }
-          end = new Date(today);
           break;
-
         case "Last 12 Months":
-          start = new Date(today);
+          start = new Date(rangeToday);
           start.setFullYear(start.getFullYear() - 1);
-          // Handle the same day-of-month issue as with 6 months
-          if (start.getDate() !== today.getDate()) {
+          if (start.getDate() !== rangeToday.getDate()) {
             start = new Date(start.getFullYear(), start.getMonth() + 1, 0);
           }
-          end = new Date(today);
           break;
-
         case "All Time":
-          this.startDate = "all";
-          this.endDate = "all";
-          shouldFormatDates = false;
-          break;
+          return { start: "all", end: "all" };
+        default:
+          return null;
       }
 
-      // Format dates as YYYY-MM-DD strings only if not "All Time"
-      if (shouldFormatDates) {
-        this.startDate = this.formatDateForInput(start);
-        this.endDate = this.formatDateForInput(end);
-      }
+      return {
+        start: formatDateForInput(start),
+        end: formatDateForInput(end),
+      };
     },
 
-    formatDateForInput(date) {
-      // Format date as YYYY-MM-DD
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, "0");
-      const day = String(date.getDate()).padStart(2, "0");
-      return `${year}-${month}-${day}`;
+    getPredefinedRangeDatesLabel(rangeName) {
+      const range = this.calculateRangeDates(rangeName);
+      if (!range) {
+        return "";
+      }
+      if (range.start === "all" && range.end === "all") {
+        return "All activity";
+      }
+      return this.formatDateRange(range.start, range.end);
     },
 
     updateDateRange() {
-      // Ensure end date is not before start date
-      if (new Date(this.endDate) < new Date(this.startDate)) {
+      if (this.hasFiniteRange() && parseLocalDate(this.endDate) < parseLocalDate(this.startDate)) {
         this.endDate = this.startDate;
       }
 
-      this.customRangeLabel = `${this.formatDisplayDate(
-        this.startDate
-      )} - ${this.formatDisplayDate(this.endDate)}`;
+      this.customRangeLabel = this.formatDateRange(this.startDate, this.endDate);
+      this.compareMode = this.normalizeCompareMode(this.compareMode);
     },
 
     applyCustomRange() {
+      this.customRangeLabel = this.formatDateRange(this.startDate, this.endDate);
       this.selectedRange = this.customRangeLabel;
-      this.isOpen = false;
+      this.isRangeOpen = false;
       this.applyDateFilter();
     },
 
     applyDateFilter() {
-      // Create URL with date parameters
       const url = new URL(window.location.href);
       url.searchParams.set("start-date", this.startDate);
       url.searchParams.set("end-date", this.endDate);
-
-      // Navigate to the URL
+      url.searchParams.set("compare", this.normalizeCompareMode(this.compareMode));
       window.location.href = url.toString();
     },
 
     formatDisplayDate(dateString) {
-      // Parse date string (YYYY-MM-DD) as local date to avoid timezone conversion issues
-      // When using new Date("YYYY-MM-DD"), it's interpreted as UTC midnight,
-      // which can shift to the previous day in local time zones ahead of UTC
-      const [year, month, day] = dateString.split("-").map(Number);
-      const date = new Date(year, month - 1, day); // month is 0-indexed
+      if (!dateString || dateString === "all") {
+        return "All time";
+      }
+
+      const date = parseLocalDate(dateString);
       return date.toLocaleDateString("en-US", {
         month: "short",
         day: "numeric",
@@ -217,142 +283,79 @@ function dateRangePicker(options = {}) {
       });
     },
 
+    formatDateRange(start, end) {
+      if (!start || !end) {
+        return "";
+      }
+
+      if (start === "all" && end === "all") {
+        return "All activity";
+      }
+
+      const startLabel = this.formatDisplayDate(start);
+      const endLabel = this.formatDisplayDate(end);
+      return start === end ? startLabel : `${startLabel} - ${endLabel}`;
+    },
+
+    getComparisonRange(mode = this.compareMode) {
+      if (this.isComparisonDisabled(mode)) {
+        return null;
+      }
+
+      const currentStart = parseLocalDate(this.startDate);
+      const currentEnd = parseLocalDate(this.endDate);
+      let compareStart = new Date(currentStart);
+      let compareEnd = new Date(currentEnd);
+
+      if (mode === "previous_period") {
+        const durationDays = Math.round(
+          (currentEnd.getTime() - currentStart.getTime()) / 86400000,
+        ) + 1;
+        compareEnd = new Date(currentStart);
+        compareEnd.setDate(compareEnd.getDate() - 1);
+        compareStart = new Date(compareEnd);
+        compareStart.setDate(compareStart.getDate() - (durationDays - 1));
+      } else if (mode === "last_year") {
+        compareStart = new Date(currentStart);
+        compareEnd = new Date(currentEnd);
+        compareStart.setFullYear(compareStart.getFullYear() - 1);
+        compareEnd.setFullYear(compareEnd.getFullYear() - 1);
+      } else {
+        return null;
+      }
+
+      return {
+        start: formatDateForInput(compareStart),
+        end: formatDateForInput(compareEnd),
+      };
+    },
+
     detectRangeFromDates() {
-      // Check for All Time (arbitrary start date)
       if (this.startDate === "all" && this.endDate === "all") {
         this.selectedRange = "All Time";
         return;
       }
-      // Parse the current start and end dates as local dates to avoid timezone conversion issues
-      // When using new Date("YYYY-MM-DD"), it's interpreted as UTC midnight,
-      // which can shift to the previous day in local time zones ahead of UTC
-      const parseLocalDate = (dateString) => {
-        const [year, month, day] = dateString.split("-").map(Number);
-        return new Date(year, month - 1, day); // month is 0-indexed
-      };
-      const startDate = parseLocalDate(this.startDate);
-      const endDate = parseLocalDate(this.endDate);
 
-      // Get today's date with time set to 00:00:00
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-
-      // Helper function to check if two dates are the same day
-      const isSameDay = (d1, d2) => {
+      const matchingRange = this.predefinedRanges.find((range) => {
+        const calculated = this.calculateRangeDates(range.name);
         return (
-          d1.getFullYear() === d2.getFullYear() &&
-          d1.getMonth() === d2.getMonth() &&
-          d1.getDate() === d2.getDate()
+          calculated &&
+          calculated.start === this.startDate &&
+          calculated.end === this.endDate
         );
-      };
+      });
 
-      // Check for Today
-      if (isSameDay(startDate, today) && isSameDay(endDate, today)) {
-        this.selectedRange = "Today";
+      if (matchingRange) {
+        this.selectedRange = matchingRange.name;
         return;
       }
 
-      // Check for Yesterday
-      const yesterday = new Date(today);
-      yesterday.setDate(yesterday.getDate() - 1);
-      if (isSameDay(startDate, yesterday) && isSameDay(endDate, yesterday)) {
-        this.selectedRange = "Yesterday";
-        return;
-      }
-
-      // Check for This Week
-      const thisWeekStart = new Date(today);
-      const dayOfWeek = today.getDay();
-      const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-      thisWeekStart.setDate(today.getDate() - diffToMonday);
-      if (isSameDay(startDate, thisWeekStart) && isSameDay(endDate, today)) {
-        this.selectedRange = "This Week";
-        return;
-      }
-
-      // Check for Last 7 Days
-      const last7DaysStart = new Date(today);
-      last7DaysStart.setDate(today.getDate() - 6);
-      if (isSameDay(startDate, last7DaysStart) && isSameDay(endDate, today)) {
-        this.selectedRange = "Last 7 Days";
-        return;
-      }
-
-      // Check for This Month
-      const thisMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-      if (isSameDay(startDate, thisMonthStart) && isSameDay(endDate, today)) {
-        this.selectedRange = "This Month";
-        return;
-      }
-
-      // Check for Last 30 Days
-      const last30DaysStart = new Date(today);
-      last30DaysStart.setDate(today.getDate() - 29);
-      if (isSameDay(startDate, last30DaysStart) && isSameDay(endDate, today)) {
-        this.selectedRange = "Last 30 Days";
-        return;
-      }
-
-      // Check for Last 90 Days
-      const last90DaysStart = new Date(today);
-      last90DaysStart.setDate(today.getDate() - 89);
-      if (isSameDay(startDate, last90DaysStart) && isSameDay(endDate, today)) {
-        this.selectedRange = "Last 90 Days";
-        return;
-      }
-
-      // Check for This Year
-      const thisYearStart = new Date(today.getFullYear(), 0, 1);
-      if (isSameDay(startDate, thisYearStart) && isSameDay(endDate, today)) {
-        this.selectedRange = "This Year";
-        return;
-      }
-
-      // Check for Last 6 Months
-      // This is more complex due to varying month lengths
-      const last6MonthsStart = new Date(today);
-      last6MonthsStart.setMonth(today.getMonth() - 6);
-      // Adjust for month length differences
-      if (last6MonthsStart.getDate() !== today.getDate()) {
-        // We rolled over to the next month, adjust to last day of previous month
-        last6MonthsStart.setDate(0);
-      }
-
-      // Allow a 1-day difference for month-end variations
-      const isWithinOneDay = (d1, d2) => {
-        const diff = Math.abs(d1.getTime() - d2.getTime());
-        return diff <= 86400000; // 24 hours in milliseconds
-      };
-
-      if (
-        isWithinOneDay(startDate, last6MonthsStart) &&
-        isSameDay(endDate, today)
-      ) {
-        this.selectedRange = "Last 6 Months";
-        return;
-      }
-
-      // Check for Last 12 Months
-      const last12MonthsStart = new Date(today);
-      last12MonthsStart.setFullYear(today.getFullYear() - 1);
-      // Adjust for month length differences and leap years
-      if (last12MonthsStart.getDate() !== today.getDate()) {
-        last12MonthsStart.setDate(0);
-      }
-
-      if (
-        isWithinOneDay(startDate, last12MonthsStart) &&
-        isSameDay(endDate, today)
-      ) {
-        this.selectedRange = "Last 12 Months";
-        return;
-      }
-
-      // If no match found, use custom range format
-      this.customRangeLabel = `${this.formatDisplayDate(
-        this.startDate
-      )} - ${this.formatDisplayDate(this.endDate)}`;
+      this.customRangeLabel = this.formatDateRange(this.startDate, this.endDate);
       this.selectedRange = this.customRangeLabel;
+    },
+
+    isKnownPredefinedRange(rangeName) {
+      return this.predefinedRanges.some((range) => range.name === rangeName);
     },
 
     async refreshStatistics() {
@@ -361,9 +364,8 @@ function dateRangePicker(options = {}) {
         return;
       }
 
-      const isPredefinedRange = this.selectedRange && this.predefinedRanges.findIndex(r => r.name === this.selectedRange) !== -1;
+      const isPredefinedRange = this.isKnownPredefinedRange(this.selectedRange);
 
-      // For custom ranges, just reload the page (they're computed inline)
       if (!isPredefinedRange) {
         this.refreshing = true;
         setTimeout(() => {
@@ -386,56 +388,42 @@ function dateRangePicker(options = {}) {
         });
 
         if (response.ok) {
-          // Poll for cache completion instead of reloading immediately
-          // This ensures the refresh is complete before reloading
-          const maxAttempts = 60; // 60 attempts * 1 second = 60 seconds max
+          const maxAttempts = 60;
           let attempts = 0;
-          
+
           const pollForCompletion = async () => {
-            attempts++;
+            attempts += 1;
             try {
               const params = new URLSearchParams({
-                cache_type: 'statistics',
-                range_name: this.selectedRange
+                cache_type: "statistics",
+                range_name: this.selectedRange,
               });
-              const statusResponse = await fetch(`/api/cache-status/?${params.toString()}`);
-              
+              const statusResponse = await fetch(
+                `/api/cache-status/?${params.toString()}`,
+              );
+
               if (statusResponse.ok) {
                 const statusData = await statusResponse.json();
-                
-                // Check if refresh is complete:
-                // 1. Not currently refreshing (is_refreshing includes refresh_lock, refresh_scheduled, metadata_refreshing)
-                // 2. No other ranges are refreshing
-                // 3. Cache exists and is fresh (recently built or not stale)
-                const isComplete = !statusData.is_refreshing && 
-                                  !statusData.any_range_refreshing && 
-                                  statusData.exists && 
-                                  (statusData.recently_built || !statusData.is_stale);
-                
+                const isComplete =
+                  !statusData.is_refreshing &&
+                  !statusData.any_range_refreshing &&
+                  statusData.exists &&
+                  (statusData.recently_built || !statusData.is_stale);
+
                 if (isComplete) {
-                  // Refresh is complete, reload the page to show fresh data
-                  console.log('Statistics refresh complete, reloading page');
                   window.location.reload();
                 } else if (attempts >= maxAttempts) {
-                  // Timeout - reload anyway
-                  console.warn('Statistics refresh polling timeout, reloading page');
                   window.location.reload();
                 } else {
-                  // Continue polling
                   setTimeout(pollForCompletion, 1000);
                 }
+              } else if (attempts >= 5) {
+                window.location.reload();
               } else {
-                // If status check fails, reload after a few attempts
-                console.error('Failed to check cache status:', statusResponse.status);
-                if (attempts >= 5) {
-                  window.location.reload();
-                } else {
-                  setTimeout(pollForCompletion, 1000);
-                }
+                setTimeout(pollForCompletion, 1000);
               }
             } catch (error) {
               console.error("Error polling cache status:", error);
-              // If polling fails, reload after a few attempts
               if (attempts >= 5) {
                 window.location.reload();
               } else {
@@ -443,8 +431,7 @@ function dateRangePicker(options = {}) {
               }
             }
           };
-          
-          // Start polling after a short delay to give the refresh time to start
+
           setTimeout(pollForCompletion, 1000);
         } else {
           console.error("Failed to refresh statistics");
@@ -456,4 +443,16 @@ function dateRangePicker(options = {}) {
       }
     },
   };
+}
+
+function parseLocalDate(dateString) {
+  const [year, month, day] = dateString.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function formatDateForInput(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }

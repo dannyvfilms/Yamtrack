@@ -1,7 +1,8 @@
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 import re
 from unittest.mock import call, patch
 
+from dateutil.relativedelta import relativedelta
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.test import TestCase
@@ -43,6 +44,28 @@ class StatisticsViewTests(TestCase):
         self.credentials = {"username": "test", "password": "12345"}
         self.user = get_user_model().objects.create_user(**self.credentials)
         self.client.login(**self.credentials)
+
+    def _create_movie_play(self, media_id, title, played_on, runtime_minutes):
+        played_at = timezone.make_aware(
+            datetime.combine(played_on, datetime.min.time()),
+            timezone.get_current_timezone(),
+        )
+        item = Item.objects.create(
+            media_id=media_id,
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MOVIE.value,
+            title=title,
+            image=f"http://example.com/{media_id}.jpg",
+            runtime_minutes=runtime_minutes,
+        )
+        return Movie.objects.create(
+            user=self.user,
+            item=item,
+            status=Status.COMPLETED.value,
+            progress=1,
+            start_date=played_at,
+            end_date=played_at,
+        )
 
     def test_statistics_view_default_date_range(self):
         """Test the statistics view with default date range (last year)."""
@@ -98,6 +121,138 @@ class StatisticsViewTests(TestCase):
         )
 
         self.assertTrue(date_is_none)
+
+    def test_statistics_view_defaults_to_previous_period_comparison(self):
+        """Finite statistics ranges default to previous-period comparisons."""
+        cache.clear()
+        self.client.login(**self.credentials)
+        current_date = date(2026, 3, 1)
+        previous_date = date(2026, 2, 28)
+
+        self._create_movie_play("movie-current-default-compare", "Current Movie", current_date, 120)
+        self._create_movie_play("movie-previous-default-compare", "Previous Movie", previous_date, 60)
+
+        response = self.client.get(
+            reverse("statistics")
+            + f"?start-date={current_date.isoformat()}&end-date={current_date.isoformat()}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["selected_compare_mode"], "previous_period")
+
+        comparison = response.context["hours_per_media_type_comparison"]["movie"]
+        self.assertEqual(comparison["badge"], "Up 100%")
+        self.assertTrue(
+            comparison["details"].endswith(response.context["comparison_range_dates_label"]),
+        )
+
+    def test_statistics_view_supports_last_year_comparison(self):
+        """Statistics comparison can target the same range last year."""
+        cache.clear()
+        self.client.login(**self.credentials)
+        current_date = date(2026, 3, 1)
+        last_year_date = date(2025, 3, 1)
+
+        self._create_movie_play("movie-current-last-year", "Current Movie", current_date, 90)
+        self._create_movie_play("movie-last-year", "Last Year Movie", last_year_date, 60)
+
+        response = self.client.get(
+            reverse("statistics")
+            + (
+                f"?start-date={current_date.isoformat()}"
+                f"&end-date={current_date.isoformat()}"
+                "&compare=last_year"
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["selected_compare_mode"], "last_year")
+
+        comparison = response.context["hours_per_media_type_comparison"]["movie"]
+        self.assertEqual(comparison["badge"], "Up 50%")
+        self.assertTrue(
+            comparison["details"].endswith(response.context["comparison_range_dates_label"]),
+        )
+
+    def test_statistics_view_uses_year_labels_for_ytd_last_year_comparison(self):
+        """Year-to-date cards should prefer semantic year labels over raw date spans."""
+        cache.clear()
+        self.client.login(**self.credentials)
+        today = timezone.localdate()
+        year_start = today.replace(month=1, day=1)
+        last_year_today = today.replace(year=today.year - 1)
+
+        self._create_movie_play("movie-current-ytd", "Current Movie", today, 120)
+        self._create_movie_play("movie-last-year-ytd", "Last Year Movie", last_year_today, 60)
+
+        response = self.client.get(
+            reverse("statistics")
+            + (
+                f"?start-date={year_start.isoformat()}"
+                f"&end-date={today.isoformat()}"
+                "&compare=last_year"
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["selected_range_name"], "This Year")
+        self.assertEqual(response.context["selected_range_dates_label"], "This Year")
+
+        comparison = response.context["hours_per_media_type_comparison"]["movie"]
+        self.assertTrue(comparison["details"].endswith("last year"))
+        self.assertNotIn(response.context["comparison_range_dates_label"], comparison["details"])
+
+    def test_statistics_view_uses_month_labels_for_mtd_last_year_comparison(self):
+        """Month-to-date cards should prefer semantic month labels over raw date spans."""
+        cache.clear()
+        self.client.login(**self.credentials)
+        today = timezone.localdate()
+        month_start = today.replace(day=1)
+        last_year_today = today - relativedelta(years=1)
+
+        self._create_movie_play("movie-current-mtd", "Current Movie", today, 120)
+        self._create_movie_play("movie-last-year-mtd", "Last Year Movie", last_year_today, 60)
+
+        response = self.client.get(
+            reverse("statistics")
+            + (
+                f"?start-date={month_start.isoformat()}"
+                f"&end-date={today.isoformat()}"
+                "&compare=last_year"
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["selected_range_name"], "This Month")
+        self.assertEqual(response.context["selected_range_dates_label"], "This Month")
+
+        comparison = response.context["hours_per_media_type_comparison"]["movie"]
+        self.assertTrue(comparison["details"].endswith("last year"))
+        self.assertNotIn(response.context["comparison_range_dates_label"], comparison["details"])
+
+    def test_statistics_view_supports_no_comparison(self):
+        """Statistics comparison can be turned off."""
+        cache.clear()
+        self.client.login(**self.credentials)
+        current_date = date(2026, 3, 1)
+
+        self._create_movie_play("movie-none-compare", "Current Movie", current_date, 120)
+
+        response = self.client.get(
+            reverse("statistics")
+            + (
+                f"?start-date={current_date.isoformat()}"
+                f"&end-date={current_date.isoformat()}"
+                "&compare=none"
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["selected_compare_mode"], "none")
+        self.assertEqual(
+            response.context["hours_per_media_type_comparison"]["movie"]["details"],
+            "No comparison selected",
+        )
 
     def test_refresh_statistics_cache_game_daily_average_tooltip_uses_game_title(self):
         """Cached game daily-average tooltip payload should include resolved game titles."""
