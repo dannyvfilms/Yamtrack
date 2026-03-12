@@ -27,13 +27,22 @@ class DiscoverWarmupTests(TestCase):
     def test_middleware_schedules_warmup_for_authenticated_html_get(
         self, mock_schedule_warmup
     ):
-        request = self.factory.get("/library/", HTTP_ACCEPT="text/html")
+        request = self.factory.get("/discover", HTTP_ACCEPT="text/html")
         request.user = self.user
 
         response = self.middleware(request)
 
         self.assertEqual(response.status_code, 200)
         mock_schedule_warmup.assert_called_once_with(self.user)
+
+    @patch("app.middleware.discover_tab_cache.maybe_schedule_user_warmup")
+    def test_middleware_skips_non_discover_html_requests(self, mock_schedule_warmup):
+        request = self.factory.get("/library/", HTTP_ACCEPT="text/html")
+        request.user = self.user
+
+        self.middleware(request)
+
+        mock_schedule_warmup.assert_not_called()
 
     @patch("app.middleware.discover_tab_cache.maybe_schedule_user_warmup")
     def test_middleware_skips_api_and_htmx_requests(self, mock_schedule_warmup):

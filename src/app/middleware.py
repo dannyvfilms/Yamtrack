@@ -4,6 +4,7 @@ import time
 from django.db.utils import OperationalError
 from django.http import HttpRequest
 from django.shortcuts import render
+from django.urls import reverse
 
 from app.discover import tab_cache as discover_tab_cache
 from app.providers import services
@@ -143,6 +144,10 @@ class DiscoverWarmupMiddleware:
         if path == "/serviceworker.js" or path.startswith(
             ("/api/", "/admin/", "/static/", "/media/", "/_debug/"),
         ):
+            return False
+        normalized_path = path.rstrip("/") or "/"
+        discover_path = reverse("discover").rstrip("/") or "/"
+        if normalized_path != discover_path:
             return False
         if request.GET.get("discover_debug") in {"1", "true", "True"}:
             return False
