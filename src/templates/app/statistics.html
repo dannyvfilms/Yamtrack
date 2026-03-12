@@ -179,23 +179,64 @@
       flex: 0 1 20rem;
       min-width: 0;
     }
-    .stats-media-card-meta {
-      margin-top: 0.35rem;
+    .stats-media-card-icon {
+      width: 2.75rem;
+      height: 2.75rem;
+      flex: 0 0 2.75rem;
       display: flex;
       align-items: center;
-      gap: 0.35rem;
+      justify-content: center;
+      border-radius: 9999px;
+      margin-right: 1rem;
+    }
+    .stats-media-card-copy {
+      --stats-media-card-label-height: 0.75rem;
+    }
+    .stats-media-card-copy {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      flex: 1 1 auto;
       min-width: 0;
+      min-height: 2.75rem;
+      padding-right: 0.25rem;
+    }
+    .stats-media-card-title {
+      display: flex;
+      align-items: flex-start;
+      min-height: var(--stats-media-card-label-height);
+      line-height: 1;
+    }
+    .stats-media-card-value {
+      line-height: 0.92;
+    }
+    .stats-media-card-meta {
+      display: flex;
+      align-items: baseline;
+      gap: 0.25rem;
+      min-width: 0;
+      min-height: var(--stats-media-card-label-height);
     }
     .stats-media-card-range {
       min-width: 0;
       font-size: 0.75rem;
-      line-height: 1.35;
+      line-height: 1;
       color: #94a3b8;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .stats-media-card-tooltip-trigger {
       color: #6b7280;
       transition: color 150ms ease;
       flex: 0 0 auto;
+      align-self: baseline;
+      line-height: 1;
+      transform: none;
+    }
+    .stats-media-card-tooltip-trigger svg {
+      display: block;
+      transform: translateY(3px);
     }
     .stats-media-card-tooltip-trigger:hover {
       color: #9ca3af;
@@ -224,6 +265,17 @@
       color: #f9fafb;
       font-weight: 600;
       white-space: nowrap;
+    }
+    @media (min-width: 640px) {
+      .stats-media-card-icon {
+        width: 4rem;
+        height: 4rem;
+        flex-basis: 4rem;
+      }
+      .stats-media-card-copy {
+        --stats-media-card-label-height: 0.875rem;
+        min-height: 4rem;
+      }
     }
     @media (min-width: 769px) {
       .stats-highlight-dots {
@@ -1114,7 +1166,7 @@
            }">
         {% if hours_per_media_type.tv and hours_per_media_type.tv != "0h 0min" %}
         <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 flex items-center min-w-0" data-media-card>
-          <div class="p-3 sm:p-4 rounded-full mr-4" style="background-color: {{ media_type_colors.tv }}33;">
+          <div class="stats-media-card-icon" style="background-color: {{ media_type_colors.tv }}33;">
             <svg xmlns="http://www.w3.org/2000/svg"
                  width="24"
                  height="24"
@@ -1129,9 +1181,9 @@
               <polyline points="17 2 12 7 7 2"/>
             </svg>
           </div>
-          <div class="min-w-0">
-            <h3 class="text-xs sm:text-sm font-medium text-gray-400">TV Shows</h3>
-            <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.tv }}</p>
+          <div class="stats-media-card-copy min-w-0">
+            <h3 class="stats-media-card-title text-xs sm:text-sm font-medium text-gray-400">TV Shows</h3>
+            <p class="stats-media-card-value text-xl sm:text-2xl font-bold">{{ hours_per_media_type.tv }}</p>
             {% with compare=hours_per_media_type_comparison.tv %}
               <div class="stats-media-card-meta">
                 <p class="stats-media-card-range">
@@ -1173,7 +1225,7 @@
         
         {% if hours_per_media_type.movie and hours_per_media_type.movie != "0h 0min" %}
         <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 flex items-center min-w-0" data-media-card>
-          <div class="p-3 sm:p-4 rounded-full mr-4" style="background-color: {{ media_type_colors.movie }}33;">
+          <div class="stats-media-card-icon" style="background-color: {{ media_type_colors.movie }}33;">
             <svg xmlns="http://www.w3.org/2000/svg"
                  width="24"
                  height="24"
@@ -1194,9 +1246,9 @@
               <path d="M17 16.5h4"/>
             </svg>
           </div>
-          <div class="min-w-0">
-            <h3 class="text-xs sm:text-sm font-medium text-gray-400">Movies</h3>
-            <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.movie }}</p>
+          <div class="stats-media-card-copy min-w-0">
+            <h3 class="stats-media-card-title text-xs sm:text-sm font-medium text-gray-400">Movies</h3>
+            <p class="stats-media-card-value text-xl sm:text-2xl font-bold">{{ hours_per_media_type.movie }}</p>
             {% with compare=hours_per_media_type_comparison.movie %}
               <div class="stats-media-card-meta">
                 <p class="stats-media-card-range">
@@ -1238,7 +1290,7 @@
         
         {% if hours_per_media_type.game and hours_per_media_type.game != "0h 0min" %}
         <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 flex items-center min-w-0" data-media-card>
-          <div class="p-3 sm:p-4 rounded-full mr-4" style="background-color: {{ media_type_colors.game }}33;">
+          <div class="stats-media-card-icon" style="background-color: {{ media_type_colors.game }}33;">
             <svg xmlns="http://www.w3.org/2000/svg"
                  width="24"
                  height="24"
@@ -1256,9 +1308,9 @@
               <path d="M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z"/>
             </svg>
           </div>
-          <div class="min-w-0">
-            <h3 class="text-xs sm:text-sm font-medium text-gray-400">Games</h3>
-            <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.game }}</p>
+          <div class="stats-media-card-copy min-w-0">
+            <h3 class="stats-media-card-title text-xs sm:text-sm font-medium text-gray-400">Games</h3>
+            <p class="stats-media-card-value text-xl sm:text-2xl font-bold">{{ hours_per_media_type.game }}</p>
             {% with compare=hours_per_media_type_comparison.game %}
               <div class="stats-media-card-meta">
                 <p class="stats-media-card-range">
@@ -1300,7 +1352,7 @@
         
         {% if user.podcast_enabled and hours_per_media_type.podcast and hours_per_media_type.podcast != "0h 0min" %}
         <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 flex items-center min-w-0" data-media-card>
-          <div class="p-3 sm:p-4 rounded-full mr-4" style="background-color: {{ media_type_colors.podcast }}33;">
+          <div class="stats-media-card-icon" style="background-color: {{ media_type_colors.podcast }}33;">
             <svg xmlns="http://www.w3.org/2000/svg"
                  width="24"
                  height="24"
@@ -1317,9 +1369,9 @@
               <line x1="8" x2="16" y1="23" y2="23"/>
             </svg>
           </div>
-          <div class="min-w-0">
-            <h3 class="text-xs sm:text-sm font-medium text-gray-400">Podcasts</h3>
-            <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.podcast }}</p>
+          <div class="stats-media-card-copy min-w-0">
+            <h3 class="stats-media-card-title text-xs sm:text-sm font-medium text-gray-400">Podcasts</h3>
+            <p class="stats-media-card-value text-xl sm:text-2xl font-bold">{{ hours_per_media_type.podcast }}</p>
             {% with compare=hours_per_media_type_comparison.podcast %}
               <div class="stats-media-card-meta">
                 <p class="stats-media-card-range">
@@ -1361,7 +1413,7 @@
         
         {% if hours_per_media_type.boardgame and hours_per_media_type.boardgame != "0 plays" %}
         <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 flex items-center min-w-0" data-media-card>
-          <div class="bg-lime-600/20 p-3 sm:p-4 rounded-full mr-4">
+          <div class="stats-media-card-icon bg-lime-600/20">
             <svg xmlns="http://www.w3.org/2000/svg"
                  width="24"
                  height="24"
@@ -1379,9 +1431,9 @@
               <path d="M8 16v-2"/>
             </svg>
           </div>
-          <div class="min-w-0">
-            <h3 class="text-xs sm:text-sm font-medium text-gray-400">Board Games</h3>
-            <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.boardgame }}</p>
+          <div class="stats-media-card-copy min-w-0">
+            <h3 class="stats-media-card-title text-xs sm:text-sm font-medium text-gray-400">Board Games</h3>
+            <p class="stats-media-card-value text-xl sm:text-2xl font-bold">{{ hours_per_media_type.boardgame }}</p>
             {% with compare=hours_per_media_type_comparison.boardgame %}
               <div class="stats-media-card-meta">
                 <p class="stats-media-card-range">
@@ -1423,7 +1475,7 @@
         
         {% if hours_per_media_type.anime and hours_per_media_type.anime != "0h 0min" %}
         <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 flex items-center min-w-0" data-media-card>
-          <div class="bg-pink-600/20 p-3 sm:p-4 rounded-full mr-4">
+          <div class="stats-media-card-icon bg-pink-600/20">
             <svg xmlns="http://www.w3.org/2000/svg"
                  width="24"
                  height="24"
@@ -1438,9 +1490,9 @@
               <polygon points="10 8 16 12 10 16 10 8"/>
             </svg>
           </div>
-          <div class="min-w-0">
-            <h3 class="text-xs sm:text-sm font-medium text-gray-400">Anime</h3>
-            <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.anime }}</p>
+          <div class="stats-media-card-copy min-w-0">
+            <h3 class="stats-media-card-title text-xs sm:text-sm font-medium text-gray-400">Anime</h3>
+            <p class="stats-media-card-value text-xl sm:text-2xl font-bold">{{ hours_per_media_type.anime }}</p>
             {% with compare=hours_per_media_type_comparison.anime %}
               <div class="stats-media-card-meta">
                 <p class="stats-media-card-range">
@@ -1482,7 +1534,7 @@
         
         {% if user.music_enabled and hours_per_media_type.music and hours_per_media_type.music != "0h 0min" %}
         <div class="bg-[#2a2f35] rounded-lg p-4 sm:p-6 flex items-center min-w-0" data-media-card>
-          <div class="p-3 sm:p-4 rounded-full mr-4" style="background-color: {{ media_type_colors.music }}33;">
+          <div class="stats-media-card-icon" style="background-color: {{ media_type_colors.music }}33;">
             <svg xmlns="http://www.w3.org/2000/svg"
                  width="24"
                  height="24"
@@ -1498,9 +1550,9 @@
               <circle cx="18" cy="16" r="3"/>
             </svg>
           </div>
-          <div class="min-w-0">
-            <h3 class="text-xs sm:text-sm font-medium text-gray-400">Music</h3>
-            <p class="text-xl sm:text-2xl font-bold">{{ hours_per_media_type.music }}</p>
+          <div class="stats-media-card-copy min-w-0">
+            <h3 class="stats-media-card-title text-xs sm:text-sm font-medium text-gray-400">Music</h3>
+            <p class="stats-media-card-value text-xl sm:text-2xl font-bold">{{ hours_per_media_type.music }}</p>
             {% with compare=hours_per_media_type_comparison.music %}
               <div class="stats-media-card-meta">
                 <p class="stats-media-card-range">

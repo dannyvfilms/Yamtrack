@@ -216,6 +216,32 @@ class StatisticsViewTests(TestCase):
         self.assertEqual(comparison["tooltip"]["current_label"], "This Year")
         self.assertEqual(comparison["tooltip"]["comparison_label"], "Last Year")
 
+    def test_statistics_view_keeps_year_label_for_stale_ytd_previous_period(self):
+        """A just-stale year-to-date range should keep its semantic label."""
+        cache.clear()
+        self.client.login(**self.credentials)
+        today = timezone.localdate()
+        if today.month == 1 and today.day == 1:
+            self.skipTest("No stale year-to-date window exists on the first day of the year.")
+
+        stale_end = today - timedelta(days=1)
+        year_start = today.replace(month=1, day=1)
+
+        self._create_movie_play("movie-current-stale-ytd", "Current Movie", stale_end, 120)
+
+        response = self.client.get(
+            reverse("statistics")
+            + (
+                f"?start-date={year_start.isoformat()}"
+                f"&end-date={stale_end.isoformat()}"
+                "&compare=previous_period"
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["selected_range_name"], "This Year")
+        self.assertEqual(response.context["selected_range_dates_label"], "This Year")
+
     def test_statistics_view_uses_month_labels_for_mtd_last_year_comparison(self):
         """Month-to-date cards should prefer semantic month labels over raw date spans."""
         cache.clear()

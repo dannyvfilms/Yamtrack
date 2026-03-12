@@ -10068,12 +10068,16 @@ def _identify_predefined_range(start_date, end_date):
     monday = today - timedelta(days=today.weekday())
     if local_start == monday and local_end == today:
         return "This Week"
+    if local_start == monday and local_end == today - timedelta(days=1):
+        return "This Week"
 
     if local_start == today - timedelta(days=6) and local_end == today:
         return "Last 7 Days"
 
     month_start = today.replace(day=1)
     if local_start == month_start and local_end == today:
+        return "This Month"
+    if local_start == month_start and local_end == today - timedelta(days=1):
         return "This Month"
 
     if local_start == today - timedelta(days=29) and local_end == today:
@@ -10084,6 +10088,8 @@ def _identify_predefined_range(start_date, end_date):
 
     year_start = today.replace(month=1, day=1)
     if local_start == year_start and local_end == today:
+        return "This Year"
+    if local_start == year_start and local_end == today - timedelta(days=1):
         return "This Year"
 
     six_months_start = _adjust_month_delta(today, months=6)

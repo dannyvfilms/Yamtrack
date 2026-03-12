@@ -63,7 +63,7 @@ function dateRangePicker(options = {}) {
         this.updateDatesFromRange(initialRangeName);
       }
 
-      this.detectRangeFromDates();
+      this.detectRangeFromDates(initialRangeName);
       this.compareMode = this.normalizeCompareMode(compareParam || initialCompareMode);
     },
 
@@ -330,7 +330,12 @@ function dateRangePicker(options = {}) {
       };
     },
 
-    detectRangeFromDates() {
+    detectRangeFromDates(preservedRangeName = "") {
+      if (this.isKnownPredefinedRange(preservedRangeName)) {
+        this.selectedRange = preservedRangeName;
+        return;
+      }
+
       if (this.startDate === "all" && this.endDate === "all") {
         this.selectedRange = "All Time";
         return;
