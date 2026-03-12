@@ -114,33 +114,49 @@ class AudiobookshelfImporter:
 
         progress_entries = me.get("mediaProgress") or []
         last_sync_ms = self.account.last_sync_ms or 0
-        changed = [
-            p
-            for p in progress_entries
-            if int(p.get("lastUpdate") or 0) > last_sync_ms
-        ]
-        max_seen = last_sync_ms
+        book_progress_entries = self._book_progress_entries(progress_entries)
+        existing_items = self._existing_book_items(book_progress_entries)
+        changed_entries, unchanged_entries = self._partition_book_progress_entries(
+            book_progress_entries,
+            last_sync_ms,
+        )
+        max_seen, changed_processed = self._import_changed_books(
+            changed_entries,
+            existing_items,
+            imported_counts,
+            last_sync_ms,
+        )
 
-        for entry in changed:
-            library_item_id = entry.get("libraryItemId")
-            if not library_item_id:
-                continue
+        if changed_entries:
+            logger.info(
+                "Audiobookshelf changed book entries processed=%s imported=%s",
+                len(changed_entries),
+                changed_processed,
+            )
 
-            max_seen = max(max_seen, int(entry.get("lastUpdate") or 0))
+        repair_candidates, skipped_healthy_repairs = self._select_repair_candidates(
+            unchanged_entries,
+            existing_items,
+        )
 
-            # Skip podcast episode progress in v1.
-            if entry.get("episodeId"):
-                continue
+        if unchanged_entries:
+            logger.info(
+                "Audiobookshelf unchanged repair candidates=%s skipped_healthy=%s",
+                len(repair_candidates),
+                skipped_healthy_repairs,
+            )
 
-            try:
-                item_metadata = self.client.get_library_item(library_item_id)
-            except AudiobookshelfClientError:
-                self.warnings.append(f"{library_item_id}: failed to fetch metadata")
-                continue
+        repaired_count = self._repair_unchanged_books(
+            repair_candidates,
+            existing_items,
+            imported_counts,
+        )
 
-            media = self._upsert_book(entry, item_metadata)
-            if media:
-                imported_counts[MediaTypes.BOOK.value] += 1
+        if repair_candidates:
+            logger.info(
+                "Audiobookshelf unchanged book repairs applied=%s",
+                repaired_count,
+            )
 
         self.account.last_sync_ms = max_seen
         self.account.last_sync_at = timezone.now()
@@ -248,6 +264,7 @@ class AudiobookshelfImporter:
             or 0
         )
         runtime_minutes = int(duration_seconds // 60) if duration_seconds else None
+        metadata_fetched_at = timezone.now()
 
         item, _ = app.models.Item.objects.update_or_create(
             media_id=media_id,
@@ -266,6 +283,7 @@ class AudiobookshelfImporter:
                 "series_name": series_name,
                 "series_position": series_position,
                 "format": "audiobook",
+                "metadata_fetched_at": metadata_fetched_at,
             },
         )
 
@@ -302,6 +320,135 @@ class AudiobookshelfImporter:
     def _stable_media_id(self, base_url: str, library_item_id: str):
         value = f"{base_url.strip().lower()}::{library_item_id}"
         return hashlib.sha256(value.encode("utf-8")).hexdigest()[:20]
+
+    def _book_progress_entries(self, progress_entries):
+        book_progress_entries = []
+        for entry in progress_entries:
+            library_item_id = entry.get("libraryItemId")
+            if not library_item_id:
+                continue
+
+            # Skip podcast episode progress in v1.
+            if entry.get("episodeId"):
+                continue
+
+            book_progress_entries.append((str(library_item_id), entry))
+        return book_progress_entries
+
+    def _partition_book_progress_entries(self, book_progress_entries, last_sync_ms):
+        changed_entries = []
+        unchanged_entries = []
+        for library_item_id, entry in book_progress_entries:
+            if int(entry.get("lastUpdate") or 0) > last_sync_ms:
+                changed_entries.append((library_item_id, entry))
+            else:
+                unchanged_entries.append((library_item_id, entry))
+        return changed_entries, unchanged_entries
+
+    def _import_changed_books(
+        self,
+        changed_entries,
+        existing_items,
+        imported_counts,
+        last_sync_ms,
+    ):
+        max_seen = last_sync_ms
+        changed_processed = 0
+        for library_item_id, entry in changed_entries:
+            max_seen = max(max_seen, int(entry.get("lastUpdate") or 0))
+
+            item_metadata = self._fetch_library_item(library_item_id)
+            if item_metadata is None:
+                continue
+
+            media = self._upsert_book(entry, item_metadata)
+            if media:
+                imported_counts[MediaTypes.BOOK.value] += 1
+                changed_processed += 1
+                existing_items[library_item_id] = media.item
+        return max_seen, changed_processed
+
+    def _select_repair_candidates(self, unchanged_entries, existing_items):
+        repair_candidates = []
+        skipped_healthy_repairs = 0
+        for library_item_id, entry in unchanged_entries:
+            if self._needs_book_repair(existing_items.get(library_item_id)):
+                repair_candidates.append((library_item_id, entry))
+                continue
+
+            skipped_healthy_repairs += 1
+            logger.debug(
+                "Audiobookshelf repair skipped for healthy book library_item_id=%s",
+                library_item_id,
+            )
+        return repair_candidates, skipped_healthy_repairs
+
+    def _repair_unchanged_books(
+        self,
+        repair_candidates,
+        existing_items,
+        imported_counts,
+    ):
+        repaired_count = 0
+        for library_item_id, entry in repair_candidates:
+            item_metadata = self._fetch_library_item(library_item_id)
+            if item_metadata is None:
+                continue
+
+            media = self._upsert_book(entry, item_metadata)
+            if media:
+                imported_counts[MediaTypes.BOOK.value] += 1
+                repaired_count += 1
+                existing_items[library_item_id] = media.item
+        return repaired_count
+
+    def _existing_book_items(self, progress_entries):
+        media_id_map = {
+            library_item_id: self._stable_media_id(
+                self.account.base_url,
+                library_item_id,
+            )
+            for library_item_id, _entry in progress_entries
+        }
+        if not media_id_map:
+            return {}
+
+        items = app.models.Item.objects.filter(
+            media_id__in=media_id_map.values(),
+            source=Sources.AUDIOBOOKSHELF.value,
+            media_type=MediaTypes.BOOK.value,
+        )
+        items_by_media_id = {item.media_id: item for item in items}
+        return {
+            library_item_id: items_by_media_id.get(media_id)
+            for library_item_id, media_id in media_id_map.items()
+            if media_id in items_by_media_id
+        }
+
+    def _fetch_library_item(self, library_item_id: str):
+        try:
+            return self.client.get_library_item(library_item_id)
+        except AudiobookshelfClientError:
+            self.warnings.append(f"{library_item_id}: failed to fetch metadata")
+            return None
+
+    def _needs_book_repair(self, item):
+        if item is None:
+            return True
+
+        return any(
+            (
+                self._should_prefer_provider_cover(item.image),
+                not item.authors,
+                not item.isbn,
+                not item.publishers,
+                not item.genres,
+                item.release_datetime is None,
+                not item.original_title,
+                not item.localized_title,
+                item.metadata_fetched_at is None,
+            ),
+        )
 
     def _extract_author_names(self, metadata: dict[str, Any]):
         raw_authors = metadata.get("authors")

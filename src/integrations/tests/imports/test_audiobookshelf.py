@@ -1,19 +1,21 @@
 """Tests for Audiobookshelf importer."""
 
 from datetime import UTC, datetime
-from unittest.mock import patch
+from unittest.mock import call, patch
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.utils import timezone
 
 from app.models import Book, Item, MediaTypes, Sources, Status
 from integrations.imports import helpers
-from integrations.imports.helpers import MediaImportError
 from integrations.imports.audiobookshelf import (
     AudiobookshelfAuthError,
     AudiobookshelfClientError,
     AudiobookshelfImporter,
 )
+from integrations.imports.helpers import MediaImportError
 from integrations.models import AudiobookshelfAccount
 
 
@@ -153,7 +155,7 @@ class AudiobookshelfImporterTests(TestCase):
         mock_me,
         mock_item,
     ):
-        """Only changed progress after the cursor should be imported."""
+        """Changed rows import first, and unchanged missing rows are repaired."""
         account = self.user.audiobookshelf_account
         account.last_sync_ms = 1_500
         account.save(update_fields=["last_sync_ms", "updated_at"])
@@ -173,21 +175,144 @@ class AudiobookshelfImporterTests(TestCase):
                 },
             ],
         }
-        mock_item.return_value = {
-            "media": {"duration": 3_600, "metadata": {"title": "New Book"}},
-            "coverPath": "https://img.example/new-book.jpg",
+        mock_item.side_effect = lambda library_item_id: {
+            "media": {
+                "duration": 3_600,
+                "metadata": {
+                    "title": "New Book"
+                    if library_item_id == "new-item"
+                    else "Old Book",
+                    "authors": [{"name": "Brandon Sanderson"}],
+                },
+            },
+            "coverPath": f"https://img.example/{library_item_id}.jpg",
         }
 
         importer = AudiobookshelfImporter(self.user)
         counts, warnings = importer.import_data()
 
-        self.assertEqual(counts.get(MediaTypes.BOOK.value), 1)
+        self.assertEqual(counts.get(MediaTypes.BOOK.value), 2)
         self.assertEqual(warnings, "")
-        self.assertEqual(Book.objects.filter(user=self.user).count(), 1)
-        self.assertEqual(Book.objects.get(user=self.user).item.title, "New Book")
+        self.assertEqual(Book.objects.filter(user=self.user).count(), 2)
+        self.assertCountEqual(
+            Book.objects.filter(user=self.user).values_list("item__title", flat=True),
+            ["New Book", "Old Book"],
+        )
         self.user.audiobookshelf_account.refresh_from_db()
         self.assertEqual(self.user.audiobookshelf_account.last_sync_ms, 2_000)
-        mock_item.assert_called_once_with("new-item")
+        self.assertEqual(
+            mock_item.call_args_list,
+            [call("new-item"), call("old-item")],
+        )
+
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_library_item")
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_me")
+    def test_repairs_unchanged_completed_item_missing_metadata_after_cursor_advance(
+        self,
+        mock_me,
+        mock_item,
+    ):
+        """Repair unchanged completed ABS books when local metadata is sparse."""
+        account = self.user.audiobookshelf_account
+        account.last_sync_ms = 2_000
+        account.save(update_fields=["last_sync_ms", "updated_at"])
+
+        importer = AudiobookshelfImporter(self.user)
+        media_id = importer._stable_media_id(account.base_url, "completed-item")
+        item = Item.objects.create(
+            media_id=media_id,
+            source=Sources.AUDIOBOOKSHELF.value,
+            media_type=MediaTypes.BOOK.value,
+            title="The Emperor's Soul",
+            image=settings.IMG_NONE,
+            authors=["Brandon Sanderson"],
+            format="audiobook",
+        )
+        Book.objects.create(
+            user=self.user,
+            item=item,
+            status=Status.COMPLETED.value,
+            progress=211,
+        )
+
+        mock_me.return_value = {
+            "mediaProgress": [
+                {
+                    "libraryItemId": "completed-item",
+                    "currentTime": 12_660,
+                    "duration": 12_660,
+                    "progress": 1,
+                    "isFinished": True,
+                    "startedAt": 1_739_145_600_000,
+                    "finishedAt": 1_739_923_200_000,
+                    "lastUpdate": 1_500,
+                },
+            ],
+        }
+        mock_item.return_value = {
+            "media": {
+                "duration": 12_660,
+                "metadata": {
+                    "title": "The Emperor's Soul",
+                    "authors": [{"name": "Brandon Sanderson"}],
+                    "isbn": "978-1-61696-058-2",
+                },
+            },
+            "coverPath": "",
+        }
+        with (
+            patch(
+                "integrations.imports.audiobookshelf.services.search",
+                return_value={
+                    "results": [
+                        {
+                            "media_id": "314",
+                            "source": Sources.HARDCOVER.value,
+                            "title": "The Emperor's Soul",
+                        },
+                    ],
+                },
+            ) as mock_search,
+            patch(
+                "integrations.imports.audiobookshelf.services.get_media_metadata",
+                return_value={
+                    "media_id": "314",
+                    "source": Sources.HARDCOVER.value,
+                    "media_type": MediaTypes.BOOK.value,
+                    "title": "The Emperor's Soul",
+                    "image": "https://covers.example/emperor.jpg",
+                    "genres": ["Fantasy"],
+                    "details": {
+                        "author": "Brandon Sanderson",
+                        "publisher": "Subterranean Press",
+                        "isbn": ["9781616960582"],
+                        "publish_date": "2012-10-11",
+                    },
+                },
+            ) as mock_get_media_metadata,
+        ):
+            importer = AudiobookshelfImporter(self.user)
+            importer.enable_provider_enrichment = True
+            counts, warnings = importer.import_data()
+
+        self.assertEqual(counts.get(MediaTypes.BOOK.value), 1)
+        self.assertEqual(warnings, "")
+
+        item.refresh_from_db()
+        self.assertEqual(item.image, "https://covers.example/emperor.jpg")
+        self.assertEqual(item.isbn, ["9781616960582"])
+        self.assertEqual(item.publishers, "Subterranean Press")
+        self.assertEqual(item.genres, ["Fantasy"])
+        self.assertEqual(
+            item.release_datetime,
+            datetime(2012, 10, 11, tzinfo=UTC),
+        )
+        self.assertEqual(item.original_title, "The Emperor's Soul")
+        self.assertEqual(item.localized_title, "The Emperor's Soul")
+        self.assertIsNotNone(item.metadata_fetched_at)
+        mock_item.assert_called_once_with("completed-item")
+        mock_search.assert_called_once()
+        mock_get_media_metadata.assert_called_once()
 
     @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_library_item")
     @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_me")
@@ -206,6 +331,70 @@ class AudiobookshelfImporterTests(TestCase):
         self.assertEqual(counts, {})
         self.assertIn("broken-item", warnings)
         self.assertFalse(Book.objects.filter(user=self.user).exists())
+
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_library_item")
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_me")
+    def test_retries_unchanged_item_after_prior_lookup_failure(
+        self,
+        mock_me,
+        mock_item,
+    ):
+        """A prior lookup failure should be retried on the next unchanged import."""
+        mock_me.return_value = {
+            "mediaProgress": [
+                {
+                    "libraryItemId": "broken-item",
+                    "currentTime": 1_200,
+                    "duration": 3_600,
+                    "lastUpdate": 3_000,
+                },
+            ],
+        }
+        mock_item.side_effect = [
+            AudiobookshelfClientError("boom"),
+            {
+                "media": {
+                    "duration": 3_600,
+                    "metadata": {
+                        "title": "Warbreaker",
+                        "authors": [{"name": "Brandon Sanderson"}],
+                        "isbn": "978-0-7653-2030-8",
+                        "publisher": "Tor",
+                        "genres": ["Fantasy"],
+                    },
+                },
+                "coverPath": "https://img.example/warbreaker.jpg",
+            },
+        ]
+
+        importer = AudiobookshelfImporter(self.user)
+        first_counts, first_warnings = importer.import_data()
+
+        self.assertEqual(first_counts, {})
+        self.assertIn("broken-item", first_warnings)
+        self.user.audiobookshelf_account.refresh_from_db()
+        self.assertEqual(self.user.audiobookshelf_account.last_sync_ms, 3_000)
+        self.assertFalse(
+            Item.objects.filter(
+                source=Sources.AUDIOBOOKSHELF.value,
+                media_type=MediaTypes.BOOK.value,
+            ).exists(),
+        )
+
+        importer = AudiobookshelfImporter(self.user)
+        second_counts, second_warnings = importer.import_data()
+
+        self.assertEqual(second_counts.get(MediaTypes.BOOK.value), 1)
+        self.assertEqual(second_warnings, "")
+        self.assertEqual(mock_item.call_count, 2)
+
+        item = Book.objects.get(user=self.user).item
+        self.assertEqual(item.title, "Warbreaker")
+        self.assertEqual(item.image, "https://img.example/warbreaker.jpg")
+        self.assertEqual(item.isbn, ["9780765320308"])
+        self.assertEqual(item.publishers, "Tor")
+        self.assertEqual(item.genres, ["Fantasy"])
+        self.assertIsNotNone(item.metadata_fetched_at)
 
     @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_library_item")
     @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_me")
@@ -293,7 +482,7 @@ class AudiobookshelfImporterTests(TestCase):
         mock_search,
         mock_get_media_metadata,
     ):
-        """Importer should enrich ABS books with provider metadata when cover is missing."""
+        """Importer should enrich ABS books when Audiobookshelf has no cover."""
         mock_me.return_value = {
             "mediaProgress": [
                 {
@@ -390,3 +579,58 @@ class AudiobookshelfImporterTests(TestCase):
             "invalid or expired",
             self.user.audiobookshelf_account.last_error_message,
         )
+
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_library_item")
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_me")
+    def test_does_not_refetch_unchanged_books_that_are_already_hydrated(
+        self,
+        mock_me,
+        mock_item,
+    ):
+        """Healthy unchanged ABS books should not trigger repair lookups."""
+        account = self.user.audiobookshelf_account
+        account.last_sync_ms = 2_000
+        account.save(update_fields=["last_sync_ms", "updated_at"])
+
+        importer = AudiobookshelfImporter(self.user)
+        media_id = importer._stable_media_id(account.base_url, "healthy-item")
+        item = Item.objects.create(
+            media_id=media_id,
+            source=Sources.AUDIOBOOKSHELF.value,
+            media_type=MediaTypes.BOOK.value,
+            title="The Blade Itself",
+            original_title="The Blade Itself",
+            localized_title="The Blade Itself",
+            image="https://covers.example/blade.jpg",
+            authors=["Joe Abercrombie"],
+            isbn=["9780316387310"],
+            publishers="Orbit",
+            genres=["Fantasy"],
+            release_datetime=datetime(2006, 5, 4, tzinfo=UTC),
+            format="audiobook",
+            metadata_fetched_at=timezone.now(),
+        )
+        Book.objects.create(
+            user=self.user,
+            item=item,
+            status=Status.IN_PROGRESS.value,
+            progress=60,
+        )
+
+        mock_me.return_value = {
+            "mediaProgress": [
+                {
+                    "libraryItemId": "healthy-item",
+                    "currentTime": 3_600,
+                    "duration": 12_000,
+                    "lastUpdate": 1_500,
+                },
+            ],
+        }
+
+        importer = AudiobookshelfImporter(self.user)
+        counts, warnings = importer.import_data()
+
+        self.assertEqual(counts, {})
+        self.assertEqual(warnings, "")
+        mock_item.assert_not_called()
