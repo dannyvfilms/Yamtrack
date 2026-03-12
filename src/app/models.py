@@ -2214,37 +2214,42 @@ class TV(Media):
 
     @property
     def progressed_at(self):
-        """Return the date when the last episode was watched."""
-        dates = [
-            season.progressed_at
-            for season in self.seasons.all()
-            if season.progressed_at and season.item.season_number != 0
-        ]
+        """Return the date when the last attached episode was watched."""
+        dates = self._season_activity_dates("progressed_at", include_specials=True)
         return max(dates) if dates else None
 
     @property
     def start_date(self):
-        """Return the date of the first episode watched."""
-        dates = [
-            season.start_date
-            for season in self.seasons.all()
-            if season.start_date and season.item.season_number != 0
-        ]
+        """Return the first watched date, preferring main seasons over specials."""
+        dates = self._season_activity_dates("start_date")
         if dates:
             return min(dates)
+        special_dates = self._season_activity_dates("start_date", include_specials=True)
+        if special_dates:
+            return min(special_dates)
         if self.status == Status.IN_PROGRESS.value:
             return self.created_at
         return None
 
     @property
     def end_date(self):
-        """Return the date of the last episode watched."""
-        dates = [
-            season.end_date
-            for season in self.seasons.all()
-            if season.end_date and season.item.season_number != 0
-        ]
+        """Return the last watched date across main seasons and specials."""
+        dates = self._season_activity_dates("end_date", include_specials=True)
         return max(dates) if dates else None
+
+    def _season_activity_dates(self, attr_name, include_specials=False):
+        """Collect season activity dates, optionally including specials."""
+        dates = []
+        for season in self.seasons.all():
+            season_number = getattr(season.item, "season_number", None)
+            if not include_specials and season_number == 0:
+                continue
+
+            date_value = getattr(season, attr_name, None)
+            if date_value is not None:
+                dates.append(date_value)
+
+        return dates
 
     def _completed(self):
         """Create remaining seasons and episodes for a TV show."""

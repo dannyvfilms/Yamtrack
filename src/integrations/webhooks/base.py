@@ -178,6 +178,7 @@ class BaseWebhookProcessor:
                     media_id = fallback_media_id
                     season_number = season_number or alt_season
                     episode_number = episode_number or alt_episode
+                    self._remember_tvdb_override(media_id, ids)
                     try:
                         tv_metadata = app.providers.tmdb.tv_with_seasons(
                             media_id,
@@ -229,10 +230,11 @@ class BaseWebhookProcessor:
             fallback_media_id, alt_season, alt_episode = self._find_tv_media_id(
                 alt_ids,
             )
-            if fallback_media_id and str(fallback_media_id) != str(media_id):
+            if fallback_media_id:
                 media_id = fallback_media_id
                 season_number = season_number or alt_season
                 episode_number = episode_number or alt_episode
+                self._remember_tvdb_override(media_id, ids)
                 try:
                     tv_metadata = app.providers.tmdb.tv_with_seasons(
                         media_id,
@@ -249,6 +251,27 @@ class BaseWebhookProcessor:
                         exc,
                     )
                     return
+        elif (
+            ids.get("tvdb_id")
+            and not self._extract_payload_tmdb_id(payload)
+            and str(tv_metadata.get("tvdb_id") or "") != str(ids["tvdb_id"])
+        ):
+            self._remember_tvdb_override(media_id, ids)
+            try:
+                tv_metadata = app.providers.tmdb.tv_with_seasons(
+                    media_id,
+                    [season_number],
+                )
+                logger.info(
+                    "Rebuilt TMDB TV metadata using preferred TVDB ID for show %s",
+                    media_id,
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning(
+                    "Preferred TVDB TMDB lookup refresh failed for show %s: %s",
+                    media_id,
+                    exc,
+                )
 
         tvdb_id = tv_metadata.get("tvdb_id") if tv_metadata else None
 
@@ -287,6 +310,45 @@ class BaseWebhookProcessor:
             return None
         return re.sub(r"\s*\(\d{4}\)$", "", str(title)).strip().casefold()
 
+    def _remember_tvdb_override(self, media_id, ids):
+        """Persist a preferred TVDB ID for a resolved TMDB show when available."""
+        tvdb_id = ids.get("tvdb_id")
+        if not media_id or not tvdb_id:
+            return
+
+        app.providers.tmdb.set_tvdb_id_override(media_id, tvdb_id)
+
+    def _extract_payload_tmdb_id(self, payload):
+        """Extract a raw TMDB ID directly from provider payload GUID fields."""
+        metadata = payload.get("Metadata", {}) or {}
+        guids = metadata.get("Guid", [])
+        if not guids:
+            single_guid = metadata.get("guid")
+            if single_guid:
+                guids = [{"id": single_guid}]
+
+        for guid in guids:
+            guid_value = guid.get("id") if isinstance(guid, dict) else guid
+            if not guid_value:
+                continue
+
+            guid_lower = str(guid_value).lower()
+            if "tmdb" not in guid_lower and "themoviedb" not in guid_lower:
+                continue
+
+            cleaned = str(guid_value).split("?", 1)[0]
+            if "://" in cleaned:
+                cleaned = cleaned.split("://", 1)[1]
+            cleaned = cleaned.lstrip("/")
+            if "/" in cleaned:
+                cleaned = cleaned.split("/", 1)[0]
+
+            match = re.search(r"\d+", cleaned)
+            if match:
+                return match.group(0)
+
+        return None
+
     def _should_recover_tv_show_from_external_ids(
         self,
         payload,
@@ -298,7 +360,7 @@ class BaseWebhookProcessor:
         if not tv_metadata:
             return False
 
-        raw_tmdb_id = ids.get("tmdb_id")
+        raw_tmdb_id = self._extract_payload_tmdb_id(payload)
         if not raw_tmdb_id or str(media_id) != str(raw_tmdb_id):
             return False
 
@@ -576,7 +638,10 @@ class BaseWebhookProcessor:
             "episode_number": int(episode_number),
             "runtime": runtime,
             "air_date": air_date,
+            "still_path": None,
             "image": tv_metadata.get("image"),
+            "name": metadata.get("title") or f"Episode {episode_number}",
+            "overview": metadata.get("summary") or "",
         }
 
     def _build_fallback_season_metadata(
@@ -587,6 +652,7 @@ class BaseWebhookProcessor:
         tv_metadata,
     ):
         """Build minimal season metadata for missing TMDB seasons."""
+        metadata = payload.get("Metadata", {}) or {}
         try:
             fallback_episode = self._build_fallback_episode_metadata(
                 payload,
@@ -597,9 +663,21 @@ class BaseWebhookProcessor:
             return None
 
         return {
-            "season_number": season_number,
+            "season_number": int(season_number),
+            "season_title": (
+                "Specials"
+                if int(season_number) == 0
+                else metadata.get("parentTitle") or f"Season {season_number}"
+            ),
+            "synopsis": tv_metadata.get("synopsis") or "No synopsis available.",
             "image": tv_metadata.get("image"),
+            "max_progress": int(episode_number),
             "episodes": [fallback_episode],
+            "details": {
+                "episodes": int(episode_number),
+            },
+            "providers": {},
+            "source_url": tv_metadata.get("external_links", {}).get("TVDB"),
         }
 
     def _handle_tv_episode(
@@ -653,6 +731,15 @@ class BaseWebhookProcessor:
                 episode_number,
                 tv_metadata,
             )
+            if season_metadata and int(season_number) == 0:
+                cached_fallback = app.providers.tmdb.cache_fallback_season_metadata(
+                    media_id,
+                    season_number,
+                    tv_metadata,
+                    season_metadata,
+                )
+                if cached_fallback:
+                    season_metadata = cached_fallback
 
         if not season_metadata:
             logger.warning(

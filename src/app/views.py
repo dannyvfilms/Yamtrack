@@ -3542,6 +3542,24 @@ def media_details(
             details = {}
             media_metadata["details"] = details
 
+        related = media_metadata.setdefault("related", {})
+        seasons = related.setdefault("seasons", [])
+        has_specials = any(season.get("season_number") == 0 for season in seasons)
+
+        if source == Sources.TMDB.value and media_metadata.get("tvdb_id") and not has_specials:
+            specials_metadata = services.get_media_metadata(
+                "tv_with_seasons",
+                media_id,
+                source,
+                [0],
+            )
+            if isinstance(specials_metadata, dict) and specials_metadata.get("season/0"):
+                enriched_related = specials_metadata.get("related") or {}
+                enriched_seasons = enriched_related.get("seasons")
+                if isinstance(enriched_seasons, list):
+                    related["seasons"] = enriched_seasons
+                    seasons = enriched_seasons
+
         if not details.get("runtime"):
             fallback_runtime = _get_tv_runtime_display_fallback(detail_item, media_metadata)
             if fallback_runtime:
@@ -3549,7 +3567,6 @@ def media_details(
 
         tv_poster = media_metadata.get("image")
         if tv_poster:
-            seasons = media_metadata.get("related", {}).get("seasons", [])
             for season in seasons:
                 season_image = season.get("image")
                 if not season_image or season_image == settings.IMG_NONE:

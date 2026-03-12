@@ -1,6 +1,7 @@
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.test import TestCase
@@ -297,6 +298,257 @@ class MediaDetailsViewTests(TestCase):
                 },
             ),
         )
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_tv_details_view_adds_specials_from_regular_path(self, mock_get_metadata):
+        """TV details should show a specials season when season 0 is enriched."""
+        mock_get_metadata.side_effect = [
+            {
+                "media_id": "114410",
+                "title": "Chainsaw Man",
+                "media_type": MediaTypes.TV.value,
+                "source": Sources.TMDB.value,
+                "image": "http://example.com/show.jpg",
+                "tvdb_id": "10196540",
+                "details": {
+                    "runtime": "24m",
+                    "first_air_date": "2022-10-12",
+                },
+                "related": {
+                    "seasons": [
+                        {
+                            "source": Sources.TMDB.value,
+                            "media_type": MediaTypes.SEASON.value,
+                            "media_id": "114410",
+                            "title": "Chainsaw Man",
+                            "season_number": 1,
+                            "season_title": "Season 1",
+                            "image": settings.IMG_NONE,
+                        },
+                    ],
+                },
+                "cast": [],
+                "crew": [],
+                "studios_full": [],
+            },
+            {
+                "media_id": "114410",
+                "title": "Chainsaw Man",
+                "media_type": MediaTypes.TV.value,
+                "source": Sources.TMDB.value,
+                "image": "http://example.com/show.jpg",
+                "tvdb_id": "10196540",
+                "details": {
+                    "runtime": "24m",
+                    "first_air_date": "2022-10-12",
+                },
+                "season/0": {
+                    "season_number": 0,
+                    "season_title": "Specials",
+                },
+                "related": {
+                    "seasons": [
+                        {
+                            "source": Sources.TMDB.value,
+                            "media_type": MediaTypes.SEASON.value,
+                            "media_id": "114410",
+                            "title": "Chainsaw Man",
+                            "season_number": 0,
+                            "season_title": "Specials",
+                            "image": "http://example.com/specials.jpg",
+                        },
+                        {
+                            "source": Sources.TMDB.value,
+                            "media_type": MediaTypes.SEASON.value,
+                            "media_id": "114410",
+                            "title": "Chainsaw Man",
+                            "season_number": 1,
+                            "season_title": "Season 1",
+                            "image": "http://example.com/season1.jpg",
+                        },
+                    ],
+                },
+                "cast": [],
+                "crew": [],
+                "studios_full": [],
+            },
+        ]
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "media_id": "114410",
+                    "title": "chainsaw-man",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        seasons = response.context["media"]["related"]["seasons"]
+        self.assertEqual(seasons[0]["item"]["season_number"], 0)
+        self.assertContains(
+            response,
+            reverse(
+                "season_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_id": "114410",
+                    "title": "chainsaw-man",
+                    "season_number": 0,
+                },
+            ),
+        )
+        self.assertEqual(mock_get_metadata.call_count, 2)
+        self.assertEqual(
+            mock_get_metadata.call_args_list[0].args,
+            (
+                MediaTypes.TV.value,
+                "114410",
+                Sources.TMDB.value,
+            ),
+        )
+        self.assertEqual(
+            mock_get_metadata.call_args_list[1].args,
+            (
+                "tv_with_seasons",
+                "114410",
+                Sources.TMDB.value,
+                [0],
+            ),
+        )
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_tv_details_view_uses_special_watch_for_show_end_date(
+        self,
+        mock_get_metadata,
+    ):
+        """TV details should show the most recent special watch in the history card."""
+        watched_main = datetime(2023, 8, 28, 12, 0, tzinfo=UTC)
+        watched_special = datetime(2026, 3, 12, 12, 0, tzinfo=UTC)
+
+        tv_item = Item.objects.create(
+            media_id="114410",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Chainsaw Man",
+            image="http://example.com/show.jpg",
+        )
+        tv = TV.objects.create(
+            user=self.user,
+            item=tv_item,
+            status=Status.IN_PROGRESS.value,
+        )
+
+        season_one_item = Item.objects.create(
+            media_id="114410",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Chainsaw Man",
+            image="http://example.com/season1.jpg",
+            season_number=1,
+        )
+        season_one = Season.objects.create(
+            user=self.user,
+            item=season_one_item,
+            related_tv=tv,
+            status=Status.COMPLETED.value,
+        )
+        Episode.objects.create(
+            item=Item.objects.create(
+                media_id="114410",
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.EPISODE.value,
+                title="Episode 12",
+                image="http://example.com/ep12.jpg",
+                season_number=1,
+                episode_number=12,
+            ),
+            related_season=season_one,
+            end_date=watched_main,
+        )
+
+        specials_item = Item.objects.create(
+            media_id="114410",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Chainsaw Man",
+            image="http://example.com/specials.jpg",
+            season_number=0,
+        )
+        specials = Season.objects.create(
+            user=self.user,
+            item=specials_item,
+            related_tv=tv,
+            status=Status.COMPLETED.value,
+        )
+        Episode.objects.create(
+            item=Item.objects.create(
+                media_id="114410",
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.EPISODE.value,
+                title="Special 1",
+                image="http://example.com/s00e01.jpg",
+                season_number=0,
+                episode_number=1,
+            ),
+            related_season=specials,
+            end_date=watched_special,
+        )
+
+        mock_get_metadata.return_value = {
+            "media_id": "114410",
+            "title": "Chainsaw Man",
+            "media_type": MediaTypes.TV.value,
+            "source": Sources.TMDB.value,
+            "image": "http://example.com/show.jpg",
+            "details": {
+                "runtime": "24m",
+            },
+            "related": {
+                "seasons": [
+                    {
+                        "source": Sources.TMDB.value,
+                        "media_type": MediaTypes.SEASON.value,
+                        "media_id": "114410",
+                        "title": "Chainsaw Man",
+                        "season_number": 0,
+                        "season_title": "Specials",
+                        "image": "http://example.com/specials.jpg",
+                    },
+                    {
+                        "source": Sources.TMDB.value,
+                        "media_type": MediaTypes.SEASON.value,
+                        "media_id": "114410",
+                        "title": "Chainsaw Man",
+                        "season_number": 1,
+                        "season_title": "Season 1",
+                        "image": "http://example.com/season1.jpg",
+                    },
+                ],
+            },
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "media_id": "114410",
+                    "title": "chainsaw-man",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_instance"].end_date, watched_special)
+        self.assertEqual(response.context["current_instance"].progress, 12)
 
     @patch("app.providers.services.get_media_metadata")
     def test_media_details_backfills_author_credits_and_renders_links(

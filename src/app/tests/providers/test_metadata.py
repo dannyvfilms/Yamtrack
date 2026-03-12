@@ -74,6 +74,355 @@ class Metadata(TestCase):
         self.assertEqual(response["details"]["status"], "Ended")
         self.assertEqual(response["details"]["episodes"], 62)
 
+    @patch("app.providers.tmdb.services.api_request")
+    def test_tv_with_seasons_adds_specials_when_tmdb_lacks_season_zero(
+        self,
+        mock_api_request,
+    ):
+        """TV details should synthesize season 0 only from TVDB-linked fallback data."""
+        tmdb.cache.clear()
+
+        def _mock_api_request(source, _method, url, params=None):  # noqa: ARG001
+            if source == Sources.TMDB.value and url.endswith("/tv/114410"):
+                return {
+                    "id": 114410,
+                    "name": "Chainsaw Man",
+                    "original_name": "Chainsaw Man",
+                    "poster_path": "/chainsaw.jpg",
+                    "overview": "A test show",
+                    "genres": [],
+                    "vote_average": 8.4,
+                    "vote_count": 10,
+                    "production_companies": [],
+                    "production_countries": [],
+                    "spoken_languages": [],
+                    "recommendations": {"results": []},
+                    "external_ids": {"tvdb_id": "10196540"},
+                    "watch/providers": {"results": {}},
+                    "aggregate_credits": {"cast": [], "crew": []},
+                    "alternative_titles": {"results": []},
+                    "episode_run_time": [24],
+                    "first_air_date": "2022-10-12",
+                    "last_air_date": "2022-12-28",
+                    "status": "Returning Series",
+                    "number_of_seasons": 1,
+                    "number_of_episodes": 12,
+                    "seasons": [
+                        {
+                            "season_number": 1,
+                            "name": "Season 1",
+                            "air_date": "2022-10-12",
+                            "episode_count": 12,
+                            "poster_path": None,
+                        },
+                    ],
+                }
+
+            if url == "https://api.tvmaze.com/lookup/shows?thetvdb=10196540":
+                return {"id": 12345}
+
+            if url == "https://api.tvmaze.com/shows/12345?embed=episodes":
+                return {
+                    "url": "https://www.tvmaze.com/shows/12345/chainsaw-man",
+                    "image": {
+                        "medium": "https://example.com/show-medium.jpg",
+                        "original": "https://example.com/show.jpg",
+                    },
+                    "_embedded": {
+                        "episodes": [
+                            {
+                                "id": 1,
+                                "season": 0,
+                                "number": 1,
+                                "name": "Special 1",
+                                "airdate": "2022-10-04",
+                                "summary": "<p>TVDB-only special.</p>",
+                                "runtime": 12,
+                                "image": {
+                                    "original": "https://example.com/s0e1.jpg",
+                                },
+                            },
+                        ],
+                    },
+                }
+
+            raise AssertionError(f"Unexpected request in test: {source} {url}")
+
+        mock_api_request.side_effect = _mock_api_request
+
+        result = tmdb.tv_with_seasons("114410", [0])
+        processed_episodes = tmdb.process_episodes(result["season/0"], [])
+
+        self.assertEqual(result["season/0"]["season_title"], "Specials")
+        self.assertEqual(result["season/0"]["details"]["episodes"], 1)
+        self.assertEqual(result["season/0"]["source_url"], "https://www.tvmaze.com/shows/12345/chainsaw-man")
+        self.assertTrue(
+            any(
+                season.get("season_number") == 0
+                for season in result["related"]["seasons"]
+            ),
+        )
+        self.assertEqual(processed_episodes[0]["title"], "Special 1")
+        self.assertEqual(
+            processed_episodes[0]["image"],
+            "https://example.com/s0e1.jpg",
+        )
+        self.assertEqual(
+            processed_episodes[0]["air_date"].date().isoformat(),
+            "2022-10-04",
+        )
+
+    @patch("app.providers.tmdb.services.api_request")
+    def test_tv_with_seasons_ignores_tvmaze_null_embedded_payload(
+        self,
+        mock_api_request,
+    ):
+        """TVMaze null embedded payloads should not crash season 0 fallback."""
+        tmdb.cache.clear()
+
+        def _mock_api_request(source, _method, url, params=None):  # noqa: ARG001
+            if source == Sources.TMDB.value and url.endswith("/tv/114410"):
+                return {
+                    "id": 114410,
+                    "name": "Chainsaw Man",
+                    "original_name": "Chainsaw Man",
+                    "poster_path": "/chainsaw.jpg",
+                    "overview": "A test show",
+                    "genres": [],
+                    "vote_average": 8.4,
+                    "vote_count": 10,
+                    "production_companies": [],
+                    "production_countries": [],
+                    "spoken_languages": [],
+                    "recommendations": {"results": []},
+                    "external_ids": {"tvdb_id": "10196540"},
+                    "watch/providers": {"results": {}},
+                    "aggregate_credits": {"cast": [], "crew": []},
+                    "alternative_titles": {"results": []},
+                    "episode_run_time": [24],
+                    "first_air_date": "2022-10-12",
+                    "last_air_date": "2022-12-28",
+                    "status": "Returning Series",
+                    "number_of_seasons": 1,
+                    "number_of_episodes": 12,
+                    "seasons": [
+                        {
+                            "season_number": 1,
+                            "name": "Season 1",
+                            "air_date": "2022-10-12",
+                            "episode_count": 12,
+                            "poster_path": None,
+                        },
+                    ],
+                }
+
+            if url == "https://api.tvmaze.com/lookup/shows?thetvdb=10196540":
+                return {"id": 12345}
+
+            if url == "https://api.tvmaze.com/shows/12345?embed=episodes":
+                return {
+                    "url": "https://www.tvmaze.com/shows/12345/chainsaw-man",
+                    "image": None,
+                    "_embedded": None,
+                }
+
+            raise AssertionError(f"Unexpected request in test: {source} {url}")
+
+        mock_api_request.side_effect = _mock_api_request
+
+        result = tmdb.tv_with_seasons("114410", [0])
+
+        self.assertEqual(result["tvdb_id"], "10196540")
+        self.assertNotIn("season/0", result)
+
+    @patch("app.providers.tmdb.services.api_request")
+    def test_tv_with_seasons_normalizes_string_season_zero(
+        self,
+        mock_api_request,
+    ):
+        """String season numbers from routes should still trigger specials fallback."""
+        tmdb.cache.clear()
+
+        def _mock_api_request(source, _method, url, params=None):  # noqa: ARG001
+            if source == Sources.TMDB.value and url.endswith("/tv/114410"):
+                return {
+                    "id": 114410,
+                    "name": "Chainsaw Man",
+                    "original_name": "Chainsaw Man",
+                    "poster_path": "/chainsaw.jpg",
+                    "overview": "A test show",
+                    "genres": [],
+                    "vote_average": 8.4,
+                    "vote_count": 10,
+                    "production_companies": [],
+                    "production_countries": [],
+                    "spoken_languages": [],
+                    "recommendations": {"results": []},
+                    "external_ids": {"tvdb_id": "10196540"},
+                    "watch/providers": {"results": {}},
+                    "aggregate_credits": {"cast": [], "crew": []},
+                    "alternative_titles": {"results": []},
+                    "episode_run_time": [24],
+                    "first_air_date": "2022-10-12",
+                    "last_air_date": "2022-12-28",
+                    "status": "Returning Series",
+                    "number_of_seasons": 1,
+                    "number_of_episodes": 12,
+                    "seasons": [
+                        {
+                            "season_number": 1,
+                            "name": "Season 1",
+                            "air_date": "2022-10-12",
+                            "episode_count": 12,
+                            "poster_path": None,
+                        },
+                    ],
+                }
+
+            if url == "https://api.tvmaze.com/lookup/shows?thetvdb=10196540":
+                return {"id": 12345}
+
+            if url == "https://api.tvmaze.com/shows/12345?embed=episodes":
+                return {
+                    "url": "https://www.tvmaze.com/shows/12345/chainsaw-man",
+                    "image": {
+                        "medium": "https://example.com/show-medium.jpg",
+                        "original": "https://example.com/show.jpg",
+                    },
+                    "_embedded": {
+                        "episodes": [
+                            {
+                                "id": 1,
+                                "season": 0,
+                                "number": 1,
+                                "name": "Special 1",
+                                "airdate": "2022-10-04",
+                                "summary": "<p>TVDB-only special.</p>",
+                                "runtime": 12,
+                                "image": {
+                                    "original": "https://example.com/s0e1.jpg",
+                                },
+                            },
+                        ],
+                    },
+                }
+
+            raise AssertionError(f"Unexpected request in test: {source} {url}")
+
+        mock_api_request.side_effect = _mock_api_request
+
+        result = tmdb.tv_with_seasons("114410", ["0"])
+
+        self.assertEqual(result["season/0"]["season_title"], "Specials")
+        self.assertEqual(result["season/0"]["max_progress"], 1)
+
+    @patch("app.providers.tmdb.services.api_request")
+    def test_tvdb_override_rebuilds_specials_from_preferred_mapping(
+        self,
+        mock_api_request,
+    ):
+        """Preferred TVDB overrides should invalidate stale season 0 metadata."""
+        tmdb.cache.clear()
+
+        def _mock_api_request(source, _method, url, params=None):  # noqa: ARG001
+            if source == Sources.TMDB.value and url.endswith("/tv/114410"):
+                return {
+                    "id": 114410,
+                    "name": "Chainsaw Man",
+                    "original_name": "Chainsaw Man",
+                    "poster_path": "/chainsaw.jpg",
+                    "overview": "A test show",
+                    "genres": [],
+                    "vote_average": 8.4,
+                    "vote_count": 10,
+                    "production_companies": [],
+                    "production_countries": [],
+                    "spoken_languages": [],
+                    "recommendations": {"results": []},
+                    "external_ids": {"tvdb_id": "397934"},
+                    "watch/providers": {"results": {}},
+                    "aggregate_credits": {"cast": [], "crew": []},
+                    "alternative_titles": {"results": []},
+                    "episode_run_time": [24],
+                    "first_air_date": "2022-10-12",
+                    "last_air_date": "2022-12-28",
+                    "status": "Returning Series",
+                    "number_of_seasons": 1,
+                    "number_of_episodes": 12,
+                    "seasons": [
+                        {
+                            "season_number": 1,
+                            "name": "Season 1",
+                            "air_date": "2022-10-12",
+                            "episode_count": 12,
+                            "poster_path": None,
+                        },
+                    ],
+                }
+
+            if url == "https://api.tvmaze.com/lookup/shows?thetvdb=397934":
+                return {"id": 200}
+
+            if url == "https://api.tvmaze.com/shows/200?embed=episodes":
+                return {
+                    "url": "https://www.tvmaze.com/shows/200/chainsaw-man",
+                    "image": {
+                        "medium": "https://example.com/wrong-medium.jpg",
+                        "original": "https://example.com/wrong.jpg",
+                    },
+                    "_embedded": {
+                        "episodes": [],
+                    },
+                }
+
+            if url == "https://api.tvmaze.com/lookup/shows?thetvdb=10196540":
+                return {"id": 12345}
+
+            if url == "https://api.tvmaze.com/shows/12345?embed=episodes":
+                return {
+                    "url": "https://www.tvmaze.com/shows/12345/chainsaw-man",
+                    "image": {
+                        "medium": "https://example.com/show-medium.jpg",
+                        "original": "https://example.com/show.jpg",
+                    },
+                    "_embedded": {
+                        "episodes": [
+                            {
+                                "id": 1,
+                                "season": 0,
+                                "number": 1,
+                                "name": "Preferred Special",
+                                "airdate": "2022-10-04",
+                                "summary": "<p>Preferred TVDB match.</p>",
+                                "runtime": 12,
+                                "image": {
+                                    "original": "https://example.com/preferred.jpg",
+                                },
+                            },
+                        ],
+                    },
+                }
+
+            msg = f"Unexpected request in test: {source} {url}"
+            raise AssertionError(msg)
+
+        mock_api_request.side_effect = _mock_api_request
+
+        initial = tmdb.tv_with_seasons("114410", [0])
+        self.assertNotIn("season/0", initial)
+
+        tmdb.set_tvdb_id_override("114410", "10196540")
+        result = tmdb.tv_with_seasons("114410", [0])
+        processed_episodes = tmdb.process_episodes(result["season/0"], [])
+
+        self.assertEqual(result["tvdb_id"], "10196540")
+        self.assertEqual(result["season/0"]["source_url"], "https://www.tvmaze.com/shows/12345/chainsaw-man")
+        self.assertEqual(processed_episodes[0]["title"], "Preferred Special")
+        self.assertEqual(
+            processed_episodes[0]["image"],
+            "https://example.com/preferred.jpg",
+        )
+
     def test_tmdb_process_episodes(self):
         """Test the process_episodes function for TMDB episodes."""
         Item.objects.create(

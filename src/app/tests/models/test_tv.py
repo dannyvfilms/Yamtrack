@@ -320,3 +320,94 @@ class TVStatusTests(TestCase):
 
         season1 = Season.objects.get(pk=self.season1.pk)
         self.assertEqual(season1.status, original_season1_status)
+
+
+class TVSpecialActivityTests(TestCase):
+    """Test show-level activity dates when specials are watched."""
+
+    def setUp(self):
+        """Create a TV entry with a regular season and a watched special."""
+        self.credentials = {"username": "specials-test", "password": "12345"}
+        self.user = get_user_model().objects.create_user(**self.credentials)
+        self.regular_watch = datetime(2023, 8, 28, 0, 0, tzinfo=UTC)
+        self.special_watch = datetime(2026, 3, 12, 0, 0, tzinfo=UTC)
+
+        tv_item = Item.objects.create(
+            media_id="114410",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Chainsaw Man",
+            image="http://example.com/show.jpg",
+        )
+        self.tv = TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+
+        season_one_item = Item.objects.create(
+            media_id="114410",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Chainsaw Man",
+            image="http://example.com/season1.jpg",
+            season_number=1,
+        )
+        season_one = Season.objects.create(
+            item=season_one_item,
+            user=self.user,
+            related_tv=self.tv,
+            status=Status.COMPLETED.value,
+        )
+        regular_episode = Episode(
+            item=Item.objects.create(
+                media_id="114410",
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.EPISODE.value,
+                title="Chainsaw Man",
+                image="http://example.com/episode1.jpg",
+                season_number=1,
+                episode_number=12,
+            ),
+            related_season=season_one,
+            end_date=self.regular_watch,
+        )
+
+        special_item = Item.objects.create(
+            media_id="114410",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Chainsaw Man",
+            image="http://example.com/specials.jpg",
+            season_number=0,
+        )
+        specials = Season.objects.create(
+            item=special_item,
+            user=self.user,
+            related_tv=self.tv,
+            status=Status.COMPLETED.value,
+        )
+        special_episode = Episode(
+            item=Item.objects.create(
+                media_id="114410",
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.EPISODE.value,
+                title="Chainsaw Man",
+                image="http://example.com/special-episode.jpg",
+                season_number=0,
+                episode_number=1,
+            ),
+            related_season=specials,
+            end_date=self.special_watch,
+        )
+        Episode.objects.bulk_create([regular_episode, special_episode])
+
+    def test_specials_do_not_change_show_progress_or_started_date(self):
+        """Specials should not change main-series progress semantics."""
+        self.assertEqual(self.tv.progress, 12)
+        self.assertEqual(self.tv.start_date, self.regular_watch)
+
+    def test_specials_advance_show_end_date_and_recent_activity(self):
+        """A watched special should update the show's latest activity date."""
+        self.assertEqual(self.tv.end_date, self.special_watch)
+        self.assertEqual(self.tv.progressed_at, self.special_watch)

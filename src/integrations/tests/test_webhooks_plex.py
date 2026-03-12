@@ -19,6 +19,7 @@ from app.models import (
     Season,
     Status,
 )
+from integrations.models import PlexAccount
 from integrations.webhooks.plex import PlexWebhookProcessor
 
 
@@ -399,6 +400,66 @@ class PlexWebhookTests(TestCase):
         self.assertEqual(
             stopped_state["status"],
             live_playback.PLAYBACK_STATUS_STOPPED,
+        )
+
+    @patch(
+        "integrations.webhooks.base.BaseWebhookProcessor._queue_collection_metadata_update_for_tv",
+    )
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_tv_special_payload_fallback_is_cached_for_season_page(
+        self,
+        mock_tv_with_seasons,
+        mock_queue_update,
+    ):
+        """Season 0 fallback from Plex should be cached as TMDB-shaped metadata."""
+        cache.clear()
+        mock_queue_update.return_value = None
+        mock_tv_with_seasons.return_value = {
+            "media_id": "114410",
+            "title": "Chainsaw Man",
+            "image": "https://example.com/show.jpg",
+            "synopsis": "A test show",
+            "genres": ["Animation"],
+            "tvdb_id": "10196540",
+            "external_links": {
+                "TVDB": "https://www.thetvdb.com/dereferrer/series/10196540",
+            },
+            "related": {"seasons": [{"season_number": 1}]},
+        }
+
+        payload = {
+            "event": "media.resume",
+            "Metadata": {
+                "title": "A Special Episode",
+                "summary": "Webhook fallback episode metadata.",
+                "duration": 720000,
+                "originallyAvailableAt": "2024-05-01",
+            },
+        }
+
+        PlexWebhookProcessor()._handle_tv_episode(
+            "114410",
+            0,
+            1,
+            payload,
+            self.user,
+        )
+
+        cached_season = cache.get("tmdb_season_114410_0")
+        cached_tv = cache.get("tmdb_tv_114410")
+
+        self.assertIsNotNone(cached_season)
+        self.assertEqual(cached_season["season_title"], "Specials")
+        self.assertEqual(cached_season["episodes"][0]["name"], "A Special Episode")
+        self.assertEqual(
+            cached_season["source_url"],
+            "https://www.thetvdb.com/dereferrer/series/10196540",
+        )
+        self.assertTrue(
+            any(
+                season.get("season_number") == 0
+                for season in cached_tv["related"]["seasons"]
+            ),
         )
 
     @patch("app.providers.tmdb.search", return_value={"results": []})
@@ -965,6 +1026,39 @@ class PlexWebhookTests(TestCase):
                     self.assertEqual(response.status_code, 200)
                     self.assertEqual(Movie.objects.count(), 0)
 
+    def test_account_id_matching_accepts_connected_plex_owner(self):
+        """Webhook user matching should accept the connected Plex account ID."""
+        PlexAccount.objects.create(
+            user=self.user,
+            plex_token="token",
+            plex_username="DannyVFilms",
+            plex_account_id="4441952",
+        )
+        self.user.plex_usernames = ""
+        self.user.save(update_fields=["plex_usernames"])
+
+        payload = {
+            "event": "media.scrobble",
+            "Account": {
+                "title": "managed-user",
+                "id": "4441952",
+            },
+            "Metadata": {
+                "type": "movie",
+                "title": "Test Movie",
+                "Guid": [{"id": "tmdb://123"}],
+            },
+        }
+
+        response = self.client.post(
+            self.url,
+            data={"payload": json.dumps(payload)},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Movie.objects.count(), 1)
+
     def test_anime_episode_anidb_guid_mark_played(self):
         """Test webhook handles anime episode with anidb guid."""
         payload = {
@@ -1083,6 +1177,78 @@ class PlexWebhookTests(TestCase):
             "anidb_id": None,
         }
         self.assertEqual(result, expected)
+
+    @patch("app.providers.tmdb.search", return_value={"results": []})
+    @patch("app.providers.tmdb.find")
+    def test_resolve_external_ids_prefers_find_for_tvdb_guid(
+        self,
+        mock_find,
+        mock_tmdb_search,
+    ):
+        """TVDB GUID resolution should use TMDB find results before title search."""
+
+        def fake_find(external_id, external_source):
+            self.assertEqual(str(external_id), "349232")
+            self.assertEqual(external_source, "tvdb_id")
+            return {
+                "tv_episode_results": [
+                    {
+                        "show_id": 1396,
+                        "season_number": 1,
+                        "episode_number": 1,
+                    },
+                ],
+                "tv_results": [],
+                "movie_results": [],
+            }
+
+        mock_find.side_effect = fake_find
+
+        payload = {
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "Breaking Bad",
+                "Guid": [
+                    {"id": "tvdb://349232"},
+                ],
+            },
+        }
+
+        ids = PlexWebhookProcessor().resolve_external_ids(payload)
+
+        self.assertEqual(ids["tmdb_id"], "1396")
+        mock_tmdb_search.assert_not_called()
+
+    def test_recover_tv_show_check_ignores_non_payload_tmdb_ids(self):
+        """Resolved TMDB IDs should not be treated like raw Plex TMDB GUIDs."""
+        payload = {
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "Chainsaw Man",
+                "guid": "plex://episode/66abff6b88824f5224a8b6db",
+            },
+        }
+        ids = {
+            "tmdb_id": "114410",
+            "imdb_id": None,
+            "tvdb_id": "10196540",
+            "plex_guid": "episode/66abff6b88824f5224a8b6db",
+            "anidb_id": None,
+        }
+        tv_metadata = {
+            "tvdb_id": "397934",
+            "title": "Chainsaw Man",
+        }
+
+        processor = PlexWebhookProcessor()
+        should_recover = processor._should_recover_tv_show_from_external_ids(
+            payload,
+            ids,
+            "114410",
+            tv_metadata,
+        )
+
+        self.assertFalse(should_recover)
 
     @patch("app.providers.tmdb.tv_with_seasons")
     @patch("app.providers.tmdb.search")

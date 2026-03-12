@@ -3,6 +3,7 @@ import logging
 import requests
 from django.conf import settings
 from django.core.cache import cache
+from django.utils.html import strip_tags
 
 from app import helpers
 from app.log_safety import exception_summary
@@ -11,6 +12,7 @@ from app.providers import services
 
 logger = logging.getLogger(__name__)
 base_url = "https://api.themoviedb.org/3"
+TVDB_OVERRIDE_CACHE_TIMEOUT = 60 * 60 * 24 * 30
 base_params = {
     "api_key": settings.TMDB_API,
     "language": settings.TMDB_LANG,
@@ -67,6 +69,104 @@ def get_external_links(external_ids, tmdb_id=None):
         links["Letterboxd"] = f"https://www.letterboxd.com/tmdb/{tmdb_id}"
 
     return links
+
+
+def _tvdb_override_cache_key(media_id):
+    """Return cache key for a preferred TVDB override on a TMDB show."""
+    return f"{Sources.TMDB.value}_tvdb_override_{media_id}"
+
+
+def get_tvdb_id_override(media_id):
+    """Return a preferred TVDB override for a TMDB show, if one exists."""
+    override = cache.get(_tvdb_override_cache_key(media_id))
+    if override in (None, ""):
+        return None
+    return str(override)
+
+
+def _apply_tvdb_id_override_to_tv_data(media_id, tv_data):
+    """Overlay any preferred TVDB override onto cached TV metadata."""
+    if not isinstance(tv_data, dict):
+        return tv_data, False
+
+    override_tvdb_id = get_tvdb_id_override(media_id)
+    if not override_tvdb_id:
+        return tv_data, False
+
+    changed = False
+    current_tvdb_id = str(tv_data.get("tvdb_id") or "")
+    if current_tvdb_id != override_tvdb_id:
+        tv_data["tvdb_id"] = override_tvdb_id
+        changed = True
+
+        related = tv_data.get("related")
+        seasons = related.get("seasons") if isinstance(related, dict) else None
+        if isinstance(seasons, list):
+            filtered_seasons = [
+                season
+                for season in seasons
+                if season.get("season_number") != 0
+            ]
+            if len(filtered_seasons) != len(seasons):
+                related["seasons"] = filtered_seasons
+                cache.delete(
+                    f"{Sources.TMDB.value}_{MediaTypes.SEASON.value}_{media_id}_0",
+                )
+
+    external_links = dict(tv_data.get("external_links") or {})
+    preferred_tvdb_link = (
+        f"https://www.thetvdb.com/dereferrer/series/{override_tvdb_id}"
+    )
+    if external_links.get("TVDB") != preferred_tvdb_link:
+        external_links["TVDB"] = preferred_tvdb_link
+        tv_data["external_links"] = external_links
+        changed = True
+
+    return tv_data, changed
+
+
+def set_tvdb_id_override(media_id, tvdb_id):
+    """Persist a preferred TVDB override for a TMDB show and invalidate season 0."""
+    if not media_id or not tvdb_id:
+        return
+
+    media_id = str(media_id)
+    tvdb_id = str(tvdb_id)
+    cache.set(
+        _tvdb_override_cache_key(media_id),
+        tvdb_id,
+        timeout=TVDB_OVERRIDE_CACHE_TIMEOUT,
+    )
+    cache.delete(f"{Sources.TMDB.value}_{MediaTypes.SEASON.value}_{media_id}_0")
+
+    tv_cache_key = f"{Sources.TMDB.value}_{MediaTypes.TV.value}_{media_id}"
+    cached_tv_data = cache.get(tv_cache_key)
+    if cached_tv_data is None:
+        return
+
+    cached_tv_data, changed = _apply_tvdb_id_override_to_tv_data(
+        media_id,
+        cached_tv_data,
+    )
+    if changed:
+        cache.set(tv_cache_key, cached_tv_data)
+
+
+def _normalize_season_numbers(season_numbers):
+    """Normalize season numbers from route and form inputs before TMDB lookups."""
+    normalized_seasons = []
+
+    for season_number in season_numbers:
+        if isinstance(season_number, str):
+            season_number = season_number.strip()
+            try:
+                season_number = int(season_number)
+            except ValueError:
+                pass
+
+        normalized_seasons.append(season_number)
+
+    return normalized_seasons
 
 
 def search(media_type, query, page):
@@ -264,6 +364,7 @@ def movie(media_id):
 
 def get_cached_seasons(media_id, season_numbers):
     """Check cache for seasons and return cached data and list of uncached seasons."""
+    season_numbers = _normalize_season_numbers(season_numbers)
     cached_data = {}
     uncached_seasons = []
 
@@ -282,10 +383,8 @@ def get_cached_seasons(media_id, season_numbers):
 
 def enrich_season_with_tv_data(season_data, tv_data, media_id, season_number):
     """Add TV show metadata to season metadata."""
-    from django.conf import settings
-
     season_data["media_id"] = media_id
-    season_data["source_url"] = (
+    season_data["source_url"] = season_data.get("source_url") or (
         f"https://www.themoviedb.org/tv/{media_id}/season/{season_number}"
     )
     season_data["title"] = tv_data["title"]
@@ -302,6 +401,286 @@ def enrich_season_with_tv_data(season_data, tv_data, media_id, season_number):
     if not season_image or season_image == settings.IMG_NONE:
         season_data["image"] = tv_data.get("image")
     return season_data
+
+
+def _get_tvmaze_show_by_tvdb_id(tvdb_id):
+    """Fetch a TVMaze show payload by TVDB ID with caching."""
+    cache_key = f"tvmaze_show_{tvdb_id}"
+    cached_data = cache.get(cache_key)
+    if cached_data is not None:
+        return cached_data
+
+    lookup_url = f"https://api.tvmaze.com/lookup/shows?thetvdb={tvdb_id}"
+    try:
+        lookup_response = services.api_request("TVMaze", "GET", lookup_url)
+    except requests.exceptions.HTTPError as error:
+        logger.warning(
+            "TVMaze lookup failed for TVDB ID %s: %s",
+            tvdb_id,
+            exception_summary(error),
+        )
+        lookup_response = {}
+
+    if not lookup_response:
+        cache.set(cache_key, {})
+        return {}
+
+    tvmaze_id = lookup_response.get("id")
+    if not tvmaze_id:
+        cache.set(cache_key, {})
+        return {}
+
+    show_url = f"https://api.tvmaze.com/shows/{tvmaze_id}?embed=episodes"
+    try:
+        show_response = services.api_request("TVMaze", "GET", show_url)
+    except requests.exceptions.HTTPError as error:
+        logger.warning(
+            "TVMaze show fetch failed for TVDB ID %s: %s",
+            tvdb_id,
+            exception_summary(error),
+        )
+        show_response = {}
+
+    cache.set(cache_key, show_response or {})
+    return show_response or {}
+
+
+def _tvmaze_special_episodes(show_response):
+    """Return ordered specials episodes from a TVMaze show payload."""
+    embedded = show_response.get("_embedded") if isinstance(show_response, dict) else {}
+    if not isinstance(embedded, dict):
+        embedded = {}
+
+    episodes = embedded.get("episodes") or []
+    if not isinstance(episodes, list):
+        return []
+
+    specials = []
+
+    for episode in episodes:
+        if not isinstance(episode, dict):
+            continue
+        season_number = episode.get("season")
+        episode_number = episode.get("number")
+        if season_number != 0 or episode_number is None:
+            continue
+        specials.append(episode)
+
+    specials.sort(
+        key=lambda episode: (
+            episode.get("number") if episode.get("number") is not None else 0,
+            episode.get("id") if episode.get("id") is not None else 0,
+        ),
+    )
+    return specials
+
+
+def _build_tvmaze_specials_related_entry(tv_data, season_data):
+    """Build a season card entry for fallback TVDB-linked specials."""
+    return {
+        "source": Sources.TMDB.value,
+        "media_type": MediaTypes.SEASON.value,
+        "image": season_data.get("image") or tv_data.get("image"),
+        "media_id": tv_data["media_id"],
+        "title": tv_data["title"],
+        "original_title": tv_data.get("original_title"),
+        "localized_title": tv_data.get("localized_title"),
+        "season_number": 0,
+        "season_title": season_data["season_title"],
+        "first_air_date": season_data["details"].get("first_air_date"),
+        "last_air_date": season_data["details"].get("last_air_date"),
+        "max_progress": season_data.get("max_progress"),
+    }
+
+
+def _attach_specials_to_tv_data(tv_data, season_data):
+    """Attach a specials season card to TV metadata if one is missing."""
+    if not tv_data:
+        return
+
+    related = tv_data.setdefault("related", {})
+    seasons = related.setdefault("seasons", [])
+    if any(season.get("season_number") == 0 for season in seasons):
+        return
+
+    seasons.append(_build_tvmaze_specials_related_entry(tv_data, season_data))
+    seasons.sort(
+        key=lambda season: (
+            season.get("season_number") is None,
+            season.get("season_number")
+            if season.get("season_number") is not None
+            else 999999,
+        ),
+    )
+
+
+def cache_fallback_season_metadata(media_id, season_number, tv_data, season_data):
+    """Persist webhook-derived fallback season metadata under TMDB cache keys."""
+    if not tv_data or not season_data:
+        return None
+
+    season_number = _normalize_season_numbers([season_number])[0]
+    episodes = [
+        episode
+        for episode in (season_data.get("episodes") or [])
+        if isinstance(episode, dict)
+    ]
+    if not episodes:
+        return None
+
+    episode_numbers = [
+        int(episode["episode_number"])
+        for episode in episodes
+        if episode.get("episode_number") is not None
+    ]
+    max_progress = season_data.get("max_progress") or (
+        max(episode_numbers) if episode_numbers else None
+    )
+
+    runtimes = [
+        runtime
+        for runtime in (episode.get("runtime") for episode in episodes)
+        if isinstance(runtime, int) and runtime > 0
+    ]
+    total_runtime = sum(runtimes) if runtimes else None
+
+    air_dates = [episode.get("air_date") for episode in episodes if episode.get("air_date")]
+    details = dict(season_data.get("details") or {})
+    if max_progress is not None:
+        details.setdefault("episodes", max_progress)
+    if air_dates:
+        details.setdefault("first_air_date", get_start_date(min(air_dates)))
+        details.setdefault("last_air_date", get_start_date(max(air_dates)))
+    if total_runtime:
+        details.setdefault("runtime", get_readable_duration(total_runtime / len(runtimes)))
+        details.setdefault("total_runtime", get_readable_duration(total_runtime))
+
+    cached_season_data = {
+        "source": Sources.TMDB.value,
+        "media_type": MediaTypes.SEASON.value,
+        "season_title": (
+            season_data.get("season_title")
+            or ("Specials" if season_number == 0 else f"Season {season_number}")
+        ),
+        "max_progress": max_progress,
+        "image": season_data.get("image") or tv_data.get("image") or settings.IMG_NONE,
+        "season_number": season_number,
+        "synopsis": season_data.get("synopsis") or get_synopsis(""),
+        "score": season_data.get("score"),
+        "score_count": season_data.get("score_count"),
+        "details": details,
+        "episodes": episodes,
+        "providers": season_data.get("providers") or {},
+        "source_url": (
+            season_data.get("source_url")
+            or tv_data.get("external_links", {}).get("TVDB")
+            or tv_data.get("source_url")
+        ),
+    }
+    cached_season_data = enrich_season_with_tv_data(
+        cached_season_data,
+        tv_data,
+        media_id,
+        season_number,
+    )
+
+    cache.set(
+        f"{Sources.TMDB.value}_{MediaTypes.SEASON.value}_{media_id}_{season_number}",
+        cached_season_data,
+    )
+
+    tv_cache_key = f"{Sources.TMDB.value}_{MediaTypes.TV.value}_{media_id}"
+    cached_tv_data = cache.get(tv_cache_key) or tv_data
+    cached_tv_data, changed = _apply_tvdb_id_override_to_tv_data(
+        media_id,
+        cached_tv_data,
+    )
+    if season_number == 0:
+        _attach_specials_to_tv_data(cached_tv_data, cached_season_data)
+        changed = True
+    if changed or cache.get(tv_cache_key) is None:
+        cache.set(tv_cache_key, cached_tv_data)
+
+    return cached_season_data
+
+
+def _build_specials_season_from_tvmaze(media_id, tv_data):
+    """Build TMDB-shaped season metadata from TVMaze specials data."""
+    if not tv_data or not tv_data.get("tvdb_id"):
+        return None
+
+    show_response = _get_tvmaze_show_by_tvdb_id(tv_data["tvdb_id"])
+    special_episodes = _tvmaze_special_episodes(show_response)
+    if not special_episodes:
+        return None
+
+    runtimes = []
+    processed_episodes = []
+
+    for episode in special_episodes:
+        runtime = episode.get("runtime")
+        if isinstance(runtime, int) and runtime > 0:
+            runtimes.append(runtime)
+
+        image = episode.get("image") or {}
+        processed_episodes.append(
+            {
+                "episode_number": episode["number"],
+                "air_date": episode.get("airdate"),
+                "still_path": None,
+                "image": image.get("original") or image.get("medium") or settings.IMG_NONE,
+                "name": episode.get("name") or f"Episode {episode['number']}",
+                "overview": get_synopsis(
+                    strip_tags(episode.get("summary") or "").strip(),
+                ),
+                "runtime": runtime,
+            },
+        )
+
+    total_runtime = sum(runtimes)
+    average_runtime = (
+        get_readable_duration(total_runtime / len(runtimes)) if runtimes else None
+    )
+
+    first_air_date = processed_episodes[0].get("air_date")
+    last_air_date = processed_episodes[-1].get("air_date")
+    show_image = show_response.get("image") if isinstance(show_response, dict) else {}
+    if not isinstance(show_image, dict):
+        show_image = {}
+    season_image = (
+        show_image.get("original")
+        or show_image.get("medium")
+        or settings.IMG_NONE
+    )
+
+    season_data = {
+        "source": Sources.TMDB.value,
+        "media_type": MediaTypes.SEASON.value,
+        "season_title": "Specials",
+        "max_progress": processed_episodes[-1]["episode_number"],
+        "image": season_image,
+        "season_number": 0,
+        "synopsis": get_synopsis(""),
+        "score": None,
+        "score_count": None,
+        "details": {
+            "first_air_date": get_start_date(first_air_date),
+            "last_air_date": get_start_date(last_air_date),
+            "episodes": len(processed_episodes),
+            "runtime": average_runtime,
+            "total_runtime": (
+                get_readable_duration(total_runtime) if total_runtime else None
+            ),
+        },
+        "episodes": processed_episodes,
+        "providers": {},
+        "source_url": (
+            show_response.get("url")
+            or tv_data.get("external_links", {}).get("TVDB")
+            or tv_data.get("source_url")
+        ),
+    }
+    return enrich_season_with_tv_data(season_data, tv_data, media_id, 0)
 
 
 def fetch_and_cache_seasons(media_id, season_numbers, tv_data):
@@ -368,6 +747,23 @@ def fetch_and_cache_seasons(media_id, season_numbers, tv_data):
             )
             result_data[season_key] = season_data
 
+    if 0 in season_numbers and "season/0" not in result_data and fetched_tv_data:
+        specials_season = _build_specials_season_from_tvmaze(
+            media_id,
+            fetched_tv_data,
+        )
+        if specials_season:
+            result_data["season/0"] = specials_season
+            _attach_specials_to_tv_data(fetched_tv_data, specials_season)
+            cache.set(
+                f"{Sources.TMDB.value}_{MediaTypes.SEASON.value}_{media_id}_0",
+                specials_season,
+            )
+            cache.set(
+                f"{Sources.TMDB.value}_{MediaTypes.TV.value}_{media_id}",
+                fetched_tv_data,
+            )
+
     return result_data, fetched_tv_data
 
 
@@ -375,9 +771,14 @@ def tv_with_seasons(media_id, season_numbers):
     """Return the metadata for the tv show with seasons appended to the response."""
     if not season_numbers:
         return tv(media_id)
+    season_numbers = _normalize_season_numbers(season_numbers)
 
     tv_cache_key = f"{Sources.TMDB.value}_{MediaTypes.TV.value}_{media_id}"
     tv_data = cache.get(tv_cache_key)
+    if tv_data is not None:
+        tv_data, changed = _apply_tvdb_id_override_to_tv_data(media_id, tv_data)
+        if changed:
+            cache.set(tv_cache_key, tv_data)
 
     cached_seasons, uncached_seasons = get_cached_seasons(media_id, season_numbers)
 
@@ -423,15 +824,25 @@ def tv(media_id):
 
         data = process_tv(response)
         cache.set(cache_key, data)
+    else:
+        data, changed = _apply_tvdb_id_override_to_tv_data(media_id, data)
+        if changed:
+            cache.set(cache_key, data)
 
     return data
 
 
 def process_tv(response):
     """Process the metadata for the selected tv show from The Movie Database."""
+    media_id = str(response["id"])
     num_episodes = response["number_of_episodes"]
     next_episode = response.get("next_episode_to_air")
     last_episode = response.get("last_episode_to_air")
+    external_ids = dict(response.get("external_ids", {}) or {})
+    override_tvdb_id = get_tvdb_id_override(media_id)
+    if override_tvdb_id:
+        external_ids["tvdb_id"] = override_tvdb_id
+
     return {
         "media_id": response["id"],
         "source": Sources.TMDB.value,
@@ -476,8 +887,8 @@ def process_tv(response):
                 MediaTypes.TV.value,
             ),
         },
-        "tvdb_id": response.get("external_ids", {}).get("tvdb_id"),
-        "external_links": get_external_links(response.get("external_ids", {})),
+        "tvdb_id": external_ids.get("tvdb_id"),
+        "external_links": get_external_links(external_ids),
         "last_episode_season": last_episode["season_number"] if last_episode else None,
         "next_episode_season": next_episode["season_number"] if next_episode else None,
         "providers": response.get("watch/providers", {}).get("results", {}),
@@ -1168,7 +1579,7 @@ def process_episodes(season_metadata, episodes_in_db):
         episode_number = episode["episode_number"]
 
         # Convert air_date to datetime object if it's a string
-        air_date = episode["air_date"]
+        air_date = episode.get("air_date")
         if air_date and isinstance(air_date, str):
             try:
                 from datetime import datetime
@@ -1182,6 +1593,11 @@ def process_episodes(season_metadata, episodes_in_db):
                 # If parsing fails, keep the original value
                 pass
 
+        if episode.get("still_path"):
+            image = get_image_url(episode["still_path"])
+        else:
+            image = episode.get("image") or settings.IMG_NONE
+
         episodes_metadata.append(
             {
                 "media_id": season_metadata["media_id"],
@@ -1190,11 +1606,11 @@ def process_episodes(season_metadata, episodes_in_db):
                 "season_number": season_metadata["season_number"],
                 "episode_number": episode_number,
                 "air_date": air_date,  # when unknown, response returns null
-                "image": get_image_url(episode["still_path"]),
-                "title": episode["name"],
-                "overview": episode["overview"],
+                "image": image,
+                "title": episode.get("name") or episode.get("title") or "",
+                "overview": episode.get("overview") or "",
                 "history": tracked_episodes.get(episode_number, []),
-                "runtime": get_readable_duration(episode["runtime"]),
+                "runtime": get_readable_duration(episode.get("runtime")),
             },
         )
     return episodes_metadata

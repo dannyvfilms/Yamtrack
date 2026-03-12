@@ -221,18 +221,22 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
             source = "tvdb_id" if ids.get("tvdb_id") else "imdb_id"
             try:
                 from app.providers import tmdb
-                find_results = tmdb.find(external_id, source=source)
-                
+                find_results = tmdb.find(external_id, source)
+
                 tmdb_id = None
                 if media_type == MediaTypes.TV.value:
-                    results = find_results.get("tv_results") or find_results.get("tv_episode_results") or []
-                    if results:
-                        tmdb_id = results[0].get("media_id")
+                    episode_results = find_results.get("tv_episode_results") or []
+                    if episode_results:
+                        tmdb_id = episode_results[0].get("show_id")
+                    else:
+                        tv_results = find_results.get("tv_results") or []
+                        if tv_results:
+                            tmdb_id = tv_results[0].get("id")
                 else:
                     results = find_results.get("movie_results") or []
                     if results:
-                        tmdb_id = results[0].get("media_id")
-                
+                        tmdb_id = results[0].get("id")
+
                 if tmdb_id:
                     ids["tmdb_id"] = str(tmdb_id)
                     logger.info("Resolved Plex external ID to TMDB using find API")
@@ -782,19 +786,65 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
         return rating
 
     def _is_valid_user(self, payload_user, payload, user):
-        stored_usernames = [
+        stored_usernames = {
             u.strip().lower()
             for u in (user.plex_usernames or "").split(",")
             if u.strip()
-        ]
+        }
+        plex_account = getattr(user, "plex_account", None)
+        plex_username = str(getattr(plex_account, "plex_username", "") or "").strip()
+        if plex_username:
+            stored_usernames.add(plex_username.lower())
+
+        payload_usernames = {
+            candidate
+            for candidate in [
+                payload_user,
+                self._extract_payload_username(payload),
+            ]
+            if candidate
+        }
         logger.debug(
             "Checking Plex webhook payload user against configured usernames",
         )
 
-        if payload_user not in stored_usernames:
+        if stored_usernames and payload_usernames.intersection(stored_usernames):
+            return self._is_valid_library(payload, user)
+
+        payload_account_id = self._extract_payload_account_id(payload)
+        connected_account_id = str(
+            getattr(plex_account, "plex_account_id", "") or "",
+        ).strip()
+        if not (
+            payload_account_id
+            and connected_account_id
+            and payload_account_id == connected_account_id
+        ):
             return False
 
         return self._is_valid_library(payload, user)
+
+    def _extract_payload_username(self, payload):
+        """Extract any alternate Plex username field from a webhook payload."""
+        for value in (
+            payload.get("user"),
+            payload.get("owner"),
+        ):
+            if isinstance(value, str) and value.strip():
+                return value.strip().lower()
+        return None
+
+    def _extract_payload_account_id(self, payload):
+        """Extract Plex account id from webhook payload when available."""
+        account = payload.get("Account", {}) or {}
+        for key in ("id", "accountID", "accountId", "account_id"):
+            value = account.get(key)
+            if value is None:
+                continue
+            value = str(value).strip()
+            if value:
+                return value
+        return None
 
     def _is_valid_library(self, payload, user):
         selected_libraries = user.plex_webhook_libraries
