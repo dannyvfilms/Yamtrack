@@ -96,6 +96,7 @@ if ALLOWED_HOSTS != ["*"]:
 
 
 CSRF_TRUSTED_ORIGINS = config("CSRF", default="", cast=Csv())
+CSRF_FAILURE_VIEW = "app.error_views.csrf_failure"
 
 URLS = config("URLS", default="", cast=Csv())
 
@@ -158,6 +159,7 @@ MIDDLEWARE = [
     "simple_history.middleware.HistoryRequestMiddleware",
     "allauth.account.middleware.AccountMiddleware",
     "app.middleware.ProviderAPIErrorMiddleware",
+    "app.middleware.ErrorCaptureMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"

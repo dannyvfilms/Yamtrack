@@ -1,17 +1,30 @@
 {% extends "base.html" %}
 {% load static %}
+{% load app_tags %}
 
 {% block title %}
-  Page not found - Yamtrack
+  {{ error_page_title|default:"Page Not Found" }} - Yamtrack
 {% endblock title %}
+
+{% block extra_head %}
+  {{ block.super }}
+  <script src="{% static 'js/copy-item.js' %}{% get_static_file_mtime 'js/copy-item.js' %}"></script>
+{% endblock extra_head %}
 
 {% block body %}
   <div class="min-h-screen bg-[#212529] flex flex-col items-center justify-center text-white p-4">
     <div class="text-center max-w-md">
       <div class="mb-6">
-        <div class="text-9xl font-bold text-indigo-500">404</div>
-        <h1 class="text-3xl font-bold mt-4 mb-2">Page Not Found</h1>
-        <p class="text-gray-400 mb-4">The page you are looking for doesn't exist or has been moved.</p>
+        <div class="text-9xl font-bold text-indigo-500">{{ error_status_code|default:"404" }}</div>
+        <h1 class="text-3xl font-bold mt-4 mb-2">{{ error_heading|default:"Page Not Found" }}</h1>
+        <p class="text-gray-400 mb-4">
+          {% if error_message %}
+            {{ error_message }}
+          {% else %}
+            The page you are looking for doesn't exist or has been moved.
+          {% endif %}
+        </p>
+        {% include "includes/error_report_panel.html" %}
         <p class="text-sm text-gray-500 mb-6">
           If you believe this was a bug, please <a href="https://github.com/dannyvfilms/Yamtrack/issues"
     class="text-indigo-400 hover:underline">report the issue.</a>

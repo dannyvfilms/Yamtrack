@@ -81,7 +81,27 @@ def search(query, page):
             logger.error("Invalid response structure from Hardcover API: %s", response)
             return helpers.format_search_response(page, settings.PER_PAGE, 0, [])
 
-        hits = response["data"]["search"]["results"]["hits"]
+        search_data = response["data"].get("search")
+        if not isinstance(search_data, dict):
+            logger.warning(
+                "Invalid Hardcover search payload for query=%r page=%s: %s",
+                query,
+                page,
+                response,
+            )
+            return helpers.format_search_response(page, settings.PER_PAGE, 0, [])
+
+        results_data = search_data.get("results")
+        if not isinstance(results_data, dict):
+            logger.warning(
+                "Invalid Hardcover search results payload for query=%r page=%s: %s",
+                query,
+                page,
+                response,
+            )
+            return helpers.format_search_response(page, settings.PER_PAGE, 0, [])
+
+        hits = results_data.get("hits") or []
         results = [
             {
                 "media_id": hit["document"]["id"],
@@ -93,7 +113,7 @@ def search(query, page):
             }
             for hit in hits
         ]
-        total_results = response["data"]["search"]["results"]["found"]
+        total_results = results_data.get("found") or 0
 
         data = helpers.format_search_response(
             page,

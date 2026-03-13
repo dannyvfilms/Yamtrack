@@ -428,6 +428,7 @@ _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.IGNORECASE,
 )
+_GRAPHQL_INT_MAX = 2_147_483_647
 
 
 def _metadata_to_search_result(metadata):
@@ -482,6 +483,12 @@ def search_by_id(media_type, query, source=None):
 
     try:
         if _NUMERIC_ID_RE.match(query):
+            if (
+                media_type == MediaTypes.BOOK.value
+                and source == Sources.HARDCOVER.value
+                and int(query) > _GRAPHQL_INT_MAX
+            ):
+                return None
             metadata = _lookup_by_numeric_id(media_type, query, source)
         elif _OL_ID_RE.match(query) and media_type == MediaTypes.BOOK.value:
             metadata = openlibrary.book(query)

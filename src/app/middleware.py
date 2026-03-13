@@ -3,10 +3,10 @@ import time
 
 from django.db.utils import OperationalError
 from django.http import HttpRequest
-from django.shortcuts import render
 from django.urls import reverse
 
 from app.discover import tab_cache as discover_tab_cache
+from app.error_views import format_exception_traceback, render_error_page
 from app.providers import services
 from integrations.imports.helpers import is_retryable_error
 
@@ -66,15 +66,16 @@ class DatabaseRetryMiddleware:
                 request.path,
                 exception,
             )
-            return render(
+            return render_error_page(
                 request,
                 "500.html",
-                {
-                    "error_message": (
-                        f"Database {error_type} error. Please try again in a moment."
-                    ),
-                },
-                status=503,  # Service Unavailable
+                status_code=503,
+                page_title="Service Unavailable",
+                heading="Service Unavailable",
+                error_message=(
+                    f"Database {error_type} error. Please try again in a moment."
+                ),
+                exception=exception,
             )
         return None
 
@@ -93,16 +94,37 @@ class ProviderAPIErrorMiddleware:
     def process_exception(self, request, exception):
         """Handle exceptions raised during request processing."""
         if isinstance(exception, services.ProviderAPIError):
-            return render(
+            return render_error_page(
                 request,
                 "500.html",
-                {
-                    "error_message": str(exception),
-                    "provider": exception.provider,
-                },
-                status=500,
+                status_code=500,
+                page_title="Server Error",
+                heading="Something Went Wrong",
+                error_message=str(exception),
+                exception=exception,
+                extra_lines=[
+                    f"Provider: {exception.provider}",
+                    f"Provider status: {exception.status_code}",
+                ],
             )
         return None
+
+
+class ErrorCaptureMiddleware:
+    """Capture exception details so the 500 handler can render tracebacks."""
+
+    def __init__(self, get_response):
+        """Initialize the middleware with the get_response callable."""
+        self.get_response = get_response
+
+    def __call__(self, request):
+        """Pass the request through the middleware chain."""
+        return self.get_response(request)
+
+    def process_exception(self, request, exception):
+        """Persist traceback details for the custom error handler."""
+        request._yamtrack_captured_exception = exception
+        request._yamtrack_captured_traceback = format_exception_traceback(exception)
 
 
 class DiscoverWarmupMiddleware:
