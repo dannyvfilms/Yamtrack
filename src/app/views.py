@@ -3576,6 +3576,15 @@ def media_details(
                     credits.sync_item_author_credits(detail_item, refreshed_authors_full)
                 authors_linked = _collect_authors_linked(media_metadata)
 
+    # Prefer a stored poster/cover override when the tracked item has one.
+    if (
+        detail_item
+        and isinstance(media_metadata, dict)
+        and detail_item.image
+        and detail_item.image != settings.IMG_NONE
+    ):
+        media_metadata["image"] = detail_item.image
+
     # For TV shows, apply fallback for seasons without posters (handles cached metadata)
     if media_type == MediaTypes.TV.value and isinstance(media_metadata, dict):
         details = media_metadata.get("details")
@@ -4033,6 +4042,12 @@ def season_details(
     )
     season_key = f"season/{season_number}"
     season_metadata = tv_with_seasons_metadata.get(season_key)
+    season_item = Item.objects.filter(
+        media_id=media_id,
+        source=source,
+        media_type=MediaTypes.SEASON.value,
+        season_number=season_number,
+    ).first()
 
     # For public views, we don't need user media data
     if public_view:
@@ -4167,6 +4182,14 @@ def season_details(
                 season_metadata,
                 episodes_in_db,
             )
+
+    if (
+        season_item
+        and isinstance(season_metadata, dict)
+        and season_item.image
+        and season_item.image != settings.IMG_NONE
+    ):
+        season_metadata["image"] = season_item.image
 
     # Add collection_entry data to each episode (if not public view)
     if not public_view and season_metadata.get("episodes"):
@@ -5360,8 +5383,12 @@ def media_save(request):
     form_class = get_form_class(media_type)
     form = form_class(request.POST, instance=instance, user=request.user)
     if form.is_valid():
-        form.save()
-        logger.info("%s saved successfully.", form.instance)
+        media = form.save()
+        image_url = form.cleaned_data.get("image_url")
+        if image_url and media.item.image != image_url:
+            media.item.image = image_url
+            media.item.save(update_fields=["image"])
+        logger.info("%s saved successfully.", media)
     else:
         logger.error(form.errors.as_json())
         for field, errors in form.errors.items():

@@ -74,6 +74,43 @@ class MediaDetailsViewTests(TestCase):
         )
 
     @patch("app.providers.services.get_media_metadata")
+    def test_media_details_prefers_stored_item_image_over_provider_image(
+        self,
+        mock_get_metadata,
+    ):
+        item = Item.objects.create(
+            media_id="377938",
+            source=Sources.HARDCOVER.value,
+            media_type=MediaTypes.BOOK.value,
+            title="The Lord of the Rings",
+            image="https://images.example.com/custom-cover.jpg",
+        )
+        mock_get_metadata.return_value = {
+            "media_id": "377938",
+            "title": "The Lord of the Rings",
+            "media_type": MediaTypes.BOOK.value,
+            "source": Sources.HARDCOVER.value,
+            "image": "https://images.example.com/provider-cover.jpg",
+            "details": {},
+            "related": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.HARDCOVER.value,
+                    "media_type": MediaTypes.BOOK.value,
+                    "media_id": "377938",
+                    "title": "the-lord-of-the-rings",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["media"]["image"], item.image)
+
+    @patch("app.providers.services.get_media_metadata")
     def test_media_details_persists_movie_recommendation_metadata(self, mock_get_metadata):
         item = Item.objects.create(
             media_id="238",
@@ -185,6 +222,56 @@ class MediaDetailsViewTests(TestCase):
             "1668",
             Sources.TMDB.value,
             [1],
+        )
+
+    @patch("app.providers.services.get_media_metadata")
+    @patch("app.providers.tmdb.process_episodes")
+    def test_season_details_prefers_stored_item_image_over_provider_image(
+        self,
+        mock_process_episodes,
+        mock_get_metadata,
+    ):
+        mock_process_episodes.return_value = []
+        Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Test TV Show",
+            image="https://images.example.com/custom-season.jpg",
+            season_number=1,
+        )
+        mock_get_metadata.return_value = {
+            "title": "Test TV Show",
+            "media_id": "1668",
+            "source": Sources.TMDB.value,
+            "media_type": MediaTypes.TV.value,
+            "image": "http://example.com/image.jpg",
+            "season/1": {
+                "title": "Season 1",
+                "media_id": "1668",
+                "media_type": MediaTypes.SEASON.value,
+                "source": Sources.TMDB.value,
+                "image": "http://example.com/provider-season.jpg",
+                "episodes": [],
+            },
+        }
+
+        response = self.client.get(
+            reverse(
+                "season_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_id": "1668",
+                    "title": "test-tv-show",
+                    "season_number": 1,
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context["media"]["image"],
+            "https://images.example.com/custom-season.jpg",
         )
 
     @patch("integrations.tasks.fetch_collection_metadata_for_item.delay")

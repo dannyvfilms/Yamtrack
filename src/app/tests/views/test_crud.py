@@ -421,6 +421,36 @@ class EditMedia(TestCase):
         )
         self.assertEqual(Movie.objects.get(item__media_id="10494").score, 10)
 
+    def test_edit_movie_image_url(self):
+        """Test overriding a movie image URL from the edit form."""
+        item = Item.objects.create(
+            media_id="10494",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Perfect Blue",
+            image="http://example.com/original.jpg",
+        )
+        movie = Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.PLANNING.value,
+        )
+
+        self.client.post(
+            reverse("media_save"),
+            {
+                "instance_id": movie.id,
+                "media_id": "10494",
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.MOVIE.value,
+                "status": Status.PLANNING.value,
+                "image_url": "https://images.example.com/custom-poster.jpg",
+            },
+        )
+
+        item.refresh_from_db()
+        self.assertEqual(item.image, "https://images.example.com/custom-poster.jpg")
+
 
 class DeleteMedia(TestCase):
     """Test the deletion of media objects through views."""

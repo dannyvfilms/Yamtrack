@@ -293,6 +293,15 @@ class MediaForm(RatingScaleFormMixin, forms.ModelForm):
     media_type = forms.CharField(widget=forms.HiddenInput(), required=True)
     source = forms.CharField(widget=forms.HiddenInput(), required=True)
     media_id = forms.CharField(widget=forms.HiddenInput(), required=True)
+    image_url = forms.URLField(
+        required=False,
+        label="Image URL",
+        widget=forms.URLInput(
+            attrs={
+                "placeholder": "https://example.com/poster.jpg",
+            },
+        ),
+    )
 
     class Meta:
         """Define fields and input types."""
@@ -335,6 +344,15 @@ class MediaForm(RatingScaleFormMixin, forms.ModelForm):
             self.fields["end_date"].required = False
             # Explicitly remove required attribute from widget to prevent HTML5 validation
             self.fields["end_date"].widget.attrs.pop("required", None)
+
+        if self.instance and getattr(self.instance, "item", None):
+            current_image = self.instance.item.image
+            if current_image and current_image != settings.IMG_NONE:
+                self.initial.setdefault("image_url", current_image)
+
+    def clean_image_url(self):
+        """Normalize optional image URL input."""
+        return (self.cleaned_data.get("image_url") or "").strip()
 
 
 class MangaForm(MediaForm):
