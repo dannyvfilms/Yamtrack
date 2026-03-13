@@ -1,6 +1,7 @@
 import logging
 import re
 import time
+from difflib import SequenceMatcher
 
 import requests
 from defusedxml import ElementTree
@@ -10,6 +11,7 @@ from redis import ConnectionPool
 from requests.adapters import HTTPAdapter
 from requests_ratelimiter import LimiterAdapter, LimiterSession
 
+from app.log_safety import exception_summary, mapping_keys
 from app.models import MediaTypes, Sources
 from app.providers import (
     bgg,
@@ -24,7 +26,6 @@ from app.providers import (
     pocketcasts,
     tmdb,
 )
-from app.log_safety import exception_summary, mapping_keys
 
 logger = logging.getLogger(__name__)
 
@@ -429,6 +430,7 @@ _UUID_RE = re.compile(
     re.IGNORECASE,
 )
 _GRAPHQL_INT_MAX = 2_147_483_647
+_ISBN_CLEAN_RE = re.compile(r"[^0-9Xx]+")
 
 
 def _metadata_to_search_result(metadata):
@@ -442,6 +444,185 @@ def _metadata_to_search_result(metadata):
         "localized_title": metadata.get("localized_title"),
         "image": metadata.get("image", settings.IMG_NONE),
     }
+
+
+def _normalize_isbn_candidate(value):
+    """Return a normalized ISBN-10/13 when the input passes checksum validation."""
+    cleaned = _ISBN_CLEAN_RE.sub("", str(value or "")).upper()
+    if len(cleaned) == 10 and re.fullmatch(r"\d{9}[\dX]", cleaned):
+        total = 0
+        for index, char in enumerate(cleaned):
+            digit = 10 if char == "X" else int(char)
+            total += (10 - index) * digit
+        return cleaned if total % 11 == 0 else None
+
+    if len(cleaned) == 13 and cleaned.isdigit():
+        checksum = 0
+        for index, char in enumerate(cleaned[:12]):
+            checksum += int(char) * (1 if index % 2 == 0 else 3)
+        expected = (10 - checksum % 10) % 10
+        return cleaned if expected == int(cleaned[-1]) else None
+
+    return None
+
+
+def _normalize_name(value):
+    normalized = re.sub(r"[^a-z0-9]+", " ", str(value or "").lower())
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _title_similarity(left, right):
+    normalized_left = _normalize_name(left)
+    normalized_right = _normalize_name(right)
+    if not normalized_left or not normalized_right:
+        return 0.0
+    if normalized_left == normalized_right:
+        return 1.0
+    return SequenceMatcher(None, normalized_left, normalized_right).ratio()
+
+
+def _extract_author_names(metadata):
+    """Return normalized author names from provider metadata."""
+    if not isinstance(metadata, dict):
+        return []
+
+    names = []
+    authors_full = metadata.get("authors_full")
+    if isinstance(authors_full, list):
+        for author in authors_full:
+            if isinstance(author, dict):
+                name = str(author.get("name") or "").strip()
+                if name:
+                    names.append(name)
+
+    details = metadata.get("details") or {}
+    detail_authors = details.get("author")
+    if isinstance(detail_authors, str):
+        names.extend(part.strip() for part in detail_authors.split(",") if part.strip())
+    elif isinstance(detail_authors, list):
+        names.extend(str(part).strip() for part in detail_authors if str(part).strip())
+
+    seen = []
+    for name in names:
+        if name not in seen:
+            seen.append(name)
+    return seen
+
+
+def _extract_isbns(metadata):
+    """Return normalized ISBNs from provider metadata."""
+    if not isinstance(metadata, dict):
+        return set()
+
+    details = metadata.get("details") or {}
+    raw_isbns = details.get("isbn") or []
+    if not isinstance(raw_isbns, list):
+        raw_isbns = [raw_isbns]
+
+    normalized = set()
+    for raw_isbn in raw_isbns:
+        isbn = _normalize_isbn_candidate(raw_isbn)
+        if isbn:
+            normalized.add(isbn)
+    return normalized
+
+
+def _resolve_hardcover_isbn_search(query, page):
+    """Resolve ISBN queries against Hardcover using Open Library metadata."""
+    from app import helpers  # noqa: PLC0415
+
+    isbn = _normalize_isbn_candidate(query)
+    if not isbn:
+        return None
+
+    try:
+        ol_results = openlibrary.search(isbn, 1).get("results", [])
+    except Exception:  # noqa: BLE001
+        return None
+
+    best_fallback_response = None
+    for ol_result in ol_results[:3]:
+        title = str(ol_result.get("title") or "").strip()
+        authors = []
+        target_isbns = {isbn}
+
+        media_id = ol_result.get("media_id")
+        if media_id:
+            try:
+                ol_metadata = openlibrary.book(str(media_id))
+            except Exception:  # noqa: BLE001
+                ol_metadata = None
+            else:
+                title = str(ol_metadata.get("title") or title).strip()
+                authors = _extract_author_names(ol_metadata)
+                target_isbns.update(_extract_isbns(ol_metadata))
+
+        if not title:
+            continue
+
+        search_queries = []
+        if authors:
+            search_queries.append(f"{title} {authors[0]}".strip())
+        search_queries.append(title)
+
+        seen_queries = set()
+        for search_query in search_queries:
+            normalized_query = search_query.strip()
+            if not normalized_query or normalized_query in seen_queries:
+                continue
+            seen_queries.add(normalized_query)
+
+            try:
+                hardcover_results = hardcover.search(normalized_query, page)
+            except Exception:  # noqa: BLE001
+                continue
+
+            if not best_fallback_response and hardcover_results.get("results"):
+                best_fallback_response = hardcover_results
+
+            for result in hardcover_results.get("results", [])[:5]:
+                media_id = result.get("media_id")
+                if not media_id:
+                    continue
+
+                try:
+                    hardcover_metadata = hardcover.book(media_id)
+                except Exception:  # noqa: BLE001
+                    continue
+
+                hardcover_isbns = _extract_isbns(hardcover_metadata)
+                if target_isbns.intersection(hardcover_isbns):
+                    return helpers.format_search_response(
+                        1,
+                        1,
+                        1,
+                        [_metadata_to_search_result(hardcover_metadata)],
+                    )
+
+                hardcover_title = hardcover_metadata.get("title") or result.get("title")
+                title_score = _title_similarity(title, hardcover_title)
+                if title_score < 0.88:
+                    continue
+
+                candidate_authors = {
+                    _normalize_name(author)
+                    for author in _extract_author_names(hardcover_metadata)
+                    if _normalize_name(author)
+                }
+                target_authors = {
+                    _normalize_name(author)
+                    for author in authors
+                    if _normalize_name(author)
+                }
+                if not target_authors or target_authors.intersection(candidate_authors):
+                    return helpers.format_search_response(
+                        1,
+                        1,
+                        1,
+                        [_metadata_to_search_result(hardcover_metadata)],
+                    )
+
+    return best_fallback_response
 
 
 def _lookup_by_numeric_id(media_type, query, source):  # noqa: PLR0911
@@ -486,7 +667,10 @@ def search_by_id(media_type, query, source=None):
             if (
                 media_type == MediaTypes.BOOK.value
                 and source == Sources.HARDCOVER.value
-                and int(query) > _GRAPHQL_INT_MAX
+                and (
+                    _normalize_isbn_candidate(query) is not None
+                    or int(query) > _GRAPHQL_INT_MAX
+                )
             ):
                 return None
             metadata = _lookup_by_numeric_id(media_type, query, source)
@@ -511,6 +695,14 @@ def search(media_type, query, page, source=None):
         id_result = search_by_id(media_type, query, source)
         if id_result is not None:
             return id_result
+
+        if (
+            media_type == MediaTypes.BOOK.value
+            and source != Sources.OPENLIBRARY.value
+        ):
+            isbn_result = _resolve_hardcover_isbn_search(query, page)
+            if isbn_result is not None:
+                return isbn_result
 
     search_handlers = {
         MediaTypes.MANGA.value: lambda: (
