@@ -190,14 +190,14 @@ class DiscoverViewTests(TestCase):
         self.assertContains(response, "Building Discover rows")
 
     @patch("app.views.discover_tab_cache.schedule_tab_refresh")
-    @patch("app.views.discover_tab_cache.clear_lower_level_cache")
+    @patch("app.views.discover_tab_cache.clear_row_cache")
     @patch("app.views.discover_tab_cache.bump_activity_version")
     @patch("app.views.discover_tab_cache.mark_active")
     def test_refresh_discover_schedules_only_active_tab(
         self,
         mock_mark_active,
         mock_bump_activity_version,
-        mock_clear_lower_level_cache,
+        mock_clear_row_cache,
         mock_schedule_tab_refresh,
     ):
         response = self.client.post(
@@ -224,7 +224,7 @@ class DiscoverViewTests(TestCase):
             self.user.id,
             "movie",
         )
-        mock_clear_lower_level_cache.assert_called_once_with(
+        mock_clear_row_cache.assert_called_once_with(
             self.user.id,
             "movie",
         )

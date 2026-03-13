@@ -8,7 +8,7 @@ from datetime import timedelta
 
 from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist
-from django.db.models import Q
+from django.db.models import Max
 from django.utils import timezone
 
 from app.discover import cache_repo
@@ -168,6 +168,26 @@ def _entry_activity_datetime(entry):
     )
 
 
+def _latest_datetime(*values):
+    filtered = [value for value in values if value is not None]
+    if not filtered:
+        return None
+    return max(filtered)
+
+
+def _entry_activity_snapshot_datetime(
+    entry,
+    *,
+    has_progressed_at: bool = True,
+    has_end_date: bool = True,
+):
+    return _latest_datetime(
+        getattr(entry, "created_at", None),
+        getattr(entry, "progressed_at", None) if has_progressed_at else None,
+        getattr(entry, "end_date", None) if has_end_date else None,
+    )
+
+
 def _model_has_field(model, field_name: str) -> bool:
     try:
         model._meta.get_field(field_name)
@@ -213,28 +233,34 @@ def _item_credit_feature_maps(item_ids: list[int]) -> tuple[dict[int, list[str]]
 
     credits = (
         ItemPersonCredit.objects.filter(item_id__in=item_ids)
-        .select_related("person")
         .order_by("item_id", "role_type", "sort_order", "person__name")
+        .values_list(
+            "item_id",
+            "role_type",
+            "role",
+            "department",
+            "person__name",
+        )
     )
-    for credit in credits:
-        person_name = normalize_person_name(credit.person.name if credit.person_id else "")
+    for item_id, role_type, role, department, person_name_raw in credits:
+        person_name = normalize_person_name(person_name_raw or "")
         if not person_name:
             continue
-        if person_name not in people_seen[credit.item_id]:
-            people_seen[credit.item_id].add(person_name)
-            people_map[credit.item_id].append(person_name)
-        if is_director_credit(credit.role_type, credit.role, credit.department):
-            if person_name not in directors_seen[credit.item_id]:
-                directors_seen[credit.item_id].add(person_name)
-                directors_map[credit.item_id].append(person_name)
+        if person_name not in people_seen[item_id]:
+            people_seen[item_id].add(person_name)
+            people_map[item_id].append(person_name)
+        if is_director_credit(role_type, role, department):
+            if person_name not in directors_seen[item_id]:
+                directors_seen[item_id].add(person_name)
+                directors_map[item_id].append(person_name)
         if (
-            credit.role_type == CreditRoleType.CAST.value
-            and lead_cast_count[credit.item_id] < 3
+            role_type == CreditRoleType.CAST.value
+            and lead_cast_count[item_id] < 3
         ):
-            if person_name not in lead_cast_seen[credit.item_id]:
-                lead_cast_seen[credit.item_id].add(person_name)
-                lead_cast_map[credit.item_id].append(person_name)
-                lead_cast_count[credit.item_id] += 1
+            if person_name not in lead_cast_seen[item_id]:
+                lead_cast_seen[item_id].add(person_name)
+                lead_cast_map[item_id].append(person_name)
+                lead_cast_count[item_id] += 1
 
     return people_map, directors_map, lead_cast_map
 
@@ -247,15 +273,15 @@ def _item_studio_feature_map(item_ids: list[int]) -> dict[int, list[str]]:
     seen: dict[int, set[str]] = defaultdict(set)
     credits = (
         ItemStudioCredit.objects.filter(item_id__in=item_ids)
-        .select_related("studio")
         .order_by("item_id", "sort_order", "studio__name")
+        .values_list("item_id", "studio__name")
     )
-    for credit in credits:
-        studio_name = normalize_studio(credit.studio.name if credit.studio_id else "")
-        if not studio_name or studio_name in seen[credit.item_id]:
+    for item_id, studio_name_raw in credits:
+        studio_name = normalize_studio(studio_name_raw or "")
+        if not studio_name or studio_name in seen[item_id]:
             continue
-        seen[credit.item_id].add(studio_name)
-        studio_map[credit.item_id].append(studio_name)
+        seen[item_id].add(studio_name)
+        studio_map[item_id].append(studio_name)
     return studio_map
 
 
@@ -425,14 +451,30 @@ def has_new_activity(user, media_type: str, snapshot_at) -> bool:
         if not model_name:
             continue
         model = apps.get_model("app", model_name)
-        activity_filter = Q(created_at__gt=snapshot_at)
+        aggregate_kwargs = {"max_created_at": Max("created_at")}
         if _model_has_field(model, "progressed_at"):
-            activity_filter |= Q(progressed_at__gt=snapshot_at)
+            aggregate_kwargs["max_progressed_at"] = Max("progressed_at")
         if _model_has_field(model, "end_date"):
-            activity_filter |= Q(end_date__gt=snapshot_at)
+            aggregate_kwargs["max_end_date"] = Max("end_date")
+        latest_model_activity = _latest_datetime(
+            *model.objects.filter(user=user).aggregate(**aggregate_kwargs).values(),
+        )
+        if latest_model_activity and latest_model_activity > snapshot_at:
+            return True
 
-        query = model.objects.filter(user=user).filter(activity_filter)
-        if query.exists():
+        latest_feedback_activity = _latest_datetime(
+            *DiscoverFeedback.objects.filter(
+                user=user,
+                feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
+                item__media_type=media_type_key,
+            )
+            .aggregate(
+                max_created_at=Max("created_at"),
+                max_updated_at=Max("updated_at"),
+            )
+            .values(),
+        )
+        if latest_feedback_activity and latest_feedback_activity > snapshot_at:
             return True
 
     return False
@@ -556,8 +598,14 @@ def compute_taste_profile(user, media_type: str) -> ProfilePayload:
                 if has_progressed_at
                 else None
             ) or getattr(entry, "created_at", None)
-            if activity_dt and (activity_snapshot is None or activity_dt > activity_snapshot):
-                activity_snapshot = activity_dt
+            activity_snapshot = _latest_datetime(
+                activity_snapshot,
+                _entry_activity_snapshot_datetime(
+                    entry,
+                    has_progressed_at=has_progressed_at,
+                    has_end_date=has_end_date,
+                ),
+            )
 
             weight = _entry_weight(entry, now, activity_dt=activity_dt)
             genres = normalize_features(entry.item.genres or [], normalize_person_name)
@@ -716,6 +764,11 @@ def compute_taste_profile(user, media_type: str) -> ProfilePayload:
                     feedback_person_map[credit.item_id].append(person_name)
 
         for feedback in feedback_rows:
+            activity_snapshot = _latest_datetime(
+                activity_snapshot,
+                getattr(feedback, "updated_at", None),
+                getattr(feedback, "created_at", None),
+            )
             weight = _feedback_weight(feedback, now)
             genres = [
                 str(genre).strip()

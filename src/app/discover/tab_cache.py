@@ -280,16 +280,22 @@ def clear_provider_cache_for_media_type(media_type: str) -> int:
 
 def clear_lower_level_cache(user_id: int, media_type: str) -> tuple[int, int]:
     """Delete lower-level row and taste-profile caches for a user/media type."""
+    deleted_rows = clear_row_cache(user_id, media_type)
+    deleted_profiles, _ = DiscoverTasteProfile.objects.filter(
+        user_id=user_id,
+        media_type=_normalize_media_type(media_type),
+    ).delete()
+    return int(deleted_rows), int(deleted_profiles)
+
+
+def clear_row_cache(user_id: int, media_type: str) -> int:
+    """Delete lower-level row caches for a user/media type."""
     normalized_media_type = _normalize_media_type(media_type)
     deleted_rows, _ = DiscoverRowCache.objects.filter(
         user_id=user_id,
         media_type=normalized_media_type,
     ).delete()
-    deleted_profiles, _ = DiscoverTasteProfile.objects.filter(
-        user_id=user_id,
-        media_type=normalized_media_type,
-    ).delete()
-    return int(deleted_rows), int(deleted_profiles)
+    return int(deleted_rows)
 
 
 def mark_active(
@@ -581,7 +587,7 @@ def refresh_tab_cache(
     media_type = _normalize_media_type(media_type)
     try:
         if force:
-            clear_lower_level_cache(user.id, media_type)
+            clear_row_cache(user.id, media_type)
         if clear_provider_cache:
             clear_provider_cache_for_media_type(media_type)
 
@@ -904,6 +910,8 @@ def get_tab_status(user_id: int, media_type: str, *, show_more: bool = False) ->
 def warm_sibling_tabs(user, active_media_type: str, *, show_more: bool = False) -> None:
     """Warm missing sibling tabs after loading Discover."""
     active_media_type = _normalize_media_type(active_media_type)
+    if active_media_type == ALL_MEDIA_KEY:
+        return
     for media_type in get_user_tab_targets(user):
         if media_type == active_media_type:
             continue
@@ -965,7 +973,7 @@ def maybe_schedule_user_warmup(
     *,
     throttle_seconds: int = DISCOVER_REQUEST_WARMUP_TTL,
 ) -> int:
-    """Throttle and schedule a user's default Discover warmup."""
+    """Throttle and schedule a lightweight request-time Discover warmup."""
     user_id = getattr(user, "id", None)
     if not user_id:
         return 0
@@ -979,6 +987,7 @@ def maybe_schedule_user_warmup(
 
     return schedule_user_tab_warmup(
         user,
+        media_types=[ALL_MEDIA_KEY],
         prioritize_media_type=ALL_MEDIA_KEY,
         show_more=False,
     )

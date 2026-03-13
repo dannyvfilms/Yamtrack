@@ -1,6 +1,7 @@
 from datetime import timedelta
 from unittest.mock import patch
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import OperationalError
 from django.test import TestCase
@@ -18,6 +19,8 @@ from app.discover.service import (
     _comfort_candidates,
     _comfort_match_signal,
     _entries_to_candidates,
+    _get_all_media_component_rows,
+    _musicbrainz_coming_soon_recording_candidates,
     _provider_row_candidates,
     _row_match_signal,
     _row_match_signal_with_details,
@@ -144,6 +147,28 @@ class DiscoverServiceTests(TestCase):
             defer_artwork=False,
         )
 
+    @patch("app.discover.service.get_discover_rows", return_value=[])
+    def test_all_media_component_rows_only_request_trending_when_collapsed(
+        self,
+        mock_get_discover_rows,
+    ):
+        _get_all_media_component_rows(
+            self.user,
+            MediaTypes.MOVIE.value,
+            show_more=False,
+            include_debug=False,
+            defer_artwork=False,
+        )
+
+        mock_get_discover_rows.assert_called_once_with(
+            self.user,
+            MediaTypes.MOVIE.value,
+            show_more=False,
+            include_debug=False,
+            defer_artwork=False,
+            row_keys=["trending_right_now"],
+        )
+
     @patch("app.discover.service._get_all_media_component_rows")
     def test_all_media_show_more_includes_all_rows_from_each_enabled_media_type(
         self,
@@ -219,6 +244,44 @@ class DiscoverServiceTests(TestCase):
                 "TV Shows: All-Time Greats You Haven't Seen",
             ],
         )
+
+    @patch("app.discover.service.musicbrainz.get_cover_art")
+    @patch("app.discover.service._api_cached_results")
+    def test_music_coming_soon_candidates_defer_cover_art_fetches(
+        self,
+        mock_cached_results,
+        mock_get_cover_art,
+    ):
+        mock_cached_results.return_value = [
+            {
+                "id": "recording-1",
+                "title": "Spring Single",
+                "artist-credit": [
+                    {
+                        "name": "Example Artist",
+                        "artist": {"name": "Example Artist"},
+                    },
+                ],
+                "first-release-date": "2026-04-01",
+                "releases": [
+                    {
+                        "id": "release-1",
+                        "date": "2026-04-01",
+                        "release-group": {"id": "group-1"},
+                    },
+                ],
+            },
+        ]
+
+        candidates = _musicbrainz_coming_soon_recording_candidates(
+            row_key="coming_soon",
+            source_reason="Upcoming music",
+            limit=10,
+        )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].image, settings.IMG_NONE)
+        mock_get_cover_art.assert_not_called()
 
     @patch("app.discover.service.TMDB_ADAPTER.top_rated", return_value=[])
     @patch("app.discover.service.TMDB_ADAPTER.upcoming", return_value=[])
@@ -3662,6 +3725,182 @@ class DiscoverServiceTests(TestCase):
         self.assertIn("burst_replay_allowance", payload["top_candidates"][0])
         self.assertIn("active_signal_families", payload["top_candidates"][0])
         self.assertIn("suppressed_signal_families", payload["top_candidates"][0])
+
+    @patch("app.discover.service._is_holiday_window", return_value=False)
+    def test_movie_behavior_first_applies_keyword_holiday_penalty_out_of_season(self, _mock_window):
+        candidates = [
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source="tmdb",
+                media_id="keyword-holiday",
+                title="Winter Whodunit",
+                keywords=["christmas", "whodunit"],
+                studios=["pixar"],
+                certification="PG",
+                runtime_bucket="90_109",
+                release_decade="2020s",
+                popularity=90.0,
+                rating_count=9000,
+                score_breakdown={
+                    "user_score": 8.0,
+                    "days_since_activity": 220.0,
+                    "rewatch_count": 1.0,
+                },
+            ),
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source="tmdb",
+                media_id="neutral",
+                title="Anytime Whodunit",
+                keywords=["whodunit"],
+                studios=["pixar"],
+                certification="PG",
+                runtime_bucket="90_109",
+                release_decade="2020s",
+                popularity=80.0,
+                rating_count=8000,
+                score_breakdown={
+                    "user_score": 8.0,
+                    "days_since_activity": 220.0,
+                    "rewatch_count": 1.0,
+                },
+            ),
+        ]
+
+        reranked = _apply_comfort_confidence(
+            candidates,
+            {
+                "phase_keyword_affinity": {"christmas": 1.0, "whodunit": 0.9},
+                "recent_keyword_affinity": {"christmas": 0.9, "whodunit": 0.8},
+                "phase_studio_affinity": {"pixar": 1.0},
+                "recent_studio_affinity": {"pixar": 0.9},
+                "phase_certification_affinity": {"pg": 1.0},
+                "recent_certification_affinity": {"pg": 0.9},
+                "phase_runtime_bucket_affinity": {"90_109": 1.0},
+                "recent_runtime_bucket_affinity": {"90_109": 0.9},
+                "phase_decade_affinity": {"2020s": 0.8},
+                "recent_decade_affinity": {"2020s": 0.8},
+                "comfort_library_affinity": {
+                    "keywords": {"christmas": 1.0, "whodunit": 0.95},
+                    "collections": {},
+                    "studios": {"pixar": 1.0},
+                    "genres": {},
+                    "directors": {},
+                    "lead_cast": {},
+                    "certifications": {"PG": 1.0},
+                    "runtime_buckets": {"90_109": 1.0},
+                    "decades": {"2020s": 0.9},
+                },
+                "comfort_rewatch_affinity": {
+                    "keywords": {"christmas": 1.0, "whodunit": 0.95},
+                    "collections": {},
+                    "studios": {"pixar": 1.0},
+                    "genres": {},
+                    "directors": {},
+                    "lead_cast": {},
+                    "certifications": {"PG": 1.0},
+                    "runtime_buckets": {"90_109": 1.0},
+                    "decades": {"2020s": 0.9},
+                },
+            },
+            use_movie_rewatch_model=True,
+        )
+
+        by_id = {candidate.media_id: candidate for candidate in reranked}
+        self.assertLess(by_id["keyword-holiday"].score_breakdown["seasonal_adjustment"], 0.0)
+        self.assertEqual(by_id["neutral"].score_breakdown["seasonal_adjustment"], 0.0)
+        self.assertLess(by_id["keyword-holiday"].final_score, by_id["neutral"].final_score)
+
+    @patch("app.discover.service._is_holiday_window", return_value=False)
+    def test_movie_behavior_first_debug_payload_exposes_holiday_penalty(self, _mock_window):
+        candidates = [
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source="tmdb",
+                media_id="keyword-holiday",
+                title="Winter Whodunit",
+                keywords=["christmas", "whodunit"],
+                studios=["pixar"],
+                certification="PG",
+                runtime_bucket="90_109",
+                release_decade="2020s",
+                popularity=90.0,
+                rating_count=9000,
+                score_breakdown={
+                    "user_score": 8.0,
+                    "days_since_activity": 220.0,
+                    "rewatch_count": 1.0,
+                },
+            ),
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source="tmdb",
+                media_id="neutral",
+                title="Anytime Whodunit",
+                keywords=["whodunit"],
+                studios=["pixar"],
+                certification="PG",
+                runtime_bucket="90_109",
+                release_decade="2020s",
+                popularity=80.0,
+                rating_count=8000,
+                score_breakdown={
+                    "user_score": 8.0,
+                    "days_since_activity": 220.0,
+                    "rewatch_count": 1.0,
+                },
+            ),
+        ]
+
+        reranked = _apply_comfort_confidence(
+            candidates,
+            {
+                "phase_keyword_affinity": {"christmas": 1.0, "whodunit": 0.9},
+                "recent_keyword_affinity": {"christmas": 0.9, "whodunit": 0.8},
+                "phase_studio_affinity": {"pixar": 1.0},
+                "recent_studio_affinity": {"pixar": 0.9},
+                "phase_certification_affinity": {"pg": 1.0},
+                "recent_certification_affinity": {"pg": 0.9},
+                "phase_runtime_bucket_affinity": {"90_109": 1.0},
+                "recent_runtime_bucket_affinity": {"90_109": 0.9},
+                "phase_decade_affinity": {"2020s": 0.8},
+                "recent_decade_affinity": {"2020s": 0.8},
+                "comfort_library_affinity": {
+                    "keywords": {"christmas": 1.0, "whodunit": 0.95},
+                    "collections": {},
+                    "studios": {"pixar": 1.0},
+                    "genres": {},
+                    "directors": {},
+                    "lead_cast": {},
+                    "certifications": {"PG": 1.0},
+                    "runtime_buckets": {"90_109": 1.0},
+                    "decades": {"2020s": 0.9},
+                },
+                "comfort_rewatch_affinity": {
+                    "keywords": {"christmas": 1.0, "whodunit": 0.95},
+                    "collections": {},
+                    "studios": {"pixar": 1.0},
+                    "genres": {},
+                    "directors": {},
+                    "lead_cast": {},
+                    "certifications": {"PG": 1.0},
+                    "runtime_buckets": {"90_109": 1.0},
+                    "decades": {"2020s": 0.9},
+                },
+            },
+            use_movie_rewatch_model=True,
+        )
+        payload = _build_comfort_debug_payload(reranked, top_n=2)
+        by_id = {
+            candidate_payload["media_id"]: candidate_payload
+            for candidate_payload in payload["top_candidates"]
+        }
+
+        self.assertIn("holiday_strength", by_id["keyword-holiday"])
+        self.assertIn("seasonal_adjustment", by_id["keyword-holiday"])
+        self.assertLess(by_id["keyword-holiday"]["seasonal_adjustment"], 0.0)
+        self.assertGreaterEqual(by_id["keyword-holiday"]["penalty_count"], 1)
+        self.assertEqual(by_id["neutral"]["seasonal_adjustment"], 0.0)
 
     def test_movie_comfort_confidence_softly_cools_recent_exact_title(self):
         zootopia_item = Item.objects.create(

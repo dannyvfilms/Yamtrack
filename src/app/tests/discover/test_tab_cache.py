@@ -198,6 +198,22 @@ class DiscoverTabCacheTests(TestCase):
         self.assertTrue(scheduled)
         mock_apply_async.assert_called_once()
 
+    @patch("app.discover.tab_cache.has_fresh_tab_cache")
+    @patch("app.discover.tab_cache.schedule_tab_refresh")
+    def test_warm_sibling_tabs_skips_redundant_work_for_all_media(
+        self,
+        mock_schedule_tab_refresh,
+        mock_has_fresh_tab_cache,
+    ):
+        tab_cache.warm_sibling_tabs(
+            self.user,
+            tab_cache.ALL_MEDIA_KEY,
+            show_more=False,
+        )
+
+        mock_has_fresh_tab_cache.assert_not_called()
+        mock_schedule_tab_refresh.assert_not_called()
+
     def test_apply_cached_action_removes_item_and_promotes_reserve(self):
         tab_cache.set_tab_cache(
             self.user.id,
@@ -321,7 +337,49 @@ class DiscoverTabCacheTests(TestCase):
             "movie",
             show_more=False,
             include_debug=False,
-            defer_artwork=True,
+            defer_artwork=False,
+        )
+
+    @patch("app.discover.service.get_discover_rows", return_value=[])
+    def test_refresh_tab_cache_force_preserves_taste_profile(self, mock_get_discover_rows):
+        expires_at = timezone.now() + timedelta(hours=1)
+        DiscoverRowCache.objects.create(
+            user=self.user,
+            media_type="movie",
+            row_key="top_picks_for_you",
+            payload={},
+            expires_at=expires_at,
+        )
+        DiscoverTasteProfile.objects.create(
+            user=self.user,
+            media_type="movie",
+            expires_at=expires_at,
+        )
+
+        tab_cache.refresh_tab_cache(
+            self.user,
+            "movie",
+            force=True,
+        )
+
+        self.assertFalse(
+            DiscoverRowCache.objects.filter(
+                user=self.user,
+                media_type="movie",
+            ).exists(),
+        )
+        self.assertTrue(
+            DiscoverTasteProfile.objects.filter(
+                user=self.user,
+                media_type="movie",
+            ).exists(),
+        )
+        mock_get_discover_rows.assert_called_once_with(
+            self.user,
+            "movie",
+            show_more=False,
+            include_debug=False,
+            defer_artwork=False,
         )
 
     @patch("app.discover.tab_cache.schedule_tab_refresh", return_value=True)
@@ -414,6 +472,7 @@ class DiscoverTabCacheTests(TestCase):
         self.assertEqual(second, 0)
         mock_schedule_warmup.assert_called_once_with(
             self.user,
+            media_types=["all"],
             prioritize_media_type="all",
             show_more=False,
         )

@@ -302,28 +302,34 @@ def _item_credit_feature_maps(item_ids: list[int]) -> tuple[dict[int, list[str]]
     lead_cast_counts: dict[int, int] = defaultdict(int)
     credits = (
         ItemPersonCredit.objects.filter(item_id__in=item_ids)
-        .select_related("person")
         .order_by("item_id", "role_type", "sort_order", "person__name")
+        .values_list(
+            "item_id",
+            "role_type",
+            "role",
+            "department",
+            "person__name",
+        )
     )
-    for credit in credits:
-        person_name = normalize_person_name(credit.person.name if credit.person_id else "")
+    for item_id, role_type, role, department, person_name_raw in credits:
+        person_name = normalize_person_name(person_name_raw or "")
         if not person_name:
             continue
-        if person_name not in people_seen[credit.item_id]:
-            people_seen[credit.item_id].add(person_name)
-            people_map[credit.item_id].append(person_name)
-        if is_director_credit(credit.role_type, credit.role, credit.department):
-            if person_name not in directors_seen[credit.item_id]:
-                directors_seen[credit.item_id].add(person_name)
-                directors_map[credit.item_id].append(person_name)
+        if person_name not in people_seen[item_id]:
+            people_seen[item_id].add(person_name)
+            people_map[item_id].append(person_name)
+        if is_director_credit(role_type, role, department):
+            if person_name not in directors_seen[item_id]:
+                directors_seen[item_id].add(person_name)
+                directors_map[item_id].append(person_name)
         if (
-            credit.role_type == CreditRoleType.CAST.value
-            and lead_cast_counts[credit.item_id] < 3
-            and person_name not in lead_cast_seen[credit.item_id]
+            role_type == CreditRoleType.CAST.value
+            and lead_cast_counts[item_id] < 3
+            and person_name not in lead_cast_seen[item_id]
         ):
-            lead_cast_seen[credit.item_id].add(person_name)
-            lead_cast_map[credit.item_id].append(person_name)
-            lead_cast_counts[credit.item_id] += 1
+            lead_cast_seen[item_id].add(person_name)
+            lead_cast_map[item_id].append(person_name)
+            lead_cast_counts[item_id] += 1
     return people_map, directors_map, lead_cast_map
 
 
@@ -335,15 +341,15 @@ def _item_studio_map(item_ids: list[int]) -> dict[int, list[str]]:
     seen: dict[int, set[str]] = defaultdict(set)
     credits = (
         ItemStudioCredit.objects.filter(item_id__in=item_ids)
-        .select_related("studio")
         .order_by("item_id", "sort_order", "studio__name")
+        .values_list("item_id", "studio__name")
     )
-    for credit in credits:
-        studio_name = normalize_studio(credit.studio.name if credit.studio_id else "")
-        if not studio_name or studio_name in seen[credit.item_id]:
+    for item_id, studio_name_raw in credits:
+        studio_name = normalize_studio(studio_name_raw or "")
+        if not studio_name or studio_name in seen[item_id]:
             continue
-        seen[credit.item_id].add(studio_name)
-        mapping[credit.item_id].append(studio_name)
+        seen[item_id].add(studio_name)
+        mapping[item_id].append(studio_name)
     return mapping
 
 
@@ -355,6 +361,12 @@ def _feature_vector(values: list[str]) -> dict[str, float]:
             continue
         vector[key] = 1.0
     return vector
+
+
+def _feature_vector_norm(vector: dict[str, float]) -> float:
+    if not vector:
+        return 0.0
+    return math.sqrt(sum(float(value) ** 2 for value in vector.values()))
 
 
 def _entry_activity_datetime(entry):
@@ -1467,8 +1479,6 @@ def _musicbrainz_coming_soon_recording_candidates(
 
         release_date = _iso_date(entry.get("first-release-date"))
         image = settings.IMG_NONE
-        release_group_id = None
-        release_id = None
         releases = entry.get("releases") or []
         if isinstance(releases, list):
             selected_release = None
@@ -1482,18 +1492,6 @@ def _musicbrainz_coming_soon_recording_candidates(
                 selected_release = releases[0]
             if isinstance(selected_release, dict):
                 release_date = release_date or _iso_date(selected_release.get("date"))
-                release_id = selected_release.get("id")
-                release_group = (
-                    selected_release.get("release-group")
-                    or selected_release.get("release_group")
-                    or {}
-                )
-                if isinstance(release_group, dict):
-                    release_group_id = release_group.get("id")
-                image = musicbrainz.get_cover_art(
-                    release_id=release_id,
-                    release_group_id=release_group_id,
-                )
 
         display_title = title if not artist_name else f"{title} - {artist_name}"
         popularity = _safe_float(entry.get("score")) or float(max(len(entries) - index + 1, 1))
@@ -2413,27 +2411,44 @@ def _is_holiday_window(today=None) -> bool:
     return month_day >= (11, 15) or month_day <= (1, 10)
 
 
+def _holiday_value_strength(value: str | None) -> float:
+    if not value:
+        return 0.0
+
+    key = str(value).strip().lower()
+    if not key:
+        return 0.0
+
+    if any(term in key for term in HOLIDAY_STRONG_TERMS):
+        return 1.0
+    if any(term in key for term in HOLIDAY_SOFT_TERMS):
+        return 0.7
+    return 0.0
+
+
 def _holiday_seasonal_strength(candidate: CandidateItem) -> float:
     values = [
         *(candidate.tags or []),
         *(candidate.genres or []),
+        *(candidate.keywords or []),
+        candidate.collection_name,
         candidate.title,
         candidate.original_title,
         candidate.localized_title,
     ]
     strength = 0.0
     for value in values:
-        if not value:
-            continue
-        key = str(value).strip().lower()
-        if not key:
-            continue
-        if any(term in key for term in HOLIDAY_STRONG_TERMS):
-            strength = max(strength, 1.0)
-            continue
-        if any(term in key for term in HOLIDAY_SOFT_TERMS):
-            strength = max(strength, 0.7)
+        strength = max(strength, _holiday_value_strength(value))
     return strength
+
+
+def _holiday_seasonal_adjustment(candidate: CandidateItem, *, holiday_window_active: bool) -> tuple[float, float]:
+    holiday_strength = _holiday_seasonal_strength(candidate)
+    if holiday_strength <= 0.0:
+        return 0.0, 0.0
+    if holiday_window_active:
+        return holiday_strength, 0.06 * holiday_strength
+    return holiday_strength, -0.40 * holiday_strength
 
 
 def _comfort_bucket_key(candidate: CandidateItem) -> str:
@@ -2572,6 +2587,21 @@ def _affinity_fit(values: list[str], affinity_map: dict[str, float]) -> float:
     return cosine_similarity(_feature_vector(values), affinity_map)
 
 
+def _affinity_fit_from_vector(
+    feature_vector: dict[str, float],
+    feature_vector_norm: float,
+    affinity_map: dict[str, float],
+    affinity_norm: float,
+) -> float:
+    if not feature_vector or not affinity_map or feature_vector_norm <= 0.0 or affinity_norm <= 0.0:
+        return 0.0
+    dot = sum(
+        float(value) * float(affinity_map.get(key, 0.0))
+        for key, value in feature_vector.items()
+    )
+    return _clamp_unit(dot / (feature_vector_norm * affinity_norm))
+
+
 def phase_fit_family(profile_payload: dict | None, family: str, values: list[str]) -> float:
     return _affinity_fit(
         values,
@@ -2623,16 +2653,56 @@ def _movie_comfort_weighted_fit(family_fits: dict[str, float]) -> float:
     )
 
 
+def _affinity_map_norm(affinity_map: dict[str, float]) -> float:
+    if not affinity_map:
+        return 0.0
+    return math.sqrt(sum(float(value) ** 2 for value in affinity_map.values()))
+
+
+def _singleton_affinity_fit(
+    label: str,
+    affinity_map: dict[str, float],
+    affinity_norm: float,
+) -> float:
+    if not label or not affinity_map or affinity_norm <= 0.0:
+        return 0.0
+    return _clamp_unit(float(affinity_map.get(label, 0.0)) / affinity_norm)
+
+
 def _movie_reason_label_strength(
-    profile_payload: dict | None,
+    family_profile_maps: dict[str, dict[str, dict[str, float]]],
+    family_profile_norms: dict[str, dict[str, float]],
     family: str,
     label: str,
+    *,
+    strength_cache: dict[tuple[str, str], float] | None = None,
 ) -> float:
-    values = [label]
-    phase_fit = phase_fit_family(profile_payload, family, values)
-    recent_fit = recent_fit_family(profile_payload, family, values)
-    library_fit = library_fit_family(profile_payload, family, values)
-    rewatch_fit = rewatch_fit_family(profile_payload, family, values)
+    cache_key = (family, str(label).strip().lower())
+    if strength_cache is not None and cache_key in strength_cache:
+        return strength_cache[cache_key]
+
+    family_layers = family_profile_maps.get(family) or {}
+    family_norms = family_profile_norms.get(family) or {}
+    phase_fit = _singleton_affinity_fit(
+        cache_key[1],
+        family_layers.get("phase") or {},
+        float(family_norms.get("phase", 0.0)),
+    )
+    recent_fit = _singleton_affinity_fit(
+        cache_key[1],
+        family_layers.get("recent") or {},
+        float(family_norms.get("recent", 0.0)),
+    )
+    library_fit = _singleton_affinity_fit(
+        cache_key[1],
+        family_layers.get("library") or {},
+        float(family_norms.get("library", 0.0)),
+    )
+    rewatch_fit = _singleton_affinity_fit(
+        cache_key[1],
+        family_layers.get("rewatch") or {},
+        float(family_norms.get("rewatch", 0.0)),
+    )
     recency_phase_fit = (
         (phase_fit * MOVIE_COMFORT_PROFILE_LAYER_WEIGHTS["phase"])
         + (recent_fit * MOVIE_COMFORT_PROFILE_LAYER_WEIGHTS["recent"])
@@ -2641,31 +2711,40 @@ def _movie_reason_label_strength(
         (library_fit * MOVIE_COMFORT_PROFILE_LAYER_WEIGHTS["library"])
         + (rewatch_fit * MOVIE_COMFORT_PROFILE_LAYER_WEIGHTS["rewatch"])
     )
-    return _clamp_unit((library_bundle_fit * 0.55) + (recency_phase_fit * 0.45))
+    strength = _clamp_unit((library_bundle_fit * 0.55) + (recency_phase_fit * 0.45))
+    if strength_cache is not None:
+        strength_cache[cache_key] = strength
+    return strength
 
 
 def _movie_reason_bucket_label(
-    profile_payload: dict | None,
+    family_profile_maps: dict[str, dict[str, dict[str, float]]],
+    family_profile_norms: dict[str, dict[str, float]],
     candidate_families: dict[str, list[str]],
     *,
     rewatch_strength: float,
+    strength_cache: dict[tuple[str, str], float] | None = None,
 ) -> tuple[str, str, str]:
     for family in MOVIE_COMFORT_BUCKET_SOURCE_PRIORITY:
         values = candidate_families.get(family) or []
         if not values:
             continue
-        ranked = sorted(
-            (
-                (value, _movie_reason_label_strength(profile_payload, family, value))
-                for value in values
-            ),
-            key=lambda item: item[1],
-            reverse=True,
-        )
-        if not ranked or ranked[0][1] < 0.20:
+        best_label = ""
+        best_strength = 0.0
+        for value in values:
+            strength = _movie_reason_label_strength(
+                family_profile_maps,
+                family_profile_norms,
+                family,
+                value,
+                strength_cache=strength_cache,
+            )
+            if strength > best_strength:
+                best_label = value
+                best_strength = strength
+        if best_strength < 0.20 or not best_label:
             continue
-        label = ranked[0][0]
-        return f"{family}:{label}", family, label
+        return f"{family}:{best_label}", family, best_label
     if rewatch_strength >= 0.50:
         return "rewatch:personal", "rewatch", "personal"
     return "broad:general", "broad", "general"
@@ -3280,6 +3359,13 @@ def _apply_movie_comfort_confidence(
         }
         for family in MOVIE_COMFORT_FAMILY_WEIGHTS
     }
+    family_profile_norms = {
+        family: {
+            layer_name: _affinity_map_norm(layer_map)
+            for layer_name, layer_map in family_layers.items()
+        }
+        for family, family_layers in family_profile_maps.items()
+    }
     if not any(
         any(layer_map for layer_map in family_layers.values())
         for family_layers in family_profile_maps.values()
@@ -3289,6 +3375,8 @@ def _apply_movie_comfort_confidence(
     cooldown_context = _movie_comfort_cooldown_context(user, candidates)
     popularity_norm = normalize_values([candidate.popularity for candidate in candidates])
     rating_count_norm = normalize_values([candidate.rating_count for candidate in candidates])
+    holiday_window_active = _is_holiday_window()
+    reason_label_strength_cache: dict[tuple[str, str], float] = {}
 
     for index, candidate in enumerate(candidates):
         candidate_families = _movie_comfort_candidate_families(candidate)
@@ -3299,10 +3387,32 @@ def _apply_movie_comfort_confidence(
 
         for family in MOVIE_COMFORT_FAMILY_WEIGHTS:
             values = candidate_families.get(family) or []
-            phase_fit = _affinity_fit(values, family_profile_maps[family]["phase"])
-            recent_fit = _affinity_fit(values, family_profile_maps[family]["recent"])
-            library_family_fit = _affinity_fit(values, family_profile_maps[family]["library"])
-            rewatch_family_fit = _affinity_fit(values, family_profile_maps[family]["rewatch"])
+            feature_vector = _feature_vector(values)
+            feature_vector_norm = _feature_vector_norm(feature_vector)
+            phase_fit = _affinity_fit_from_vector(
+                feature_vector,
+                feature_vector_norm,
+                family_profile_maps[family]["phase"],
+                float(family_profile_norms[family]["phase"]),
+            )
+            recent_fit = _affinity_fit_from_vector(
+                feature_vector,
+                feature_vector_norm,
+                family_profile_maps[family]["recent"],
+                float(family_profile_norms[family]["recent"]),
+            )
+            library_family_fit = _affinity_fit_from_vector(
+                feature_vector,
+                feature_vector_norm,
+                family_profile_maps[family]["library"],
+                float(family_profile_norms[family]["library"]),
+            )
+            rewatch_family_fit = _affinity_fit_from_vector(
+                feature_vector,
+                feature_vector_norm,
+                family_profile_maps[family]["rewatch"],
+                float(family_profile_norms[family]["rewatch"]),
+            )
             recency_phase_family_fit = _clamp_unit(
                 (phase_fit * MOVIE_COMFORT_PROFILE_LAYER_WEIGHTS["phase"])
                 + (recent_fit * MOVIE_COMFORT_PROFILE_LAYER_WEIGHTS["recent"]),
@@ -3434,7 +3544,7 @@ def _apply_movie_comfort_confidence(
             cooldown_context,
         )
         ready_now_score = float(cooldown_signal["ready_now_score"])
-        final_score = _clamp_unit(
+        raw_final_score = _clamp_unit(
             (core_affinity_score * (1.0 - MOVIE_COMFORT_READY_NOW_WEIGHT))
             + (ready_now_score * MOVIE_COMFORT_READY_NOW_WEIGHT),
         )
@@ -3443,12 +3553,23 @@ def _apply_movie_comfort_confidence(
                 (1.0 - MOVIE_COMFORT_RECENT_TITLE_MULTIPLIER_FLOOR)
                 * (1.0 - float(cooldown_signal["cooldown_penalty"]))
             )
-            final_score = min(final_score, _clamp_unit(core_affinity_score * floor_multiplier))
+            raw_final_score = min(
+                raw_final_score,
+                _clamp_unit(core_affinity_score * floor_multiplier),
+            )
+
+        holiday_strength, seasonal_adjustment = _holiday_seasonal_adjustment(
+            candidate,
+            holiday_window_active=holiday_window_active,
+        )
+        final_score = _clamp_unit(raw_final_score + seasonal_adjustment)
 
         primary_reason_bucket, primary_reason_source, primary_reason_label = _movie_reason_bucket_label(
-            profile_payload,
+            family_profile_maps,
+            family_profile_norms,
             candidate_families,
             rewatch_strength=rewatch_strength,
+            strength_cache=reason_label_strength_cache,
         )
         for family in MOVIE_COMFORT_RICH_FAMILIES:
             if family == primary_reason_source:
@@ -3571,12 +3692,16 @@ def _apply_movie_comfort_confidence(
             (library_fit * 0.30) + (shape_coverage * 0.05),
             6,
         )
-        candidate.score_breakdown["dampeners_contribution"] = 0.0
-        candidate.score_breakdown["seasonality_dampener_contribution"] = 0.0
+        candidate.score_breakdown["holiday_strength"] = round(holiday_strength, 6)
+        candidate.score_breakdown["dampeners_contribution"] = round(seasonal_adjustment, 6)
+        candidate.score_breakdown["seasonality_dampener_contribution"] = round(
+            seasonal_adjustment,
+            6,
+        )
         candidate.score_breakdown["diversity_dampener_contribution"] = 0.0
         candidate.score_breakdown["era_dampener_contribution"] = 0.0
         candidate.score_breakdown["opening_era_dampener_contribution"] = 0.0
-        candidate.score_breakdown["seasonal_adjustment"] = 0.0
+        candidate.score_breakdown["seasonal_adjustment"] = round(seasonal_adjustment, 6)
         candidate.score_breakdown["diversity_multiplier"] = 1.0
         candidate.score_breakdown["era_multiplier"] = 1.0
         candidate.score_breakdown["comfort_score"] = round(final_score, 6)
@@ -3768,14 +3893,10 @@ def _apply_comfort_confidence(
         # shorter gap, but all else being equal longer-dormant favourites
         # surface first.
         inactivity_norm = _clamp_unit(inactivity_days / 730.0)
-        holiday_strength = _holiday_seasonal_strength(candidate)
-        seasonal_adjustment = 0.0
-        if holiday_strength > 0.0:
-            seasonal_adjustment = (
-                0.06 * holiday_strength
-                if holiday_window_active
-                else -0.40 * holiday_strength
-            )
+        holiday_strength, seasonal_adjustment = _holiday_seasonal_adjustment(
+            candidate,
+            holiday_window_active=holiday_window_active,
+        )
 
         phase_family_contribution = (
             (phase_fit * 0.32)
@@ -4116,11 +4237,14 @@ def _build_movie_comfort_debug_payload(
     for index, candidate in enumerate(top_slice, start=1):
         score = candidate.score_breakdown
         penalty_count = 0
+        seasonal_adjustment = float(score.get("seasonal_adjustment", 0.0))
         if float(score.get("generic_only_match", 0.0)) >= 1.0:
             penalty_count += 1
         if str(score.get("reason_bucket_quota_action", "")) in {"relaxed_fill", "forced_fill"}:
             penalty_count += 1
         if float(score.get("candidate_is_unrated", 0.0)) >= 1.0:
+            penalty_count += 1
+        if seasonal_adjustment < 0.0:
             penalty_count += 1
         if penalty_count >= 2:
             multi_penalty_ids.append(str(candidate.media_id))
@@ -4211,6 +4335,16 @@ def _build_movie_comfort_debug_payload(
                 ),
                 "ready_now_contribution": round(
                     float(score.get("ready_now_contribution", 0.0)),
+                    6,
+                ),
+                "holiday_strength": round(float(score.get("holiday_strength", 0.0)), 6),
+                "seasonal_adjustment": round(seasonal_adjustment, 6),
+                "dampeners_contribution": round(
+                    float(score.get("dampeners_contribution", 0.0)),
+                    6,
+                ),
+                "seasonality_dampener_contribution": round(
+                    float(score.get("seasonality_dampener_contribution", 0.0)),
                     6,
                 ),
                 "penalty_count": penalty_count,
@@ -5672,6 +5806,7 @@ def _get_all_media_component_rows(
         show_more=show_more,
         include_debug=include_debug,
         defer_artwork=defer_artwork,
+        row_keys=None if show_more else ["trending_right_now"],
     )
 
 
@@ -5731,6 +5866,7 @@ def get_discover_rows(
     show_more: bool = False,
     include_debug: bool = False,
     defer_artwork: bool = False,
+    row_keys: list[str] | None = None,
 ) -> list[RowResult]:
     """Return discover rows for selected media type."""
     media_type = _coerce_media_type(media_type)
@@ -5743,6 +5879,13 @@ def get_discover_rows(
         )
 
     row_definitions = get_rows(media_type, include_show_more=show_more)
+    if row_keys is not None:
+        requested_keys = set(row_keys)
+        row_definitions = [
+            row_definition
+            for row_definition in row_definitions
+            if row_definition.key in requested_keys
+        ]
     profile_payload = get_or_compute_taste_profile(user, media_type)
 
     seen_identities: set[tuple[str, str, str]] = set()

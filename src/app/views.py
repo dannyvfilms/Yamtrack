@@ -795,7 +795,7 @@ def refresh_discover(request):
     )
 
     discover_tab_cache.bump_activity_version(request.user.id, media_type)
-    discover_tab_cache.clear_lower_level_cache(request.user.id, media_type)
+    discover_tab_cache.clear_row_cache(request.user.id, media_type)
     discover_tab_cache.schedule_tab_refresh(
         request.user.id,
         media_type,

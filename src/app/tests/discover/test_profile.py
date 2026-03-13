@@ -5,7 +5,7 @@ from django.test import TestCase
 from django.utils import timezone
 from unittest.mock import patch
 
-from app.discover.profile import compute_taste_profile
+from app.discover.profile import compute_taste_profile, get_or_compute_taste_profile
 from app.models import (
     Anime,
     CreditRoleType,
@@ -521,3 +521,72 @@ class DiscoverProfileTests(TestCase):
         self.assertIn("<90", profile.comfort_library_affinity["runtime_buckets"])
         self.assertIn("found family", profile.comfort_rewatch_affinity["keywords"])
         self.assertIn("studio pierrot", profile.comfort_rewatch_affinity["studios"])
+
+    def test_get_or_compute_taste_profile_reuses_cached_movie_profile(self):
+        item = Item.objects.create(
+            media_id="804",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Cached Profile Movie",
+            image="http://example.com/cached-profile.jpg",
+            genres=["Comedy"],
+        )
+        with patch("app.models.providers.services.get_media_metadata", return_value={"max_progress": 1}):
+            movie = Movie.objects.create(
+                item=item,
+                user=self.user,
+                score=8,
+                status=Status.COMPLETED.value,
+                progressed_at=timezone.now() - timedelta(hours=1),
+            )
+
+        now = timezone.now()
+        Movie.objects.filter(id=movie.id).update(
+            created_at=now,
+            progressed_at=now - timedelta(microseconds=100),
+        )
+
+        get_or_compute_taste_profile(self.user, MediaTypes.MOVIE.value, force=True)
+
+        with patch("app.discover.profile.compute_taste_profile") as mock_compute:
+            cached = get_or_compute_taste_profile(
+                self.user,
+                MediaTypes.MOVIE.value,
+                force=False,
+            )
+
+        mock_compute.assert_not_called()
+        self.assertIn("comedy", cached["genre_affinity"])
+
+    def test_compute_taste_profile_snapshot_includes_feedback_updates(self):
+        item = Item.objects.create(
+            media_id="805",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Feedback Snapshot Movie",
+            image="http://example.com/feedback-snapshot.jpg",
+            genres=["Mystery"],
+        )
+        with patch("app.models.providers.services.get_media_metadata", return_value={"max_progress": 1}):
+            Movie.objects.create(
+                item=item,
+                user=self.user,
+                score=7,
+                status=Status.COMPLETED.value,
+                end_date=timezone.now() - timedelta(days=10),
+            )
+
+        feedback = DiscoverFeedback.objects.create(
+            user=self.user,
+            item=item,
+            feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
+        )
+        feedback_updated_at = timezone.now()
+        DiscoverFeedback.objects.filter(id=feedback.id).update(
+            created_at=feedback_updated_at - timedelta(minutes=1),
+            updated_at=feedback_updated_at,
+        )
+
+        profile = compute_taste_profile(self.user, MediaTypes.MOVIE.value)
+
+        self.assertEqual(profile.activity_snapshot_at, feedback_updated_at)
