@@ -488,6 +488,281 @@ class StatisticsViewTests(TestCase):
             r"·\s*\d+\s+manga\b",
         )
 
+    @patch("app.providers.services.get_media_metadata")
+    def test_statistics_view_passes_book_top_authors_for_all_time(self, mock_get_metadata):
+        """Book consumption should expose linked top authors for all-time statistics."""
+        mock_get_metadata.return_value = {"max_progress": 500}
+        cache.clear()
+        self.client.login(**self.credentials)
+        now = timezone.now()
+
+        primary_author = Person.objects.create(
+            source=Sources.OPENLIBRARY.value,
+            source_person_id="OL1A",
+            name="Primary Author",
+            image="http://example.com/primary-author.jpg",
+        )
+        guest_author = Person.objects.create(
+            source=Sources.OPENLIBRARY.value,
+            source_person_id="OL2A",
+            name="Guest Author",
+            image="http://example.com/guest-author.jpg",
+        )
+
+        first_item = Item.objects.create(
+            media_id="book-top-author-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Author Book One",
+            image="http://example.com/book-one.jpg",
+            authors=["Primary Author"],
+        )
+        second_item = Item.objects.create(
+            media_id="book-top-author-2",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Author Book Two",
+            image="http://example.com/book-two.jpg",
+            authors=["Primary Author", "Guest Author"],
+        )
+
+        ItemPersonCredit.objects.create(
+            item=first_item,
+            person=primary_author,
+            role_type=CreditRoleType.AUTHOR.value,
+        )
+        ItemPersonCredit.objects.create(
+            item=second_item,
+            person=primary_author,
+            role_type=CreditRoleType.AUTHOR.value,
+        )
+        ItemPersonCredit.objects.create(
+            item=second_item,
+            person=guest_author,
+            role_type=CreditRoleType.AUTHOR.value,
+        )
+
+        first_book = Book.objects.create(
+            user=self.user,
+            item=first_item,
+            status=Status.COMPLETED.value,
+            progress=300,
+            start_date=now - timedelta(days=4),
+            end_date=now - timedelta(days=4),
+        )
+        second_book = Book.objects.create(
+            user=self.user,
+            item=second_item,
+            status=Status.COMPLETED.value,
+            progress=120,
+            start_date=now - timedelta(days=2),
+            end_date=now - timedelta(days=2),
+        )
+
+        statistics_cache.invalidate_statistics_cache(self.user.id)
+        response = self.client.get(reverse("statistics") + "?start-date=all&end-date=all")
+
+        self.assertEqual(response.status_code, 200)
+        top_authors = response.context["book_consumption"]["top_authors"]
+        self.assertEqual(top_authors[0]["name"], "Primary Author")
+        self.assertEqual(top_authors[0]["units"], first_book.progress + second_book.progress)
+        self.assertEqual(top_authors[0]["titles"], 2)
+        self.assertEqual(top_authors[1]["name"], "Guest Author")
+        self.assertEqual(top_authors[1]["units"], second_book.progress)
+        self.assertEqual(top_authors[1]["titles"], 1)
+        self.assertContains(
+            response,
+            reverse(
+                "person_detail",
+                kwargs={
+                    "source": Sources.OPENLIBRARY.value,
+                    "person_id": "OL1A",
+                    "name": "primary-author",
+                },
+            ),
+        )
+        self.assertContains(response, "Top 2 Authors")
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_statistics_view_passes_book_top_authors_for_custom_range(self, mock_get_metadata):
+        """Custom-range reading statistics should aggregate top authors from day caches."""
+        mock_get_metadata.return_value = {"max_progress": 500}
+        cache.clear()
+        self.client.login(**self.credentials)
+
+        in_range_author = Person.objects.create(
+            source=Sources.OPENLIBRARY.value,
+            source_person_id="OL3A",
+            name="Range Author",
+        )
+        out_of_range_author = Person.objects.create(
+            source=Sources.OPENLIBRARY.value,
+            source_person_id="OL4A",
+            name="Other Author",
+        )
+
+        in_range_item = Item.objects.create(
+            media_id="book-range-author-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Range Book",
+            image="http://example.com/range-book.jpg",
+            authors=["Range Author"],
+        )
+        out_of_range_item = Item.objects.create(
+            media_id="book-range-author-2",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Out Of Range Book",
+            image="http://example.com/out-of-range-book.jpg",
+            authors=["Other Author"],
+        )
+
+        ItemPersonCredit.objects.create(
+            item=in_range_item,
+            person=in_range_author,
+            role_type=CreditRoleType.AUTHOR.value,
+        )
+        ItemPersonCredit.objects.create(
+            item=out_of_range_item,
+            person=out_of_range_author,
+            role_type=CreditRoleType.AUTHOR.value,
+        )
+
+        in_range_book = Book.objects.create(
+            user=self.user,
+            item=in_range_item,
+            status=Status.COMPLETED.value,
+            progress=240,
+            start_date=timezone.make_aware(datetime(2026, 1, 10, 12, 0)),
+            end_date=timezone.make_aware(datetime(2026, 1, 10, 12, 0)),
+        )
+        Book.objects.create(
+            user=self.user,
+            item=out_of_range_item,
+            status=Status.COMPLETED.value,
+            progress=180,
+            start_date=timezone.make_aware(datetime(2026, 2, 10, 12, 0)),
+            end_date=timezone.make_aware(datetime(2026, 2, 10, 12, 0)),
+        )
+
+        response = self.client.get(
+            reverse("statistics") + "?start-date=2026-01-01&end-date=2026-01-31",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        top_authors = response.context["book_consumption"]["top_authors"]
+        self.assertEqual(len(top_authors), 1)
+        self.assertEqual(top_authors[0]["name"], "Range Author")
+        self.assertEqual(top_authors[0]["units"], in_range_book.progress)
+        self.assertEqual(top_authors[0]["titles"], 1)
+        self.assertContains(response, "Range Author")
+        self.assertNotContains(response, "Other Author")
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_statistics_view_passes_book_top_authors_for_this_year_cached_range(self, mock_get_metadata):
+        """Predefined cached reading ranges should render top authors on the statistics page."""
+        mock_get_metadata.return_value = {"max_progress": 500}
+        cache.clear()
+        self.client.login(**self.credentials)
+
+        today = timezone.localdate()
+        year_start = today.replace(month=1, day=1)
+        played_at = timezone.make_aware(
+            datetime.combine(today, datetime.min.time()),
+            timezone.get_current_timezone(),
+        )
+
+        author = Person.objects.create(
+            source=Sources.OPENLIBRARY.value,
+            source_person_id="OL5A",
+            name="Year Author",
+        )
+        item = Item.objects.create(
+            media_id="book-year-author-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Year Book",
+            image="http://example.com/year-book.jpg",
+            authors=["Year Author"],
+        )
+        ItemPersonCredit.objects.create(
+            item=item,
+            person=author,
+            role_type=CreditRoleType.AUTHOR.value,
+        )
+
+        Book.objects.create(
+            user=self.user,
+            item=item,
+            status=Status.COMPLETED.value,
+            progress=150,
+            start_date=played_at,
+            end_date=played_at,
+        )
+
+        response = self.client.get(
+            reverse("statistics")
+            + f"?start-date={year_start.isoformat()}&end-date={today.isoformat()}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["selected_range_name"], "This Year")
+        top_authors = response.context["book_consumption"]["top_authors"]
+        self.assertEqual(len(top_authors), 1)
+        self.assertEqual(top_authors[0]["name"], "Year Author")
+        self.assertEqual(top_authors[0]["titles"], 1)
+        self.assertContains(response, "Top 1 Authors")
+        self.assertContains(response, "Year Author")
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_statistics_view_passes_book_top_authors_from_cached_metadata(self, mock_get_metadata):
+        """Book top authors should fall back to cached metadata for legacy items."""
+        mock_get_metadata.return_value = {"max_progress": 500}
+        cache.clear()
+        self.client.login(**self.credentials)
+        now = timezone.now()
+
+        item = Item.objects.create(
+            media_id="book-cache-author-1",
+            source=Sources.OPENLIBRARY.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Cached Author Book",
+            image="http://example.com/cached-author-book.jpg",
+            authors=[],
+        )
+        cache.set(
+            f"{Sources.OPENLIBRARY.value}_{MediaTypes.BOOK.value}_{item.media_id}",
+            {
+                "authors_full": [
+                    {
+                        "name": "Cached Author",
+                        "person_id": "OL9A",
+                    },
+                ],
+            },
+        )
+
+        book_entry = Book.objects.create(
+            user=self.user,
+            item=item,
+            status=Status.COMPLETED.value,
+            progress=220,
+            start_date=now - timedelta(days=1),
+            end_date=now - timedelta(days=1),
+        )
+
+        statistics_cache.invalidate_statistics_cache(self.user.id)
+        response = self.client.get(reverse("statistics") + "?start-date=all&end-date=all")
+
+        self.assertEqual(response.status_code, 200)
+        top_authors = response.context["book_consumption"]["top_authors"]
+        self.assertEqual(len(top_authors), 1)
+        self.assertEqual(top_authors[0]["name"], "Cached Author")
+        self.assertEqual(top_authors[0]["units"], book_entry.progress)
+        self.assertEqual(top_authors[0]["titles"], 1)
+        self.assertContains(response, "Cached Author")
+
     def test_updating_reading_scores_refreshes_top_rated_cards(self):
         """Updating reading scores should invalidate day caches used by top-rated cards."""
         cache.clear()

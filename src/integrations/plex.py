@@ -704,4 +704,9 @@ def _raise_for_auth(response: requests.Response):
     """Raise auth errors consistently."""
     if response.status_code == 401:
         raise PlexAuthError("Plex token is invalid or expired")
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        raise PlexClientError(
+            f"Plex request failed with status {response.status_code}",
+        ) from exc

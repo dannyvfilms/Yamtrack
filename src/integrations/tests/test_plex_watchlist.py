@@ -1,6 +1,7 @@
 from datetime import timedelta
 from unittest.mock import Mock, patch
 
+import requests
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
@@ -85,6 +86,16 @@ class PlexWatchlistProviderTests(TestCase):
 
         self.assertEqual(metadata["title"], "Movie")
         self.assertEqual(metadata["Guid"][0]["id"], "tmdb://123")
+
+    @patch("integrations.plex.requests.get")
+    def test_fetch_watchlist_metadata_wraps_404_as_client_error(self, mock_get):
+        response = Mock()
+        response.status_code = 404
+        response.raise_for_status.side_effect = requests.HTTPError("404 Client Error")
+        mock_get.return_value = response
+
+        with self.assertRaisesMessage(plex_api.PlexClientError, "status 404"):
+            plex_api.fetch_watchlist_metadata("token", "missing")
 
     def test_extract_external_ids_from_guids_includes_plex_guid(self):
         ids = plex_api.extract_external_ids_from_guids(
@@ -305,6 +316,35 @@ class PlexWatchlistSyncServiceTests(TestCase):
         self.assertEqual(counts["created"], 1)
         self.assertEqual(Movie.objects.get(user=self.user).item.media_id, "123")
         mock_fetch_watchlist_metadata.assert_called_once_with(self.account.plex_token, "rk-movie")
+
+    @patch("integrations.plex_watchlist.plex_api.fetch_watchlist_metadata")
+    @patch("integrations.plex_watchlist.plex_api.fetch_watchlist")
+    def test_sync_warns_and_skips_when_detail_metadata_returns_404(
+        self,
+        mock_fetch_watchlist,
+        mock_fetch_watchlist_metadata,
+    ):
+        mock_fetch_watchlist.return_value = (
+            [
+                {
+                    "ratingKey": "rk-movie",
+                    "type": "movie",
+                    "title": "Movie Title",
+                    "guid": "plex://movie/abc123",
+                },
+            ],
+            1,
+        )
+        mock_fetch_watchlist_metadata.side_effect = plex_api.PlexClientError(
+            "Plex request failed with status 404",
+        )
+
+        counts, warnings = PlexWatchlistSyncService(self.user, self.account).sync()
+
+        self.assertEqual(counts["skipped_missing_ids"], 1)
+        self.assertIn("Could not load Plex watchlist metadata for Movie Title", warnings)
+        self.assertIn("Skipped Plex watchlist entry without resolvable IDs: Movie Title.", warnings)
+        self.assertFalse(Movie.objects.filter(user=self.user).exists())
 
 
 class PlexWatchlistViewTests(TestCase):

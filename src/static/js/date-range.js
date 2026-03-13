@@ -410,10 +410,9 @@ function dateRangePicker(options = {}) {
               if (statusResponse.ok) {
                 const statusData = await statusResponse.json();
                 const isComplete =
-                  !statusData.is_refreshing &&
-                  !statusData.any_range_refreshing &&
                   statusData.exists &&
-                  (statusData.recently_built || !statusData.is_stale);
+                  !statusData.is_stale &&
+                  !statusData.is_refreshing;
 
                 if (isComplete) {
                   window.location.reload();

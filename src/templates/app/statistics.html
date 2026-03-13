@@ -415,12 +415,26 @@
           const data = await response.json();
           console.log('Statistics page: Initial cache status', data);
           // Show notification and start polling only when a refresh is actually running
-          // (or has just been scheduled), to avoid stale-but-idle loops.
+          // (or when this specific range is missing/stale while a broader refresh wave is active),
+          // to avoid polling/reload loops from unrelated range rebuilds.
           this.metadataRefreshing = data.metadata_refreshing || false;
-          if (data.is_refreshing || data.any_range_refreshing || data.refresh_scheduled || this.metadataRefreshing) {
+          const currentRangeNeedsRefresh =
+            data.is_refreshing ||
+            data.refresh_scheduled ||
+            this.metadataRefreshing ||
+            !data.exists ||
+            data.is_stale;
+          const waitingOnCurrentRange =
+            data.is_refreshing ||
+            data.refresh_scheduled ||
+            this.metadataRefreshing ||
+            ((!data.exists || data.is_stale) && data.any_range_refreshing);
+          if (waitingOnCurrentRange) {
             console.log('Statistics page: Showing notification and starting polling', {
               is_stale: data.is_stale,
               is_refreshing: data.is_refreshing,
+              exists: data.exists,
+              any_range_refreshing: data.any_range_refreshing,
               recently_built: data.recently_built,
               refresh_scheduled: data.refresh_scheduled,
               metadata_refreshing: data.metadata_refreshing
@@ -429,7 +443,8 @@
             if (this.cacheUpdater) {
               // Mark that we were refreshing so we can detect completion
               // Set this BEFORE calling start() so it's preserved
-              this.cacheUpdater.wasRefreshing = data.is_refreshing || false;
+              this.cacheUpdater.wasRefreshing = currentRangeNeedsRefresh;
+              this.cacheUpdater.lastBuiltAt = data.built_at || null;
               this.cacheUpdater.start();
             }
           } else {
@@ -2441,7 +2456,7 @@
       {% endif %}
 
       {% if user.book_enabled and book_consumption.has_data %}
-        {% include "app/components/reading_consumption_section.html" with media_name="Books" consumption=book_consumption media_type_slug='book' chart_prefix='book' top_rated_list=top_rated_book %}
+        {% include "app/components/reading_consumption_section.html" with media_name="Books" consumption=book_consumption media_type_slug='book' chart_prefix='book' top_rated_list=top_rated_book show_top_authors=True %}
       {% endif %}
 
       {% if user.comic_enabled and comic_consumption.has_data %}

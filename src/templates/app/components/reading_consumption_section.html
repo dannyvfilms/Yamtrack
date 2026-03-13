@@ -142,6 +142,46 @@
         {% endif %}
       </div>
 
+      {% if show_top_authors %}
+      <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
+        <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top {{ consumption.top_authors|length|default:0 }} Authors</h3>
+        {% if consumption.top_authors %}
+          <div class="overflow-y-auto pr-1 statistics-card-scroll">
+            {% for author in consumption.top_authors %}
+              {% if author.source and author.person_id %}
+              <a href="{% url 'person_detail' source=author.source person_id=author.person_id name=author.name|slug %}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
+              {% else %}
+              <div class="flex items-center space-x-3 rounded-md p-1 -m-1">
+              {% endif %}
+                <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
+                {% if author.image %}
+                <img src="{{ author.image }}" alt="{{ author.name }}" class="w-10 h-10 rounded-full object-cover">
+                {% else %}
+                <div class="w-10 h-10 rounded-full bg-[#2a2f35] flex items-center justify-center">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                  </svg>
+                </div>
+                {% endif %}
+                <div class="flex-1 min-w-0">
+                  <p class="text-sm font-medium text-white truncate">{{ author.name }}</p>
+                  <p class="text-xs text-gray-500">{{ author.formatted_units }} · {{ author.titles }} book{{ author.titles|pluralize }}</p>
+                </div>
+              {% if author.source and author.person_id %}
+              </a>
+              {% else %}
+              </div>
+              {% endif %}
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="flex flex-col items-center justify-center py-8 text-gray-400">
+            <p class="text-sm">No author data available.</p>
+          </div>
+        {% endif %}
+      </div>
+      {% endif %}
+
       <div class="bg-[#39404b] rounded-lg p-3 sm:p-4">
         <h3 class="text-sm font-medium uppercase tracking-wide text-gray-300 mb-4">Top Genres</h3>
         {% if consumption.top_genres %}

@@ -44,7 +44,7 @@ from app.templatetags import app_tags
 
 logger = logging.getLogger(__name__)
 
-STATISTICS_CACHE_VERSION = 3
+STATISTICS_CACHE_VERSION = 4
 STATISTICS_CACHE_PREFIX = f"statistics_page_v{STATISTICS_CACHE_VERSION}"
 STATISTICS_CACHE_TIMEOUT = 60 * 60 * 6  # 6 hours
 STATISTICS_STALE_AFTER = timedelta(minutes=15)
@@ -3755,11 +3755,13 @@ def _aggregate_statistics_from_days(
 
         release_datetimes = []
         item_ids = [meta.get("item_id") for meta in items_by_type.get(media_type, {}).values() if meta.get("item_id")]
-        if item_ids:
-            release_datetimes = list(
-                Item.objects.filter(id__in=item_ids)
-                .values_list("release_datetime", flat=True)
-            )
+        items_with_authors = stats._fetch_reading_items_with_authors(item_ids)
+        if items_with_authors:
+            release_datetimes = [
+                item.release_datetime
+                for item in items_with_authors.values()
+                if item.release_datetime
+            ]
         completed_lengths = []
         model = apps.get_model("app", media_type)
         completed_queryset = model.objects.filter(user=user, status=Status.COMPLETED.value).select_related("item")
@@ -3778,6 +3780,18 @@ def _aggregate_statistics_from_days(
         top_entries.sort(
             key=lambda entry: (entry.get("minutes", 0), entry.get("activity_dt") or baseline_dt),
             reverse=True,
+        )
+        top_authors = stats._build_reading_top_authors(
+            [
+                (
+                    items_with_authors.get(entry.get("item_id")),
+                    entry.get("minutes", 0),
+                )
+                for entry in top_entries
+                if entry.get("minutes", 0) > 0
+            ],
+            unit_name,
+            limit=20,
         )
         top_entries = top_entries[:20]
         top_media_refs = {(media_type, entry.get("media_id")) for entry in top_entries if entry.get("media_id")}
@@ -3850,6 +3864,7 @@ def _aggregate_statistics_from_days(
             "unit_label": chart_label,
             "completion_label": completion_label,
             "top_items": top_items,
+            "top_authors": top_authors,
             "top_genres": genre_items,
             "highlights": {
                 "longest_item": longest_item,

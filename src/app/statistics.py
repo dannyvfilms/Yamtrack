@@ -7,6 +7,7 @@ from collections import Counter, defaultdict
 
 from dateutil.relativedelta import relativedelta
 from django.apps import apps
+from django.core.cache import cache
 from django.db import models, transaction
 from django.db.models import (
     Prefetch,
@@ -18,7 +19,9 @@ from app import config, providers
 from app.models import (
     TV,
     BasicMedia,
+    CreditRoleType,
     Episode,
+    ItemPersonCredit,
     MediaManager,
     MediaTypes,
     Season,
@@ -2125,6 +2128,193 @@ def _format_reading_unit(value, unit_name):
     return f"{numeric} {unit_lower}s"
 
 
+def _normalize_item_author_names(raw_authors):
+    """Normalize stored item authors into a unique list of display names."""
+    if not raw_authors:
+        return []
+    if not isinstance(raw_authors, list):
+        raw_authors = [raw_authors]
+
+    names = []
+    seen = set()
+    for raw_author in raw_authors:
+        if isinstance(raw_author, dict):
+            author_name = (
+                raw_author.get("name")
+                or raw_author.get("person")
+                or raw_author.get("author")
+            )
+        else:
+            author_name = raw_author
+
+        author_text = str(author_name).strip() if author_name else ""
+        if not author_text:
+            continue
+
+        dedupe_key = author_text.casefold()
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        names.append(author_text)
+
+    return names
+
+
+def _extract_cached_item_authors(item):
+    """Return author names from provider cache for legacy items without persisted authors."""
+    if not item:
+        return []
+
+    cache_key = f"{item.source}_{item.media_type}_{item.media_id}"
+    cached = cache.get(cache_key)
+    if not isinstance(cached, dict):
+        return []
+
+    details = cached.get("details") if isinstance(cached.get("details"), dict) else {}
+    raw_authors = (
+        details.get("authors")
+        or details.get("author")
+        or details.get("people")
+        or cached.get("authors")
+        or cached.get("author")
+        or cached.get("people")
+    )
+    author_names = _normalize_item_author_names(raw_authors)
+    if author_names:
+        return author_names
+    return _normalize_item_author_names(cached.get("authors_full"))
+
+
+def _fetch_reading_items_with_authors(item_ids):
+    """Fetch Item objects with author credits prefetched for reading rollups."""
+    if not item_ids:
+        return {}
+
+    Item = apps.get_model("app", "Item")
+    author_credit_prefetch = Prefetch(
+        "person_credits",
+        queryset=ItemPersonCredit.objects.filter(
+            role_type=CreditRoleType.AUTHOR.value,
+        ).select_related("person"),
+        to_attr="prefetched_author_credits",
+    )
+    return {
+        item.id: item
+        for item in Item.objects.filter(id__in=item_ids).prefetch_related(author_credit_prefetch)
+    }
+
+
+def _extract_item_authors(item):
+    """Return normalized author payloads for an item, preferring persisted credits."""
+    if not item:
+        return []
+
+    authors = []
+    seen = set()
+
+    author_credits = getattr(item, "prefetched_author_credits", None)
+    if author_credits is None and hasattr(item, "person_credits"):
+        author_credits = item.person_credits.filter(
+            role_type=CreditRoleType.AUTHOR.value,
+        ).select_related("person")
+
+    for credit in author_credits or []:
+        person = getattr(credit, "person", None)
+        name = (getattr(person, "name", "") or "").strip()
+        person_id = getattr(person, "source_person_id", "")
+        source = getattr(person, "source", "")
+        if not name or not source or not person_id:
+            continue
+
+        dedupe_key = (source, str(person_id))
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        authors.append(
+            {
+                "name": name,
+                "image": getattr(person, "image", "") or "",
+                "source": source,
+                "person_id": str(person_id),
+            },
+        )
+
+    if authors:
+        return authors
+
+    fallback_names = _normalize_item_author_names(getattr(item, "authors", None))
+    if not fallback_names:
+        fallback_names = _extract_cached_item_authors(item)
+
+    for name in fallback_names:
+        authors.append(
+            {
+                "name": name,
+                "image": "",
+                "source": "",
+                "person_id": "",
+            },
+        )
+    return authors
+
+
+def _build_reading_top_authors(item_units, unit_name, limit=20):
+    """Aggregate reading units by author for top-author overview cards."""
+    author_stats = defaultdict(
+        lambda: {
+            "units": 0,
+            "titles": set(),
+            "name": "",
+            "image": "",
+            "source": "",
+            "person_id": "",
+        },
+    )
+
+    for item, units in item_units:
+        if not item or (units or 0) <= 0:
+            continue
+
+        item_id = getattr(item, "id", None)
+        for author in _extract_item_authors(item):
+            name = (author.get("name") or "").strip()
+            if not name:
+                continue
+
+            source = author.get("source") or ""
+            person_id = author.get("person_id") or ""
+            if source and person_id:
+                dedupe_key = (source, str(person_id))
+            else:
+                dedupe_key = ("name", name.casefold())
+
+            payload = author_stats[dedupe_key]
+            payload["units"] += units
+            if item_id is not None:
+                payload["titles"].add(item_id)
+            for field in ("name", "image", "source", "person_id"):
+                if author.get(field) and not payload.get(field):
+                    payload[field] = author.get(field)
+
+    top_authors = sorted(
+        author_stats.values(),
+        key=lambda item: (-item["units"], -len(item["titles"]), item["name"].lower()),
+    )[:limit]
+
+    return [
+        {
+            "name": payload["name"],
+            "image": payload["image"],
+            "source": payload["source"],
+            "person_id": payload["person_id"],
+            "units": payload["units"],
+            "titles": len(payload["titles"]),
+            "formatted_units": _format_reading_unit(payload["units"], unit_name),
+        }
+        for payload in top_authors
+    ]
+
+
 def _build_weighted_media_charts(weighted_datetimes, color, dataset_label):
     """Build grouped chart datasets where each datetime contributes weighted value."""
     empty_chart = {"labels": [], "datasets": []}
@@ -2186,6 +2376,8 @@ def get_reading_consumption_stats(user_media, start_date, end_date, media_type):
     queryset = (user_media or {}).get(media_type)
     if queryset is None:
         queryset = []
+    elif hasattr(queryset, "select_related"):
+        queryset = queryset.select_related("item")
 
     unit_name = config.get_unit(media_type, short=False) or "Unit"
     media_label_map = {
@@ -2258,12 +2450,14 @@ def get_reading_consumption_stats(user_media, start_date, end_date, media_type):
     completed_datetimes = []
     completed_lengths = []
     top_items = []
+    author_item_units = []
     genre_stats = defaultdict(lambda: {"units": 0, "title_ids": set(), "name": ""})
     item_lengths = []
     scored_items = []
     longest_item = None
     shortest_item = None
     total_units = 0
+    items_with_authors = _fetch_reading_items_with_authors(grouped_entries.keys())
 
     for item_id, entries in grouped_entries.items():
         total_item_units = sum((entry.progress or 0) for entry in entries)
@@ -2281,6 +2475,12 @@ def get_reading_consumption_stats(user_media, start_date, end_date, media_type):
             weighted_datetimes.append((localized_activity, total_item_units))
             weighted_datetimes_only.append(localized_activity)
             total_units += total_item_units
+            author_item_units.append(
+                (
+                    items_with_authors.get(item_id) or latest_entry.item,
+                    total_item_units,
+                ),
+            )
 
             top_items.append(
                 {
@@ -2343,6 +2543,7 @@ def get_reading_consumption_stats(user_media, start_date, end_date, media_type):
                 "formatted_units": _format_reading_unit(payload["units"], unit_name),
             }
         )
+    top_authors = _build_reading_top_authors(author_item_units, unit_name, limit=20)
 
     avg_length = round(sum(item_lengths) / len(item_lengths), 1) if item_lengths else 0
     avg_rating = round(sum(scored_items) / len(scored_items), 2) if scored_items else None
@@ -2380,6 +2581,7 @@ def get_reading_consumption_stats(user_media, start_date, end_date, media_type):
         "unit_label": chart_label,
         "completion_label": completion_label,
         "top_items": top_items,
+        "top_authors": top_authors,
         "top_genres": top_genres,
         "highlights": {
             "longest_item": longest_item,
