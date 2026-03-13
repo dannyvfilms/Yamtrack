@@ -1138,6 +1138,11 @@ def progress_edit(request, media_type, instance_id):
 def media_list(request, media_type):
     """Return the media list page."""
     previous_sort = getattr(request.user, f"{media_type}_sort")
+    author_media_types = (
+        MediaTypes.BOOK.value,
+        MediaTypes.MANGA.value,
+        MediaTypes.COMIC.value,
+    )
     layout = request.user.update_preference(
         f"{media_type}_layout",
         request.GET.get("layout"),
@@ -1157,6 +1162,12 @@ def media_list(request, media_type):
         # Reset direction to the default for the fallback sort
         direction_param = None
     elif sort_filter == "plays" and media_type != MediaTypes.MOVIE.value:
+        sort_filter = "title"  # Default fallback
+        # Update the user's preference to the fallback
+        request.user.update_preference(f"{media_type}_sort", "title")
+        # Reset direction to the default for the fallback sort
+        direction_param = None
+    elif sort_filter == "author" and media_type not in author_media_types:
         sort_filter = "title"  # Default fallback
         # Update the user's preference to the fallback
         request.user.update_preference(f"{media_type}_sort", "title")
@@ -1571,6 +1582,37 @@ def media_list(request, media_type):
                 filtered_items.append(media)
         return filtered_items
 
+    def _author_sort_value(media):
+        item = getattr(media, "item", None)
+        authors = _extract_cached_authors(item)
+        return authors[0].strip() if authors else ""
+
+    def sort_media_items_by_author(media_items, sort_direction):
+        with_author = []
+        without_author = []
+
+        for media in media_items:
+            if _author_sort_value(media):
+                with_author.append(media)
+            else:
+                without_author.append(media)
+
+        with_author.sort(
+            key=lambda media: (
+                _author_sort_value(media).lower(),
+                getattr(getattr(media, "item", None), "title", "").lower(),
+            ),
+            reverse=sort_direction == "desc",
+        )
+        without_author.sort(
+            key=lambda media: getattr(getattr(media, "item", None), "title", "").lower(),
+        )
+        return with_author + without_author
+
+    def annotate_media_authors(media_items):
+        for media in media_items:
+            media.display_authors = _extract_cached_authors(getattr(media, "item", None))
+
     FORMAT_LABELS = {
         "hardcover": "Hardcover",
         "paperback": "Paperback",
@@ -1710,11 +1752,13 @@ def media_list(request, media_type):
         }
 
     # Get media list with filters applied
+    query_sort_filter = "title" if sort_filter == "author" else sort_filter
+
     media_queryset = BasicMedia.objects.get_media_list(
         user=request.user,
         media_type=media_type,
         status_filter=status_filter,
-        sort_filter=sort_filter,
+        sort_filter=query_sort_filter,
         search=search_query,
         direction=direction,
     )
@@ -1737,7 +1781,7 @@ def media_list(request, media_type):
                 platform_value = str(collection_platform or "").strip()
                 if platform_value:
                     collection_platforms_by_item_id[item_id].add(platform_value)
-    if media_type in (MediaTypes.BOOK.value, MediaTypes.MANGA.value, MediaTypes.COMIC.value):
+    if media_type in author_media_types:
         item_ids = {
             media.item_id
             for media in media_list
@@ -1767,16 +1811,8 @@ def media_list(request, media_type):
     )
     filter_data["show_platforms"] = media_type == MediaTypes.GAME.value
     filter_data["show_origins"] = media_type == MediaTypes.MUSIC.value
-    filter_data["show_formats"] = media_type in (
-        MediaTypes.BOOK.value,
-        MediaTypes.MANGA.value,
-        MediaTypes.COMIC.value,
-    )
-    filter_data["show_authors"] = media_type in (
-        MediaTypes.BOOK.value,
-        MediaTypes.MANGA.value,
-        MediaTypes.COMIC.value,
-    )
+    filter_data["show_formats"] = media_type in author_media_types
+    filter_data["show_authors"] = media_type in author_media_types
     user_tags = list(
         Tag.objects.filter(user=request.user)
         .values_list("name", flat=True)
@@ -1794,10 +1830,12 @@ def media_list(request, media_type):
         media_list = apply_country_filter(media_list, country_filter)
     if media_type == MediaTypes.GAME.value:
         media_list = apply_platform_filter(media_list, platform_filter)
-    if media_type in (MediaTypes.BOOK.value, MediaTypes.MANGA.value, MediaTypes.COMIC.value):
+    if media_type in author_media_types:
         media_list = apply_author_filter(media_list, author_filter)
         media_list = apply_format_filter(media_list, format_filter)
     media_list = apply_tag_filter(media_list, tag_included_ids, tag_excluded_ids)
+    if sort_filter == "author" and media_type in author_media_types:
+        media_list = sort_media_items_by_author(media_list, direction)
 
     # Handle time_left sorting for TV shows
     if sort_filter == "time_left" and media_type == MediaTypes.TV.value:
@@ -1872,6 +1910,9 @@ def media_list(request, media_type):
             media_page.object_list,
             media_type,
         )
+
+    if media_type in author_media_types:
+        annotate_media_authors(media_page.object_list)
 
     context = {
         "user": request.user,

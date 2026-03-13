@@ -252,6 +252,8 @@ class MetadataBackfillTaskTests(TestCase):
             "details": {
                 "publish_date": "1999-03-31",
                 "country": "US",
+                "number_of_pages": 328,
+                "author": ["George Orwell"],
             },
         }
 
@@ -261,6 +263,8 @@ class MetadataBackfillTaskTests(TestCase):
 
         self.assertEqual(item.release_datetime.date(), date(1999, 3, 31))
         self.assertEqual(item.country, "US")
+        self.assertEqual(item.number_of_pages, 328)
+        self.assertEqual(item.authors, ["George Orwell"])
         self.assertIsNotNone(item.metadata_fetched_at)
         self.assertEqual(result["success_count"], 1)
         self.assertEqual(result["release_updated_count"], 1)

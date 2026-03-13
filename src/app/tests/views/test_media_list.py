@@ -535,7 +535,7 @@ class MediaListViewTests(TestCase):
     def test_book_author_filter_shows_and_filters_tracked_books(self):
         book_with_author = Item.objects.create(
             media_id="book-author-filter-1",
-            source=Sources.OPENLIBRARY.value,
+            source=Sources.MANUAL.value,
             media_type=MediaTypes.BOOK.value,
             title="Author Filter Book One",
             image="http://example.com/book1.jpg",
@@ -543,7 +543,7 @@ class MediaListViewTests(TestCase):
         )
         other_book = Item.objects.create(
             media_id="book-author-filter-2",
-            source=Sources.OPENLIBRARY.value,
+            source=Sources.MANUAL.value,
             media_type=MediaTypes.BOOK.value,
             title="Author Filter Book Two",
             image="http://example.com/book2.jpg",
@@ -581,10 +581,78 @@ class MediaListViewTests(TestCase):
         self.assertContains(filtered_response, "Author Filter Book One")
         self.assertNotContains(filtered_response, "Author Filter Book Two")
 
+    def test_book_sort_by_author_orders_alphabetically(self):
+        first_book = Item.objects.create(
+            media_id="book-author-sort-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Zulu Title",
+            image="http://example.com/book-sort-1.jpg",
+            authors=["Bravo Writer"],
+        )
+        second_book = Item.objects.create(
+            media_id="book-author-sort-2",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Alpha Title",
+            image="http://example.com/book-sort-2.jpg",
+            authors=["Alpha Writer"],
+        )
+        Book.objects.create(
+            item=first_book,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=0,
+        )
+        Book.objects.create(
+            item=second_book,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=0,
+        )
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.BOOK.value]) + "?sort=author",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "author")
+        self.assertEqual(response.context["current_direction"], "asc")
+        self.assertContains(response, "toggleSort('author')")
+        self.assertEqual(
+            [media.item.title for media in response.context["media_list"].object_list[:2]],
+            ["Alpha Title", "Zulu Title"],
+        )
+
+    def test_book_table_renders_author_column(self):
+        book_item = Item.objects.create(
+            media_id="book-author-column-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.BOOK.value,
+            title="Author Column Book",
+            image="http://example.com/book-column.jpg",
+            authors=["Author One", "Author Two"],
+        )
+        Book.objects.create(
+            item=book_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=0,
+        )
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.BOOK.value]) + "?layout=table",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        column_keys = [column.key for column in response.context["resolved_columns"]]
+        self.assertIn("author", column_keys)
+        self.assertContains(response, "Author One, Author Two")
+
     def test_comic_and_manga_author_filter_work(self):
         comic_item = Item.objects.create(
             media_id="comic-author-filter-1",
-            source=Sources.COMICVINE.value,
+            source=Sources.MANUAL.value,
             media_type=MediaTypes.COMIC.value,
             title="Author Filter Comic",
             image="http://example.com/comic.jpg",
@@ -592,7 +660,7 @@ class MediaListViewTests(TestCase):
         )
         manga_item = Item.objects.create(
             media_id="manga-author-filter-1",
-            source=Sources.MANGAUPDATES.value,
+            source=Sources.MANUAL.value,
             media_type=MediaTypes.MANGA.value,
             title="Author Filter Manga",
             image="http://example.com/manga.jpg",
@@ -629,6 +697,18 @@ class MediaListViewTests(TestCase):
         response = self.client.get(reverse("medialist", args=[MediaTypes.MOVIE.value]))
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.context["filter_data"]["show_authors"])
+
+    def test_non_bookish_sort_hides_author_option_and_falls_back(self):
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.MOVIE.value]) + "?sort=author",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "title")
+        self.assertNotContains(response, "toggleSort('author')")
+
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.movie_sort, "title")
 
     def test_media_list_htmx_request(self):
         """Test the media list view with HTMX request."""

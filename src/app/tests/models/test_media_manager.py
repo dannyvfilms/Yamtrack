@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.db.models import Prefetch
@@ -42,7 +43,7 @@ class MediaManagerTests(TestCase):
 
         self.movie_item = Item.objects.create(
             media_id="550",
-            source=Sources.TMDB.value,
+            source=Sources.MANUAL.value,
             media_type=MediaTypes.MOVIE.value,
             title="Fight Club",
             image="http://example.com/fightclub.jpg",
@@ -50,7 +51,7 @@ class MediaManagerTests(TestCase):
 
         self.anime_item = Item.objects.create(
             media_id="1",
-            source=Sources.MAL.value,
+            source=Sources.MANUAL.value,
             media_type=MediaTypes.ANIME.value,
             title="Cowboy Bebop",
             image="http://example.com/bebop.jpg",
@@ -58,7 +59,7 @@ class MediaManagerTests(TestCase):
 
         self.game_item = Item.objects.create(
             media_id="1234",
-            source=Sources.IGDB.value,
+            source=Sources.MANUAL.value,
             media_type=MediaTypes.GAME.value,
             title="The Last of Us",
             image="http://example.com/tlou.jpg",
@@ -66,7 +67,7 @@ class MediaManagerTests(TestCase):
 
         self.book_item = Item.objects.create(
             media_id="OL21733390M",
-            source=Sources.OPENLIBRARY.value,
+            source=Sources.MANUAL.value,
             media_type=MediaTypes.BOOK.value,
             title="1984",
             image="http://example.com/1984.jpg",
@@ -74,7 +75,7 @@ class MediaManagerTests(TestCase):
 
         self.manga_item = Item.objects.create(
             media_id="2",
-            source=Sources.MAL.value,
+            source=Sources.MANUAL.value,
             media_type=MediaTypes.MANGA.value,
             title="Berserk",
             image="http://example.com/berserk.jpg",
@@ -120,7 +121,7 @@ class MediaManagerTests(TestCase):
 
         self.season1_item = Item.objects.create(
             media_id="1668",
-            source=Sources.TMDB.value,
+            source=Sources.MANUAL.value,
             media_type=MediaTypes.SEASON.value,
             title="Friends",
             image="http://example.com/image.jpg",
@@ -139,7 +140,7 @@ class MediaManagerTests(TestCase):
         for i in range(1, 5):
             episode_item = Item.objects.create(
                 media_id="1668",
-                source=Sources.TMDB.value,
+                source=Sources.MANUAL.value,
                 media_type=MediaTypes.EPISODE.value,
                 title=f"Friends S1E{i}",
                 image="http://example.com/image.jpg",
@@ -329,7 +330,7 @@ class MediaManagerTests(TestCase):
 
         season2_item = Item.objects.create(
             media_id="1668",
-            source=Sources.TMDB.value,
+            source=Sources.MANUAL.value,
             media_type=MediaTypes.SEASON.value,
             title="Friends Season 2",
             image="http://example.com/image.jpg",
@@ -347,7 +348,7 @@ class MediaManagerTests(TestCase):
         for i in range(1, 3):
             episode_item = Item.objects.create(
                 media_id="1668",
-                source=Sources.TMDB.value,
+                source=Sources.MANUAL.value,
                 media_type=MediaTypes.EPISODE.value,
                 title=f"Friends S2E{i}",
                 image="http://example.com/image.jpg",
@@ -363,7 +364,7 @@ class MediaManagerTests(TestCase):
 
         season3_item = Item.objects.create(
             media_id="1668",
-            source=Sources.TMDB.value,
+            source=Sources.MANUAL.value,
             media_type=MediaTypes.SEASON.value,
             title="Friends Season 3",
             image="http://example.com/image.jpg",
@@ -464,7 +465,7 @@ class MediaManagerTests(TestCase):
 
         anime_item2 = Item.objects.create(
             media_id="5",
-            source=Sources.MAL.value,
+            source=Sources.MANUAL.value,
             media_type=MediaTypes.ANIME.value,
             title="Naruto",
             image="http://example.com/naruto.jpg",
@@ -555,7 +556,7 @@ class MediaManagerTests(TestCase):
 
         anime_item2 = Item.objects.create(
             media_id="5",
-            source=Sources.MAL.value,
+            source=Sources.MANUAL.value,
             media_type=MediaTypes.ANIME.value,
             title="Naruto",
             image="http://example.com/naruto.jpg",
@@ -606,7 +607,7 @@ class MediaManagerTests(TestCase):
         # Anime with no next event and low completion
         anime_item2 = Item.objects.create(
             media_id="5",
-            source=Sources.MAL.value,
+            source=Sources.MANUAL.value,
             media_type=MediaTypes.ANIME.value,
             title="Naruto",
             image="http://example.com/naruto.jpg",
@@ -626,7 +627,7 @@ class MediaManagerTests(TestCase):
         # Anime with next event and medium completion
         anime_item3 = Item.objects.create(
             media_id="6",
-            source=Sources.MAL.value,
+            source=Sources.MANUAL.value,
             media_type=MediaTypes.ANIME.value,
             title="Attack on Titan",
             image="http://example.com/aot.jpg",
@@ -713,6 +714,29 @@ class MediaManagerTests(TestCase):
         manager._annotate_tv_released_episodes(tv_list, timezone.now())
         self.assertEqual(tv_list[0].max_progress, 10)
 
+    @patch("app.models.providers.services.get_media_metadata")
+    def test_annotate_max_progress_for_books_uses_stored_pages_only(self, mock_get_media_metadata):
+        manager = MediaManager()
+
+        self.book_item.number_of_pages = None
+        self.book_item.save(update_fields=["number_of_pages"])
+
+        book_list = list(Book.objects.filter(user=self.user.id).select_related("item"))
+        manager.annotate_max_progress(book_list, MediaTypes.BOOK.value)
+
+        self.assertIsNone(book_list[0].max_progress)
+        mock_get_media_metadata.assert_not_called()
+
+        self.book_item.number_of_pages = 328
+        self.book_item.save(update_fields=["number_of_pages"])
+        mock_get_media_metadata.reset_mock()
+
+        book_list = list(Book.objects.filter(user=self.user.id).select_related("item"))
+        manager.annotate_max_progress(book_list, MediaTypes.BOOK.value)
+
+        self.assertEqual(book_list[0].max_progress, 328)
+        mock_get_media_metadata.assert_not_called()
+
     def test_get_in_progress(self):
         """Test the get_in_progress method."""
         manager = MediaManager()
@@ -749,7 +773,7 @@ class MediaManagerTests(TestCase):
         for i in range(10):
             anime_item = Item.objects.create(
                 media_id=f"100{i}",
-                source=Sources.MAL.value,
+                source=Sources.MANUAL.value,
                 media_type=MediaTypes.ANIME.value,
                 title=f"Test Anime {i}",
                 image=f"http://example.com/anime{i}.jpg",
@@ -830,7 +854,7 @@ class MediaManagerTests(TestCase):
             user=self.user,
             media_id="1668",
             media_type=MediaTypes.TV.value,
-            source=Sources.TMDB.value,
+            source=Sources.MANUAL.value,
         ).first()
 
         self.assertEqual(tv, self.tv)
@@ -839,7 +863,7 @@ class MediaManagerTests(TestCase):
             user=self.user,
             media_id="1668",
             media_type=MediaTypes.SEASON.value,
-            source=Sources.TMDB.value,
+            source=Sources.MANUAL.value,
             season_number=1,
         ).first()
 
@@ -849,7 +873,7 @@ class MediaManagerTests(TestCase):
             user=self.user,
             media_id="1668",
             media_type=MediaTypes.EPISODE.value,
-            source=Sources.TMDB.value,
+            source=Sources.MANUAL.value,
             season_number=1,
             episode_number=1,
         ).first()
@@ -861,7 +885,7 @@ class MediaManagerTests(TestCase):
             user=self.user,
             media_id="9999",
             media_type=MediaTypes.MOVIE.value,
-            source=Sources.TMDB.value,
+            source=Sources.MANUAL.value,
         ).first()
 
         self.assertIsNone(non_existent)

@@ -1,0 +1,7 @@
+{% if media.display_authors %}
+  <span class="block truncate" title="{{ media.display_authors|join:', ' }}">
+    {{ media.display_authors|join:", " }}
+  </span>
+{% else %}
+  <span class="text-gray-500">-</span>
+{% endif %}

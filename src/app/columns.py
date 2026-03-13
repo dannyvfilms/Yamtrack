@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from app.models import MediaTypes
 
@@ -40,6 +41,14 @@ def _show_last_watched(media_type: str, current_sort: str, _user: Any) -> bool:
     return media_type == MediaTypes.TV.value and current_sort != "time_left"
 
 
+def _show_author(media_type: str, _current_sort: str, _user: Any) -> bool:
+    return media_type in (
+        MediaTypes.BOOK.value,
+        MediaTypes.COMIC.value,
+        MediaTypes.MANGA.value,
+    )
+
+
 MEDIA_COLUMNS: list[ColumnDef] = [
     ColumnDef(
         key="image",
@@ -60,6 +69,16 @@ MEDIA_COLUMNS: list[ColumnDef] = [
         table_types=("media",),
         default_order=20,
         user_hideable=False,
+    ),
+    ColumnDef(
+        key="author",
+        label="Author",
+        th_classes="p-2 pe-6",
+        td_classes="p-2 pe-6 text-gray-200",
+        cell_template="app/components/cells/media_author_cell.html",
+        table_types=("media",),
+        is_visible=_show_author,
+        default_order=25,
     ),
     ColumnDef(
         key="score",
@@ -243,10 +262,7 @@ def _get_media_type_prefs(
         return [], []
 
     # Support both flat and table-type-scoped shapes.
-    if "order" in raw or "hidden" in raw:
-        media_prefs = raw
-    else:
-        media_prefs = raw.get(table_type, {})
+    media_prefs = raw if "order" in raw or "hidden" in raw else raw.get(table_type, {})
 
     raw_order = media_prefs.get("order", [])
     raw_hidden = media_prefs.get("hidden", [])
@@ -256,7 +272,12 @@ def _get_media_type_prefs(
     return order, hidden
 
 
-def _base_columns(media_type: str, current_sort: str, user: Any, table_type: TableType) -> list[ColumnDef]:
+def _base_columns(
+    media_type: str,
+    current_sort: str,
+    user: Any,
+    table_type: TableType,
+) -> list[ColumnDef]:
     columns = [column for column in MEDIA_COLUMNS if table_type in column.table_types]
     visible_columns = []
     for column in columns:
@@ -266,7 +287,9 @@ def _base_columns(media_type: str, current_sort: str, user: Any, table_type: Tab
     return sorted(visible_columns, key=lambda col: col.default_order)
 
 
-def _split_fixed_and_flex(columns: list[ColumnDef]) -> tuple[list[ColumnDef], list[ColumnDef]]:
+def _split_fixed_and_flex(
+    columns: list[ColumnDef],
+) -> tuple[list[ColumnDef], list[ColumnDef]]:
     fixed_columns = [column for column in columns if not column.user_hideable]
     flex_columns = [column for column in columns if column.user_hideable]
     return fixed_columns, flex_columns
@@ -380,7 +403,12 @@ def resolve_default_column_config(
     table_type: TableType,
 ) -> list[dict[str, Any]]:
     """Return default user-hideable column order for reset actions."""
-    base_columns = _base_columns(media_type, current_sort, user=None, table_type=table_type)
+    base_columns = _base_columns(
+        media_type,
+        current_sort,
+        user=None,
+        table_type=table_type,
+    )
     return [
         {
             "key": column.key,

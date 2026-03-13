@@ -14,6 +14,7 @@ CORE_METADATA_FIELDS = [
     "studios",
     "themes",
     "authors",
+    "number_of_pages",
     "publishers",
     "isbn",
     "source_material",
@@ -57,6 +58,16 @@ def extract_item_metadata_values(metadata: dict | None) -> dict[str, object]:
     if isinstance(publishers, list):
         publishers = publishers[0] if publishers else ""
 
+    raw_number_of_pages = (
+        payload.get("max_progress") or details.get("number_of_pages")
+    )
+    try:
+        number_of_pages = (
+            int(raw_number_of_pages) if raw_number_of_pages is not None else None
+        )
+    except (TypeError, ValueError):
+        number_of_pages = None
+
     return {
         "country": details.get("country") or "",
         "languages": _coerce_list(details.get("languages")),
@@ -66,6 +77,7 @@ def extract_item_metadata_values(metadata: dict | None) -> dict[str, object]:
         "studios": _coerce_list(details.get("studios"), allow_scalar=False),
         "themes": _coerce_list(details.get("themes"), allow_scalar=False),
         "authors": authors,
+        "number_of_pages": number_of_pages,
         "publishers": publishers,
         "isbn": _coerce_list(details.get("isbn"), allow_scalar=False),
         "source_material": details.get("source") or "",
@@ -73,13 +85,23 @@ def extract_item_metadata_values(metadata: dict | None) -> dict[str, object]:
         "runtime": details.get("runtime") or "",
         "provider_popularity": payload.get("provider_popularity"),
         "provider_rating": payload.get("provider_rating", payload.get("score")),
-        "provider_rating_count": payload.get("provider_rating_count", payload.get("score_count")),
-        "provider_keywords": _coerce_list(payload.get("provider_keywords"), allow_scalar=False),
+        "provider_rating_count": payload.get(
+            "provider_rating_count",
+            payload.get("score_count"),
+        ),
+        "provider_keywords": _coerce_list(
+            payload.get("provider_keywords"),
+            allow_scalar=False,
+        ),
         "provider_certification": normalize_certification(
             payload.get("provider_certification") or details.get("certification") or "",
         ),
-        "provider_collection_id": str(payload.get("provider_collection_id") or "").strip(),
-        "provider_collection_name": str(payload.get("provider_collection_name") or "").strip(),
+        "provider_collection_id": str(
+            payload.get("provider_collection_id") or ""
+        ).strip(),
+        "provider_collection_name": str(
+            payload.get("provider_collection_name") or ""
+        ).strip(),
         "release_datetime": helpers.extract_release_datetime(payload),
     }
 
@@ -108,7 +130,11 @@ def apply_item_metadata(
                 setattr(item, field_name, values[field_name])
                 update_fields.append(field_name)
 
-    if include_release and values["release_datetime"] and item.release_datetime != values["release_datetime"]:
+    if (
+        include_release
+        and values["release_datetime"]
+        and item.release_datetime != values["release_datetime"]
+    ):
         item.release_datetime = values["release_datetime"]
         update_fields.append("release_datetime")
 

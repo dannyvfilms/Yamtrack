@@ -624,7 +624,7 @@ class MediaManager(models.Manager):
 
     def _default_direction(self, sort_filter):
         """Return default direction for a sort key."""
-        if sort_filter in ("start_date", "title", "time_left"):
+        if sort_filter in ("author", "start_date", "title", "time_left"):
             return "asc"
         return "desc"
 
@@ -944,6 +944,9 @@ class MediaManager(models.Manager):
 
     def _sort_generic_media_list(self, queryset, sort_filter, direction):
         """Apply generic sorting logic for all media types."""
+        if sort_filter == "author":
+            return self._sort_media_list_by_author(list(queryset), direction)
+
         # Handle progress sorting specially to use aggregated progress
         if sort_filter in ("progress", "plays"):
             # Since we're now sorting after aggregation, we can use the aggregated_progress attribute
@@ -996,6 +999,39 @@ class MediaManager(models.Manager):
             else models.F(sort_filter).desc(nulls_last=True)
         )
         return queryset.order_by(order, models.functions.Lower("item__title"))
+
+    def _sort_media_list_by_author(self, media_list, direction):
+        """Sort media items by their first persisted author, keeping missing authors last."""
+
+        def _primary_author(media):
+            authors = getattr(getattr(media, "item", None), "authors", None) or []
+            if not isinstance(authors, list):
+                authors = [authors]
+            for author in authors:
+                author_text = str(author).strip()
+                if author_text:
+                    return author_text
+            return ""
+
+        with_author = []
+        without_author = []
+        for media in media_list:
+            if _primary_author(media):
+                with_author.append(media)
+            else:
+                without_author.append(media)
+
+        with_author.sort(
+            key=lambda media: (
+                _primary_author(media).lower(),
+                getattr(getattr(media, "item", None), "title", "").lower(),
+            ),
+            reverse=direction == "desc",
+        )
+        without_author.sort(
+            key=lambda media: getattr(getattr(media, "item", None), "title", "").lower(),
+        )
+        return with_author + without_author
 
     def get_in_progress(self, user, sort_by, items_limit, specific_media_type=None):
         """Get a media list of in progress media by type."""
@@ -1400,30 +1436,8 @@ class MediaManager(models.Manager):
             return
 
         if media_type == MediaTypes.BOOK.value:
-            # For books, use number_of_pages from Item model
-            # If not available, try to fetch from metadata
             for media in media_list:
-                if media.item.number_of_pages:
-                    media.max_progress = media.item.number_of_pages
-                else:
-                    # Try to fetch from metadata if not stored
-                    try:
-                        from app.providers import services
-                        metadata = services.get_media_metadata(
-                            media.item.media_type,
-                            media.item.media_id,
-                            media.item.source,
-                        )
-                        number_of_pages = metadata.get("max_progress") or metadata.get("details", {}).get("number_of_pages")
-                        if number_of_pages:
-                            # Save it to the Item for future use
-                            media.item.number_of_pages = number_of_pages
-                            media.item.save(update_fields=["number_of_pages"])
-                            media.max_progress = number_of_pages
-                        else:
-                            media.max_progress = None
-                    except Exception:
-                        media.max_progress = None
+                media.max_progress = media.item.number_of_pages or None
             return
 
         # For other media types, calculate max_progress from events
