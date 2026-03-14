@@ -89,6 +89,7 @@ from app.models import (
     Track,
 )
 from app.providers import comicvine, hardcover, mangaupdates, manual, openlibrary, services, tmdb
+from app.services import game_lengths as game_length_services
 from app.services import music as sync_services
 from app.services.tracking_hydration import ensure_item_metadata
 from app.templatetags import app_tags
@@ -232,6 +233,293 @@ def _get_tv_runtime_display_fallback(detail_item, media_metadata):
             return tmdb.get_readable_duration(runtime_minutes)
 
     return None
+
+
+def _format_game_length_minutes(minutes):
+    """Return a display string for stored game-length minutes."""
+    try:
+        minutes = int(minutes or 0)
+    except (TypeError, ValueError):
+        minutes = 0
+    return helpers.minutes_to_hhmm(minutes) if minutes > 0 else "--"
+
+
+def _format_game_length_seconds(seconds):
+    """Return a display string for stored game-length seconds."""
+    try:
+        seconds = int(seconds or 0)
+    except (TypeError, ValueError):
+        seconds = 0
+    return _format_game_length_minutes(round(seconds / 60)) if seconds > 0 else "--"
+
+
+def _build_game_length_card(label, value, count):
+    """Return display metadata for a summary game-length card."""
+    card_styles = {
+        "Main Story": {
+            "icon_template": "app/icons/book-open.svg",
+            "icon_background": "rgba(96, 165, 250, 0.2)",
+            "icon_color": "#60a5fa",
+        },
+        "Main + Extras": {
+            "icon_template": "app/icons/list.svg",
+            "icon_background": "rgba(52, 211, 153, 0.2)",
+            "icon_color": "#34d399",
+        },
+        "Completionist": {
+            "icon_template": "app/icons/ribbon.svg",
+            "icon_background": "rgba(245, 158, 11, 0.2)",
+            "icon_color": "#f59e0b",
+        },
+        "All PlayStyles": {
+            "icon_template": "app/icons/four-square.svg",
+            "icon_background": "rgba(167, 139, 250, 0.2)",
+            "icon_color": "#a78bfa",
+        },
+        "Hastily": {
+            "icon_template": "app/icons/clock-reversing.svg",
+            "icon_background": "rgba(245, 158, 11, 0.2)",
+            "icon_color": "#f59e0b",
+        },
+        "Normally": {
+            "icon_template": "app/icons/clock.svg",
+            "icon_background": "rgba(96, 165, 250, 0.2)",
+            "icon_color": "#60a5fa",
+        },
+        "Completely": {
+            "icon_template": "app/icons/circle-check.svg",
+            "icon_background": "rgba(52, 211, 153, 0.2)",
+            "icon_color": "#34d399",
+        },
+    }
+    style = card_styles.get(
+        label,
+        {
+            "icon_template": "app/icons/clock.svg",
+            "icon_background": "rgba(129, 140, 248, 0.2)",
+            "icon_color": "#818cf8",
+        },
+    )
+    return {
+        "label": label,
+        "value": value,
+        "count": count or 0,
+        **style,
+    }
+
+
+def _build_game_lengths_context(detail_item):
+    """Return template-ready game-length metadata for a stored item."""
+    if not detail_item:
+        return None
+
+    payload = detail_item.provider_game_lengths or {}
+    external_ids = detail_item.provider_external_ids or {}
+    active_source = detail_item.provider_game_lengths_source or payload.get("active_source")
+    if active_source == "hltb":
+        hltb_payload = payload.get("hltb") or {}
+        cards = []
+        card_specs = [
+            ("Main Story", hltb_payload.get("summary", {}).get("main_minutes"), hltb_payload.get("counts", {}).get("main")),
+            (
+                "Main + Extras",
+                hltb_payload.get("summary", {}).get("main_plus_minutes"),
+                hltb_payload.get("counts", {}).get("main_plus"),
+            ),
+            (
+                "Completionist",
+                hltb_payload.get("summary", {}).get("completionist_minutes"),
+                hltb_payload.get("counts", {}).get("completionist"),
+            ),
+            (
+                "All PlayStyles",
+                hltb_payload.get("summary", {}).get("all_styles_minutes"),
+                hltb_payload.get("counts", {}).get("all_styles"),
+            ),
+        ]
+        for label, minutes, count in card_specs:
+            if (minutes or 0) <= 0:
+                continue
+            cards.append(_build_game_length_card(label, _format_game_length_minutes(minutes), count))
+
+        single_player_rows = []
+        for row in hltb_payload.get("single_player_table") or []:
+            single_player_rows.append(
+                {
+                    "label": row.get("label") or "",
+                    "count": row.get("count") or 0,
+                    "average": _format_game_length_minutes(row.get("average_minutes")),
+                    "median": _format_game_length_minutes(row.get("median_minutes")),
+                    "rushed": _format_game_length_minutes(row.get("rushed_minutes")),
+                    "leisure": _format_game_length_minutes(row.get("leisure_minutes")),
+                },
+            )
+
+        platform_rows = []
+        for row in hltb_payload.get("platform_table") or []:
+            platform_rows.append(
+                {
+                    "platform": row.get("platform") or "",
+                    "count": row.get("count") or 0,
+                    "main": _format_game_length_minutes(row.get("main_minutes")),
+                    "main_plus": _format_game_length_minutes(row.get("main_plus_minutes")),
+                    "completionist": _format_game_length_minutes(row.get("completionist_minutes")),
+                    "fastest": _format_game_length_minutes(row.get("fastest_minutes")),
+                    "slowest": _format_game_length_minutes(row.get("slowest_minutes")),
+                },
+            )
+
+        return {
+            "available": bool(cards),
+            "source": "hltb",
+            "source_label": "How Long to Beat",
+            "source_url": hltb_payload.get("url")
+            or (
+                f"https://howlongtobeat.com/game/{external_ids['hltb_game_id']}"
+                if external_ids.get("hltb_game_id")
+                else None
+            ),
+            "match": detail_item.provider_game_lengths_match,
+            "cards": cards,
+            "submission_count": (hltb_payload.get("counts") or {}).get("all_styles") or 0,
+            "single_player_rows": single_player_rows,
+            "platform_rows": platform_rows,
+        }
+
+    if active_source == "igdb":
+        igdb_payload = payload.get("igdb") or {}
+        summary = igdb_payload.get("summary") or {}
+        cards = []
+        for label, key in (
+            ("Hastily", "hastily_seconds"),
+            ("Normally", "normally_seconds"),
+            ("Completely", "completely_seconds"),
+        ):
+            value = summary.get(key) or 0
+            if value <= 0:
+                continue
+            cards.append(
+                _build_game_length_card(
+                    label,
+                    _format_game_length_seconds(value),
+                    summary.get("count") or 0,
+                ),
+            )
+
+        return {
+            "available": bool(cards),
+            "source": "igdb",
+            "source_label": "Internet Games Database",
+            "source_url": None,
+            "match": detail_item.provider_game_lengths_match,
+            "cards": cards,
+            "submission_count": summary.get("count") or 0,
+            "single_player_rows": [],
+            "platform_rows": [],
+        }
+
+    return None
+
+
+def _apply_cached_hltb_link(media_metadata, detail_item):
+    """Prefer a stored direct HLTB link when one has already been resolved."""
+    if not detail_item or not isinstance(media_metadata, dict):
+        return
+
+    external_links = media_metadata.setdefault("external_links", {})
+    if not isinstance(external_links, dict):
+        external_links = {}
+        media_metadata["external_links"] = external_links
+
+    hltb_game_id = ((detail_item.provider_external_ids or {}).get("hltb_game_id"))
+    if hltb_game_id:
+        external_links["HowLongToBeat"] = f"https://howlongtobeat.com/game/{hltb_game_id}"
+    elif "HowLongToBeat" not in external_links:
+        search_url = game_length_services.get_hltb_search_url(media_metadata.get("title"))
+        if search_url:
+            external_links["HowLongToBeat"] = search_url
+
+
+def _should_queue_game_lengths_refresh(detail_item):
+    """Return whether a background game-length refresh should be queued."""
+    if not detail_item:
+        return False
+    if detail_item.source != Sources.IGDB.value or detail_item.media_type != MediaTypes.GAME.value:
+        return False
+    if not detail_item.provider_game_lengths:
+        return True
+    return detail_item.provider_game_lengths_match == "igdb_fallback"
+
+
+def _get_game_lengths_refresh_lock(detail_item, *, force=False, fetch_hltb=True):
+    """Return an active game-length refresh lock, clearing stale or legacy values."""
+    if not detail_item:
+        return None
+
+    lock_key = game_length_services.get_game_lengths_refresh_lock_key(
+        detail_item.id,
+        force=force,
+        fetch_hltb=fetch_hltb,
+    )
+    refresh_lock = cache.get(lock_key)
+    if refresh_lock is None:
+        return None
+
+    if refresh_lock is True or game_length_services.is_game_lengths_refresh_lock_stale(refresh_lock):
+        cache.delete(lock_key)
+        return None
+    return refresh_lock
+
+
+def _queue_game_lengths_refresh(detail_item, *, force=False, fetch_hltb=True):
+    """Schedule a background game-length refresh once per debounce window."""
+    if not detail_item:
+        return False
+
+    lock_key = game_length_services.get_game_lengths_refresh_lock_key(
+        detail_item.id,
+        force=force,
+        fetch_hltb=fetch_hltb,
+    )
+    if _get_game_lengths_refresh_lock(detail_item, force=force, fetch_hltb=fetch_hltb) is not None:
+        return False
+
+    lock_payload = game_length_services.build_game_lengths_refresh_lock(
+        force=force,
+        fetch_hltb=fetch_hltb,
+    )
+    if not cache.add(
+        lock_key,
+        lock_payload,
+        timeout=game_length_services.GAME_LENGTHS_REFRESH_TTL,
+    ):
+        if _get_game_lengths_refresh_lock(detail_item, force=force, fetch_hltb=fetch_hltb) is not None:
+            return False
+        if not cache.add(
+            lock_key,
+            lock_payload,
+            timeout=game_length_services.GAME_LENGTHS_REFRESH_TTL,
+        ):
+            return False
+
+    try:
+        from app.tasks import refresh_item_game_lengths
+
+        refresh_item_game_lengths.delay(
+            detail_item.id,
+            force=force,
+            fetch_hltb=fetch_hltb,
+        )
+    except Exception:
+        cache.delete(lock_key)
+        logger.warning(
+            "game_lengths_refresh_schedule_failed item_id=%s media_id=%s",
+            detail_item.id,
+            detail_item.media_id,
+            exc_info=True,
+        )
+        return False
+    return True
 
 
 @require_GET
@@ -1161,6 +1449,12 @@ def media_list(request, media_type):
         request.user.update_preference(f"{media_type}_sort", "title")
         # Reset direction to the default for the fallback sort
         direction_param = None
+    elif sort_filter == "time_to_beat" and media_type != MediaTypes.GAME.value:
+        sort_filter = "title"  # Default fallback
+        # Update the user's preference to the fallback
+        request.user.update_preference(f"{media_type}_sort", "title")
+        # Reset direction to the default for the fallback sort
+        direction_param = None
     elif sort_filter == "plays" and media_type != MediaTypes.MOVIE.value:
         sort_filter = "title"  # Default fallback
         # Update the user's preference to the fallback
@@ -1609,6 +1903,43 @@ def media_list(request, media_type):
         )
         return with_author + without_author
 
+    def _game_time_to_beat_sort_value(media):
+        item = getattr(media, "item", None)
+        if not item:
+            return None
+        return item.game_time_to_beat_minutes
+
+    def sort_media_items_by_game_time_to_beat(media_items, sort_direction):
+        with_time_to_beat = []
+        without_time_to_beat = []
+
+        for media in media_items:
+            minutes = _game_time_to_beat_sort_value(media)
+            if minutes:
+                with_time_to_beat.append((media, minutes))
+            else:
+                without_time_to_beat.append(media)
+
+        if sort_direction == "desc":
+            with_time_to_beat.sort(
+                key=lambda entry: (
+                    -entry[1],
+                    getattr(getattr(entry[0], "item", None), "title", "").lower(),
+                ),
+            )
+        else:
+            with_time_to_beat.sort(
+                key=lambda entry: (
+                    entry[1],
+                    getattr(getattr(entry[0], "item", None), "title", "").lower(),
+                ),
+            )
+
+        without_time_to_beat.sort(
+            key=lambda media: getattr(getattr(media, "item", None), "title", "").lower(),
+        )
+        return [media for media, _minutes in with_time_to_beat] + without_time_to_beat
+
     def annotate_media_authors(media_items):
         for media in media_items:
             media.display_authors = _extract_cached_authors(getattr(media, "item", None))
@@ -1752,7 +2083,7 @@ def media_list(request, media_type):
         }
 
     # Get media list with filters applied
-    query_sort_filter = "title" if sort_filter == "author" else sort_filter
+    query_sort_filter = "title" if sort_filter in {"author", "time_to_beat"} else sort_filter
 
     media_queryset = BasicMedia.objects.get_media_list(
         user=request.user,
@@ -1836,6 +2167,8 @@ def media_list(request, media_type):
     media_list = apply_tag_filter(media_list, tag_included_ids, tag_excluded_ids)
     if sort_filter == "author" and media_type in author_media_types:
         media_list = sort_media_items_by_author(media_list, direction)
+    if sort_filter == "time_to_beat" and media_type == MediaTypes.GAME.value:
+        media_list = sort_media_items_by_game_time_to_beat(media_list, direction)
 
     # Handle time_left sorting for TV shows
     if sort_filter == "time_left" and media_type == MediaTypes.TV.value:
@@ -2509,6 +2842,8 @@ def update_table_columns(request, media_type):
 
     current_sort = request.POST.get("sort") or getattr(request.user, f"{media_type}_sort", MediaSortChoices.SCORE)
     if current_sort == "time_left" and media_type != MediaTypes.TV.value:
+        current_sort = "title"
+    elif current_sort == "time_to_beat" and media_type != MediaTypes.GAME.value:
         current_sort = "title"
     elif current_sort == "plays" and media_type != MediaTypes.MOVIE.value:
         current_sort = "title"
@@ -3416,6 +3751,22 @@ def media_details(
         media_type=media_type,
     ).first()
 
+    if (
+        detail_item is None
+        and source == Sources.IGDB.value
+        and media_type == MediaTypes.GAME.value
+        and isinstance(media_metadata, dict)
+    ):
+        detail_item, _ = Item.objects.get_or_create(
+            media_id=media_id,
+            source=source,
+            media_type=media_type,
+            defaults={
+                **Item.title_fields_from_metadata(media_metadata),
+                "image": media_metadata.get("image") or settings.IMG_NONE,
+            },
+        )
+
     # When the user prefers original titles, aggressively refresh stale TMDB cache
     # if we don't yet have an original title. This lets details-page opens backfill
     # better title variants that can then propagate across the UI.
@@ -3496,6 +3847,58 @@ def media_details(
             missing_studios = not detail_item.studio_credits.exists()
             if missing_people or missing_studios:
                 credits.sync_item_credits_from_metadata(detail_item, media_metadata)
+
+    if (
+        source == Sources.IGDB.value
+        and media_type == MediaTypes.GAME.value
+        and detail_item
+        and isinstance(media_metadata, dict)
+    ):
+        metadata_update_fields = metadata_utils.apply_item_metadata(detail_item, media_metadata)
+        if metadata_update_fields:
+            detail_item.metadata_fetched_at = timezone.now()
+            metadata_update_fields.append("metadata_fetched_at")
+            detail_item.save(update_fields=metadata_update_fields)
+
+    _apply_cached_hltb_link(media_metadata, detail_item)
+
+    game_lengths = (
+        _build_game_lengths_context(detail_item)
+        if source == Sources.IGDB.value and media_type == MediaTypes.GAME.value
+        else None
+    )
+    if (
+        game_lengths
+        and game_lengths.get("source") == "igdb"
+        and isinstance(media_metadata, dict)
+        and media_metadata.get("source_url")
+    ):
+        game_lengths["source_url"] = media_metadata["source_url"]
+    game_lengths_fetch_queued = False
+    game_lengths_refresh_pending = False
+    if _should_queue_game_lengths_refresh(detail_item):
+        game_lengths_refresh_pending = (
+            _get_game_lengths_refresh_lock(
+                detail_item,
+                force=False,
+                fetch_hltb=True,
+            )
+            is not None
+        )
+        if not game_lengths_refresh_pending:
+            game_lengths_fetch_queued = _queue_game_lengths_refresh(
+                detail_item,
+                force=False,
+                fetch_hltb=True,
+            )
+            game_lengths_refresh_pending = game_lengths_fetch_queued or (
+                _get_game_lengths_refresh_lock(
+                    detail_item,
+                    force=False,
+                    fetch_hltb=True,
+                )
+                is not None
+            )
 
     author_detail_keys = ("author", "authors", "people")
     authors_linked = []
@@ -3887,6 +4290,9 @@ def media_details(
         "music_album": music_album,
         "public_view": public_view,
         "play_stats": play_stats,
+        "game_lengths": game_lengths,
+        "game_lengths_pending": game_lengths_refresh_pending
+        and not (game_lengths and game_lengths.get("available")),
         "notes_entry": notes_entry,
         "collection_entry": collection_entry,
         "collection_entries": collection_entries,
@@ -4566,6 +4972,26 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
             item.metadata_fetched_at = timezone.now()
             metadata_update_fields.append("metadata_fetched_at")
             item.save(update_fields=metadata_update_fields)
+
+        if source == Sources.IGDB.value and media_type == MediaTypes.GAME.value:
+            try:
+                game_length_services.refresh_game_lengths(
+                    item,
+                    igdb_metadata=metadata,
+                    force=True,
+                    fetch_hltb=True,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "game_lengths_manual_refresh_failed item_id=%s media_id=%s error=%s",
+                    item.id,
+                    item.media_id,
+                    exception_summary(exc),
+                )
+                messages.warning(
+                    request,
+                    "Game length metadata could not be refreshed. Cached data will be used if available.",
+                )
 
         if source == Sources.TMDB.value and media_type in (MediaTypes.MOVIE.value, MediaTypes.TV.value):
             credits.sync_item_credits_from_metadata(item, metadata)

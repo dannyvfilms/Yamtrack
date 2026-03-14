@@ -942,7 +942,7 @@
 
     {# Related Media #}
     {% if media_type != MediaTypes.PODCAST.value %}
-      {% if media.related or media.cast or media.crew %}
+      {% if media.related or media.cast or media.crew or media_type == MediaTypes.GAME.value %}
         <div class="w-full md:w-3/4">
         {% if media.related %}
           {% for name, related_items in media.related.items %}
@@ -1120,6 +1120,11 @@
             </div>
           </section>
         {% endif %}
+
+        {% if media_type == MediaTypes.GAME.value %}
+          {% include "app/components/game_lengths_section.html" %}
+        {% endif %}
+
         </div>
       {% endif %}
     {% endif %}

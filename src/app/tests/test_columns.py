@@ -40,6 +40,20 @@ class ResolveColumnsTests(TestCase):
         self.assertNotIn("progress", keys)
         self.assertNotIn("episodes_left", keys)
         self.assertNotIn("time_left", keys)
+        self.assertNotIn("time_to_beat", keys)
+
+    def test_game_columns_include_time_to_beat(self):
+        columns = resolve_columns(
+            media_type=MediaTypes.GAME.value,
+            current_sort="score",
+            user=self.user,
+            table_type="media",
+        )
+        keys = [column.key for column in columns]
+
+        self.assertIn("progress", keys)
+        self.assertIn("time_to_beat", keys)
+        self.assertNotIn("time_left", keys)
 
     def test_artist_table_uses_artist_name_column(self):
         columns = resolve_columns(

@@ -25,6 +25,7 @@ from app.models import (
     Studio,
     TV,
 )
+from app.services import game_lengths as game_length_services
 from events.models import Event
 
 User = get_user_model()
@@ -200,8 +201,13 @@ class MetadataBackfillTaskTests(TestCase):
         mock_clear_time_left_cache.assert_any_call(user.id)
         self.assertEqual(result["success_count"], 1)
 
+    @patch("app.tasks.game_length_services.refresh_game_lengths")
     @patch("app.tasks.services.get_media_metadata")
-    def test_backfill_updates_release_datetime_for_existing_items(self, mock_get_media_metadata):
+    def test_backfill_updates_release_datetime_for_existing_items(
+        self,
+        mock_get_media_metadata,
+        mock_refresh_game_lengths,
+    ):
         old_fetched_at = timezone.now() - timedelta(days=30)
         item = Item.objects.create(
             media_id="262712",
@@ -231,6 +237,7 @@ class MetadataBackfillTaskTests(TestCase):
         self.assertEqual(result["release_updated_count"], 1)
         self.assertEqual(result["error_count"], 0)
         self.assertIsNone(cache.get(cache_key))
+        mock_refresh_game_lengths.assert_called_once()
         mock_get_media_metadata.assert_any_call(
             MediaTypes.GAME.value,
             item.media_id,
@@ -269,6 +276,231 @@ class MetadataBackfillTaskTests(TestCase):
         self.assertEqual(result["success_count"], 1)
         self.assertEqual(result["release_updated_count"], 1)
         self.assertEqual(result["error_count"], 0)
+
+    @patch("app.tasks.game_length_services.refresh_game_lengths")
+    @patch("app.tasks.services.get_media_metadata")
+    def test_backfill_game_length_fallback_records_success(
+        self,
+        mock_get_media_metadata,
+        mock_refresh_game_lengths,
+    ):
+        old_fetched_at = timezone.now() - timedelta(days=30)
+        item = Item.objects.create(
+            media_id="325609",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Dispatch",
+            image="https://example.com/dispatch.jpg",
+            metadata_fetched_at=old_fetched_at,
+        )
+        mock_get_media_metadata.return_value = {
+            "media_id": "325609",
+            "title": "Dispatch",
+            "media_type": MediaTypes.GAME.value,
+            "source": Sources.IGDB.value,
+            "image": "https://example.com/dispatch.jpg",
+            "details": {
+                "format": "Main game",
+                "release_date": "2025-10-22",
+                "platforms": ["PC"],
+            },
+            "related": {},
+        }
+        mock_refresh_game_lengths.return_value = {
+            "active_source": "igdb",
+        }
+
+        result = tasks.backfill_item_metadata_task(batch_size=1)
+
+        state = MetadataBackfillState.objects.get(
+            item=item,
+            field=MetadataBackfillField.GAME_LENGTHS,
+        )
+        self.assertEqual(result["success_count"], 1)
+        self.assertEqual(state.fail_count, 0)
+        self.assertIsNotNone(state.last_success_at)
+        self.assertEqual(state.strategy_version, tasks.GAME_LENGTHS_BACKFILL_VERSION)
+        mock_refresh_game_lengths.assert_called_once_with(
+            item,
+            igdb_metadata=mock_get_media_metadata.return_value,
+            force=False,
+            fetch_hltb=True,
+        )
+
+    def test_game_length_queryset_includes_existing_igdb_games_until_current_version_marked(self):
+        old_fetched_at = timezone.now() - timedelta(days=30)
+        candidate = Item.objects.create(
+            media_id="325609",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Dispatch",
+            image="https://example.com/dispatch.jpg",
+            metadata_fetched_at=old_fetched_at,
+            release_datetime=timezone.now() - timedelta(days=120),
+            provider_game_lengths={"active_source": "igdb"},
+            provider_game_lengths_source="igdb",
+            provider_game_lengths_match="igdb_fallback",
+            provider_game_lengths_fetched_at=old_fetched_at,
+        )
+        ambiguous = Item.objects.create(
+            media_id="999001",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Ambiguous Game",
+            image="https://example.com/ambiguous.jpg",
+            metadata_fetched_at=old_fetched_at,
+            release_datetime=timezone.now() - timedelta(days=120),
+            provider_game_lengths={"active_source": "igdb"},
+            provider_game_lengths_source="igdb",
+            provider_game_lengths_match=game_length_services.HLTB_MATCH_AMBIGUOUS,
+            provider_game_lengths_fetched_at=old_fetched_at,
+        )
+        resolved = Item.objects.create(
+            media_id="999002",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Resolved Game",
+            image="https://example.com/resolved.jpg",
+            metadata_fetched_at=old_fetched_at,
+            release_datetime=timezone.now() - timedelta(days=120),
+            provider_game_lengths={"active_source": "hltb"},
+            provider_game_lengths_source=game_length_services.GAME_LENGTH_SOURCE_HLTB,
+            provider_game_lengths_match=game_length_services.HLTB_MATCH_EXACT,
+            provider_game_lengths_fetched_at=old_fetched_at,
+        )
+
+        candidate_ids = set(tasks._game_length_items_queryset().values_list("id", flat=True))
+        self.assertIn(candidate.id, candidate_ids)
+        self.assertNotIn(ambiguous.id, candidate_ids)
+        self.assertNotIn(resolved.id, candidate_ids)
+
+        MetadataBackfillState.objects.create(
+            item=candidate,
+            field=MetadataBackfillField.GAME_LENGTHS,
+            strategy_version=tasks.GAME_LENGTHS_BACKFILL_VERSION,
+            last_success_at=timezone.now(),
+        )
+
+        candidate_ids = set(tasks._game_length_items_queryset().values_list("id", flat=True))
+        self.assertNotIn(candidate.id, candidate_ids)
+
+    @patch("app.tasks.game_length_services.refresh_game_lengths")
+    @patch("app.tasks.services.get_media_metadata")
+    def test_backfill_selects_existing_igdb_games_for_game_length_enrichment(
+        self,
+        mock_get_media_metadata,
+        mock_refresh_game_lengths,
+    ):
+        old_fetched_at = timezone.now() - timedelta(days=30)
+        item = Item.objects.create(
+            media_id="325609",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Dispatch",
+            image="https://example.com/dispatch.jpg",
+            metadata_fetched_at=old_fetched_at,
+            release_datetime=timezone.now() - timedelta(days=120),
+        )
+        mock_get_media_metadata.return_value = {
+            "media_id": "325609",
+            "title": "Dispatch",
+            "media_type": MediaTypes.GAME.value,
+            "source": Sources.IGDB.value,
+            "image": "https://example.com/dispatch.jpg",
+            "details": {
+                "format": "Main game",
+                "release_date": "2025-10-22",
+                "platforms": ["PC"],
+            },
+            "related": {},
+        }
+        mock_refresh_game_lengths.return_value = {
+            "active_source": "hltb",
+        }
+
+        result = tasks.backfill_item_metadata_task(batch_size=1, game_length_batch_size=1)
+
+        state = MetadataBackfillState.objects.get(
+            item=item,
+            field=MetadataBackfillField.GAME_LENGTHS,
+        )
+        self.assertEqual(result["success_count"], 1)
+        self.assertEqual(result["remaining_game_lengths"], 0)
+        self.assertEqual(state.strategy_version, tasks.GAME_LENGTHS_BACKFILL_VERSION)
+        mock_get_media_metadata.assert_called_once_with(
+            MediaTypes.GAME.value,
+            item.media_id,
+            item.source,
+        )
+        mock_refresh_game_lengths.assert_called_once_with(
+            item,
+            igdb_metadata=mock_get_media_metadata.return_value,
+            force=False,
+            fetch_hltb=True,
+        )
+
+    @patch("app.tasks.game_length_services.refresh_game_lengths", side_effect=RuntimeError("boom"))
+    def test_refresh_item_game_lengths_records_failure(self, _mock_refresh_game_lengths):
+        item = Item.objects.create(
+            media_id="325609",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Dispatch",
+            image="https://example.com/dispatch.jpg",
+        )
+
+        result = tasks.refresh_item_game_lengths(item.id)
+
+        state = MetadataBackfillState.objects.get(
+            item=item,
+            field=MetadataBackfillField.GAME_LENGTHS,
+        )
+        self.assertFalse(result["updated"])
+        self.assertEqual(state.fail_count, 1)
+        self.assertFalse(state.give_up)
+        self.assertIn("boom", state.last_error)
+
+    @patch("app.tasks.game_length_services.refresh_game_lengths")
+    def test_refresh_item_game_lengths_clears_refresh_lock_on_success(self, mock_refresh_game_lengths):
+        item = Item.objects.create(
+            media_id="325609",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Dispatch",
+            image="https://example.com/dispatch.jpg",
+        )
+        lock_key = game_length_services.get_game_lengths_refresh_lock_key(item.id)
+        cache.set(
+            lock_key,
+            game_length_services.build_game_lengths_refresh_lock(),
+            timeout=game_length_services.GAME_LENGTHS_REFRESH_TTL,
+        )
+        mock_refresh_game_lengths.return_value = {"active_source": "igdb"}
+
+        result = tasks.refresh_item_game_lengths(item.id)
+
+        self.assertTrue(result["updated"])
+        self.assertIsNone(cache.get(lock_key))
+
+    @patch("app.tasks.game_length_services.refresh_game_lengths", side_effect=RuntimeError("boom"))
+    def test_refresh_item_game_lengths_clears_refresh_lock_on_failure(self, _mock_refresh_game_lengths):
+        item = Item.objects.create(
+            media_id="325609",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Dispatch",
+            image="https://example.com/dispatch.jpg",
+        )
+        lock_key = game_length_services.get_game_lengths_refresh_lock_key(item.id)
+        cache.set(
+            lock_key,
+            game_length_services.build_game_lengths_refresh_lock(),
+            timeout=game_length_services.GAME_LENGTHS_REFRESH_TTL,
+        )
+
+        tasks.refresh_item_game_lengths(item.id)
+
+        self.assertIsNone(cache.get(lock_key))
 
     @patch("app.tasks.services.get_media_metadata")
     def test_backfill_updates_movie_provider_recommendation_metadata(self, mock_get_media_metadata):

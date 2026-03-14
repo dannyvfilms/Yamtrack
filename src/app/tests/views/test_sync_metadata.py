@@ -1,0 +1,65 @@
+from unittest.mock import patch
+
+from django.contrib.auth import get_user_model
+from django.test import TestCase
+from django.urls import reverse
+
+from app.models import MediaTypes, Sources
+
+User = get_user_model()
+
+
+class SyncMetadataViewTests(TestCase):
+    def setUp(self):
+        self.credentials = {"username": "sync-user", "password": "12345"}
+        self.user = User.objects.create_user(**self.credentials)
+        self.client.login(**self.credentials)
+
+    @patch("app.views._sync_plex_rating")
+    @patch("app.views.Item.fetch_releases")
+    @patch("app.views.game_length_services.refresh_game_lengths")
+    @patch("app.views.services.get_media_metadata")
+    def test_sync_metadata_refreshes_game_lengths_for_igdb_games(
+        self,
+        mock_get_media_metadata,
+        mock_refresh_game_lengths,
+        mock_fetch_releases,
+        mock_sync_plex_rating,
+    ):
+        mock_get_media_metadata.return_value = {
+            "media_id": "325609",
+            "title": "Dispatch",
+            "media_type": MediaTypes.GAME.value,
+            "source": Sources.IGDB.value,
+            "image": "https://example.com/dispatch.jpg",
+            "details": {
+                "format": "Main game",
+                "release_date": "2025-10-22",
+                "platforms": ["PC", "PlayStation 5"],
+            },
+            "genres": ["Action"],
+            "related": {},
+            "external_links": {
+                "HowLongToBeat": "https://howlongtobeat.com/?q=Dispatch",
+            },
+        }
+
+        response = self.client.post(
+            reverse(
+                "sync_metadata",
+                kwargs={
+                    "source": Sources.IGDB.value,
+                    "media_type": MediaTypes.GAME.value,
+                    "media_id": "325609",
+                },
+            ),
+            {"next": "/"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        mock_refresh_game_lengths.assert_called_once()
+        _, kwargs = mock_refresh_game_lengths.call_args
+        self.assertTrue(kwargs["force"])
+        self.assertTrue(kwargs["fetch_hltb"])
+        mock_fetch_releases.assert_called_once()
+        mock_sync_plex_rating.assert_called_once()

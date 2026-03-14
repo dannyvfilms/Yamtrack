@@ -808,12 +808,18 @@ CELERY_BEAT_SCHEDULE = {
     "backfill_item_metadata": {
         "task": "Backfill item metadata",
         "schedule": crontab(hour=3, minute=0),  # every day at 3 AM
-        "kwargs": {"batch_size": 1000},  # Process 1000 items per run (cleanup mode)
+        "kwargs": {
+            "batch_size": 1000,
+            "game_length_batch_size": 200,
+        },  # Process 1000 items per run plus a bounded HLTB enrichment sweep.
     },
     "backfill_item_metadata_incremental": {
         "task": "Backfill item metadata",
         "schedule": crontab(minute="*/15"),  # every 15 minutes for gradual convergence
-        "kwargs": {"batch_size": 150},
+        "kwargs": {
+            "batch_size": 150,
+            "game_length_batch_size": 25,
+        },
     },
     "nightly_metadata_quality_backfill": {
         "task": "Nightly metadata quality backfill",

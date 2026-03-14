@@ -1,0 +1,125 @@
+{% load humanize %}
+
+<style>
+  .game-length-highlight-card {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    background: #2a2f35;
+  }
+  .game-length-highlight-icon {
+    width: 2.75rem;
+    height: 2.75rem;
+    flex: 0 0 2.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    margin-right: 1rem;
+  }
+  .game-length-highlight-copy {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    justify-content: space-between;
+    min-width: 0;
+    min-height: 2.75rem;
+    padding-right: 0.25rem;
+  }
+  .game-length-highlight-label {
+    display: flex;
+    align-items: flex-start;
+    min-height: 0.75rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    line-height: 1;
+    color: #9ca3af;
+  }
+  .game-length-highlight-value {
+    font-size: 1.25rem;
+    font-weight: 700;
+    line-height: 0.92;
+    color: #f9fafb;
+  }
+  .game-length-highlight-meta {
+    min-width: 0;
+    min-height: 0.75rem;
+    font-size: 0.75rem;
+    line-height: 1;
+    color: #94a3b8;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  @media (min-width: 640px) {
+    .game-length-highlight-card {
+      padding: 1.5rem;
+    }
+    .game-length-highlight-icon {
+      width: 4rem;
+      height: 4rem;
+      flex-basis: 4rem;
+    }
+    .game-length-highlight-copy {
+      min-height: 4rem;
+    }
+    .game-length-highlight-label,
+    .game-length-highlight-meta {
+      min-height: 0.875rem;
+      font-size: 0.875rem;
+    }
+    .game-length-highlight-value {
+      font-size: 1.5rem;
+    }
+  }
+</style>
+
+<section class="mb-12 md:mb-10">
+  <div class="flex items-center justify-between gap-3 mb-4">
+    <h2 class="text-xl font-bold">Time to Beat</h2>
+    {% if game_lengths and game_lengths.source_label %}
+      {% if game_lengths.source_url %}
+        <a href="{{ game_lengths.source_url }}"
+           target="_blank"
+           rel="noreferrer noopener"
+           class="inline-flex items-center rounded-full border border-indigo-500/30 bg-indigo-500/10 px-3 py-1 text-xs font-semibold tracking-wide text-indigo-300 transition hover:border-indigo-400/50 hover:bg-indigo-500/15 hover:text-indigo-200">
+          {{ game_lengths.source_label }}
+        </a>
+      {% else %}
+        <span class="inline-flex items-center rounded-full border border-indigo-500/30 bg-indigo-500/10 px-3 py-1 text-xs font-semibold tracking-wide text-indigo-300">
+          {{ game_lengths.source_label }}
+        </span>
+      {% endif %}
+    {% endif %}
+  </div>
+
+  {% if game_lengths and game_lengths.available %}
+    <div class="grid gap-4 grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 mb-4">
+      {% for card in game_lengths.cards %}
+        <div class="game-length-highlight-card">
+          <div class="game-length-highlight-icon"
+               style="background-color: {{ card.icon_background }}; color: {{ card.icon_color }};">
+            {% include card.icon_template with classes="w-5 h-5 sm:w-8 sm:h-8" %}
+          </div>
+          <div class="game-length-highlight-copy">
+            <h3 class="game-length-highlight-label">{{ card.label }}</h3>
+            <p class="game-length-highlight-value">{{ card.value }}</p>
+            <p class="game-length-highlight-meta">
+              {{ card.count|intcomma }} submission{{ card.count|pluralize }}
+            </p>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% elif game_lengths_pending %}
+    <div class="bg-[#2a2f35] p-4 rounded-lg">
+      <p class="text-gray-300">Fetching cached time-to-beat data in the background.</p>
+    </div>
+  {% else %}
+    <div class="bg-[#2a2f35] p-4 rounded-lg">
+      <p class="text-gray-300">Time-to-beat data is not available yet.</p>
+    </div>
+  {% endif %}
+</section>

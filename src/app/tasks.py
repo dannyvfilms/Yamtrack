@@ -26,6 +26,7 @@ from app.models import (
     Sources,
 )
 from app.providers import services
+from app.services import game_lengths as game_length_services
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,7 @@ RELEASE_BACKFILL_MEDIA_TYPES = (
 METADATA_BACKFILL_BASE_DELAY_SECONDS = 60 * 60  # 1 hour
 METADATA_BACKFILL_MAX_DELAY_SECONDS = 60 * 60 * 24  # 1 day
 METADATA_BACKFILL_MAX_ATTEMPTS = 6
+GAME_LENGTHS_BACKFILL_VERSION = 2
 NIGHTLY_METADATA_QUALITY_GENRE_BATCH_SIZE = 1500
 NIGHTLY_METADATA_QUALITY_RUNTIME_BATCH_SIZE = 500
 NIGHTLY_METADATA_QUALITY_EPISODE_SEASONS_BATCH_SIZE = 300
@@ -411,6 +413,31 @@ def count_discover_movie_metadata_backfill_items() -> int:
     return _discover_movie_metadata_items_queryset().count()
 
 
+def _game_length_items_queryset():
+    queryset = Item.objects.filter(
+        source=Sources.IGDB.value,
+        media_type=MediaTypes.GAME.value,
+        metadata_fetched_at__isnull=False,
+    ).exclude(
+        provider_game_lengths_source=game_length_services.GAME_LENGTH_SOURCE_HLTB,
+    ).exclude(
+        provider_game_lengths_match=game_length_services.HLTB_MATCH_AMBIGUOUS,
+    )
+    queryset = _apply_backfill_state_filters(queryset, MetadataBackfillField.GAME_LENGTHS)
+    completed_ids = MetadataBackfillState.objects.filter(
+        field=MetadataBackfillField.GAME_LENGTHS,
+        give_up=False,
+        fail_count=0,
+        last_success_at__isnull=False,
+        strategy_version__gte=GAME_LENGTHS_BACKFILL_VERSION,
+    ).values("item_id")
+    return queryset.exclude(id__in=completed_ids)
+
+
+def count_game_length_backfill_items() -> int:
+    return _game_length_items_queryset().count()
+
+
 def _schedule_discover_refresh_for_movie_items(items: list[Item]) -> None:
     movie_item_ids = [
         item.id
@@ -526,6 +553,71 @@ def _fetch_item_metadata(item: Item):
         item.media_id,
         item.source,
     )
+
+
+@shared_task(name="Refresh item game lengths")
+def refresh_item_game_lengths(item_id: int, force: bool = False, fetch_hltb: bool = True):
+    """Refresh persisted game-length metadata for a game item."""
+    lock_key = game_length_services.get_game_lengths_refresh_lock_key(
+        item_id,
+        force=force,
+        fetch_hltb=fetch_hltb,
+    )
+
+    try:
+        item = Item.objects.filter(id=item_id).first()
+        if not item:
+            return {"updated": False, "reason": "missing_item"}
+        if item.source != Sources.IGDB.value or item.media_type != MediaTypes.GAME.value:
+            return {"updated": False, "reason": "unsupported_item"}
+
+        try:
+            payload = game_length_services.refresh_game_lengths(
+                item,
+                force=force,
+                fetch_hltb=fetch_hltb,
+            )
+        except Exception as exc:
+            error_message = _exception_with_details(exc)
+            _record_backfill_failure(
+                item,
+                MetadataBackfillField.GAME_LENGTHS,
+                f"exception: {error_message}",
+            )
+            logger.error(
+                "game_lengths_refresh_error item_id=%s media_id=%s error=%s",
+                item.id,
+                item.media_id,
+                error_message,
+            )
+            return {
+                "updated": False,
+                "error": error_message,
+                "item_id": item.id,
+            }
+
+        _record_backfill_success(
+            item,
+            MetadataBackfillField.GAME_LENGTHS,
+            strategy_version=GAME_LENGTHS_BACKFILL_VERSION,
+        )
+        return {
+            "updated": True,
+            "item_id": item.id,
+            "active_source": payload.get("active_source"),
+            "match": item.provider_game_lengths_match,
+        }
+    finally:
+        cache.delete(lock_key)
+
+
+def _exception_with_details(exc: Exception) -> str:
+    """Return a compact exception summary that preserves the message when present."""
+    summary = exception_summary(exc)
+    details = str(exc).strip()
+    if details and details != summary:
+        return f"{summary}: {details}"
+    return summary
 
 
 def _normalize_item_ids(item_ids):
@@ -2670,41 +2762,59 @@ def populate_episode_runtime_data(season_keys: list[str] | None = None):
 
 
 @shared_task(name="Backfill item metadata")
-def backfill_item_metadata_task(batch_size: int = 10):
-    """Backfill metadata fields and missing release dates.
+def backfill_item_metadata_task(batch_size: int = 10, game_length_batch_size: int | None = None):
+    """Backfill metadata fields, missing release dates, and game-length metadata.
 
     Args:
         batch_size: Number of items to process in this batch (default: 10)
+        game_length_batch_size: Max already-fetched IGDB games to enrich with game lengths.
 
     Returns:
         dict: Results including success_count, error_count, and message
     """
+    if game_length_batch_size is None:
+        game_length_batch_size = min(max(int(batch_size), 0), 25)
+    else:
+        game_length_batch_size = max(int(game_length_batch_size), 0)
+
     initial_items = list(
         Item.objects.filter(metadata_fetched_at__isnull=True).order_by("id")[:batch_size],
     )
     initial_item_ids = [item.id for item in initial_items]
     remaining_slots = max(batch_size - len(initial_items), 0)
+    game_length_backfill_items = []
     release_backfill_items = []
     discover_backfill_items = []
 
+    if remaining_slots > 0 and game_length_batch_size > 0:
+        game_length_limit = min(remaining_slots, game_length_batch_size)
+        game_length_backfill_items = list(
+            _game_length_items_queryset()
+            .exclude(id__in=initial_item_ids)
+            .order_by("provider_game_lengths_fetched_at", "metadata_fetched_at", "id")[:game_length_limit],
+        )
+        remaining_slots = max(remaining_slots - len(game_length_backfill_items), 0)
+
     if remaining_slots > 0:
+        selected_ids = initial_item_ids + [item.id for item in game_length_backfill_items]
         release_backfill_items = list(
             _release_items_queryset()
             .filter(metadata_fetched_at__isnull=False)
-            .exclude(id__in=initial_item_ids)
+            .exclude(id__in=selected_ids)
             .order_by("metadata_fetched_at", "id")[:remaining_slots],
         )
         remaining_slots = max(remaining_slots - len(release_backfill_items), 0)
 
     if remaining_slots > 0:
         release_item_ids = [item.id for item in release_backfill_items]
+        selected_ids = initial_item_ids + [item.id for item in game_length_backfill_items] + release_item_ids
         discover_backfill_items = list(
             _discover_movie_metadata_items_queryset()
-            .exclude(id__in=initial_item_ids + release_item_ids)
+            .exclude(id__in=selected_ids)
             .order_by("metadata_fetched_at", "id")[:remaining_slots],
         )
 
-    items = initial_items + release_backfill_items + discover_backfill_items
+    items = initial_items + release_backfill_items + discover_backfill_items + game_length_backfill_items
     if not items:
         return {
             "success_count": 0,
@@ -2712,7 +2822,8 @@ def backfill_item_metadata_task(batch_size: int = 10):
             "remaining_metadata": 0,
             "remaining_release": 0,
             "remaining_discover_movie_metadata": 0,
-            "message": "No items need metadata, release-date, or Discover metadata backfill",
+            "remaining_game_lengths": 0,
+            "message": "No items need metadata, release-date, Discover metadata, or game-length backfill",
         }
 
     success_count = 0
@@ -2720,10 +2831,12 @@ def backfill_item_metadata_task(batch_size: int = 10):
     release_updated_count = 0
     processed_movie_discover_items: list[Item] = []
     discover_item_ids = {item.id for item in discover_backfill_items}
+    game_length_item_ids = {item.id for item in game_length_backfill_items}
 
     for item in items:
         initial_metadata_backfill = item.metadata_fetched_at is None
         discover_metadata_backfill = item.id in discover_item_ids
+        game_lengths_backfill = item.id in game_length_item_ids
         try:
             if item.release_datetime is None:
                 _clear_item_metadata_cache(item)
@@ -2761,6 +2874,33 @@ def backfill_item_metadata_task(batch_size: int = 10):
 
             item.save(update_fields=update_fields)
 
+            if item.source == Sources.IGDB.value and item.media_type == MediaTypes.GAME.value:
+                try:
+                    game_length_services.refresh_game_lengths(
+                        item,
+                        igdb_metadata=metadata,
+                        force=False,
+                        fetch_hltb=True,
+                    )
+                    _record_backfill_success(
+                        item,
+                        MetadataBackfillField.GAME_LENGTHS,
+                        strategy_version=GAME_LENGTHS_BACKFILL_VERSION,
+                    )
+                except Exception as exc:
+                    error_message = _exception_with_details(exc)
+                    _record_backfill_failure(
+                        item,
+                        MetadataBackfillField.GAME_LENGTHS,
+                        f"exception: {error_message}",
+                    )
+                    logger.warning(
+                        "game_lengths_backfill_error item_id=%s media_id=%s error=%s",
+                        item.id,
+                        item.media_id,
+                        error_message,
+                    )
+
             if item.source == Sources.TMDB.value and item.media_type == MediaTypes.TV.value:
                 from events import calendar as events_calendar
 
@@ -2786,7 +2926,7 @@ def backfill_item_metadata_task(batch_size: int = 10):
             logger.info(
                 (
                     "metadata_backfill_success item_id=%s media_type=%s "
-                    "country=%s format=%s release_datetime=%s initial=%s discover=%s"
+                    "country=%s format=%s release_datetime=%s initial=%s discover=%s game_lengths=%s"
                 ),
                 item.id,
                 item.media_type,
@@ -2795,6 +2935,7 @@ def backfill_item_metadata_task(batch_size: int = 10):
                 item.release_datetime.isoformat() if item.release_datetime else None,
                 initial_metadata_backfill,
                 discover_metadata_backfill,
+                game_lengths_backfill,
             )
 
         except Exception as e:
@@ -2819,6 +2960,7 @@ def backfill_item_metadata_task(batch_size: int = 10):
     remaining_metadata = Item.objects.filter(metadata_fetched_at__isnull=True).count()
     remaining_release = count_release_backfill_items()
     remaining_discover_movie_metadata = count_discover_movie_metadata_backfill_items()
+    remaining_game_lengths = count_game_length_backfill_items()
 
     if processed_movie_discover_items:
         _schedule_discover_refresh_for_movie_items(processed_movie_discover_items)
@@ -2830,12 +2972,14 @@ def backfill_item_metadata_task(batch_size: int = 10):
         "remaining_metadata": remaining_metadata,
         "remaining_release": remaining_release,
         "remaining_discover_movie_metadata": remaining_discover_movie_metadata,
+        "remaining_game_lengths": remaining_game_lengths,
         "remaining": remaining_metadata,
         "message": (
             f"Processed {success_count + error_count} items, "
             f"{remaining_metadata} metadata items remaining, "
             f"{remaining_release} release items remaining, "
-            f"{remaining_discover_movie_metadata} Discover movie items remaining"
+            f"{remaining_discover_movie_metadata} Discover movie items remaining, "
+            f"{remaining_game_lengths} game-length items remaining"
         ),
     }
 

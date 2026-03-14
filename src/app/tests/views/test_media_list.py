@@ -71,6 +71,70 @@ class MediaListViewTests(TestCase):
             ],
         )
 
+    def _create_game_entry(
+        self,
+        media_id,
+        title,
+        *,
+        hltb_minutes=None,
+        igdb_seconds=None,
+    ):
+        provider_game_lengths = {}
+        provider_game_lengths_source = ""
+        provider_game_lengths_match = ""
+
+        if hltb_minutes:
+            provider_game_lengths = {
+                "active_source": "hltb",
+                "hltb": {
+                    "game_id": int(media_id) if str(media_id).isdigit() else 0,
+                    "summary": {
+                        "all_styles_minutes": hltb_minutes,
+                    },
+                    "counts": {
+                        "all_styles": 12,
+                    },
+                },
+            }
+            provider_game_lengths_source = "hltb"
+            provider_game_lengths_match = "exact_title_year"
+        elif igdb_seconds:
+            provider_game_lengths = {
+                "active_source": "igdb",
+                "igdb": {
+                    "game_id": int(media_id) if str(media_id).isdigit() else 0,
+                    "summary": {
+                        "normally_seconds": igdb_seconds,
+                        "count": 4,
+                    },
+                    "raw": [],
+                },
+            }
+            provider_game_lengths_source = "igdb"
+            provider_game_lengths_match = "igdb_fallback"
+
+        item = Item.objects.create(
+            media_id=str(media_id),
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title=title,
+            image="http://example.com/game.jpg",
+            provider_game_lengths=provider_game_lengths,
+            provider_game_lengths_source=provider_game_lengths_source,
+            provider_game_lengths_match=provider_game_lengths_match,
+        )
+        Game.objects.bulk_create(
+            [
+                Game(
+                    item=item,
+                    user=self.user,
+                    status=Status.IN_PROGRESS.value,
+                    progress=60,
+                ),
+            ],
+        )
+        return item
+
     def test_media_list_view(self):
         """Test the media list view displays media items."""
         response = self.client.get(reverse("medialist", args=[MediaTypes.MOVIE.value]))
@@ -215,6 +279,26 @@ class MediaListViewTests(TestCase):
 
         self.user.refresh_from_db()
         self.assertEqual(self.user.anime_sort, "title")
+
+    def test_game_sort_dropdown_includes_time_to_beat_option(self):
+        self._create_game_entry("325609", "Dispatch", hltb_minutes=555)
+
+        response = self.client.get(reverse("medialist", args=[MediaTypes.GAME.value]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "toggleSort('time_to_beat')")
+
+    def test_non_game_sort_hides_time_to_beat_option_and_falls_back(self):
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.MOVIE.value]) + "?sort=time_to_beat",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "title")
+        self.assertNotContains(response, "toggleSort('time_to_beat')")
+
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.movie_sort, "title")
 
     def test_movie_sort_by_plays_orders_by_aggregated_completed_plays(self):
         """Movie plays sort should use aggregated completed play totals."""
@@ -433,6 +517,40 @@ class MediaListViewTests(TestCase):
         }
         self.assertIn("Nintendo Switch", platform_values)
         self.assertIn("PlayStation 5", platform_values)
+
+    def test_game_table_renders_time_to_beat_column(self):
+        self._create_game_entry("325609", "Dispatch", hltb_minutes=555)
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.GAME.value]) + "?layout=table",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        column_keys = [column.key for column in response.context["resolved_columns"]]
+        self.assertIn("time_to_beat", column_keys)
+        self.assertContains(response, "Time to Beat")
+        self.assertContains(response, "9h 15min")
+
+    def test_game_sort_by_time_to_beat_orders_by_best_available_value(self):
+        self._create_game_entry("910001", "Longest Run", hltb_minutes=555)
+        self._create_game_entry("910002", "Quick Quest", hltb_minutes=120)
+        self._create_game_entry("910003", "Fallback Route", igdb_seconds=10800)
+        self._create_game_entry("910004", "Unknown Length")
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.GAME.value])
+            + "?layout=grid&sort=time_to_beat&direction=asc",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "time_to_beat")
+        self.assertEqual(response.context["current_direction"], "asc")
+        self.assertEqual(
+            [media.item.title for media in response.context["media_list"].object_list[:4]],
+            ["Quick Quest", "Fallback Route", "Longest Run", "Unknown Length"],
+        )
+        self.assertContains(response, "2h 00min")
+        self.assertContains(response, "3h 00min")
 
     def test_game_platform_filter_uses_latest_aggregated_status(self):
         """Status filtering should honor latest aggregated status for duplicate sessions."""

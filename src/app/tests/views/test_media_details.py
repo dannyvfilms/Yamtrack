@@ -24,6 +24,7 @@ from app.models import (
     Status,
     TV,
 )
+from app.services import game_lengths as game_length_services
 from integrations.models import PlexAccount
 
 
@@ -157,6 +158,304 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(item.provider_certification, "PG")
         self.assertEqual(item.provider_collection_id, "44")
         self.assertEqual(item.provider_collection_name, "Mystery Collection")
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_game_media_details_renders_cached_hltb_tables(self, mock_get_metadata):
+        Item.objects.create(
+            media_id="325609",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Dispatch",
+            image="https://example.com/dispatch.jpg",
+            provider_external_ids={
+                "hltb_game_id": 160618,
+                "steam_app_id": 2592160,
+                "itch_id": 0,
+                "ign_uuid": "84fb8aca-cd19-4ff6-8919-c1b8ef5fa88a",
+            },
+            provider_game_lengths={
+                "active_source": "hltb",
+                "hltb": {
+                    "game_id": 160618,
+                    "url": "https://howlongtobeat.com/game/160618",
+                    "summary": {
+                        "main_minutes": 512,
+                        "main_plus_minutes": 614,
+                        "completionist_minutes": 1191,
+                        "all_styles_minutes": 555,
+                    },
+                    "counts": {
+                        "main": 1261,
+                        "main_plus": 364,
+                        "completionist": 108,
+                        "all_styles": 1733,
+                    },
+                    "single_player_table": [
+                        {
+                            "label": "Main Story",
+                            "count": 1261,
+                            "average_minutes": 514,
+                            "median_minutes": 510,
+                            "rushed_minutes": 376,
+                            "leisure_minutes": 634,
+                        },
+                    ],
+                    "platform_table": [
+                        {
+                            "platform": "PC",
+                            "count": 1479,
+                            "main_minutes": 518,
+                            "main_plus_minutes": 624,
+                            "completionist_minutes": 1201,
+                            "fastest_minutes": 240,
+                            "slowest_minutes": 2581,
+                        },
+                    ],
+                    "external_ids": {
+                        "steam_app_id": 2592160,
+                        "itch_id": 0,
+                        "ign_uuid": "84fb8aca-cd19-4ff6-8919-c1b8ef5fa88a",
+                    },
+                    "raw": {},
+                },
+                "igdb": {
+                    "game_id": 325609,
+                    "summary": {
+                        "hastily_seconds": 32400,
+                        "normally_seconds": 32400,
+                        "completely_seconds": 46800,
+                        "count": 13,
+                    },
+                    "raw": [],
+                },
+            },
+            provider_game_lengths_source="hltb",
+            provider_game_lengths_match="steam_verified",
+        )
+        mock_get_metadata.return_value = {
+            "media_id": "325609",
+            "title": "Dispatch",
+            "media_type": MediaTypes.GAME.value,
+            "source": Sources.IGDB.value,
+            "source_url": "https://www.igdb.com/games/dispatch",
+            "image": "https://example.com/dispatch.jpg",
+            "synopsis": "Test synopsis",
+            "details": {
+                "format": "Main game",
+                "release_date": "2025-10-22",
+                "platforms": ["PC", "PlayStation 5"],
+            },
+            "genres": ["Action"],
+            "related": {},
+            "external_links": {
+                "HowLongToBeat": "https://howlongtobeat.com/?q=Dispatch",
+            },
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.IGDB.value,
+                    "media_type": MediaTypes.GAME.value,
+                    "media_id": "325609",
+                    "title": "dispatch",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Time to Beat")
+        self.assertContains(response, "How Long to Beat")
+        self.assertContains(response, "Main Story")
+        self.assertContains(response, 'href="https://howlongtobeat.com/game/160618"', html=False)
+        self.assertNotContains(response, "Based on 1,733 submissions.")
+        self.assertNotContains(response, "SINGLE-PLAYER")
+        self.assertNotContains(response, "Playstyle")
+        self.assertEqual(
+            response.context["media"]["external_links"]["HowLongToBeat"],
+            "https://howlongtobeat.com/game/160618",
+        )
+
+    @patch("app.views._queue_game_lengths_refresh", return_value=True)
+    @patch("app.providers.services.get_media_metadata")
+    def test_game_media_details_renders_igdb_fallback_and_queues_hltb_refresh(
+        self,
+        mock_get_metadata,
+        mock_queue_game_lengths_refresh,
+    ):
+        Item.objects.create(
+            media_id="325609",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Dispatch",
+            image="https://example.com/dispatch.jpg",
+            provider_game_lengths={
+                "active_source": "igdb",
+                "igdb": {
+                    "game_id": 325609,
+                    "summary": {
+                        "hastily_seconds": 32400,
+                        "normally_seconds": 32400,
+                        "completely_seconds": 46800,
+                        "count": 13,
+                    },
+                    "raw": [{"game_id": 325609}],
+                },
+            },
+            provider_game_lengths_source="igdb",
+            provider_game_lengths_match="igdb_fallback",
+        )
+        mock_get_metadata.return_value = {
+            "media_id": "325609",
+            "title": "Dispatch",
+            "media_type": MediaTypes.GAME.value,
+            "source": Sources.IGDB.value,
+            "source_url": "https://www.igdb.com/games/dispatch",
+            "image": "https://example.com/dispatch.jpg",
+            "synopsis": "Test synopsis",
+            "details": {
+                "format": "Main game",
+                "release_date": "2025-10-22",
+                "platforms": ["PC", "PlayStation 5"],
+            },
+            "genres": ["Action"],
+            "related": {},
+            "external_links": {
+                "HowLongToBeat": "https://howlongtobeat.com/?q=Dispatch",
+            },
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.IGDB.value,
+                    "media_type": MediaTypes.GAME.value,
+                    "media_id": "325609",
+                    "title": "dispatch",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Internet Games Database")
+        self.assertContains(response, 'href="https://www.igdb.com/games/dispatch"', html=False)
+        self.assertContains(response, "Normally")
+        self.assertContains(response, "13 submissions")
+        mock_queue_game_lengths_refresh.assert_called_once()
+
+    @patch("app.views._queue_game_lengths_refresh", return_value=True)
+    @patch("app.providers.services.get_media_metadata")
+    def test_game_media_details_queues_background_fetch_when_missing_game_lengths(
+        self,
+        mock_get_metadata,
+        mock_queue_game_lengths_refresh,
+    ):
+        mock_get_metadata.return_value = {
+            "media_id": "325609",
+            "title": "Dispatch",
+            "media_type": MediaTypes.GAME.value,
+            "source": Sources.IGDB.value,
+            "source_url": "https://www.igdb.com/games/dispatch",
+            "image": "https://example.com/dispatch.jpg",
+            "synopsis": "Test synopsis",
+            "details": {
+                "format": "Main game",
+                "release_date": "2025-10-22",
+                "platforms": ["PC", "PlayStation 5"],
+            },
+            "genres": ["Action"],
+            "related": {},
+            "external_links": {
+                "HowLongToBeat": "https://howlongtobeat.com/?q=Dispatch",
+            },
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.IGDB.value,
+                    "media_type": MediaTypes.GAME.value,
+                    "media_id": "325609",
+                    "title": "dispatch",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Fetching cached time-to-beat data in the background.")
+        self.assertTrue(
+            Item.objects.filter(
+                media_id="325609",
+                source=Sources.IGDB.value,
+                media_type=MediaTypes.GAME.value,
+            ).exists(),
+        )
+        mock_queue_game_lengths_refresh.assert_called_once()
+
+    @patch("app.providers.services.get_media_metadata")
+    @patch("app.views._queue_game_lengths_refresh")
+    def test_game_media_details_shows_pending_when_refresh_lock_exists(
+        self,
+        mock_queue_game_lengths_refresh,
+        mock_get_metadata,
+    ):
+        item = Item.objects.create(
+            media_id="325609",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Dispatch",
+            image="https://example.com/dispatch.jpg",
+        )
+        cache.set(
+            game_length_services.get_game_lengths_refresh_lock_key(
+                item.id,
+                force=False,
+                fetch_hltb=True,
+            ),
+            game_length_services.build_game_lengths_refresh_lock(
+                force=False,
+                fetch_hltb=True,
+            ),
+            timeout=game_length_services.GAME_LENGTHS_REFRESH_TTL,
+        )
+        mock_get_metadata.return_value = {
+            "media_id": "325609",
+            "title": "Dispatch",
+            "media_type": MediaTypes.GAME.value,
+            "source": Sources.IGDB.value,
+            "source_url": "https://www.igdb.com/games/dispatch",
+            "image": "https://example.com/dispatch.jpg",
+            "synopsis": "Test synopsis",
+            "details": {
+                "format": "Main game",
+                "release_date": "2025-10-22",
+                "platforms": ["PC", "PlayStation 5"],
+            },
+            "genres": ["Action"],
+            "related": {},
+            "external_links": {
+                "HowLongToBeat": "https://howlongtobeat.com/?q=Dispatch",
+            },
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.IGDB.value,
+                    "media_type": MediaTypes.GAME.value,
+                    "media_id": "325609",
+                    "title": "dispatch",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Fetching cached time-to-beat data in the background.")
+        mock_queue_game_lengths_refresh.assert_not_called()
 
     @patch("app.providers.services.get_media_metadata")
     @patch("app.providers.tmdb.process_episodes")

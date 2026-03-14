@@ -142,6 +142,42 @@ class Item(CalendarTriggerMixin, models.Model):
         default="",
         help_text="Provider collection/franchise name",
     )
+    provider_external_ids = models.JSONField(default=dict, blank=True, help_text="Resolved external ids")
+    provider_game_lengths = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Persisted game length metadata from external providers",
+    )
+    provider_game_lengths_source = models.CharField(
+        max_length=10,
+        blank=True,
+        default="",
+        choices=(
+            ("", ""),
+            ("hltb", "HowLongToBeat"),
+            ("igdb", "IGDB"),
+        ),
+        help_text="Active provider for persisted game length metadata",
+    )
+    provider_game_lengths_match = models.CharField(
+        max_length=32,
+        blank=True,
+        default="",
+        choices=(
+            ("", ""),
+            ("direct_url", "Direct URL"),
+            ("exact_title_year", "Exact Title + Year"),
+            ("steam_verified", "Steam Verified"),
+            ("ambiguous", "Ambiguous"),
+            ("igdb_fallback", "IGDB Fallback"),
+        ),
+        help_text="How the active game length metadata was matched",
+    )
+    provider_game_lengths_fetched_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When game length metadata was last fetched",
+    )
     metadata_fetched_at = models.DateTimeField(null=True, blank=True, help_text="When metadata was last fetched")
     series_name = models.TextField(null=True, blank=True)
     series_position = models.FloatField(null=True, blank=True)
@@ -303,6 +339,56 @@ class Item(CalendarTriggerMixin, models.Model):
         display_title, _ = self.get_display_and_alternative_title(user=user)
         return display_title
 
+    @staticmethod
+    def _coerce_positive_int(value):
+        """Return a positive integer or None."""
+        try:
+            coerced = int(value or 0)
+        except (TypeError, ValueError):
+            return None
+        return coerced if coerced > 0 else None
+
+    def _game_time_to_beat_minutes_for_source(self, source):
+        """Return the persisted time-to-beat value in minutes for a source."""
+        payload = self.provider_game_lengths or {}
+        if source == "hltb":
+            summary = ((payload.get("hltb") or {}).get("summary") or {})
+            return self._coerce_positive_int(summary.get("all_styles_minutes"))
+
+        if source == "igdb":
+            summary = ((payload.get("igdb") or {}).get("summary") or {})
+            seconds = self._coerce_positive_int(summary.get("normally_seconds"))
+            return round(seconds / 60) if seconds else None
+
+        return None
+
+    @property
+    def game_time_to_beat_minutes(self):
+        """Return the best available persisted time-to-beat value in minutes."""
+        if self.media_type != MediaTypes.GAME.value:
+            return None
+
+        payload = self.provider_game_lengths or {}
+        active_source = self.provider_game_lengths_source or payload.get("active_source") or ""
+        sources = []
+        if active_source in {"hltb", "igdb"}:
+            sources.append(active_source)
+        for fallback_source in ("hltb", "igdb"):
+            if fallback_source not in sources:
+                sources.append(fallback_source)
+
+        for source in sources:
+            minutes = self._game_time_to_beat_minutes_for_source(source)
+            if minutes:
+                return minutes
+        return None
+
+    @property
+    def formatted_game_time_to_beat(self):
+        """Return a display string for the persisted time-to-beat value."""
+        minutes = self.game_time_to_beat_minutes
+        return app.helpers.minutes_to_hhmm(minutes) if minutes else "--"
+
     def get_alternative_title(self, user=None):
         """Return the opposite title variant for tooltip display."""
         _, alternative_title = self.get_display_and_alternative_title(user=user)
@@ -342,6 +428,15 @@ class Item(CalendarTriggerMixin, models.Model):
             value = getattr(self, field_name, None)
             if value is None:
                 setattr(self, field_name, [])
+
+        json_object_fields = [
+            "provider_external_ids",
+            "provider_game_lengths",
+        ]
+        for field_name in json_object_fields:
+            value = getattr(self, field_name, None)
+            if value is None:
+                setattr(self, field_name, {})
 
         super().save(*args, **kwargs)
 
@@ -403,6 +498,7 @@ class MetadataBackfillField(models.TextChoices):
     CREDITS = "credits", "Credits"
     RELEASE = "release", "Release Date"
     DISCOVER = "discover", "Discover Metadata"
+    GAME_LENGTHS = "game_lengths", "Game Lengths"
 
 
 CREDITS_BACKFILL_VERSION = 2
@@ -624,7 +720,7 @@ class MediaManager(models.Manager):
 
     def _default_direction(self, sort_filter):
         """Return default direction for a sort key."""
-        if sort_filter in ("author", "start_date", "title", "time_left"):
+        if sort_filter in ("author", "start_date", "title", "time_left", "time_to_beat"):
             return "asc"
         return "desc"
 

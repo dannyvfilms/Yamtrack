@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import UTC, datetime
 from enum import IntEnum
 from urllib.parse import quote_plus, urlparse
@@ -304,7 +305,8 @@ def game(media_id):
             "expanded_games.name,expanded_games.cover.image_id,"
             "similar_games.name,similar_games.cover.image_id,"
             "dlcs.name,dlcs.cover.image_id,"
-            "external_games.url,websites.url;"
+            "external_games.url,external_games.uid,external_games.external_game_source,"
+            "websites.url;"
             f"where id = {media_id};"
         )
         headers = {
@@ -385,6 +387,10 @@ def game(media_id):
 
         if external_links:
             data["external_links"] = external_links
+
+        external_ids = get_external_ids(response, hltb_url)
+        if external_ids:
+            data["external_ids"] = external_ids
         cache.set(cache_key, data)
     return data
 
@@ -531,6 +537,37 @@ def get_hltb_search_url(title):
         return None
 
     return f"https://howlongtobeat.com/?q={quote_plus(query)}"
+
+
+def get_external_ids(response, hltb_url=None):
+    """Return normalized external ids exposed by IGDB metadata."""
+    external_ids = {}
+    for entry in response.get("external_games") or []:
+        uid = entry.get("uid")
+        if uid in (None, ""):
+            continue
+        source = entry.get("external_game_source")
+        if source == ExternalGameSource.STEAM:
+            external_ids["steam_app_id"] = str(uid)
+        elif source == ExternalGameSource.ITCH_IO:
+            external_ids["itch_id"] = str(uid)
+
+    direct_hltb_url = hltb_url or get_hltb_url(response)
+    if direct_hltb_url:
+        game_id = _extract_hltb_game_id(direct_hltb_url)
+        if game_id:
+            external_ids["hltb_game_id"] = game_id
+    return external_ids
+
+
+def _extract_hltb_game_id(url):
+    """Return the numeric HLTB game id from a URL."""
+    if not isinstance(url, str):
+        return None
+    match = re.search(r"/game/(\d+)", url)
+    if not match:
+        return None
+    return match.group(1)
 
 
 def get_parent(parent_game):

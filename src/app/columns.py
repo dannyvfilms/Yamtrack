@@ -37,6 +37,10 @@ def _show_time_left(media_type: str, current_sort: str, _user: Any) -> bool:
     return media_type == MediaTypes.TV.value and current_sort == "time_left"
 
 
+def _show_game_time_to_beat(media_type: str, _current_sort: str, _user: Any) -> bool:
+    return media_type == MediaTypes.GAME.value
+
+
 def _show_last_watched(media_type: str, current_sort: str, _user: Any) -> bool:
     return media_type == MediaTypes.TV.value and current_sort != "time_left"
 
@@ -118,6 +122,16 @@ MEDIA_COLUMNS: list[ColumnDef] = [
         table_types=("media",),
         is_visible=_show_time_left,
         default_order=60,
+    ),
+    ColumnDef(
+        key="time_to_beat",
+        label="Time to Beat",
+        th_classes="p-2 text-center w-28",
+        td_classes="p-2 text-center",
+        cell_template="app/components/cells/time_to_beat_cell.html",
+        table_types=("media",),
+        is_visible=_show_game_time_to_beat,
+        default_order=65,
     ),
     ColumnDef(
         key="last_watched",

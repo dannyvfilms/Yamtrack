@@ -50,6 +50,10 @@
           <p class="mt-2 text-sm font-semibold text-white">{{ time_left }} left</p>
         {% endif %}
       {% endwith %}
+    {% elif current_sort == 'time_to_beat' %}
+      {% if media.item.game_time_to_beat_minutes %}
+        <p class="mt-2 text-sm font-semibold text-white">{{ media.item.formatted_game_time_to_beat }}</p>
+      {% endif %}
     {% endif %}
   </div>
 {% endfor %}
