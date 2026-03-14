@@ -1,0 +1,16 @@
+name: "Yamtrack CodeQL Config"
+
+query-filters:
+  # py/clear-text-logging-of-sensitive-data generates ~340 false positives because
+  # CodeQL's taint tracking treats media metadata (item titles, TMDB IDs, usernames)
+  # from webhook payloads and API responses as sensitive. All genuine exceptions
+  # (raw `exc` in log calls) have been fixed to use exception_summary(). The
+  # log_safety module (exception_summary, safe_url, presence_map) handles real
+  # sensitive data. Disable this query to keep the alert list actionable.
+  - exclude:
+      id: py/clear-text-logging-of-sensitive-data
+
+  # py/weak-sensitive-data-hashing fires on log_safety.stable_hmac() which uses
+  # HMAC-SHA256 — a secure keyed digest. False positive from SECRET_KEY taint.
+  - exclude:
+      id: py/weak-sensitive-data-hashing

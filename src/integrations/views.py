@@ -18,6 +18,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 import users
+from app.log_safety import exception_summary
 from integrations import exports, lastfm_api, pocketcasts_api, tasks
 from integrations import plex as plex_api
 from integrations.imports import anilist, helpers, simkl, trakt
@@ -285,7 +286,7 @@ def plex_callback(request):
     try:
         sections = plex_api.list_sections(plex_token)
     except Exception as exc:  # pragma: no cover - defensive
-        logger.warning("Connected to Plex but could not fetch libraries: %s", exc)
+        logger.warning("Connected to Plex but could not fetch libraries: %s", exception_summary(exc))
         messages.warning(
             request,
             "Connected to Plex, but could not load libraries yet. You can refresh from the import page.",

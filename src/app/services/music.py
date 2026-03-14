@@ -9,6 +9,7 @@ from django.db import IntegrityError, models
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 
+from app.log_safety import exception_summary
 from app.models import Album, Artist, Track
 
 logger = logging.getLogger(__name__)
@@ -1033,7 +1034,7 @@ def populate_album_tracks(album: Album) -> int:
         logger.info("Populated %d tracks for album %s", len(tracks_data), album.title)
         return len(tracks_data)
     except Exception as exc:  # pragma: no cover - defensive
-        logger.warning("Failed to populate tracks for album %s: %s", album.title, exc)
+        logger.warning("Failed to populate tracks for album %s: %s", album.title, exception_summary(exc))
         return 0
 
 

@@ -349,7 +349,7 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
             logger.debug("Title search returned no results for Plex TV entry")
 
             # Try stripping year from title like "Show (YYYY)"
-            clean_title = re.sub(r'\s*\(\d{4}\)$', '', series_title)
+            clean_title = re.sub(r'\s*\(\d{4}\)$', '', series_title[:500])
             if clean_title != series_title:
                 logger.debug("Retrying Plex TV search with normalized title")
                 search_results = services.search(

@@ -23,6 +23,7 @@ from app.models import (
     Status,
     Track,
 )
+from app.log_safety import exception_summary
 from app.providers import musicbrainz
 from app.services.music import (
     get_artist_hero_image,
@@ -133,7 +134,7 @@ def record_music_playback(event: MusicPlaybackEvent) -> Music | None:
                     dedupe_artist_albums(artist)
                     force_cover_prefetch = True
                 except Exception as exc:  # pragma: no cover - defensive network guard
-                    logger.debug("Failed discography sync for %s: %s", artist, exc)
+                    logger.debug("Failed discography sync for %s: %s", artist, exception_summary(exc))
         elif not getattr(event, "defer_cover_prefetch", False):
             _enrich_missing_artist_metadata(artist, album, track, music, metadata)
 
@@ -229,7 +230,7 @@ def _populate_from_recording(metadata: ResolvedMusicMetadata, recording_id: str)
     try:
         recording = musicbrainz.recording(recording_id)
     except Exception as exc:  # pragma: no cover - defensive
-        logger.debug("Failed to fetch recording %s: %s", recording_id, exc)
+        logger.debug("Failed to fetch recording %s: %s", recording_id, exception_summary(exc))
         return False
 
     metadata.musicbrainz_recording_id = recording_id
@@ -276,7 +277,7 @@ def _populate_from_release(
     try:
         release = musicbrainz.get_release(release_lookup_id)
     except Exception as exc:  # pragma: no cover - defensive
-        logger.debug("Failed to fetch release %s: %s", release_lookup_id, exc)
+        logger.debug("Failed to fetch release %s: %s", release_lookup_id, exception_summary(exc))
         return False
 
     metadata.musicbrainz_release_id = release_lookup_id
@@ -330,7 +331,7 @@ def _populate_from_search(metadata: ResolvedMusicMetadata) -> None:
             (results or {}).get("total_results"),
         )
     except Exception as exc:  # pragma: no cover - defensive
-        logger.debug("Music search failed for query '%s': %s", query, exc)
+        logger.debug("Music search failed for query '%s': %s", query, exception_summary(exc))
         return
 
     expected_artist = _normalize(metadata.artist_name or "")
@@ -1162,7 +1163,7 @@ def _maybe_refresh_album_cover(album: Album) -> None:
     try:
         refresh_album_cover_art(album)
     except Exception as exc:  # pragma: no cover - defensive network guard
-        logger.debug("Cover art refresh failed for album %s: %s", album.id, exc)
+        logger.debug("Cover art refresh failed for album %s: %s", album.id, exception_summary(exc))
 
 
 def _prefetch_missing_covers(artist: Artist, force: bool = False) -> None:
@@ -1185,7 +1186,7 @@ def _prefetch_missing_covers(artist: Artist, force: bool = False) -> None:
     try:
         prefetch_album_covers(artist, limit=None)  # fetch all missing art for this artist
     except Exception as exc:  # pragma: no cover - defensive network guard
-        logger.debug("Prefetch covers failed for artist %s: %s", artist.id, exc)
+        logger.debug("Prefetch covers failed for artist %s: %s", artist.id, exception_summary(exc))
 
 def _enrich_missing_artist_metadata(
     artist: Artist,
@@ -1211,7 +1212,7 @@ def _enrich_missing_artist_metadata(
     try:
         results = musicbrainz.search(query, page=1, skip_cover_art=True)
     except Exception as exc:  # pragma: no cover - defensive network guard
-        logger.debug("Artist enrichment search failed for %s: %s", query, exc)
+        logger.debug("Artist enrichment search failed for %s: %s", query, exception_summary(exc))
         return
 
     total_results = (results or {}).get("total_results") or 0
@@ -1258,7 +1259,7 @@ def _enrich_missing_artist_metadata(
             try:
                 sync_artist_discography(artist, force=True)
             except Exception as exc:  # pragma: no cover
-                logger.debug("Discography sync failed during enrichment for %s: %s", artist, exc)
+                logger.debug("Discography sync failed during enrichment for %s: %s", artist, exception_summary(exc))
 
     release_id = result.get("release_id")
     release_group_id = result.get("release_group_id")
@@ -1315,7 +1316,7 @@ def _maybe_attach_artist_from_artist_search(metadata: ResolvedMusicMetadata, eve
     try:
         results = musicbrainz.search_artists(artist_query, page=1)
     except Exception as exc:  # pragma: no cover - defensive network guard
-        logger.debug("Artist-only search failed for '%s': %s", artist_query, exc)
+        logger.debug("Artist-only search failed for '%s': %s", artist_query, exception_summary(exc))
         return
 
     candidates = (results or {}).get("results") or []
@@ -1340,7 +1341,7 @@ def _sync_artist_metadata(artist: Artist, musicbrainz_id: str, force: bool = Fal
     try:
         data = musicbrainz.get_artist(musicbrainz_id)
     except Exception as exc:  # pragma: no cover - defensive network guard
-        logger.debug("Failed to fetch artist metadata for %s: %s", musicbrainz_id, exc)
+        logger.debug("Failed to fetch artist metadata for %s: %s", musicbrainz_id, exception_summary(exc))
         return
 
     updates = {}

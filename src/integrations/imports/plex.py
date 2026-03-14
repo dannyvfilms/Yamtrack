@@ -1456,7 +1456,7 @@ class PlexHistoryImporter:
                             )
                         
                         # If title has year in parenthesis like "Show (YYYY)", try stripping it
-                        clean_title = re.sub(r'\s*\(\d{4}\)$', '', series_title)
+                        clean_title = re.sub(r'\s*\(\d{4}\)$', '', series_title[:500])
                         if clean_title != series_title:
                             logger.info("Retrying Plex TV title fallback search with normalized title")
                             search_results = services.search(

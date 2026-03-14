@@ -9,6 +9,8 @@ import requests
 from django.conf import settings
 from requests import RequestException
 
+from app.log_safety import exception_summary
+
 logger = logging.getLogger(__name__)
 
 
@@ -145,7 +147,7 @@ def list_users(token: str) -> list[dict[str, Any]]:
             if isinstance(user, dict):
                 add_user(user)
     except (RequestException, ValueError) as exc:
-        logger.debug("Could not fetch Plex home users: %s", exc)
+        logger.debug("Could not fetch Plex home users: %s", exception_summary(exc))
 
     # Shared users (XML or JSON)
     try:
@@ -167,7 +169,7 @@ def list_users(token: str) -> list[dict[str, Any]]:
             for node in root.findall("User"):
                 add_user(dict(node.attrib))
     except (RequestException, ValueError, ElementTree.ParseError) as exc:
-        logger.debug("Could not fetch Plex users: %s", exc)
+        logger.debug("Could not fetch Plex users: %s", exception_summary(exc))
 
     return users
 
@@ -187,7 +189,7 @@ def list_resources(token: str) -> list[dict[str, Any]]:
     try:
         return _parse_resources_xml(content, fallback_token=token)
     except ElementTree.ParseError as exc:  # pragma: no cover - defensive
-        logger.warning("Failed to parse Plex resources XML: %s", exc)
+        logger.warning("Failed to parse Plex resources XML: %s", exception_summary(exc))
         return []
 
 

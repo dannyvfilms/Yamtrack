@@ -308,7 +308,8 @@ class BaseWebhookProcessor:
         """Normalize series titles for loose webhook-vs-TMDB comparisons."""
         if not title:
             return None
-        return re.sub(r"\s*\(\d{4}\)$", "", str(title)).strip().casefold()
+        title_str = str(title)[:500]
+        return re.sub(r"\s*\(\d{4}\)$", "", title_str).strip().casefold()
 
     def _remember_tvdb_override(self, media_id, ids):
         """Persist a preferred TVDB ID for a resolved TMDB show when available."""

@@ -4702,7 +4702,7 @@ def season_details(
                 logger.debug("Season page: Show item not found for media_id=%s, source=%s", media_id, source)
                 pass
             except Exception as exc:
-                logger.error("Error checking show collection entry in season_details: %s", exc, exc_info=True)
+                logger.error("Error checking show collection entry in season_details: %s", exception_summary(exc), exc_info=True)
             
             # Get collection entry for the season item itself (if it exists)
             collection_entries = list(get_item_collection_entries(request.user, season_item))
@@ -7564,7 +7564,7 @@ def artist_detail(request, artist_id):
                     cand_count,
                 )
         except Exception as exc:  # pragma: no cover - defensive
-            logger.debug("Artist MBID attach failed on view for %s: %s", artist.name, exc)
+            logger.debug("Artist MBID attach failed on view for %s: %s", artist.name, exception_summary(exc))
 
     # Heal duplicate albums for this artist (caused by noisy metadata)
     dedupe_artist_albums(artist)
@@ -7788,7 +7788,7 @@ def prefetch_artist_covers(request, artist_id):
                     raise queue_exc
             poll_for_covers = bool(cache.get(cache_key))
         except Exception as exc:  # pragma: no cover - defensive
-            logger.debug("Cover prefetch queue failed for artist %s: %s", artist.id, exc)
+            logger.debug("Cover prefetch queue failed for artist %s: %s", artist.id, exception_summary(exc))
 
     return render(request, "app/components/artist_discography_container.html", {
         "discography_groups": discography_groups,
@@ -7859,7 +7859,7 @@ def album_detail(request, album_id):
                     return redirect("album_detail", album_id=best.id)
                 album = best
         except Exception as exc:  # pragma: no cover - defensive
-            logger.debug("Failed to heal album %s via discography: %s", album_id, exc)
+            logger.debug("Failed to heal album %s via discography: %s", album_id, exception_summary(exc))
 
     # Ensure album has a release_id (fetch from release_group if needed)
     # This fixes albums that came from discography sync with only release_group_id
@@ -8054,7 +8054,7 @@ def sync_artist_discography_view(request, artist_id):
         cover_task_id = result.id
         cache.set(f"music:cover-prefetch:{artist.id}", True, 60 * 10)
     except Exception as exc:  # pragma: no cover - defensive
-        logger.debug("Cover prefetch queue failed for artist %s: %s", artist.id, exc)
+        logger.debug("Cover prefetch queue failed for artist %s: %s", artist.id, exception_summary(exc))
         try:
             prefetch_album_covers(artist, limit=None)
             cache.set(f"music:cover-prefetch:{artist.id}", True, 60 * 10)

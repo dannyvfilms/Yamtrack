@@ -773,7 +773,7 @@ def enqueue_runtime_backfill_items(item_ids, countdown=10):
         if cache.add(RUNTIME_BACKFILL_ITEMS_SCHEDULED_KEY, True, timeout=30):
             populate_runtime_backfill_queue.apply_async(countdown=countdown)
     except Exception as exc:  # pragma: no cover - cache unavailable
-        logger.debug("Runtime backfill queue unavailable: %s", exc)
+        logger.debug("Runtime backfill queue unavailable: %s", exception_summary(exc))
         populate_runtime_data_for_items.apply_async(args=[normalized], countdown=countdown)
     return len(normalized)
 
@@ -799,7 +799,7 @@ def enqueue_episode_runtime_backfill(season_keys, countdown=10):
         if cache.add(RUNTIME_BACKFILL_EPISODES_SCHEDULED_KEY, True, timeout=30):
             populate_episode_runtime_queue.apply_async(countdown=countdown)
     except Exception as exc:  # pragma: no cover - cache unavailable
-        logger.debug("Episode runtime backfill queue unavailable: %s", exc)
+        logger.debug("Episode runtime backfill queue unavailable: %s", exception_summary(exc))
         populate_episode_runtime_data.apply_async(kwargs={"season_keys": normalized}, countdown=countdown)
         return len(normalized)
     return len(tokens)
@@ -817,7 +817,7 @@ def enqueue_genre_backfill_items(item_ids, countdown=10):
         if cache.add(GENRE_BACKFILL_ITEMS_SCHEDULED_KEY, True, timeout=30):
             populate_genre_backfill_queue.apply_async(countdown=countdown)
     except Exception as exc:  # pragma: no cover - cache unavailable
-        logger.debug("Genre backfill queue unavailable: %s", exc)
+        logger.debug("Genre backfill queue unavailable: %s", exception_summary(exc))
         populate_genre_data_for_items.apply_async(args=[normalized], countdown=countdown)
     return len(normalized)
 
@@ -835,7 +835,7 @@ def enqueue_credits_backfill_items(item_ids, countdown=10):
         if cache.add(CREDITS_BACKFILL_ITEMS_SCHEDULED_KEY, True, timeout=30):
             populate_credits_backfill_queue.apply_async(countdown=countdown)
     except Exception as exc:  # pragma: no cover - cache unavailable
-        logger.debug("Credits backfill queue unavailable: %s", exc)
+        logger.debug("Credits backfill queue unavailable: %s", exception_summary(exc))
         populate_credits_data_for_items.apply_async(args=[normalized], countdown=countdown)
     return len(normalized)
 
@@ -895,8 +895,8 @@ def _populate_genres_for_items(items, delay_seconds):
                 time.sleep(delay_seconds)
         except Exception as exc:
             error_count += 1
-            logger.error("Error updating genres for %s: %s", item.title, exc)
-            _record_backfill_failure(item, MetadataBackfillField.GENRES, f"exception: {exc}")
+            logger.error("Error updating genres for %s: %s", item.title, exception_summary(exc))
+            _record_backfill_failure(item, MetadataBackfillField.GENRES, f"exception: {exception_summary(exc)}")
 
     logger.info("Genre population batch completed: %s updated, %s errors", updated_count, error_count)
     if updated_items:
@@ -977,8 +977,8 @@ def _populate_credits_for_items(items, delay_seconds):
                 time.sleep(delay_seconds)
         except Exception as exc:
             error_count += 1
-            logger.error("Error syncing credits for %s: %s", item.title, exc)
-            _record_backfill_failure(item, MetadataBackfillField.CREDITS, f"exception: {exc}")
+            logger.error("Error syncing credits for %s: %s", item.title, exception_summary(exc))
+            _record_backfill_failure(item, MetadataBackfillField.CREDITS, f"exception: {exception_summary(exc)}")
 
     logger.info("Credits population batch completed: %s updated, %s errors", updated_count, error_count)
     if updated_items:
@@ -1070,8 +1070,8 @@ def _populate_runtime_for_items(items, delay_seconds):
                 time.sleep(delay_seconds)
         except Exception as exc:
             error_count += 1
-            logger.error("Error updating runtime for %s: %s", item.title, exc)
-            _mark_runtime_failure(item, f"exception: {exc}")
+            logger.error("Error updating runtime for %s: %s", item.title, exception_summary(exc))
+            _mark_runtime_failure(item, f"exception: {exception_summary(exc)}")
 
     logger.info("Runtime population batch completed: %s updated, %s errors", updated_count, error_count)
     if updated_items:
@@ -1741,13 +1741,13 @@ def enrich_music_library_task(user_id: int):
                 sync_artist_discography(artist, force=False)
                 synced += 1
             except Exception as exc:  # pragma: no cover - defensive
-                logger.debug("Discography sync failed for %s: %s", artist.name, exc)
+                logger.debug("Discography sync failed for %s: %s", artist.name, exception_summary(exc))
 
         try:
             dedupe_artist_albums(artist)
             deduped += 1
         except Exception as exc:  # pragma: no cover - defensive
-            logger.debug("Album dedupe failed for %s: %s", artist.name, exc)
+            logger.debug("Album dedupe failed for %s: %s", artist.name, exception_summary(exc))
 
         # Collect albums that need track population (defer to background for speed)
         # Only collect albums with MBIDs - can't populate tracks without them
@@ -1801,7 +1801,7 @@ def enrich_music_library_task(user_id: int):
                 if to_update:
                     Music.objects.bulk_update(to_update, ["track"])
         except Exception as exc:  # pragma: no cover - defensive
-            logger.debug("Music->Track relink failed for artist %s: %s", artist.id, exc)
+            logger.debug("Music->Track relink failed for artist %s: %s", artist.id, exception_summary(exc))
 
         # Either queue cover prefetch for later or do it inline (configurable)
         if defer_covers and artist.musicbrainz_id:
@@ -1810,7 +1810,7 @@ def enrich_music_library_task(user_id: int):
             try:
                 prefetch_album_covers(artist, limit=None)
             except Exception as exc:  # pragma: no cover - defensive
-                logger.debug("Cover prefetch failed for artist %s: %s", artist.id, exc)
+                logger.debug("Cover prefetch failed for artist %s: %s", artist.id, exception_summary(exc))
 
     # Phase 3: Final runtime backfill from newly populated/linked tracks (if any)
     # This catches tracks that got duration_ms during enrichment
@@ -2049,7 +2049,7 @@ def populate_album_tracks_batch(album_ids: list[int], user_id: int | None = None
             elif album.musicbrainz_release_group_id and not album.musicbrainz_release_id:
                 skipped_no_release_id += 1
         except Exception as exc:
-            logger.warning("Track populate failed for album %s: %s", album_id, exc)
+            logger.warning("Track populate failed for album %s: %s", album_id, exception_summary(exc))
 
     if skipped_no_release_id > 0:
         logger.info(
@@ -2085,7 +2085,7 @@ def populate_album_tracks_batch(album_ids: list[int], user_id: int | None = None
         except User.DoesNotExist:
             logger.warning("populate_album_tracks_batch: User %s not found, skipping track linking", user_id)
         except Exception as exc:
-            logger.warning("Failed to link tracks/backfill runtime after track population: %s", exc)
+            logger.warning("Failed to link tracks/backfill runtime after track population: %s", exception_summary(exc))
 
     return {
         "albums": len(album_ids),
@@ -2427,7 +2427,7 @@ def enrich_albums_task(user_id: int):
             if count > 0:
                 populated_count += 1
         except Exception as exc:
-            logger.warning("Track populate failed for album %s: %s", album_id, exc)
+            logger.warning("Track populate failed for album %s: %s", album_id, exception_summary(exc))
 
     logger.info(
         "enrich_albums_task: Populated tracks for %d albums",
@@ -2449,7 +2449,7 @@ def enrich_albums_task(user_id: int):
                 backfill_result.get("backfilled", 0),
             )
         except Exception as exc:
-            logger.warning("Failed to link tracks/backfill runtime after track population: %s", exc)
+            logger.warning("Failed to link tracks/backfill runtime after track population: %s", exception_summary(exc))
 
     # Phase 5: Final runtime backfill from newly populated/linked tracks
     music_with_new_runtime = (
@@ -2514,7 +2514,7 @@ def prefetch_album_covers_batch(artist_ids: list[int], limit_per_artist: int | N
         try:
             updated += prefetch_album_covers(artist, limit=limit_per_artist)
         except Exception as exc:  # pragma: no cover - defensive
-            logger.debug("Cover batch prefetch failed for artist %s: %s", artist_id, exc)
+            logger.debug("Cover batch prefetch failed for artist %s: %s", artist_id, exception_summary(exc))
     return {"artists": len(artist_ids), "covers_updated": updated}
 
 

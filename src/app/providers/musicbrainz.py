@@ -8,6 +8,7 @@ from django.conf import settings
 from django.core.cache import cache
 
 from app import helpers
+from app.log_safety import exception_summary
 from app.models import MediaTypes, Sources
 from app.providers import services
 
@@ -509,7 +510,7 @@ def search_artists(query, page=1):
                     total_results = resp.get("count", total_results)
                     break
             except Exception as exc:  # pragma: no cover - defensive
-                logger.debug("musicbrainz.search_artists fallback failed for %s: %s", variant, exc)
+                logger.debug("musicbrainz.search_artists fallback failed for %s: %s", variant, exception_summary(exc))
 
     data = {
         "page": page,

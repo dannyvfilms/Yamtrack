@@ -1248,7 +1248,7 @@ def fetch_collection_metadata_for_item(user_id, item_id):
                 logger.info("Continuing to search other sections...")
                 continue
     except Exception as exc:
-        logger.warning("Failed to fetch collection metadata for %s - %s: %s", user.username, item.title, exc, exc_info=True)
+        logger.warning("Failed to fetch collection metadata for %s - %s: %s", user.username, item.title, exception_summary(exc), exc_info=True)
         return None
     
     logger.info("Could not find matching Plex item for %s - %s in any section", user.username, item.title)
@@ -1698,7 +1698,7 @@ def _aggregate_tv_show_collection_metadata(
                         "collection_metadata": episode_collection,
                     })
         except Exception as exc:
-            logger.debug("Error fetching episodes for season %s: %s", season_key, exc)
+            logger.debug("Error fetching episodes for season %s: %s", season_key, exception_summary(exc))
             continue
     
     if not all_episode_metadata:
@@ -1775,7 +1775,7 @@ def update_collection_metadata_from_plex(library, user_id):
     try:
         resources = plex_api.list_resources(plex_account.plex_token)
     except plex_api.PlexAuthError as exc:
-        logger.warning("Plex token expired for user %s: %s", user.username, exc)
+        logger.warning("Plex token expired for user %s: %s", user.username, exception_summary(exc))
         return {"error": "Plex token expired"}
 
     # Get target sections
