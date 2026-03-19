@@ -8,6 +8,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from app.models import (
+    Anime,
     Book,
     Comic,
     CollectionEntry,
@@ -18,8 +19,10 @@ from app.models import (
     Movie,
     Sources,
     Status,
+    TV,
 )
 from app.templatetags import app_tags
+from events.models import Event
 
 
 class MediaListViewTests(TestCase):
@@ -132,6 +135,87 @@ class MediaListViewTests(TestCase):
                     progress=60,
                 ),
             ],
+        )
+        return item
+
+    def _create_movie_runtime_entry(self, media_id, title, runtime_minutes=None):
+        item = Item.objects.create(
+            media_id=str(media_id),
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title=title,
+            image="http://example.com/movie-runtime.jpg",
+            runtime_minutes=runtime_minutes,
+        )
+        Movie.objects.bulk_create(
+            [
+                Movie(
+                    item=item,
+                    user=self.user,
+                    status=Status.IN_PROGRESS.value,
+                    progress=0,
+                ),
+            ],
+        )
+        return item
+
+    def _create_tv_runtime_entry(self, media_id, title, episode_runtimes):
+        item = Item.objects.create(
+            media_id=str(media_id),
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title=title,
+            image="http://example.com/tv-runtime.jpg",
+        )
+        TV.objects.bulk_create(
+            [
+                TV(
+                    item=item,
+                    user=self.user,
+                    status=Status.IN_PROGRESS.value,
+                ),
+            ],
+        )
+
+        released_at = timezone.now() - timedelta(days=30)
+        for episode_number, runtime_minutes in enumerate(episode_runtimes, start=1):
+            Item.objects.create(
+                media_id=str(media_id),
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.EPISODE.value,
+                title=f"{title} Episode {episode_number}",
+                image="http://example.com/tv-episode.jpg",
+                season_number=1,
+                episode_number=episode_number,
+                runtime_minutes=runtime_minutes,
+                release_datetime=released_at + timedelta(days=episode_number),
+            )
+
+        return item
+
+    def _create_anime_runtime_entry(self, media_id, title, *, runtime_minutes, episode_count):
+        item = Item.objects.create(
+            media_id=str(media_id),
+            source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME.value,
+            title=title,
+            image="http://example.com/anime-runtime.jpg",
+            runtime_minutes=runtime_minutes,
+        )
+        Anime.objects.bulk_create(
+            [
+                Anime(
+                    item=item,
+                    user=self.user,
+                    status=Status.PLANNING.value,
+                    progress=0,
+                ),
+            ],
+        )
+        Event.objects.create(
+            item=item,
+            content_number=episode_count,
+            datetime=timezone.now() - timedelta(days=1),
         )
         return item
 
@@ -288,6 +372,12 @@ class MediaListViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "toggleSort('time_to_beat')")
 
+    def test_movie_sort_dropdown_includes_runtime_option(self):
+        response = self.client.get(reverse("medialist", args=[MediaTypes.MOVIE.value]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "toggleSort('runtime')")
+
     def test_non_game_sort_hides_time_to_beat_option_and_falls_back(self):
         response = self.client.get(
             reverse("medialist", args=[MediaTypes.MOVIE.value]) + "?sort=time_to_beat",
@@ -299,6 +389,18 @@ class MediaListViewTests(TestCase):
 
         self.user.refresh_from_db()
         self.assertEqual(self.user.movie_sort, "title")
+
+    def test_non_runtime_media_sort_hides_runtime_option_and_falls_back(self):
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.BOOK.value]) + "?sort=runtime",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "title")
+        self.assertNotContains(response, "toggleSort('runtime')")
+
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.book_sort, "title")
 
     def test_movie_sort_by_plays_orders_by_aggregated_completed_plays(self):
         """Movie plays sort should use aggregated completed play totals."""
@@ -531,6 +633,88 @@ class MediaListViewTests(TestCase):
         self.assertContains(response, "Time to Beat")
         self.assertContains(response, "9h 15min")
 
+    def test_movie_table_renders_runtime_column(self):
+        self._create_movie_runtime_entry("runtime-column-movie", "Runtime Column Movie", 142)
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.MOVIE.value])
+            + "?layout=table&search=Runtime+Column+Movie",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        column_keys = [column.key for column in response.context["resolved_columns"]]
+        self.assertIn("runtime", column_keys)
+        self.assertContains(response, "Runtime")
+        self.assertContains(response, "2h 22min")
+
+    def test_movie_sort_by_runtime_orders_shortest_first(self):
+        self._create_movie_runtime_entry("runtime-sort-movie-1", "Runtime Sort Long", 160)
+        self._create_movie_runtime_entry("runtime-sort-movie-2", "Runtime Sort Short", 95)
+        self._create_movie_runtime_entry("runtime-sort-movie-3", "Runtime Sort Unknown")
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.MOVIE.value])
+            + "?layout=grid&search=Runtime+Sort&sort=runtime",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "runtime")
+        self.assertEqual(response.context["current_direction"], "asc")
+        self.assertEqual(
+            [media.item.title for media in response.context["media_list"].object_list[:3]],
+            ["Runtime Sort Short", "Runtime Sort Long", "Runtime Sort Unknown"],
+        )
+        self.assertContains(response, "1h 35min")
+        self.assertContains(response, "2h 40min")
+
+    def test_tv_sort_by_runtime_uses_total_show_runtime(self):
+        self._create_tv_runtime_entry("tv-runtime-1", "TV Runtime Short", [24, 24, 24])
+        self._create_tv_runtime_entry("tv-runtime-2", "TV Runtime Long", [48, 48, 48])
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.TV.value])
+            + "?layout=grid&search=TV+Runtime&sort=runtime",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "runtime")
+        self.assertEqual(response.context["current_direction"], "asc")
+        self.assertEqual(
+            [media.item.title for media in response.context["media_list"].object_list[:2]],
+            ["TV Runtime Short", "TV Runtime Long"],
+        )
+        self.assertContains(response, "1h 12min")
+        self.assertContains(response, "2h 24min")
+
+    def test_anime_sort_by_runtime_uses_episode_count_times_runtime(self):
+        self._create_anime_runtime_entry(
+            "anime-runtime-1",
+            "Anime Runtime Short",
+            runtime_minutes=24,
+            episode_count=12,
+        )
+        self._create_anime_runtime_entry(
+            "anime-runtime-2",
+            "Anime Runtime Long",
+            runtime_minutes=24,
+            episode_count=26,
+        )
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.ANIME.value])
+            + "?layout=grid&search=Anime+Runtime&sort=runtime",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "runtime")
+        self.assertEqual(response.context["current_direction"], "asc")
+        self.assertEqual(
+            [media.item.title for media in response.context["media_list"].object_list[:2]],
+            ["Anime Runtime Short", "Anime Runtime Long"],
+        )
+        self.assertContains(response, "4h 48min")
+        self.assertContains(response, "10h 24min")
+
     def test_game_sort_by_time_to_beat_orders_by_best_available_value(self):
         self._create_game_entry("910001", "Longest Run", hltb_minutes=555)
         self._create_game_entry("910002", "Quick Quest", hltb_minutes=120)
@@ -571,31 +755,39 @@ class MediaListViewTests(TestCase):
             platforms=["PlayStation 5"],
         )
 
-        old_in_progress = Game.objects.create(
+        Game.objects.bulk_create(
+            [
+                Game(
+                    item=stale_item,
+                    user=self.user,
+                    status=Status.IN_PROGRESS.value,
+                    progress=12,
+                ),
+                Game(
+                    item=stale_item,
+                    user=self.user,
+                    status=Status.COMPLETED.value,
+                    progress=30,
+                    end_date=timezone.now() - timedelta(days=1),
+                ),
+                Game(
+                    item=active_item,
+                    user=self.user,
+                    status=Status.IN_PROGRESS.value,
+                    progress=20,
+                ),
+            ],
+        )
+
+        old_in_progress = Game.objects.filter(
             item=stale_item,
             user=self.user,
             status=Status.IN_PROGRESS.value,
-            progress=12,
-        )
+        ).get()
         old_activity = timezone.now() - timedelta(days=3)
         Game.objects.filter(id=old_in_progress.id).update(
             created_at=old_activity,
             progressed_at=old_activity,
-        )
-
-        Game.objects.create(
-            item=stale_item,
-            user=self.user,
-            status=Status.COMPLETED.value,
-            progress=30,
-            end_date=timezone.now() - timedelta(days=1),
-        )
-
-        Game.objects.create(
-            item=active_item,
-            user=self.user,
-            status=Status.IN_PROGRESS.value,
-            progress=20,
         )
 
         url = reverse("medialist", args=[MediaTypes.GAME.value])
@@ -619,11 +811,15 @@ class MediaListViewTests(TestCase):
             image="http://example.com/book.jpg",
             format="",
         )
-        Book.objects.create(
-            item=book_item,
-            user=self.user,
-            status=Status.IN_PROGRESS.value,
-            progress=0,
+        Book.objects.bulk_create(
+            [
+                Book(
+                    item=book_item,
+                    user=self.user,
+                    status=Status.IN_PROGRESS.value,
+                    progress=0,
+                ),
+            ],
         )
         CollectionEntry.objects.create(
             user=self.user,
@@ -944,7 +1140,7 @@ class MediaListViewTests(TestCase):
         self.assertEqual(
             self.user.table_column_prefs[MediaTypes.MOVIE.value],
             {
-                "order": ["status", "score", "release_date", "date_added", "start_date", "end_date"],
+                "order": ["status", "score", "runtime", "release_date", "date_added", "start_date", "end_date"],
                 "hidden": ["status"],
             },
         )
@@ -999,7 +1195,7 @@ class MediaListViewTests(TestCase):
         self.user.refresh_from_db()
         self.assertEqual(
             self.user.table_column_prefs[MediaTypes.MOVIE.value]["order"],
-            ["score", "start_date", "status", "release_date", "date_added", "end_date"],
+            ["score", "start_date", "runtime", "status", "release_date", "date_added", "end_date"],
         )
 
         response = self.client.get(
@@ -1008,7 +1204,7 @@ class MediaListViewTests(TestCase):
         column_keys = [column.key for column in response.context["resolved_columns"]]
         self.assertEqual(
             column_keys,
-            ["image", "title", "score", "start_date", "status", "release_date", "date_added", "end_date"],
+            ["image", "title", "score", "start_date", "runtime", "status", "release_date", "date_added", "end_date"],
         )
 
     def test_consecutive_column_reorder_full_round_trip(self):
@@ -1056,7 +1252,7 @@ class MediaListViewTests(TestCase):
         first_refresh = self.client.get(f"{list_url}{list_query}", **htmx_headers)
         assert_partial_table_refresh(
             first_refresh,
-            ["", "Title", "End Date", "Status", "Score", "Start Date", "Release Date", "Date Added"],
+            ["", "Title", "End Date", "Status", "Score", "Start Date", "Runtime", "Release Date", "Date Added"],
         )
 
         second_order = ["score", "start_date", "end_date", "status"]
@@ -1080,7 +1276,7 @@ class MediaListViewTests(TestCase):
         second_refresh = self.client.get(f"{list_url}{list_query}", **htmx_headers)
         assert_partial_table_refresh(
             second_refresh,
-            ["", "Title", "Score", "Start Date", "End Date", "Status", "Release Date", "Date Added"],
+            ["", "Title", "Score", "Start Date", "End Date", "Status", "Runtime", "Release Date", "Date Added"],
         )
 
         full_page = self.client.get(f"{list_url}{list_query}")
@@ -1103,11 +1299,11 @@ class MediaListViewTests(TestCase):
             column_config = json.loads(config_match.group(1))
             self.assertEqual(
                 [column["key"] for column in column_config],
-                second_order + ["release_date", "date_added"],
+                second_order + ["runtime", "release_date", "date_added"],
             )
 
         resolved_keys = [column.key for column in full_page.context["resolved_columns"]]
         self.assertEqual(
             resolved_keys,
-            ["image", "title", "score", "start_date", "end_date", "status", "release_date", "date_added"],
+            ["image", "title", "score", "start_date", "end_date", "status", "runtime", "release_date", "date_added"],
         )

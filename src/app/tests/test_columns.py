@@ -25,6 +25,7 @@ class ResolveColumnsTests(TestCase):
 
         self.assertIn("episodes_left", keys)
         self.assertIn("time_left", keys)
+        self.assertIn("runtime", keys)
         self.assertNotIn("progress", keys)
         self.assertNotIn("last_watched", keys)
 
@@ -40,6 +41,7 @@ class ResolveColumnsTests(TestCase):
         self.assertNotIn("progress", keys)
         self.assertNotIn("episodes_left", keys)
         self.assertNotIn("time_left", keys)
+        self.assertIn("runtime", keys)
         self.assertNotIn("time_to_beat", keys)
 
     def test_game_columns_include_time_to_beat(self):
@@ -53,6 +55,20 @@ class ResolveColumnsTests(TestCase):
 
         self.assertIn("progress", keys)
         self.assertIn("time_to_beat", keys)
+        self.assertNotIn("time_left", keys)
+        self.assertNotIn("runtime", keys)
+
+    def test_anime_columns_include_runtime(self):
+        columns = resolve_columns(
+            media_type=MediaTypes.ANIME.value,
+            current_sort="score",
+            user=self.user,
+            table_type="media",
+        )
+        keys = [column.key for column in columns]
+
+        self.assertIn("progress", keys)
+        self.assertIn("runtime", keys)
         self.assertNotIn("time_left", keys)
 
     def test_artist_table_uses_artist_name_column(self):
@@ -109,7 +125,7 @@ class ResolveColumnsTests(TestCase):
         # Fixed columns stay first, and hidden only applies to hideable columns.
         self.assertEqual(
             keys,
-            ["image", "title", "status", "release_date", "date_added", "start_date", "end_date"],
+            ["image", "title", "status", "runtime", "release_date", "date_added", "start_date", "end_date"],
         )
 
     def test_new_columns_append_when_not_in_saved_order(self):
@@ -131,5 +147,5 @@ class ResolveColumnsTests(TestCase):
 
         self.assertEqual(
             keys,
-            ["image", "title", "status", "score", "release_date", "date_added", "start_date", "end_date"],
+            ["image", "title", "status", "score", "runtime", "release_date", "date_added", "start_date", "end_date"],
         )

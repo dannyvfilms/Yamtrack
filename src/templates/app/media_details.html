@@ -367,7 +367,13 @@
           {# Total Hours/Plays - mobile: order-3 (row 1, col 3), desktop: order-5 #}
           <div class="bg-[#2a2f35] p-3 rounded-lg" data-mobile-order="3" data-desktop-order="5">
             <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">
-              {% if media_type == MediaTypes.BOARDGAME.value %}TOTAL PLAYS{% else %}TOTAL HOURS{% endif %}
+              {% if media_type == MediaTypes.BOARDGAME.value %}
+                TOTAL PLAYS
+              {% elif media_type == MediaTypes.TV.value %}
+                WATCHED HOURS
+              {% else %}
+                TOTAL HOURS
+              {% endif %}
             </h3>
             {% if media_type == MediaTypes.BOARDGAME.value %}
               <p class="text-lg font-bold text-white text-center leading-none">

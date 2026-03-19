@@ -1431,6 +1431,11 @@ def media_list(request, media_type):
         MediaTypes.MANGA.value,
         MediaTypes.COMIC.value,
     )
+    runtime_media_types = {
+        MediaTypes.MOVIE.value,
+        MediaTypes.TV.value,
+        MediaTypes.ANIME.value,
+    }
     layout = request.user.update_preference(
         f"{media_type}_layout",
         request.GET.get("layout"),
@@ -1444,6 +1449,12 @@ def media_list(request, media_type):
 
     # Enforce media-type-specific sort options.
     if sort_filter == "time_left" and media_type != MediaTypes.TV.value:
+        sort_filter = "title"  # Default fallback
+        # Update the user's preference to the fallback
+        request.user.update_preference(f"{media_type}_sort", "title")
+        # Reset direction to the default for the fallback sort
+        direction_param = None
+    elif sort_filter == "runtime" and media_type not in runtime_media_types:
         sort_filter = "title"  # Default fallback
         # Update the user's preference to the fallback
         request.user.update_preference(f"{media_type}_sort", "title")
@@ -1940,6 +1951,40 @@ def media_list(request, media_type):
         )
         return [media for media, _minutes in with_time_to_beat] + without_time_to_beat
 
+    def _runtime_sort_value(media):
+        return getattr(media, "total_runtime_minutes", None)
+
+    def sort_media_items_by_runtime(media_items, sort_direction):
+        with_runtime = []
+        without_runtime = []
+
+        for media in media_items:
+            minutes = _runtime_sort_value(media)
+            if minutes:
+                with_runtime.append((media, minutes))
+            else:
+                without_runtime.append(media)
+
+        if sort_direction == "desc":
+            with_runtime.sort(
+                key=lambda entry: (
+                    -entry[1],
+                    getattr(getattr(entry[0], "item", None), "title", "").lower(),
+                ),
+            )
+        else:
+            with_runtime.sort(
+                key=lambda entry: (
+                    entry[1],
+                    getattr(getattr(entry[0], "item", None), "title", "").lower(),
+                ),
+            )
+
+        without_runtime.sort(
+            key=lambda media: getattr(getattr(media, "item", None), "title", "").lower(),
+        )
+        return [media for media, _minutes in with_runtime] + without_runtime
+
     def annotate_media_authors(media_items):
         for media in media_items:
             media.display_authors = _extract_cached_authors(getattr(media, "item", None))
@@ -2083,7 +2128,7 @@ def media_list(request, media_type):
         }
 
     # Get media list with filters applied
-    query_sort_filter = "title" if sort_filter in {"author", "time_to_beat"} else sort_filter
+    query_sort_filter = "title" if sort_filter in {"author", "runtime", "time_to_beat"} else sort_filter
 
     media_queryset = BasicMedia.objects.get_media_list(
         user=request.user,
@@ -2167,6 +2212,9 @@ def media_list(request, media_type):
     media_list = apply_tag_filter(media_list, tag_included_ids, tag_excluded_ids)
     if sort_filter == "author" and media_type in author_media_types:
         media_list = sort_media_items_by_author(media_list, direction)
+    if sort_filter == "runtime" and media_type in runtime_media_types:
+        BasicMedia.objects.annotate_max_progress(media_list, media_type)
+        media_list = sort_media_items_by_runtime(media_list, direction)
     if sort_filter == "time_to_beat" and media_type == MediaTypes.GAME.value:
         media_list = sort_media_items_by_game_time_to_beat(media_list, direction)
 
@@ -2842,6 +2890,12 @@ def update_table_columns(request, media_type):
 
     current_sort = request.POST.get("sort") or getattr(request.user, f"{media_type}_sort", MediaSortChoices.SCORE)
     if current_sort == "time_left" and media_type != MediaTypes.TV.value:
+        current_sort = "title"
+    elif current_sort == "runtime" and media_type not in {
+        MediaTypes.MOVIE.value,
+        MediaTypes.TV.value,
+        MediaTypes.ANIME.value,
+    }:
         current_sort = "title"
     elif current_sort == "time_to_beat" and media_type != MediaTypes.GAME.value:
         current_sort = "title"
@@ -4046,6 +4100,36 @@ def media_details(
 
             user_medias.sort(key=_activity_key, reverse=True)
         current_instance = user_medias[0] if user_medias else None
+
+    if media_type in (
+        MediaTypes.MOVIE.value,
+        MediaTypes.TV.value,
+        MediaTypes.ANIME.value,
+    ):
+        runtime_media = current_instance
+        if runtime_media is None and detail_item is not None:
+            runtime_model = apps.get_model(app_label="app", model_name=media_type)
+            runtime_media = runtime_model(item=detail_item)
+
+        if runtime_media is not None and isinstance(media_metadata, dict):
+            BasicMedia.objects.annotate_max_progress([runtime_media], media_type)
+            total_runtime_display = runtime_media.formatted_total_runtime
+            if total_runtime_display and total_runtime_display != "--":
+                details = media_metadata.get("details")
+                if not isinstance(details, dict):
+                    details = {}
+                    media_metadata["details"] = details
+
+                if details.get("runtime"):
+                    ordered_details = {}
+                    for key, value in details.items():
+                        ordered_details[key] = value
+                        if key == "runtime":
+                            ordered_details["total_runtime"] = total_runtime_display
+                    details.clear()
+                    details.update(ordered_details)
+                else:
+                    details["total_runtime"] = total_runtime_display
 
     # Apply the same rating aggregation logic as in the media list
     if user_medias and len(user_medias) > 1:

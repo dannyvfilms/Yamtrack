@@ -720,7 +720,14 @@ class MediaManager(models.Manager):
 
     def _default_direction(self, sort_filter):
         """Return default direction for a sort key."""
-        if sort_filter in ("author", "start_date", "title", "time_left", "time_to_beat"):
+        if sort_filter in (
+            "author",
+            "runtime",
+            "start_date",
+            "title",
+            "time_left",
+            "time_to_beat",
+        ):
             return "asc"
         return "desc"
 
@@ -2046,6 +2053,115 @@ class Media(models.Model):
                 return app.helpers.minutes_to_hhmm(self.aggregated_progress)
             return str(self.aggregated_progress)
         return str(self.progress)
+
+    def _get_known_item_runtime_minutes(self):
+        """Return a persisted runtime value without falling back to estimates."""
+        runtime_minutes = getattr(self.item, "runtime_minutes", None)
+        if runtime_minutes and runtime_minutes < 999998:
+            return runtime_minutes
+
+        runtime_display = getattr(self.item, "runtime", "")
+        if runtime_display:
+            from app.statistics import parse_runtime_to_minutes
+
+            parsed_runtime = parse_runtime_to_minutes(runtime_display)
+            if parsed_runtime and parsed_runtime < 999998:
+                return parsed_runtime
+
+        return None
+
+    def _calc_total_runtime_from_items(self, total_episodes):
+        """Estimate full released runtime from stored episode runtimes when possible."""
+        if not total_episodes or total_episodes <= 0:
+            return None
+
+        if self.item.media_type == MediaTypes.TV.value:
+            breakdown = getattr(self, "released_episode_breakdown", None) or {}
+            if not breakdown:
+                return None
+
+            total_runtime = 0
+            episodes_with_data = 0
+            for season_num in sorted(breakdown.keys()):
+                released_episode_count = breakdown[season_num]
+                season_runtimes = list(
+                    Item.objects.filter(
+                        media_id=self.item.media_id,
+                        source=self.item.source,
+                        media_type=MediaTypes.EPISODE.value,
+                        season_number=season_num,
+                        episode_number__lte=released_episode_count,
+                        runtime_minutes__isnull=False,
+                    )
+                    .exclude(runtime_minutes=999999)
+                    .exclude(runtime_minutes=999998)
+                    .values_list("runtime_minutes", flat=True),
+                )
+                if season_runtimes:
+                    total_runtime += sum(season_runtimes)
+                    episodes_with_data += len(season_runtimes)
+
+            if episodes_with_data > 0:
+                if episodes_with_data == total_episodes:
+                    return total_runtime
+                missing_eps = total_episodes - episodes_with_data
+                avg_runtime = total_runtime / episodes_with_data
+                return total_runtime + int(missing_eps * avg_runtime)
+            return None
+
+        if self.item.media_type != MediaTypes.ANIME.value:
+            return None
+
+        episode_runtimes = list(
+            Item.objects.filter(
+                media_id=self.item.media_id,
+                source=self.item.source,
+                media_type=MediaTypes.EPISODE.value,
+                episode_number__lte=total_episodes,
+                runtime_minutes__isnull=False,
+            )
+            .exclude(runtime_minutes=999999)
+            .exclude(runtime_minutes=999998)
+            .values_list("runtime_minutes", flat=True),
+        )
+        if not episode_runtimes:
+            return None
+        if len(episode_runtimes) == total_episodes:
+            return sum(episode_runtimes)
+        avg_runtime = sum(episode_runtimes) / len(episode_runtimes)
+        return sum(episode_runtimes) + int((total_episodes - len(episode_runtimes)) * avg_runtime)
+
+    @property
+    def total_runtime_minutes(self):
+        """Return total title runtime in minutes for supported media types."""
+        cached_total = getattr(self, "_total_runtime_minutes_cache", None)
+        if cached_total is not None:
+            return cached_total
+
+        total_runtime = None
+        media_type = getattr(self.item, "media_type", None)
+
+        if media_type == MediaTypes.MOVIE.value:
+            total_runtime = self._get_known_item_runtime_minutes()
+        elif media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
+            total_episodes = getattr(self, "max_progress", None)
+            if total_episodes and total_episodes > 0:
+                total_runtime = self._calc_total_runtime_from_items(total_episodes)
+                if total_runtime is None:
+                    average_runtime = self._get_known_item_runtime_minutes()
+                    if average_runtime is None:
+                        average_runtime = self._get_fallback_runtime_minutes()
+                    if average_runtime and average_runtime < 999999:
+                        total_runtime = total_episodes * average_runtime
+
+        self._total_runtime_minutes_cache = total_runtime or 0
+        return total_runtime
+
+    @property
+    def formatted_total_runtime(self):
+        """Return the total runtime in a readable display format."""
+        total_runtime = self.total_runtime_minutes
+        return app.helpers.minutes_to_hhmm(total_runtime) if total_runtime else "--"
 
     @property
     def episodes_left(self):

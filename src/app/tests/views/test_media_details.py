@@ -1466,6 +1466,137 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.context["play_stats"]["total_minutes"], 45)
         self.assertEqual(response.context["play_stats"]["episode_count"], 1)
 
+    @patch("app.providers.services.get_media_metadata")
+    def test_tv_media_details_show_total_runtime_uses_same_calculation_as_media_list(
+        self,
+        mock_get_metadata,
+    ):
+        """TV details should show shared total runtime while play stats remain watched hours."""
+        now = timezone.now()
+        show_item = Item.objects.create(
+            media_id="fallout-runtime-shared",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Shared Runtime Show",
+            image="http://example.com/show.jpg",
+            runtime_minutes=25,
+        )
+        tv = TV.objects.create(
+            item=show_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        season_item = Item.objects.create(
+            media_id="fallout-runtime-shared",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            title="Shared Runtime Show",
+            image="http://example.com/season.jpg",
+        )
+        season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=tv,
+            status=Status.IN_PROGRESS.value,
+        )
+
+        first_episode_item = Item.objects.create(
+            media_id="fallout-runtime-shared",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=1,
+            title="Episode 1",
+            runtime_minutes=52,
+            release_datetime=now - timedelta(days=3),
+        )
+        second_episode_item = Item.objects.create(
+            media_id="fallout-runtime-shared",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=2,
+            title="Episode 2",
+            runtime_minutes=58,
+            release_datetime=now - timedelta(days=2),
+        )
+        third_episode_item = Item.objects.create(
+            media_id="fallout-runtime-shared",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=3,
+            title="Episode 3",
+            runtime_minutes=47,
+            release_datetime=now - timedelta(days=1),
+        )
+
+        Episode.objects.create(
+            item=first_episode_item,
+            related_season=season,
+            end_date=now - timedelta(days=1),
+        )
+        Episode.objects.create(
+            item=second_episode_item,
+            related_season=season,
+            end_date=now,
+        )
+        Episode.objects.create(
+            item=third_episode_item,
+            related_season=season,
+        )
+
+        mock_get_metadata.return_value = {
+            "media_id": "fallout-runtime-shared",
+            "title": "Shared Runtime Show",
+            "media_type": MediaTypes.TV.value,
+            "source": Sources.TMDB.value,
+            "source_url": "https://www.themoviedb.org/tv/fallout-runtime-shared",
+            "image": "http://example.com/show.jpg",
+            "synopsis": "Test synopsis",
+            "details": {
+                "format": "TV",
+                "runtime": "25m",
+                "seasons": 1,
+                "episodes": 3,
+            },
+            "related": {},
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+            "providers": {},
+            "external_links": {},
+        }
+
+        detail_response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "media_id": "fallout-runtime-shared",
+                    "title": "shared-runtime-show",
+                },
+            ),
+        )
+
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertEqual(detail_response.context["media"]["details"]["runtime"], "25m")
+        self.assertEqual(detail_response.context["media"]["details"]["total_runtime"], "2h 37min")
+        self.assertEqual(detail_response.context["play_stats"]["total_minutes"], 110)
+        self.assertContains(detail_response, "WATCHED HOURS")
+        self.assertContains(detail_response, "TOTAL RUNTIME")
+        self.assertContains(detail_response, "2h 37min")
+
+        list_response = self.client.get(
+            reverse("medialist", args=[MediaTypes.TV.value])
+            + "?layout=table&search=Shared+Runtime+Show",
+        )
+
+        self.assertEqual(list_response.status_code, 200)
+        self.assertContains(list_response, "2h 37min")
+
     @patch("app.providers.openlibrary.book")
     def test_audiobookshelf_book_details_does_not_call_openlibrary(
         self,

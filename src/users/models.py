@@ -41,6 +41,7 @@ class MediaSortChoices(models.TextChoices):
     TITLE = "title", "Title"
     AUTHOR = "author", "Author"
     PROGRESS = "progress", "Progress"
+    RUNTIME = "runtime", "Runtime"
     TIME_TO_BEAT = "time_to_beat", "Time to Beat"
     PLAYS = "plays", "Plays"
     RELEASE_DATE = "release_date", "Release Date"

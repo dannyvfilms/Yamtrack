@@ -54,6 +54,10 @@
       {% if media.item.game_time_to_beat_minutes %}
         <p class="mt-2 text-sm font-semibold text-white">{{ media.item.formatted_game_time_to_beat }}</p>
       {% endif %}
+    {% elif current_sort == 'runtime' %}
+      {% if media.total_runtime_minutes %}
+        <p class="mt-2 text-sm font-semibold text-white">{{ media.formatted_total_runtime }}</p>
+      {% endif %}
     {% endif %}
   </div>
 {% endfor %}
