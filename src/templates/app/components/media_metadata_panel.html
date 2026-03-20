@@ -47,7 +47,7 @@
             <button type="button"
                     @click="open = !open"
                     @click.outside="open = false"
-                    class="flex items-center justify-between w-full px-3 py-2.5 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
+                    class="flex h-10 items-center justify-between w-full px-3 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
               <span x-text="selectedLabel"></span>
               {% include "app/icons/chevron-down.svg" with classes="w-4 h-4 text-gray-400" %}
             </button>
@@ -72,11 +72,50 @@
           </div>
 
           <button type="submit"
-                  class="shrink-0 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors text-sm cursor-pointer">
+                  class="shrink-0 inline-flex h-10 w-48 items-center justify-center px-4 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors text-sm cursor-pointer">
             Save Provider
           </button>
         </div>
       </form>
+    </section>
+  {% endif %}
+
+  {% if image_field %}
+    <section class="space-y-3"
+             x-data="{ imageUrl: '{{ image_field.value|default_if_none:''|escapejs }}' }">
+      <label class="block text-sm font-medium text-gray-300"
+             for="{{ image_field.id_for_label }}">{{ image_field.label }}</label>
+
+      <div class="flex flex-col md:flex-row md:items-start gap-3">
+        <input type="url"
+               id="{{ image_field.id_for_label }}"
+               name="{{ image_field.html_name }}"
+               value="{{ image_field.value|default_if_none:'' }}"
+               x-model="imageUrl"
+               form="{{ track_form_id }}"
+               placeholder="https://example.com/poster.jpg"
+               class="flex-1 w-full h-10 px-3 bg-[#39404b] rounded-md text-white text-sm border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff]">
+
+        {% if image_save_item_id %}
+          <form method="post"
+                action="{% url 'update_item_image' image_save_item_id %}"
+                class="shrink-0">
+            {% csrf_token %}
+            <input type="hidden" name="return_url" value="{{ return_url }}">
+            <input type="hidden" name="image_url" x-model="imageUrl">
+            <button type="submit"
+                    class="inline-flex h-10 w-48 items-center justify-center px-4 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors text-sm cursor-pointer">
+              Save Image
+            </button>
+          </form>
+        {% endif %}
+      </div>
+
+      {% if not image_save_item_id %}
+        <p class="text-xs text-gray-400">
+          Save this image from the General tab when you add or update the entry.
+        </p>
+      {% endif %}
     </section>
   {% endif %}
 

@@ -7,6 +7,7 @@ from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 from datetime import UTC, date, timedelta
 from pathlib import Path
+from uuid import uuid4
 
 from dateutil.relativedelta import relativedelta
 from django.apps import apps
@@ -4745,7 +4746,14 @@ def update_metadata_provider_preference(request, source, media_type, media_id):
         )
         messages.success(request, "Metadata provider updated.")
 
-    if return_url and url_has_allowed_host_and_scheme(return_url, allowed_hosts=None):
+    if return_url and (
+        return_url.startswith("/")
+        or url_has_allowed_host_and_scheme(
+            return_url,
+            allowed_hosts={request.get_host()},
+            require_https=request.is_secure(),
+        )
+    ):
         return redirect(return_url)
 
     return redirect(
@@ -4755,6 +4763,43 @@ def update_metadata_provider_preference(request, source, media_type, media_id):
         media_id=media_id,
         title=title if (title := item.get_display_title(request.user)) else "item",
     )
+
+
+@login_required
+@require_POST
+def update_item_image(request, item_id):
+    """Persist an image URL override for an item the user already tracks."""
+    return_url = (request.POST.get("return_url") or "").strip()
+    image_url = (request.POST.get("image_url") or "").strip()
+
+    item = get_object_or_404(Item, id=item_id)
+    media_model = apps.get_model("app", item.media_type)
+    if not media_model.objects.filter(user=request.user, item=item).exists():
+        messages.error(request, "You can only update images for items in your library.")
+        return helpers.redirect_back(request)
+
+    if not image_url:
+        messages.error(request, "Enter an image URL to save.")
+        return helpers.redirect_back(request)
+
+    if item.image != image_url:
+        item.image = image_url
+        item.save(update_fields=["image"])
+        messages.success(request, "Image URL updated.")
+    else:
+        messages.success(request, "Image URL already matches this item.")
+
+    if return_url and (
+        return_url.startswith("/")
+        or url_has_allowed_host_and_scheme(
+            return_url,
+            allowed_hosts={request.get_host()},
+            require_https=request.is_secure(),
+        )
+    ):
+        return redirect(return_url)
+
+    return helpers.redirect_back(request)
 
 
 @login_required
@@ -5936,9 +5981,7 @@ def track_modal(
         # This is an episode (episode_uuid) - use music-style modal
         episode = PodcastEpisode.objects.filter(episode_uuid=media_id).first()
         if episode:
-            from django.conf import settings
-
-            from app.models import Item, Podcast
+            from app.models import Podcast
 
             show = episode.show
             instance_id = request.GET.get("instance_id")
@@ -6217,6 +6260,14 @@ def track_modal(
         initial_data["identity_media_type"] = route_identity_media_type
     if route_library_media_type:
         initial_data["library_media_type"] = route_library_media_type
+    if "image_url" not in initial_data:
+        preferred_image = None
+        if metadata_item and metadata_item.image and metadata_item.image != settings.IMG_NONE:
+            preferred_image = metadata_item.image
+        elif base_metadata and base_metadata.get("image") and base_metadata["image"] != settings.IMG_NONE:
+            preferred_image = base_metadata["image"]
+        if preferred_image:
+            initial_data["image_url"] = preferred_image
 
     form_media_type = metadata_resolution.get_tracking_media_type(
         media_type,
@@ -6238,6 +6289,40 @@ def track_modal(
             initial=initial_data,
             user=request.user,
         )
+
+    hidden_field_names = {
+        "instance_id",
+        "media_type",
+        "identity_media_type",
+        "library_media_type",
+        "source",
+        "media_id",
+        "season_number",
+    }
+    metadata_field_names = {"image_url"}
+    ordered_general_field_names = [
+        field_name
+        for field_name in ("score", "status", "progress", "start_date", "end_date")
+        if field_name in form.fields
+    ]
+    remaining_general_field_names = [
+        field_name
+        for field_name in form.fields
+        if field_name not in hidden_field_names
+        and field_name not in metadata_field_names
+        and field_name != "notes"
+        and field_name not in ordered_general_field_names
+    ]
+    general_fields = [
+        form[field_name]
+        for field_name in ordered_general_field_names + remaining_general_field_names
+    ]
+    metadata_fields = [
+        form[field_name]
+        for field_name in form.fields
+        if field_name in metadata_field_names
+    ]
+    image_field = form["image_url"] if "image_url" in form.fields else None
 
     display_provider = source
     identity_provider = source
@@ -6286,7 +6371,7 @@ def track_modal(
         )
 
     metadata_tab_available = bool(
-        can_update_metadata_provider or can_migrate_grouped_anime
+        metadata_fields or can_update_metadata_provider or can_migrate_grouped_anime
     )
 
     response = render(
@@ -6310,6 +6395,11 @@ def track_modal(
             "can_migrate_grouped_anime": can_migrate_grouped_anime,
             "metadata_tab_available": metadata_tab_available,
             "metadata_item": metadata_item,
+            "general_fields": general_fields,
+            "metadata_fields": metadata_fields,
+            "image_field": image_field,
+            "image_save_item_id": metadata_item.id if media and metadata_item else None,
+            "track_form_id": f"track-form-{uuid4().hex}",
         },
     )
     # Explicitly set cache control headers for Safari compatibility

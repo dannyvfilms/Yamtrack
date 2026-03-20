@@ -72,6 +72,20 @@ class TrackModalViewTests(TestCase):
         self.assertIn("media", response.context)
         self.assertEqual(response.context["media"], self.movie)
         self.assertEqual(response.context["return_url"], "/home")
+        self.assertTrue(response.context["metadata_tab_available"])
+        general_field_names = [
+            field.name for field in response.context["general_fields"]
+        ]
+        self.assertEqual(general_field_names[:2], ["score", "status"])
+        self.assertEqual(
+            [field.name for field in response.context["metadata_fields"]],
+            ["image_url"],
+        )
+        self.assertContains(response, "General")
+        self.assertContains(response, "Metadata")
+        self.assertContains(response, "Image URL")
+        self.assertContains(response, "Save Image")
+        self.assertNotContains(response, "Metadata Provider")
 
     @patch("app.providers.services.get_media_metadata")
     def test_track_modal_view_new_media(self, mock_get_metadata):
@@ -105,6 +119,34 @@ class TrackModalViewTests(TestCase):
         self.assertEqual(
             response.context["form"].initial["media_type"],
             MediaTypes.MOVIE.value,
+        )
+        self.assertEqual(
+            response.context["form"].initial["image_url"],
+            "http://example.com/image.jpg",
+        )
+        self.assertContains(
+            response,
+            "Save this image from the General tab when you add or update the entry.",
+        )
+        self.assertNotContains(response, "Save Image")
+
+    def test_update_item_image(self):
+        """Existing tracked items should allow image overrides from metadata."""
+        response = self.client.post(
+            reverse("update_item_image", args=[self.item.id]),
+            {
+                "image_url": "https://images.example.com/updated-poster.jpg",
+                "return_url": "/home",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, "/home")
+
+        self.item.refresh_from_db()
+        self.assertEqual(
+            self.item.image,
+            "https://images.example.com/updated-poster.jpg",
         )
 
     @override_settings(TVDB_API_KEY="test-tvdb-key")
