@@ -584,6 +584,54 @@ class MediaDetailsViewTests(TestCase):
             "https://howlongtobeat.com/game/160618",
         )
 
+    @patch("app.providers.services.get_media_metadata")
+    def test_grouped_anime_details_do_not_render_hltb_links(self, mock_get_metadata):
+        Item.objects.create(
+            media_id="259640",
+            source=Sources.TVDB.value,
+            media_type=MediaTypes.TV.value,
+            library_media_type=MediaTypes.ANIME.value,
+            title="Sword Art Online",
+            image="https://example.com/sao.jpg",
+            provider_external_ids={"hltb_game_id": 160618},
+        )
+        mock_get_metadata.return_value = {
+            "media_id": "259640",
+            "title": "Sword Art Online",
+            "localized_title": "Sword Art Online",
+            "media_type": MediaTypes.ANIME.value,
+            "identity_media_type": MediaTypes.TV.value,
+            "library_media_type": MediaTypes.ANIME.value,
+            "source": Sources.TVDB.value,
+            "source_url": "https://www.thetvdb.com/dereferrer/series/259640",
+            "image": "https://example.com/sao.jpg",
+            "synopsis": "Players are trapped inside a virtual world.",
+            "details": {"format": "TV"},
+            "related": {},
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+            "external_links": {
+                "TVDB": "https://www.thetvdb.com/dereferrer/series/259640",
+            },
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TVDB.value,
+                    "media_type": MediaTypes.ANIME.value,
+                    "media_id": "259640",
+                    "title": "sword-art-online",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "How Long to Beat")
+        self.assertNotIn("HowLongToBeat", response.context["media"]["external_links"])
+
     @patch("app.views._queue_game_lengths_refresh", return_value=True)
     @patch("app.providers.services.get_media_metadata")
     def test_game_media_details_renders_igdb_fallback_and_queues_hltb_refresh(

@@ -438,6 +438,8 @@ def _apply_cached_hltb_link(media_metadata, detail_item):
     """Prefer a stored direct HLTB link when one has already been resolved."""
     if not detail_item or not isinstance(media_metadata, dict):
         return
+    if detail_item.media_type != MediaTypes.GAME.value:
+        return
 
     external_links = media_metadata.setdefault("external_links", {})
     if not isinstance(external_links, dict):
