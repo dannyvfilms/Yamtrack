@@ -9,7 +9,7 @@ from django.utils import timezone
 from django_celery_beat.models import PeriodicTask
 from django_celery_results.models import TaskResult
 
-from app.models import Item, MediaTypes, Status
+from app.models import Item, MediaTypes, Sources, Status
 from users import helpers
 
 EXCLUDED_SEARCH_TYPES = [MediaTypes.SEASON.value, MediaTypes.EPISODE.value]
@@ -217,6 +217,22 @@ class QuickWatchDateChoices(models.TextChoices):
     CURRENT_DATE = "current_date", "Current Date"
     RELEASE_DATE = "release_date", "Release Date"
     NO_DATE = "no_date", "No Date"
+
+
+class MetadataSourceDefaultChoices(models.TextChoices):
+    """Choices for library metadata defaults."""
+
+    TMDB = Sources.TMDB.value, Sources.TMDB.label
+    TVDB = Sources.TVDB.value, Sources.TVDB.label
+    MAL = Sources.MAL.value, Sources.MAL.label
+
+
+class AnimeLibraryModeChoices(models.TextChoices):
+    """Choices for where grouped anime should surface in the UI."""
+
+    ANIME = MediaTypes.ANIME.value, "Anime Library"
+    TV = MediaTypes.TV.value, "TV Library"
+    BOTH = "both", "Both Libraries"
 
 
 class User(AbstractUser):
@@ -547,6 +563,31 @@ class User(AbstractUser):
         default="UNSET",
         help_text="Region to show watch providers for",
     )
+    tv_metadata_source_default = models.CharField(
+        max_length=20,
+        default=MetadataSourceDefaultChoices.TMDB,
+        choices=[
+            (MetadataSourceDefaultChoices.TMDB, MetadataSourceDefaultChoices.TMDB.label),
+            (MetadataSourceDefaultChoices.TVDB, MetadataSourceDefaultChoices.TVDB.label),
+        ],
+        help_text="Default metadata provider for TV details and search tabs.",
+    )
+    anime_metadata_source_default = models.CharField(
+        max_length=20,
+        default=MetadataSourceDefaultChoices.MAL,
+        choices=[
+            (MetadataSourceDefaultChoices.MAL, MetadataSourceDefaultChoices.MAL.label),
+            (MetadataSourceDefaultChoices.TMDB, MetadataSourceDefaultChoices.TMDB.label),
+            (MetadataSourceDefaultChoices.TVDB, MetadataSourceDefaultChoices.TVDB.label),
+        ],
+        help_text="Default metadata provider for Anime details and search tabs.",
+    )
+    anime_library_mode = models.CharField(
+        max_length=20,
+        default=AnimeLibraryModeChoices.ANIME,
+        choices=AnimeLibraryModeChoices.choices,
+        help_text="Where grouped anime entries should surface in the UI.",
+    )
 
     # Calendar preferences
     calendar_layout = models.CharField(
@@ -868,6 +909,29 @@ class User(AbstractUser):
             models.CheckConstraint(
                 name="calendar_layout_valid",
                 condition=models.Q(calendar_layout__in=CalendarLayoutChoices.values),
+            ),
+            models.CheckConstraint(
+                name="tv_metadata_source_default_valid",
+                condition=models.Q(
+                    tv_metadata_source_default__in=[
+                        MetadataSourceDefaultChoices.TMDB,
+                        MetadataSourceDefaultChoices.TVDB,
+                    ],
+                ),
+            ),
+            models.CheckConstraint(
+                name="anime_metadata_source_default_valid",
+                condition=models.Q(
+                    anime_metadata_source_default__in=[
+                        MetadataSourceDefaultChoices.MAL,
+                        MetadataSourceDefaultChoices.TMDB,
+                        MetadataSourceDefaultChoices.TVDB,
+                    ],
+                ),
+            ),
+            models.CheckConstraint(
+                name="anime_library_mode_valid",
+                condition=models.Q(anime_library_mode__in=AnimeLibraryModeChoices.values),
             ),
             models.CheckConstraint(
                 name="lists_sort_valid",

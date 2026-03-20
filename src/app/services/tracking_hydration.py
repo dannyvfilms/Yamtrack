@@ -13,6 +13,11 @@ from app import credits, helpers
 from app import statistics as stats
 from app.models import Album, Artist, Item, MediaTypes, PodcastShow, Sources, Track
 from app.providers import pocketcasts, services
+from app.services.metadata_resolution import (
+    get_library_media_type,
+    get_tracking_media_type,
+    upsert_provider_links,
+)
 
 
 @dataclass(slots=True)
@@ -238,6 +243,8 @@ def ensure_item_metadata(
     season_number=None,
     *,
     episode_number=None,
+    identity_media_type: str | None = None,
+    library_media_type: str | None = None,
     fallback_title: str = "",
     fallback_image: str | None = None,
     fallback_release_date: str | None = None,
@@ -319,15 +326,25 @@ def ensure_item_metadata(
     if not isinstance(creators, list):
         creators = []
     runtime = _coerce_text(details.get("runtime"))
+    tracking_media_type = get_tracking_media_type(
+        media_type,
+        source=source,
+        identity_media_type=identity_media_type or metadata.get("identity_media_type"),
+    )
+    resolved_library_media_type = get_library_media_type(
+        media_type,
+        library_media_type=library_media_type or metadata.get("library_media_type"),
+    )
 
     item, created = Item.objects.get_or_create(
         media_id=media_id,
         source=source,
-        media_type=media_type,
+        media_type=tracking_media_type,
         season_number=season_number,
         episode_number=episode_number,
         defaults={
             **Item.title_fields_from_metadata(metadata, fallback_title=fallback_title),
+            "library_media_type": resolved_library_media_type,
             "image": metadata.get("image") or settings.IMG_NONE,
             "runtime_minutes": runtime_minutes,
             "number_of_pages": number_of_pages,
@@ -355,9 +372,12 @@ def ensure_item_metadata(
     if not created:
         item.metadata_fetched_at = timezone.now()
         update_fields.append("metadata_fetched_at")
-    if not item.title and title_fields["title"]:
+    if title_fields["title"] and item.title != title_fields["title"]:
         item.title = title_fields["title"]
         update_fields.append("title")
+    if item.library_media_type != resolved_library_media_type:
+        item.library_media_type = resolved_library_media_type
+        update_fields.append("library_media_type")
     if item.image == settings.IMG_NONE and metadata.get("image"):
         item.image = metadata["image"]
         update_fields.append("image")
@@ -412,16 +432,27 @@ def ensure_item_metadata(
     if not item.runtime and runtime:
         item.runtime = runtime
         update_fields.append("runtime")
-    if not item.original_title and title_fields["original_title"]:
+    if title_fields["original_title"] and item.original_title != title_fields["original_title"]:
         item.original_title = title_fields["original_title"]
         update_fields.append("original_title")
-    if not item.localized_title and title_fields["localized_title"]:
+    if title_fields["localized_title"] and item.localized_title != title_fields["localized_title"]:
         item.localized_title = title_fields["localized_title"]
         update_fields.append("localized_title")
     if update_fields:
         item.save(update_fields=list(dict.fromkeys(update_fields)))
 
-    if source == Sources.TMDB.value and media_type in (MediaTypes.MOVIE.value, MediaTypes.TV.value):
+    upsert_provider_links(
+        item,
+        metadata,
+        provider=source,
+        provider_media_type=tracking_media_type,
+        season_number=season_number,
+    )
+
+    if source == Sources.TMDB.value and tracking_media_type in (
+        MediaTypes.MOVIE.value,
+        MediaTypes.TV.value,
+    ):
         credits.sync_item_credits_from_metadata(item, metadata)
 
     artist = None

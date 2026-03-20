@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from app.models import (
@@ -12,6 +12,7 @@ from app.models import (
     MediaTypes,
     Sources,
 )
+from users.models import MetadataSourceDefaultChoices
 
 
 class MediaSearchViewTests(TestCase):
@@ -147,3 +148,28 @@ class MediaSearchViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "The Lucky Ones")
+
+    @override_settings(TVDB_API_KEY="test-tvdb-key")
+    @patch("app.providers.services.search")
+    def test_anime_search_defaults_to_user_metadata_provider(self, mock_search):
+        """Anime search should honor the user's configured default metadata source."""
+        self.user.anime_metadata_source_default = MetadataSourceDefaultChoices.TVDB
+        self.user.save(update_fields=["anime_metadata_source_default"])
+        mock_search.return_value = {
+            "page": 1,
+            "total_results": 0,
+            "total_pages": 0,
+            "results": [],
+        }
+
+        response = self.client.get(
+            reverse("search") + "?media_type=anime&q=chainsaw",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        mock_search.assert_called_once_with(
+            MediaTypes.ANIME.value,
+            "chainsaw",
+            1,
+            Sources.TVDB.value,
+        )

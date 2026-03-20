@@ -45,6 +45,16 @@ urlpatterns = [
         name="sync_metadata",
     ),
     path(
+        "details/provider/<source:source>/<media_type:media_type>/<path:media_id>",
+        views.update_metadata_provider_preference,
+        name="update_metadata_provider_preference",
+    ),
+    path(
+        "details/migrate/<source:source>/<media_type:media_type>/<path:media_id>",
+        views.migrate_grouped_anime,
+        name="migrate_grouped_anime",
+    ),
+    path(
         "track_modal/<source:source>/<media_type:media_type>/<path:media_id>/<int:season_number>",
         views.track_modal,
         name="track_modal",

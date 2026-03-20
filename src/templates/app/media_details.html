@@ -113,7 +113,8 @@
           <div x-show="trackOpen"
                @keydown.escape.window="trackOpen = false"
                class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div class="w-152 modal-max-height overflow-y-auto px-4 md:px-0 relative z-60"
+            <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
+                 style="width: min(96vw, 72rem);"
                  @click.outside="trackOpen = false"
                  @click.stop>
               <div id="podcast-show-track-modal"></div>
@@ -144,7 +145,8 @@
           <div x-show="trackOpen"
                @keydown.escape.window="trackOpen = false"
                class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div class="w-152 modal-max-height overflow-y-auto px-4 md:px-0 relative z-60"
+            <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
+                 style="width: min(96vw, 72rem);"
                  @click.outside="trackOpen = false"
                  @click.stop>
               {# stop click propagation to avoid resetting the modal because this one doesn't have click once #}
@@ -316,7 +318,8 @@
               <div x-show="trackOpen"
                    @keydown.escape.window="trackOpen = false"
                    class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                <div class="w-152 modal-max-height overflow-y-auto px-4 md:px-0 relative z-60"
+                <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
+                     style="width: min(96vw, 72rem);"
                      @click.outside="trackOpen = false">
                   <div id="{% component_id 'track' media notes_modal_id %}"></div>
                 </div>
@@ -333,7 +336,7 @@
         {# Source score - mobile: order-1 (row 1, col 1), desktop: order-1 #}
         {% if media.score_count is not None %}
           <div class="bg-[#2a2f35] p-3 rounded-lg" data-mobile-order="1" data-desktop-order="1">
-            <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">{{ media.source|upper }} SCORE</h3>
+            <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">{{ display_provider|upper }} SCORE</h3>
             <div class="flex items-center justify-center">
               {% include "app/icons/star.svg" with classes="w-5 h-5 mr-1.5 text-yellow-400 fill-yellow-400" %}
               {% if media.score is not None %}
@@ -506,7 +509,8 @@
               <div x-show="trackOpen"
                    @keydown.escape.window="trackOpen = false"
                    class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                <div class="w-152 modal-max-height overflow-y-auto px-4 md:px-0 relative z-60"
+                <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
+                     style="width: min(96vw, 72rem);"
                      @click.outside="trackOpen = false">
                   <div id="{% component_id 'track' media %}"></div>
                 </div>
@@ -587,7 +591,8 @@
                         <div x-show="trackOpen"
                              @keydown.escape.window="trackOpen = false"
                              class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                          <div class="w-152 modal-max-height overflow-y-auto px-4 md:px-0 relative z-60"
+                          <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
+                               style="width: min(96vw, 72rem);"
                                @click.outside="trackOpen = false">
                             <div id="{% component_id 'track' media user_media.id %}"></div>
                           </div>
@@ -690,6 +695,16 @@
             </div>
           </div>
         {% endif %}
+      {% endif %}
+
+      {% if migrated_grouped_item and not current_instance and media_type == MediaTypes.ANIME.value %}
+      <div class="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-4 mb-6">
+        <p class="text-sm text-emerald-200">
+          This legacy anime entry has already been migrated to grouped series tracking.
+          <a href="{% url 'media_details' source=migrated_grouped_item.source media_type=MediaTypes.ANIME.value media_id=migrated_grouped_item.media_id title=migrated_grouped_title|default:migrated_grouped_item.title|slug %}"
+             class="font-semibold hover:underline">Open grouped series</a>
+        </p>
+      </div>
       {% endif %}
 
       {# Actions #}
@@ -818,18 +833,32 @@
             </div>
           {% endif %}
           <div>
-            <h3 class="text-sm font-semibold text-gray-400">Source</h3>
+            <h3 class="text-sm font-semibold text-gray-400">
+              {% if display_provider != identity_provider %}
+                Tracking Source
+              {% else %}
+                Source
+              {% endif %}
+            </h3>
             <div class="flex flex-col gap-1">
-              <a href="{{ media.source_url }}"
+              <a href="{{ media.tracking_source_url|default:media.source_url }}"
                  class="text-gray-200 hover:text-indigo-500 transition-colors duration-200"
-                 target="_blank">{{ media.source|source_readable }}</a>
-              {% if media_type == MediaTypes.MOVIE.value and media.source == Sources.TMDB.value and media.media_id %}
+                 target="_blank">{{ identity_provider|source_readable }}</a>
+              {% if media_type == MediaTypes.MOVIE.value and identity_provider == Sources.TMDB.value and media.media_id %}
                 <a href="https://letterboxd.com/tmdb/{{ media.media_id }}"
                    class="text-gray-200 hover:text-indigo-500 transition-colors duration-200"
                    target="_blank">Letterboxd</a>
               {% endif %}
             </div>
           </div>
+          {% if display_provider != identity_provider and media.display_source_url %}
+            <div class="mt-4">
+              <h3 class="text-sm font-semibold text-gray-400">Metadata Source</h3>
+              <a href="{{ media.display_source_url }}"
+                 class="text-gray-200 hover:text-indigo-500 transition-colors duration-200 block"
+                 target="_blank">{{ display_provider|source_readable }}</a>
+            </div>
+          {% endif %}
           {% if media.external_links %}
             <div class="mt-4">
               <h3 class="text-sm font-semibold text-gray-400">EXTERNAL LINKS</h3>
@@ -944,6 +973,7 @@
           {% endif %}
         </div>
       {% endif %}
+
     </div>
 
     {# Related Media #}

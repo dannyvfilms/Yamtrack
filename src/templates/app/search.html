@@ -12,14 +12,21 @@
     <div class="flex items-center flex-wrap gap-x-4 gap-y-2">
       <span class="text-sm text-gray-400">Source:</span>
       <div class="flex gap-x-2">
-        {% with source_options=media_type|sources %}
+        {% if source_options %}
           {% for source_option in source_options %}
             <a href="{% url 'search' %}?q={{ request.GET.q|urlencode }}&media_type={{ media_type }}&source={{ source_option.value }}&layout={{ layout }}"
                class="px-3 py-1.5 text-sm rounded-md transition-colors duration-200 cursor-pointer flex items-center {% if source == source_option.value %}bg-indigo-600 text-white{% else %}bg-gray-700 text-gray-300 hover:bg-gray-600{% endif %}">
               {{ source_option.label }}
             </a>
           {% endfor %}
-        {% endwith %}
+        {% else %}
+          {% for source_option in media_type|sources %}
+            <a href="{% url 'search' %}?q={{ request.GET.q|urlencode }}&media_type={{ media_type }}&source={{ source_option.value }}&layout={{ layout }}"
+               class="px-3 py-1.5 text-sm rounded-md transition-colors duration-200 cursor-pointer flex items-center {% if source == source_option.value %}bg-indigo-600 text-white{% else %}bg-gray-700 text-gray-300 hover:bg-gray-600{% endif %}">
+              {{ source_option.label }}
+            </a>
+          {% endfor %}
+        {% endif %}
         <div class="flex rounded-md overflow-hidden border border-gray-700">
           <a href="?q={{ request.GET.q|urlencode }}&media_type={{ media_type }}{% if source %}&source={{ source }}{% endif %}&layout=grid"
              {% if layout == 'grid' %} class="p-2 cursor-pointer bg-indigo-600 text-white flex items-center" {% else %} class="p-2 cursor-pointer bg-[#39404b] hover:bg-[#454d5a] flex items-center" {% endif %}
@@ -157,7 +164,8 @@
                   <div x-show="trackOpen"
                        @keydown.escape.window="trackOpen = false"
                        class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                    <div class="w-152 modal-max-height overflow-y-auto px-4 md:px-0 relative z-60"
+                    <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
+                         style="width: min(96vw, 72rem);"
                          @click.outside="trackOpen = false">
                       <div id="album-track-modal-{{ tracker.album.id }}"></div>
                     </div>

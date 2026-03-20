@@ -21,6 +21,7 @@ from django_celery_beat.models import PeriodicTask
 from app import history_cache, statistics_cache
 from app.models import Item, MediaTypes, Status
 from app.providers import tmdb
+from app.services import metadata_resolution
 from app.templatetags import app_tags
 from integrations import exports
 from integrations import plex
@@ -36,8 +37,10 @@ from users.forms import (
 )
 from users.models import (
     ActivityHistoryViewChoices,
+    AnimeLibraryModeChoices,
     DateFormatChoices,
     GameLoggingStyleChoices,
+    MetadataSourceDefaultChoices,
     MediaCardSubtitleDisplayChoices,
     MobileGridLayoutChoices,
     PlannedHomeDisplayChoices,
@@ -489,7 +492,26 @@ def preferences(request):
     library_labels = {"all": "All Libraries"}
     for library in active_libraries:
         library_labels[library] = app_tags.media_type_readable_plural(library)
-    watch_provider_regions = tmdb.watch_provider_regions()
+    try:
+        watch_provider_regions = tmdb.watch_provider_regions()
+    except Exception as exc:  # pragma: no cover - defensive provider fallback
+        logger.warning("Could not load TMDB watch provider regions: %s", exc)
+        watch_provider_regions = [("UNSET", "Not set")]
+    tv_metadata_source_choices = [
+        (choice.value, choice.label)
+        for choice in metadata_resolution.available_metadata_sources(
+            MediaTypes.TV.value,
+        )
+    ]
+    anime_metadata_source_choices = [
+        (choice.value, choice.label)
+        for choice in metadata_resolution.available_metadata_sources(
+            MediaTypes.ANIME.value,
+        )
+    ]
+    tvdb_enabled = metadata_resolution.provider_is_enabled(
+        MetadataSourceDefaultChoices.TVDB,
+    )
 
     if request.method == "POST":
         # Prevent demo users from updating preferences
@@ -508,6 +530,9 @@ def preferences(request):
         title_display_preference = request.POST.get("title_display_preference")
         top_talent_sort_by = request.POST.get("top_talent_sort_by")
         rating_scale = request.POST.get("rating_scale")
+        tv_metadata_source_default = request.POST.get("tv_metadata_source_default")
+        anime_metadata_source_default = request.POST.get("anime_metadata_source_default")
+        anime_library_mode = request.POST.get("anime_library_mode")
         progress_bar_raw = request.POST.get("progress_bar")
         hide_completed_recommendations_raw = request.POST.get("hide_completed_recommendations")
         hide_zero_rating_raw = request.POST.get("hide_zero_rating")
@@ -653,6 +678,25 @@ def preferences(request):
                 request.user.watch_provider_region = "UNSET"
                 fields_to_update.append("watch_provider_region")
 
+        if tv_metadata_source_default in {
+            choice[0] for choice in tv_metadata_source_choices
+        }:
+            if request.user.tv_metadata_source_default != tv_metadata_source_default:
+                request.user.tv_metadata_source_default = tv_metadata_source_default
+                fields_to_update.append("tv_metadata_source_default")
+
+        if anime_metadata_source_default in {
+            choice[0] for choice in anime_metadata_source_choices
+        }:
+            if request.user.anime_metadata_source_default != anime_metadata_source_default:
+                request.user.anime_metadata_source_default = anime_metadata_source_default
+                fields_to_update.append("anime_metadata_source_default")
+
+        if anime_library_mode in [choice[0] for choice in AnimeLibraryModeChoices.choices]:
+            if request.user.anime_library_mode != anime_library_mode:
+                request.user.anime_library_mode = anime_library_mode
+                fields_to_update.append("anime_library_mode")
+
         if fields_to_update:
             request.user.save(update_fields=fields_to_update)
             request.user.refresh_from_db()
@@ -683,6 +727,10 @@ def preferences(request):
         "auto_pause_rules_json": json.dumps(request.user.auto_pause_rules or []),
         "library_labels_json": json.dumps(library_labels),
         "watch_provider_choices": watch_provider_regions,
+        "tv_metadata_source_choices": tv_metadata_source_choices,
+        "anime_metadata_source_choices": anime_metadata_source_choices,
+        "anime_library_mode_choices": AnimeLibraryModeChoices.choices,
+        "tvdb_enabled": tvdb_enabled,
     }
 
     return render(request, "users/preferences.html", context)

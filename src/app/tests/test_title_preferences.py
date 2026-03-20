@@ -52,6 +52,19 @@ class ItemTitlePreferenceTests(TestCase):
         self.assertEqual(display, "Localized")
         self.assertIsNone(alternative)
 
+    def test_title_fields_from_metadata_normalizes_structured_payloads(self):
+        title_fields = Item.title_fields_from_metadata(
+            {
+                "title": {"language": "jpn", "name": "Sodo Ato Onrain"},
+                "original_title": "{'language': 'jpn', 'name': 'Sodo Ato Onrain'}",
+                "localized_title": None,
+            },
+        )
+
+        self.assertEqual(title_fields["title"], "Sodo Ato Onrain")
+        self.assertEqual(title_fields["original_title"], "Sodo Ato Onrain")
+        self.assertEqual(title_fields["localized_title"], "Sodo Ato Onrain")
+
     def test_get_display_and_alternative_title_uses_user_preference(self):
         user = get_user_model().objects.create_user(
             username="pref-user",
@@ -88,3 +101,21 @@ class TitleTemplateFilterTests(TestCase):
 
     def test_alternative_title_filter(self):
         self.assertEqual(app_tags.alternative_title(self.item, self.user), "Localized")
+
+    def test_display_title_filter_normalizes_structured_provider_payloads(self):
+        payload = {
+            "title": {"language": "jpn", "name": "Sōdo Āto Onrain"},
+            "original_title": {"language": "jpn", "name": "Sōdo Āto Onrain"},
+            "localized_title": {"language": "jpn", "name": "Sōdo Āto Onrain"},
+        }
+
+        self.assertEqual(app_tags.display_title(payload, self.user), "Sōdo Āto Onrain")
+
+    def test_display_title_filter_normalizes_stringified_payloads(self):
+        payload = {
+            "title": "{'language': 'jpn', 'name': 'Sōdo Āto Onrain'}",
+            "original_title": "{'language': 'jpn', 'name': 'Sōdo Āto Onrain'}",
+            "localized_title": "{'language': 'jpn', 'name': 'Sōdo Āto Onrain'}",
+        }
+
+        self.assertEqual(app_tags.display_title(payload, self.user), "Sōdo Āto Onrain")

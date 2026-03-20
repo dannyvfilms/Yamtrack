@@ -10,7 +10,8 @@ from django.utils.html import format_html
 from unidecode import unidecode
 
 from app import config
-from app.models import MediaTypes, Sources, Status
+from app.models import Item, MediaTypes, Sources, Status
+from app.services import metadata_resolution
 from users.models import TimeFormatChoices
 from users.templatetags.user_tags import user_date_format, user_time_format
 
@@ -267,10 +268,7 @@ def safe_attr(obj, attr):
 
 
 def _normalize_title_value(value):
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
+    return Item._normalize_title_value(value)
 
 
 def _resolve_title_pair(item, preference):
@@ -371,7 +369,7 @@ def release_year(item, media=None):
 @register.filter
 def sources(media_type):
     """Template filter to get source options for a media type."""
-    return config.get_sources(media_type)
+    return metadata_resolution.available_metadata_sources(media_type)
 
 
 @register.simple_tag
@@ -508,7 +506,11 @@ def media_url(media):
         return ""
 
     # Get attributes using either dict access or object attribute
-    media_type = media["media_type"] if is_dict else media.media_type
+    media_type = (
+        media.get("route_media_type") or media["media_type"]
+        if is_dict
+        else getattr(media, "route_media_type", None) or media.media_type
+    )
     source = media["source"] if is_dict else media.source
     media_id = media["media_id"] if is_dict else media.media_id
     title = media["title"] if is_dict else media.title
@@ -550,7 +552,11 @@ def media_view_url(view_name, media):
     # Build kwargs using either dict access or object attribute
     kwargs = {
         "source": media["source"] if is_dict else media.source,
-        "media_type": media["media_type"] if is_dict else media.media_type,
+        "media_type": (
+            media.get("route_media_type") or media["media_type"]
+            if is_dict
+            else getattr(media, "route_media_type", None) or media.media_type
+        ),
         "media_id": str(media["media_id"] if is_dict else media.media_id),
     }
 
@@ -585,7 +591,11 @@ def component_id(component_type, media, instance_id=None):
         return ""
 
     # Get base attributes using either dict access or object attribute
-    media_type = media["media_type"] if is_dict else media.media_type
+    media_type = (
+        media.get("route_media_type") or media["media_type"]
+        if is_dict
+        else getattr(media, "route_media_type", None) or media.media_type
+    )
     media_id = media["media_id"] if is_dict else media.media_id
 
     component_id = f"{component_type}-{media_type}-{media_id}"

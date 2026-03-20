@@ -11,8 +11,9 @@ from redis import ConnectionPool
 from requests.adapters import HTTPAdapter
 from requests_ratelimiter import LimiterAdapter, LimiterSession
 
+from app import config
 from app.log_safety import exception_summary, mapping_keys
-from app.models import MediaTypes, Sources
+from app.models import Item, MediaTypes, Sources
 from app.providers import (
     bgg,
     comicvine,
@@ -24,6 +25,7 @@ from app.providers import (
     musicbrainz,
     openlibrary,
     pocketcasts,
+    tvdb,
     tmdb,
 )
 
@@ -113,7 +115,7 @@ session.mount(
     LimiterAdapter(per_second=3),
 )
 session.mount(
-    "https://api.tvmaze.com",
+    "https://api4.thetvdb.com",
     LimiterAdapter(per_second=2),
 )
 session.mount(
@@ -294,19 +296,7 @@ def _ensure_title_fields(metadata):
     if not isinstance(metadata, dict):
         return metadata
 
-    metadata.setdefault("original_title", None)
-    metadata.setdefault("localized_title", None)
-
-    if not metadata.get("title"):
-        metadata["title"] = (
-            metadata.get("localized_title")
-            or metadata.get("original_title")
-            or ""
-        )
-
-    if not metadata.get("localized_title") and metadata.get("title"):
-        metadata["localized_title"] = metadata["title"]
-
+    metadata.update(Item.title_fields_from_metadata(metadata))
     return metadata
 
 
@@ -350,20 +340,74 @@ def get_media_metadata(
             )
         return seasons[season_key]
 
+    def tvdb_series_metadata(routed_media_type=MediaTypes.TV.value):
+        """Return TVDB series metadata for TV or grouped anime routes."""
+        return tvdb.tv(media_id, routed_media_type=routed_media_type)
+
+    def tvdb_series_with_seasons(routed_media_type=MediaTypes.TV.value):
+        """Return TVDB season bundle for TV or grouped anime routes."""
+        return tvdb.tv_with_seasons(
+            media_id,
+            season_numbers,
+            routed_media_type=routed_media_type,
+        )
+
+    def tvdb_season_metadata(routed_media_type=MediaTypes.TV.value):
+        """Return TVDB season metadata or raise a not-found error."""
+        seasons = tvdb_series_with_seasons(routed_media_type)
+        season_key = f"season/{season_numbers[0]}"
+        if season_key not in seasons:
+            raise_not_found_error(
+                Sources.TVDB.value,
+                media_id,
+                media_type=f"season {season_numbers[0]}",
+            )
+        return seasons[season_key]
+
     metadata_retrievers = {
-        MediaTypes.ANIME.value: lambda: mal.anime(media_id),
+        MediaTypes.ANIME.value: lambda: (
+            mal.anime(media_id)
+            if source == Sources.MAL.value
+            else tmdb.tv(media_id) | {
+                "media_type": MediaTypes.ANIME.value,
+                "identity_media_type": MediaTypes.TV.value,
+                "library_media_type": MediaTypes.ANIME.value,
+            }
+            if source == Sources.TMDB.value
+            else tvdb_series_metadata(MediaTypes.ANIME.value)
+        ),
         MediaTypes.MANGA.value: lambda: (
             mangaupdates.manga(media_id)
             if source == Sources.MANGAUPDATES.value
             else mal.manga(media_id)
         ),
-        MediaTypes.TV.value: lambda: tmdb.tv(media_id),
-        "tv_with_seasons": lambda: tmdb.tv_with_seasons(media_id, season_numbers),
-        MediaTypes.SEASON.value: tmdb_season_metadata,
-        MediaTypes.EPISODE.value: lambda: tmdb.episode(
-            media_id,
-            season_numbers[0],
-            episode_number,
+        MediaTypes.TV.value: lambda: (
+            tmdb.tv(media_id)
+            if source == Sources.TMDB.value
+            else tvdb_series_metadata(MediaTypes.TV.value)
+        ),
+        "tv_with_seasons": lambda: (
+            tmdb.tv_with_seasons(media_id, season_numbers)
+            if source == Sources.TMDB.value
+            else tvdb_series_with_seasons(MediaTypes.TV.value)
+        ),
+        MediaTypes.SEASON.value: (
+            tmdb_season_metadata
+            if source == Sources.TMDB.value
+            else tvdb_season_metadata
+        ),
+        MediaTypes.EPISODE.value: lambda: (
+            tmdb.episode(
+                media_id,
+                season_numbers[0],
+                episode_number,
+            )
+            if source == Sources.TMDB.value
+            else tvdb.episode(
+                media_id,
+                season_numbers[0],
+                episode_number,
+            )
         ),
         MediaTypes.MOVIE.value: lambda: tmdb.movie(media_id),
         MediaTypes.GAME.value: lambda: igdb.game(media_id),
@@ -431,6 +475,37 @@ _UUID_RE = re.compile(
 )
 _GRAPHQL_INT_MAX = 2_147_483_647
 _ISBN_CLEAN_RE = re.compile(r"[^0-9Xx]+")
+
+
+def _normalize_source_value(source):
+    """Return a string provider value from enums or raw strings."""
+    if isinstance(source, Sources):
+        return source.value
+    return str(source) if source is not None else None
+
+
+def _resolve_search_source(media_type, source=None):
+    """Return the effective search provider for a media type."""
+    resolved = _normalize_source_value(source)
+    if resolved:
+        if resolved == Sources.TVDB.value and not tvdb.enabled():
+            resolved = None
+        else:
+            return resolved
+
+    default_source = config.get_default_source_name(media_type)
+    default_value = _normalize_source_value(default_source)
+    if default_value != Sources.TVDB.value or tvdb.enabled():
+        return default_value
+
+    for candidate in config.get_sources(media_type) or []:
+        candidate_value = _normalize_source_value(candidate)
+        if candidate_value == Sources.TVDB.value and not tvdb.enabled():
+            continue
+        if candidate_value:
+            return candidate_value
+
+    return default_value
 
 
 def _metadata_to_search_result(metadata):
@@ -632,9 +707,17 @@ def _lookup_by_numeric_id(media_type, query, source):  # noqa: PLR0911
     if media_type == MediaTypes.MOVIE.value:
         return tmdb.movie(n)
     if media_type in tv_types:
-        return tmdb.tv(n)
+        return tmdb.tv(n) if source == Sources.TMDB.value else tvdb.tv(n)
     if media_type == MediaTypes.ANIME.value:
-        return mal.anime(n)
+        if source == Sources.MAL.value:
+            return mal.anime(n)
+        if source == Sources.TMDB.value:
+            return tmdb.tv(n) | {
+                "media_type": MediaTypes.ANIME.value,
+                "identity_media_type": MediaTypes.TV.value,
+                "library_media_type": MediaTypes.ANIME.value,
+            }
+        return tvdb.tv(n, routed_media_type=MediaTypes.ANIME.value)
     if media_type == MediaTypes.MANGA.value:
         if source == Sources.MANGAUPDATES.value:
             return mangaupdates.manga(query)
@@ -660,6 +743,7 @@ def search_by_id(media_type, query, source=None):
     from app import helpers  # noqa: PLC0415
 
     query = query.strip()
+    source = _resolve_search_source(media_type, source)
     metadata = None
 
     try:
@@ -690,6 +774,8 @@ def search_by_id(media_type, query, source=None):
 
 def search(media_type, query, page, source=None):
     """Search for media based on the query and return the results."""
+    source = _resolve_search_source(media_type, source)
+
     # Attempt direct ID lookup on page 1 only
     if page == 1:
         id_result = search_by_id(media_type, query, source)
@@ -710,11 +796,32 @@ def search(media_type, query, page, source=None):
             if source == Sources.MANGAUPDATES.value
             else mal.search(media_type, query, page)
         ),
-        MediaTypes.ANIME.value: lambda: mal.search(media_type, query, page),
-        MediaTypes.TV.value: lambda: tmdb.search(media_type, query, page),
+        MediaTypes.ANIME.value: lambda: (
+            mal.search(media_type, query, page)
+            if source == Sources.MAL.value
+            else _annotate_grouped_anime_results(
+                tmdb.search(MediaTypes.TV.value, query, page),
+                source=Sources.TMDB.value,
+            )
+            if source == Sources.TMDB.value
+            else tvdb.search(media_type, query, page)
+        ),
+        MediaTypes.TV.value: lambda: (
+            tmdb.search(media_type, query, page)
+            if source == Sources.TMDB.value
+            else tvdb.search(media_type, query, page)
+        ),
         MediaTypes.MOVIE.value: lambda: tmdb.search(media_type, query, page),
-        MediaTypes.SEASON.value: lambda: tmdb.search(MediaTypes.TV.value, query, page),
-        MediaTypes.EPISODE.value: lambda: tmdb.search(MediaTypes.TV.value, query, page),
+        MediaTypes.SEASON.value: lambda: (
+            tmdb.search(MediaTypes.TV.value, query, page)
+            if source == Sources.TMDB.value
+            else tvdb.search(MediaTypes.TV.value, query, page)
+        ),
+        MediaTypes.EPISODE.value: lambda: (
+            tmdb.search(MediaTypes.TV.value, query, page)
+            if source == Sources.TMDB.value
+            else tvdb.search(MediaTypes.TV.value, query, page)
+        ),
         MediaTypes.GAME.value: lambda: igdb.search(query, page),
         MediaTypes.BOOK.value: lambda: (
             openlibrary.search(query, page)
@@ -737,4 +844,19 @@ def search(media_type, query, page, source=None):
         from app import helpers
 
         return helpers.format_search_response(page, settings.PER_PAGE, 0, [])
+    return response
+
+
+def _annotate_grouped_anime_results(response, *, source):
+    """Normalize grouped-provider anime search results to anime library metadata."""
+    response = dict(response or {})
+    results = []
+    for row in response.get("results", []):
+        normalized = dict(row)
+        normalized["media_type"] = MediaTypes.ANIME.value
+        normalized["identity_media_type"] = MediaTypes.TV.value
+        normalized["library_media_type"] = MediaTypes.ANIME.value
+        normalized["source"] = source
+        results.append(normalized)
+    response["results"] = results
     return response

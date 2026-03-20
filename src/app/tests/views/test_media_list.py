@@ -1307,3 +1307,43 @@ class MediaListViewTests(TestCase):
             resolved_keys,
             ["image", "title", "score", "start_date", "end_date", "status", "runtime", "release_date", "date_added"],
         )
+
+    def test_grouped_anime_library_mode_routes_grouped_titles(self):
+        """Grouped anime TV rows should follow the user's anime library mode."""
+        grouped_item = Item.objects.create(
+            media_id="9350138",
+            source=Sources.TVDB.value,
+            media_type=MediaTypes.TV.value,
+            library_media_type=MediaTypes.ANIME.value,
+            title="Frieren: Beyond Journey's End",
+            image="https://example.com/grouped-anime.jpg",
+        )
+        TV.objects.create(
+            item=grouped_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+
+        self.user.anime_library_mode = MediaTypes.ANIME.value
+        self.user.save(update_fields=["anime_library_mode"])
+
+        anime_response = self.client.get(reverse("medialist", args=[MediaTypes.ANIME.value]))
+        tv_response = self.client.get(reverse("medialist", args=[MediaTypes.TV.value]))
+
+        anime_titles = [media.item.title for media in anime_response.context["media_list"].object_list]
+        tv_titles = [media.item.title for media in tv_response.context["media_list"].object_list]
+
+        self.assertIn("Frieren: Beyond Journey's End", anime_titles)
+        self.assertNotIn("Frieren: Beyond Journey's End", tv_titles)
+
+        self.user.anime_library_mode = MediaTypes.TV.value
+        self.user.save(update_fields=["anime_library_mode"])
+
+        anime_response = self.client.get(reverse("medialist", args=[MediaTypes.ANIME.value]))
+        tv_response = self.client.get(reverse("medialist", args=[MediaTypes.TV.value]))
+
+        anime_titles = [media.item.title for media in anime_response.context["media_list"].object_list]
+        tv_titles = [media.item.title for media in tv_response.context["media_list"].object_list]
+
+        self.assertNotIn("Frieren: Beyond Journey's End", anime_titles)
+        self.assertIn("Frieren: Beyond Journey's End", tv_titles)

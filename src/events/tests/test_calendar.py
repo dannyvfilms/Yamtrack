@@ -28,7 +28,7 @@ from events.calendar import (
     fetch_releases,
     get_anime_schedule_bulk,
     get_items_to_process,
-    get_tvmaze_episode_map,
+    get_tvdb_episode_map,
     process_anime_bulk,
     process_comic,
     process_other,
@@ -346,60 +346,59 @@ class ReloadCalendarTaskTests(TestCase):
 
         self.assertNotIn(self.tv_item, items)
 
-    @patch("events.calendar.tmdb.tv")
-    @patch("events.calendar.tmdb.tv_with_seasons")
-    @patch("events.calendar.get_tvmaze_episode_map")
+    @patch("events.calendar.services.get_media_metadata")
+    @patch("events.calendar.get_tvdb_episode_map")
     def test_process_tv_season(
         self,
-        mock_get_tvmaze_episode_map,
-        mock_tv_with_seasons,
-        mock_tv,
+        mock_get_tvdb_episode_map,
+        mock_get_media_metadata,
     ):
         """Test processing for a TV season."""
         # Setup mocks
-        mock_tv.return_value = {
-            "related": {
-                "seasons": [
-                    {"season_number": 1, "episodes": [1, 2, 3]},
-                    {"season_number": 2, "episodes": [1, 2]},
-                    {"season_number": 3, "episodes": [1]},
-                ],
+        mock_get_media_metadata.side_effect = [
+            {
+                "related": {
+                    "seasons": [
+                        {"season_number": 1, "episodes": [1, 2, 3]},
+                        {"season_number": 2, "episodes": [1, 2]},
+                        {"season_number": 3, "episodes": [1]},
+                    ],
+                },
+                "next_episode_season": 2,
             },
-            "next_episode_season": 2,
-        }
+            {
+                "season/1": {
+                    "image": "http://example.com/season1.jpg",
+                    "season_number": 1,
+                    "episodes": [
+                        {"episode_number": 1, "air_date": "2008-01-20"},
+                        {"episode_number": 2, "air_date": "2008-01-27"},
+                        {"episode_number": 3, "air_date": "2008-02-03"},
+                    ],
+                    "tvdb_id": "81189",
+                },
+                "season/2": {
+                    "image": "http://example.com/season2.jpg",
+                    "season_number": 2,
+                    "episodes": [
+                        {"episode_number": 1, "air_date": "2009-01-20"},
+                        {"episode_number": 2, "air_date": "2009-01-27"},
+                    ],
+                    "tvdb_id": "81189",
+                },
+                "season/3": {
+                    "image": "http://example.com/season3.jpg",
+                    "season_number": 3,
+                    "episodes": [
+                        {"episode_number": 1, "air_date": "2010-01-20"},
+                    ],
+                    "tvdb_id": "81189",
+                },
+            },
+        ]
 
-        mock_tv_with_seasons.return_value = {
-            "season/1": {
-                "image": "http://example.com/season1.jpg",
-                "season_number": 1,
-                "episodes": [
-                    {"episode_number": 1, "air_date": "2008-01-20"},
-                    {"episode_number": 2, "air_date": "2008-01-27"},
-                    {"episode_number": 3, "air_date": "2008-02-03"},
-                ],
-                "tvdb_id": "81189",
-            },
-            "season/2": {
-                "image": "http://example.com/season2.jpg",
-                "season_number": 2,
-                "episodes": [
-                    {"episode_number": 1, "air_date": "2009-01-20"},
-                    {"episode_number": 2, "air_date": "2009-01-27"},
-                ],
-                "tvdb_id": "81189",
-            },
-            "season/3": {
-                "image": "http://example.com/season3.jpg",
-                "season_number": 3,
-                "episodes": [
-                    {"episode_number": 1, "air_date": "2010-01-20"},
-                ],
-                "tvdb_id": "81189",
-            },
-        }
-
-        # TVMaze data with more precise timestamps
-        mock_get_tvmaze_episode_map.return_value = {
+        # TVDB data with more precise timestamps
+        mock_get_tvdb_episode_map.return_value = {
             "1_1": "2008-01-20T22:00:00+00:00",
             "1_2": "2008-01-27T22:00:00+00:00",
             "1_3": "2008-02-03T22:00:00+00:00",
@@ -416,7 +415,7 @@ class ReloadCalendarTaskTests(TestCase):
         self.assertEqual(events_bulk[0].item, self.season_item)
         self.assertEqual(events_bulk[0].content_number, 1)
 
-        # Verify TVMaze data was used (more precise timestamp)
+        # Verify TVDB data was used (more precise timestamp)
         expected_date = datetime.datetime.fromisoformat("2008-01-20T22:00:00+00:00")
         self.assertEqual(events_bulk[0].datetime, expected_date)
 
@@ -664,39 +663,19 @@ class ReloadCalendarTaskTests(TestCase):
         self.assertEqual(len(result["437"]), 1)  # Only episode 1
         self.assertEqual(result["437"][0]["episode"], 1)
 
-    @patch("events.calendar.services.api_request")
-    def test_get_tvmaze_episode_map(self, mock_api_request):
-        """Test get_tvmaze_episode_map function."""
+    @patch("events.calendar.tvdb.get_episode_airstamp_map")
+    def test_get_tvdb_episode_map(self, mock_get_episode_airstamp_map):
+        """Test get_tvdb_episode_map function."""
         # Clear cache first
         cache.clear()
 
-        # Setup mocks for the two API calls
-        mock_api_request.side_effect = [
-            # First call - lookup show
-            {"id": 12345},
-            # Second call - get episodes
-            {
-                "_embedded": {
-                    "episodes": [
-                        {
-                            "season": 1,
-                            "number": 1,
-                            "airstamp": "2008-01-20T22:00:00+00:00",
-                            "airtime": "22:00",
-                        },
-                        {
-                            "season": 1,
-                            "number": 2,
-                            "airstamp": "2008-01-27T22:00:00+00:00",
-                            "airtime": "22:00",
-                        },
-                    ],
-                },
-            },
-        ]
+        mock_get_episode_airstamp_map.return_value = {
+            "1_1": "2008-01-20T22:00:00+00:00",
+            "1_2": "2008-01-27T22:00:00+00:00",
+        }
 
         # Call the function
-        result = get_tvmaze_episode_map("81189")
+        result = get_tvdb_episode_map("81189")
 
         # Verify result
         self.assertEqual(len(result), 2)
@@ -706,31 +685,29 @@ class ReloadCalendarTaskTests(TestCase):
         self.assertEqual(result["1_2"], "2008-01-27T22:00:00+00:00")
 
         # Verify cache was set
-        cached_result = cache.get("tvmaze_map_81189")
+        cached_result = cache.get("tvdb_map_81189")
         self.assertEqual(cached_result, result)
 
         # Reset mock and call again - should use cache
-        mock_api_request.reset_mock()
-        cached_result = get_tvmaze_episode_map("81189")
-        mock_api_request.assert_not_called()  # Should not call API again
+        mock_get_episode_airstamp_map.reset_mock()
+        cached_result = get_tvdb_episode_map("81189")
+        mock_get_episode_airstamp_map.assert_not_called()  # Should not call API again
 
-    @patch("events.calendar.services.api_request")
-    def test_get_tvmaze_episode_map_lookup_failure(self, mock_api_request):
-        """Test get_tvmaze_episode_map when lookup fails."""
+    @patch("events.calendar.tvdb.get_episode_airstamp_map")
+    def test_get_tvdb_episode_map_lookup_failure(self, mock_get_episode_airstamp_map):
+        """Test get_tvdb_episode_map when lookup fails."""
         # Clear cache first
         cache.clear()
 
-        # Setup mock to return empty response for lookup
-        mock_api_request.return_value = None
+        mock_get_episode_airstamp_map.side_effect = RuntimeError("boom")
 
         # Call the function
-        result = get_tvmaze_episode_map("invalid_id")
+        result = get_tvdb_episode_map("invalid_id")
 
         # Verify result is empty
         self.assertEqual(result, {})
 
-        # Should only have called the API once (for lookup)
-        mock_api_request.assert_called_once()
+        mock_get_episode_airstamp_map.assert_called_once_with("invalid_id")
 
     def test_anilist_date_parser(self):
         """Test anilist_date_parser function."""

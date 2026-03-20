@@ -1,0 +1,177 @@
+{% load app_tags user_tags %}
+
+<div class="space-y-6">
+  {% if can_update_metadata_provider and metadata_provider_options and metadata_item %}
+    <section class="space-y-3">
+      <div>
+        <h3 class="text-xl font-semibold text-white">Metadata Provider</h3>
+        <p class="text-sm text-gray-400 mt-1">
+          Display metadata can differ from tracking. Watch history stays on {{ identity_provider|upper }} until you explicitly migrate a title.
+        </p>
+      </div>
+
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <p class="text-sm text-gray-200">
+            Display metadata is currently coming from <span class="font-semibold">{{ display_provider|upper }}</span>.
+          </p>
+          <p class="text-xs text-gray-400 mt-1">
+            Tracking source stays on {{ identity_provider|upper }}.
+          </p>
+        </div>
+        {% if metadata_provider_mapping_status == "missing" %}
+          <span class="shrink-0 text-[11px] px-2 py-1 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">Mapping needed</span>
+        {% elif metadata_provider_mapping_status == "mapped" %}
+          <span class="shrink-0 text-[11px] px-2 py-1 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">Mapped</span>
+        {% endif %}
+      </div>
+
+      <form method="post"
+            action="{% url 'update_metadata_provider_preference' source=identity_provider media_type=media_type media_id=metadata_item.media_id %}"
+            class="space-y-3">
+        {% csrf_token %}
+        <input type="hidden" name="return_url" value="{{ return_url }}">
+        <div class="flex flex-col md:flex-row md:items-start gap-3">
+          <div class="relative flex-1"
+               x-data="{
+                 open: false,
+                 selectedValue: '{{ display_provider }}',
+                 selectedLabel: '',
+                 options: [{% for source_option in metadata_provider_options %}{ value: '{{ source_option.value }}', label: '{{ source_option.label|escapejs }}' }{% if not forloop.last %},{% endif %}{% endfor %}],
+                 init() {
+                   const match = this.options.find(o => o.value === this.selectedValue);
+                   this.selectedLabel = match ? match.label : this.options[0]?.label ?? '';
+                 }
+               }"
+               x-init="init()">
+            <button type="button"
+                    @click="open = !open"
+                    @click.outside="open = false"
+                    class="flex items-center justify-between w-full px-3 py-2.5 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
+              <span x-text="selectedLabel"></span>
+              {% include "app/icons/chevron-down.svg" with classes="w-4 h-4 text-gray-400" %}
+            </button>
+            <div x-show="open"
+                 x-transition:enter="transition ease-out duration-100"
+                 x-transition:enter-start="transform opacity-0 scale-95"
+                 x-transition:enter-end="transform opacity-100 scale-100"
+                 x-transition:leave="transition ease-in duration-75"
+                 x-transition:leave-start="transform opacity-100 scale-100"
+                 x-transition:leave-end="transform opacity-0 scale-95"
+                 class="absolute left-0 right-0 mt-2 py-1 bg-[#272c31] rounded-md shadow-lg overflow-y-auto max-h-60 z-10 border border-gray-600">
+              <template x-for="option in options" :key="option.value">
+                <button type="button"
+                        @click="selectedValue = option.value; selectedLabel = option.label; open = false"
+                        class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white"
+                        :class="{ 'text-white bg-[#39404b]': selectedValue === option.value }">
+                  <span x-text="option.label"></span>
+                </button>
+              </template>
+            </div>
+            <input type="hidden" name="provider" x-bind:value="selectedValue">
+          </div>
+
+          <button type="submit"
+                  class="shrink-0 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors text-sm cursor-pointer">
+            Save Provider
+          </button>
+        </div>
+      </form>
+    </section>
+  {% endif %}
+
+  {% if can_migrate_grouped_anime and grouped_preview and metadata_item %}
+    <section class="space-y-3">
+      <div>
+        <h3 class="text-xl font-semibold text-white">Convert to Grouped Series</h3>
+        <p class="text-sm text-gray-400 mt-1">
+          See how this {{ identity_provider|upper }} entry will map into a single show with seasons before you convert it.
+        </p>
+      </div>
+
+      <div class="bg-[#252a30] border border-[#2c3136] rounded-xl p-4 space-y-4">
+        <div>
+          <p class="text-sm text-gray-200">
+            {{ display_provider|upper }} organizes this anime as
+            <span class="font-semibold">{{ grouped_preview|display_title:user }}</span>,
+            with seasons grouped under one main show.
+          </p>
+          {% if grouped_preview_target %}
+            <p class="text-sm text-gray-300 mt-2">
+              This {{ identity_provider|upper }} entry would convert to
+              <span class="font-semibold">{{ grouped_preview_target.season_title|default:"Unknown season" }}</span>
+              {% if grouped_preview_target.episode_start and grouped_preview_target.episode_end %}
+                , episodes {{ grouped_preview_target.episode_start }}-{{ grouped_preview_target.episode_end }}
+              {% elif grouped_preview_target.episode_start %}
+                starting at episode {{ grouped_preview_target.episode_start }}
+              {% endif %}
+              .
+            </p>
+          {% endif %}
+          <p class="text-xs text-gray-400 mt-1">
+            Nothing changes until you click Convert to Grouped Series. Your existing {{ identity_provider|upper }} entry stays in place until then.
+          </p>
+        </div>
+
+        {% with preview_seasons=grouped_preview.related.seasons %}
+          {% if preview_seasons %}
+            <div class="grid gap-2">
+              {% for season in preview_seasons %}
+                <div class="flex items-center justify-between gap-3 rounded-md bg-[#272c31] px-3 py-3 {% if season.is_mapped_target %}ring-1 ring-indigo-400/60{% endif %}">
+                  <div>
+                    <div class="flex items-center gap-2">
+                      <p class="text-sm text-gray-100">
+                        {% if season.season_number == 0 %}
+                          Specials
+                        {% else %}
+                          Season {{ season.season_number }}
+                        {% endif %}
+                      </p>
+                      {% if season.is_mapped_target %}
+                        <span class="text-[11px] px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
+                          Conversion target
+                        </span>
+                      {% endif %}
+                    </div>
+                    {% if season.first_air_date %}
+                      <p class="text-xs text-gray-400">{{ season.first_air_date|user_date_format:user }}</p>
+                    {% endif %}
+                    {% if season.is_mapped_target and season.mapped_episode_start and season.mapped_episode_end %}
+                      <p class="text-xs text-indigo-300 mt-1">
+                        {{ identity_provider|upper }} episodes: E{{ season.mapped_episode_start }}-E{{ season.mapped_episode_end }}
+                      </p>
+                    {% endif %}
+                  </div>
+                  <p class="text-xs text-gray-300 text-right">
+                    {% if season.max_progress or season.max_progress == 0 %}
+                      {{ season.max_progress }} episodes
+                    {% elif season.episode_count or season.episode_count == 0 %}
+                      {{ season.episode_count }} episodes
+                    {% elif season.details and season.details.episodes %}
+                      {{ season.details.episodes }} episodes
+                    {% else %}
+                      ? episodes
+                    {% endif %}
+                  </p>
+                </div>
+              {% endfor %}
+            </div>
+          {% endif %}
+        {% endwith %}
+
+        <div class="flex justify-end">
+          <form method="post"
+                action="{% url 'migrate_grouped_anime' source=identity_provider media_type=media_type media_id=metadata_item.media_id %}">
+            {% csrf_token %}
+            <input type="hidden" name="provider" value="{{ display_provider }}">
+            <input type="hidden" name="return_url" value="{{ return_url }}">
+            <button type="submit"
+                    class="px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition-colors text-sm cursor-pointer">
+              Convert to Grouped Series
+            </button>
+          </form>
+        </div>
+      </div>
+    </section>
+  {% endif %}
+</div>

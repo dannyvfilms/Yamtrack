@@ -1,6 +1,7 @@
+from collections import defaultdict
+import ast
 import logging
 from datetime import timedelta
-from collections import defaultdict
 
 from django.apps import apps
 from django.conf import settings
@@ -41,6 +42,7 @@ class Sources(models.TextChoices):
     """Choices for the source of the item."""
 
     TMDB = "tmdb", "The Movie Database"
+    TVDB = "tvdb", "TheTVDB"
     MAL = "mal", "MyAnimeList"
     MANGAUPDATES = "mangaupdates", "MangaUpdates"
     IGDB = "igdb", "Internet Game Database"
@@ -83,6 +85,13 @@ class Item(CalendarTriggerMixin, models.Model):
         max_length=10,
         choices=MediaTypes,
         default=MediaTypes.MOVIE.value,
+    )
+    library_media_type = models.CharField(
+        max_length=10,
+        choices=MediaTypes,
+        blank=True,
+        default="",
+        help_text="Library bucket for this item (e.g. grouped anime stored on TV rows).",
     )
     title = models.TextField()
     original_title = models.TextField(null=True, blank=True)
@@ -255,6 +264,10 @@ class Item(CalendarTriggerMixin, models.Model):
                 condition=Q(media_type__in=MediaTypes.values),
                 name="%(app_label)s_%(class)s_media_type_valid",
             ),
+            CheckConstraint(
+                condition=Q(library_media_type="") | Q(library_media_type__in=MediaTypes.values),
+                name="%(app_label)s_%(class)s_library_media_type_valid",
+            ),
         ]
         ordering = ["media_id"]
 
@@ -267,11 +280,44 @@ class Item(CalendarTriggerMixin, models.Model):
                 name += f"E{self.episode_number}"
         return name
 
-    @staticmethod
-    def _normalize_title_value(value):
+    @classmethod
+    def _normalize_title_value(cls, value):
         """Normalize title values to non-empty strings or None."""
         if value is None:
             return None
+        if isinstance(value, dict):
+            for key in (
+                "localized_title",
+                "original_title",
+                "title",
+                "name",
+                "value",
+                "text",
+                "label",
+            ):
+                normalized = cls._normalize_title_value(value.get(key))
+                if normalized:
+                    return normalized
+            return None
+        if isinstance(value, (list, tuple)):
+            for entry in value:
+                normalized = cls._normalize_title_value(entry)
+                if normalized:
+                    return normalized
+            return None
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return None
+            if text[0] in "[{" and text[-1] in "]}":
+                try:
+                    parsed = ast.literal_eval(text)
+                except (SyntaxError, ValueError):
+                    return text
+                normalized = cls._normalize_title_value(parsed)
+                if normalized:
+                    return normalized
+            return text
         text = str(value).strip()
         return text or None
 
@@ -413,6 +459,9 @@ class Item(CalendarTriggerMixin, models.Model):
 
     def save(self, *args, **kwargs):
         """Save the item, ensuring JSONField arrays are never None."""
+        if not self.library_media_type:
+            self.library_media_type = self.media_type
+
         # Ensure all JSONField arrays are lists, never None
         json_array_fields = [
             "genres",
@@ -467,7 +516,9 @@ class Item(CalendarTriggerMixin, models.Model):
                 if tv_metadata.get("details", {}).get("runtime"):
                     from app.statistics import parse_runtime_to_minutes
 
-                    runtime_minutes = parse_runtime_to_minutes(tv_metadata["details"]["runtime"])
+                    runtime_minutes = parse_runtime_to_minutes(
+                        tv_metadata["details"]["runtime"],
+                    )
 
                 tv_item = Item.objects.create(
                     media_id=self.media_id,
@@ -485,9 +536,89 @@ class Item(CalendarTriggerMixin, models.Model):
             items_to_process = [self]
 
         if delay:
-            events.tasks.reload_calendar.apply_async(kwargs={"items_to_process": items_to_process}, countdown=3)
+            events.tasks.reload_calendar.apply_async(
+                kwargs={"items_to_process": items_to_process},
+                countdown=3,
+            )
         else:
             events.tasks.reload_calendar(items_to_process=items_to_process)
+
+
+class ItemProviderLink(models.Model):
+    """Cross-provider ID mapping for a tracked item."""
+
+    item = models.ForeignKey(
+        Item,
+        on_delete=models.CASCADE,
+        related_name="provider_links",
+    )
+    provider = models.CharField(max_length=20, choices=Sources.choices)
+    provider_media_id = models.CharField(max_length=32)
+    provider_media_type = models.CharField(max_length=10, choices=MediaTypes.choices)
+    season_number = models.PositiveIntegerField(null=True, blank=True)
+    episode_offset = models.IntegerField(null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["provider", "provider_media_type", "provider_media_id", "season_number"]
+        constraints = [
+            UniqueConstraint(
+                fields=["item", "provider", "provider_media_type", "season_number"],
+                name="%(app_label)s_%(class)s_unique_item_provider_type",
+            ),
+            UniqueConstraint(
+                fields=["provider", "provider_media_type", "provider_media_id", "season_number"],
+                name="%(app_label)s_%(class)s_unique_provider_lookup",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["provider", "provider_media_type", "provider_media_id"]),
+            models.Index(fields=["item", "provider"]),
+        ]
+
+    def __str__(self):
+        """Return a readable mapping label."""
+        season_suffix = f" S{self.season_number}" if self.season_number is not None else ""
+        return (
+            f"{self.item_id}:{self.provider}/{self.provider_media_type}/"
+            f"{self.provider_media_id}{season_suffix}"
+        )
+
+
+class MetadataProviderPreference(models.Model):
+    """Per-user display-provider override for a tracked item."""
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="metadata_provider_preferences",
+    )
+    item = models.ForeignKey(
+        Item,
+        on_delete=models.CASCADE,
+        related_name="metadata_provider_preferences",
+    )
+    provider = models.CharField(max_length=20, choices=Sources.choices)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            UniqueConstraint(
+                fields=["user", "item"],
+                name="%(app_label)s_%(class)s_unique_user_item",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["user", "provider"]),
+            models.Index(fields=["item", "provider"]),
+        ]
+
+    def __str__(self):
+        """Return the display-provider preference label."""
+        return f"{self.user_id}:{self.item_id}->{self.provider}"
 
 
 class MetadataBackfillField(models.TextChoices):
@@ -908,7 +1039,9 @@ class MediaManager(models.Manager):
     def _apply_prefetch_related(self, queryset, media_type):
         """Apply appropriate prefetch_related based on media type."""
         # Apply media-specific prefetches
-        if media_type == MediaTypes.TV.value:
+        if media_type == MediaTypes.TV.value or (
+            media_type == MediaTypes.ANIME.value and queryset.model == TV
+        ):
             return queryset.prefetch_related(
                 Prefetch(
                     "seasons",
@@ -1513,6 +1646,20 @@ class MediaManager(models.Manager):
             self._annotate_tv_released_episodes(media_list, current_datetime)
             return
 
+        if media_type == MediaTypes.ANIME.value:
+            grouped_media = [
+                media
+                for media in media_list
+                if getattr(getattr(media, "item", None), "media_type", None)
+                == MediaTypes.TV.value
+            ]
+            flat_media = [media for media in media_list if media not in grouped_media]
+            if grouped_media:
+                self._annotate_tv_released_episodes(grouped_media, current_datetime)
+            if not flat_media:
+                return
+            media_list = flat_media
+
         if media_type == MediaTypes.SEASON.value:
             # For seasons, use metadata max_progress instead of database annotation
             # The metadata value is more accurate as it reflects the actual total episodes
@@ -1743,6 +1890,16 @@ class MediaManager(models.Manager):
         instance_id,
     ):
         """Get user media object given the media type and item."""
+        if media_type == MediaTypes.ANIME.value:
+            try:
+                return Anime.objects.get(id=instance_id, user=user)
+            except Anime.DoesNotExist:
+                return TV.objects.get(
+                    id=instance_id,
+                    user=user,
+                    item__library_media_type=MediaTypes.ANIME.value,
+                )
+
         model = apps.get_model(app_label="app", model_name=media_type)
         params = self._get_media_params(
             user,
@@ -1759,6 +1916,25 @@ class MediaManager(models.Manager):
         instance_id,
     ):
         """Get user media object with prefetch_related applied."""
+        if media_type == MediaTypes.ANIME.value:
+            anime_queryset = Anime.objects.filter(id=instance_id, user=user)
+            if anime_queryset.exists():
+                anime_queryset = self._apply_prefetch_related(
+                    anime_queryset,
+                    media_type,
+                )
+                self.annotate_max_progress(anime_queryset, media_type)
+                return anime_queryset[0]
+
+            tv_queryset = TV.objects.filter(
+                id=instance_id,
+                user=user,
+                item__library_media_type=MediaTypes.ANIME.value,
+            )
+            tv_queryset = self._apply_prefetch_related(tv_queryset, media_type)
+            self.annotate_max_progress(tv_queryset, media_type)
+            return tv_queryset[0]
+
         model = apps.get_model(app_label="app", model_name=media_type)
         params = self._get_media_params(
             user,
@@ -1799,7 +1975,13 @@ class MediaManager(models.Manager):
         episode_number=None,
     ):
         """Filter media objects based on parameters."""
-        model = apps.get_model(app_label="app", model_name=media_type)
+        if media_type == MediaTypes.ANIME.value and source in {
+            Sources.TMDB.value,
+            Sources.TVDB.value,
+        }:
+            model = TV
+        else:
+            model = apps.get_model(app_label="app", model_name=media_type)
         params = self._filter_media_params(
             media_type,
             media_id,
@@ -1849,6 +2031,13 @@ class MediaManager(models.Manager):
             "item__source": source,
             "item__media_id": media_id,
         }
+
+        if media_type == MediaTypes.ANIME.value and source in {
+            Sources.TMDB.value,
+            Sources.TVDB.value,
+        }:
+            params["item__media_type"] = MediaTypes.TV.value
+            params["item__library_media_type"] = MediaTypes.ANIME.value
 
         if media_type == MediaTypes.SEASON.value:
             params["item__season_number"] = season_number
@@ -3019,6 +3208,7 @@ class Season(Media):
                         tv_metadata,
                         fallback_title=fallback_title,
                     ),
+                    "library_media_type": self.item.library_media_type,
                     "image": tv_metadata.get("image") or self.item.image,
                 },
             )
@@ -3130,6 +3320,7 @@ class Season(Media):
             episode_number=episode_number,
             defaults={
                 **Item.title_fields_from_metadata({"title": self.item.title}),
+                "library_media_type": self.item.library_media_type,
                 "image": image,
                 "runtime_minutes": runtime_minutes,
                 "release_datetime": release_datetime,
@@ -3139,14 +3330,21 @@ class Season(Media):
         # Update fields if not set and we have them now
         updated = False
         if not created:
+            update_fields = []
+            if item.library_media_type != self.item.library_media_type:
+                item.library_media_type = self.item.library_media_type
+                update_fields.append("library_media_type")
+                updated = True
             if not item.runtime_minutes and runtime_minutes:
                 item.runtime_minutes = runtime_minutes
+                update_fields.append("runtime_minutes")
                 updated = True
             if not item.release_datetime and release_datetime:
                 item.release_datetime = release_datetime
+                update_fields.append("release_datetime")
                 updated = True
             if updated:
-                item.save(update_fields=["runtime_minutes", "release_datetime"])
+                item.save(update_fields=update_fields)
         elif created:
             # Ensure runtime and release_datetime are set for newly created items
             needs_save = False
@@ -3157,7 +3355,13 @@ class Season(Media):
                 item.release_datetime = release_datetime
                 needs_save = True
             if needs_save:
-                item.save(update_fields=["runtime_minutes", "release_datetime"])
+                item.save(
+                    update_fields=[
+                        "library_media_type",
+                        "runtime_minutes",
+                        "release_datetime",
+                    ],
+                )
 
         return item
 
@@ -3317,10 +3521,37 @@ class Manga(Media):
     tracker = FieldTracker()
 
 
+class ActiveAnimeQuerySet(models.QuerySet):
+    """Anime rows that have not been migrated into grouped series."""
+
+    def active(self):
+        """Return only rows still surfaced in the flat anime library."""
+        return self.filter(migrated_to_item__isnull=True)
+
+
+class ActiveAnimeManager(models.Manager):
+    """Default anime manager that hides migrated legacy rows."""
+
+    def get_queryset(self):
+        """Return only active flat anime rows."""
+        return ActiveAnimeQuerySet(self.model, using=self._db).active()
+
+
 class Anime(Media):
     """Model for anime."""
 
+    migrated_to_item = models.ForeignKey(
+        Item,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="migrated_anime_entries",
+    )
+    migrated_at = models.DateTimeField(null=True, blank=True)
+
     tracker = FieldTracker()
+    objects = ActiveAnimeManager()
+    all_objects = models.Manager()
 
 
 class Movie(Media):

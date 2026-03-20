@@ -4,17 +4,19 @@ from unittest.mock import patch
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
 from app import statistics_cache
 from app.models import (
+    Anime,
     Book,
     CreditRoleType,
     Episode,
     Item,
     ItemPersonCredit,
+    MetadataProviderPreference,
     MediaTypes,
     Person,
     PodcastEpisode,
@@ -25,6 +27,7 @@ from app.models import (
     TV,
 )
 from app.services import game_lengths as game_length_services
+from app.services.metadata_resolution import MetadataResolutionResult
 from integrations.models import PlexAccount
 
 
@@ -112,6 +115,106 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.context["media"]["image"], item.image)
 
     @patch("app.providers.services.get_media_metadata")
+    def test_media_details_repairs_stringified_title_payloads_on_existing_item(
+        self,
+        mock_get_metadata,
+    ):
+        item = Item.objects.create(
+            media_id="81189",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="{'language': 'jpn', 'name': 'Sōdo Āto Onrain'}",
+            original_title="{'language': 'jpn', 'name': 'Sōdo Āto Onrain'}",
+            localized_title="{'language': 'jpn', 'name': 'Sōdo Āto Onrain'}",
+            image="https://example.com/cover.jpg",
+        )
+        mock_get_metadata.return_value = {
+            "media_id": "81189",
+            "title": {"language": "jpn", "name": "Sōdo Āto Onrain"},
+            "original_title": {"language": "jpn", "name": "Sōdo Āto Onrain"},
+            "localized_title": {"language": "jpn", "name": "Sōdo Āto Onrain"},
+            "media_type": MediaTypes.TV.value,
+            "source": Sources.TMDB.value,
+            "image": "https://example.com/provider-cover.jpg",
+            "details": {},
+            "related": {},
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "media_id": "81189",
+                    "title": "sword-art-online",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Sōdo Āto Onrain")
+        self.assertNotContains(response, "{'language': 'jpn', 'name': 'Sōdo Āto Onrain'}")
+
+        item.refresh_from_db()
+        self.assertEqual(item.title, "Sōdo Āto Onrain")
+        self.assertEqual(item.original_title, "Sōdo Āto Onrain")
+        self.assertEqual(item.localized_title, "Sōdo Āto Onrain")
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_refreshes_stale_tvdb_titles_with_english_localized_text(
+        self,
+        mock_get_metadata,
+    ):
+        item = Item.objects.create(
+            media_id="259640",
+            source=Sources.TVDB.value,
+            media_type=MediaTypes.TV.value,
+            title="ソードアート・オンライン",
+            original_title="ソードアート・オンライン",
+            localized_title="ソードアート・オンライン",
+            image="https://example.com/cover.jpg",
+        )
+        mock_get_metadata.return_value = {
+            "media_id": "259640",
+            "title": "Sword Art Online",
+            "original_title": "ソードアート・オンライン",
+            "localized_title": "Sword Art Online",
+            "media_type": MediaTypes.TV.value,
+            "source": Sources.TVDB.value,
+            "image": "https://example.com/provider-cover.jpg",
+            "synopsis": "English overview",
+            "details": {},
+            "related": {},
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TVDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "media_id": "259640",
+                    "title": "sword-art-online",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Sword Art Online")
+
+        item.refresh_from_db()
+        self.assertEqual(item.title, "Sword Art Online")
+        self.assertEqual(item.original_title, "ソードアート・オンライン")
+        self.assertEqual(item.localized_title, "Sword Art Online")
+
+    @patch("app.providers.services.get_media_metadata")
     def test_media_details_persists_movie_recommendation_metadata(self, mock_get_metadata):
         item = Item.objects.create(
             media_id="238",
@@ -158,6 +261,210 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(item.provider_certification, "PG")
         self.assertEqual(item.provider_collection_id, "44")
         self.assertEqual(item.provider_collection_name, "Mystery Collection")
+
+    @override_settings(TVDB_API_KEY="test-tvdb-key")
+    @patch("app.views.metadata_resolution.resolve_detail_metadata")
+    @patch("app.providers.services.get_media_metadata")
+    def test_anime_details_keep_source_labels_but_move_metadata_controls_to_modal(
+        self,
+        mock_get_metadata,
+        mock_resolve_detail_metadata,
+    ):
+        """Flat anime details keep source context while metadata controls live in the modal."""
+        base_metadata = {
+            "media_id": "52991",
+            "title": "Frieren",
+            "original_title": "Sousou no Frieren",
+            "localized_title": "Frieren",
+            "media_type": MediaTypes.ANIME.value,
+            "source": Sources.MAL.value,
+            "source_url": "https://myanimelist.net/anime/52991",
+            "external_links": {
+                "TVDB": "https://www.thetvdb.com/dereferrer/series/9350138",
+            },
+            "display_source_url": "https://www.thetvdb.com/dereferrer/series/9350138",
+            "max_progress": 28,
+            "image": "https://example.com/frieren.jpg",
+            "synopsis": "A mage looks back.",
+            "details": {"episodes": 28},
+            "related": {},
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+        }
+        mock_get_metadata.return_value = base_metadata
+        item = Item.objects.create(
+            media_id="52991",
+            source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME.value,
+            title="Frieren",
+            image="https://example.com/frieren.jpg",
+        )
+        Anime.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=1,
+        )
+        mock_resolve_detail_metadata.return_value = MetadataResolutionResult(
+            display_provider=Sources.TVDB.value,
+            identity_provider=Sources.MAL.value,
+            mapping_status="mapped",
+            header_metadata=base_metadata,
+            grouped_preview={
+                "media_id": "9350138",
+                "source": Sources.TVDB.value,
+                "media_type": MediaTypes.ANIME.value,
+                "title": "Frieren: Beyond Journey's End",
+                "original_title": "Sousou no Frieren",
+                "localized_title": "Frieren: Beyond Journey's End",
+                "related": {
+                    "seasons": [
+                        {
+                            "season_number": 1,
+                            "max_progress": None,
+                            "episode_count": 28,
+                            "first_air_date": timezone.now(),
+                            "is_mapped_target": True,
+                            "mapped_episode_start": 1,
+                            "mapped_episode_end": 28,
+                        },
+                    ],
+                },
+            },
+            provider_media_id="9350138",
+            grouped_preview_target={
+                "season_number": 1,
+                "season_title": "Season 1",
+                "episode_start": 1,
+                "episode_end": 28,
+            },
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.MAL.value,
+                    "media_type": MediaTypes.ANIME.value,
+                    "media_id": "52991",
+                    "title": "frieren",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Tracking Source")
+        self.assertContains(response, "Metadata Source")
+        self.assertContains(response, "https://myanimelist.net/anime/52991")
+        self.assertContains(response, "https://www.thetvdb.com/dereferrer/series/9350138")
+        self.assertNotContains(response, "Metadata Provider")
+        self.assertNotContains(response, "Grouped Series Preview")
+        self.assertNotContains(response, "Migrate to Grouped Series")
+        self.assertTrue(response.context["can_migrate_grouped_anime"])
+
+    @override_settings(TVDB_API_KEY="test-tvdb-key")
+    def test_update_metadata_provider_preference_saves_override(self):
+        """Saving a metadata provider override should persist a user preference only."""
+        item = Item.objects.create(
+            media_id="1396",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Breaking Bad",
+            image="https://example.com/breaking-bad.jpg",
+        )
+
+        response = self.client.post(
+            reverse(
+                "update_metadata_provider_preference",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "media_id": "1396",
+                },
+            ),
+            {"provider": Sources.TVDB.value},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        preference = MetadataProviderPreference.objects.get(user=self.user, item=item)
+        self.assertEqual(preference.provider, Sources.TVDB.value)
+        item.refresh_from_db()
+        self.assertEqual(item.source, Sources.TMDB.value)
+
+    @patch("app.views.metadata_resolution.resolve_detail_metadata")
+    @patch("app.providers.services.get_media_metadata")
+    def test_migrated_flat_anime_shows_grouped_banner(
+        self,
+        mock_get_metadata,
+        mock_resolve_detail_metadata,
+    ):
+        """Migrated legacy anime routes should link users to the grouped series."""
+        base_metadata = {
+            "media_id": "52991",
+            "title": "Frieren",
+            "original_title": "Sousou no Frieren",
+            "localized_title": "Frieren",
+            "media_type": MediaTypes.ANIME.value,
+            "source": Sources.MAL.value,
+            "max_progress": 28,
+            "image": "https://example.com/frieren.jpg",
+            "synopsis": "A mage looks back.",
+            "details": {"episodes": 28},
+            "related": {},
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+        }
+        mock_get_metadata.return_value = base_metadata
+        flat_item = Item.objects.create(
+            media_id="52991",
+            source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME.value,
+            title="Frieren",
+            image="https://example.com/frieren.jpg",
+        )
+        grouped_item = Item.objects.create(
+            media_id="9350138",
+            source=Sources.TVDB.value,
+            media_type=MediaTypes.TV.value,
+            library_media_type=MediaTypes.ANIME.value,
+            title="Frieren: Beyond Journey's End",
+            image="https://example.com/grouped.jpg",
+        )
+        Anime.all_objects.create(
+            item=flat_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=28,
+            migrated_to_item=grouped_item,
+            migrated_at=timezone.now(),
+        )
+
+        mock_resolve_detail_metadata.return_value = MetadataResolutionResult(
+            display_provider=Sources.MAL.value,
+            identity_provider=Sources.MAL.value,
+            mapping_status="identity",
+            header_metadata=base_metadata,
+            grouped_preview=None,
+            provider_media_id="52991",
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.MAL.value,
+                    "media_type": MediaTypes.ANIME.value,
+                    "media_id": "52991",
+                    "title": "frieren",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "already been migrated to grouped series tracking")
+        self.assertContains(response, "Open grouped series")
 
     @patch("app.providers.services.get_media_metadata")
     def test_game_media_details_renders_cached_hltb_tables(self, mock_get_metadata):

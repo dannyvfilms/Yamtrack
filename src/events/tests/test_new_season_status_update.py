@@ -131,18 +131,17 @@ class NewSeasonStatusUpdateTests(TestCase):
 
     @patch("events.calendar.cache_utils.clear_time_left_cache_for_user")
     @patch("app.models.providers.services.get_media_metadata")
-    @patch("events.calendar.get_tvmaze_episode_map")
-    @patch("events.calendar.tmdb.tv_with_seasons")
+    @patch("events.calendar.get_tvdb_episode_map")
+    @patch("events.calendar.services.get_media_metadata")
     def test_new_season_updates_completed_tv_status(
         self,
-        mock_tv_with_seasons,
-        mock_tvmaze,
+        mock_calendar_get_metadata,
+        mock_tvdb,
         mock_get_metadata,
         mock_clear_time_left_cache,
     ):
         """Test that a newly detected season updates Completed TV status to In Progress."""
-        # Mock TVMaze (empty, not needed for this test)
-        mock_tvmaze.return_value = {}
+        mock_tvdb.return_value = {}
         mock_get_metadata.return_value = {
             "related": {
                 "seasons": [
@@ -155,7 +154,7 @@ class NewSeasonStatusUpdateTests(TestCase):
         }
 
         # Mock the provider to return Season 2 metadata (simulating new season detection)
-        mock_tv_with_seasons.return_value = {
+        mock_calendar_get_metadata.return_value = {
             "season/2": {
                 "image": "http://example.com/season2.jpg",
                 "season_number": 2,
@@ -211,17 +210,17 @@ class NewSeasonStatusUpdateTests(TestCase):
         mock_clear_time_left_cache.assert_any_call(self.user.id)
 
     @patch("app.models.providers.services.get_media_metadata")
-    @patch("events.calendar.get_tvmaze_episode_map")
-    @patch("events.calendar.tmdb.tv_with_seasons")
-    def test_new_season_does_not_update_dropped_status(self, mock_tv_with_seasons, mock_tvmaze, mock_get_metadata):
+    @patch("events.calendar.get_tvdb_episode_map")
+    @patch("events.calendar.services.get_media_metadata")
+    def test_new_season_does_not_update_dropped_status(self, mock_calendar_get_metadata, mock_tvdb, mock_get_metadata):
         """Test that Dropped status remains unchanged when a new season is detected."""
         # Change TV status to Dropped
         self.tv_instance.status = Status.DROPPED.value
         self.tv_instance.save()
 
         # Mock provider responses
-        mock_tvmaze.return_value = {}
-        mock_tv_with_seasons.return_value = {
+        mock_tvdb.return_value = {}
+        mock_calendar_get_metadata.return_value = {
             "season/2": {
                 "image": "http://example.com/season2.jpg",
                 "season_number": 2,
@@ -247,17 +246,17 @@ class NewSeasonStatusUpdateTests(TestCase):
         )
 
     @patch("app.models.providers.services.get_media_metadata")
-    @patch("events.calendar.get_tvmaze_episode_map")
-    @patch("events.calendar.tmdb.tv_with_seasons")
-    def test_new_season_does_not_update_planning_status(self, mock_tv_with_seasons, mock_tvmaze, mock_get_metadata):
+    @patch("events.calendar.get_tvdb_episode_map")
+    @patch("events.calendar.services.get_media_metadata")
+    def test_new_season_does_not_update_planning_status(self, mock_calendar_get_metadata, mock_tvdb, mock_get_metadata):
         """Test that Planning status remains unchanged when a new season is detected."""
         # Change TV status to Planning
         self.tv_instance.status = Status.PLANNING.value
         self.tv_instance.save()
 
         # Mock provider responses
-        mock_tvmaze.return_value = {}
-        mock_tv_with_seasons.return_value = {
+        mock_tvdb.return_value = {}
+        mock_calendar_get_metadata.return_value = {
             "season/2": {
                 "image": "http://example.com/season2.jpg",
                 "season_number": 2,
@@ -283,17 +282,17 @@ class NewSeasonStatusUpdateTests(TestCase):
         )
 
     @patch("app.models.providers.services.get_media_metadata")
-    @patch("events.calendar.get_tvmaze_episode_map")
-    @patch("events.calendar.tmdb.tv_with_seasons")
-    def test_new_season_does_not_update_paused_status(self, mock_tv_with_seasons, mock_tvmaze, mock_get_metadata):
+    @patch("events.calendar.get_tvdb_episode_map")
+    @patch("events.calendar.services.get_media_metadata")
+    def test_new_season_does_not_update_paused_status(self, mock_calendar_get_metadata, mock_tvdb, mock_get_metadata):
         """Test that Paused status remains unchanged when a new season is detected."""
         # Change TV status to Paused
         self.tv_instance.status = Status.PAUSED.value
         self.tv_instance.save()
 
         # Mock provider responses
-        mock_tvmaze.return_value = {}
-        mock_tv_with_seasons.return_value = {
+        mock_tvdb.return_value = {}
+        mock_calendar_get_metadata.return_value = {
             "season/2": {
                 "image": "http://example.com/season2.jpg",
                 "season_number": 2,

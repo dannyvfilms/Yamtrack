@@ -8,6 +8,7 @@ from django.utils import timezone
 import app
 from app.log_safety import exception_summary
 from app.models import MediaTypes, Sources, Status
+from integrations import anime_mapping
 
 logger = logging.getLogger(__name__)
 
@@ -484,12 +485,7 @@ class BaseWebhookProcessor:
 
     def _fetch_mapping_data(self):
         """Fetch anime mapping data with caching."""
-        data = cache.get("anime_mapping_data")
-        if data is None:
-            url = "https://raw.githubusercontent.com/Kometa-Team/Anime-IDs/refs/heads/master/anime_ids.json"
-            data = app.providers.services.api_request("GITHUB", "GET", url)
-            cache.set("anime_mapping_data", data)
-        return data
+        return anime_mapping.load_mapping_data()
 
     def _get_mal_id_from_tvdb(
         self,
@@ -553,6 +549,8 @@ class BaseWebhookProcessor:
 
     def _handle_movie(self, media_id, payload, user):
         """Handle movie playback event."""
+        from app.services import metadata_resolution  # noqa: PLC0415
+
         movie_metadata = app.providers.tmdb.movie(media_id)
         movie_item, _ = app.models.Item.objects.get_or_create(
             media_id=media_id,
@@ -562,6 +560,21 @@ class BaseWebhookProcessor:
                 "title": movie_metadata["title"],
                 "image": movie_metadata["image"],
             },
+        )
+        movie_external_ids = self._extract_external_ids(payload)
+        metadata_resolution.upsert_provider_links(
+            movie_item,
+            movie_metadata
+            | {
+                "provider_external_ids": {
+                    **(movie_metadata.get("provider_external_ids") or {}),
+                    "tmdb_id": str(media_id),
+                    "imdb_id": movie_external_ids.get("imdb_id"),
+                    "tvdb_id": movie_external_ids.get("tvdb_id"),
+                },
+            },
+            provider=Sources.TMDB.value,
+            provider_media_type=MediaTypes.MOVIE.value,
         )
 
         movie_instances = app.models.Movie.objects.filter(item=movie_item, user=user)
@@ -690,6 +703,8 @@ class BaseWebhookProcessor:
         user,
     ):
         """Handle TV episode playback event."""
+        from app.services import metadata_resolution  # noqa: PLC0415
+
         tv_metadata = app.providers.tmdb.tv_with_seasons(media_id, [season_number])
         tv_item, _ = app.models.Item.objects.get_or_create(
             media_id=media_id,
@@ -699,6 +714,21 @@ class BaseWebhookProcessor:
                 "title": tv_metadata["title"],
                 "image": tv_metadata["image"],
             },
+        )
+        external_ids = self._extract_external_ids(payload)
+        metadata_resolution.upsert_provider_links(
+            tv_item,
+            tv_metadata
+            | {
+                "provider_external_ids": {
+                    **(tv_metadata.get("provider_external_ids") or {}),
+                    "tmdb_id": str(media_id),
+                    "tvdb_id": external_ids.get("tvdb_id") or tv_metadata.get("tvdb_id"),
+                    "imdb_id": external_ids.get("imdb_id"),
+                },
+            },
+            provider=Sources.TMDB.value,
+            provider_media_type=MediaTypes.TV.value,
         )
 
         tv_instance, tv_created = app.models.TV.objects.get_or_create(
@@ -764,6 +794,21 @@ class BaseWebhookProcessor:
                 "title": tv_metadata["title"],
                 "image": season_image,
             },
+        )
+        metadata_resolution.upsert_provider_links(
+            season_item,
+            season_metadata
+            | {
+                "provider_external_ids": {
+                    **(season_metadata.get("provider_external_ids") or {}),
+                    "tmdb_id": str(media_id),
+                    "tvdb_id": external_ids.get("tvdb_id") or tv_metadata.get("tvdb_id"),
+                    "imdb_id": external_ids.get("imdb_id"),
+                },
+            },
+            provider=Sources.TMDB.value,
+            provider_media_type=MediaTypes.SEASON.value,
+            season_number=season_number,
         )
 
         season_instance, season_created = app.models.Season.objects.get_or_create(
@@ -846,6 +891,8 @@ class BaseWebhookProcessor:
 
     def _handle_anime(self, media_id, episode_number, payload, user):
         """Handle anime playback event."""
+        from app.services import metadata_resolution  # noqa: PLC0415
+
         anime_metadata = app.providers.mal.anime(media_id)
         anime_item, _ = app.models.Item.objects.get_or_create(
             media_id=media_id,
@@ -856,6 +903,71 @@ class BaseWebhookProcessor:
                 "image": anime_metadata["image"],
             },
         )
+        metadata_resolution.upsert_provider_links(
+            anime_item,
+            anime_metadata | {"media_id": str(media_id)},
+            provider=Sources.MAL.value,
+            provider_media_type=MediaTypes.ANIME.value,
+        )
+
+        for mapping_entry in anime_mapping.find_entries_for_mal_id(media_id):
+            tmdb_id = (
+                mapping_entry.get("tmdb_show_id")
+                or mapping_entry.get("tmdb_id")
+                or mapping_entry.get("tmdb_tv_id")
+            )
+            tvdb_id = mapping_entry.get("tvdb_id")
+            season_number = (
+                mapping_entry.get("tmdb_season")
+                or mapping_entry.get("tvdb_season")
+            )
+            episode_offset = (
+                mapping_entry.get("tmdb_epoffset")
+                or mapping_entry.get("tvdb_epoffset")
+                or 0
+            )
+            try:
+                normalized_season_number = (
+                    int(season_number) if season_number not in (None, "") else None
+                )
+            except (TypeError, ValueError):
+                normalized_season_number = None
+            try:
+                normalized_episode_offset = int(episode_offset or 0)
+            except (TypeError, ValueError):
+                normalized_episode_offset = 0
+
+            if tmdb_id not in (None, ""):
+                metadata_resolution.upsert_provider_links(
+                    anime_item,
+                    {
+                        "media_id": str(tmdb_id),
+                        "source": Sources.TMDB.value,
+                        "media_type": MediaTypes.ANIME.value,
+                        "identity_media_type": MediaTypes.TV.value,
+                        "provider_external_ids": {"tmdb_id": str(tmdb_id)},
+                    },
+                    provider=Sources.TMDB.value,
+                    provider_media_type=MediaTypes.TV.value,
+                    season_number=normalized_season_number,
+                    episode_offset=normalized_episode_offset,
+                )
+
+            if tvdb_id not in (None, ""):
+                metadata_resolution.upsert_provider_links(
+                    anime_item,
+                    {
+                        "media_id": str(tvdb_id),
+                        "source": Sources.TVDB.value,
+                        "media_type": MediaTypes.ANIME.value,
+                        "identity_media_type": MediaTypes.TV.value,
+                        "provider_external_ids": {"tvdb_id": str(tvdb_id)},
+                    },
+                    provider=Sources.TVDB.value,
+                    provider_media_type=MediaTypes.TV.value,
+                    season_number=normalized_season_number,
+                    episode_offset=normalized_episode_offset,
+                )
 
         anime_instances = app.models.Anime.objects.filter(item=anime_item, user=user)
         current_instance = anime_instances.first()

@@ -22,6 +22,7 @@ from app import helpers
 from app.discover import tab_cache as discover_tab_cache
 from app.models import Item, MediaManager, MediaTypes
 from app.providers import services
+from app.services import metadata_resolution
 from integrations.imports import helpers as import_helpers
 from integrations.imports import trakt as trakt_imports
 from integrations.models import TraktAccount
@@ -1361,14 +1362,22 @@ def lists_modal(
     episode_number=None,
 ):
     """Return the modal showing all custom lists and allowing to add to them."""
+    tracking_media_type = metadata_resolution.get_tracking_media_type(
+        media_type,
+        source=source,
+    )
+    lookup = {
+        "media_id": media_id,
+        "source": source,
+        "media_type": tracking_media_type,
+        "season_number": season_number,
+        "episode_number": episode_number,
+    }
+    if metadata_resolution.is_grouped_anime_route(media_type, source=source):
+        lookup["library_media_type"] = MediaTypes.ANIME.value
+
     try:
-        item = Item.objects.get(
-            media_id=media_id,
-            source=source,
-            media_type=media_type,
-            season_number=season_number,
-            episode_number=episode_number,
-        )
+        item = Item.objects.get(**lookup)
     except Item.DoesNotExist:
         metadata = services.get_media_metadata(
             media_type,
@@ -1380,9 +1389,10 @@ def lists_modal(
         item = Item.objects.create(
             media_id=media_id,
             source=source,
-            media_type=media_type,
+            media_type=tracking_media_type,
             season_number=season_number,
             episode_number=episode_number,
+            library_media_type=metadata.get("library_media_type") or media_type,
             title=metadata["title"],
             image=metadata["image"],
         )

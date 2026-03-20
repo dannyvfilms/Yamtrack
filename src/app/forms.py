@@ -291,6 +291,8 @@ class MediaForm(RatingScaleFormMixin, forms.ModelForm):
 
     instance_id = forms.CharField(widget=forms.HiddenInput(), required=False)
     media_type = forms.CharField(widget=forms.HiddenInput(), required=True)
+    identity_media_type = forms.CharField(widget=forms.HiddenInput(), required=False)
+    library_media_type = forms.CharField(widget=forms.HiddenInput(), required=False)
     source = forms.CharField(widget=forms.HiddenInput(), required=True)
     media_id = forms.CharField(widget=forms.HiddenInput(), required=True)
     image_url = forms.URLField(
@@ -543,6 +545,8 @@ class EpisodeForm(forms.ModelForm):
 
     instance_id = forms.CharField(widget=forms.HiddenInput(), required=False)
     media_type = forms.CharField(widget=forms.HiddenInput(), required=False)
+    identity_media_type = forms.CharField(widget=forms.HiddenInput(), required=False)
+    library_media_type = forms.CharField(widget=forms.HiddenInput(), required=False)
     source = forms.CharField(widget=forms.HiddenInput(), required=False)
     media_id = forms.CharField(widget=forms.HiddenInput(), required=False)
     season_number = forms.IntegerField(widget=forms.HiddenInput(), required=False)

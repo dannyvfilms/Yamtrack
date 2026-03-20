@@ -178,7 +178,7 @@
                           hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
                           hx-target="#discover-rows"
                           hx-swap="innerHTML"
-                          hx-vals='{"action":"planning","candidate_media_type":"{{ item.media_type|escapejs }}","source":"{{ item.source|escapejs }}","media_id":"{{ item.media_id|escapejs }}","season_number":"{{ item.season_number|default_if_none:"" }}","active_media_type":"{{ discover_active_media_type|default:"all"|escapejs }}","show_more":"{% if discover_show_more %}1{% else %}0{% endif %}","row_key":"{{ discover_row_key|default:""|escapejs }}","title":"{{ resolved_item_title|default:title|escapejs }}","image":"{{ item.image|default:IMG_NONE|escapejs }}","release_date":"{{ item.release_date|default:""|escapejs }}","discover_debug":"{% if discover_debug %}1{% else %}0{% endif %}"}'>
+                          hx-vals='{"action":"planning","candidate_media_type":"{{ resolved_media_type|escapejs }}","identity_media_type":"{{ item.identity_media_type|default:""|escapejs }}","library_media_type":"{{ item.library_media_type|default:""|escapejs }}","source":"{{ item.source|escapejs }}","media_id":"{{ item.media_id|escapejs }}","season_number":"{{ item.season_number|default_if_none:"" }}","active_media_type":"{{ discover_active_media_type|default:"all"|escapejs }}","show_more":"{% if discover_show_more %}1{% else %}0{% endif %}","row_key":"{{ discover_row_key|default:""|escapejs }}","title":"{{ resolved_item_title|default:title|escapejs }}","image":"{{ item.image|default:IMG_NONE|escapejs }}","release_date":"{{ item.release_date|default:""|escapejs }}","discover_debug":"{% if discover_debug %}1{% else %}0{% endif %}"}'>
                     {% include "app/icons/states/planning.svg" with classes="w-4 h-4" %}
                   </button>
                   <button class="p-2.5 bg-rose-600 text-white rounded-full hover:bg-rose-500 hover:scale-110 hover:shadow-[0_0_15px_rgba(244,63,94,0.45)] transition-all duration-200 cursor-pointer"
@@ -187,7 +187,7 @@
                           hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
                           hx-target="#discover-rows"
                           hx-swap="innerHTML"
-                          hx-vals='{"action":"dismiss","candidate_media_type":"{{ item.media_type|escapejs }}","source":"{{ item.source|escapejs }}","media_id":"{{ item.media_id|escapejs }}","season_number":"{{ item.season_number|default_if_none:"" }}","active_media_type":"{{ discover_active_media_type|default:"all"|escapejs }}","show_more":"{% if discover_show_more %}1{% else %}0{% endif %}","row_key":"{{ discover_row_key|default:""|escapejs }}","title":"{{ resolved_item_title|default:title|escapejs }}","image":"{{ item.image|default:IMG_NONE|escapejs }}","release_date":"{{ item.release_date|default:""|escapejs }}","discover_debug":"{% if discover_debug %}1{% else %}0{% endif %}"}'>
+                          hx-vals='{"action":"dismiss","candidate_media_type":"{{ resolved_media_type|escapejs }}","identity_media_type":"{{ item.identity_media_type|default:""|escapejs }}","library_media_type":"{{ item.library_media_type|default:""|escapejs }}","source":"{{ item.source|escapejs }}","media_id":"{{ item.media_id|escapejs }}","season_number":"{{ item.season_number|default_if_none:"" }}","active_media_type":"{{ discover_active_media_type|default:"all"|escapejs }}","show_more":"{% if discover_show_more %}1{% else %}0{% endif %}","row_key":"{{ discover_row_key|default:""|escapejs }}","title":"{{ resolved_item_title|default:title|escapejs }}","image":"{{ item.image|default:IMG_NONE|escapejs }}","release_date":"{{ item.release_date|default:""|escapejs }}","discover_debug":"{% if discover_debug %}1{% else %}0{% endif %}"}'>
                     {% include "app/icons/eye-closed.svg" with classes="w-4 h-4" %}
                   </button>
 
@@ -523,7 +523,8 @@
           <div x-show="trackOpen"
                @keydown.escape.window="trackOpen = false"
                class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div class="w-152 modal-max-height overflow-y-auto px-4 md:px-0 relative z-60"
+            <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
+                 style="width: min(96vw, 72rem);"
                  @click.outside="trackOpen = false">
               {% if use_podcast_show|default:False and podcast_show %}
                 <div id="podcast-show-track-modal-{{ podcast_show.id }}"></div>

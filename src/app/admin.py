@@ -7,6 +7,8 @@ from django.contrib.admin.sites import AlreadyRegistered
 from app.models import (
     Episode,
     Item,
+    ItemProviderLink,
+    MetadataProviderPreference,
 )
 
 
@@ -88,6 +90,8 @@ SpecialModels = [
     "ItemPersonCredit",
     "ItemStudioCredit",
     "MetadataBackfillState",
+    "ItemProviderLink",
+    "MetadataProviderPreference",
     "CollectionEntry",
     "Tag",
     "ItemTag",
@@ -159,6 +163,39 @@ class MetadataBackfillStateAdmin(admin.ModelAdmin):
 
 
 admin.site.register(MetadataBackfillState, MetadataBackfillStateAdmin)
+
+
+class ItemProviderLinkAdmin(admin.ModelAdmin):
+    """Admin for provider-link mappings."""
+
+    list_display = [
+        "item",
+        "provider",
+        "provider_media_type",
+        "provider_media_id",
+        "season_number",
+        "episode_offset",
+        "updated_at",
+    ]
+    list_filter = ["provider", "provider_media_type"]
+    search_fields = ["item__title", "item__media_id", "provider_media_id"]
+    raw_id_fields = ["item"]
+
+
+class MetadataProviderPreferenceAdmin(admin.ModelAdmin):
+    """Admin for per-user metadata provider preferences."""
+
+    list_display = ["user", "item", "provider", "updated_at"]
+    list_filter = ["provider"]
+    search_fields = ["user__username", "item__title", "item__media_id"]
+    raw_id_fields = ["user", "item"]
+
+
+admin.site.register(ItemProviderLink, ItemProviderLinkAdmin)
+admin.site.register(
+    MetadataProviderPreference,
+    MetadataProviderPreferenceAdmin,
+)
 
 
 class PodcastShowAdmin(admin.ModelAdmin):

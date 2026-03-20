@@ -3,7 +3,6 @@ import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-import requests
 from django.conf import settings
 from django.core.cache import cache
 from django.db.models import Exists, OuterRef, Q, Subquery
@@ -12,7 +11,7 @@ from simple_history.utils import bulk_update_with_history
 
 from app import cache_utils, config
 from app.models import TV, Item, MediaTypes, PodcastEpisode, Season, Sources, Status
-from app.providers import comicvine, services, tmdb
+from app.providers import comicvine, services, tmdb, tvdb
 from events.models import Event, SentinelDatetime
 
 logger = logging.getLogger(__name__)
@@ -500,7 +499,11 @@ def process_tv(tv_item, events_bulk, tv_metadata=None):
 def get_seasons_to_process(tv_item, tv_metadata=None):
     """Identify which seasons of a TV show need to be processed."""
     if tv_metadata is None:
-        tv_metadata = tmdb.tv(tv_item.media_id)
+        tv_metadata = services.get_media_metadata(
+            MediaTypes.TV.value,
+            tv_item.media_id,
+            tv_item.source,
+        )
 
     if not tv_metadata.get("related", {}).get("seasons"):
         logger.warning("No seasons found for TV show: %s", tv_item)
@@ -554,8 +557,10 @@ def get_seasons_to_process(tv_item, tv_metadata=None):
 def process_tv_seasons(tv_item, seasons_to_process, events_bulk):
     """Process specific seasons of a TV show."""
     # Fetch detailed data for seasons to process
-    process_seasons_data = tmdb.tv_with_seasons(
+    process_seasons_data = services.get_media_metadata(
+        "tv_with_seasons",
         tv_item.media_id,
+        tv_item.source,
         seasons_to_process,
     )
     item_changes = False
@@ -584,6 +589,7 @@ def process_tv_seasons(tv_item, seasons_to_process, events_bulk):
             season_number=season_number,
             defaults={
                 "title": tv_item.title,
+                "library_media_type": tv_item.library_media_type,
                 "image": season_image,
             },
         )
@@ -610,17 +616,17 @@ def process_tv_seasons(tv_item, seasons_to_process, events_bulk):
 
 def process_season_episodes(item, metadata, events_bulk):
     """Process episodes for a season and add them to events_bulk."""
-    # Get TVMaze episode data if available
-    tvmaze_map = {}
+    # Get TVDB episode air datetimes if available
+    tvdb_map = {}
     if metadata.get("tvdb_id"):
         logger.info(
-            "%s - TVDB ID found, fetching TVMaze episode data",
+            "%s - TVDB ID found, fetching TVDB episode data",
             item,
         )
-        tvmaze_map = get_tvmaze_episode_map(metadata["tvdb_id"])
+        tvdb_map = get_tvdb_episode_map(metadata["tvdb_id"])
     else:
         logger.warning(
-            "%s - No TVDB ID found, skipping TVMaze episode data",
+            "%s - No TVDB ID found, skipping TVDB episode data",
             item,
         )
 
@@ -652,7 +658,7 @@ def process_season_episodes(item, metadata, events_bulk):
             episode,
             season_number,
             episode_number,
-            tvmaze_map,
+            tvdb_map,
         )
 
         events_bulk.append(
@@ -678,6 +684,7 @@ def process_season_episodes(item, metadata, events_bulk):
                 media_type=MediaTypes.EPISODE.value,
                 title=item.title,
                 image=image,
+                library_media_type=item.library_media_type,
                 season_number=season_number,
                 episode_number=episode_number,
             )
@@ -799,15 +806,15 @@ def update_tv_status_for_new_season(tv_item, season_number):
     )
 
 
-def get_episode_datetime(episode, season_number, episode_number, tvmaze_map):
+def get_episode_datetime(episode, season_number, episode_number, tvdb_map):
     """Determine the most accurate air datetime for an episode."""
-    # First check if we have TVMaze data for this episode
-    tvmaze_key = f"{season_number}_{episode_number}"
-    tvmaze_airstamp = tvmaze_map.get(tvmaze_key)
+    # First check if we have precise TVDB data for this episode
+    tvdb_key = f"{season_number}_{episode_number}"
+    tvdb_airstamp = tvdb_map.get(tvdb_key)
 
-    # Use TVMaze data if available
-    if tvmaze_airstamp:
-        return datetime.fromisoformat(tvmaze_airstamp)
+    # Use TVDB data if available
+    if tvdb_airstamp:
+        return datetime.fromisoformat(tvdb_airstamp)
 
     # Fall back to TMDB data (date only)
     if episode["air_date"]:
@@ -830,79 +837,29 @@ def get_episode_datetime(episode, season_number, episode_number, tvmaze_map):
     return datetime.min.replace(tzinfo=ZoneInfo("UTC"))
 
 
-def get_tvmaze_episode_map(tvdb_id):
-    """Fetch and process episode data from TVMaze using TVDB ID with caching."""
-    # Check cache first for the processed map
-    cache_key = f"tvmaze_map_{tvdb_id}"
+def get_tvdb_episode_map(tvdb_id):
+    """Fetch and process precise episode data from TVDB using TVDB ID with caching."""
+    cache_key = f"tvdb_map_{tvdb_id}"
     cached_map = cache.get(cache_key)
 
     if cached_map:
-        logger.info("%s - Using cached TVMaze episode map", tvdb_id)
+        logger.info("%s - Using cached TVDB episode map", tvdb_id)
         return cached_map
 
-    show_response = get_tvmaze_response(tvdb_id)
+    try:
+        tvdb_map = tvdb.get_episode_airstamp_map(str(tvdb_id))
+    except Exception as err:  # pragma: no cover - defensive provider fallback
+        logger.warning("%s - TVDB episode map fetch error: %s", tvdb_id, err)
+        tvdb_map = {}
 
-    # Process episodes into the map format we need
-    tvmaze_map = {}
-
-    if show_response:
-        episodes = show_response["_embedded"]["episodes"]
-
-        for ep in episodes:
-            season_num = ep.get("season")
-            episode_num = ep.get("number")
-            if season_num is not None and episode_num is not None:
-                key = f"{season_num}_{episode_num}"
-                tvmaze_map[key] = ep.get("airstamp")
-
-    cache.set(cache_key, tvmaze_map)
+    cache.set(cache_key, tvdb_map)
     logger.info(
-        "%s - Cached TVMaze episode map with %d entries",
+        "%s - Cached TVDB episode map with %d entries",
         tvdb_id,
-        len(tvmaze_map),
+        len(tvdb_map),
     )
 
-    return tvmaze_map
-
-
-def get_tvmaze_response(tvdb_id):
-    """Fetch episode data from TVMaze using TVDB ID."""
-    # First, lookup the TVMaze ID using the TVDB ID
-    lookup_url = f"https://api.tvmaze.com/lookup/shows?thetvdb={tvdb_id}"
-    try:
-        lookup_response = services.api_request("TVMaze", "GET", lookup_url)
-    except requests.exceptions.HTTPError as err:
-        if err.response.status_code == requests.codes.not_found:
-            logger.warning(
-                "TVMaze lookup failed for TVDB ID %s - %s",
-                tvdb_id,
-                err.response.text,
-            )
-        else:
-            logger.warning(
-                "%s - TVMaze lookup error: %s",
-                tvdb_id,
-                err.response.text,
-            )
-        lookup_response = {}
-
-    if not lookup_response:
-        logger.warning("%s - No TVMaze lookup response for TVDB ID", tvdb_id)
-        return {}
-
-    tvmaze_id = lookup_response.get("id")
-
-    if not tvmaze_id:
-        logger.warning("%s - TVMaze ID not found for TVDB ID", tvdb_id)
-        return {}
-
-    # Now fetch the show with embedded episodes
-    show_url = f"https://api.tvmaze.com/shows/{tvmaze_id}?embed=episodes"
-
-    try:
-        return services.api_request("TVMaze", "GET", show_url)
-    except requests.exceptions.HTTPError:
-        return {}
+    return tvdb_map
 
 
 def process_comic(item, events_bulk):

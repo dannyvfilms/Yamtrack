@@ -403,79 +403,7 @@ def enrich_season_with_tv_data(season_data, tv_data, media_id, season_number):
     return season_data
 
 
-def _get_tvmaze_show_by_tvdb_id(tvdb_id):
-    """Fetch a TVMaze show payload by TVDB ID with caching."""
-    cache_key = f"tvmaze_show_{tvdb_id}"
-    cached_data = cache.get(cache_key)
-    if cached_data is not None:
-        return cached_data
-
-    lookup_url = f"https://api.tvmaze.com/lookup/shows?thetvdb={tvdb_id}"
-    try:
-        lookup_response = services.api_request("TVMaze", "GET", lookup_url)
-    except requests.exceptions.HTTPError as error:
-        logger.warning(
-            "TVMaze lookup failed for TVDB ID %s: %s",
-            tvdb_id,
-            exception_summary(error),
-        )
-        lookup_response = {}
-
-    if not lookup_response:
-        cache.set(cache_key, {})
-        return {}
-
-    tvmaze_id = lookup_response.get("id")
-    if not tvmaze_id:
-        cache.set(cache_key, {})
-        return {}
-
-    show_url = f"https://api.tvmaze.com/shows/{tvmaze_id}?embed=episodes"
-    try:
-        show_response = services.api_request("TVMaze", "GET", show_url)
-    except requests.exceptions.HTTPError as error:
-        logger.warning(
-            "TVMaze show fetch failed for TVDB ID %s: %s",
-            tvdb_id,
-            exception_summary(error),
-        )
-        show_response = {}
-
-    cache.set(cache_key, show_response or {})
-    return show_response or {}
-
-
-def _tvmaze_special_episodes(show_response):
-    """Return ordered specials episodes from a TVMaze show payload."""
-    embedded = show_response.get("_embedded") if isinstance(show_response, dict) else {}
-    if not isinstance(embedded, dict):
-        embedded = {}
-
-    episodes = embedded.get("episodes") or []
-    if not isinstance(episodes, list):
-        return []
-
-    specials = []
-
-    for episode in episodes:
-        if not isinstance(episode, dict):
-            continue
-        season_number = episode.get("season")
-        episode_number = episode.get("number")
-        if season_number != 0 or episode_number is None:
-            continue
-        specials.append(episode)
-
-    specials.sort(
-        key=lambda episode: (
-            episode.get("number") if episode.get("number") is not None else 0,
-            episode.get("id") if episode.get("id") is not None else 0,
-        ),
-    )
-    return specials
-
-
-def _build_tvmaze_specials_related_entry(tv_data, season_data):
+def _build_specials_related_entry(tv_data, season_data):
     """Build a season card entry for fallback TVDB-linked specials."""
     return {
         "source": Sources.TMDB.value,
@@ -503,7 +431,7 @@ def _attach_specials_to_tv_data(tv_data, season_data):
     if any(season.get("season_number") == 0 for season in seasons):
         return
 
-    seasons.append(_build_tvmaze_specials_related_entry(tv_data, season_data))
+    seasons.append(_build_specials_related_entry(tv_data, season_data))
     seasons.sort(
         key=lambda season: (
             season.get("season_number") is None,
@@ -604,82 +532,21 @@ def cache_fallback_season_metadata(media_id, season_number, tv_data, season_data
     return cached_season_data
 
 
-def _build_specials_season_from_tvmaze(media_id, tv_data):
-    """Build TMDB-shaped season metadata from TVMaze specials data."""
+def _build_specials_season_from_tvdb(media_id, tv_data):
+    """Build TMDB-shaped season metadata from TVDB specials data."""
     if not tv_data or not tv_data.get("tvdb_id"):
         return None
 
-    show_response = _get_tvmaze_show_by_tvdb_id(tv_data["tvdb_id"])
-    special_episodes = _tvmaze_special_episodes(show_response)
-    if not special_episodes:
+    from app.providers import tvdb  # noqa: PLC0415
+
+    season_data = tvdb.build_specials_season(
+        tv_data["tvdb_id"],
+        media_id=media_id,
+        source=Sources.TMDB.value,
+        tv_data=tv_data,
+    )
+    if season_data is None:
         return None
-
-    runtimes = []
-    processed_episodes = []
-
-    for episode in special_episodes:
-        runtime = episode.get("runtime")
-        if isinstance(runtime, int) and runtime > 0:
-            runtimes.append(runtime)
-
-        image = episode.get("image") or {}
-        processed_episodes.append(
-            {
-                "episode_number": episode["number"],
-                "air_date": episode.get("airdate"),
-                "still_path": None,
-                "image": image.get("original") or image.get("medium") or settings.IMG_NONE,
-                "name": episode.get("name") or f"Episode {episode['number']}",
-                "overview": get_synopsis(
-                    strip_tags(episode.get("summary") or "").strip(),
-                ),
-                "runtime": runtime,
-            },
-        )
-
-    total_runtime = sum(runtimes)
-    average_runtime = (
-        get_readable_duration(total_runtime / len(runtimes)) if runtimes else None
-    )
-
-    first_air_date = processed_episodes[0].get("air_date")
-    last_air_date = processed_episodes[-1].get("air_date")
-    show_image = show_response.get("image") if isinstance(show_response, dict) else {}
-    if not isinstance(show_image, dict):
-        show_image = {}
-    season_image = (
-        show_image.get("original")
-        or show_image.get("medium")
-        or settings.IMG_NONE
-    )
-
-    season_data = {
-        "source": Sources.TMDB.value,
-        "media_type": MediaTypes.SEASON.value,
-        "season_title": "Specials",
-        "max_progress": processed_episodes[-1]["episode_number"],
-        "image": season_image,
-        "season_number": 0,
-        "synopsis": get_synopsis(""),
-        "score": None,
-        "score_count": None,
-        "details": {
-            "first_air_date": get_start_date(first_air_date),
-            "last_air_date": get_start_date(last_air_date),
-            "episodes": len(processed_episodes),
-            "runtime": average_runtime,
-            "total_runtime": (
-                get_readable_duration(total_runtime) if total_runtime else None
-            ),
-        },
-        "episodes": processed_episodes,
-        "providers": {},
-        "source_url": (
-            show_response.get("url")
-            or tv_data.get("external_links", {}).get("TVDB")
-            or tv_data.get("source_url")
-        ),
-    }
     return enrich_season_with_tv_data(season_data, tv_data, media_id, 0)
 
 
@@ -748,7 +615,7 @@ def fetch_and_cache_seasons(media_id, season_numbers, tv_data):
             result_data[season_key] = season_data
 
     if 0 in season_numbers and "season/0" not in result_data and fetched_tv_data:
-        specials_season = _build_specials_season_from_tvmaze(
+        specials_season = _build_specials_season_from_tvdb(
             media_id,
             fetched_tv_data,
         )
@@ -1363,6 +1230,7 @@ def get_related(related_medias, media_type, parent_response=None):
             "image": season_image,
         }
         if media_type == MediaTypes.SEASON.value:
+            episode_count = media.get("episode_count")
             data["media_id"] = parent_response["id"]
             data["title"] = get_title(parent_response)
             data["original_title"] = get_original_title(parent_response)
@@ -1374,7 +1242,11 @@ def get_related(related_medias, media_type, parent_response=None):
             # For last_air_date, we need to simulate get_end_date logic since we don't have episode data here
             # This will be updated when the detailed season data is fetched
             data["last_air_date"] = None
-            data["max_progress"] = media["episode_count"]
+            data["max_progress"] = episode_count
+            data["episode_count"] = episode_count
+            data["details"] = {
+                "episodes": episode_count,
+            }
         else:
             data["media_id"] = media["id"]
             data["title"] = get_title(media)
@@ -1586,9 +1458,20 @@ def process_episodes(season_metadata, episodes_in_db):
 
                 from django.utils import timezone
 
-                # TMDB returns dates in YYYY-MM-DD format
-                date_obj = datetime.strptime(air_date, "%Y-%m-%d")
-                air_date = timezone.make_aware(date_obj, timezone.get_current_timezone())
+                normalized_air_date = air_date.replace("Z", "+00:00")
+                if "T" in normalized_air_date:
+                    date_obj = datetime.fromisoformat(normalized_air_date)
+                else:
+                    # TMDB returns dates in YYYY-MM-DD format
+                    date_obj = datetime.strptime(normalized_air_date, "%Y-%m-%d")
+                air_date = (
+                    date_obj
+                    if timezone.is_aware(date_obj)
+                    else timezone.make_aware(
+                        date_obj,
+                        timezone.get_current_timezone(),
+                    )
+                )
             except (ValueError, TypeError):
                 # If parsing fails, keep the original value
                 pass

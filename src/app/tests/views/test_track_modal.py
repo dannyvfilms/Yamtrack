@@ -1,10 +1,11 @@
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from app.models import (
+    Anime,
     Item,
     MediaTypes,
     Movie,
@@ -14,6 +15,7 @@ from app.models import (
     Sources,
     Status,
 )
+from app.services.metadata_resolution import MetadataResolutionResult
 
 
 class TrackModalViewTests(TestCase):
@@ -24,6 +26,16 @@ class TrackModalViewTests(TestCase):
         self.credentials = {"username": "test", "password": "12345"}
         self.user = get_user_model().objects.create_user(**self.credentials)
         self.client.login(**self.credentials)
+
+        self.mock_get_media_metadata = patch(
+            "app.models.providers.services.get_media_metadata",
+            return_value={"max_progress": 1},
+        )
+        self.mock_fetch_releases = patch("app.models.Item.fetch_releases")
+        self.mock_get_media_metadata.start()
+        self.mock_fetch_releases.start()
+        self.addCleanup(self.mock_get_media_metadata.stop)
+        self.addCleanup(self.mock_fetch_releases.stop)
 
         self.item = Item.objects.create(
             media_id="238",
@@ -94,6 +106,94 @@ class TrackModalViewTests(TestCase):
             response.context["form"].initial["media_type"],
             MediaTypes.MOVIE.value,
         )
+
+    @override_settings(TVDB_API_KEY="test-tvdb-key")
+    @patch("app.views.metadata_resolution.resolve_detail_metadata")
+    @patch("app.providers.services.get_media_metadata")
+    def test_track_modal_renders_metadata_sidebar_for_anime(
+        self,
+        mock_get_metadata,
+        mock_resolve_detail_metadata,
+    ):
+        """Anime tracking modal should expose a separate metadata tab."""
+        anime_item = Item.objects.create(
+            media_id="52991",
+            source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME.value,
+            title="Frieren",
+            image="https://example.com/frieren.jpg",
+        )
+        base_metadata = {
+            "media_id": "52991",
+            "title": "Frieren",
+            "original_title": "Sousou no Frieren",
+            "localized_title": "Frieren",
+            "media_type": MediaTypes.ANIME.value,
+            "source": Sources.MAL.value,
+            "image": "https://example.com/frieren.jpg",
+            "max_progress": 28,
+            "details": {"episodes": 28},
+            "related": {},
+        }
+        mock_get_metadata.return_value = base_metadata
+        anime = Anime.objects.create(
+            item=anime_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=12,
+        )
+        mock_resolve_detail_metadata.return_value = MetadataResolutionResult(
+            display_provider=Sources.TVDB.value,
+            identity_provider=Sources.MAL.value,
+            mapping_status="mapped",
+            header_metadata=base_metadata,
+            grouped_preview={
+                "media_id": "9350138",
+                "source": Sources.TVDB.value,
+                "media_type": MediaTypes.ANIME.value,
+                "title": "Frieren: Beyond Journey's End",
+                "related": {
+                    "seasons": [
+                        {
+                            "season_number": 1,
+                            "episode_count": 28,
+                            "is_mapped_target": True,
+                            "mapped_episode_start": 1,
+                            "mapped_episode_end": 28,
+                        },
+                    ],
+                },
+            },
+            provider_media_id="9350138",
+            grouped_preview_target={
+                "season_number": 1,
+                "season_title": "Season 1",
+                "episode_start": 1,
+                "episode_end": 28,
+            },
+        )
+
+        response = self.client.get(
+            reverse(
+                "track_modal",
+                kwargs={
+                    "source": Sources.MAL.value,
+                    "media_type": MediaTypes.ANIME.value,
+                    "media_id": "52991",
+                },
+            )
+            + f"?instance_id={anime.id}&return_url=/details/mal/anime/52991/frieren",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "app/components/fill_track.html")
+        self.assertTrue(response.context["metadata_tab_available"])
+        self.assertContains(response, "General")
+        self.assertContains(response, "Metadata")
+        self.assertContains(response, "Metadata Provider")
+        self.assertContains(response, "Convert to Grouped Series")
+        self.assertContains(response, "This MAL entry would convert to")
+        self.assertContains(response, "Conversion target")
 
 
 class PodcastTrackModalViewTests(TestCase):

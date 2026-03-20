@@ -313,6 +313,20 @@ class ServicesTests(TestCase):
 
         mock_tv.assert_called_once_with("1")
 
+    @patch("app.providers.tvdb.tv")
+    def test_get_media_metadata_tv_tvdb(self, mock_tv):
+        """Test the get_media_metadata function for TVDB TV shows."""
+        mock_tv.return_value = {"title": "Test TVDB Show"}
+
+        result = services.get_media_metadata(
+            MediaTypes.TV.value,
+            "81189",
+            Sources.TVDB.value,
+        )
+
+        self.assert_metadata_title_payload(result, "Test TVDB Show")
+        mock_tv.assert_called_once_with("81189", routed_media_type=MediaTypes.TV.value)
+
     @patch("app.providers.tmdb.tv_with_seasons")
     def test_get_media_metadata_tv_with_seasons(self, mock_tv_with_seasons):
         """Test the get_media_metadata function for TV shows with seasons."""
@@ -328,6 +342,25 @@ class ServicesTests(TestCase):
         self.assert_metadata_title_payload(result, "Test TV with Seasons")
 
         mock_tv_with_seasons.assert_called_once_with("1", [1, 2])
+
+    @patch("app.providers.tvdb.tv_with_seasons")
+    def test_get_media_metadata_tv_with_seasons_tvdb(self, mock_tv_with_seasons):
+        """Test the get_media_metadata function for TVDB seasons."""
+        mock_tv_with_seasons.return_value = {"title": "Test TVDB Seasons"}
+
+        result = services.get_media_metadata(
+            "tv_with_seasons",
+            "81189",
+            Sources.TVDB.value,
+            season_numbers=[0, 1],
+        )
+
+        self.assert_metadata_title_payload(result, "Test TVDB Seasons")
+        mock_tv_with_seasons.assert_called_once_with(
+            "81189",
+            [0, 1],
+            routed_media_type=MediaTypes.TV.value,
+        )
 
     @patch("app.providers.tmdb.tv_with_seasons")
     def test_get_media_metadata_season(self, mock_tv_with_seasons):
@@ -523,6 +556,21 @@ class ServicesTests(TestCase):
 
         self.assertEqual(result, [{"title": "Test Anime"}])
 
+        mock_search.assert_called_once_with(MediaTypes.ANIME.value, "test", 1)
+
+    @patch("app.providers.tvdb.search")
+    def test_search_anime_tvdb(self, mock_search):
+        """Test the search function for anime via TVDB."""
+        mock_search.return_value = {"results": []}
+
+        result = services.search(
+            MediaTypes.ANIME.value,
+            "test",
+            1,
+            source=Sources.TVDB.value,
+        )
+
+        self.assertEqual(result, {"results": []})
         mock_search.assert_called_once_with(MediaTypes.ANIME.value, "test", 1)
 
     @patch("app.providers.mangaupdates.search")

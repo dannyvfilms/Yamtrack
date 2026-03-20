@@ -33,16 +33,14 @@ User = get_user_model()
 
 class MetadataBackfillTaskTests(TestCase):
     @patch("events.calendar.cache_utils.clear_time_left_cache_for_user")
-    @patch("app.models.providers.services.get_media_metadata")
-    @patch("events.calendar.get_tvmaze_episode_map")
-    @patch("events.calendar.tmdb.tv_with_seasons")
-    @patch("app.tasks.services.get_media_metadata")
+    @patch("events.calendar.get_tvdb_episode_map")
+    @patch("events.calendar.services.get_media_metadata")
+    @patch("app.tasks._fetch_item_metadata")
     def test_backfill_tmdb_tv_syncs_new_season_and_clears_time_left(
         self,
-        mock_get_media_metadata,
-        mock_tv_with_seasons,
-        mock_tvmaze,
-        mock_model_metadata,
+        mock_fetch_item_metadata,
+        mock_calendar_get_metadata,
+        mock_tvdb,
         mock_clear_time_left_cache,
     ):
         user = User.objects.create_user(username="tv-user", password="pw")
@@ -79,6 +77,21 @@ class MetadataBackfillTaskTests(TestCase):
             user=user,
             status=Status.COMPLETED.value,
         )
+        season2_item = Item.objects.create(
+            media_id="201834",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=2,
+            title="Ted",
+            image="https://example.com/season2.jpg",
+            metadata_fetched_at=old_fetched_at,
+        )
+        Season.objects.create(
+            item=season2_item,
+            related_tv=tv,
+            user=user,
+            status=Status.PLANNING.value,
+        )
 
         episode_items = []
         for episode_number in range(1, 8):
@@ -114,8 +127,8 @@ class MetadataBackfillTaskTests(TestCase):
             ],
         )
 
-        mock_tvmaze.return_value = {}
-        mock_get_media_metadata.return_value = {
+        mock_tvdb.return_value = {}
+        mock_fetch_item_metadata.return_value = {
             "media_id": "201834",
             "source": Sources.TMDB.value,
             "media_type": MediaTypes.TV.value,
@@ -135,7 +148,7 @@ class MetadataBackfillTaskTests(TestCase):
                 "episodes": 15,
             },
         }
-        mock_tv_with_seasons.return_value = {
+        mock_calendar_get_metadata.return_value = {
             "season/2": {
                 "image": "https://example.com/season2.jpg",
                 "season_number": 2,
@@ -151,17 +164,6 @@ class MetadataBackfillTaskTests(TestCase):
                 "tvdb_id": None,
             },
         }
-        mock_model_metadata.return_value = {
-            "related": {
-                "seasons": [
-                    {"season_number": 1, "image": "https://example.com/season1.jpg"},
-                    {"season_number": 2, "image": "https://example.com/season2.jpg"},
-                ],
-            },
-            "details": {"seasons": 2},
-            "max_progress": 15,
-        }
-
         result = tasks.backfill_item_metadata_task(batch_size=1)
 
         tv.refresh_from_db()
