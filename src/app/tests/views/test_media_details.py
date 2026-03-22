@@ -863,6 +863,8 @@ class MediaDetailsViewTests(TestCase):
         self.assertIn("media", response.context)
         self.assertEqual(response.context["media"]["title"], "Season 1")
         self.assertEqual(len(response.context["media"]["episodes"]), 1)
+        self.assertEqual(response.context["display_provider"], Sources.TMDB.value)
+        self.assertEqual(response.context["identity_provider"], Sources.TMDB.value)
         self.assertContains(
             response,
             reverse(

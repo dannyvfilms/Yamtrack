@@ -5415,6 +5415,8 @@ def season_details(
             season_metadata.get("providers"), request.user.watch_provider_region
         ),
         "watch_provider_region": request.user.watch_provider_region,
+        "display_provider": source,
+        "identity_provider": source,
     }
     return render(request, "app/media_details.html", context)
 
