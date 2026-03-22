@@ -196,7 +196,12 @@ def is_list(arg1):
 @register.filter
 def source_readable(source):
     """Return the readable source name."""
-    return Sources(source).label
+    if not source:
+        return ""
+    try:
+        return Sources(source).label
+    except ValueError:
+        return source
 
 
 @register.filter
