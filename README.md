@@ -54,6 +54,11 @@ Beyond the originals: music + podcasts (and more), so your tracking isn't split 
 
 The easiest way to get started is with Docker Compose. This works great with Portainer stacks or standalone Docker.
 
+Important:
+- Yamtrack uses PostgreSQL only when `DB_HOST` is set.
+- If `DB_HOST` is not set, Yamtrack uses SQLite at `/yamtrack/db/db.sqlite3`.
+- `DATABASE_URL` is not currently supported.
+
 **For SQLite (simple setup):**
 
 ```yaml
@@ -69,7 +74,7 @@ services:
       - REDIS_URL=redis://redis:6379
       - TZ=America/New_York  # Your timezone
     volumes:
-      - ./db-sqlite:/yamtrack/db
+      - ./db:/yamtrack/db
     ports:
       - "8000:8000"
 
@@ -84,18 +89,67 @@ volumes:
   redis_data:
 ```
 
+Important:
+If you use SQLite, you must persist `/yamtrack/db`.
+Without that mount, updates that recreate the container will also recreate an empty database.
+
 Save this as `docker-compose.yml` and run:
 
 ```bash
 docker compose up -d
 ```
 
-Then visit `http://localhost:8000` and create your admin account.
+Then visit `http://localhost:8000` and create your first account.
 
 **For PostgreSQL (production setup):**
 
-Use `docker-compose.postgres.yml` from the repository, which includes a PostgreSQL database container.
-It uses a dedicated `postgres_data` volume so it won't conflict with the SQLite `./db-sqlite` folder.
+```yaml
+services:
+  yamtrack:
+    image: ghcr.io/dannyvfilms/yamtrack:latest
+    container_name: yamtrack
+    restart: unless-stopped
+    depends_on:
+      - db
+      - redis
+    environment:
+      - SECRET=your-secret-key-here-change-this
+      - REDIS_URL=redis://redis:6379
+      - TZ=America/New_York  # Your timezone
+      - DB_HOST=db
+      - DB_NAME=yamtrack
+      - DB_USER=yamtrack
+      - DB_PASSWORD=change-this-password
+      - DB_PORT=5432
+    ports:
+      - "8000:8000"
+
+  db:
+    image: postgres:16-alpine
+    container_name: yamtrack-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=yamtrack
+      - POSTGRES_USER=yamtrack
+      - POSTGRES_PASSWORD=change-this-password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:8-alpine
+    container_name: yamtrack-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:
+```
+
+Important:
+For PostgreSQL, use `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, and `DB_PORT`.
+Do not replace these with `DATABASE_URL`; Yamtrack will fall back to SQLite if `DB_HOST` is missing.
 
 ### Docker Run (Quick Start)
 
@@ -125,17 +179,30 @@ docker run -d \
 
 Note: This setup uses named volumes (`yamtrack-db` and `yamtrack-redis-data`) and a shared network (`yamtrack-net`). For docker compose with more options, see the Docker Compose section above.
 
-### Portainer Stack
+### Portainer
 
+Portainer users should prefer **Stacks** over **Containers -> Add container**.
+Stacks let you paste the working compose file directly and avoid missing required database volumes or env vars.
+
+**Recommended: Portainer Stacks**
 1. In Portainer, go to **Stacks** → **Add Stack**
 2. Name it `yamtrack`
-3. Paste the docker compose configuration above
+3. Paste one of the compose configurations above
 4. Update the `SECRET` environment variable with a secure random string
 5. Deploy the stack
 
+**If you use Containers -> Add container anyway**
+- Always set `SECRET` and `REDIS_URL`.
+- For SQLite, mount persistent storage to `/yamtrack/db`.
+- For PostgreSQL, set `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, and `DB_PORT` on the Yamtrack container.
+- For PostgreSQL, also persist `/var/lib/postgresql/data` on the Postgres container.
+- Publish port `8000` from the container to a host port.
+- Leave `Command` and `Entrypoint` empty unless you know you need to override them.
+
 ### Environment Variables
 
-The only **required** variable is `SECRET` (a long random string for Django's secret key).
+The only universally **required** variable is `SECRET` (a long random string for Django's secret key).
+For Docker installs, you should also set `REDIS_URL` to a reachable Redis instance.
 
 **Optional but recommended:**
 - `TMDB_API` - For movie/TV metadata (get from [TMDB](https://www.themoviedb.org/settings/api))
@@ -144,9 +211,16 @@ The only **required** variable is `SECRET` (a long random string for Django's se
 - `STEAM_API_KEY` - For Steam game imports
 - `BGG_API_TOKEN` - For board game metadata (get from [BoardGameGeek](https://boardgamegeek.com/using_the_xml_api))
 - `URLS` - Your public URL if using a reverse proxy (e.g., `https://yamtrack.mydomain.com`)
-- `ADMIN_ENABLED` - Set to `True` to enable the Django admin interface at `/admin/` (see [Admin Page documentation](https://github.com/FuzzyGrim/Yamtrack/wiki/Admin-Page) for setup instructions)
+- `ADMIN_ENABLED` - Set to `True` to enable the Django admin interface at `/admin/` (see the [Admin Guide](wiki/6.-Admin-and-Operations.md#admin-guide) for setup instructions)
 
-For a complete list, see the [Environment Variables documentation](https://github.com/FuzzyGrim/Yamtrack/wiki/Environment-Variables).
+For a complete list, see the [Environment Variables documentation](wiki/6.-Admin-and-Operations.md#environment-variables).
+
+### Persistence Checklist
+
+- SQLite stores the app database at `/yamtrack/db/db.sqlite3`; persist `/yamtrack/db`.
+- PostgreSQL stores its database files at `/var/lib/postgresql/data`; persist that path on the Postgres container.
+- Redis stores sessions and background-task state; resetting Redis can log users out, but it should not delete accounts if the database is persisted.
+- Do not assume `DATABASE_URL` enables PostgreSQL. Yamtrack uses Postgres only when `DB_HOST` is set.
 
 Example `.env` file:
 
@@ -160,6 +234,14 @@ BGG_API_TOKEN=BGG_API_TOKEN
 SECRET=SECRET
 DEBUG=True
 ```
+
+### Troubleshooting: I Updated and My Login Is Gone
+
+If an update recreated the container and your account is gone:
+1. If you intended to use PostgreSQL, confirm `DB_HOST` is set. `DATABASE_URL` alone will not enable Postgres.
+2. If you intended to use SQLite, confirm `/yamtrack/db` is mounted to persistent storage.
+3. If you were only logged out but can sign in again, Redis/session data was reset; your account database is still intact.
+4. Do not remove database volumes during updates unless you intentionally want a fresh install.
 
 ### Reverse Proxy Setup
 
