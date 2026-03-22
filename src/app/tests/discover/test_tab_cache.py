@@ -244,7 +244,8 @@ class DiscoverTabCacheTests(TestCase):
         row.source = "provider"
         row.reserve_items[0].image = settings.IMG_NONE
 
-        def hydrate(row_to_hydrate):
+        def hydrate(row_to_hydrate, *, allow_remote=True):
+            self.assertFalse(allow_remote)
             row_to_hydrate.items[0].image = "https://example.com/hydrated.jpg"
 
         mock_hydrate_visible_row_artwork.side_effect = hydrate
@@ -262,6 +263,54 @@ class DiscoverTabCacheTests(TestCase):
         self.assertIsNotNone(rows)
         self.assertEqual(rows[0].items[0].title, "Promoted Movie")
         self.assertEqual(rows[0].items[0].image, "https://example.com/hydrated.jpg")
+        mock_hydrate_visible_row_artwork.assert_called_once()
+
+    @patch("app.discover.service.hydrate_visible_row_artwork")
+    def test_apply_cached_action_skips_hydration_for_non_active_tabs(
+        self,
+        mock_hydrate_visible_row_artwork,
+    ):
+        movie_row = self._row(title="Remove Me", reserve_title="Movie Replacement")
+        movie_row.reserve_items[0].image = settings.IMG_NONE
+        all_row = RowResult(
+            key="trending_right_now",
+            title="Trending",
+            mission="Global picks",
+            why="Popular now.",
+            source="trakt",
+            items=[
+                CandidateItem(
+                    media_type="movie",
+                    source="tmdb",
+                    media_id="101",
+                    title="Remove Me",
+                    image="https://example.com/poster.jpg",
+                ),
+            ],
+            reserve_items=[
+                CandidateItem(
+                    media_type="movie",
+                    source="tmdb",
+                    media_id="103",
+                    title="All Replacement",
+                    image=settings.IMG_NONE,
+                ),
+            ],
+        )
+        tab_cache.set_tab_cache(self.user.id, "movie", [movie_row])
+        tab_cache.set_tab_cache(self.user.id, "all", [all_row])
+
+        rows = tab_cache.apply_cached_action(
+            self.user.id,
+            "movie",
+            "movie",
+            media_id="101",
+            source="tmdb",
+            show_more=False,
+        )
+
+        self.assertIsNotNone(rows)
+        self.assertEqual(rows[0].items[0].title, "Movie Replacement")
         mock_hydrate_visible_row_artwork.assert_called_once()
 
     def test_store_and_restore_undo_snapshot_restores_prior_rows(self):

@@ -49,6 +49,7 @@ class AppConfig(AppConfig):
         if (
             not settings.TESTING
             and not is_celery_worker
+            and getattr(settings, "DISCOVER_WARMUP_ON_STARTUP", False)
             and discover_cache_available
         ):
             self._schedule_discover_startup_warmup()

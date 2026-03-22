@@ -539,12 +539,28 @@ def _build_specials_season_from_tvdb(media_id, tv_data):
 
     from app.providers import tvdb  # noqa: PLC0415
 
-    season_data = tvdb.build_specials_season(
-        tv_data["tvdb_id"],
-        media_id=media_id,
-        source=Sources.TMDB.value,
-        tv_data=tv_data,
-    )
+    if not tvdb.enabled():
+        return None
+
+    try:
+        season_data = tvdb.build_specials_season(
+            tv_data["tvdb_id"],
+            media_id=media_id,
+            source=Sources.TMDB.value,
+            tv_data=tv_data,
+        )
+    except ValueError as error:
+        if str(error) != "TVDB is not configured":
+            raise
+        logger.info(
+            "Skipping TMDB specials fallback because TVDB is not configured",
+            extra={
+                "media_id": media_id,
+                "tvdb_id": tv_data.get("tvdb_id"),
+            },
+        )
+        return None
+
     if season_data is None:
         return None
     return enrich_season_with_tv_data(season_data, tv_data, media_id, 0)

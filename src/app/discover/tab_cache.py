@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from datetime import timedelta
 from urllib.parse import parse_qsl, urlparse
@@ -662,12 +663,16 @@ def apply_cached_action(
     """Optimistically patch cached Discover tabs after a card action."""
     from app.discover.service import hydrate_visible_row_artwork
 
+    started = time.monotonic()
+    normalized_active_media_type = _normalize_media_type(active_media_type)
     identity = (
         _normalize_media_type(candidate_media_type),
         str(source),
         str(media_id),
     )
     active_rows: list[RowResult] | None = None
+    patched_tabs = 0
+    hydrated_rows = 0
 
     entries = preloaded_payloads if preloaded_payloads is not None else _collect_cached_action_payloads(
         user_id,
@@ -676,6 +681,14 @@ def apply_cached_action(
     )
     for entry in entries:
         rows = _deserialize_rows(entry["payload"].get("rows"))
+        was_active_entry = (
+            entry["media_type"] == normalized_active_media_type
+            and bool(entry["show_more"]) == bool(show_more)
+        )
+        visible_before = [
+            [candidate.identity() for candidate in row.items[:DISCOVER_VISIBLE_ITEMS_PER_ROW]]
+            for row in rows
+        ]
         for row in rows:
             row.items = [
                 candidate
@@ -689,8 +702,16 @@ def apply_cached_action(
             ]
 
         rows = _rebalance_rows(rows)
-        for row in rows:
-            hydrate_visible_row_artwork(row)
+        if was_active_entry:
+            for index, row in enumerate(rows):
+                visible_after = [
+                    candidate.identity()
+                    for candidate in row.items[:DISCOVER_VISIBLE_ITEMS_PER_ROW]
+                ]
+                if visible_after == visible_before[index]:
+                    continue
+                hydrate_visible_row_artwork(row, allow_remote=False)
+                hydrated_rows += 1
         set_tab_cache(
             user_id,
             entry["media_type"],
@@ -699,12 +720,21 @@ def apply_cached_action(
             activity_version=_get_activity_version(user_id, entry["media_type"]),
             optimistic_refreshing=True,
         )
-        if (
-            entry["media_type"] == _normalize_media_type(active_media_type)
-            and bool(entry["show_more"]) == bool(show_more)
-        ):
+        patched_tabs += 1
+        if was_active_entry:
             active_rows = rows
 
+    logger.info(
+        "discover_cached_action_patch user_id=%s active_media_type=%s candidate_media_type=%s "
+        "show_more=%s patched_tabs=%s hydrated_rows=%s duration_ms=%s",
+        user_id,
+        normalized_active_media_type,
+        _normalize_media_type(candidate_media_type),
+        int(bool(show_more)),
+        patched_tabs,
+        hydrated_rows,
+        int((time.monotonic() - started) * 1000),
+    )
     return active_rows
 
 

@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import requests
 from django.conf import settings
 from django.core.cache import cache
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from app.credits import _normalize_credit_rows
 from app.models import Episode, Item, MediaTypes, Sources
@@ -19,8 +19,8 @@ from app.providers import (
     manual,
     openlibrary,
     services,
-    tvdb,
     tmdb,
+    tvdb,
 )
 
 mock_path = Path(__file__).resolve().parent.parent / "mock_data"
@@ -78,6 +78,7 @@ class Metadata(TestCase):
 
     @patch("app.providers.tvdb.build_specials_season")
     @patch("app.providers.tmdb.services.api_request")
+    @override_settings(TVDB_API_KEY="test-tvdb-key")
     def test_tv_with_seasons_adds_specials_when_tmdb_lacks_season_zero(
         self,
         mock_api_request,
@@ -185,6 +186,64 @@ class Metadata(TestCase):
 
     @patch("app.providers.tvdb.build_specials_season")
     @patch("app.providers.tmdb.services.api_request")
+    @override_settings(TVDB_API_KEY="")
+    def test_tv_with_seasons_skips_specials_fallback_when_tvdb_unconfigured(
+        self,
+        mock_api_request,
+        mock_build_specials_season,
+    ):
+        """TMDB TV details should not invoke TVDB specials fallback when disabled."""
+        tmdb.cache.clear()
+
+        def _mock_api_request(source, _method, url, params=None):  # noqa: ARG001
+            if source == Sources.TMDB.value and url.endswith("/tv/114410"):
+                return {
+                    "id": 114410,
+                    "name": "Chainsaw Man",
+                    "original_name": "Chainsaw Man",
+                    "poster_path": "/chainsaw.jpg",
+                    "overview": "A test show",
+                    "genres": [],
+                    "vote_average": 8.4,
+                    "vote_count": 10,
+                    "production_companies": [],
+                    "production_countries": [],
+                    "spoken_languages": [],
+                    "recommendations": {"results": []},
+                    "external_ids": {"tvdb_id": "10196540"},
+                    "watch/providers": {"results": {}},
+                    "aggregate_credits": {"cast": [], "crew": []},
+                    "alternative_titles": {"results": []},
+                    "episode_run_time": [24],
+                    "first_air_date": "2022-10-12",
+                    "last_air_date": "2022-12-28",
+                    "status": "Returning Series",
+                    "number_of_seasons": 1,
+                    "number_of_episodes": 12,
+                    "seasons": [
+                        {
+                            "season_number": 1,
+                            "name": "Season 1",
+                            "air_date": "2022-10-12",
+                            "episode_count": 12,
+                            "poster_path": None,
+                        },
+                    ],
+                }
+
+            raise AssertionError(f"Unexpected request in test: {source} {url}")
+
+        mock_api_request.side_effect = _mock_api_request
+
+        result = tmdb.tv_with_seasons("114410", [0])
+
+        self.assertEqual(result["tvdb_id"], "10196540")
+        self.assertNotIn("season/0", result)
+        mock_build_specials_season.assert_not_called()
+
+    @patch("app.providers.tvdb.build_specials_season")
+    @patch("app.providers.tmdb.services.api_request")
+    @override_settings(TVDB_API_KEY="test-tvdb-key")
     def test_tv_with_seasons_ignores_missing_tvdb_specials_payload(
         self,
         mock_api_request,
@@ -242,6 +301,7 @@ class Metadata(TestCase):
 
     @patch("app.providers.tvdb.build_specials_season")
     @patch("app.providers.tmdb.services.api_request")
+    @override_settings(TVDB_API_KEY="test-tvdb-key")
     def test_tv_with_seasons_normalizes_string_season_zero(
         self,
         mock_api_request,

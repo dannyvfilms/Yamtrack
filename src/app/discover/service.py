@@ -74,6 +74,7 @@ MOVIE_PERSONALIZED_ROW_SCHEMA_VERSION = 3
 TV_ANIME_TRAKT_ROW_SCHEMA_VERSION = 1
 TV_ANIME_PERSONALIZED_ROW_SCHEMA_VERSION = 3
 ROW_CANDIDATE_BUFFER_MULTIPLIER = 5
+ARTWORK_HYDRATION_ITEMS_PER_ROW = MAX_ITEMS_PER_ROW * 2
 MOVIE_PERSONALIZED_ROW_KEYS = {
     "top_picks_for_you",
     "comfort_rewatches",
@@ -5275,11 +5276,16 @@ def _supports_provider_artwork_hydration(candidate: CandidateItem) -> bool:
     )
 
 
-def _hydrate_provider_ranked_artwork(candidates: list[CandidateItem]) -> None:
+def _hydrate_provider_ranked_artwork(
+    candidates: list[CandidateItem],
+    *,
+    allow_remote: bool = True,
+    hydrate_limit: int = MAX_ITEMS_PER_ROW,
+) -> None:
     """Hydrate missing artwork for top provider-ranked boardgame/music candidates."""
     display_candidates = [
         candidate
-        for candidate in candidates[:MAX_ITEMS_PER_ROW]
+        for candidate in candidates[:hydrate_limit]
         if _supports_provider_artwork_hydration(candidate)
     ]
     if not display_candidates:
@@ -5303,6 +5309,9 @@ def _hydrate_provider_ranked_artwork(candidates: list[CandidateItem]) -> None:
         local_image = local_images.get(candidate.identity())
         if local_image:
             candidate.image = local_image
+
+    if not allow_remote:
+        return
 
     for candidate in missing:
         if not _is_missing_image(candidate):
@@ -5331,6 +5340,9 @@ def _hydrate_provider_ranked_artwork(candidates: list[CandidateItem]) -> None:
 def _hydrate_trakt_ranked_artwork(
     media_type: str,
     candidates: list[CandidateItem],
+    *,
+    allow_remote: bool = True,
+    hydrate_limit: int = MAX_ITEMS_PER_ROW,
 ) -> None:
     """Hydrate missing artwork for displayed Trakt-ranked TMDB candidates."""
     provider_media_type = _provider_media_type_for_artwork(media_type)
@@ -5339,7 +5351,7 @@ def _hydrate_trakt_ranked_artwork(
 
     display_candidates = [
         candidate
-        for candidate in candidates[:MAX_ITEMS_PER_ROW]
+        for candidate in candidates[:hydrate_limit]
         if candidate.media_type == media_type
         and candidate.source == TMDB_ADAPTER.provider
     ]
@@ -5365,6 +5377,9 @@ def _hydrate_trakt_ranked_artwork(
         if local_image:
             candidate.image = local_image
 
+    if not allow_remote:
+        return
+
     for candidate in missing:
         if not _is_missing_image(candidate):
             continue
@@ -5387,7 +5402,11 @@ def _hydrate_trakt_ranked_artwork(
             candidate.image = image
 
 
-def hydrate_visible_row_artwork(row: RowResult) -> None:
+def hydrate_visible_row_artwork(
+    row: RowResult,
+    *,
+    allow_remote: bool = True,
+) -> None:
     """Hydrate missing artwork for currently visible row items.
 
     This is used by the optimistic Discover tab-cache patching path so a
@@ -5420,11 +5439,18 @@ def hydrate_visible_row_artwork(row: RowResult) -> None:
         "all_time_greats_unseen",
         "coming_soon",
     }:
-        _hydrate_trakt_ranked_artwork(effective_media_type, row.items)
+        _hydrate_trakt_ranked_artwork(
+            effective_media_type,
+            row.items,
+            allow_remote=allow_remote,
+        )
         return
 
     if row.source == "provider" and row.key in PROVIDER_ARTWORK_HYDRATION_ROW_KEYS:
-        _hydrate_provider_ranked_artwork(row.items)
+        _hydrate_provider_ranked_artwork(
+            row.items,
+            allow_remote=allow_remote,
+        )
 
 
 def _blocked_statuses_for_row(row_definition: RowDefinition) -> set[str] | None:
@@ -5510,18 +5536,27 @@ def _prepare_row_from_candidates(
         row_definition.source == "provider"
         and row_definition.key in PROVIDER_ARTWORK_HYDRATION_ROW_KEYS
     )
+    artwork_hydration_limit = min(
+        len(candidates),
+        MAX_ITEMS_PER_ROW * ROW_CANDIDATE_BUFFER_MULTIPLIER,
+        ARTWORK_HYDRATION_ITEMS_PER_ROW,
+    )
     if is_trakt_ranked_row:
         if defer_artwork:
             needs_async_artwork_refresh = any(
                 _is_missing_image(item)
-                for item in candidates[:MAX_ITEMS_PER_ROW]
+                for item in candidates[:artwork_hydration_limit]
             )
         else:
-            _hydrate_trakt_ranked_artwork(media_type, candidates)
+            _hydrate_trakt_ranked_artwork(
+                media_type,
+                candidates,
+                hydrate_limit=artwork_hydration_limit,
+            )
     elif is_provider_ranked_row:
         provider_display_candidates = [
             candidate
-            for candidate in candidates[:MAX_ITEMS_PER_ROW]
+            for candidate in candidates[:artwork_hydration_limit]
             if _supports_provider_artwork_hydration(candidate)
         ]
         if defer_artwork:
@@ -5530,7 +5565,10 @@ def _prepare_row_from_candidates(
                 for candidate in provider_display_candidates
             )
         else:
-            _hydrate_provider_ranked_artwork(candidates)
+            _hydrate_provider_ranked_artwork(
+                candidates,
+                hydrate_limit=artwork_hydration_limit,
+            )
 
     match_signal = _row_match_signal(
         row_definition.key,

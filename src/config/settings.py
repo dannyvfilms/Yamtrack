@@ -578,6 +578,11 @@ BACKUP_DIR = config("BACKUP_DIR", default=str(BASE_DIR / "backups"))
 # Runtime population settings
 RUNTIME_POPULATION_DISABLED = config("RUNTIME_POPULATION_DISABLED", default=False, cast=bool)
 RUNTIME_POPULATION_ON_STARTUP = config("RUNTIME_POPULATION_ON_STARTUP", default=False, cast=bool)
+DISCOVER_WARMUP_ON_STARTUP = config(
+    "DISCOVER_WARMUP_ON_STARTUP",
+    default=not DEBUG,
+    cast=bool,
+)
 
 TZ = zoneinfo.ZoneInfo(TIME_ZONE)
 

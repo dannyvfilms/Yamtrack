@@ -150,6 +150,9 @@
 
           this.discoverActionListener = (event) => {
             this.showToast(event.detail || {});
+            if (!this.discoverDebug) {
+              this.checkCacheStatus();
+            }
           };
           document.body.addEventListener("discoverActionComplete", this.discoverActionListener);
         },

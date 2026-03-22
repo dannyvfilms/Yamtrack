@@ -10,8 +10,9 @@ from django.utils import timezone
 from app.discover import cache_repo
 from app.discover.providers.trakt_adapter import TraktDiscoverAdapter
 from app.discover.registry import ALL_MEDIA_KEY
-from app.discover.schemas import CandidateItem, RowResult
+from app.discover.schemas import CandidateItem, RowDefinition, RowResult
 from app.discover.service import (
+    MAX_ITEMS_PER_ROW,
     _apply_comfort_confidence,
     _apply_wildcard_novelty,
     _build_comfort_debug_payload,
@@ -21,6 +22,7 @@ from app.discover.service import (
     _entries_to_candidates,
     _get_all_media_component_rows,
     _musicbrainz_coming_soon_recording_candidates,
+    _prepare_row_from_candidates,
     _provider_row_candidates,
     _row_match_signal,
     _row_match_signal_with_details,
@@ -282,6 +284,47 @@ class DiscoverServiceTests(TestCase):
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0].image, settings.IMG_NONE)
         mock_get_cover_art.assert_not_called()
+
+    @patch("app.discover.service.services.get_media_metadata")
+    def test_trakt_ranked_rows_hydrate_first_buffered_reserve_candidate(
+        self,
+        mock_get_media_metadata,
+    ):
+        mock_get_media_metadata.side_effect = lambda _media_type, media_id, _source: {
+            "image": f"https://example.com/{media_id}.jpg",
+        }
+        row_definition = RowDefinition(
+            key="all_time_greats_unseen",
+            title="All-Time Greats You Haven't Seen",
+            mission="Must-watch classics still missing",
+            why="Must-watch classics still missing",
+            source="trakt",
+        )
+        candidates = [
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source=Sources.TMDB.value,
+                media_id=str(index),
+                title=f"Movie {index}",
+                image=settings.IMG_NONE,
+            )
+            for index in range(1, MAX_ITEMS_PER_ROW + 2)
+        ]
+
+        row, needs_async_artwork_refresh = _prepare_row_from_candidates(
+            self.user,
+            MediaTypes.MOVIE.value,
+            row_definition,
+            {},
+            candidates,
+            defer_artwork=False,
+        )
+
+        self.assertFalse(needs_async_artwork_refresh)
+        self.assertEqual(
+            row.items[MAX_ITEMS_PER_ROW].image,
+            f"https://example.com/{MAX_ITEMS_PER_ROW + 1}.jpg",
+        )
 
     @patch("app.discover.service.TMDB_ADAPTER.top_rated", return_value=[])
     @patch("app.discover.service.TMDB_ADAPTER.upcoming", return_value=[])

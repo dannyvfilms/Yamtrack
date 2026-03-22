@@ -944,6 +944,26 @@ def _render_discover_rows_fragment(
     )
 
 
+def _render_discover_row_fragment(
+    request,
+    *,
+    selected_media_type: str,
+    show_more: bool,
+    discover_debug: bool,
+    row,
+):
+    return render(
+        request,
+        "app/components/discover_row.html",
+        {
+            "selected_media_type": selected_media_type,
+            "show_more": show_more,
+            "discover_debug": discover_debug,
+            "row": row,
+        },
+    )
+
+
 def _discover_response_rows(
     user,
     *,
@@ -1145,10 +1165,22 @@ def refresh_discover(request):
 @require_POST
 def discover_action(request):
     """Handle Discover quick actions and return the updated rows fragment."""
+    request_id = uuid4().hex[:8]
+    request_started = time.monotonic()
     action = (request.POST.get("action") or "").strip().lower()
     active_media_type = _coerce_discover_media_type(request.POST.get("active_media_type"))
     show_more = request.POST.get("show_more") in {"1", "true", "True"}
     discover_debug = _coerce_discover_debug(request.POST.get("discover_debug"))
+    logger.info(
+        "discover_action_start request_id=%s user_id=%s action=%s active_media_type=%s "
+        "show_more=%s discover_debug=%s",
+        request_id,
+        request.user.id,
+        action or "invalid",
+        active_media_type,
+        int(bool(show_more)),
+        int(bool(discover_debug)),
+    )
     discover_tab_cache.mark_active(
         request.user.id,
         active_media_type,
@@ -1156,6 +1188,7 @@ def discover_action(request):
     )
 
     if action == "undo":
+        undo_started = time.monotonic()
         undo_token = (request.POST.get("undo_token") or "").strip()
         snapshot = discover_tab_cache.get_undo_snapshot(request.user.id, undo_token)
         if not snapshot:
@@ -1229,6 +1262,16 @@ def discover_action(request):
                 },
             },
         )
+        logger.info(
+            "discover_action_complete request_id=%s user_id=%s action=undo active_media_type=%s "
+            "rows=%s restored_snapshot=%s total_ms=%s",
+            request_id,
+            request.user.id,
+            active_media_type,
+            len(rows or []),
+            int(bool(restored_snapshot)),
+            int((time.monotonic() - undo_started) * 1000),
+        )
         return response
 
     if action not in {"planning", "dismiss"}:
@@ -1250,10 +1293,25 @@ def discover_action(request):
     season_number = int(season_number) if season_number not in (None, "") else None
     row_key = (request.POST.get("row_key") or "").strip()
     candidate_seed = _discover_candidate_seed(request)
+    logger.info(
+        "discover_action_candidate request_id=%s user_id=%s action=%s active_media_type=%s "
+        "candidate_media_type=%s source=%s media_id=%s row_key=%s show_more=%s",
+        request_id,
+        request.user.id,
+        action,
+        active_media_type,
+        candidate_media_type,
+        source,
+        media_id,
+        row_key or "-",
+        int(bool(show_more)),
+    )
 
     undo_token: str | None = None
     message = ""
     _action_payloads: list[dict] | None = None
+    action_stage_started = time.monotonic()
+    mutation_ms = 0
     if action == "planning":
         hydrated = ensure_item_metadata(
             request.user,
@@ -1335,6 +1393,7 @@ def discover_action(request):
                     },
                 )
             message = f'Added "{hydrated.item.title}" to Planning.'
+        mutation_ms = int((time.monotonic() - action_stage_started) * 1000)
     else:
         item = _get_or_create_discover_item(
             candidate_media_type,
@@ -1392,7 +1451,9 @@ def discover_action(request):
         elif not created:
             undo_token = None
         message = f'Hidden "{item_title}" from Discover.'
+        mutation_ms = int((time.monotonic() - action_stage_started) * 1000)
 
+    cache_patch_started = time.monotonic()
     rows = None
     if not discover_debug:
         rows = discover_tab_cache.apply_cached_action(
@@ -1404,6 +1465,8 @@ def discover_action(request):
             show_more=show_more,
             preloaded_payloads=_action_payloads,
         )
+    cache_patch_ms = int((time.monotonic() - cache_patch_started) * 1000)
+    row_fetch_started = time.monotonic()
     if rows is None:
         rows = _discover_response_rows(
             request.user,
@@ -1411,14 +1474,30 @@ def discover_action(request):
             show_more=show_more,
             discover_debug=discover_debug,
         )
+    row_fetch_ms = int((time.monotonic() - row_fetch_started) * 1000)
 
-    response = _render_discover_rows_fragment(
-        request,
-        selected_media_type=active_media_type,
-        show_more=show_more,
-        discover_debug=discover_debug,
-        rows=rows,
-    )
+    render_started = time.monotonic()
+    updated_row = None
+    if row_key:
+        updated_row = next((row for row in rows if row.key == row_key), None)
+
+    if updated_row is not None:
+        response = _render_discover_row_fragment(
+            request,
+            selected_media_type=active_media_type,
+            show_more=show_more,
+            discover_debug=discover_debug,
+            row=updated_row,
+        )
+    else:
+        response = _render_discover_rows_fragment(
+            request,
+            selected_media_type=active_media_type,
+            show_more=show_more,
+            discover_debug=discover_debug,
+            rows=rows,
+        )
+    render_ms = int((time.monotonic() - render_started) * 1000)
     trigger_payload = {
         "action": action,
         "message": message,
@@ -1429,6 +1508,26 @@ def discover_action(request):
         {
             "discoverActionComplete": trigger_payload,
         },
+    )
+    logger.info(
+        "discover_action_complete request_id=%s user_id=%s action=%s active_media_type=%s "
+        "candidate_media_type=%s source=%s media_id=%s row_key=%s rows=%s undo=%s "
+        "mutation_ms=%s cache_patch_ms=%s row_fetch_ms=%s render_ms=%s total_ms=%s",
+        request_id,
+        request.user.id,
+        action,
+        active_media_type,
+        candidate_media_type,
+        source,
+        media_id,
+        row_key or "-",
+        len(rows or []),
+        int(bool(undo_token)),
+        mutation_ms,
+        cache_patch_ms,
+        row_fetch_ms,
+        render_ms,
+        int((time.monotonic() - request_started) * 1000),
     )
     return response
 
