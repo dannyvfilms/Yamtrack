@@ -1,5 +1,6 @@
 """Last.fm API client for fetching user scrobbles."""
 
+from dataclasses import dataclass
 import hashlib
 import logging
 import random
@@ -31,6 +32,18 @@ class LastFMClientError(LastFMAPIError):
     """Raised for client errors (invalid user, etc.)."""
 
     pass
+
+
+@dataclass
+class LastFMRecentTracksResult:
+    """Structured response for paginated recent-track fetches."""
+
+    tracks: list[dict[str, Any]]
+    pages_fetched: int
+    total_pages: int
+    complete: bool
+    interrupted: bool = False
+    max_seen_uts: int | None = None
 
 
 def _make_api_request(method: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -120,6 +133,7 @@ def _make_api_request(method: str, params: dict[str, Any]) -> dict[str, Any]:
 def get_recent_tracks(
     username: str,
     from_timestamp_uts: int | None = None,
+    to_timestamp_uts: int | None = None,
     limit: int = 200,
     page: int = 1,
     extended: int = 1,
@@ -129,6 +143,7 @@ def get_recent_tracks(
     Args:
         username: Last.fm username
         from_timestamp_uts: Unix timestamp (seconds) to fetch tracks from (optional)
+        to_timestamp_uts: Unix timestamp (seconds) upper bound for fetches (optional)
         limit: Maximum tracks per page (max 200)
         page: Page number (1-indexed)
         extended: Include extended metadata (1 = yes, 0 = no)
@@ -150,24 +165,32 @@ def get_recent_tracks(
 
     if from_timestamp_uts is not None:
         params["from"] = from_timestamp_uts
+    if to_timestamp_uts is not None:
+        params["to"] = to_timestamp_uts
 
     return _make_api_request("user.getRecentTracks", params)
 
 
-def get_all_recent_tracks(
+def get_recent_tracks_window(
     username: str,
     from_timestamp_uts: int | None = None,
+    to_timestamp_uts: int | None = None,
     extended: int = 1,
-) -> list[dict[str, Any]]:
-    """Fetch all recent tracks for a user (handles pagination).
+    page_start: int = 1,
+    max_pages: int | None = None,
+) -> LastFMRecentTracksResult:
+    """Fetch a recent-track window for a user, handling pagination.
 
     Args:
         username: Last.fm username
         from_timestamp_uts: Unix timestamp (seconds) to fetch tracks from (optional)
+        to_timestamp_uts: Unix timestamp (seconds) upper bound for fetches (optional)
         extended: Include extended metadata (1 = yes, 0 = no)
+        page_start: Page number to begin fetching from
+        max_pages: Maximum number of pages to fetch in this call
 
     Returns:
-        List of track dictionaries
+        Structured page result with completion metadata
 
     Raises:
         LastFMAPIError: For API errors
@@ -175,14 +198,19 @@ def get_all_recent_tracks(
         LastFMClientError: For client errors (invalid user)
     """
     all_tracks = []
-    page = 1
+    page = max(page_start, 1)
     total_pages = None
+    pages_fetched = 0
+    complete = True
+    interrupted = False
+    max_seen_uts = None
 
     while True:
         try:
             data = get_recent_tracks(
                 username=username,
                 from_timestamp_uts=from_timestamp_uts,
+                to_timestamp_uts=to_timestamp_uts,
                 limit=200,
                 page=page,
                 extended=extended,
@@ -206,10 +234,27 @@ def get_all_recent_tracks(
                 )
 
             all_tracks.extend(tracks)
+            pages_fetched += 1
+
+            for track in tracks:
+                date_attr = track.get("date", {})
+                date_uts = date_attr.get("uts")
+                if not date_uts:
+                    continue
+                try:
+                    track_timestamp = int(date_uts)
+                except (TypeError, ValueError):
+                    continue
+                if max_seen_uts is None or track_timestamp > max_seen_uts:
+                    max_seen_uts = track_timestamp
 
             # Check if we've fetched all pages
             current_page = int(attr.get("page", page))
             if current_page >= total_pages or not tracks:
+                break
+
+            if max_pages is not None and pages_fetched >= max_pages:
+                complete = False
                 break
 
             page += 1
@@ -233,14 +278,40 @@ def get_all_recent_tracks(
                     "Returning partial results (%d tracks) due to error",
                     len(all_tracks),
                 )
+                complete = False
+                interrupted = True
                 break
             raise
 
     logger.info(
-        "Fetched %d tracks across %d pages for user %s",
+        "Fetched %d tracks across %d pages for user %s (complete=%s)",
         len(all_tracks),
-        page,
+        pages_fetched,
         username,
+        complete,
     )
 
-    return all_tracks
+    return LastFMRecentTracksResult(
+        tracks=all_tracks,
+        pages_fetched=pages_fetched,
+        total_pages=total_pages or 1,
+        complete=complete,
+        interrupted=interrupted,
+        max_seen_uts=max_seen_uts,
+    )
+
+
+def get_all_recent_tracks(
+    username: str,
+    from_timestamp_uts: int | None = None,
+    to_timestamp_uts: int | None = None,
+    extended: int = 1,
+) -> list[dict[str, Any]]:
+    """Fetch all recent tracks for a user (handles pagination)."""
+    result = get_recent_tracks_window(
+        username=username,
+        from_timestamp_uts=from_timestamp_uts,
+        to_timestamp_uts=to_timestamp_uts,
+        extended=extended,
+    )
+    return result.tracks

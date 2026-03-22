@@ -88,6 +88,10 @@ def record_music_playback(event: MusicPlaybackEvent) -> Music | None:
     played_at = event.played_at or timezone.now().replace(second=0, microsecond=0)
 
     if getattr(event, "defer_cover_prefetch", False):
+        recording_id = event.external_ids.get("musicbrainz_recording")
+        release_id = event.external_ids.get("musicbrainz_release")
+        release_group_id = event.external_ids.get("musicbrainz_release_group")
+        artist_id = event.external_ids.get("musicbrainz_artist")
         # Fast path: avoid enrichment and heavy lookups during batch imports
         metadata = ResolvedMusicMetadata(
             track_title=event.track_title or "Unknown Track",
@@ -95,13 +99,15 @@ def record_music_playback(event: MusicPlaybackEvent) -> Music | None:
             album_title=event.album_title or "Unknown Album",
             track_number=_coerce_int(event.track_number),
             duration_ms=_coerce_int(event.duration_ms),
-            musicbrainz_recording_id=None,
-            musicbrainz_release_id=None,
-            musicbrainz_release_group_id=None,
-            musicbrainz_artist_id=None,
-            source=Sources.MANUAL.value,
+            musicbrainz_recording_id=recording_id,
+            musicbrainz_release_id=release_id,
+            musicbrainz_release_group_id=release_group_id,
+            musicbrainz_artist_id=artist_id,
+            source=Sources.MUSICBRAINZ.value
+            if any([recording_id, release_id, release_group_id, artist_id])
+            else Sources.MANUAL.value,
             media_id=_select_media_id(
-                None,
+                recording_id,
                 event.plex_rating_key,
                 event.artist_name,
                 event.track_title,

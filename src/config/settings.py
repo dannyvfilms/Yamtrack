@@ -746,6 +746,7 @@ PLEX_HISTORY_MAX_ITEMS = config("PLEX_HISTORY_MAX_ITEMS", default=0, cast=int)
 
 LASTFM_API_KEY = config("LASTFM_API_KEY", default="")
 LASTFM_POLL_INTERVAL_MINUTES = config("LASTFM_POLL_INTERVAL_MINUTES", default=15, cast=int)
+LASTFM_HISTORY_PAGES_PER_TASK = config("LASTFM_HISTORY_PAGES_PER_TASK", default=5, cast=int)
 
 TESTING = False
 

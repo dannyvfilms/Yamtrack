@@ -113,6 +113,10 @@ class LastFMAccount(models.Model):
 - `last_sync_at`: Django datetime of when the last sync completed (for UI display).
 - `connection_broken`: Set to `True` when username is invalid or persistent errors occur. Prevents further polling attempts.
 - `failure_count`: Tracks consecutive failures for monitoring/debugging.
+- `history_import_status`: Separate state for the bounded full-history import (`idle`, `queued`, `running`, `failed`, `completed`).
+- `history_import_cutoff_uts`: Fixed upper timestamp bound for the current history backfill.
+- `history_import_next_page` / `history_import_total_pages`: Resume cursor for chunked history imports.
+- `history_import_started_at` / `history_import_completed_at` / `history_import_last_error_message`: User-facing progress/error metadata for the import page.
 
 ## API Client (`src/integrations/lastfm_api.py`)
 
@@ -124,6 +128,7 @@ Requires a single app-level API key (no per-user OAuth):
 # settings.py
 LASTFM_API_KEY = config("LASTFM_API_KEY", default="")
 LASTFM_POLL_INTERVAL_MINUTES = config("LASTFM_POLL_INTERVAL_MINUTES", default=15, cast=int)
+LASTFM_HISTORY_PAGES_PER_TASK = config("LASTFM_HISTORY_PAGES_PER_TASK", default=5, cast=int)
 ```
 
 **API Key Setup:**
@@ -190,10 +195,9 @@ def get_all_recent_tracks(
 - Logs total pages and track count
 
 **Important: Cursor Safety on Partial Pagination**
-- **Current Behavior (Known Issue)**: If `get_all_recent_tracks()` returns partial results due to a pagination error, the cursor **is still advanced** to the latest track in the partial results
-- This can cause permanent data loss: older scrobbles (> old cursor but < new cursor) that were never fetched will be skipped forever
-- **Recommended Fix**: Only advance `last_fetch_timestamp_uts` after successful full pagination. If pagination fails, keep cursor unchanged and rely on deduplication on the next run
-- The current implementation doesn't distinguish between full and partial pagination results
+- Pagination helpers now report whether a fetch completed cleanly or was interrupted mid-window.
+- Incremental sync only advances `last_fetch_timestamp_uts` after a clean full pagination run.
+- If pagination is interrupted, imported scrobbles are kept, but the forward cursor stays put so the next run can safely retry the same range.
 
 ### Error Handling
 
@@ -315,6 +319,11 @@ def poll_all_lastfm_scrobbles():
 - Single global task processes all connected users (not per-user schedules)
 - Task name: `"Poll Last.fm for all users"`
 
+### Per-User Tasks
+
+- `Poll Last.fm for user`: one-user incremental sync used by the connect flow and the "Sync now" button.
+- `Import from Last.fm History`: bounded full-history importer that processes up to `LASTFM_HISTORY_PAGES_PER_TASK` pages per run, then requeues itself until the backfill is complete.
+
 **Why Global Task:**
 - Avoids schedule table bloat (one task vs N tasks for N users)
 - Easier to manage and monitor
@@ -340,12 +349,9 @@ def poll_all_lastfm_scrobbles():
    - Check if user has `music_enabled` (skip if disabled)
    - Calculate `from_timestamp_uts`:
      - Use `last_fetch_timestamp_uts - 60` (60-second overlap for safety)
-     - If no previous timestamp, fetch all scrobbles (see "Initial Import" below)
-   - Fetch all tracks via `get_all_recent_tracks()`
-   - **Cursor Safety (Current Implementation)**: Advances `last_fetch_timestamp_uts` to the latest track timestamp, even if pagination returned partial results
-     - **Known Issue**: This can cause permanent data loss if pagination fails mid-run
-     - **Recommended**: Only advance cursor after verifying full pagination completed (check total_pages vs pages fetched)
-   - Process tracks through `LastFMScrobbleProcessor`
+     - If no previous timestamp, fetch all scrobbles newer than account connect time
+   - Fetch tracks through the shared account-scoped helper in `src/integrations/lastfm_sync.py`
+   - Process tracks oldest-first through `LastFMScrobbleProcessor`
    - Update `last_fetch_timestamp_uts` to most recent track's timestamp
    - Update sync status fields
 
@@ -480,18 +486,16 @@ Connects a Last.fm account by username.
 **Flow:**
 1. Validates username by making test API call
 2. Creates/updates `LastFMAccount` record
-3. Sets `last_fetch_timestamp_uts` to **current time** (not historical backfill)
-4. Creates global periodic task if it doesn't exist
-5. Triggers initial import via `poll_all_lastfm_scrobbles.delay()`
+3. Sets `last_fetch_timestamp_uts` to **current time** for recurring incremental sync
+4. Initializes separate history-import state with `history_import_cutoff_uts = current_time - 1`
+5. Creates or refreshes the global periodic task if needed
+6. Queues `poll_lastfm_for_user.delay(user_id=...)`
+7. Queues `import_lastfm_history.delay(user_id=...)`
 
 **Initial Import Behavior:**
-- **No historical backfill**: On first connect, `last_fetch_timestamp_uts` is set to current time
-- Only fetches scrobbles going forward from connection time
-- For older Last.fm accounts with years of history, this means:
-  - No automatic backfill of old scrobbles
-  - Users can manually sync to fetch recent scrobbles, but not full history
-- **Rationale**: Prevents tying up workers for hours and hitting rate limits on large accounts
-- **Future Enhancement**: Consider staged backfill (e.g., last 90 days initially, then expand) or user-configurable backfill window
+- Recurring sync starts from connection time and continues using `last_fetch_timestamp_uts`.
+- Full history import runs separately, bounded by `history_import_cutoff_uts`, so it cannot race the recurring cursor.
+- The backfill is chunked and resumes page-by-page using `history_import_next_page`.
 
 **Error Handling:**
 - Invalid username: Shows error, doesn't create account
@@ -513,24 +517,30 @@ Manually triggers a sync (bypasses periodic schedule).
 
 **Flow:**
 1. Validates user has connected Last.fm account
-2. Calls `poll_all_lastfm_scrobbles.delay()` (global task)
+2. Calls `poll_lastfm_for_user.delay(user_id=...)`
 3. Shows success message
 4. User can check import page for results
 
-**Important: Manual Sync Scope**
-- **Triggers global task**: One user clicking "Sync now" causes a **full sweep of all connected users**
-- This is intentional - the global task processes everyone, not just the requesting user
-- **Rationale**: Simpler implementation, ensures all users stay in sync
-- **Trade-off**: Manual sync for one user may cause rate limit delays for others if many users are connected
-- **Future Enhancement**: Consider per-user task option for manual syncs to allow isolated user updates
+#### `import_lastfm_history_manual`
+
+Manually starts or reruns a full history import.
+
+**Flow:**
+1. Validates the user has a healthy Last.fm connection
+2. Rejects the request if the history import is already `queued` or `running`
+3. Resets history state from `last_fetch_timestamp_uts - 1`
+4. Calls `import_lastfm_history.delay(user_id=...)`
 
 ### Import Data Page (`src/templates/users/import_data.html`)
 
 **Last.fm Card:**
 - Shows connection status (Connected/Disconnected)
 - Displays last sync time (if available)
+- Shows separate full-history status and page progress
 - Shows error message if connection is broken
+- Shows history-import error details when a backfill fails
 - Provides "Sync now" button for manual sync
+- Provides "Import full history" / "Reimport full history" when allowed
 - Provides "Disconnect" button
 - Shows poll interval (e.g., "every 15 minutes")
 
@@ -556,6 +566,9 @@ LASTFM_API_KEY=your_api_key_here
 
 # Optional (default: 15)
 LASTFM_POLL_INTERVAL_MINUTES=15
+
+# Optional (default: 5 pages / 1000 scrobbles per task)
+LASTFM_HISTORY_PAGES_PER_TASK=5
 ```
 
 ### Settings (`src/config/settings.py`)

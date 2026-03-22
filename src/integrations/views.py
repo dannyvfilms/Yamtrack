@@ -143,6 +143,61 @@ def _disable_plex_watchlist_schedule(user):
     ).delete()
 
 
+def _ensure_lastfm_poll_schedule():
+    """Create or update the shared Last.fm polling schedule."""
+    from django_celery_beat.models import IntervalSchedule, PeriodicTask
+
+    poll_interval_minutes = getattr(settings, "LASTFM_POLL_INTERVAL_MINUTES", 15)
+    interval, _ = IntervalSchedule.objects.get_or_create(
+        every=poll_interval_minutes,
+        period=IntervalSchedule.MINUTES,
+    )
+    task_name = f"Poll Last.fm for all users (every {poll_interval_minutes} minutes)"
+    existing_task = PeriodicTask.objects.filter(task="Poll Last.fm for all users").first()
+
+    if existing_task:
+        updated_fields = []
+        if existing_task.name != task_name:
+            existing_task.name = task_name
+            updated_fields.append("name")
+        if existing_task.interval_id != interval.id:
+            existing_task.interval = interval
+            updated_fields.append("interval")
+        if not existing_task.enabled:
+            existing_task.enabled = True
+            updated_fields.append("enabled")
+        if existing_task.start_time is None:
+            existing_task.start_time = timezone.now()
+            updated_fields.append("start_time")
+        if updated_fields:
+            existing_task.save(update_fields=updated_fields)
+        return existing_task, poll_interval_minutes
+
+    return PeriodicTask.objects.create(
+        name=task_name,
+        task="Poll Last.fm for all users",
+        interval=interval,
+        start_time=timezone.now(),
+        enabled=True,
+    ), poll_interval_minutes
+
+
+def _save_lastfm_history_reset(account, cutoff_uts: int):
+    """Persist a fresh Last.fm history import state."""
+    account.reset_history_import(cutoff_uts)
+    account.save(
+        update_fields=[
+            "history_import_status",
+            "history_import_cutoff_uts",
+            "history_import_next_page",
+            "history_import_total_pages",
+            "history_import_started_at",
+            "history_import_completed_at",
+            "history_import_last_error_message",
+        ],
+    )
+
+
 @require_POST
 def trakt_oauth(request):
     """View for initiating Trakt OAuth2 authorization flow."""
@@ -930,13 +985,13 @@ def lastfm_connect(request):
         messages.error(request, f"Failed to connect to Last.fm: {e}")
         return redirect("import_data")
 
-    # Store username and initialize timestamp
+    # Store username and initialize sync state
     try:
         import time
 
         current_timestamp = int(time.time())
 
-        LastFMAccount.objects.update_or_create(
+        lastfm_account, _ = LastFMAccount.objects.update_or_create(
             user=request.user,
             defaults={
                 "lastfm_username": username,
@@ -948,41 +1003,19 @@ def lastfm_connect(request):
                 "last_failed_at": None,
             },
         )
+        _save_lastfm_history_reset(lastfm_account, current_timestamp - 1)
 
-        # Set up global recurring polling task if it doesn't exist
-        from django_celery_beat.models import IntervalSchedule, PeriodicTask
-
+        _ensure_lastfm_poll_schedule()
         poll_interval_minutes = getattr(settings, "LASTFM_POLL_INTERVAL_MINUTES", 15)
-
-        existing_task = PeriodicTask.objects.filter(
-            task="Poll Last.fm for all users",
-            enabled=True,
-        ).first()
-
-        if not existing_task:
-            # Create interval schedule for polling
-            interval, _ = IntervalSchedule.objects.get_or_create(
-                every=poll_interval_minutes,
-                period=IntervalSchedule.MINUTES,
-            )
-
-            task_name = f"Poll Last.fm for all users (every {poll_interval_minutes} minutes)"
-            PeriodicTask.objects.create(
-                name=task_name,
-                task="Poll Last.fm for all users",
-                interval=interval,
-                start_time=timezone.now(),
-                enabled=True,
-            )
-
-            # Run initial poll
-            tasks.poll_all_lastfm_scrobbles.delay()
-            messages.success(
-                request,
-                f"Connected to Last.fm successfully. Initial sync queued. Recurring imports will run every {poll_interval_minutes} minutes.",
-            )
-        else:
-            messages.success(request, "Connected to Last.fm successfully. Scrobbles will be imported automatically.")
+        tasks.poll_lastfm_for_user.delay(user_id=request.user.id)
+        tasks.import_lastfm_history.delay(user_id=request.user.id, reset=False)
+        messages.success(
+            request,
+            (
+                "Connected to Last.fm successfully. Recurring syncs will run every "
+                f"{poll_interval_minutes} minutes. Initial sync and full history import queued."
+            ),
+        )
     except Exception as e:
         logger.error("Failed to store Last.fm connection: %s", e, exc_info=True)
         messages.error(request, f"Failed to save Last.fm connection: {e}")
@@ -994,9 +1027,6 @@ def lastfm_connect(request):
 def lastfm_disconnect(request):
     """Remove Last.fm connection."""
     LastFMAccount.objects.filter(user=request.user).delete()
-
-    # Check if there are any other connected users
-    remaining_accounts = LastFMAccount.objects.filter(connection_broken=False).count()
 
     # If no users left, we could disable the periodic task, but we'll leave it
     # running - it will just skip if no users are connected
@@ -1014,15 +1044,39 @@ def poll_lastfm_manual(request):
         messages.error(request, "Connect Last.fm before syncing.")
         return redirect("import_data")
 
+    lastfm_account.refresh_from_db()
     if not lastfm_account.is_connected:
         messages.error(request, "Last.fm connection is broken. Please reconnect.")
         return redirect("import_data")
 
-    # Trigger the polling task for this user
-    from integrations import tasks
-
-    tasks.poll_all_lastfm_scrobbles.delay()
+    tasks.poll_lastfm_for_user.delay(user_id=request.user.id)
     messages.info(request, "Last.fm sync queued. Scrobbles will be imported shortly.")
+    return redirect("import_data")
+
+
+@require_POST
+def import_lastfm_history_manual(request):
+    """Queue or rerun a full Last.fm history import for the current user."""
+    lastfm_account = getattr(request.user, "lastfm_account", None)
+    if not lastfm_account:
+        messages.error(request, "Connect Last.fm before importing history.")
+        return redirect("import_data")
+
+    lastfm_account.refresh_from_db()
+    if not lastfm_account.is_connected:
+        messages.error(request, "Last.fm connection is broken. Please reconnect.")
+        return redirect("import_data")
+
+    if lastfm_account.history_import_is_active:
+        messages.info(request, "Full Last.fm history import already running.")
+        return redirect("import_data")
+
+    import time
+
+    cutoff_uts = (lastfm_account.last_fetch_timestamp_uts or int(time.time())) - 1
+    _save_lastfm_history_reset(lastfm_account, cutoff_uts)
+    tasks.import_lastfm_history.delay(user_id=request.user.id, reset=False)
+    messages.info(request, "Full Last.fm history import queued.")
     return redirect("import_data")
 
 

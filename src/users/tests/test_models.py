@@ -505,6 +505,33 @@ class UserGetImportTasksTests(TestCase):
         self.assertEqual(import_tasks["results"][0]["summary"], "Imported 1 book")
         mock_process_task_result.assert_called_once()
 
+    @patch("users.helpers.process_task_result")
+    def test_get_import_tasks_maps_lastfm_history_results(self, mock_process_task_result):
+        """Last.fm history task results should appear under the Last.fm source."""
+        mock_task = MagicMock()
+        mock_task.summary = "Imported 42 Last.fm history scrobbles."
+        mock_task.errors = None
+        mock_process_task_result.return_value = mock_task
+
+        TaskResult.objects.create(
+            task_id="task-lastfm-history",
+            task_name="Import from Last.fm History",
+            task_kwargs=(f'{{"user_id": {self.user.id}}}'),
+            status="SUCCESS",
+            date_done=timezone.now(),
+            result='"Imported 42 Last.fm history scrobbles."',
+        )
+
+        import_tasks = self.user.get_import_tasks()
+
+        self.assertEqual(len(import_tasks["results"]), 1)
+        self.assertEqual(import_tasks["results"][0]["source"], "lastfm")
+        self.assertEqual(
+            import_tasks["results"][0]["summary"],
+            "Imported 42 Last.fm history scrobbles.",
+        )
+        mock_process_task_result.assert_called_once()
+
 
 class UserResolveWatchDateTests(TestCase):
     """Tests for the User.resolve_watch_date method."""

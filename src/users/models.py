@@ -1233,6 +1233,7 @@ class User(AbstractUser):
             "plex": ["Import from Plex", "Sync Plex Watchlist"],
             "audiobookshelf": ["Import from Audiobookshelf"],
             "pocketcasts": ["Import from Pocket Casts"],
+            "lastfm": ["Import from Last.fm History"],
         }
         schedule_task_names = {
             **result_task_names,

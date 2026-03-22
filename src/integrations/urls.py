@@ -52,6 +52,7 @@ urlpatterns = [
     path("import/pocketcasts", views.import_pocketcasts, name="import_pocketcasts"),
     path("import/lastfm/connect", views.lastfm_connect, name="lastfm_connect"),
     path("import/lastfm/disconnect", views.lastfm_disconnect, name="lastfm_disconnect"),
+    path("import/lastfm/history", views.import_lastfm_history_manual, name="import_lastfm_history"),
     path("import/lastfm/poll", views.poll_lastfm_manual, name="poll_lastfm_manual"),
     path("export/csv", views.export_csv, name="export_csv"),
     path(

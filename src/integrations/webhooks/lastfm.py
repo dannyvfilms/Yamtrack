@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class LastFMScrobbleProcessor:
     """Processor for Last.fm scrobble data."""
 
-    def process_track(self, track_data: dict, user) -> music_scrobble.Music | None:
+    def process_track(self, track_data: dict, user, *, fast_mode: bool = False) -> music_scrobble.Music | None:
         """Process a single Last.fm track and record it as a scrobble.
 
         Args:
@@ -93,7 +93,7 @@ class LastFMScrobbleProcessor:
             external_ids=external_ids,
             completed=True,  # All Last.fm scrobbles are completed
             played_at=played_at,
-            defer_cover_prefetch=False,
+            defer_cover_prefetch=fast_mode,
         )
 
         # Record the scrobble
@@ -173,7 +173,7 @@ class LastFMScrobbleProcessor:
 
         return False
 
-    def process_tracks(self, tracks: list[dict], user) -> dict[str, int | set]:
+    def process_tracks(self, tracks: list[dict], user, *, fast_mode: bool = False) -> dict[str, int | set]:
         """Process multiple Last.fm tracks.
 
         Args:
@@ -189,7 +189,7 @@ class LastFMScrobbleProcessor:
 
         for track_data in tracks:
             try:
-                result = self.process_track(track_data, user)
+                result = self.process_track(track_data, user, fast_mode=fast_mode)
                 if result is None:
                     stats["skipped"] += 1
                 else:

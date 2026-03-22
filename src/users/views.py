@@ -851,6 +851,11 @@ def import_data(request):
     # Get Last.fm periodic task status
     lastfm_periodic_task = None
     lastfm_poll_interval = getattr(settings, "LASTFM_POLL_INTERVAL_MINUTES", 15)
+    lastfm_history_status_label = "Not started"
+    lastfm_history_current_page = None
+    lastfm_history_total_pages = None
+    lastfm_history_can_start = False
+    lastfm_history_button_label = "Import full history"
     if lastfm_account:
         from django_celery_beat.models import PeriodicTask
 
@@ -861,6 +866,20 @@ def import_data(request):
         # Get actual interval from task if it exists
         if lastfm_periodic_task and lastfm_periodic_task.interval:
             lastfm_poll_interval = lastfm_periodic_task.interval.every
+        if lastfm_account.history_import_status != "idle":
+            lastfm_history_status_label = lastfm_account.get_history_import_status_display()
+        lastfm_history_total_pages = lastfm_account.history_import_total_pages
+        if lastfm_history_total_pages:
+            if lastfm_account.history_import_status == "completed":
+                lastfm_history_current_page = lastfm_history_total_pages
+            elif lastfm_account.history_import_next_page:
+                lastfm_history_current_page = min(
+                    lastfm_account.history_import_next_page,
+                    lastfm_history_total_pages,
+                )
+        lastfm_history_can_start = lastfm_account.history_import_can_start
+        if lastfm_account.history_import_status in {"completed", "failed"}:
+            lastfm_history_button_label = "Reimport full history"
 
     context = {
         "user": request.user,
@@ -873,6 +892,11 @@ def import_data(request):
         "lastfm_account": lastfm_account,
         "lastfm_periodic_task": lastfm_periodic_task,
         "lastfm_poll_interval": lastfm_poll_interval,
+        "lastfm_history_status_label": lastfm_history_status_label,
+        "lastfm_history_current_page": lastfm_history_current_page,
+        "lastfm_history_total_pages": lastfm_history_total_pages,
+        "lastfm_history_can_start": lastfm_history_can_start,
+        "lastfm_history_button_label": lastfm_history_button_label,
     }
     return render(request, "users/import_data.html", context)
 

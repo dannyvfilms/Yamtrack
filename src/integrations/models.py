@@ -5,6 +5,16 @@ from django.db import models
 from django.utils import timezone
 
 
+class LastFMHistoryImportStatus(models.TextChoices):
+    """History import states for Last.fm backfills."""
+
+    IDLE = "idle", "Idle"
+    QUEUED = "queued", "Queued"
+    RUNNING = "running", "Running"
+    FAILED = "failed", "Failed"
+    COMPLETED = "completed", "Completed"
+
+
 class PlexAccount(models.Model):
     """Store Plex authentication and cached library data for a user."""
 
@@ -269,6 +279,29 @@ class LastFMAccount(models.Model):
         help_text="Human-readable error message",
     )
     last_failed_at = models.DateTimeField(null=True, blank=True)
+    history_import_status = models.CharField(
+        max_length=20,
+        choices=LastFMHistoryImportStatus.choices,
+        default=LastFMHistoryImportStatus.IDLE,
+        help_text="Current Last.fm history import state",
+    )
+    history_import_cutoff_uts = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="Upper timestamp bound for the current history import",
+    )
+    history_import_next_page = models.PositiveIntegerField(
+        default=1,
+        help_text="Next Last.fm history page to import",
+    )
+    history_import_total_pages = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Total page count reported by Last.fm for the current history import",
+    )
+    history_import_started_at = models.DateTimeField(null=True, blank=True)
+    history_import_completed_at = models.DateTimeField(null=True, blank=True)
+    history_import_last_error_message = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -286,6 +319,33 @@ class LastFMAccount(models.Model):
     def is_connected(self):
         """Return True when we have a valid connection."""
         return bool(self.lastfm_username) and not self.connection_broken
+
+    @property
+    def history_import_is_active(self):
+        """Return True when a history backfill is queued or running."""
+        return self.history_import_status in {
+            LastFMHistoryImportStatus.QUEUED,
+            LastFMHistoryImportStatus.RUNNING,
+        }
+
+    @property
+    def history_import_can_start(self):
+        """Return True when the user can start or rerun a history backfill."""
+        return self.history_import_status in {
+            LastFMHistoryImportStatus.IDLE,
+            LastFMHistoryImportStatus.FAILED,
+            LastFMHistoryImportStatus.COMPLETED,
+        }
+
+    def reset_history_import(self, cutoff_uts: int):
+        """Prepare state for a fresh history backfill."""
+        self.history_import_status = LastFMHistoryImportStatus.QUEUED
+        self.history_import_cutoff_uts = cutoff_uts
+        self.history_import_next_page = 1
+        self.history_import_total_pages = None
+        self.history_import_started_at = None
+        self.history_import_completed_at = None
+        self.history_import_last_error_message = ""
 
 
 class TraktAccount(models.Model):

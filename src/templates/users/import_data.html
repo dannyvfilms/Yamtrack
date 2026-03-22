@@ -475,25 +475,56 @@
           {% if lastfm_account %}
             <p class="text-sm text-gray-400">Import your Last.fm listening history automatically every {{ lastfm_poll_interval }} minutes.</p>
 
-            <div class="flex items-center gap-2 text-sm">
-              {% if lastfm_account.is_connected %}
-                <span class="text-gray-300">Connected</span>
-              {% else %}
-                <span class="text-gray-300">Disconnected</span>
-              {% endif %}
-              {% if lastfm_periodic_task %}
-                <span class="text-gray-400">•</span>
-                <span class="text-gray-400">Recurring import: {{ lastfm_periodic_task.interval.every }} minutes</span>
-              {% endif %}
-              {% if lastfm_account.last_sync_at %}
-                <span class="text-gray-400">•</span>
-                <span class="text-gray-400">Last sync: {{ lastfm_account.last_sync_at|user_datetime_format:user }}</span>
-              {% endif %}
+            <div class="space-y-2 text-sm">
+              <div class="flex items-center gap-2">
+                {% if lastfm_account.is_connected %}
+                  <span class="text-gray-300">Connected</span>
+                {% else %}
+                  <span class="text-gray-300">Disconnected</span>
+                {% endif %}
+                {% if lastfm_periodic_task %}
+                  <span class="text-gray-400">•</span>
+                  <span class="text-gray-400">Recurring import: {{ lastfm_periodic_task.interval.every }} minutes</span>
+                {% endif %}
+                {% if lastfm_account.last_sync_at %}
+                  <span class="text-gray-400">•</span>
+                  <span class="text-gray-400">Last sync: {{ lastfm_account.last_sync_at|user_datetime_format:user }}</span>
+                {% endif %}
+              </div>
+
+              <div class="text-gray-400 space-y-1">
+                <div>
+                  Full history import:
+                  {% if lastfm_account.history_import_status == "completed" %}
+                    <span class="text-green-300">{{ lastfm_history_status_label }}</span>
+                  {% elif lastfm_account.history_import_status == "failed" %}
+                    <span class="text-red-300">{{ lastfm_history_status_label }}</span>
+                  {% elif lastfm_account.history_import_status == "running" %}
+                    <span class="text-blue-300">{{ lastfm_history_status_label }}</span>
+                  {% elif lastfm_account.history_import_status == "queued" %}
+                    <span class="text-indigo-300">{{ lastfm_history_status_label }}</span>
+                  {% else %}
+                    <span class="text-gray-300">{{ lastfm_history_status_label }}</span>
+                  {% endif %}
+                </div>
+                {% if lastfm_history_total_pages %}
+                  <div>Page {{ lastfm_history_current_page }} of {{ lastfm_history_total_pages }}</div>
+                {% endif %}
+                {% if lastfm_account.history_import_completed_at %}
+                  <div>Completed: {{ lastfm_account.history_import_completed_at|user_datetime_format:user }}</div>
+                {% endif %}
+              </div>
             </div>
 
             {% if lastfm_account.connection_broken and lastfm_account.last_error_message %}
               <div class="text-xs text-amber-200 bg-amber-500/10 border border-amber-400/30 rounded p-2">
                 <strong>Error:</strong> {{ lastfm_account.last_error_message }}
+              </div>
+            {% endif %}
+
+            {% if lastfm_account.history_import_status == "failed" and lastfm_account.history_import_last_error_message %}
+              <div class="text-xs text-amber-200 bg-amber-500/10 border border-amber-400/30 rounded p-2">
+                <strong>History import error:</strong> {{ lastfm_account.history_import_last_error_message }}
               </div>
             {% endif %}
 
@@ -505,6 +536,16 @@
                   Sync now
                 </button>
               </form>
+
+              {% if lastfm_history_can_start %}
+                <form method="post" action="{% url 'import_lastfm_history' %}">
+                  {% csrf_token %}
+                  <button type="submit"
+                          class="w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer bg-sky-600 text-white hover:bg-sky-700">
+                    {{ lastfm_history_button_label }}
+                  </button>
+                </form>
+              {% endif %}
               
               <form method="post" action="{% url 'lastfm_disconnect' %}">
                 {% csrf_token %}
@@ -517,7 +558,7 @@
 
           {% else %}
             <p class="text-sm text-gray-400 mb-3">
-              Import your Last.fm listening history automatically every {{ lastfm_poll_interval }} minutes. Your scrobbles must be public.
+              Connect Last.fm to enable recurring syncs every {{ lastfm_poll_interval }} minutes and import your full listening history. Your scrobbles must be public.
             </p>
             <form method="post" action="{% url 'lastfm_connect' %}">
               {% csrf_token %}
