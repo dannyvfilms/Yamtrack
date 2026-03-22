@@ -23,6 +23,16 @@ urlpatterns = [
     path("settings/preferences", views.preferences, name="preferences"),
     path("settings/integrations", views.integrations, name="integrations"),
     path("settings/import", views.import_data, name="import_data"),
+    path(
+        "settings/import/plex-status",
+        views.import_data_plex_status,
+        name="import_data_plex_status",
+    ),
+    path(
+        "settings/import/plex-sections",
+        views.import_data_plex_sections,
+        name="import_data_plex_sections",
+    ),
     path("settings/export", views.export_data, name="export_data"),
     path("settings/advanced", views.advanced, name="advanced"),
     path("settings/about", views.about, name="about"),

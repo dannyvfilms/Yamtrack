@@ -9,10 +9,15 @@
 {% block settings_content %}
   <div class="space-y-6"
        x-data="{
+         hasStoredPlexAccount: {% if plex_account %}true{% else %}false{% endif %},
          importFrequency: 'once',
          importTime: '{% now "H:i" %}',
          importMode: 'new',
          hasPlexSections: {% if plex_sections %}true{% else %}false{% endif %},
+         plexSections: JSON.parse('{{ plex_sections_json|escapejs }}'),
+         plexConnectionState: {% if plex_account %}'checking'{% else %}'disconnected'{% endif %},
+         plexLibrariesLoading: {% if plex_account %}true{% else %}false{% endif %},
+         plexLiveError: '',
          plexWatchlistSyncEnabled: {% if plex_account and plex_account.watchlist_sync_enabled %}true{% else %}false{% endif %},
          activeMediaTag: 'all',
          mediaTagLabels: {
@@ -35,6 +40,9 @@
            return this.importMode === 'update_collection' || this.importMode === 'watchlist';
          },
          plexSubmitDisabled() {
+           if (this.plexConnectionState === 'error') {
+             return true;
+           }
            return !this.isWatchlistMode() && !this.hasPlexSections;
          },
          plexPrimaryActionLabel() {
@@ -45,8 +53,122 @@
              return this.plexWatchlistSyncEnabled ? 'Sync Now' : 'Enable Sync';
            }
            return 'Import';
+         },
+         plexStatusBadgeClasses() {
+           if (this.plexConnectionState === 'connected') {
+             return 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30';
+           }
+           if (this.plexConnectionState === 'error') {
+             return 'bg-red-500/10 text-red-300 border-red-500/30';
+           }
+           if (this.plexConnectionState === 'checking') {
+             return 'bg-amber-500/10 text-amber-200 border-amber-400/30';
+           }
+           return 'bg-gray-500/20 text-gray-300 border-gray-600/50';
+         },
+         plexStatusLabel() {
+           if (this.plexConnectionState === 'connected') {
+             return 'Connected';
+           }
+           if (this.plexConnectionState === 'error') {
+             return 'Connection failed';
+           }
+           if (this.plexConnectionState === 'checking') {
+             return 'Checking';
+           }
+           return 'Disconnected';
+         },
+         plexLibraryLabel(section) {
+           let label = section.title || 'Unknown library';
+           if (section.server_name) {
+             label += ' - ' + section.server_name;
+           }
+           if (section.type) {
+             label += ' (' + String(section.type).charAt(0).toUpperCase() + String(section.type).slice(1) + ')';
+           }
+           return label;
+         },
+         async initPlexStatus() {
+           if (!this.hasStoredPlexAccount) {
+             return;
+           }
+
+           window.requestAnimationFrame(() => {
+             this.checkPlexConnection();
+             this.refreshPlexSections();
+           });
+         },
+         async checkPlexConnection() {
+           try {
+             const response = await fetch('{% url "import_data_plex_status" %}', {
+               headers: {
+                 'X-Requested-With': 'XMLHttpRequest'
+               }
+             });
+             const data = await response.json();
+
+             if (!response.ok) {
+               throw new Error(data.error || 'Could not verify Plex connection.');
+             }
+
+             this.plexConnectionState = data.state || 'error';
+             this.plexLiveError = data.error || '';
+
+             if (this.plexConnectionState === 'error') {
+               this.plexSections = [];
+               this.hasPlexSections = false;
+               this.plexLibrariesLoading = false;
+             }
+           } catch (error) {
+             this.plexConnectionState = 'error';
+             this.plexLiveError = error.message || 'Could not verify Plex connection.';
+             this.plexSections = [];
+             this.hasPlexSections = false;
+             this.plexLibrariesLoading = false;
+           }
+         },
+         async refreshPlexSections() {
+           if (!this.hasStoredPlexAccount) {
+             return;
+           }
+
+           this.plexLibrariesLoading = true;
+
+           try {
+             const response = await fetch('{% url "import_data_plex_sections" %}', {
+               headers: {
+                 'X-Requested-With': 'XMLHttpRequest'
+               }
+             });
+             const data = await response.json();
+
+             if (!response.ok) {
+               throw new Error(data.error || 'Could not load Plex libraries.');
+             }
+
+             if (Array.isArray(data.sections)) {
+               this.plexSections = data.sections;
+               this.hasPlexSections = data.sections.length > 0;
+             }
+
+             if (data.error) {
+               this.plexLiveError = data.error;
+             } else if (this.plexConnectionState !== 'error') {
+               this.plexLiveError = '';
+             }
+           } catch (error) {
+             if (!this.plexSections.length) {
+               this.hasPlexSections = false;
+             }
+             if (!this.plexLiveError) {
+               this.plexLiveError = error.message || 'Could not load Plex libraries.';
+             }
+           } finally {
+             this.plexLibrariesLoading = false;
+           }
          }
-       }">
+       }"
+       x-init="initPlexStatus()">
 
     {# Import settings #}
     <div class="bg-[#2a2f35] rounded-lg p-6">
@@ -177,13 +299,18 @@
           <div class="flex items-center justify-between">
             <div class="flex items-center">{% source_display "plex" %}</div>
             {% if plex_account %}
-              <form method="post" action="{% url 'plex_disconnect' %}">
-                {% csrf_token %}
-                <button type="submit"
-                        class="px-2 py-1 text-xs rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/20 transition-colors cursor-pointer">
-                  Connected
-                </button>
-              </form>
+              <div class="flex items-center gap-2">
+                <span class="px-2 py-1 text-xs rounded border"
+                      :class="plexStatusBadgeClasses()"
+                      x-text="plexStatusLabel()"></span>
+                <form method="post" action="{% url 'plex_disconnect' %}">
+                  {% csrf_token %}
+                  <button type="submit"
+                          class="px-2 py-1 text-xs rounded bg-slate-500/10 text-slate-200 border border-slate-400/30 hover:bg-slate-500/20 transition-colors cursor-pointer">
+                    Disconnect
+                  </button>
+                </form>
+              </div>
             {% else %}
               <span class="px-2 py-1 text-xs rounded bg-gray-500/20 text-gray-300 border border-gray-600/50">Disconnected</span>
             {% endif %}
@@ -210,11 +337,10 @@
               {% endif %}
             </div>
 
-            {% if plex_error %}
-              <div class="text-xs text-amber-200 bg-amber-500/10 border border-amber-400/30 rounded p-2">
-                {{ plex_error }}
-              </div>
-            {% endif %}
+            <div x-cloak
+                 x-show="plexLiveError"
+                 class="text-xs text-amber-200 bg-amber-500/10 border border-amber-400/30 rounded p-2"
+                 x-text="plexLiveError"></div>
 
             {% if plex_account.watchlist_last_error %}
               <div x-show="isWatchlistMode()"
@@ -222,6 +348,17 @@
                 <strong>Last watchlist sync error:</strong> {{ plex_account.watchlist_last_error }}
               </div>
             {% endif %}
+
+            <form x-cloak
+                  x-show="plexConnectionState === 'error'"
+                  method="post"
+                  action="{% url 'plex_connect' %}">
+              {% csrf_token %}
+              <button type="submit"
+                      class="w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer bg-amber-600 text-white hover:bg-amber-700">
+                Reconnect Plex
+              </button>
+            </form>
 
             <form method="post" action="{% url 'import_plex' %}" class="space-y-3">
               {% csrf_token %}
@@ -237,18 +374,27 @@
                           class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 appearance-none disabled:opacity-50"
                           :disabled="plexSubmitDisabled()">
                     <option value="all">All libraries</option>
-                    {% for section in plex_sections %}
-                      <option value="{{ section.machine_identifier }}::{{ section.id }}">
-                        {{ section.title }}{% if section.server_name %} – {{ section.server_name }}{% endif %}
-                        {% if section.type %} ({{ section.type|title }}){% endif %}
-                      </option>
-                    {% endfor %}
+                    <template x-for="section in plexSections"
+                              :key="`${section.machine_identifier}::${section.id}`">
+                      <option :value="`${section.machine_identifier}::${section.id}`"
+                              x-text="plexLibraryLabel(section)"></option>
+                    </template>
                   </select>
                   {% include "app/icons/chevron-down.svg" with classes="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" %}
                 </div>
-                {% if not plex_sections %}
-                  <p class="text-xs text-gray-400 mt-1">No libraries detected yet. Reconnect Plex to refresh.</p>
-                {% endif %}
+                <p x-cloak x-show="!plexSections.length && plexLibrariesLoading" class="text-xs text-amber-200 mt-1">
+                  Checking Plex libraries...
+                </p>
+                <p x-cloak
+                   x-show="!plexSections.length && !plexLibrariesLoading && plexConnectionState === 'error'"
+                   class="text-xs text-gray-400 mt-1">
+                  Reconnect Plex to refresh libraries.
+                </p>
+                <p x-cloak
+                   x-show="!plexSections.length && !plexLibrariesLoading && plexConnectionState !== 'error'"
+                   class="text-xs text-gray-400 mt-1">
+                  No libraries detected yet. Reconnect Plex to refresh.
+                </p>
               </div>
 
               <div class="flex w-full">
@@ -278,16 +424,11 @@
 
           {% else %}
             <p class="text-sm text-gray-400">Import watch and listening history from your Plex server.</p>
-            {% if plex_error %}
-              <div class="text-xs text-amber-200 bg-amber-500/10 border border-amber-400/30 rounded p-2">
-                {{ plex_error }}
-              </div>
-            {% endif %}
             <form method="post" action="{% url 'plex_connect' %}">
               {% csrf_token %}
               <button type="submit"
                       class="w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer bg-indigo-600 text-white hover:bg-indigo-700">
-                {% if plex_error %}Reconnect Plex{% else %}Connect Plex{% endif %}
+                Connect Plex
               </button>
             </form>
           {% endif %}

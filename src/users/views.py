@@ -11,7 +11,7 @@ from django.contrib.auth.decorators import login_not_required, login_required
 from django.core.cache import cache
 from django.db import IntegrityError
 from django.db.models import Q
-from django.http import StreamingHttpResponse
+from django.http import JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.defaultfilters import pluralize
 from django.utils import timezone
@@ -130,6 +130,36 @@ def _should_refresh_plex_sections(account: PlexAccount) -> bool:
         hours=settings.PLEX_SECTIONS_TTL_HOURS,
     )
     return timezone.now() >= expiry
+
+
+def _get_stored_plex_account(user):
+    """Return the user's stored Plex account when it has a token."""
+    plex_account = getattr(user, "plex_account", None)
+    if plex_account and not plex_account.plex_token:
+        return None
+    return plex_account
+
+
+def _refresh_cached_plex_sections(account: PlexAccount) -> tuple[list[dict], str | None]:
+    """Refresh and persist Plex library sections when the cache is stale."""
+    cached_sections = account.sections or []
+    needs_refresh = _should_refresh_plex_sections(account) or not cached_sections
+
+    if not needs_refresh:
+        return cached_sections, None
+
+    try:
+        account.sections = plex.list_sections(account.plex_token)
+        account.sections_refreshed_at = timezone.now()
+        account.save(
+            update_fields=["sections", "sections_refreshed_at"],
+        )
+    except plex.PlexAuthError:
+        return cached_sections, "Plex token expired or revoked. Please reconnect."
+    except Exception as exc:  # pragma: no cover - defensive
+        return cached_sections, f"Could not refresh Plex libraries: {exc}"
+
+    return account.sections or [], None
 
 
 def _build_qr_data_uri(provisioning_uri: str) -> str:
@@ -798,39 +828,8 @@ def integrations(request):
 def import_data(request):
     """Render the import data settings page."""
     import_tasks = request.user.get_import_tasks()
-    plex_account = getattr(request.user, "plex_account", None)
-    if plex_account and not plex_account.plex_token:
-        plex_account = None
-    plex_sections: list[dict] = []
-    plex_connected = False
-    plex_error = None
-
-    if plex_account:
-        try:
-            account_data = plex.fetch_account(plex_account.plex_token)
-            plex_connected = True
-
-            username = account_data.get("username")
-            if username and username != plex_account.plex_username:
-                plex_account.plex_username = username
-                plex_account.save(update_fields=["plex_username"])
-        except plex.PlexAuthError:
-            plex_error = "Plex token expired or revoked. Please reconnect."
-        except Exception as exc:  # pragma: no cover - defensive
-            plex_error = str(exc)
-        else:
-            if _should_refresh_plex_sections(plex_account):
-                try:
-                    plex_account.sections = plex.list_sections(plex_account.plex_token)
-                    plex_account.sections_refreshed_at = timezone.now()
-                    plex_account.save(
-                        update_fields=["sections", "sections_refreshed_at"],
-                    )
-                except Exception as exc:  # pragma: no cover - defensive
-                    if not plex_error:
-                        plex_error = f"Could not refresh Plex libraries: {exc}"
-
-            plex_sections = plex_account.sections or []
+    plex_account = _get_stored_plex_account(request.user)
+    plex_sections = plex_account.sections or [] if plex_account else []
 
     # Get Audiobookshelf account
     audiobookshelf_account = getattr(request.user, "audiobookshelf_account", None)
@@ -884,9 +883,9 @@ def import_data(request):
     context = {
         "user": request.user,
         "import_tasks": import_tasks,
-        "plex_account": plex_account if plex_connected else None,
+        "plex_account": plex_account,
         "plex_sections": plex_sections,
-        "plex_error": plex_error,
+        "plex_sections_json": json.dumps(plex_sections),
         "audiobookshelf_account": audiobookshelf_account,
         "pocketcasts_account": pocketcasts_account,
         "lastfm_account": lastfm_account,
@@ -899,6 +898,69 @@ def import_data(request):
         "lastfm_history_button_label": lastfm_history_button_label,
     }
     return render(request, "users/import_data.html", context)
+
+
+@require_GET
+def import_data_plex_status(request):
+    """Verify the stored Plex account without blocking the initial page render."""
+    plex_account = _get_stored_plex_account(request.user)
+    if not plex_account:
+        return JsonResponse(
+            {
+                "state": "disconnected",
+                "error": "",
+            },
+        )
+
+    try:
+        account_data = plex.fetch_account(plex_account.plex_token)
+    except plex.PlexAuthError:
+        return JsonResponse(
+            {
+                "state": "error",
+                "error": "Plex token expired or revoked. Please reconnect.",
+            },
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        return JsonResponse(
+            {
+                "state": "error",
+                "error": str(exc),
+            },
+        )
+
+    username = account_data.get("username")
+    if username and username != plex_account.plex_username:
+        plex_account.plex_username = username
+        plex_account.save(update_fields=["plex_username"])
+
+    return JsonResponse(
+        {
+            "state": "connected",
+            "error": "",
+        },
+    )
+
+
+@require_GET
+def import_data_plex_sections(request):
+    """Refresh cached Plex library sections for the import page in the background."""
+    plex_account = _get_stored_plex_account(request.user)
+    if not plex_account:
+        return JsonResponse(
+            {
+                "sections": [],
+                "error": "",
+            },
+        )
+
+    sections, error = _refresh_cached_plex_sections(plex_account)
+    return JsonResponse(
+        {
+            "sections": sections,
+            "error": error or "",
+        },
+    )
 
 
 @require_GET
