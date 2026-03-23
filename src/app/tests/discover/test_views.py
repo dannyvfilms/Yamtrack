@@ -16,6 +16,7 @@ from app.models import (
     Movie,
     Sources,
     Status,
+    TV,
 )
 from app.services.tracking_hydration import HydratedItemResult
 from users.models import DateFormatChoices
@@ -381,6 +382,80 @@ class DiscoverViewTests(TestCase):
         mock_invalidate_for_media_change.assert_called_once_with(
             self.user.id,
             MediaTypes.MOVIE.value,
+        )
+
+    @patch("app.models.Item.fetch_releases")
+    @patch("app.views.discover_tab_cache.invalidate_for_media_change")
+    @patch("app.views.discover_tab_cache.update_undo_snapshot")
+    @patch("app.views.discover_tab_cache.apply_cached_action")
+    @patch("app.views.discover_tab_cache.store_undo_snapshot", return_value="undo-tv")
+    @patch("app.views.ensure_item_metadata")
+    @patch("app.views.ensure_item_metadata_from_discover_seed")
+    def test_discover_action_planning_tv_uses_local_seed_hydration(
+        self,
+        mock_ensure_item_metadata_from_discover_seed,
+        mock_ensure_item_metadata,
+        _mock_store_undo_snapshot,
+        mock_apply_cached_action,
+        mock_update_undo_snapshot,
+        mock_invalidate_for_media_change,
+        _mock_fetch_releases,
+    ):
+        item = Item.objects.create(
+            media_id="tv-9001",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Slow TV",
+            image="https://example.com/tv.jpg",
+        )
+        mock_ensure_item_metadata_from_discover_seed.return_value = HydratedItemResult(
+            item=item,
+            metadata={},
+            created=False,
+        )
+        mock_apply_cached_action.return_value = [self._row(title="Updated TV")]
+
+        response = self.client.post(
+            reverse("discover_action"),
+            {
+                "action": "planning",
+                "candidate_media_type": MediaTypes.TV.value,
+                "source": Sources.TMDB.value,
+                "media_id": item.media_id,
+                "active_media_type": MediaTypes.TV.value,
+                "show_more": "0",
+                "row_key": "all_time_greats_unseen",
+                "title": item.title,
+                "image": item.image,
+                "release_date": "2026-01-01",
+            },
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            TV.objects.filter(
+                user=self.user,
+                item=item,
+                status=Status.PLANNING.value,
+            ).exists(),
+        )
+        mock_ensure_item_metadata.assert_not_called()
+        mock_ensure_item_metadata_from_discover_seed.assert_called_once_with(
+            MediaTypes.TV.value,
+            item.media_id,
+            Sources.TMDB.value,
+            None,
+            identity_media_type=None,
+            library_media_type=None,
+            fallback_title=item.title,
+            fallback_image=item.image,
+            fallback_release_date="2026-01-01",
+        )
+        mock_update_undo_snapshot.assert_called_once()
+        mock_invalidate_for_media_change.assert_called_once_with(
+            self.user.id,
+            MediaTypes.TV.value,
         )
 
     @patch("app.views.discover_tab_cache.update_undo_snapshot")

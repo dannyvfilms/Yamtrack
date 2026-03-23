@@ -95,7 +95,10 @@ from app.providers import comicvine, hardcover, mangaupdates, manual, openlibrar
 from app.services import game_lengths as game_length_services
 from app.services import anime_migration, metadata_resolution
 from app.services import music as sync_services
-from app.services.tracking_hydration import ensure_item_metadata
+from app.services.tracking_hydration import (
+    ensure_item_metadata,
+    ensure_item_metadata_from_discover_seed,
+)
 from app.templatetags import app_tags
 from app.signals import suppress_media_cache_change_signals
 from lists.models import CustomList
@@ -124,6 +127,10 @@ DISCOVER_ALLOWED_MEDIA_TYPES = {
     MediaTypes.MANGA.value,
     MediaTypes.GAME.value,
     MediaTypes.BOARDGAME.value,
+}
+DISCOVER_FAST_LOCAL_PLANNING_MEDIA_TYPES = {
+    MediaTypes.TV.value,
+    MediaTypes.ANIME.value,
 }
 
 STATISTICS_COMPARE_PREVIOUS_PERIOD = "previous_period"
@@ -1312,17 +1319,31 @@ def discover_action(request):
     _action_payloads: list[dict] | None = None
     action_stage_started = time.monotonic()
     mutation_ms = 0
+    metadata_strategy = "-"
     if action == "planning":
-        hydrated = ensure_item_metadata(
-            request.user,
-            candidate_media_type,
-            media_id,
-            source,
-            season_number,
-            identity_media_type=identity_media_type,
-            library_media_type=library_media_type,
-            **candidate_seed,
-        )
+        if candidate_media_type in DISCOVER_FAST_LOCAL_PLANNING_MEDIA_TYPES:
+            hydrated = ensure_item_metadata_from_discover_seed(
+                candidate_media_type,
+                media_id,
+                source,
+                season_number,
+                identity_media_type=identity_media_type,
+                library_media_type=library_media_type,
+                **candidate_seed,
+            )
+            metadata_strategy = "local_seed"
+        else:
+            hydrated = ensure_item_metadata(
+                request.user,
+                candidate_media_type,
+                media_id,
+                source,
+                season_number,
+                identity_media_type=identity_media_type,
+                library_media_type=library_media_type,
+                **candidate_seed,
+            )
+            metadata_strategy = "provider_fetch"
         existing_instance = _discover_planning_instance(
             request.user,
             candidate_media_type,
@@ -1356,16 +1377,18 @@ def discover_action(request):
                 source=source,
                 identity_media_type=identity_media_type,
             )
-            instance = model(
-                item=hydrated.item,
-                user=request.user,
-                status=Status.PLANNING.value,
-                score=None,
-                progress=0,
-                start_date=None,
-                end_date=None,
-                notes="",
-            )
+            instance_kwargs = {
+                "item": hydrated.item,
+                "user": request.user,
+                "status": Status.PLANNING.value,
+                "score": None,
+                "notes": "",
+            }
+            if model not in {TV, Season}:
+                instance_kwargs["progress"] = 0
+                instance_kwargs["start_date"] = None
+                instance_kwargs["end_date"] = None
+            instance = model(**instance_kwargs)
             if candidate_media_type == MediaTypes.MUSIC.value:
                 instance.artist = hydrated.artist
                 instance.album = hydrated.album
@@ -1512,7 +1535,7 @@ def discover_action(request):
     logger.info(
         "discover_action_complete request_id=%s user_id=%s action=%s active_media_type=%s "
         "candidate_media_type=%s source=%s media_id=%s row_key=%s rows=%s undo=%s "
-        "mutation_ms=%s cache_patch_ms=%s row_fetch_ms=%s render_ms=%s total_ms=%s",
+        "metadata_strategy=%s mutation_ms=%s cache_patch_ms=%s row_fetch_ms=%s render_ms=%s total_ms=%s",
         request_id,
         request.user.id,
         action,
@@ -1523,6 +1546,7 @@ def discover_action(request):
         row_key or "-",
         len(rows or []),
         int(bool(undo_token)),
+        metadata_strategy,
         mutation_ms,
         cache_patch_ms,
         row_fetch_ms,
