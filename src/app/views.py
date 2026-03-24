@@ -4050,6 +4050,9 @@ def media_details(
                 },
                 "episodes": episode_list,  # Use episodes key like TV seasons
             }
+            media_metadata.setdefault("source_url", None)
+            media_metadata.setdefault("tracking_source_url", None)
+            media_metadata.setdefault("display_source_url", None)
 
             # For pagination, calculate if there are more episodes
             total_episodes_count = episodes.count()
