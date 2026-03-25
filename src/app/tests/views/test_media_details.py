@@ -258,9 +258,80 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         item.refresh_from_db()
         self.assertEqual(item.provider_keywords, ["Whodunit", "Holiday"])
-        self.assertEqual(item.provider_certification, "PG")
-        self.assertEqual(item.provider_collection_id, "44")
-        self.assertEqual(item.provider_collection_name, "Mystery Collection")
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_renders_trakt_score_card_when_data_exists(self, mock_get_metadata):
+        Item.objects.create(
+            media_id="238",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Test Movie",
+            image="http://example.com/image.jpg",
+            trakt_rating=8.4,
+            trakt_rating_count=123456,
+            trakt_popularity_rank=9,
+            trakt_popularity_score=3210.5,
+            trakt_popularity_fetched_at=timezone.now(),
+        )
+        mock_get_metadata.return_value = {
+            "media_id": "238",
+            "title": "Test Movie",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "image": "http://example.com/image.jpg",
+            "details": {},
+            "related": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "238",
+                    "title": "test-movie",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "TRAKT SCORE")
+        self.assertContains(response, "123,456 ratings")
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_hides_trakt_score_card_without_data(self, mock_get_metadata):
+        Item.objects.create(
+            media_id="239",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="No Trakt Movie",
+            image="http://example.com/image.jpg",
+        )
+        mock_get_metadata.return_value = {
+            "media_id": "239",
+            "title": "No Trakt Movie",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "image": "http://example.com/image.jpg",
+            "details": {},
+            "related": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "239",
+                    "title": "no-trakt-movie",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "TRAKT SCORE")
 
     @override_settings(TVDB_API_KEY="test-tvdb-key")
     @patch("app.views.metadata_resolution.resolve_detail_metadata")

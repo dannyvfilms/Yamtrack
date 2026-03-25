@@ -63,3 +63,46 @@ class SyncMetadataViewTests(TestCase):
         self.assertTrue(kwargs["fetch_hltb"])
         mock_fetch_releases.assert_called_once()
         mock_sync_plex_rating.assert_called_once()
+
+    @patch("app.views._sync_plex_rating")
+    @patch("app.views.Item.fetch_releases")
+    @patch("app.views.trakt_popularity_service.refresh_trakt_popularity")
+    @patch("app.views.services.get_media_metadata")
+    def test_sync_metadata_refreshes_trakt_popularity_for_movies(
+        self,
+        mock_get_media_metadata,
+        mock_refresh_trakt_popularity,
+        mock_fetch_releases,
+        mock_sync_plex_rating,
+    ):
+        mock_get_media_metadata.return_value = {
+            "media_id": "238",
+            "title": "The Godfather",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "image": "https://example.com/godfather.jpg",
+            "details": {
+                "release_date": "1972-03-14",
+            },
+            "related": {},
+        }
+
+        response = self.client.post(
+            reverse(
+                "sync_metadata",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "238",
+                },
+            ),
+            {"next": "/"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        mock_refresh_trakt_popularity.assert_called_once()
+        _, kwargs = mock_refresh_trakt_popularity.call_args
+        self.assertEqual(kwargs["route_media_type"], MediaTypes.MOVIE.value)
+        self.assertTrue(kwargs["force"])
+        mock_fetch_releases.assert_called_once()
+        mock_sync_plex_rating.assert_called_once()

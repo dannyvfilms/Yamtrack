@@ -1,6 +1,7 @@
 import calendar
 import json
 import logging
+import math
 import re
 import time
 from collections import defaultdict
@@ -95,6 +96,7 @@ from app.providers import comicvine, hardcover, mangaupdates, manual, openlibrar
 from app.services import game_lengths as game_length_services
 from app.services import anime_migration, metadata_resolution
 from app.services import music as sync_services
+from app.services import trakt_popularity as trakt_popularity_service
 from app.services.tracking_hydration import (
     ensure_item_metadata,
     ensure_item_metadata_from_discover_seed,
@@ -440,6 +442,29 @@ def _build_game_lengths_context(detail_item):
         }
 
     return None
+
+
+def _build_trakt_popularity_context(detail_item, route_media_type):
+    """Return template-ready stored Trakt popularity metadata for a detail item."""
+    if (
+        not detail_item
+        or route_media_type not in (
+            MediaTypes.MOVIE.value,
+            MediaTypes.TV.value,
+            MediaTypes.ANIME.value,
+        )
+        or not trakt_popularity_service.trakt_provider.is_configured()
+        or detail_item.trakt_rating_count is None
+    ):
+        return None
+
+    return {
+        "rating": detail_item.trakt_rating,
+        "rating_count": detail_item.trakt_rating_count,
+        "rank": detail_item.trakt_popularity_rank,
+        "score": detail_item.trakt_popularity_score,
+        "fetched_at": detail_item.trakt_popularity_fetched_at,
+    }
 
 
 def _apply_cached_hltb_link(media_metadata, detail_item):
@@ -1607,6 +1632,11 @@ def media_list(request, media_type):
         MediaTypes.MANGA.value,
         MediaTypes.COMIC.value,
     )
+    popularity_media_types = {
+        MediaTypes.MOVIE.value,
+        MediaTypes.TV.value,
+        MediaTypes.ANIME.value,
+    }
     runtime_media_types = {
         MediaTypes.MOVIE.value,
         MediaTypes.TV.value,
@@ -1653,6 +1683,10 @@ def media_list(request, media_type):
         # Update the user's preference to the fallback
         request.user.update_preference(f"{media_type}_sort", "title")
         # Reset direction to the default for the fallback sort
+        direction_param = None
+    elif sort_filter == "popularity" and media_type not in popularity_media_types:
+        sort_filter = "title"
+        request.user.update_preference(f"{media_type}_sort", "title")
         direction_param = None
 
     # Resolve and persist sort direction with the same preference flow as sort
@@ -2463,6 +2497,11 @@ def media_list(request, media_type):
             if sort_filter == "release_date":
                 release_dt = getattr(item, "release_datetime", None)
                 return (_sortable_dt(release_dt), title.lower())
+            if sort_filter == "popularity":
+                rank = getattr(item, "trakt_popularity_rank", None)
+                if rank is None:
+                    rank = math.inf if direction == "asc" else -math.inf
+                return (rank, title.lower())
             if sort_filter == "date_added":
                 return (_sortable_dt(getattr(media, "created_at", None)), title.lower())
             if sort_filter == "start_date":
@@ -3158,6 +3197,12 @@ def update_table_columns(request, media_type):
     elif current_sort == "time_to_beat" and media_type != MediaTypes.GAME.value:
         current_sort = "title"
     elif current_sort == "plays" and media_type != MediaTypes.MOVIE.value:
+        current_sort = "title"
+    elif current_sort == "popularity" and media_type not in {
+        MediaTypes.MOVIE.value,
+        MediaTypes.TV.value,
+        MediaTypes.ANIME.value,
+    }:
         current_sort = "title"
 
     if settings.DEBUG:
@@ -4305,6 +4350,7 @@ def media_details(
                 )
                 is not None
             )
+    trakt_score = _build_trakt_popularity_context(detail_item, media_type)
 
     author_detail_keys = ("author", "authors", "people")
     authors_linked = []
@@ -4803,6 +4849,7 @@ def media_details(
         "music_album": music_album,
         "public_view": public_view,
         "play_stats": play_stats,
+        "trakt_score": trakt_score,
         "game_lengths": game_lengths,
         "game_lengths_pending": game_lengths_refresh_pending
         and not (game_lengths and game_lengths.get("available")),
@@ -5683,6 +5730,25 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
             provider_media_type=tracking_media_type,
             season_number=season_number,
         )
+
+        if trakt_popularity_service.supports_route_media_type(media_type):
+            try:
+                trakt_popularity_service.refresh_trakt_popularity(
+                    item,
+                    route_media_type=media_type,
+                    force=True,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "trakt_popularity_manual_refresh_failed item_id=%s media_id=%s error=%s",
+                    item.id,
+                    item.media_id,
+                    exception_summary(exc),
+                )
+                messages.warning(
+                    request,
+                    "Trakt popularity metadata could not be refreshed. Cached data will be used if available.",
+                )
 
         if source == Sources.TMDB.value and tracking_media_type in (
             MediaTypes.MOVIE.value,

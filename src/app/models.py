@@ -132,6 +132,31 @@ class Item(CalendarTriggerMixin, models.Model):
         blank=True,
         help_text="Rating count from provider metadata",
     )
+    trakt_rating = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Average rating value from Trakt metadata",
+    )
+    trakt_rating_count = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Rating count from Trakt metadata",
+    )
+    trakt_popularity_score = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Derived Trakt popularity score computed from rating and votes",
+    )
+    trakt_popularity_rank = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Estimated Trakt popularity rank derived from the local score model",
+    )
+    trakt_popularity_fetched_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When Trakt popularity metadata was last fetched",
+    )
     provider_keywords = models.JSONField(default=list, blank=True, help_text="Provider keywords")
     provider_certification = models.CharField(
         max_length=20,
@@ -630,10 +655,12 @@ class MetadataBackfillField(models.TextChoices):
     RELEASE = "release", "Release Date"
     DISCOVER = "discover", "Discover Metadata"
     GAME_LENGTHS = "game_lengths", "Game Lengths"
+    TRAKT_POPULARITY = "trakt_popularity", "Trakt Popularity"
 
 
 CREDITS_BACKFILL_VERSION = 2
 DISCOVER_MOVIE_METADATA_BACKFILL_VERSION = 1
+TRAKT_POPULARITY_BACKFILL_VERSION = 1
 
 
 class MetadataBackfillState(models.Model):
@@ -853,6 +880,7 @@ class MediaManager(models.Manager):
         """Return default direction for a sort key."""
         if sort_filter in (
             "author",
+            "popularity",
             "runtime",
             "start_date",
             "title",
@@ -1209,6 +1237,14 @@ class MediaManager(models.Manager):
                 models.F("item__release_datetime").asc(nulls_last=True)
                 if direction == "asc"
                 else models.F("item__release_datetime").desc(nulls_last=True)
+            )
+            return queryset.order_by(order, models.functions.Lower("item__title"))
+
+        if sort_filter == "popularity":
+            order = (
+                models.F("item__trakt_popularity_rank").asc(nulls_last=True)
+                if direction == "asc"
+                else models.F("item__trakt_popularity_rank").desc(nulls_last=True)
             )
             return queryset.order_by(order, models.functions.Lower("item__title"))
 

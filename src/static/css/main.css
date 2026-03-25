@@ -3767,6 +3767,9 @@
   .stats-card-grid>[data-mobile-order="6"] {
     order: 6;
   }
+  .stats-card-grid>[data-mobile-order="7"] {
+    order: 7;
+  }
 }
 @media (min-width: 48rem) {
   .stats-card-grid {
@@ -3794,6 +3797,9 @@
   }
   .stats-card-grid>[data-desktop-order="6"] {
     order: 6;
+  }
+  .stats-card-grid>[data-desktop-order="7"] {
+    order: 7;
   }
 }
 .media-grid {

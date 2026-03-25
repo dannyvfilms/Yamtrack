@@ -1,0 +1,5 @@
+{% if media.item.trakt_popularity_rank %}
+  <div class="font-medium">#{{ media.item.trakt_popularity_rank }}</div>
+{% else %}
+  <div class="text-gray-400">--</div>
+{% endif %}

@@ -35,32 +35,35 @@
   max-height: calc(100vh - 4rem);
 }
 
-/* Game/Boardgame stats cards: 3x2 grid on mobile, flex-wrap on desktop */
+/* Game/Boardgame stats cards: 3-column grid on mobile, flex-wrap on desktop */
 .stats-card-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: calc(var(--spacing) * 2);
 }
 
-/* Mobile order (3x2 grid) - only apply on mobile */
+/* Mobile order - only apply on mobile */
 @media (max-width: 47.999rem) {
   .stats-card-grid>[data-mobile-order="1"] {
-    order: 1; /* Source Score - row 1, col 1 */
+    order: 1;
   }
   .stats-card-grid>[data-mobile-order="2"] {
-    order: 2; /* First Played - row 1, col 2 */
+    order: 2;
   }
   .stats-card-grid>[data-mobile-order="3"] {
-    order: 3; /* Total Hours - row 1, col 3 */
+    order: 3;
   }
   .stats-card-grid>[data-mobile-order="4"] {
-    order: 4; /* Your Score - row 2, col 1 */
+    order: 4;
   }
   .stats-card-grid>[data-mobile-order="5"] {
-    order: 5; /* Last Played - row 2, col 2 */
+    order: 5;
   }
   .stats-card-grid>[data-mobile-order="6"] {
-    order: 6; /* Avg Time - row 2, col 3 */
+    order: 6;
+  }
+  .stats-card-grid>[data-mobile-order="7"] {
+    order: 7;
   }
 }
 
@@ -77,22 +80,25 @@
 
   /* Desktop order (grouped: scores, dates, time stats) */
   .stats-card-grid>[data-desktop-order="1"] {
-    order: 1; /* Source Score */
+    order: 1;
   }
   .stats-card-grid>[data-desktop-order="2"] {
-    order: 2; /* Your Score - group with Source Score */
+    order: 2;
   }
   .stats-card-grid>[data-desktop-order="3"] {
-    order: 3; /* First Played */
+    order: 3;
   }
   .stats-card-grid>[data-desktop-order="4"] {
-    order: 4; /* Last Played - group with First Played */
+    order: 4;
   }
   .stats-card-grid>[data-desktop-order="5"] {
-    order: 5; /* Total Hours */
+    order: 5;
   }
   .stats-card-grid>[data-desktop-order="6"] {
-    order: 6; /* Avg Time - group with Total Hours */
+    order: 6;
+  }
+  .stats-card-grid>[data-desktop-order="7"] {
+    order: 7;
   }
 }
 
