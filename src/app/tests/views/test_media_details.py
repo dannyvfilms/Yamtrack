@@ -70,6 +70,11 @@ class MediaDetailsViewTests(TestCase):
 
         self.assertIn("media", response.context)
         self.assertEqual(response.context["media"]["title"], "Test Movie")
+        self.assertContains(
+            response,
+            "flex flex-wrap items-center justify-center gap-2 mb-6",
+            html=False,
+        )
 
         mock_get_metadata.assert_called_once_with(
             MediaTypes.MOVIE.value,

@@ -727,10 +727,10 @@
       {# Actions #}
       {% if not public_view|default:False %}
       <h2 class="text-xl font-bold mb-4">Actions</h2>
-      <div class="bg-[#2a2f35] p-4 md:p-2 lg:p-4 rounded-lg flex items-center justify-center gap-x-3 md:gap-x-1 lg:gap-x-3 mb-6">
+      <div class="bg-[#2a2f35] p-4 md:p-2 lg:p-4 rounded-lg flex flex-wrap items-center justify-center gap-2 mb-6">
         {# Custom Lists #}
         <div x-data="{ listsOpen: false }">
-          <button class="px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition duration-300 cursor-pointer"
+          <button class="size-10 inline-flex items-center justify-center shrink-0 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition duration-300 cursor-pointer"
                   title="Add to custom lists"
                   hx-get="{% media_view_url 'lists_modal' media %}"
                   hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
@@ -750,7 +750,7 @@
 
         {# Tags #}
         <div x-data="{ tagsOpen: false }">
-          <button class="px-4 py-2 bg-violet-600 text-white rounded-md hover:bg-violet-700 transition duration-300 cursor-pointer"
+          <button class="size-10 inline-flex items-center justify-center shrink-0 bg-violet-600 text-white rounded-md hover:bg-violet-700 transition duration-300 cursor-pointer"
                   title="Manage tags"
                   hx-get="{% media_view_url 'tags_modal' media %}"
                   hx-target="#{% component_id 'tags' media %}"
@@ -768,7 +768,7 @@
         </div>
 
         {# Activity History #}
-        <a class="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 transition duration-300 cursor-pointer"
+        <a class="size-10 inline-flex items-center justify-center shrink-0 bg-amber-600 text-white rounded-md hover:bg-amber-700 transition duration-300 cursor-pointer"
            title="View your activity history"
            href="{% url 'history' %}?{% if media_type == MediaTypes.SEASON.value %}media_type={{ MediaTypes.TV.value }}&media_id={{ media.media_id|urlencode }}&source={{ media.source|urlencode }}&season_number={{ media.season_number }}{% elif media_type == MediaTypes.TV.value %}media_type={{ MediaTypes.TV.value }}&media_id={{ media.media_id|urlencode }}&source={{ media.source|urlencode }}{% elif media_type == MediaTypes.PODCAST.value and podcast_show %}media_type={{ MediaTypes.PODCAST.value }}&podcast_show={{ podcast_show.id }}{% else %}media_type={{ media_type }}&media_id={{ media.media_id|urlencode }}&source={{ media.source|urlencode }}{% endif %}{% if media_type == MediaTypes.GAME.value or media_type == MediaTypes.BOARDGAME.value %}&logging_style=sessions{% endif %}">
           {% include "app/icons/history.svg" with classes="w-4 h-4" %}
@@ -777,7 +777,7 @@
         {# Sync metadata #}
         <button type="button"
                 title="Sync metadata with provider"
-                class="px-4 py-2 bg-fuchsia-600 text-white rounded-md hover:bg-fuchsia-700 transition duration-300 cursor-pointer disabled:opacity-75"
+                class="size-10 inline-flex items-center justify-center shrink-0 bg-fuchsia-600 text-white rounded-md hover:bg-fuchsia-700 transition duration-300 cursor-pointer disabled:opacity-75"
                 hx-post="{% media_view_url 'sync_metadata' media %}"
                 hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
                 hx-vals='{"next": "{{ request.get_full_path|urlencode }}"}'
