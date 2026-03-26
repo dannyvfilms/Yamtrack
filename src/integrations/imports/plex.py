@@ -1206,12 +1206,15 @@ class PlexHistoryImporter:
                     # Apply rating from library items if available and different
                     rating = self._library_ratings.get(("tmdb", actual_tmdb_id))
                     if rating is None:
-                        # Try TVDB fallback
-                        tv_metadata = self._tv_metadata_cache.get(actual_tmdb_id)
-                        if tv_metadata:
-                            tvdb_id = tv_metadata.get("tvdb_id")
-                            if tvdb_id:
-                                rating = self._library_ratings.get(("tvdb", str(tvdb_id)))
+                        # Title/search fallback can resolve a different show ID than the
+                        # original Plex GUID, so keep using the resolved metadata payload
+                        # if the cache is not also keyed by the final TMDB ID.
+                        resolved_tv_metadata = (
+                            self._tv_metadata_cache.get(actual_tmdb_id) or tv_metadata
+                        )
+                        tvdb_id = resolved_tv_metadata.get("tvdb_id")
+                        if tvdb_id:
+                            rating = self._library_ratings.get(("tvdb", str(tvdb_id)))
                     if rating is not None and tv_obj.score != rating:
                         tv_obj.score = rating
                         tv_obj.save(update_fields=["score"])

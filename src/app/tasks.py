@@ -1387,6 +1387,7 @@ def populate_trakt_popularity_backfill_queue(
             )
     else:
         cache.delete(TRAKT_POPULARITY_BACKFILL_ITEMS_QUEUE_KEY)
+        logger.info("trakt_popularity_backfill_complete: queue fully drained")
 
     return populate_trakt_popularity_data_for_items(
         batch,
