@@ -1,4 +1,4 @@
-"""Persisted Trakt popularity helpers for movie, TV, and anime items."""
+"""Persisted Trakt popularity helpers for movie, TV, anime, and season items."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ SUPPORTED_ROUTE_MEDIA_TYPES = {
     MediaTypes.MOVIE.value,
     MediaTypes.TV.value,
     MediaTypes.ANIME.value,
+    MediaTypes.SEASON.value,
 }
 TRAKT_POPULARITY_PRIOR_MEAN = 60.0
 TRAKT_POPULARITY_PRIOR_VOTES = 50_000.0
@@ -95,7 +96,11 @@ def resolve_lookup_candidates(
 
     external_ids = _normalize_external_ids(item)
 
-    if route_media_type in {MediaTypes.TV.value, MediaTypes.ANIME.value}:
+    if route_media_type in {
+        MediaTypes.TV.value,
+        MediaTypes.ANIME.value,
+        MediaTypes.SEASON.value,
+    }:
         for provider, external_key in (
             (Sources.TMDB.value, "tmdb_id"),
             (Sources.TVDB.value, "tvdb_id"),
@@ -105,7 +110,11 @@ def resolve_lookup_candidates(
             provider_media_id = metadata_resolution.resolve_provider_media_id(
                 item,
                 provider,
-                route_media_type=route_media_type,
+                route_media_type=(
+                    MediaTypes.TV.value
+                    if route_media_type == MediaTypes.SEASON.value
+                    else route_media_type
+                ),
             )
             if provider_media_id:
                 external_ids[external_key] = str(provider_media_id)
@@ -114,7 +123,11 @@ def resolve_lookup_candidates(
         ("tmdb", external_ids.get("tmdb_id")),
         ("imdb", external_ids.get("imdb_id")),
     )
-    if route_media_type in {MediaTypes.TV.value, MediaTypes.ANIME.value}:
+    if route_media_type in {
+        MediaTypes.TV.value,
+        MediaTypes.ANIME.value,
+        MediaTypes.SEASON.value,
+    }:
         lookup_order = (
             ("tmdb", external_ids.get("tmdb_id")),
             ("tvdb", external_ids.get("tvdb_id")),
@@ -150,6 +163,7 @@ def lookup_item_summary(
             lookup_type,
             lookup_value,
             media_type=route_media_type,
+            season_number=item.season_number,
         )
         if payload:
             payload["matched_lookup_value"] = lookup_value

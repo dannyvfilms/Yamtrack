@@ -958,6 +958,110 @@ class MediaDetailsViewTests(TestCase):
             [1],
         )
 
+    @patch("app.views.trakt_popularity_service.refresh_trakt_popularity")
+    @patch("app.providers.services.get_media_metadata")
+    @patch("app.providers.tmdb.process_episodes")
+    def test_season_details_refreshes_and_renders_trakt_score(
+        self,
+        mock_process_episodes,
+        mock_get_metadata,
+        mock_refresh_trakt_popularity,
+    ):
+        def _refresh(item, *, route_media_type, force):
+            item.trakt_rating = 7.88048
+            item.trakt_rating_count = 1849
+            item.trakt_popularity_rank = 25
+            item.trakt_popularity_score = 998.1
+            item.trakt_popularity_fetched_at = timezone.now()
+            item.save(
+                update_fields=[
+                    "trakt_rating",
+                    "trakt_rating_count",
+                    "trakt_popularity_rank",
+                    "trakt_popularity_score",
+                    "trakt_popularity_fetched_at",
+                ],
+            )
+            return {
+                "rating": item.trakt_rating,
+                "votes": item.trakt_rating_count,
+                "score": item.trakt_popularity_score,
+                "rank": item.trakt_popularity_rank,
+            }
+
+        mock_refresh_trakt_popularity.side_effect = _refresh
+        show_item = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Test TV Show",
+            image="http://example.com/image.jpg",
+        )
+        related_tv = TV.objects.create(
+            item=show_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+        )
+        season_item = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Season 1",
+            image="http://example.com/season.jpg",
+            season_number=1,
+        )
+        Season.objects.create(
+            item=season_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            related_tv=related_tv,
+        )
+        mock_get_metadata.return_value = {
+            "title": "Test TV Show",
+            "media_id": "1668",
+            "source": Sources.TMDB.value,
+            "media_type": MediaTypes.TV.value,
+            "image": "http://example.com/image.jpg",
+            "season/1": {
+                "title": "Season 1",
+                "media_id": "1668",
+                "media_type": MediaTypes.SEASON.value,
+                "source": Sources.TMDB.value,
+                "image": "http://example.com/season.jpg",
+                "episodes": [],
+            },
+        }
+        mock_process_episodes.return_value = []
+
+        response = self.client.get(
+            reverse(
+                "season_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_id": "1668",
+                    "title": "test-tv-show",
+                    "season_number": 1,
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "TRAKT SCORE")
+        self.assertContains(response, "7.8")
+        self.assertNotContains(response, "7.88048")
+        self.assertContains(response, "1,849 ratings")
+        mock_refresh_trakt_popularity.assert_called_once()
+        self.assertTrue(
+            Item.objects.filter(
+                media_id="1668",
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.SEASON.value,
+                season_number=1,
+                trakt_rating=7.88048,
+                trakt_rating_count=1849,
+            ).exists(),
+        )
+
     @patch("app.providers.services.get_media_metadata")
     @patch("app.providers.tmdb.process_episodes")
     def test_season_details_prefers_stored_item_image_over_provider_image(

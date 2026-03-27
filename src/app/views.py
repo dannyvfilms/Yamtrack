@@ -454,6 +454,7 @@ def _build_trakt_popularity_context(detail_item, route_media_type):
             MediaTypes.MOVIE.value,
             MediaTypes.TV.value,
             MediaTypes.ANIME.value,
+            MediaTypes.SEASON.value,
         )
         or not trakt_popularity_service.trakt_provider.is_configured()
         or detail_item.trakt_rating_count is None
@@ -479,7 +480,6 @@ def _build_trakt_popularity_context(detail_item, route_media_type):
         "score": detail_item.trakt_popularity_score,
         "fetched_at": detail_item.trakt_popularity_fetched_at,
     }
-
 
 def _apply_cached_hltb_link(media_metadata, detail_item):
     """Prefer a stored direct HLTB link when one has already been resolved."""
@@ -5249,6 +5249,27 @@ def season_details(
         if latest_rating is not None:
             current_instance.score = latest_rating
 
+    if season_item is None:
+        season_defaults = {
+            **Item.title_fields_from_metadata(
+                season_metadata if isinstance(season_metadata, dict) else {},
+                fallback_title=((season_metadata or {}).get("title") or ""),
+            ),
+            "image": (
+                (season_metadata or {}).get("image")
+                if isinstance(season_metadata, dict)
+                else settings.IMG_NONE
+            )
+            or settings.IMG_NONE,
+        }
+        season_item, _ = Item.objects.get_or_create(
+            media_id=media_id,
+            source=source,
+            media_type=MediaTypes.SEASON.value,
+            season_number=season_number,
+            defaults=season_defaults,
+        )
+
     # Save episode runtimes from raw metadata before processing for display
     # This ensures runtime data is persisted when viewing the season page
     if (
@@ -5483,7 +5504,34 @@ def season_details(
         except ItemModel.DoesNotExist:
             pass
 
+    if (
+        season_item
+        and current_instance
+        and season_number > 0
+        and trakt_popularity_service.trakt_provider.is_configured()
+        and trakt_popularity_service.needs_refresh(season_item)
+    ):
+        try:
+            trakt_popularity_service.refresh_trakt_popularity(
+                season_item,
+                route_media_type=MediaTypes.SEASON.value,
+                force=False,
+            )
+            season_item.refresh_from_db()
+        except Exception as exc:
+            logger.warning(
+                "trakt_popularity_season_refresh_failed item_id=%s media_id=%s season=%s error=%s",
+                season_item.id,
+                season_item.media_id,
+                season_number,
+                exception_summary(exc),
+            )
+
     has_collection_data = bool(collection_entries) or collection_entry is not None
+    trakt_score = _build_trakt_popularity_context(
+        season_item,
+        MediaTypes.SEASON.value,
+    )
 
     context = {
         "user": request.user,
@@ -5499,6 +5547,7 @@ def season_details(
         "has_collection_data": has_collection_data,
         "fetching_collection_data": fetching_collection_data if not public_view else False,
         "item_id_for_polling": item_id_for_polling if not public_view else None,
+        "trakt_score": trakt_score,
         "watch_providers": tmdb.filter_providers(
             season_metadata.get("providers"), request.user.watch_provider_region
         ),

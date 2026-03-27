@@ -70,6 +70,52 @@ class TraktProviderTests(TestCase):
         self.assertEqual(payload["trakt_ids"]["tvdb"], "81189")
         self.assertEqual(payload["trakt_ids"]["imdb"], "tt0903747")
 
+    @patch("app.providers.trakt.services.api_request")
+    def test_lookup_by_external_id_normalizes_season_payload(self, mock_api_request):
+        mock_api_request.side_effect = [
+            [
+                {
+                    "type": "show",
+                    "show": {
+                        "title": "The Gilded Age",
+                        "rating": 8.1,
+                        "votes": 12345,
+                        "ids": {
+                            "trakt": 152334,
+                            "slug": "the-gilded-age",
+                            "tmdb": 81723,
+                            "tvdb": 384696,
+                        },
+                    },
+                },
+            ],
+            [
+                {
+                    "number": 1,
+                    "rating": 7.88048,
+                    "votes": 1849,
+                    "ids": {
+                        "trakt": 998877,
+                        "tvdb": 1978241,
+                    },
+                },
+            ],
+        ]
+
+        payload = trakt.lookup_by_external_id(
+            "tmdb",
+            "81723",
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+        )
+
+        self.assertEqual(payload["rating"], 7.88048)
+        self.assertEqual(payload["votes"], 1849)
+        self.assertEqual(payload["season_number"], 1)
+        self.assertEqual(payload["trakt_ids"]["tmdb"], "81723")
+        self.assertEqual(payload["trakt_ids"]["tvdb"], "1978241")
+        self.assertEqual(mock_api_request.call_count, 2)
+
 
 class TraktPopularityServiceTests(TestCase):
     @patch("app.services.trakt_popularity.trakt_provider.lookup_by_external_id")
@@ -109,6 +155,7 @@ class TraktPopularityServiceTests(TestCase):
             "tmdb",
             "1396",
             media_type=MediaTypes.ANIME.value,
+            season_number=None,
         )
 
     def test_compute_popularity_score_is_deterministic(self):
@@ -171,6 +218,40 @@ class TraktPopularityServiceTests(TestCase):
         item.refresh_from_db()
         self.assertEqual(item.trakt_rating, 8.0)
         self.assertEqual(item.trakt_rating_count, 1200000)
+        self.assertIsNotNone(item.trakt_popularity_score)
+        self.assertEqual(item.trakt_popularity_rank, result["rank"])
+        self.assertIsNotNone(item.trakt_popularity_fetched_at)
+
+    @patch("app.services.trakt_popularity.lookup_item_summary")
+    def test_refresh_trakt_popularity_persists_season_fields(self, mock_lookup_item_summary):
+        item = Item.objects.create(
+            media_id="81723",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="The Gilded Age Season 1",
+            image="https://example.com/season.jpg",
+            season_number=1,
+        )
+        mock_lookup_item_summary.return_value = {
+            "rating": 7.88048,
+            "votes": 1849,
+            "trakt_ids": {
+                "trakt": "998877",
+                "tmdb": "81723",
+            },
+            "matched_id_type": "tmdb",
+            "matched_lookup_value": "81723",
+        }
+
+        result = trakt_popularity.refresh_trakt_popularity(
+            item,
+            route_media_type=MediaTypes.SEASON.value,
+            force=True,
+        )
+
+        item.refresh_from_db()
+        self.assertEqual(item.trakt_rating, 7.88048)
+        self.assertEqual(item.trakt_rating_count, 1849)
         self.assertIsNotNone(item.trakt_popularity_score)
         self.assertEqual(item.trakt_popularity_rank, result["rank"])
         self.assertIsNotNone(item.trakt_popularity_fetched_at)
