@@ -73,7 +73,7 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.context["media"]["title"], "Test Movie")
         self.assertContains(
             response,
-            "flex flex-wrap items-center justify-center gap-2 mb-6",
+            'class="mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center"',
             html=False,
         )
 
@@ -82,6 +82,46 @@ class MediaDetailsViewTests(TestCase):
             "238",
             Sources.TMDB.value,
         )
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_renders_top_action_row_between_chips_and_description(self, mock_get_metadata):
+        mock_get_metadata.return_value = {
+            "media_id": "238",
+            "title": "Test Movie",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "image": "http://example.com/image.jpg",
+            "synopsis": "Test overview",
+            "score": 7.6,
+            "score_count": 42000,
+            "details": {},
+            "related": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "238",
+                    "title": "test-movie",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertIn('class="mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center"', content)
+        self.assertIn("Add to tracker", content)
+        self.assertIn('title="Add to custom lists"', content)
+        self.assertIn('title="Manage tags"', content)
+        self.assertIn('title="Sync metadata with provider"', content)
+        self.assertNotIn('<h2 class="text-xl font-bold mb-4">Actions</h2>', content)
+        self.assertNotIn('mt-4 p-3 rounded-lg w-full flex items-center', content)
+        self.assertIn(":class=\"isExpanded ? '' : 'line-clamp-3'\"", content)
+        self.assertLess(content.index("tmdb-logo.png"), content.index("Add to tracker"))
+        self.assertLess(content.index("Add to tracker"), content.index("Test overview"))
 
     @patch("app.providers.services.get_media_metadata")
     def test_media_details_prefers_stored_item_image_over_provider_image(

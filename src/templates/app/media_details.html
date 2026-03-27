@@ -86,77 +86,6 @@
       <img alt="{{ media|display_title:user }}"
            class="w-full rounded-lg shadow-lg bg-[#2a2f35] object-cover"
            src="{{ media.image }}">
-
-      {% if not public_view|default:False %}
-      <div x-data="{ trackOpen: false }">
-        {% if media_type == MediaTypes.PODCAST.value and podcast_show %}
-          {# Podcast show tracker button #}
-          <button type="button"
-                  class="mt-4 p-3 rounded-lg w-full flex items-center text-white transition duration-300 cursor-pointer {% if podcast_tracker %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}"
-                  hx-get="{% url 'podcast_show_track_modal' podcast_show.id %}"
-                  hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
-                  hx-target="#podcast-show-track-modal"
-                  hx-trigger="click"
-                  @click="trackOpen = true">
-            <div class="flex-1 text-center font-medium">
-              {% if podcast_tracker %}
-                {{ podcast_tracker.status_readable }}
-              {% else %}
-                Add to Library
-              {% endif %}
-            </div>
-
-            <div class="h-5 mx-2 border-l border-white/30"></div>
-            {% include "app/icons/edit.svg" with classes="w-5 h-5 shrink-0" %}
-          </button>
-
-          {# Track Modal #}
-          <div x-show="trackOpen"
-               @keydown.escape.window="trackOpen = false"
-               class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
-                 style="width: min(96vw, 72rem);"
-                 @click.outside="trackOpen = false"
-                 @click.stop>
-              <div id="podcast-show-track-modal"></div>
-            </div>
-          </div>
-        {% else %}
-          {# Standard media tracker button #}
-          <button type="button"
-                  class="mt-4 p-3 rounded-lg w-full flex items-center text-white transition duration-300 cursor-pointer {% if user_medias %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}"
-                  hx-get="{% media_view_url 'track_modal' media %}"
-                  hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"{% if current_instance %}, "instance_id": "{{ current_instance.id }}"{% endif %}}'
-                  hx-target="#{% if current_instance %}{% component_id 'track' media current_instance.id %}{% else %}{% component_id 'track' media %}{% endif %}"
-                  hx-trigger="click"
-                  @click="trackOpen = true">
-            <div class="flex-1 text-center font-medium">
-              {% if user_medias %}
-                {{ current_instance.status|media_status_readable }}
-              {% else %}
-                Add to tracker
-              {% endif %}
-            </div>
-
-            <div class="h-5 mx-2 border-l border-white/30"></div>
-            {% include "app/icons/edit.svg" with classes="w-5 h-5 shrink-0" %}
-          </button>
-
-          {# Track Modal #}
-          <div x-show="trackOpen"
-               @keydown.escape.window="trackOpen = false"
-               class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
-                 style="width: min(96vw, 72rem);"
-                 @click.outside="trackOpen = false"
-                 @click.stop>
-              {# stop click propagation to avoid resetting the modal because this one doesn't have click once #}
-              <div id="{% if current_instance %}{% component_id 'track' media current_instance.id %}{% else %}{% component_id 'track' media %}{% endif %}"></div>
-            </div>
-          </div>
-        {% endif %}
-      </div>
-      {% endif %}
     </div>
 
     {# Media details #}
@@ -360,12 +289,139 @@
         </div>
       {% endif %}
 
+      {% if not public_view|default:False %}
+        <div class="mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+          <div x-data="{ trackOpen: false }" class="sm:shrink-0">
+            {% if media_type == MediaTypes.PODCAST.value and podcast_show %}
+              <button type="button"
+                      class="inline-flex w-full items-center justify-center gap-3 rounded-xl px-5 py-3 text-white shadow-sm transition duration-300 cursor-pointer sm:w-auto {% if podcast_tracker %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}"
+                      hx-get="{% url 'podcast_show_track_modal' podcast_show.id %}"
+                      hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
+                      hx-target="#podcast-show-track-modal"
+                      hx-trigger="click"
+                      @click="trackOpen = true">
+                <span class="font-medium">
+                  {% if podcast_tracker %}
+                    {{ podcast_tracker.status_readable }}
+                  {% else %}
+                    Add to Library
+                  {% endif %}
+                </span>
+                <span class="h-5 w-px bg-white/30"></span>
+                {% include "app/icons/edit.svg" with classes="w-5 h-5 shrink-0" %}
+              </button>
+
+              <div x-show="trackOpen"
+                   @keydown.escape.window="trackOpen = false"
+                   class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
+                     style="width: min(96vw, 72rem);"
+                     @click.outside="trackOpen = false"
+                     @click.stop>
+                  <div id="podcast-show-track-modal"></div>
+                </div>
+              </div>
+            {% else %}
+              <button type="button"
+                      class="inline-flex w-full items-center justify-center gap-3 rounded-xl px-5 py-3 text-white shadow-sm transition duration-300 cursor-pointer sm:w-auto {% if user_medias %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}"
+                      hx-get="{% media_view_url 'track_modal' media %}"
+                      hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"{% if current_instance %}, "instance_id": "{{ current_instance.id }}"{% endif %}}'
+                      hx-target="#{% if current_instance %}{% component_id 'track' media current_instance.id %}{% else %}{% component_id 'track' media %}{% endif %}"
+                      hx-trigger="click"
+                      @click="trackOpen = true">
+                <span class="font-medium">
+                  {% if user_medias %}
+                    {{ current_instance.status|media_status_readable }}
+                  {% else %}
+                    Add to tracker
+                  {% endif %}
+                </span>
+                <span class="h-5 w-px bg-white/30"></span>
+                {% include "app/icons/edit.svg" with classes="w-5 h-5 shrink-0" %}
+              </button>
+
+              <div x-show="trackOpen"
+                   @keydown.escape.window="trackOpen = false"
+                   class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
+                     style="width: min(96vw, 72rem);"
+                     @click.outside="trackOpen = false"
+                     @click.stop>
+                  <div id="{% if current_instance %}{% component_id 'track' media current_instance.id %}{% else %}{% component_id 'track' media %}{% endif %}"></div>
+                </div>
+              </div>
+            {% endif %}
+          </div>
+
+          <div class="flex flex-wrap items-center gap-2">
+            <div x-data="{ listsOpen: false }">
+              <button class="size-11 inline-flex items-center justify-center shrink-0 rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer"
+                      title="Add to custom lists"
+                      hx-get="{% media_view_url 'lists_modal' media %}"
+                      hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
+                      hx-target="#{% component_id 'lists' media %}"
+                      hx-trigger="click once"
+                      @click="listsOpen = true">{% include "app/icons/list-add.svg" with classes="w-4 h-4" %}</button>
+
+              <div x-show="listsOpen"
+                   @keydown.escape.window="listsOpen = false"
+                   class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
+                     @click.outside="listsOpen = false">
+                  <div id="{% component_id 'lists' media %}"></div>
+                </div>
+              </div>
+            </div>
+
+            <div x-data="{ tagsOpen: false }">
+              <button class="size-11 inline-flex items-center justify-center shrink-0 rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer"
+                      title="Manage tags"
+                      hx-get="{% media_view_url 'tags_modal' media %}"
+                      hx-target="#{% component_id 'tags' media %}"
+                      hx-trigger="click once"
+                      @click="tagsOpen = true">{% include "app/icons/tag.svg" with classes="w-4 h-4" %}</button>
+
+              <div x-show="tagsOpen"
+                   @keydown.escape.window="tagsOpen = false"
+                   class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
+                     @click.outside="tagsOpen = false">
+                  <div id="{% component_id 'tags' media %}"></div>
+                </div>
+              </div>
+            </div>
+
+            <a class="size-11 inline-flex items-center justify-center shrink-0 rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer"
+               title="View your activity history"
+               href="{% url 'history' %}?{% if media_type == MediaTypes.SEASON.value %}media_type={{ MediaTypes.TV.value }}&media_id={{ media.media_id|urlencode }}&source={{ media.source|urlencode }}&season_number={{ media.season_number }}{% elif media_type == MediaTypes.TV.value %}media_type={{ MediaTypes.TV.value }}&media_id={{ media.media_id|urlencode }}&source={{ media.source|urlencode }}{% elif media_type == MediaTypes.PODCAST.value and podcast_show %}media_type={{ MediaTypes.PODCAST.value }}&podcast_show={{ podcast_show.id }}{% else %}media_type={{ media_type }}&media_id={{ media.media_id|urlencode }}&source={{ media.source|urlencode }}{% endif %}{% if media_type == MediaTypes.GAME.value or media_type == MediaTypes.BOARDGAME.value %}&logging_style=sessions{% endif %}">
+              {% include "app/icons/history.svg" with classes="w-4 h-4" %}
+            </a>
+
+            <button type="button"
+                    title="Sync metadata with provider"
+                    class="size-11 inline-flex items-center justify-center shrink-0 rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer disabled:opacity-75"
+                    hx-post="{% media_view_url 'sync_metadata' media %}"
+                    hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+                    hx-vals='{"next": "{{ request.get_full_path|urlencode }}"}'
+                    hx-target="body"
+                    hx-swap="none"
+                    x-data="{ loading: false }"
+                    @click="loading = true"
+                    :disabled="loading">
+              <div :class="{ 'animate-spin': loading }">
+                {% include "app/icons/circle-spinning-clockwise.svg" with classes="w-4 h-4" %}
+              </div>
+            </button>
+          </div>
+        </div>
+      {% endif %}
+
       {# Description #}
       <div class="mb-6">
         <div x-data="{ isExpanded: false, isClamped: false, checkClamp() { const element = this.$refs.synopsisText; this.isClamped = element.scrollHeight > element.clientHeight; } }"
              x-init="$nextTick(() => checkClamp())">
           <p x-ref="synopsisText"
-             :class="isExpanded ? '' : '{% if media.media_type == MediaTypes.SEASON.value %}line-clamp-4{% else %}line-clamp-5{% endif %}'"
+             :class="isExpanded ? '' : 'line-clamp-3'"
              class="text-gray-300 text-pretty">{{ media.synopsis|linebreaksbr|safe }}</p>
           <button x-show="isClamped"
                   @click="isExpanded = !isExpanded"
@@ -724,75 +780,6 @@
           <a href="{% url 'media_details' source=migrated_grouped_item.source media_type=MediaTypes.ANIME.value media_id=migrated_grouped_item.media_id title=migrated_grouped_title|default:migrated_grouped_item.title|slug %}"
              class="font-semibold hover:underline">Open grouped series</a>
         </p>
-      </div>
-      {% endif %}
-
-      {# Actions #}
-      {% if not public_view|default:False %}
-      <h2 class="text-xl font-bold mb-4">Actions</h2>
-      <div class="bg-[#2a2f35] p-4 md:p-2 lg:p-4 rounded-lg flex flex-wrap items-center justify-center gap-2 mb-6">
-        {# Custom Lists #}
-        <div x-data="{ listsOpen: false }">
-          <button class="size-10 inline-flex items-center justify-center shrink-0 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition duration-300 cursor-pointer"
-                  title="Add to custom lists"
-                  hx-get="{% media_view_url 'lists_modal' media %}"
-                  hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
-                  hx-target="#{% component_id 'lists' media %}"
-                  hx-trigger="click once"
-                  @click="listsOpen = true">{% include "app/icons/list-add.svg" with classes="w-4 h-4" %}</button>
-
-          <div x-show="listsOpen"
-               @keydown.escape.window="listsOpen = false"
-               class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
-                 @click.outside="listsOpen = false">
-              <div id="{% component_id 'lists' media %}"></div>
-            </div>
-          </div>
-        </div>
-
-        {# Tags #}
-        <div x-data="{ tagsOpen: false }">
-          <button class="size-10 inline-flex items-center justify-center shrink-0 bg-violet-600 text-white rounded-md hover:bg-violet-700 transition duration-300 cursor-pointer"
-                  title="Manage tags"
-                  hx-get="{% media_view_url 'tags_modal' media %}"
-                  hx-target="#{% component_id 'tags' media %}"
-                  hx-trigger="click once"
-                  @click="tagsOpen = true">{% include "app/icons/tag.svg" with classes="w-4 h-4" %}</button>
-
-          <div x-show="tagsOpen"
-               @keydown.escape.window="tagsOpen = false"
-               class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
-                 @click.outside="tagsOpen = false">
-              <div id="{% component_id 'tags' media %}"></div>
-            </div>
-          </div>
-        </div>
-
-        {# Activity History #}
-        <a class="size-10 inline-flex items-center justify-center shrink-0 bg-amber-600 text-white rounded-md hover:bg-amber-700 transition duration-300 cursor-pointer"
-           title="View your activity history"
-           href="{% url 'history' %}?{% if media_type == MediaTypes.SEASON.value %}media_type={{ MediaTypes.TV.value }}&media_id={{ media.media_id|urlencode }}&source={{ media.source|urlencode }}&season_number={{ media.season_number }}{% elif media_type == MediaTypes.TV.value %}media_type={{ MediaTypes.TV.value }}&media_id={{ media.media_id|urlencode }}&source={{ media.source|urlencode }}{% elif media_type == MediaTypes.PODCAST.value and podcast_show %}media_type={{ MediaTypes.PODCAST.value }}&podcast_show={{ podcast_show.id }}{% else %}media_type={{ media_type }}&media_id={{ media.media_id|urlencode }}&source={{ media.source|urlencode }}{% endif %}{% if media_type == MediaTypes.GAME.value or media_type == MediaTypes.BOARDGAME.value %}&logging_style=sessions{% endif %}">
-          {% include "app/icons/history.svg" with classes="w-4 h-4" %}
-        </a>
-
-        {# Sync metadata #}
-        <button type="button"
-                title="Sync metadata with provider"
-                class="size-10 inline-flex items-center justify-center shrink-0 bg-fuchsia-600 text-white rounded-md hover:bg-fuchsia-700 transition duration-300 cursor-pointer disabled:opacity-75"
-                hx-post="{% media_view_url 'sync_metadata' media %}"
-                hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
-                hx-vals='{"next": "{{ request.get_full_path|urlencode }}"}'
-                hx-target="body"
-                hx-swap="none"
-                x-data="{ loading: false }"
-                @click="loading = true"
-                :disabled="loading">
-          <div :class="{ 'animate-spin': loading }">
-            {% include "app/icons/circle-spinning-clockwise.svg" with classes="w-4 h-4" %}
-          </div>
-        </button>
       </div>
       {% endif %}
 
