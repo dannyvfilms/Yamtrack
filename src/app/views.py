@@ -519,7 +519,7 @@ _DETAIL_LINK_BRANDS = {
         "fallback_text": "TVDB",
     },
     Sources.MAL.value: {
-        "logo_src": static("img/mal-logo.ico"),
+        "logo_src": static("img/myanimelist-logo.svg"),
         "chip_classes": "border-indigo-400/18 bg-indigo-500/[0.07]",
         "badge_classes": "border-indigo-400/28 bg-indigo-500/14",
         "accent_classes": "text-indigo-100",
@@ -532,6 +532,7 @@ _DETAIL_LINK_BRANDS = {
         "fallback_text": "MU",
     },
     Sources.IGDB.value: {
+        "logo_src": static("img/igdb-logo.png"),
         "chip_classes": "border-orange-400/18 bg-orange-500/[0.07]",
         "badge_classes": "border-orange-400/28 bg-orange-500/14",
         "accent_classes": "text-orange-100",
@@ -656,6 +657,7 @@ _DETAIL_LINK_BRANDS = {
         "fallback_text": "LB",
     },
     "howlongtobeat": {
+        "logo_src": static("img/hltb-logo.png"),
         "chip_classes": "border-amber-400/18 bg-amber-500/[0.07]",
         "badge_classes": "border-amber-400/28 bg-amber-500/14",
         "accent_classes": "text-amber-100",

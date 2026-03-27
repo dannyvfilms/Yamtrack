@@ -266,13 +266,23 @@
 
       {# Score chips #}
       {% if media.score_count is not None or trakt_score or user_medias and current_instance and not public_view|default:False %}
-        <div class="{% if media.media_type == MediaTypes.SEASON.value or activity_subtitle %}mt-4 mb-5{% else %}mb-4{% endif %} flex flex-wrap gap-2">
+        <div class="mt-4 mb-5 flex flex-wrap gap-2">
           {% if media.score_count is not None %}
             <div class="inline-flex h-8 items-center gap-2 rounded-full border border-cyan-400/18 bg-cyan-500/[0.07] pl-0 pr-3 text-sm text-white shadow-sm">
               <span class="sr-only">{{ display_provider|source_readable }} score</span>
               <span class="-my-px -ml-px flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-cyan-400/28 bg-cyan-500/14">
                 {% if display_provider == Sources.TMDB.value %}
                   <img src="{% static 'img/tmdb-logo.png' %}"
+                       alt=""
+                       aria-hidden="true"
+                       class="h-3.5 w-3.5 object-contain">
+                {% elif display_provider == Sources.MAL.value %}
+                  <img src="{% static 'img/myanimelist-logo.svg' %}"
+                       alt=""
+                       aria-hidden="true"
+                       class="h-3.5 w-3.5 object-contain">
+                {% elif display_provider == Sources.IGDB.value %}
+                  <img src="{% static 'img/igdb-logo.png' %}"
                        alt=""
                        aria-hidden="true"
                        class="h-3.5 w-3.5 object-contain">

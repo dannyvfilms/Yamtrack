@@ -294,6 +294,91 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(external_entry["logo_src"], "/static/img/wikidata-logo.png")
 
     @patch("app.providers.services.get_media_metadata")
+    def test_media_details_uses_mal_logo_in_link_sections(
+        self,
+        mock_get_metadata,
+    ):
+        mock_get_metadata.return_value = {
+            "media_id": "52991",
+            "title": "Frieren",
+            "media_type": MediaTypes.MANGA.value,
+            "source": Sources.MAL.value,
+            "image": "http://example.com/image.jpg",
+            "source_url": "https://myanimelist.net/manga/52991/Sousou_no_Frieren",
+            "synopsis": "Test overview",
+            "details": {},
+            "related": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.MAL.value,
+                    "media_type": MediaTypes.MANGA.value,
+                    "media_id": "52991",
+                    "title": "frieren",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "myanimelist-logo.svg")
+
+        source_entry = response.context["detail_link_sections"][0]["entries"][0]
+        self.assertEqual(source_entry["label"], "MyAnimeList")
+        self.assertEqual(source_entry["chip_classes"], "border-indigo-400/18 bg-indigo-500/[0.07]")
+        self.assertEqual(source_entry["logo_src"], "/static/img/myanimelist-logo.svg")
+
+    @patch("app.views._queue_game_lengths_refresh", return_value=True)
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_uses_igdb_and_hltb_logos_in_link_sections(
+        self,
+        mock_get_metadata,
+        _mock_queue_game_lengths_refresh,
+    ):
+        mock_get_metadata.return_value = {
+            "media_id": "325609",
+            "title": "Dispatch",
+            "media_type": MediaTypes.GAME.value,
+            "source": Sources.IGDB.value,
+            "image": "http://example.com/image.jpg",
+            "source_url": "https://www.igdb.com/games/dispatch",
+            "external_links": {
+                "HowLongToBeat": "https://howlongtobeat.com/game/160618",
+            },
+            "synopsis": "Test overview",
+            "details": {},
+            "related": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.IGDB.value,
+                    "media_type": MediaTypes.GAME.value,
+                    "media_id": "325609",
+                    "title": "dispatch",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertIn("igdb-logo.png", content)
+        self.assertIn("hltb-logo.png", content)
+
+        source_entry = response.context["detail_link_sections"][0]["entries"][0]
+        external_entry = response.context["detail_link_sections"][1]["entries"][0]
+        self.assertEqual(source_entry["label"], "Internet Game Database")
+        self.assertEqual(source_entry["chip_classes"], "border-orange-400/18 bg-orange-500/[0.07]")
+        self.assertEqual(source_entry["logo_src"], "/static/img/igdb-logo.png")
+        self.assertEqual(external_entry["label"], "HowLongToBeat")
+        self.assertEqual(external_entry["chip_classes"], "border-amber-400/18 bg-amber-500/[0.07]")
+        self.assertEqual(external_entry["logo_src"], "/static/img/hltb-logo.png")
+
+    @patch("app.providers.services.get_media_metadata")
     def test_media_details_renders_tag_preview_sections_next_to_links(
         self,
         mock_get_metadata,
@@ -711,6 +796,78 @@ class MediaDetailsViewTests(TestCase):
         self.assertContains(response, "tmdb-logo.png")
         self.assertContains(response, "7.6")
         self.assertContains(response, "42,000 votes")
+        self.assertContains(
+            response,
+            'class="mt-4 mb-5 flex flex-wrap gap-2"',
+            html=False,
+        )
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_renders_source_score_chip_with_mal_logo(self, mock_get_metadata):
+        mock_get_metadata.return_value = {
+            "media_id": "52991",
+            "title": "Frieren",
+            "media_type": MediaTypes.MANGA.value,
+            "source": Sources.MAL.value,
+            "image": "http://example.com/image.jpg",
+            "score": 8.9,
+            "score_count": 123456,
+            "details": {},
+            "related": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.MAL.value,
+                    "media_type": MediaTypes.MANGA.value,
+                    "media_id": "52991",
+                    "title": "frieren",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "myanimelist-logo.svg")
+        self.assertContains(response, "8.9")
+        self.assertContains(response, "123,456 votes")
+
+    @patch("app.views._queue_game_lengths_refresh", return_value=True)
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_renders_source_score_chip_with_igdb_logo(
+        self,
+        mock_get_metadata,
+        _mock_queue_game_lengths_refresh,
+    ):
+        mock_get_metadata.return_value = {
+            "media_id": "325609",
+            "title": "Dispatch",
+            "media_type": MediaTypes.GAME.value,
+            "source": Sources.IGDB.value,
+            "image": "http://example.com/image.jpg",
+            "score": 83,
+            "score_count": 12000,
+            "details": {},
+            "related": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.IGDB.value,
+                    "media_type": MediaTypes.GAME.value,
+                    "media_id": "325609",
+                    "title": "dispatch",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "igdb-logo.png")
+        self.assertContains(response, "83")
+        self.assertContains(response, "12,000 votes")
 
     @patch("app.providers.services.get_media_metadata")
     def test_tv_media_details_uses_same_title_spacing_as_score_chips(self, mock_get_metadata):
@@ -741,7 +898,7 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(
             response,
-            '<div class="mb-3 text-center md:text-start">',
+            '<div class="mb-1 text-center md:text-start">',
             html=False,
         )
         self.assertContains(
