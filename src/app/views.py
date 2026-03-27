@@ -4957,11 +4957,15 @@ def media_details(
             MediaTypes.GAME.value,
             MediaTypes.BOARDGAME.value,
             MediaTypes.TV.value,
+            MediaTypes.ANIME.value,
             MediaTypes.MOVIE.value,
         ]
     ):
-        if media_type == MediaTypes.TV.value:
-            # Calculate TV show play stats from watched episodes
+        if media_type == MediaTypes.TV.value or (
+            media_type == MediaTypes.ANIME.value
+            and hasattr(current_instance, "seasons")
+        ):
+            # Calculate TV and grouped-anime play stats from watched episodes.
             total_minutes = 0
             episode_count = 0
             first_played = None
@@ -5002,6 +5006,33 @@ def media_details(
                     "total_minutes_remainder": total_minutes % 60,
                     "episode_count": episode_count,
                 }
+        elif media_type == MediaTypes.ANIME.value:
+            # Flat anime entries track episode progress directly on the media row.
+            BasicMedia.objects._aggregate_item_data(current_instance, user_medias)
+            aggregated_progress = getattr(current_instance, "aggregated_progress", None)
+            if aggregated_progress is None:
+                aggregated_progress = current_instance.progress or 0
+
+            play_stats = {
+                "first_played": getattr(current_instance, "aggregated_start_date", None)
+                or current_instance.start_date,
+                "last_played": getattr(current_instance, "aggregated_end_date", None)
+                or current_instance.end_date,
+            }
+            current_instance.subtitle_start_date = play_stats["first_played"]
+            current_instance.subtitle_end_date = play_stats["last_played"]
+
+            runtime_minutes = current_instance._get_known_item_runtime_minutes()
+            total_progress = int(aggregated_progress or 0)
+            if runtime_minutes and total_progress > 0:
+                total_minutes = runtime_minutes * total_progress
+                play_stats.update(
+                    {
+                        "total_minutes": total_minutes,
+                        "total_hours": total_minutes // 60,
+                        "total_minutes_remainder": total_minutes % 60,
+                    },
+                )
         else:
             # Games, boardgames, and movies calculation
             BasicMedia.objects._aggregate_item_data(current_instance, user_medias)

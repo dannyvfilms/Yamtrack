@@ -1190,6 +1190,196 @@ class MediaDetailsViewTests(TestCase):
         self.assertTrue(response.context["can_migrate_grouped_anime"])
 
     @override_settings(TVDB_API_KEY="test-tvdb-key")
+    @patch("app.views.metadata_resolution.resolve_detail_metadata")
+    @patch("app.providers.services.get_media_metadata")
+    def test_flat_anime_media_details_render_tv_style_subtitle(
+        self,
+        mock_get_metadata,
+        mock_resolve_detail_metadata,
+    ):
+        self.user.date_format = DateFormatChoices.ISO_8601
+        self.user.save(update_fields=["date_format"])
+        base_metadata = {
+            "media_id": "52991",
+            "title": "Frieren",
+            "original_title": "Sousou no Frieren",
+            "localized_title": "Frieren",
+            "media_type": MediaTypes.ANIME.value,
+            "source": Sources.MAL.value,
+            "source_url": "https://myanimelist.net/anime/52991",
+            "max_progress": 28,
+            "image": "https://example.com/frieren.jpg",
+            "synopsis": "A mage looks back.",
+            "details": {"episodes": 28, "runtime": "24m"},
+            "related": {},
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+        }
+        mock_get_metadata.return_value = base_metadata
+        item = Item.objects.create(
+            media_id="52991",
+            source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME.value,
+            title="Frieren",
+            image="https://example.com/frieren.jpg",
+            runtime_minutes=24,
+        )
+        Anime.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=3,
+            start_date=datetime(2026, 3, 1, 12, 0, tzinfo=UTC),
+            end_date=datetime(2026, 3, 12, 12, 0, tzinfo=UTC),
+        )
+        mock_resolve_detail_metadata.return_value = MetadataResolutionResult(
+            display_provider=Sources.MAL.value,
+            identity_provider=Sources.MAL.value,
+            mapping_status="identity",
+            header_metadata=base_metadata,
+            grouped_preview=None,
+            provider_media_id="52991",
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.MAL.value,
+                    "media_type": MediaTypes.ANIME.value,
+                    "media_id": "52991",
+                    "title": "frieren",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Progress: 3/28")
+        self.assertContains(response, "2026-03-01 - 2026-03-12")
+        self.assertContains(response, "1h 12min watched")
+        self.assertContains(
+            response,
+            'class="mt-4 mb-5 flex flex-wrap gap-2"',
+            html=False,
+        )
+        self.assertNotContains(response, "FIRST PLAYED")
+        self.assertNotContains(response, "LAST PLAYED")
+        self.assertNotContains(response, "WATCHED HOURS")
+
+    @override_settings(TVDB_API_KEY="test-tvdb-key")
+    @patch("app.views.metadata_resolution.resolve_detail_metadata")
+    @patch("app.providers.services.get_media_metadata")
+    def test_grouped_anime_media_details_render_tv_style_subtitle(
+        self,
+        mock_get_metadata,
+        mock_resolve_detail_metadata,
+    ):
+        self.user.date_format = DateFormatChoices.ISO_8601
+        self.user.save(update_fields=["date_format"])
+        item = Item.objects.create(
+            media_id="9350138",
+            source=Sources.TVDB.value,
+            media_type=MediaTypes.TV.value,
+            library_media_type=MediaTypes.ANIME.value,
+            title="Frieren: Beyond Journey's End",
+            image="https://example.com/frieren-grouped.jpg",
+        )
+        tv = TV.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        season_item = Item.objects.create(
+            media_id="9350138",
+            source=Sources.TVDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Season 1",
+            image="https://example.com/frieren-season.jpg",
+            season_number=1,
+        )
+        season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=tv,
+            status=Status.IN_PROGRESS.value,
+        )
+        episode_item = Item.objects.create(
+            media_id="9350138",
+            source=Sources.TVDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Episode 1",
+            image="https://example.com/frieren-episode.jpg",
+            season_number=1,
+            episode_number=1,
+            runtime_minutes=24,
+        )
+        Episode.objects.create(
+            item=episode_item,
+            related_season=season,
+            end_date=datetime(2026, 3, 1, 12, 0, tzinfo=UTC),
+        )
+        Episode.objects.create(
+            item=episode_item,
+            related_season=season,
+            end_date=datetime(2026, 3, 12, 12, 0, tzinfo=UTC),
+        )
+        base_metadata = {
+            "media_id": "9350138",
+            "title": "Frieren: Beyond Journey's End",
+            "original_title": "Sousou no Frieren",
+            "localized_title": "Frieren: Beyond Journey's End",
+            "media_type": MediaTypes.ANIME.value,
+            "identity_media_type": MediaTypes.TV.value,
+            "library_media_type": MediaTypes.ANIME.value,
+            "source": Sources.TVDB.value,
+            "source_url": "https://www.thetvdb.com/dereferrer/series/9350138",
+            "max_progress": 28,
+            "image": "https://example.com/frieren-grouped.jpg",
+            "synopsis": "A mage looks back.",
+            "details": {"episodes": 28, "runtime": "24m"},
+            "related": {},
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+            "external_links": {},
+        }
+        mock_get_metadata.return_value = base_metadata
+        mock_resolve_detail_metadata.return_value = MetadataResolutionResult(
+            display_provider=Sources.TVDB.value,
+            identity_provider=Sources.TVDB.value,
+            mapping_status="identity",
+            header_metadata=base_metadata,
+            grouped_preview=None,
+            provider_media_id="9350138",
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TVDB.value,
+                    "media_type": MediaTypes.ANIME.value,
+                    "media_id": "9350138",
+                    "title": "frieren-beyond-journeys-end",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Progress: 1/28")
+        self.assertContains(response, "2026-03-01 - 2026-03-12")
+        self.assertContains(response, "48min watched")
+        self.assertContains(
+            response,
+            'class="mt-4 mb-5 flex flex-wrap gap-2"',
+            html=False,
+        )
+        self.assertNotContains(response, "FIRST PLAYED")
+        self.assertNotContains(response, "LAST PLAYED")
+        self.assertNotContains(response, "WATCHED HOURS")
+
+    @override_settings(TVDB_API_KEY="test-tvdb-key")
     def test_update_metadata_provider_preference_saves_override(self):
         """Saving a metadata provider override should persist a user preference only."""
         item = Item.objects.create(
