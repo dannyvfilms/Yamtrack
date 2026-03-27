@@ -18,6 +18,7 @@ from app.models import (
     ItemPersonCredit,
     MetadataProviderPreference,
     MediaTypes,
+    Movie,
     Person,
     PodcastEpisode,
     PodcastShow,
@@ -301,7 +302,7 @@ class MediaDetailsViewTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "TRAKT SCORE")
+        self.assertContains(response, "trakt-logo.svg")
         self.assertContains(response, "7.8")
         self.assertNotContains(response, "7.88048")
         self.assertContains(response, "123,456 ratings")
@@ -338,7 +339,162 @@ class MediaDetailsViewTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertNotContains(response, "TRAKT SCORE")
+        self.assertNotContains(response, "trakt-logo.svg")
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_renders_source_score_chip_with_tmdb_logo(self, mock_get_metadata):
+        mock_get_metadata.return_value = {
+            "media_id": "238",
+            "title": "Test Movie",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "image": "http://example.com/image.jpg",
+            "score": 7.6,
+            "score_count": 42000,
+            "details": {},
+            "related": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "238",
+                    "title": "test-movie",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "tmdb-logo.png")
+        self.assertContains(response, "7.6")
+        self.assertContains(response, "42,000 votes")
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_tv_media_details_uses_same_title_spacing_as_score_chips(self, mock_get_metadata):
+        mock_get_metadata.return_value = {
+            "media_id": "1668",
+            "title": "Test TV Show",
+            "media_type": MediaTypes.TV.value,
+            "source": Sources.TMDB.value,
+            "image": "http://example.com/image.jpg",
+            "score": 7.6,
+            "score_count": 42000,
+            "details": {},
+            "related": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "media_id": "1668",
+                    "title": "test-tv-show",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            '<div class="mb-3 text-center md:text-start">',
+            html=False,
+        )
+        self.assertContains(
+            response,
+            'class="mt-4 mb-5 flex flex-wrap gap-2"',
+            html=False,
+        )
+        self.assertContains(response, '<h1 class="text-3xl font-bold">Test TV Show</h1>', html=False)
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_renders_your_score_chip_with_edit_rating(self, mock_get_metadata):
+        mock_get_metadata.return_value = {
+            "media_id": "238",
+            "title": "Test Movie",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "image": "http://example.com/image.jpg",
+            "max_progress": 1,
+            "details": {},
+            "related": {},
+        }
+        item = Item.objects.create(
+            media_id="238",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Test Movie",
+            image="http://example.com/image.jpg",
+        )
+        Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            score=8,
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "238",
+                    "title": "test-movie",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Edit rating")
+        self.assertContains(response, "x-text=\"rating || ''\">8<", html=False)
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_renders_your_score_chip_with_add_rating_when_empty(self, mock_get_metadata):
+        mock_get_metadata.return_value = {
+            "media_id": "238",
+            "title": "Test Movie",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "image": "http://example.com/image.jpg",
+            "max_progress": 1,
+            "details": {},
+            "related": {},
+        }
+        item = Item.objects.create(
+            media_id="238",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Test Movie",
+            image="http://example.com/image.jpg",
+        )
+        Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.PLANNING.value,
+            score=None,
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "238",
+                    "title": "test-movie",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Add rating")
+        self.assertNotContains(response, "Click to edit")
 
     @override_settings(TVDB_API_KEY="test-tvdb-key")
     @patch("app.views.metadata_resolution.resolve_detail_metadata")
@@ -1046,7 +1202,7 @@ class MediaDetailsViewTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "TRAKT SCORE")
+        self.assertContains(response, "trakt-logo.svg")
         self.assertContains(response, "7.8")
         self.assertNotContains(response, "7.88048")
         self.assertContains(response, "1,849 ratings")
@@ -1111,6 +1267,61 @@ class MediaDetailsViewTests(TestCase):
             response.context["media"]["image"],
             "https://images.example.com/custom-season.jpg",
         )
+
+    @patch("app.providers.services.get_media_metadata")
+    @patch("app.providers.tmdb.process_episodes")
+    def test_season_details_swaps_show_and_season_heading_sizes(
+        self,
+        mock_process_episodes,
+        mock_get_metadata,
+    ):
+        mock_process_episodes.return_value = []
+        mock_get_metadata.return_value = {
+            "title": "Test TV Show",
+            "media_id": "1668",
+            "source": Sources.TMDB.value,
+            "media_type": MediaTypes.TV.value,
+            "image": "http://example.com/image.jpg",
+            "season/1": {
+                "title": "Test TV Show",
+                "season_title": "Season 1",
+                "media_id": "1668",
+                "media_type": MediaTypes.SEASON.value,
+                "source": Sources.TMDB.value,
+                "image": "http://example.com/season.jpg",
+                "score": 7.6,
+                "score_count": 42000,
+                "episodes": [],
+            },
+        }
+
+        response = self.client.get(
+            reverse(
+                "season_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_id": "1668",
+                    "title": "test-tv-show",
+                    "season_number": 1,
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertRegex(
+            content,
+            r'<h1 class="text-3xl font-bold cursor-pointer hover:text-indigo-500 transition-colors duration-200 mb-0 text-center md:text-start">\s*<a href="[^"]+">Test TV Show</a>\s*</h1>',
+        )
+        self.assertRegex(
+            content,
+            r'<h2 class="text-xl font-semibold text-gray-400">Season 1</h2>',
+        )
+        self.assertIn(
+            'class="flex flex-col md:flex-row gap-y-4 md:gap-y-0 items-center justify-between mb-1"',
+            content,
+        )
+        self.assertIn('class="mt-4 mb-5 flex flex-wrap gap-2"', content)
 
     @patch("integrations.tasks.fetch_collection_metadata_for_item.delay")
     @patch("app.providers.services.get_media_metadata")

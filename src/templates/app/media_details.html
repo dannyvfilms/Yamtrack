@@ -2,6 +2,7 @@
 {% load app_tags %}
 {% load user_tags %}
 {% load humanize %}
+{% load static %}
 
 {% block title %}
   {{ media|display_title:user }}
@@ -161,12 +162,12 @@
     {# Media details #}
     <div class="md:w-3/4">
       {% if media.media_type == MediaTypes.SEASON.value %}
-        <h2 class="text-xl font-semibold cursor-pointer hover:text-indigo-500 transition-colors duration-200 mb-2 text-gray-400 text-center md:text-start">
+        <h1 class="text-3xl font-bold cursor-pointer hover:text-indigo-500 transition-colors duration-200 mb-0 text-center md:text-start">
           <a href="{% url 'media_details' source=media.source media_type=MediaTypes.TV.value media_id=media.media_id title=media.title|slug %}">{{ media|display_title:user }}</a>
-        </h2>
+        </h1>
 
-        <div class="flex flex-col md:flex-row gap-y-4 md:gap-y-0 items-center justify-between mb-6">
-          <h1 class="text-3xl font-bold">{{ media.season_title }}</h1>
+        <div class="flex flex-col md:flex-row gap-y-4 md:gap-y-0 items-center justify-between mb-1">
+          <h2 class="text-xl font-semibold text-gray-400">{{ media.season_title }}</h2>
 
           {# Season dropdown #}
           <div class="relative"
@@ -215,7 +216,7 @@
         {% endif %}
 
         {% with media|alternative_title:user as detail_alt_title %}
-          <div class="mb-1 text-center md:text-start">
+          <div class="{% if media.media_type == MediaTypes.TV.value %}mb-3{% else %}mb-1{% endif %} text-center md:text-start">
             <div class="inline-flex items-center gap-2 md:flex md:gap-2">
               <h1 class="text-3xl font-bold">{{ media|display_title:user }}</h1>
               {% if detail_alt_title %}
@@ -259,12 +260,105 @@
         {% endif %}
       {% endif %}
 
-      {# Genres #}
-      <div class="flex flex-wrap gap-2 mb-4">
-        {% for genre in media.genres %}
-          <span class="px-3 py-1 bg-violet-600 text-white rounded-full text-sm">{{ genre }}</span>
-        {% endfor %}
-      </div>
+      {# Score chips and genres #}
+      {% if media.score_count is not None or trakt_score or user_medias and current_instance and not public_view|default:False or media.genres %}
+        <div class="{% if media.media_type == MediaTypes.TV.value or media.media_type == MediaTypes.SEASON.value %}mt-4 mb-5{% else %}mb-4{% endif %} flex flex-wrap gap-2">
+          {% if media.score_count is not None %}
+            <div class="inline-flex h-8 items-center gap-2 rounded-full border border-cyan-400/18 bg-cyan-500/[0.07] pl-0 pr-3 text-sm text-white shadow-sm">
+              <span class="sr-only">{{ display_provider|source_readable }} score</span>
+              <span class="-my-px -ml-px flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-cyan-400/28 bg-cyan-500/14">
+                {% if display_provider == Sources.TMDB.value %}
+                  <img src="{% static 'img/tmdb-logo.png' %}"
+                       alt=""
+                       aria-hidden="true"
+                       class="h-3.5 w-3.5 object-contain">
+                {% else %}
+                  <span class="text-[9px] font-black tracking-[0.12em] text-cyan-100">{{ display_provider|upper|slice:":4" }}</span>
+                {% endif %}
+              </span>
+              {% if media.score is not None %}
+                <span class="text-sm font-semibold text-white">{{ media.score }}</span>
+              {% else %}
+                <span class="text-sm font-semibold text-gray-400">-</span>
+              {% endif %}
+              <span class="text-sm text-gray-500">|</span>
+              <span class="text-sm text-gray-300">{{ media.score_count|intcomma }} vote{{ media.score_count|pluralize }}</span>
+            </div>
+          {% endif %}
+
+          {% if trakt_score %}
+            <div class="inline-flex h-8 items-center gap-2 rounded-full border border-rose-400/18 bg-rose-500/[0.07] pl-0 pr-3 text-sm text-white shadow-sm">
+              <span class="sr-only">Trakt score</span>
+              <span class="-my-px -ml-px flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-rose-400/28 bg-rose-500/14">
+                <img src="{% static 'img/trakt-logo.svg' %}"
+                     alt=""
+                     aria-hidden="true"
+                     class="h-4 w-4 object-contain">
+              </span>
+              {% if trakt_score.rating is not None %}
+                <span class="text-sm font-semibold text-white">{{ trakt_score.rating }}</span>
+              {% else %}
+                <span class="text-sm font-semibold text-gray-400">-</span>
+              {% endif %}
+              <span class="text-sm text-gray-500">|</span>
+              <span class="text-sm text-gray-300">{{ trakt_score.rating_count|intcomma }} rating{{ trakt_score.rating_count|pluralize }}</span>
+            </div>
+          {% endif %}
+
+          {% if user_medias and current_instance and not public_view|default:False %}
+            <div x-data="{ showRatingPopup: false, rating: {{ current_instance.score|score_display:user|default:'null' }}, hoverRating: null, isHovering: false }"
+                 class="relative">
+              <button type="button"
+                      @click="showRatingPopup = !showRatingPopup"
+                      class="inline-flex h-8 items-center gap-2 rounded-full border border-amber-400/18 bg-amber-500/[0.07] pl-0 pr-3 text-sm text-white shadow-sm transition-colors duration-200 hover:border-amber-300/28 hover:bg-amber-500/[0.11]">
+                <span class="sr-only">Your score</span>
+                <span class="-my-px -ml-px flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-amber-400/28 bg-amber-500/14">
+                  {% include "app/icons/star.svg" with classes="h-4 w-4 text-yellow-400 fill-yellow-400" %}
+                </span>
+                <span class="inline-flex items-center gap-2">
+                  <span class="text-sm font-semibold text-white {% if current_instance.score is None %}hidden{% endif %}"
+                        :class="rating ? '' : 'hidden'"
+                        x-text="rating || ''">{% if current_instance.score is not None %}{{ current_instance.score|score_display:user }}{% endif %}</span>
+                  <span class="text-sm text-gray-500 {% if current_instance.score is None %}hidden{% endif %}"
+                        :class="rating ? '' : 'hidden'">|</span>
+                  <span class="text-sm font-medium text-gray-200"
+                        x-text="rating ? 'Edit rating' : 'Add rating'">{% if current_instance.score is not None %}Edit rating{% else %}Add rating{% endif %}</span>
+                </span>
+              </button>
+
+              <div x-show="showRatingPopup"
+                   @click.outside="showRatingPopup = false; isHovering = false"
+                   class="absolute left-0 top-full mt-2 w-[250px] rounded-lg border border-gray-700 bg-[#2a2f35] p-3 shadow-lg z-10"
+                   @mouseenter="isHovering = true"
+                   @mouseleave="isHovering = false; hoverRating = null">
+                <div class="flex justify-between mb-1">
+                  {% with rating_range=user|rating_scale_max|get_range %}
+                    {% for rating_value in rating_range %}
+                      <button @click="if (rating === {{ rating_value }}) { rating = null; } else { rating = {{ rating_value }}; } showRatingPopup = false; isHovering = false"
+                              @mouseenter="hoverRating = {{ rating_value }}"
+                              hx-post="{% url 'update_media_score' media_type current_instance.id %}"
+                              hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+                              hx-vals='{"score": {{ rating_value }}, "toggle": true }'
+                              hx-trigger="click"
+                              hx-swap="none"
+                              class="focus:outline-none flex flex-col items-center cursor-pointer">
+                        <div :class="{ 'text-yellow-400': {{ rating_value }} <= (isHovering ? hoverRating : rating), 'text-gray-600': {{ rating_value }} > (isHovering ? hoverRating : rating) }">
+                          {% include "app/icons/star.svg" with classes="w-5 h-5 hover:scale-110 transition-transform" %}
+                        </div>
+                        <span class="text-xs mt-1 text-gray-400">{{ rating_value }}</span>
+                      </button>
+                    {% endfor %}
+                  {% endwith %}
+                </div>
+              </div>
+            </div>
+          {% endif %}
+
+          {% for genre in media.genres %}
+            <span class="px-3 py-1 bg-violet-600 text-white rounded-full text-sm">{{ genre }}</span>
+          {% endfor %}
+        </div>
+      {% endif %}
 
       {# Description #}
       <div class="mb-6">
@@ -329,47 +423,10 @@
         {% endif %}
       </div>
 
-      {# Source score and play stats - 3x2/3x3 grid on mobile, flex-wrap on desktop #}
-      <div class="stats-card-grid">
-        {# Mobile layout: Source Score, Trakt Score, First Played, Total Hours, Your Score, Last Played, Avg Time #}
-
-        {# Source score - mobile: order-1 (row 1, col 1), desktop: order-1 #}
-        {% if media.score_count is not None %}
-          <div class="bg-[#2a2f35] p-3 rounded-lg" data-mobile-order="1" data-desktop-order="1">
-            <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">{{ display_provider|upper }} SCORE</h3>
-            <div class="flex items-center justify-center">
-              {% include "app/icons/star.svg" with classes="w-5 h-5 mr-1.5 text-yellow-400 fill-yellow-400" %}
-              {% if media.score is not None %}
-                <span class="text-lg font-bold text-white">{{ media.score }}</span><span class="text-gray-400 ml-0.5 text-sm">/10</span>
-              {% else %}
-                <span class="text-lg font-bold text-gray-400">-</span>
-              {% endif %}
-            </div>
-            <p class="text-xs text-gray-400 mt-0.5 text-center">
-              {{ media.score_count|intcomma }} vote{{ media.score_count|pluralize }}
-            </p>
-          </div>
-        {% endif %}
-
-        {% if trakt_score %}
-          <div class="bg-[#2a2f35] p-3 rounded-lg" data-mobile-order="2" data-desktop-order="2">
-            <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">TRAKT SCORE</h3>
-            <div class="flex items-center justify-center">
-              {% include "app/icons/star.svg" with classes="w-5 h-5 mr-1.5 text-yellow-400 fill-yellow-400" %}
-              {% if trakt_score.rating is not None %}
-                <span class="text-lg font-bold text-white">{{ trakt_score.rating }}</span><span class="text-gray-400 ml-0.5 text-sm">/10</span>
-              {% else %}
-                <span class="text-lg font-bold text-gray-400">-</span>
-              {% endif %}
-            </div>
-            <p class="text-xs text-gray-400 mt-0.5 text-center">
-              {{ trakt_score.rating_count|intcomma }} rating{{ trakt_score.rating_count|pluralize }}
-            </p>
-          </div>
-        {% endif %}
-
-        {# First Played - mobile: order-3, desktop: order-4 #}
-        {% if play_stats %}
+      {# Play stats - 3x2/3x3 grid on mobile, flex-wrap on desktop #}
+      {% if play_stats %}
+        <div class="stats-card-grid">
+          {# First Played - mobile: order-3, desktop: order-4 #}
           <div class="bg-[#2a2f35] p-3 rounded-lg" data-mobile-order="3" data-desktop-order="4">
             <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">FIRST PLAYED</h3>
             {% if play_stats.first_played %}
@@ -417,62 +474,8 @@
               {% endif %}
             {% endif %}
           </div>
-        {% endif %}
 
-        {# User score - mobile: order-5, desktop: order-3 #}
-        {% if user_medias and current_instance and not public_view|default:False %}
-          <div x-data="{ showRatingPopup: false, rating: {{ current_instance.score|score_display:user|default:'null' }}, hoverRating: null, isHovering: false }"
-               class="relative" data-mobile-order="5" data-desktop-order="3">
-            <!-- Rating display -->
-            <div @click="showRatingPopup = !showRatingPopup"
-                 class="bg-[#2a2f35] p-3 rounded-lg cursor-pointer h-full">
-              <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">YOUR SCORE</h3>
-              <div class="flex items-center justify-center">
-                {% include "app/icons/star.svg" with classes="w-5 h-5 mr-1.5 text-yellow-400 fill-yellow-400" %}
-                <template x-if="rating">
-                  <div class="flex items-baseline">
-                    <span class="text-lg font-bold text-white" x-text="rating"></span>
-                    <span class="text-gray-400 ml-0.5 text-sm">/{{ user|rating_scale_max }}</span>
-                  </div>
-                </template>
-                <template x-if="!rating">
-                  <span class="text-lg font-bold text-gray-400">-</span>
-                </template>
-              </div>
-              <p class="text-xs text-gray-400 mt-0.5 text-center">Click to edit</p>
-            </div>
-
-            <!-- Rating popup -->
-            <div x-show="showRatingPopup"
-                 @click.outside="showRatingPopup = false; isHovering = false"
-                 class="absolute left-0 top-full mt-2 p-3 bg-[#2a2f35] rounded-lg shadow-lg z-10 w-[250px] border border-gray-700"
-                 @mouseenter="isHovering = true"
-                 @mouseleave="isHovering = false; hoverRating = null">
-              <div class="flex justify-between mb-1">
-                {% with rating_range=user|rating_scale_max|get_range %}
-                  {% for rating_value in rating_range %}
-                    <button @click="if (rating === {{ rating_value }}) { rating = null; } else { rating = {{ rating_value }}; } showRatingPopup = false; isHovering = false"
-                            @mouseenter="hoverRating = {{ rating_value }}"
-                            hx-post="{% url 'update_media_score' media_type current_instance.id %}"
-                            hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
-                            hx-vals='{"score": {{ rating_value }}, "toggle": true }'
-                            hx-trigger="click"
-                            hx-swap="none"
-                            class="focus:outline-none flex flex-col items-center cursor-pointer">
-                      <div :class="{ 'text-yellow-400': {{ rating_value }} <= (isHovering ? hoverRating : rating), 'text-gray-600': {{ rating_value }} > (isHovering ? hoverRating : rating) }">
-                        {% include "app/icons/star.svg" with classes="w-5 h-5 hover:scale-110 transition-transform" %}
-                      </div>
-                      <span class="text-xs mt-1 text-gray-400">{{ rating_value }}</span>
-                    </button>
-                  {% endfor %}
-                {% endwith %}
-              </div>
-            </div>
-          </div>
-        {% endif %}
-
-        {# Last Played - mobile: order-6, desktop: order-5 #}
-        {% if play_stats %}
+          {# Last Played - mobile: order-6, desktop: order-5 #}
           <div class="bg-[#2a2f35] p-3 rounded-lg" data-mobile-order="6" data-desktop-order="5">
             <h3 class="text-xs font-semibold text-gray-400 mb-1 text-center">LAST PLAYED</h3>
             {% if play_stats.last_played %}
@@ -497,8 +500,8 @@
               <p class="text-xs text-gray-400 mt-0.5 text-center">Per Day</p>
             </div>
           {% endif %}
-        {% endif %}
-      </div>
+        </div>
+      {% endif %}
     </div>
   </div>
 
