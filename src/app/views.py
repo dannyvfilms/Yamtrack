@@ -5651,6 +5651,22 @@ def season_details(
                 "Season metadata was not found for this show. Showing local activity only.",
             )
 
+    default_season_title = "Specials" if season_number == 0 else f"Season {season_number}"
+    anime_show_item = Item.objects.filter(
+        media_id=media_id,
+        source=source,
+        media_type=MediaTypes.TV.value,
+        library_media_type=MediaTypes.ANIME.value,
+    ).first()
+    if isinstance(season_metadata, dict):
+        season_metadata.setdefault("season_header_title", season_metadata.get("season_title") or default_season_title)
+        season_metadata.setdefault("season_alternative_title", None)
+        if anime_show_item:
+            provider_season_title = (season_metadata.get("season_title") or "").strip()
+            if provider_season_title and provider_season_title != default_season_title:
+                season_metadata["season_header_title"] = default_season_title
+                season_metadata["season_alternative_title"] = provider_season_title
+
     # Apply the same rating aggregation logic as in the media list
     if user_medias and len(user_medias) > 1:
         # Find the most recent rating among all entries

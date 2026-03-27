@@ -2107,6 +2107,61 @@ class MediaDetailsViewTests(TestCase):
 
     @patch("app.providers.services.get_media_metadata")
     @patch("app.providers.tmdb.process_episodes")
+    def test_anime_season_details_use_tooltip_for_alt_season_title(
+        self,
+        mock_process_episodes,
+        mock_get_metadata,
+    ):
+        mock_process_episodes.return_value = []
+        Item.objects.create(
+            media_id="259640",
+            source=Sources.TVDB.value,
+            media_type=MediaTypes.TV.value,
+            library_media_type=MediaTypes.ANIME.value,
+            title="Sword Art Online",
+            image="https://example.com/sao.jpg",
+        )
+        mock_get_metadata.return_value = {
+            "title": "Sword Art Online",
+            "media_id": "259640",
+            "source": Sources.TVDB.value,
+            "media_type": MediaTypes.TV.value,
+            "image": "https://example.com/sao.jpg",
+            "season/3": {
+                "title": "Sword Art Online",
+                "season_title": "Alicization",
+                "media_id": "259640",
+                "media_type": MediaTypes.SEASON.value,
+                "source": Sources.TVDB.value,
+                "image": "https://example.com/alicization.jpg",
+                "episodes": [],
+            },
+        }
+
+        response = self.client.get(
+            reverse(
+                "season_details",
+                kwargs={
+                    "source": Sources.TVDB.value,
+                    "media_id": "259640",
+                    "title": "sword-art-online",
+                    "season_number": 3,
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertRegex(
+            content,
+            r'<h1 class="text-3xl font-bold cursor-pointer hover:text-indigo-500 transition-colors duration-200">\s*<a href="[^"]+">Sword Art Online</a>\s*</h1>\s*<div class="relative shrink-0"',
+        )
+        self.assertIn('aria-label="Show alternative title"', content)
+        self.assertIn('<h2 class="text-sm font-medium text-gray-400">Season 3</h2>', content)
+        self.assertIn("<p>Alicization</p>", content)
+
+    @patch("app.providers.services.get_media_metadata")
+    @patch("app.providers.tmdb.process_episodes")
     def test_season_details_renders_progress_and_date_subtitle_without_history_card(
         self,
         mock_process_episodes,

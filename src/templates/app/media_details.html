@@ -91,13 +91,41 @@
     {# Media details #}
     <div class="md:w-3/4">
       {% if media.media_type == MediaTypes.SEASON.value %}
-        <h1 class="text-3xl font-bold cursor-pointer hover:text-indigo-500 transition-colors duration-200 mb-0 text-center md:text-start">
-          <a href="{% url 'media_details' source=media.source media_type=MediaTypes.TV.value media_id=media.media_id title=media.title|slug %}">{{ media|display_title:user }}</a>
-        </h1>
+        <div class="mb-0 text-center md:text-start">
+          <div class="inline-flex items-center gap-2 md:flex md:gap-2">
+            <h1 class="text-3xl font-bold cursor-pointer hover:text-indigo-500 transition-colors duration-200">
+              <a href="{% url 'media_details' source=media.source media_type=MediaTypes.TV.value media_id=media.media_id title=media.title|slug %}">{{ media|display_title:user }}</a>
+            </h1>
+            {% if media.season_alternative_title %}
+              <div class="relative shrink-0" x-data="{ tooltipOpen: false }">
+                <button @mouseenter="tooltipOpen = true"
+                        @mouseleave="tooltipOpen = false"
+                        @click="tooltipOpen = !tooltipOpen"
+                        @click.outside="tooltipOpen = false"
+                        class="text-gray-500 hover:text-gray-400 transition-colors cursor-pointer inline-flex items-center"
+                        type="button"
+                        aria-label="Show alternative title">
+                  {% include "app/icons/info.svg" with classes="w-4 h-4" %}
+                </button>
+                <div x-show="tooltipOpen"
+                     x-transition:enter="transition ease-out duration-200"
+                     x-transition:enter-start="opacity-0 scale-95"
+                     x-transition:enter-end="opacity-100 scale-100"
+                     x-transition:leave="transition ease-in duration-150"
+                     x-transition:leave-start="opacity-100 scale-100"
+                     x-transition:leave-end="opacity-0 scale-95"
+                     class="absolute right-0 bottom-full mb-2 w-56 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10"
+                     style="display: none; background: rgba(0, 0, 0, 0.85); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);">
+                  <p>{{ media.season_alternative_title }}</p>
+                </div>
+              </div>
+            {% endif %}
+          </div>
+        </div>
 
         <div class="flex flex-col md:flex-row gap-y-4 md:gap-y-0 items-center justify-between mb-1">
           <div class="flex flex-wrap items-center justify-center gap-y-1 text-center text-sm font-medium text-gray-400 md:justify-start md:text-start">
-            <h2 class="text-sm font-medium text-gray-400">{{ media.season_title }}</h2>
+            <h2 class="text-sm font-medium text-gray-400">{{ media.season_header_title|default:media.season_title }}</h2>
             {% if not public_view|default:False and current_instance %}
               <span class="mx-2 text-gray-600">•</span>
               <span class="text-sm font-medium text-gray-400">
