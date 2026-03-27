@@ -5,7 +5,7 @@ import math
 import re
 import time
 from collections import defaultdict
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from datetime import UTC, date, timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -460,8 +460,20 @@ def _build_trakt_popularity_context(detail_item, route_media_type):
     ):
         return None
 
+    rating = detail_item.trakt_rating
+    if rating is not None:
+        try:
+            rating = float(
+                Decimal(str(rating)).quantize(
+                    Decimal("0.1"),
+                    rounding=ROUND_DOWN,
+                ),
+            )
+        except (InvalidOperation, TypeError, ValueError):
+            pass
+
     return {
-        "rating": detail_item.trakt_rating,
+        "rating": rating,
         "rating_count": detail_item.trakt_rating_count,
         "rank": detail_item.trakt_popularity_rank,
         "score": detail_item.trakt_popularity_score,

@@ -272,7 +272,7 @@ class MediaDetailsViewTests(TestCase):
             media_type=MediaTypes.MOVIE.value,
             title="Test Movie",
             image="http://example.com/image.jpg",
-            trakt_rating=8.4,
+            trakt_rating=7.88048,
             trakt_rating_count=123456,
             trakt_popularity_rank=9,
             trakt_popularity_score=3210.5,
@@ -302,6 +302,8 @@ class MediaDetailsViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "TRAKT SCORE")
+        self.assertContains(response, "7.8")
+        self.assertNotContains(response, "7.88048")
         self.assertContains(response, "123,456 ratings")
 
     @patch("app.providers.services.get_media_metadata")
