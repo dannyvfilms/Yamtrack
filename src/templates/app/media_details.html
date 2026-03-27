@@ -405,34 +405,106 @@
                 </div>
               </div>
             {% else %}
-              <button type="button"
-                      class="inline-flex w-full items-center justify-center gap-3 rounded-xl px-5 py-3 text-white shadow-sm transition duration-300 cursor-pointer sm:w-auto {% if user_medias %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}"
-                      hx-get="{% media_view_url 'track_modal' media %}"
-                      hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"{% if current_instance %}, "instance_id": "{{ current_instance.id }}"{% endif %}}'
-                      hx-target="#{% if current_instance %}{% component_id 'track' media current_instance.id %}{% else %}{% component_id 'track' media %}{% endif %}"
-                      hx-trigger="click"
-                      @click="trackOpen = true">
-                <span class="font-medium">
-                  {% if user_medias %}
-                    {{ current_instance.status|media_status_readable }}
-                  {% else %}
-                    Add to tracker
-                  {% endif %}
-                </span>
-                <span class="h-5 w-px bg-white/30"></span>
-                {% include "app/icons/edit.svg" with classes="w-5 h-5 shrink-0" %}
-              </button>
+              {% if user_medias and media_type != MediaTypes.TV.value and media_type != MediaTypes.SEASON.value %}
+                <div x-data="{ editTrackOpen: false, createTrackOpen: false, trackMenuOpen: false }"
+                     class="relative inline-flex w-full sm:w-auto"
+                     @click.outside="trackMenuOpen = false">
+                  <button type="button"
+                          class="flex h-10 flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-l-md border-r border-indigo-500 bg-indigo-600 px-4 text-white transition-colors cursor-pointer hover:bg-indigo-700 sm:flex-none"
+                          hx-get="{% media_view_url 'track_modal' media %}"
+                          hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}", "instance_id": "{{ current_instance.id }}"}'
+                          hx-target="#{% component_id 'track' media current_instance.id %}"
+                          hx-trigger="click"
+                          @click="editTrackOpen = true">
+                    {% include "app/icons/edit.svg" with classes="w-5 h-5 shrink-0" %}
+                    <span class="font-medium">{{ current_instance.status|media_status_readable }}</span>
+                  </button>
+                  <button @click="trackMenuOpen = !trackMenuOpen"
+                          class="flex h-10 shrink-0 items-center rounded-r-md bg-indigo-600 px-2 text-white transition-colors cursor-pointer hover:bg-indigo-700"
+                          aria-label="More tracking actions"
+                          type="button">
+                    {% include "app/icons/chevron-down.svg" with classes="w-4 h-4" %}
+                  </button>
+                  <div class="absolute left-0 top-full mt-2 w-52 rounded-md border border-gray-700 bg-[#39404b] py-1 shadow-lg overflow-hidden z-50"
+                       x-cloak
+                       x-show="trackMenuOpen"
+                       x-transition:enter="transition ease-out duration-100"
+                       x-transition:enter-start="transform opacity-0 scale-95"
+                       x-transition:enter-end="transform opacity-100 scale-100"
+                       x-transition:leave="transition ease-in duration-75"
+                       x-transition:leave-start="transform opacity-100 scale-100"
+                       x-transition:leave-end="transform opacity-0 scale-95">
+                    <button class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors cursor-pointer"
+                            type="button"
+                            hx-get="{% media_view_url 'track_modal' media %}"
+                            hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}", "is_create": true}'
+                            hx-target="#{% component_id 'track' media %}"
+                            hx-trigger="click"
+                            @click.stop="trackMenuOpen = false; createTrackOpen = true">
+                      {% if media_type == MediaTypes.GAME.value or media_type == MediaTypes.BOARDGAME.value %}
+                        Add new session
+                      {% elif media_type == MediaTypes.MUSIC.value %}
+                        Add new listen
+                      {% elif media_type == MediaTypes.MOVIE.value or media_type == MediaTypes.PODCAST.value %}
+                        Add new play
+                      {% else %}
+                        Add new entry
+                      {% endif %}
+                    </button>
+                  </div>
 
-              <div x-show="trackOpen"
-                   @keydown.escape.window="trackOpen = false"
-                   class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
-                     style="width: min(96vw, 72rem);"
-                     @click.outside="trackOpen = false"
-                     @click.stop>
-                  <div id="{% if current_instance %}{% component_id 'track' media current_instance.id %}{% else %}{% component_id 'track' media %}{% endif %}"></div>
+                  <div x-show="editTrackOpen"
+                       @keydown.escape.window="editTrackOpen = false"
+                       class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                    <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
+                         style="width: min(96vw, 72rem);"
+                         @click.outside="editTrackOpen = false"
+                         @click.stop>
+                      <div id="{% component_id 'track' media current_instance.id %}"></div>
+                    </div>
+                  </div>
+
+                  <div x-show="createTrackOpen"
+                       @keydown.escape.window="createTrackOpen = false"
+                       class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                    <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
+                         style="width: min(96vw, 72rem);"
+                         @click.outside="createTrackOpen = false"
+                         @click.stop>
+                      <div id="{% component_id 'track' media %}"></div>
+                    </div>
+                  </div>
                 </div>
-              </div>
+              {% else %}
+                <button type="button"
+                        class="inline-flex w-full items-center justify-center gap-3 rounded-xl px-5 py-3 text-white shadow-sm transition duration-300 cursor-pointer sm:w-auto {% if user_medias %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}"
+                        hx-get="{% media_view_url 'track_modal' media %}"
+                        hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"{% if current_instance %}, "instance_id": "{{ current_instance.id }}"{% endif %}}'
+                        hx-target="#{% if current_instance %}{% component_id 'track' media current_instance.id %}{% else %}{% component_id 'track' media %}{% endif %}"
+                        hx-trigger="click"
+                        @click="trackOpen = true">
+                  <span class="font-medium">
+                    {% if user_medias %}
+                      {{ current_instance.status|media_status_readable }}
+                    {% else %}
+                      Add to tracker
+                    {% endif %}
+                  </span>
+                  <span class="h-5 w-px bg-white/30"></span>
+                  {% include "app/icons/edit.svg" with classes="w-5 h-5 shrink-0" %}
+                </button>
+
+                <div x-show="trackOpen"
+                     @keydown.escape.window="trackOpen = false"
+                     class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                  <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
+                       style="width: min(96vw, 72rem);"
+                       @click.outside="trackOpen = false"
+                       @click.stop>
+                    <div id="{% if current_instance %}{% component_id 'track' media current_instance.id %}{% else %}{% component_id 'track' media %}{% endif %}"></div>
+                  </div>
+                </div>
+              {% endif %}
             {% endif %}
           </div>
 
@@ -833,169 +905,6 @@
           </div>
         </div>
           {% endif %}
-        {% elif user_medias|length > 1 or current_instance.start_date or current_instance.end_date or current_instance.progress and media.media_type != MediaTypes.MOVIE.value %}
-        <div class="flex items-center justify-between mb-4">
-          <h2 class="text-xl font-bold">Your History</h2>
-
-          {% if media_type != MediaTypes.TV.value and media_type != MediaTypes.SEASON.value and not public_view|default:False %}
-            <div x-data="{ trackOpen: false }">
-              <button class="p-2  text-white rounded-md bg-indigo-600 hover:bg-indigo-700 transition-colors cursor-pointer"
-                      hx-get="{% media_view_url 'track_modal' media %}"
-                      hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}", "is_create": true}'
-                      hx-target="#{% component_id 'track' media %}"
-                      hx-trigger="click once"
-                      @click="trackOpen = true"
-                      title="Add new consumption">{% include "app/icons/plus.svg" with classes="w-4 h-4" %}</button>
-
-              {# Track Modal #}
-              <div x-show="trackOpen"
-                   @keydown.escape.window="trackOpen = false"
-                   class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
-                     style="width: min(96vw, 72rem);"
-                     @click.outside="trackOpen = false">
-                  <div id="{% component_id 'track' media %}"></div>
-                </div>
-              </div>
-            </div>
-          {% endif %}
-        </div>
-
-        <div class="space-y-4 mb-6">
-          <div class="bg-[#2a2f35] p-4 rounded-lg text-center md:text-start">
-            <div class="@container flex flex-col gap-y-1">
-              {% if current_instance.start_date %}
-                <div class="flex @max-[210px]:flex-col justify-between text-sm">
-                  <span class="text-gray-400">Started:</span>
-                  <span class="text-gray-200">{{ current_instance.start_date|user_date_format:user }}</span>
-                </div>
-              {% endif %}
-
-              {% if current_instance.end_date %}
-                <div class="flex @max-[210px]:flex-col justify-between text-sm">
-                  <span class="text-gray-400">Ended:</span>
-                  <span class="text-gray-200">{{ current_instance.end_date|user_date_format:user }}</span>
-                </div>
-              {% endif %}
-
-              {% if media_type != MediaTypes.MOVIE.value %}
-                <div class="flex @max-[210px]:flex-col justify-between text-sm">
-                  <span class="text-gray-400">Progress:</span>
-                  <span class="text-gray-200">
-                    {% if media_type == MediaTypes.SEASON.value %}
-                      {{ current_instance.completed_episode_count }}
-                    {% else %}
-                      {{ current_instance.formatted_progress }}
-                    {% endif %}
-                    {% if media.max_progress %}/ {{ media.max_progress }}{% endif %}
-                  </span>
-                </div>
-              {% endif %}
-            </div>
-          </div>
-
-          {% if user_medias|length > 1 %}
-            <div x-data="{ showRepeats: false }">
-              <button @click="showRepeats = !showRepeats"
-                      class="group flex items-center justify-center w-full px-3 py-2 text-sm text-white bg-gray-600 hover:bg-gray-700 transition-all duration-200 rounded-lg tracking-wide cursor-pointer">
-                <div class="lucide lucide-chevron-down w-4 h-4 mr-2 transition-transform"
-                     :class="{ 'rotate-180': showRepeats }">{% include "app/icons/chevron-down.svg" %}</div>
-                {% if media_type == MediaTypes.GAME.value or media_type == MediaTypes.BOARDGAME.value %}Show Sessions{% else %}Show Repeats{% endif %} ({{ user_medias|length|add:"-1" }})
-              </button>
-
-              <div x-show="showRepeats" class="space-y-2 mt-4">
-                {% for user_media in user_medias|slice:"1:" %}
-                  <div class="bg-[#2a2f35] p-4 rounded-lg">
-                    <div class="flex items-center justify-between mb-2">
-                      <div class="flex items-center">
-                        {% if user_media.score %}
-                          {% include "app/icons/star.svg" with classes="w-4 h-4 mr-2 text-yellow-400 fill-yellow-400" %}
-                        {% else %}
-                          {% include "app/icons/star.svg" with classes="w-4 h-4 mr-2 text-gray-400 fill-gray-400" %}
-                        {% endif %}
-                        {% if user_media.score %}
-                          <span class="text-sm font-medium text-gray-300">{{ user_media.score|score_display:user }}</span>
-                        {% else %}
-                          <span class="text-sm font-medium text-gray-400">Not rated</span>
-                        {% endif %}
-                      </div>
-
-                      {% if not public_view|default:False %}
-                      <div x-data="{ trackOpen: false }">
-                        <button class="p-1 text-gray-400 hover:text-white transition-colors cursor-pointer"
-                                hx-get="{% media_view_url 'track_modal' media %}?instance_id={{ user_media.id }}&return_url={{ request.get_full_path|urlencode }}"
-                                hx-target="#{% component_id 'track' media user_media.id %}"
-                                hx-trigger="click"
-                                @click="trackOpen = true">
-                          {% include "app/icons/edit-flat.svg" with classes="w-4 h-4" %}
-                        </button>
-
-                        <div x-show="trackOpen"
-                             @keydown.escape.window="trackOpen = false"
-                             class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                          <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
-                               style="width: min(96vw, 72rem);"
-                               @click.outside="trackOpen = false">
-                            <div id="{% component_id 'track' media user_media.id %}"></div>
-                          </div>
-                        </div>
-                      </div>
-                      {% endif %}
-                    </div>
-
-                    <div class="space-y-2">
-                      <div class="text-xs text-gray-400">Status: {{ user_media.status|media_status_readable }}</div>
-
-                      {% if media.media_type != MediaTypes.MOVIE.value %}
-                        <div class="text-xs text-gray-400">
-                          {% if media_type == MediaTypes.SEASON.value %}
-                            Progress: {{ user_media.completed_episode_count }}{% if media.max_progress %} / {{ media.max_progress }}{% endif %}
-                          {% else %}
-                            Progress: {{ user_media.formatted_progress }}
-                            {% if media.media_type != MediaTypes.GAME.value %}
-                              {{ media_type|long_unit|lower }}{{ user_media.progress|pluralize }}
-                            {% endif %}
-                          {% endif %}
-                        </div>
-                      {% endif %}
-
-                      {% if user_media.start_date %}
-                        <div class="text-xs text-gray-400">Started: {{ user_media.start_date|user_date_format:user }}</div>
-                      {% endif %}
-
-                      {% if user_media.end_date %}
-                        <div class="text-xs text-gray-400">Finished: {{ user_media.end_date|user_date_format:user }}</div>
-                      {% endif %}
-
-                      {% if user_media.notes %}
-                        {% with user_notes_id=user_media.id|stringformat:"s"|add:"-notes-preview" %}
-                          {{ user_media.notes|json_script:user_notes_id }}
-                          <div class="flex items-start mt-3"
-                               x-data="{ isExpanded:false, isClamped:false, measure(){ const el = this.$refs.notesPreview; this.isClamped = el.scrollHeight > el.clientHeight }, rafMeasure(){ requestAnimationFrame(() => this.measure()) }, reset(){ this.isExpanded = false; this.$nextTick(() => this.rafMeasure()) } }"
-                               x-init="rafMeasure(); $watch('showRepeats', v => { if (v) reset() })">
-                            {% include "app/icons/page-empty.svg" with classes="w-3 h-3 mr-1 text-yellow-400 shrink-0 mt-0.5" %}
-                            <div class="flex-1">
-                              <div x-ref="notesPreview"
-                                   data-markdown-preview
-                                   data-markdown-source="{{ user_notes_id }}"
-                                   :class="isExpanded ? 'max-h-60 overflow-y-auto' : 'max-h-20 overflow-hidden'"
-                                   class="text-xs text-gray-200 rounded-md border border-gray-700 bg-[#2a2f35] p-2"></div>
-                              <button x-show="isClamped"
-                                      @click="isExpanded = !isExpanded"
-                                      class="text-indigo-400 hover:text-indigo-300 text-xs mt-1 focus:outline-none transition-colors cursor-pointer">
-                                <span x-text="isExpanded ? 'Show less' : 'Read more'"></span>
-                              </button>
-                            </div>
-                          </div>
-                        {% endwith %}
-                      {% endif %}
-                    </div>
-                  </div>
-                {% endfor %}
-              </div>
-            </div>
-          {% endif %}
-        </div>
         {% endif %}
       {% endif %}
 

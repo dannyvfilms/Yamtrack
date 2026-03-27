@@ -873,6 +873,10 @@ class MediaDetailsViewTests(TestCase):
             'class="mt-4 mb-5 flex flex-wrap gap-2"',
             html=False,
         )
+        self.assertContains(response, 'aria-label="More tracking actions"', html=False)
+        self.assertContains(response, "Add new play")
+        self.assertContains(response, '"is_create": true', html=False)
+        self.assertNotContains(response, "Your History")
         self.assertNotContains(response, "FIRST PLAYED")
         self.assertNotContains(response, "LAST PLAYED")
         self.assertNotContains(response, "TOTAL HOURS")
