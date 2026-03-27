@@ -10,6 +10,10 @@ from django.utils import timezone
 
 from app import statistics_cache
 from app.models import (
+    Album,
+    AlbumTracker,
+    Artist,
+    ArtistTracker,
     Anime,
     BoardGame,
     Book,
@@ -35,6 +39,7 @@ from app.models import (
     Status,
     Tag,
     TV,
+    Track,
 )
 from app.services import game_lengths as game_length_services
 from app.services.metadata_resolution import MetadataResolutionResult
@@ -222,6 +227,216 @@ class MediaDetailsViewTests(TestCase):
         self.assertLess(content.index("Your Notes"), content.index("Cast"))
         self.assertNotIn(">Edit<", content)
         self.assertNotIn("YOUR NOTES", content)
+
+    @patch("app.services.music.needs_discography_sync", return_value=False)
+    @patch("app.services.music_scrobble.dedupe_artist_albums")
+    @patch("app.providers.musicbrainz.get_artist")
+    def test_music_artist_details_renders_shared_media_details_template(
+        self,
+        mock_get_artist,
+        _mock_dedupe_artist_albums,
+        _mock_needs_discography_sync,
+    ):
+        artist = Artist.objects.create(
+            name="Test Artist",
+            musicbrainz_id="artist-mbid",
+            image="http://example.com/artist.jpg",
+            discography_synced_at=timezone.now(),
+        )
+        Album.objects.create(
+            title="Debut Album",
+            artist=artist,
+            musicbrainz_release_id="release-mbid",
+            release_date=datetime(2024, 1, 15, tzinfo=UTC).date(),
+            image="http://example.com/album.jpg",
+        )
+        ArtistTracker.objects.create(
+            user=self.user,
+            artist=artist,
+            status=Status.IN_PROGRESS.value,
+            score=8,
+            notes="Artist notes",
+            start_date=datetime(2026, 1, 10, 18, 0, tzinfo=UTC),
+        )
+        mock_get_artist.return_value = {
+            "type": "Group",
+            "country": "US",
+            "genres": [{"name": "indie"}],
+            "tags": [],
+            "rating": 4.2,
+            "rating_count": 132,
+            "bio": "Artist biography",
+            "image": "http://example.com/artist.jpg",
+        }
+
+        response = self.client.get(
+            reverse(
+                "music_artist_details",
+                kwargs={
+                    "artist_id": artist.id,
+                    "artist_slug": "test-artist",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "app/media_details.html")
+        self.assertNotContains(response, "app/music_artist_detail.html")
+        self.assertEqual(response.context["music_detail_kind"], "artist")
+        self.assertContains(response, "Discography")
+        self.assertContains(response, "Debut Album")
+        self.assertContains(
+            response,
+            f'hx-get="{reverse("artist_track_modal", args=[artist.id])}?instance_id=',
+            html=False,
+        )
+
+    @patch("app.services.music_scrobble.is_incomplete_album", return_value=False)
+    @patch("app.services.music_scrobble.dedupe_artist_albums")
+    def test_music_album_details_renders_shared_media_details_template(
+        self,
+        _mock_dedupe_artist_albums,
+        _mock_is_incomplete_album,
+    ):
+        artist = Artist.objects.create(
+            name="Test Artist",
+            musicbrainz_id="artist-mbid",
+            image="http://example.com/artist.jpg",
+        )
+        album = Album.objects.create(
+            title="Debut Album",
+            artist=artist,
+            musicbrainz_release_id="release-mbid",
+            tracks_populated=True,
+            image="http://example.com/album.jpg",
+            release_type="Album",
+            release_date=datetime(2024, 1, 15, tzinfo=UTC).date(),
+        )
+        track = Track.objects.create(
+            album=album,
+            title="Track One",
+            track_number=1,
+            duration_ms=180000,
+        )
+        album_tracker = AlbumTracker.objects.create(
+            user=self.user,
+            album=album,
+            status=Status.COMPLETED.value,
+            score=7,
+            notes="Album notes",
+            start_date=datetime(2026, 2, 1, 18, 0, tzinfo=UTC),
+            end_date=datetime(2026, 2, 2, 18, 0, tzinfo=UTC),
+        )
+        item = Item.objects.create(
+            media_id="recording-1",
+            source=Sources.MUSICBRAINZ.value,
+            media_type=MediaTypes.MUSIC.value,
+            title="Track One",
+            image="http://example.com/album.jpg",
+        )
+        Music.objects.create(
+            item=item,
+            user=self.user,
+            artist=artist,
+            album=album,
+            track=track,
+            status=Status.COMPLETED.value,
+            start_date=datetime(2026, 2, 1, 18, 0, tzinfo=UTC),
+            end_date=datetime(2026, 2, 2, 18, 0, tzinfo=UTC),
+        )
+
+        response = self.client.get(
+            reverse(
+                "music_album_details",
+                kwargs={
+                    "artist_id": artist.id,
+                    "artist_slug": "test-artist",
+                    "album_id": album.id,
+                    "album_slug": "debut-album",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "app/media_details.html")
+        self.assertNotContains(response, "app/music_album_detail.html")
+        self.assertEqual(response.context["music_detail_kind"], "album")
+        self.assertContains(response, "Track One")
+        self.assertContains(response, artist.name)
+        self.assertContains(response, "Debut Album")
+        self.assertContains(
+            response,
+            f'hx-get="{reverse("album_track_modal", args=[album.id])}?instance_id={album_tracker.id}',
+            html=False,
+        )
+
+    def test_legacy_music_artist_detail_redirects_to_canonical_route(self):
+        artist = Artist.objects.create(name="Redirect Artist")
+
+        response = self.client.get(reverse("artist_detail", args=[artist.id]))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response["Location"],
+            reverse(
+                "music_artist_details",
+                kwargs={
+                    "artist_id": artist.id,
+                    "artist_slug": "redirect-artist",
+                },
+            ),
+        )
+
+    def test_legacy_music_album_detail_redirects_to_canonical_route(self):
+        artist = Artist.objects.create(name="Redirect Artist")
+        album = Album.objects.create(title="Redirect Album", artist=artist)
+
+        response = self.client.get(reverse("album_detail", args=[album.id]))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response["Location"],
+            reverse(
+                "music_album_details",
+                kwargs={
+                    "artist_id": artist.id,
+                    "artist_slug": "redirect-artist",
+                    "album_id": album.id,
+                    "album_slug": "redirect-album",
+                },
+            ),
+        )
+
+    def test_music_album_details_redirects_when_artist_path_is_wrong(self):
+        artist = Artist.objects.create(name="Right Artist")
+        wrong_artist = Artist.objects.create(name="Wrong Artist")
+        album = Album.objects.create(title="Redirect Album", artist=artist)
+
+        response = self.client.get(
+            reverse(
+                "music_album_details",
+                kwargs={
+                    "artist_id": wrong_artist.id,
+                    "artist_slug": "wrong-artist",
+                    "album_id": album.id,
+                    "album_slug": "redirect-album",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response["Location"],
+            reverse(
+                "music_album_details",
+                kwargs={
+                    "artist_id": artist.id,
+                    "artist_slug": "right-artist",
+                    "album_id": album.id,
+                    "album_slug": "redirect-album",
+                },
+            ),
+        )
 
     @patch("app.providers.services.get_media_metadata")
     def test_media_details_renders_links_action_with_source_and_external_links(

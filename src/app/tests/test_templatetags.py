@@ -1,11 +1,14 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from django.contrib.auth import get_user_model
+from django.template.loader import render_to_string
 from django.test import TestCase
+from django.test.client import RequestFactory
 from django.urls import reverse
 from django.utils import timezone
 
-from app.models import Item, MediaTypes, Sources
+from app.models import Album, Artist, Item, MediaTypes, Sources
 from app.templatetags import app_tags
 from users.models import DateFormatChoices, TimeFormatChoices
 
@@ -15,6 +18,12 @@ class AppTagsTests(TestCase):
 
     def setUp(self):
         """Set up test data."""
+        self.user = get_user_model().objects.create_user(
+            username="templater",
+            password="12345",
+        )
+        self.request_factory = RequestFactory()
+
         # Create a sample item for testing
         self.tv_item = Item(
             media_id="1668",
@@ -265,6 +274,164 @@ class AppTagsTests(TestCase):
         self.assertEqual(
             app_tags.iso_date_format("not-a-date", iso_user),
             "not-a-date",
+        )
+
+    def test_music_artist_url_returns_canonical_details_path(self):
+        """Music artists should resolve to the canonical shared details route."""
+        artist = Artist.objects.create(name="The Amazing Artist")
+
+        self.assertEqual(
+            app_tags.music_artist_url(artist),
+            reverse(
+                "music_artist_details",
+                kwargs={
+                    "artist_id": artist.id,
+                    "artist_slug": "the-amazing-artist",
+                },
+            ),
+        )
+
+    def test_music_album_url_returns_nested_canonical_details_path(self):
+        """Music albums should resolve to the nested artist/album shared route."""
+        artist = Artist.objects.create(name="The Amazing Artist")
+        album = Album.objects.create(title="First Record", artist=artist)
+
+        self.assertEqual(
+            app_tags.music_album_url(album),
+            reverse(
+                "music_album_details",
+                kwargs={
+                    "artist_id": artist.id,
+                    "artist_slug": "the-amazing-artist",
+                    "album_id": album.id,
+                    "album_slug": "first-record",
+                },
+            ),
+        )
+
+    def test_music_album_url_accepts_statistics_track_rollup_dict(self):
+        """Track rollup dicts with album metadata should still resolve canonically."""
+        self.assertEqual(
+            app_tags.music_album_url(
+                {
+                    "album_id": 17,
+                    "album": "Live at Home",
+                    "album_artist_id": 9,
+                    "album_artist_name": "Short Name",
+                },
+            ),
+            reverse(
+                "music_album_details",
+                kwargs={
+                    "artist_id": 9,
+                    "artist_slug": "short-name",
+                    "album_id": 17,
+                    "album_slug": "live-at-home",
+                },
+            ),
+        )
+
+    def test_media_card_uses_canonical_music_album_url(self):
+        """Music media cards should link through the nested shared album route."""
+        artist = Artist.objects.create(name="Card Artist")
+        album = Album.objects.create(title="Card Album", artist=artist)
+        item = Item.objects.create(
+            media_id="track-card-1",
+            source=Sources.MUSICBRAINZ.value,
+            media_type=MediaTypes.MUSIC.value,
+            title="Card Song",
+            image="http://example.com/card-album.jpg",
+        )
+        request = self.request_factory.get("/library")
+        request.user = self.user
+
+        content = render_to_string(
+            "app/components/media_card.html",
+            {
+                "item": item,
+                "media": SimpleNamespace(
+                    album=album,
+                    status=None,
+                    progress=None,
+                    next_event=None,
+                    episodes_left=0,
+                ),
+                "user": self.user,
+                "title": item.title,
+                "show_status_chip": False,
+                "show_progress_chip": False,
+            },
+            request=request,
+        )
+
+        self.assertIn(
+            reverse(
+                "music_album_details",
+                kwargs={
+                    "artist_id": artist.id,
+                    "artist_slug": "card-artist",
+                    "album_id": album.id,
+                    "album_slug": "card-album",
+                },
+            ),
+            content,
+        )
+
+    def test_history_card_uses_canonical_music_album_url(self):
+        """Music history cards should link to the shared nested album route."""
+        artist = Artist.objects.create(name="History Artist")
+        album = Album.objects.create(title="History Album", artist=artist)
+        item = Item.objects.create(
+            media_id="track-history-1",
+            source=Sources.MUSICBRAINZ.value,
+            media_type=MediaTypes.MUSIC.value,
+            title="History Song",
+            image="http://example.com/history-album.jpg",
+        )
+        request = self.request_factory.get("/history")
+        request.user = self.user
+
+        content = render_to_string(
+            "app/components/history_card.html",
+            {
+                "entry": SimpleNamespace(
+                    media_type=MediaTypes.MUSIC.value,
+                    album=album,
+                    item=item,
+                    poster=item.image,
+                    status=None,
+                    runtime_display=None,
+                    display_title=item.title,
+                    title=item.title,
+                    played_at_local=timezone.now(),
+                    time_range_display="6:00 PM",
+                    play_count=1,
+                    progress_display=None,
+                    episode_label=None,
+                    episode_code=None,
+                    show=None,
+                    score=None,
+                    entry_key="music-entry-1",
+                    instance_id=1,
+                ),
+                "card_class": "search-result-card-square",
+                "history_mode": "history",
+                "user": self.user,
+            },
+            request=request,
+        )
+
+        self.assertIn(
+            reverse(
+                "music_album_details",
+                kwargs={
+                    "artist_id": artist.id,
+                    "artist_slug": "history-artist",
+                    "album_id": album.id,
+                    "album_slug": "history-album",
+                },
+            ),
+            content,
         )
 
     def test_match_percent_clamps_and_rounds(self):

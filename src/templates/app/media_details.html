@@ -11,6 +11,11 @@
 {% endblock title %}
 
 {% block content %}
+  {% if music_detail_kind == "artist" %}
+    {% include "app/components/detail_music_artist.html" %}
+  {% elif music_detail_kind == "album" %}
+    {% include "app/components/detail_music_album.html" %}
+  {% else %}
   {# Collection data fetching notification banner #}
   {% if fetching_collection_data and not public_view and item_id_for_polling %}
   <div x-data="{
@@ -188,7 +193,7 @@
         {# Music track navigation - show artist and album links #}
         {% if media_type == MediaTypes.MUSIC.value and music_artist %}
           <h2 class="text-xl font-semibold cursor-pointer hover:text-indigo-400 transition-colors duration-200 mb-2 text-gray-400 text-center md:text-start">
-            <a href="{% url 'artist_detail' music_artist.id %}">{{ music_artist.name }}</a>
+            <a href="{{ music_artist|music_artist_url }}">{{ music_artist.name }}</a>
           </h2>
         {% endif %}
 
@@ -259,7 +264,7 @@
 
         {% if media_type == MediaTypes.MUSIC.value and music_album %}
           <p class="text-gray-400 mb-4 text-center md:text-start">
-            from <a href="{% url 'album_detail' music_album.id %}" class="text-indigo-400 hover:text-indigo-300 transition-colors">{{ music_album.title }}</a>
+            from <a href="{{ music_album|music_album_url }}" class="text-indigo-400 hover:text-indigo-300 transition-colors">{{ music_album.title }}</a>
           </p>
         {% endif %}
       {% endif %}
@@ -1356,6 +1361,8 @@
       </div>
     {% endif %}
   </div>
+
+  {% endif %}
 
   {# Script to close track modal after successful podcast save via HTMX #}
   <script>

@@ -9,7 +9,7 @@
      x-data="{ historyOpen: false, listsOpen: false }">
   <div class="relative">
     {% with entry.item|display_title:user as preferred_entry_title %}
-    <a href="{% if entry.media_type == MediaTypes.MUSIC.value and entry.album %}{% url 'album_detail' entry.album.id %}{% elif entry.media_type == MediaTypes.PODCAST.value and entry.show and entry.show.podcast_uuid %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=entry.show.podcast_uuid title=entry.show.slug|default:entry.show.title|slug %}{% else %}{{ entry.item|media_url }}{% endif %}">
+    <a href="{% if entry.media_type == MediaTypes.MUSIC.value and entry.album %}{{ entry.album|music_album_url }}{% elif entry.media_type == MediaTypes.PODCAST.value and entry.show and entry.show.podcast_uuid %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=entry.show.podcast_uuid title=entry.show.slug|default:entry.show.title|slug %}{% else %}{{ entry.item|media_url }}{% endif %}">
       <img alt="{{ preferred_entry_title|default:entry.display_title|default:entry.title }}"
            class="media-card-poster lazyload w-full {% if card_class == 'search-result-card-square' %}aspect-[1/1]{% else %}aspect-[2/3]{% endif %} {% if entry.poster != IMG_NONE %}object-cover{% endif %}"
            data-src="{{ entry.poster }}"
@@ -51,7 +51,7 @@
         {# Darkening background layer #}
         <div class="absolute inset-0 bg-black/50 z-0"></div>
         
-        <a href="{% if entry.media_type == MediaTypes.MUSIC.value and entry.album %}{% url 'album_detail' entry.album.id %}{% elif entry.media_type == MediaTypes.PODCAST.value and entry.show and entry.show.podcast_uuid %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=entry.show.podcast_uuid title=entry.show.slug|default:entry.show.title|slug %}{% else %}{{ entry.item|media_url }}{% endif %}"
+        <a href="{% if entry.media_type == MediaTypes.MUSIC.value and entry.album %}{{ entry.album|music_album_url }}{% elif entry.media_type == MediaTypes.PODCAST.value and entry.show and entry.show.podcast_uuid %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=entry.show.podcast_uuid title=entry.show.slug|default:entry.show.title|slug %}{% else %}{{ entry.item|media_url }}{% endif %}"
            class="absolute inset-0 z-0"></a>
 
         <div class="relative z-10 flex items-center justify-center space-x-2.5">
@@ -95,7 +95,7 @@
     {% with entry.item|display_title:user as preferred_entry_title %}
       {% with entry.item|alternative_title:user as entry_alternative_title %}
     <div class="flex items-center gap-2 min-w-0">
-      <a href="{% if entry.media_type == MediaTypes.MUSIC.value and entry.album %}{% url 'album_detail' entry.album.id %}{% elif entry.media_type == MediaTypes.PODCAST.value and entry.show and entry.show.podcast_uuid %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=entry.show.podcast_uuid title=entry.show.slug|default:entry.show.title|slug %}{% else %}{{ entry.item|media_url }}{% endif %}"
+      <a href="{% if entry.media_type == MediaTypes.MUSIC.value and entry.album %}{{ entry.album|music_album_url }}{% elif entry.media_type == MediaTypes.PODCAST.value and entry.show and entry.show.podcast_uuid %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=entry.show.podcast_uuid title=entry.show.slug|default:entry.show.title|slug %}{% else %}{{ entry.item|media_url }}{% endif %}"
          class="media-card-title text-sm font-semibold text-white hover:text-indigo-400 transition duration-300 line-clamp-1 min-w-0"
          title="{{ preferred_entry_title|default:entry.display_title|default:entry.title }}">
         {{ preferred_entry_title|default:entry.display_title|default:entry.title }}

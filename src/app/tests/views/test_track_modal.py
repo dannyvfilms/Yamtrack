@@ -6,6 +6,10 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from app.models import (
+    Album,
+    AlbumTracker,
+    Artist,
+    ArtistTracker,
     TV,
     Anime,
     Item,
@@ -123,6 +127,171 @@ class TrackModalViewTests(TestCase):
         self.assertContains(response, "Image URL")
         self.assertContains(response, "Save Image")
         self.assertNotContains(response, "Metadata Provider")
+
+    def test_artist_track_modal_uses_shared_fill_track_shell(self):
+        """Music artist trackers should render through the shared modal shell."""
+        artist = Artist.objects.create(name="Test Artist")
+        tracker = ArtistTracker.objects.create(
+            user=self.user,
+            artist=artist,
+            status=Status.IN_PROGRESS.value,
+        )
+
+        response = self.client.get(
+            reverse("artist_track_modal", args=[artist.id]) + "?return_url=/music",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "app/components/fill_track.html")
+        self.assertEqual(response.context["title"], artist.name)
+        self.assertEqual(response.context["general_existing_instance"], tracker)
+        self.assertFalse(response.context["metadata_tab_available"])
+        self.assertContains(response, "General")
+        self.assertNotContains(response, "Metadata")
+
+    def test_album_track_modal_uses_shared_fill_track_shell(self):
+        """Music album trackers should render through the shared modal shell."""
+        artist = Artist.objects.create(name="Test Artist")
+        album = Album.objects.create(title="Test Album", artist=artist)
+        tracker = AlbumTracker.objects.create(
+            user=self.user,
+            album=album,
+            status=Status.COMPLETED.value,
+        )
+
+        response = self.client.get(
+            reverse("album_track_modal", args=[album.id]) + "?return_url=/music",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "app/components/fill_track.html")
+        self.assertEqual(response.context["title"], album.title)
+        self.assertEqual(response.context["general_existing_instance"], tracker)
+        self.assertFalse(response.context["metadata_tab_available"])
+        self.assertContains(response, "General")
+        self.assertNotContains(response, "Metadata")
+
+    def test_artist_save_redirects_to_canonical_music_details(self):
+        """Artist saves should land on the canonical shared details page."""
+        artist = Artist.objects.create(name="Saved Artist")
+
+        response = self.client.post(
+            reverse("artist_save"),
+            {
+                "artist_id": artist.id,
+                "status": Status.IN_PROGRESS.value,
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.url,
+            reverse(
+                "music_artist_details",
+                kwargs={
+                    "artist_id": artist.id,
+                    "artist_slug": "saved-artist",
+                },
+            ),
+        )
+
+    def test_album_delete_redirects_to_canonical_music_details(self):
+        """Album deletes should land on the canonical shared details page."""
+        artist = Artist.objects.create(name="Saved Artist")
+        album = Album.objects.create(title="Saved Album", artist=artist)
+        AlbumTracker.objects.create(
+            user=self.user,
+            album=album,
+            status=Status.IN_PROGRESS.value,
+        )
+
+        response = self.client.post(
+            reverse("album_delete"),
+            {
+                "album_id": album.id,
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.url,
+            reverse(
+                "music_album_details",
+                kwargs={
+                    "artist_id": artist.id,
+                    "artist_slug": "saved-artist",
+                    "album_id": album.id,
+                    "album_slug": "saved-album",
+                },
+            ),
+        )
+
+    @patch("app.services.music.sync_artist_discography")
+    @patch("app.providers.musicbrainz.get_artist")
+    def test_create_artist_from_search_redirects_to_canonical_music_details(
+        self,
+        mock_get_artist,
+        mock_sync_artist_discography,
+    ):
+        """Artist search creates should redirect to the canonical shared details page."""
+        mock_get_artist.return_value = {
+            "name": "Fetched Artist",
+            "sort_name": "Artist, Fetched",
+            "country": "US",
+            "genres": [{"name": "rock"}],
+        }
+        mock_sync_artist_discography.return_value = 0
+
+        response = self.client.get(
+            reverse("create_artist_from_search", args=["artist-mbid"]),
+        )
+
+        artist = Artist.objects.get(musicbrainz_id="artist-mbid")
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.url,
+            reverse(
+                "music_artist_details",
+                kwargs={
+                    "artist_id": artist.id,
+                    "artist_slug": "fetched-artist",
+                },
+            ),
+        )
+
+    @patch("app.providers.musicbrainz.get_release")
+    def test_create_album_from_search_redirects_to_canonical_music_details(
+        self,
+        mock_get_release,
+    ):
+        """Album search creates should redirect to the canonical shared details page."""
+        mock_get_release.return_value = {
+            "title": "Fetched Album",
+            "artist_id": "artist-mbid",
+            "artist_name": "Fetched Artist",
+            "release_date": "2024-01-15",
+            "image": "https://example.com/album.jpg",
+            "genres": ["rock"],
+        }
+
+        response = self.client.get(
+            reverse("create_album_from_search", args=["release-mbid"]),
+        )
+
+        album = Album.objects.get(musicbrainz_release_id="release-mbid")
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.url,
+            reverse(
+                "music_album_details",
+                kwargs={
+                    "artist_id": album.artist.id,
+                    "artist_slug": "fetched-artist",
+                    "album_id": album.id,
+                    "album_slug": "fetched-album",
+                },
+            ),
+        )
 
     @patch("app.providers.services.get_media_metadata")
     def test_track_modal_view_new_media(self, mock_get_metadata):

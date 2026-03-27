@@ -3,12 +3,15 @@ import re
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
+from django.template.loader import render_to_string
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
 from app.models import (
+    Album,
     Anime,
+    Artist,
     Book,
     Comic,
     CollectionEntry,
@@ -16,6 +19,7 @@ from app.models import (
     Item,
     Manga,
     MediaTypes,
+    Music,
     Movie,
     Sources,
     Status,
@@ -260,6 +264,44 @@ class MediaListViewTests(TestCase):
         self.assertEqual(
             response.context["media_type_plural"],
             app_tags.media_type_readable_plural(MediaTypes.MOVIE.value).lower(),
+        )
+
+    def test_music_media_list_uses_canonical_artist_links(self):
+        """Music list should render artist cells with canonical shared-detail URLs."""
+        artist = Artist.objects.create(name="List Artist")
+        album = Album.objects.create(title="List Album", artist=artist)
+        item = Item.objects.create(
+            media_id="list-track-1",
+            source=Sources.MUSICBRAINZ.value,
+            media_type=MediaTypes.MUSIC.value,
+            title="List Track",
+            image="http://example.com/list-track.jpg",
+        )
+        media = Music.objects.create(
+            item=item,
+            user=self.user,
+            artist=artist,
+            album=album,
+            status=Status.COMPLETED.value,
+            progress=1,
+        )
+
+        response = self.client.get(reverse("medialist", args=[MediaTypes.MUSIC.value]))
+
+        self.assertEqual(response.status_code, 200)
+        rendered_cell = render_to_string(
+            "app/components/cells/artist_name_cell.html",
+            {"media": media},
+        )
+        self.assertIn(
+            reverse(
+                "music_artist_details",
+                kwargs={
+                    "artist_id": artist.id,
+                    "artist_slug": "list-artist",
+                },
+            ),
+            rendered_cell,
         )
 
     def test_movie_grid_aggregates_duplicate_completed_plays(self):

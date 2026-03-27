@@ -20,6 +20,16 @@ urlpatterns = [
     ),
     path("search", views.media_search, name="search"),
     path(
+        "details/music/artist/<int:artist_id>/<slug:artist_slug>/",
+        views.music_artist_details,
+        name="music_artist_details",
+    ),
+    path(
+        "details/music/artist/<int:artist_id>/<slug:artist_slug>/album/<int:album_id>/<slug:album_slug>/",
+        views.music_album_details,
+        name="music_album_details",
+    ),
+    path(
         "details/<source:source>/tv/<str:media_id>/<str:title>/season/<int:season_number>",
         views.season_details,
         name="season_details",

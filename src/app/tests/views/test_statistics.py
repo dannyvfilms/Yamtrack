@@ -11,7 +11,9 @@ from django.utils import timezone
 
 from app import history_cache, statistics_cache
 from app.models import (
+    Album,
     Anime,
+    Artist,
     Book,
     Comic,
     CREDITS_BACKFILL_VERSION,
@@ -21,6 +23,7 @@ from app.models import (
     Item,
     ItemPersonCredit,
     ItemStudioCredit,
+    Music,
     MediaTypes,
     MetadataBackfillField,
     MetadataBackfillState,
@@ -102,6 +105,68 @@ class StatisticsViewTests(TestCase):
         self.assertIn("status_distribution", response.context)
         self.assertIn("status_pie_chart_data", response.context)
         self.assertIn("daily_hours_by_media_type", response.context)
+
+    def test_statistics_view_uses_canonical_music_detail_links(self):
+        """Music statistics cards should link through shared artist/album details routes."""
+        cache.clear()
+        self.client.login(**self.credentials)
+        artist = Artist.objects.create(
+            name="Stats Artist",
+            image="http://example.com/stats-artist.jpg",
+        )
+        album = Album.objects.create(
+            title="Stats Album",
+            artist=artist,
+            image="http://example.com/stats-album.jpg",
+        )
+        item = Item.objects.create(
+            media_id="stats-track-1",
+            source=Sources.MUSICBRAINZ.value,
+            media_type=MediaTypes.MUSIC.value,
+            title="Stats Track",
+            image="http://example.com/stats-album.jpg",
+            runtime_minutes=4,
+        )
+        played_at = timezone.make_aware(
+            datetime.combine(timezone.localdate(), datetime.min.time()),
+            timezone.get_current_timezone(),
+        )
+        Music.objects.create(
+            item=item,
+            user=self.user,
+            artist=artist,
+            album=album,
+            status=Status.COMPLETED.value,
+            start_date=played_at,
+            end_date=played_at,
+        )
+
+        response = self.client.get(reverse("statistics"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            reverse(
+                "music_artist_details",
+                kwargs={
+                    "artist_id": artist.id,
+                    "artist_slug": "stats-artist",
+                },
+            ),
+        )
+        self.assertContains(
+            response,
+            reverse(
+                "music_album_details",
+                kwargs={
+                    "artist_id": artist.id,
+                    "artist_slug": "stats-artist",
+                    "album_id": album.id,
+                    "album_slug": "stats-album",
+                },
+            ),
+            count=2,
+        )
 
     def test_statistics_view_invalid_date_format(self):
         """Test the statistics view with invalid date format."""

@@ -113,6 +113,28 @@ class MediaSearchViewTests(TestCase):
         self.assertContains(response, "Evergreen")
         self.assertContains(response, "A Pentatonix Christmas")
         self.assertContains(response, "Pentatonix")
+        self.assertContains(
+            response,
+            reverse(
+                "music_artist_details",
+                kwargs={
+                    "artist_id": artist.id,
+                    "artist_slug": "pentatonix",
+                },
+            ),
+        )
+        self.assertContains(
+            response,
+            reverse(
+                "music_album_details",
+                kwargs={
+                    "artist_id": artist.id,
+                    "artist_slug": "pentatonix",
+                    "album_id": album.id,
+                    "album_slug": "evergreen",
+                },
+            ),
+        )
         self.assertContains(response, "http://example.com/remote-artist.jpg")
         self.assertContains(response, "http://example.com/remote-album.jpg")
         self.assertNotIn("Tracks</h3>", response.content.decode())

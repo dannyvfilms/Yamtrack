@@ -44,12 +44,12 @@ from app.templatetags import app_tags
 
 logger = logging.getLogger(__name__)
 
-STATISTICS_CACHE_VERSION = 4
+STATISTICS_CACHE_VERSION = 5
 STATISTICS_CACHE_PREFIX = f"statistics_page_v{STATISTICS_CACHE_VERSION}"
 STATISTICS_CACHE_TIMEOUT = 60 * 60 * 6  # 6 hours
 STATISTICS_STALE_AFTER = timedelta(minutes=15)
 STATISTICS_REFRESH_LOCK_PREFIX = f"{STATISTICS_CACHE_PREFIX}_refresh_lock"
-STATISTICS_DAY_CACHE_VERSION = 2
+STATISTICS_DAY_CACHE_VERSION = 3
 STATISTICS_DAY_PREFIX = f"stats:day:v{STATISTICS_DAY_CACHE_VERSION}"
 STATISTICS_DAY_DIRTY_PREFIX = "stats:dirty"
 STATISTICS_HISTORY_VERSION_PREFIX = "stats:history_version"
@@ -1067,8 +1067,32 @@ def build_stats_for_day(user_id: int, day_value):
     }
     music_rollups = {
         "artists": defaultdict(lambda: {"minutes": 0, "plays": 0, "name": "", "image": "", "id": None}),
-        "albums": defaultdict(lambda: {"minutes": 0, "plays": 0, "title": "", "artist": "", "image": "", "id": None}),
-        "tracks": defaultdict(lambda: {"minutes": 0, "plays": 0, "title": "", "artist": "", "album": "", "album_image": "", "album_id": None, "id": None}),
+        "albums": defaultdict(
+            lambda: {
+                "minutes": 0,
+                "plays": 0,
+                "title": "",
+                "artist": "",
+                "artist_id": None,
+                "artist_name": "",
+                "image": "",
+                "id": None,
+            },
+        ),
+        "tracks": defaultdict(
+            lambda: {
+                "minutes": 0,
+                "plays": 0,
+                "title": "",
+                "artist": "",
+                "album": "",
+                "album_image": "",
+                "album_id": None,
+                "album_artist_id": None,
+                "album_artist_name": "",
+                "id": None,
+            },
+        ),
         "genres": defaultdict(lambda: {"minutes": 0, "plays": 0, "name": ""}),
         "decades": defaultdict(lambda: {"minutes": 0, "plays": 0, "label": ""}),
         "countries": defaultdict(lambda: {"minutes": 0, "plays": 0, "code": "", "name": ""}),
@@ -1677,8 +1701,8 @@ def build_stats_for_day(user_id: int, day_value):
             track_stats["title"] = music.item.title if music.item else "Unknown"
             track_stats["id"] = music.id
 
-            artist = getattr(music, "artist", None)
             album = getattr(music, "album", None)
+            artist = getattr(music, "artist", None) or getattr(album, "artist", None)
             if artist:
                 track_stats["artist"] = artist.name
                 artist_stats = music_rollups["artists"][artist.id]
@@ -1692,11 +1716,15 @@ def build_stats_for_day(user_id: int, day_value):
                 track_stats["album"] = album.title
                 track_stats["album_image"] = album.image or track_stats.get("album_image") or ""
                 track_stats["album_id"] = album.id
+                track_stats["album_artist_id"] = artist.id if artist else None
+                track_stats["album_artist_name"] = artist.name if artist else ""
                 album_stats = music_rollups["albums"][album.id]
                 album_stats["minutes"] += runtime_minutes
                 album_stats["plays"] += 1
                 album_stats["title"] = album.title
                 album_stats["artist"] = artist.name if artist else "Unknown"
+                album_stats["artist_id"] = artist.id if artist else None
+                album_stats["artist_name"] = artist.name if artist else ""
                 album_stats["image"] = album.image or ""
                 album_stats["id"] = album.id
 
@@ -2967,8 +2995,32 @@ def _aggregate_statistics_from_days(
     }
     music_rollups = {
         "artists": defaultdict(lambda: {"minutes": 0, "plays": 0, "name": "", "image": "", "id": None}),
-        "albums": defaultdict(lambda: {"minutes": 0, "plays": 0, "title": "", "artist": "", "image": "", "id": None}),
-        "tracks": defaultdict(lambda: {"minutes": 0, "plays": 0, "title": "", "artist": "", "album": "", "album_image": "", "album_id": None, "id": None}),
+        "albums": defaultdict(
+            lambda: {
+                "minutes": 0,
+                "plays": 0,
+                "title": "",
+                "artist": "",
+                "artist_id": None,
+                "artist_name": "",
+                "image": "",
+                "id": None,
+            },
+        ),
+        "tracks": defaultdict(
+            lambda: {
+                "minutes": 0,
+                "plays": 0,
+                "title": "",
+                "artist": "",
+                "album": "",
+                "album_image": "",
+                "album_id": None,
+                "album_artist_id": None,
+                "album_artist_name": "",
+                "id": None,
+            },
+        ),
         "genres": defaultdict(lambda: {"minutes": 0, "plays": 0, "name": ""}),
         "decades": defaultdict(lambda: {"minutes": 0, "plays": 0, "label": ""}),
         "countries": defaultdict(lambda: {"minutes": 0, "plays": 0, "code": "", "name": ""}),
@@ -3114,7 +3166,22 @@ def _aggregate_statistics_from_days(
                     existing = music_rollups[key][item_id_str]
                     existing["minutes"] += payload.get("minutes", 0)
                     existing["plays"] += payload.get("plays", 0)
-                    for field in ("name", "image", "id", "title", "artist", "album", "album_image", "album_id", "label", "code"):
+                    for field in (
+                        "name",
+                        "image",
+                        "id",
+                        "title",
+                        "artist",
+                        "artist_id",
+                        "artist_name",
+                        "album",
+                        "album_image",
+                        "album_id",
+                        "album_artist_id",
+                        "album_artist_name",
+                        "label",
+                        "code",
+                    ):
                         if payload.get(field) and not existing.get(field):
                             existing[field] = payload.get(field)
 
