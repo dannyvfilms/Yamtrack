@@ -50,6 +50,7 @@
     --color-blue-600: oklch(54.6% 0.245 262.881);
     --color-blue-700: oklch(48.8% 0.243 264.376);
     --color-blue-900: oklch(37.9% 0.146 265.522);
+    --color-indigo-100: oklch(93% 0.034 272.788);
     --color-indigo-200: oklch(87% 0.065 274.039);
     --color-indigo-300: oklch(78.5% 0.115 274.713);
     --color-indigo-400: oklch(67.3% 0.182 276.935);
@@ -1122,6 +1123,9 @@
   .gap-4 {
     gap: calc(var(--spacing) * 4);
   }
+  .gap-5 {
+    gap: calc(var(--spacing) * 5);
+  }
   .gap-6 {
     gap: calc(var(--spacing) * 6);
   }
@@ -1991,6 +1995,9 @@
   .pr-20 {
     padding-right: calc(var(--spacing) * 20);
   }
+  .pr-28 {
+    padding-right: calc(var(--spacing) * 28);
+  }
   .pb-1 {
     padding-bottom: calc(var(--spacing) * 1);
   }
@@ -2195,6 +2202,9 @@
   }
   .text-green-400 {
     color: var(--color-green-400);
+  }
+  .text-indigo-100 {
+    color: var(--color-indigo-100);
   }
   .text-indigo-300 {
     color: var(--color-indigo-300);
@@ -3558,11 +3568,6 @@
       gap: calc(var(--spacing) * 10);
     }
   }
-  .md\:gap-x-1 {
-    @media (width >= 48rem) {
-      column-gap: calc(var(--spacing) * 1);
-    }
-  }
   .md\:gap-x-2 {
     @media (width >= 48rem) {
       column-gap: calc(var(--spacing) * 2);
@@ -3695,11 +3700,6 @@
         margin-block-start: calc(calc(var(--spacing) * 3) * var(--tw-space-y-reverse));
         margin-block-end: calc(calc(var(--spacing) * 3) * calc(1 - var(--tw-space-y-reverse)));
       }
-    }
-  }
-  .lg\:gap-x-3 {
-    @media (width >= 64rem) {
-      column-gap: calc(var(--spacing) * 3);
     }
   }
   .lg\:gap-x-5 {
