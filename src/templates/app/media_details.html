@@ -96,7 +96,27 @@
         </h1>
 
         <div class="flex flex-col md:flex-row gap-y-4 md:gap-y-0 items-center justify-between mb-1">
-          <h2 class="text-xl font-semibold text-gray-400">{{ media.season_title }}</h2>
+          <div class="flex flex-wrap items-center justify-center gap-y-1 text-center text-sm font-medium text-gray-400 md:justify-start md:text-start">
+            <h2 class="text-sm font-medium text-gray-400">{{ media.season_title }}</h2>
+            {% if not public_view|default:False and current_instance %}
+              <span class="mx-2 text-gray-600">•</span>
+              <span class="text-sm font-medium text-gray-400">
+                Progress: {{ current_instance.completed_episode_count }}{% if media.max_progress %}/{{ media.max_progress }}{% endif %}
+              </span>
+              {% if current_instance.start_date or current_instance.end_date %}
+                <span class="mx-2 text-gray-600">•</span>
+                <span class="text-sm font-medium text-gray-400">
+                  {% if current_instance.start_date and current_instance.end_date %}
+                    {{ current_instance.start_date|user_date_format:user }} - {{ current_instance.end_date|user_date_format:user }}
+                  {% elif current_instance.start_date %}
+                    {{ current_instance.start_date|user_date_format:user }}
+                  {% else %}
+                    {{ current_instance.end_date|user_date_format:user }}
+                  {% endif %}
+                </span>
+              {% endif %}
+            {% endif %}
+          </div>
 
           {# Season dropdown #}
           <div class="relative"
@@ -145,7 +165,7 @@
         {% endif %}
 
         {% with media|alternative_title:user as detail_alt_title %}
-          <div class="{% if media.media_type == MediaTypes.TV.value %}mb-3{% else %}mb-1{% endif %} text-center md:text-start">
+          <div class="{% if media.media_type == MediaTypes.TV.value %}mb-1{% else %}mb-1{% endif %} text-center md:text-start">
             <div class="inline-flex items-center gap-2 md:flex md:gap-2">
               <h1 class="text-3xl font-bold">{{ media|display_title:user }}</h1>
               {% if detail_alt_title %}
@@ -175,6 +195,25 @@
             </div>
           </div>
         {% endwith %}
+        {% if media.media_type == MediaTypes.TV.value and not public_view|default:False and current_instance %}
+          <div class="mb-3 flex flex-wrap items-center justify-center gap-y-1 text-center text-sm font-medium text-gray-400 md:justify-start md:text-start">
+            <span>
+              Progress: {{ current_instance.formatted_progress }}{% if media.max_progress %}/{{ media.max_progress }}{% endif %}
+            </span>
+            {% if current_instance.start_date or current_instance.end_date %}
+              <span class="mx-2 text-gray-600">•</span>
+              <span>
+                {% if current_instance.start_date and current_instance.end_date %}
+                  {{ current_instance.start_date|user_date_format:user }} - {{ current_instance.end_date|user_date_format:user }}
+                {% elif current_instance.start_date %}
+                  {{ current_instance.start_date|user_date_format:user }}
+                {% else %}
+                  {{ current_instance.end_date|user_date_format:user }}
+                {% endif %}
+              </span>
+            {% endif %}
+          </div>
+        {% endif %}
         {% if media.media_type == MediaTypes.BOOK.value and media.series_name %}
           <p class="text-indigo-400 font-medium mb-4 text-center md:text-start">
             {{ media.series_name }}
@@ -567,7 +606,115 @@
     <div class="w-full md:w-1/4 md:max-w-[250px] mx-auto lg:mx-0">
       {# Your History #}
       {% if not public_view|default:False and current_instance and user_medias %}
-        {% if user_medias|length > 1 or current_instance.start_date or current_instance.end_date or current_instance.progress and media.media_type != MediaTypes.MOVIE.value %}
+        {% if media_type == MediaTypes.TV.value or media_type == MediaTypes.SEASON.value %}
+          {% if user_medias|length > 1 %}
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-xl font-bold">Your History</h2>
+        </div>
+
+        <div class="space-y-4 mb-6">
+          <div x-data="{ showRepeats: false }">
+            <button @click="showRepeats = !showRepeats"
+                    class="group flex items-center justify-center w-full px-3 py-2 text-sm text-white bg-gray-600 hover:bg-gray-700 transition-all duration-200 rounded-lg tracking-wide cursor-pointer">
+              <div class="lucide lucide-chevron-down w-4 h-4 mr-2 transition-transform"
+                   :class="{ 'rotate-180': showRepeats }">{% include "app/icons/chevron-down.svg" %}</div>
+              {% if media_type == MediaTypes.GAME.value or media_type == MediaTypes.BOARDGAME.value %}Show Sessions{% else %}Show Repeats{% endif %} ({{ user_medias|length|add:"-1" }})
+            </button>
+
+            <div x-show="showRepeats" class="space-y-2 mt-4">
+              {% for user_media in user_medias|slice:"1:" %}
+                <div class="bg-[#2a2f35] p-4 rounded-lg">
+                  <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-center">
+                      {% if user_media.score %}
+                        {% include "app/icons/star.svg" with classes="w-4 h-4 mr-2 text-yellow-400 fill-yellow-400" %}
+                      {% else %}
+                        {% include "app/icons/star.svg" with classes="w-4 h-4 mr-2 text-gray-400 fill-gray-400" %}
+                      {% endif %}
+                      {% if user_media.score %}
+                        <span class="text-sm font-medium text-gray-300">{{ user_media.score|score_display:user }}</span>
+                      {% else %}
+                        <span class="text-sm font-medium text-gray-400">Not rated</span>
+                      {% endif %}
+                    </div>
+
+                    {% if not public_view|default:False %}
+                    <div x-data="{ trackOpen: false }">
+                      <button class="p-1 text-gray-400 hover:text-white transition-colors cursor-pointer"
+                              hx-get="{% media_view_url 'track_modal' media %}?instance_id={{ user_media.id }}&return_url={{ request.get_full_path|urlencode }}"
+                              hx-target="#{% component_id 'track' media user_media.id %}"
+                              hx-trigger="click"
+                              @click="trackOpen = true">
+                        {% include "app/icons/edit-flat.svg" with classes="w-4 h-4" %}
+                      </button>
+
+                      <div x-show="trackOpen"
+                           @keydown.escape.window="trackOpen = false"
+                           class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                        <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
+                             style="width: min(96vw, 72rem);"
+                             @click.outside="trackOpen = false">
+                          <div id="{% component_id 'track' media user_media.id %}"></div>
+                        </div>
+                      </div>
+                    </div>
+                    {% endif %}
+                  </div>
+
+                  <div class="space-y-2">
+                    <div class="text-xs text-gray-400">Status: {{ user_media.status|media_status_readable }}</div>
+
+                    {% if media.media_type != MediaTypes.MOVIE.value %}
+                      <div class="text-xs text-gray-400">
+                        {% if media_type == MediaTypes.SEASON.value %}
+                          Progress: {{ user_media.completed_episode_count }}{% if media.max_progress %} / {{ media.max_progress }}{% endif %}
+                        {% else %}
+                          Progress: {{ user_media.formatted_progress }}
+                          {% if media.media_type != MediaTypes.GAME.value %}
+                            {{ media_type|long_unit|lower }}{{ user_media.progress|pluralize }}
+                          {% endif %}
+                        {% endif %}
+                      </div>
+                    {% endif %}
+
+                    {% if user_media.start_date %}
+                      <div class="text-xs text-gray-400">Started: {{ user_media.start_date|user_date_format:user }}</div>
+                    {% endif %}
+
+                    {% if user_media.end_date %}
+                      <div class="text-xs text-gray-400">Finished: {{ user_media.end_date|user_date_format:user }}</div>
+                    {% endif %}
+
+                    {% if user_media.notes %}
+                      {% with user_notes_id=user_media.id|stringformat:"s"|add:"-notes-preview" %}
+                        {{ user_media.notes|json_script:user_notes_id }}
+                        <div class="flex items-start mt-3"
+                             x-data="{ isExpanded:false, isClamped:false, measure(){ const el = this.$refs.notesPreview; this.isClamped = el.scrollHeight > el.clientHeight }, rafMeasure(){ requestAnimationFrame(() => this.measure()) }, reset(){ this.isExpanded = false; this.$nextTick(() => this.rafMeasure()) } }"
+                             x-init="rafMeasure(); $watch('showRepeats', v => { if (v) reset() })">
+                          {% include "app/icons/page-empty.svg" with classes="w-3 h-3 mr-1 text-yellow-400 shrink-0 mt-0.5" %}
+                          <div class="flex-1">
+                            <div x-ref="notesPreview"
+                                 data-markdown-preview
+                                 data-markdown-source="{{ user_notes_id }}"
+                                 :class="isExpanded ? 'max-h-60 overflow-y-auto' : 'max-h-20 overflow-hidden'"
+                                 class="text-xs text-gray-200 rounded-md border border-gray-700 bg-[#2a2f35] p-2"></div>
+                            <button x-show="isClamped"
+                                    @click="isExpanded = !isExpanded"
+                                    class="text-indigo-400 hover:text-indigo-300 text-xs mt-1 focus:outline-none transition-colors cursor-pointer">
+                              <span x-text="isExpanded ? 'Show less' : 'Read more'"></span>
+                            </button>
+                          </div>
+                        </div>
+                      {% endwith %}
+                    {% endif %}
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+          {% endif %}
+        {% elif user_medias|length > 1 or current_instance.start_date or current_instance.end_date or current_instance.progress and media.media_type != MediaTypes.MOVIE.value %}
         <div class="flex items-center justify-between mb-4">
           <h2 class="text-xl font-bold">Your History</h2>
 

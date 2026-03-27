@@ -30,6 +30,7 @@ from app.models import (
 from app.services import game_lengths as game_length_services
 from app.services.metadata_resolution import MetadataResolutionResult
 from integrations.models import PlexAccount
+from users.models import DateFormatChoices
 
 
 class MediaDetailsViewTests(TestCase):
@@ -450,6 +451,86 @@ class MediaDetailsViewTests(TestCase):
             html=False,
         )
         self.assertContains(response, '<h1 class="text-3xl font-bold">Test TV Show</h1>', html=False)
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_tv_media_details_renders_progress_and_date_subtitle_without_history_card(
+        self,
+        mock_get_metadata,
+    ):
+        self.user.date_format = DateFormatChoices.ISO_8601
+        self.user.save(update_fields=["date_format"])
+        item = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Test TV Show",
+            image="http://example.com/image.jpg",
+        )
+        tv = TV.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        season_item = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Season 1",
+            image="http://example.com/season.jpg",
+            season_number=1,
+        )
+        season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=tv,
+            status=Status.IN_PROGRESS.value,
+        )
+        episode_item = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Episode 1",
+            image="http://example.com/episode1.jpg",
+            season_number=1,
+            episode_number=1,
+        )
+        Episode.objects.create(
+            item=episode_item,
+            related_season=season,
+            end_date=datetime(2026, 3, 1, 12, 0, tzinfo=UTC),
+        )
+        Episode.objects.create(
+            item=episode_item,
+            related_season=season,
+            end_date=datetime(2026, 3, 12, 12, 0, tzinfo=UTC),
+        )
+        mock_get_metadata.return_value = {
+            "media_id": "1668",
+            "title": "Test TV Show",
+            "media_type": MediaTypes.TV.value,
+            "source": Sources.TMDB.value,
+            "image": "http://example.com/image.jpg",
+            "max_progress": 8,
+            "details": {},
+            "related": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "media_id": "1668",
+                    "title": "test-tv-show",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Progress: 1/8")
+        self.assertContains(response, "2026-03-01 - 2026-03-12")
+        self.assertNotContains(response, "Your History")
 
     @patch("app.providers.services.get_media_metadata")
     def test_media_details_renders_your_score_chip_with_edit_rating(self, mock_get_metadata):
@@ -1355,13 +1436,113 @@ class MediaDetailsViewTests(TestCase):
         )
         self.assertRegex(
             content,
-            r'<h2 class="text-xl font-semibold text-gray-400">Season 1</h2>',
+            r'<h2 class="text-sm font-medium text-gray-400">Season 1</h2>',
         )
         self.assertIn(
             'class="flex flex-col md:flex-row gap-y-4 md:gap-y-0 items-center justify-between mb-1"',
             content,
         )
         self.assertIn('class="mt-4 mb-5 flex flex-wrap gap-2"', content)
+
+    @patch("app.providers.services.get_media_metadata")
+    @patch("app.providers.tmdb.process_episodes")
+    def test_season_details_renders_progress_and_date_subtitle_without_history_card(
+        self,
+        mock_process_episodes,
+        mock_get_metadata,
+    ):
+        self.user.date_format = DateFormatChoices.ISO_8601
+        self.user.save(update_fields=["date_format"])
+        mock_process_episodes.return_value = []
+        show_item = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Test TV Show",
+            image="http://example.com/image.jpg",
+        )
+        related_tv = TV.objects.create(
+            item=show_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        season_item = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Season 1",
+            image="http://example.com/season.jpg",
+            season_number=1,
+        )
+        season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=related_tv,
+            status=Status.IN_PROGRESS.value,
+        )
+        Episode.objects.create(
+            item=Item.objects.create(
+                media_id="1668",
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.EPISODE.value,
+                title="Episode 1",
+                image="http://example.com/episode1.jpg",
+                season_number=1,
+                episode_number=1,
+            ),
+            related_season=season,
+            end_date=datetime(2026, 3, 1, 12, 0, tzinfo=UTC),
+        )
+        Episode.objects.create(
+            item=Item.objects.create(
+                media_id="1668",
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.EPISODE.value,
+                title="Episode 2",
+                image="http://example.com/episode2.jpg",
+                season_number=1,
+                episode_number=2,
+            ),
+            related_season=season,
+            end_date=datetime(2026, 3, 12, 12, 0, tzinfo=UTC),
+        )
+        mock_get_metadata.return_value = {
+            "title": "Test TV Show",
+            "media_id": "1668",
+            "source": Sources.TMDB.value,
+            "media_type": MediaTypes.TV.value,
+            "image": "http://example.com/image.jpg",
+            "season/1": {
+                "title": "Test TV Show",
+                "season_title": "Season 1",
+                "media_id": "1668",
+                "media_type": MediaTypes.SEASON.value,
+                "source": Sources.TMDB.value,
+                "image": "http://example.com/season.jpg",
+                "max_progress": 8,
+                "episodes": [],
+            },
+        }
+
+        response = self.client.get(
+            reverse(
+                "season_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_id": "1668",
+                    "title": "test-tv-show",
+                    "season_number": 1,
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertRegex(
+            content,
+            r'Season 1</h2>\s*<span class="mx-2 text-gray-600">•</span>\s*<span class="text-sm font-medium text-gray-400">\s*Progress: 2/8\s*</span>\s*<span class="mx-2 text-gray-600">•</span>\s*<span class="text-sm font-medium text-gray-400">\s*2026-03-01 - 2026-03-12\s*</span>',
+        )
+        self.assertNotIn("Your History", content)
 
     @patch("integrations.tasks.fetch_collection_metadata_for_item.delay")
     @patch("app.providers.services.get_media_metadata")
