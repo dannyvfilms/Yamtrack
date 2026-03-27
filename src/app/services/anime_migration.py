@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
 
 from django.utils import timezone
 
@@ -18,6 +17,7 @@ from app.models import (
     TV,
 )
 from app.providers import services
+from app.services.bulk_episode_tracking import distribute_timestamps
 from app.services.metadata_resolution import upsert_provider_links
 from app.services.tracking_hydration import ensure_item_metadata
 from integrations import anime_mapping
@@ -73,28 +73,12 @@ def _provider_episode_offset(entry: dict, provider: str) -> int:
 
 
 def _distribution_timestamps(anime: Anime, total_episodes: int) -> list:
-    if total_episodes <= 0:
-        return []
-
-    start_dt = anime.start_date
-    end_dt = anime.end_date
-    fallback_dt = anime.progressed_at or anime.created_at or timezone.now()
-
-    if start_dt and end_dt:
-        if total_episodes == 1:
-            return [end_dt]
-        span_seconds = max((end_dt - start_dt).total_seconds(), 0)
-        step_seconds = span_seconds / max(total_episodes - 1, 1)
-        return [
-            start_dt + timedelta(seconds=round(step_seconds * index))
-            for index in range(total_episodes)
-        ]
-
-    if end_dt:
-        return [end_dt for _ in range(total_episodes)]
-    if start_dt:
-        return [start_dt for _ in range(total_episodes)]
-    return [fallback_dt for _ in range(total_episodes)]
+    return distribute_timestamps(
+        anime.start_date,
+        anime.end_date,
+        total_episodes,
+        fallback_dt=anime.progressed_at or anime.created_at or timezone.now(),
+    )
 
 
 def _entries_for_provider_series(anime_entries: list[Anime], provider: str, series_id: str) -> list[tuple[Anime, dict]]:

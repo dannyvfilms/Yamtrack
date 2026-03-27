@@ -1,7 +1,8 @@
 {% load widget_tweaks %}
 
 <div class="bg-[#262a2f] rounded-xl shadow-2xl overflow-hidden"
-     x-data="{ activeTab: 'general' }">
+     data-track-modal-root
+     x-data="{ activeTab: '{{ initial_active_tab|default:"general" }}' }">
   <div class="flex items-center justify-between px-7 py-4 bg-[#2a2f35] border-b border-[#2c3136]">
     <div>
       <h2 class="text-xl md:text-2xl font-bold text-white line-clamp-2">{{ title }}</h2>
@@ -27,6 +28,15 @@
           {% include "app/icons/database.svg" with classes="w-5 h-5 shrink-0" %}
           <span class="font-medium">Metadata</span>
         </button>
+        {% if episode_plays_tab_available %}
+          <button type="button"
+                  @click="activeTab = 'episode-plays'"
+                  class="flex items-center gap-3 w-full px-4 py-3 rounded-lg text-left transition-colors cursor-pointer"
+                  :class="activeTab === 'episode-plays' ? 'bg-[#2c3136] text-white' : 'text-gray-400 hover:text-white hover:bg-[#23272b]'">
+            {% include "app/icons/history.svg" with classes="w-5 h-5 shrink-0" %}
+            <span class="font-medium">Episode Plays</span>
+          </button>
+        {% endif %}
       </nav>
     </aside>
 
@@ -103,6 +113,16 @@
       <section x-show="activeTab === 'metadata'" x-cloak>
         {% include "app/components/media_metadata_panel.html" %}
       </section>
+
+      {% if episode_plays_tab_available %}
+        <section x-show="activeTab === 'episode-plays'" x-cloak>
+          {% include "app/components/fill_track_episode_bulk.html" %}
+        </section>
+      {% endif %}
     </div>
   </div>
+
+  {% if episode_plays_domain %}
+    {{ episode_plays_domain|json_script:episode_plays_domain_script_id }}
+  {% endif %}
 </div>

@@ -28,6 +28,7 @@ from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils import formats, timezone
 from django.utils.dateparse import parse_date
+from django.utils.text import slugify
 from django.utils.timezone import datetime
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
@@ -57,6 +58,7 @@ from app import (
     statistics as stats,
 )
 from app.forms import (
+    BulkEpisodeTrackForm,
     CollectionEntryForm,
     EpisodeForm,
     ManualItemForm,
@@ -94,7 +96,7 @@ from app.models import (
 )
 from app.providers import comicvine, hardcover, mangaupdates, manual, openlibrary, services, tmdb
 from app.services import game_lengths as game_length_services
-from app.services import anime_migration, metadata_resolution
+from app.services import anime_migration, bulk_episode_tracking, metadata_resolution
 from app.services import music as sync_services
 from app.services import trakt_popularity as trakt_popularity_service
 from app.services.tracking_hydration import (
@@ -6132,6 +6134,385 @@ def _sync_plex_rating(request, item, media_type):
             logger.info("Created TV instance from Plex rating sync")
 
 
+def _bulk_episode_form_initial_data(return_url, domain):
+    """Return initial form values for the bulk episode-play tab."""
+    now = timezone.localtime(timezone.now()).replace(second=0, microsecond=0)
+    date_initial = now if settings.TRACK_TIME else now.date()
+
+    return {
+        "media_id": domain["tracking_media_id"],
+        "source": domain["tracking_source"],
+        "media_type": domain["route_media_type"],
+        "identity_media_type": domain.get("identity_media_type") or "",
+        "library_media_type": domain.get("library_media_type") or "",
+        "instance_id": "",
+        "return_url": return_url,
+        "first_season_number": domain["default_first"]["season_number"],
+        "first_episode_number": domain["default_first"]["episode_number"],
+        "last_season_number": domain["default_last"]["season_number"],
+        "last_episode_number": domain["default_last"]["episode_number"],
+        "write_mode": BulkEpisodeTrackForm.WRITE_MODE_ADD,
+        "distribution_mode": BulkEpisodeTrackForm.DISTRIBUTION_MODE_AIR_DATE,
+        "start_date": date_initial,
+        "end_date": date_initial,
+    }
+
+
+def _episode_domain_template_payload(domain):
+    """Return the JSON-friendly episode selector payload for Alpine."""
+    if not domain:
+        return None
+
+    season_episode_map = {}
+    for season_number, episodes in domain["season_episode_map"].items():
+        season_episode_map[str(season_number)] = [
+            {
+                "order": episode["order"],
+                "season_number": episode["season_number"],
+                "episode_number": episode["episode_number"],
+                "episode_title": episode["episode_title"],
+                "existing_play_count": episode["existing_play_count"],
+                "air_date": episode["air_date"].isoformat() if episode["air_date"] else "",
+            }
+            for episode in episodes
+        ]
+
+    return {
+        "seasons": domain["seasons"],
+        "seasonEpisodeMap": season_episode_map,
+        "defaultFirst": domain["default_first"],
+        "defaultLast": domain["default_last"],
+        "lockedSeasonNumber": domain["locked_season_number"],
+        "modeNotice": domain.get("mode_notice", ""),
+    }
+
+
+def _render_standard_track_modal(
+    request,
+    source,
+    media_type,
+    media_id,
+    season_number=None,
+    *,
+    form_override=None,
+    bulk_form_override=None,
+    initial_active_tab="general",
+):
+    """Build and render the standard media track modal context."""
+    instance_id = request.GET.get("instance_id") or request.POST.get("instance_id")
+    if instance_id:
+        media = BasicMedia.objects.get_media(
+            request.user,
+            media_type,
+            instance_id,
+        )
+    elif request.GET.get("is_create"):
+        media = None
+    else:
+        user_medias = BasicMedia.objects.filter_media(
+            request.user,
+            media_id,
+            media_type,
+            source,
+            season_number=season_number,
+        )
+        media = user_medias.first()
+        if media:
+            instance_id = media.id
+
+    initial_data = {
+        "media_id": media_id,
+        "source": source,
+        "media_type": media_type,
+        "season_number": season_number,
+        "instance_id": instance_id,
+    }
+    route_identity_media_type = None
+    route_library_media_type = None
+
+    max_progress = None
+    metadata_resolution_result = None
+    metadata_item = None
+    base_metadata = None
+    if media:
+        title = media.item
+        metadata_item = media.item
+        if (
+            media_type == MediaTypes.ANIME.value
+            and media.item.media_type == MediaTypes.TV.value
+            and media.item.library_media_type == MediaTypes.ANIME.value
+        ):
+            route_identity_media_type = MediaTypes.TV.value
+            route_library_media_type = MediaTypes.ANIME.value
+        if media_type == MediaTypes.GAME.value:
+            initial_data["progress"] = helpers.minutes_to_hhmm(media.progress)
+        elif media_type in (
+            MediaTypes.BOOK.value,
+            MediaTypes.COMIC.value,
+            MediaTypes.MANGA.value,
+        ):
+            if media_type == MediaTypes.BOOK.value:
+                if media.item.number_of_pages:
+                    max_progress = media.item.number_of_pages
+                else:
+                    try:
+                        metadata = services.get_media_metadata(
+                            media.item.media_type,
+                            media.item.media_id,
+                            media.item.source,
+                        )
+                        number_of_pages = metadata.get("max_progress") or metadata.get(
+                            "details",
+                            {},
+                        ).get("number_of_pages")
+                        if number_of_pages:
+                            media.item.number_of_pages = number_of_pages
+                            media.item.save(update_fields=["number_of_pages"])
+                            max_progress = number_of_pages
+                    except Exception:
+                        pass
+            else:
+                media_list = [media]
+                BasicMedia.objects.annotate_max_progress(media_list, media_type)
+                if hasattr(media, "max_progress"):
+                    max_progress = media.max_progress
+
+            if (
+                request.user.book_comic_manga_progress_percentage
+                and max_progress
+                and media.progress
+            ):
+                percentage = round((media.progress / max_progress) * 100, 1)
+                initial_data["progress"] = percentage
+    else:
+        metadata = services.get_media_metadata(
+            media_type,
+            media_id,
+            source,
+            [season_number],
+        )
+        base_metadata = metadata
+        title = metadata["title"]
+        route_identity_media_type = metadata.get("identity_media_type")
+        route_library_media_type = metadata.get("library_media_type")
+        if media_type == MediaTypes.SEASON.value:
+            title += f" S{season_number}"
+        item_lookup = {
+            "media_id": media_id,
+            "source": source,
+            "media_type": metadata_resolution.get_tracking_media_type(
+                media_type,
+                source=source,
+                identity_media_type=route_identity_media_type,
+            ),
+            "season_number": season_number,
+        }
+        if metadata_resolution.is_grouped_anime_route(
+            media_type,
+            source=source,
+            identity_media_type=route_identity_media_type,
+            library_media_type=route_library_media_type,
+        ):
+            item_lookup["library_media_type"] = MediaTypes.ANIME.value
+        metadata_item = Item.objects.filter(**item_lookup).first()
+
+    if route_identity_media_type:
+        initial_data["identity_media_type"] = route_identity_media_type
+    if route_library_media_type:
+        initial_data["library_media_type"] = route_library_media_type
+    if "image_url" not in initial_data:
+        preferred_image = None
+        if metadata_item and metadata_item.image and metadata_item.image != settings.IMG_NONE:
+            preferred_image = metadata_item.image
+        elif (
+            base_metadata
+            and base_metadata.get("image")
+            and base_metadata["image"] != settings.IMG_NONE
+        ):
+            preferred_image = base_metadata["image"]
+        if preferred_image:
+            initial_data["image_url"] = preferred_image
+
+    form_media_type = metadata_resolution.get_tracking_media_type(
+        media_type,
+        source=source,
+        identity_media_type=route_identity_media_type,
+    )
+    form_class = get_form_class(form_media_type)
+    if form_override is not None:
+        form = form_override
+    elif media_type in (
+        MediaTypes.BOOK.value,
+        MediaTypes.COMIC.value,
+        MediaTypes.MANGA.value,
+    ):
+        form = form_class(
+            instance=media,
+            initial=initial_data,
+            user=request.user,
+            max_progress=max_progress,
+        )
+    else:
+        form = form_class(
+            instance=media,
+            initial=initial_data,
+            user=request.user,
+        )
+
+    hidden_field_names = {
+        "instance_id",
+        "media_type",
+        "identity_media_type",
+        "library_media_type",
+        "source",
+        "media_id",
+        "season_number",
+    }
+    metadata_field_names = {"image_url"}
+    ordered_general_field_names = [
+        field_name
+        for field_name in ("score", "status", "progress", "start_date", "end_date")
+        if field_name in form.fields
+    ]
+    remaining_general_field_names = [
+        field_name
+        for field_name in form.fields
+        if field_name not in hidden_field_names
+        and field_name not in metadata_field_names
+        and field_name != "notes"
+        and field_name not in ordered_general_field_names
+    ]
+    general_fields = [
+        form[field_name]
+        for field_name in ordered_general_field_names + remaining_general_field_names
+    ]
+    metadata_fields = [
+        form[field_name]
+        for field_name in form.fields
+        if field_name in metadata_field_names
+    ]
+    image_field = form["image_url"] if "image_url" in form.fields else None
+
+    display_provider = source
+    identity_provider = source
+    grouped_preview = None
+    grouped_preview_target = None
+    can_update_metadata_provider = False
+    can_migrate_grouped_anime = False
+    metadata_provider_mapping_status = "identity"
+    metadata_provider_options = []
+
+    if media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
+        if base_metadata is None:
+            base_metadata = services.get_media_metadata(
+                media_type,
+                media_id,
+                source,
+                [season_number],
+            )
+        metadata_resolution_result = metadata_resolution.resolve_detail_metadata(
+            request.user,
+            item=metadata_item,
+            route_media_type=media_type,
+            media_id=media_id,
+            source=source,
+            base_metadata=base_metadata,
+        )
+        display_provider = metadata_resolution_result.display_provider
+        identity_provider = metadata_resolution_result.identity_provider
+        grouped_preview = metadata_resolution_result.grouped_preview
+        grouped_preview_target = metadata_resolution_result.grouped_preview_target
+        metadata_provider_mapping_status = metadata_resolution_result.mapping_status
+        metadata_provider_options = metadata_resolution.available_metadata_sources(
+            media_type,
+        )
+        can_update_metadata_provider = bool(
+            metadata_item is not None
+            and media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value)
+        )
+        can_migrate_grouped_anime = bool(
+            metadata_item is not None
+            and metadata_item.source == Sources.MAL.value
+            and metadata_item.media_type == MediaTypes.ANIME.value
+            and display_provider in {Sources.TMDB.value, Sources.TVDB.value}
+            and grouped_preview
+            and Anime.objects.filter(user=request.user, item=metadata_item).exists()
+        )
+
+    metadata_tab_available = bool(
+        metadata_fields or can_update_metadata_provider or can_migrate_grouped_anime
+    )
+
+    episode_plays_domain = bulk_episode_tracking.build_episode_play_domain(
+        request.user,
+        media_type,
+        source,
+        media_id,
+        metadata_item=metadata_item,
+        base_metadata=base_metadata,
+        metadata_resolution_result=metadata_resolution_result,
+    )
+    episode_plays_tab_available = bool(episode_plays_domain)
+    return_url = request.GET.get("return_url") or request.POST.get("return_url", "")
+    if episode_plays_tab_available:
+        if bulk_form_override is not None:
+            episode_plays_form = bulk_form_override
+        else:
+            bulk_initial = _bulk_episode_form_initial_data(return_url, episode_plays_domain)
+            bulk_initial["instance_id"] = instance_id or ""
+            episode_plays_form = BulkEpisodeTrackForm(
+                initial=bulk_initial,
+                domain=episode_plays_domain,
+            )
+    else:
+        episode_plays_form = None
+
+    track_form_id = f"track-form-{uuid4().hex}"
+    context = {
+        "user": request.user,
+        "title": title,
+        "media_type": media_type,
+        "form": form,
+        "media": media,
+        "return_url": return_url,
+        "max_progress": max_progress,
+        "display_provider": display_provider,
+        "identity_provider": identity_provider,
+        "grouped_preview": grouped_preview,
+        "grouped_preview_target": grouped_preview_target,
+        "metadata_provider_mapping_status": metadata_provider_mapping_status,
+        "metadata_provider_options": metadata_provider_options,
+        "can_update_metadata_provider": can_update_metadata_provider,
+        "can_migrate_grouped_anime": can_migrate_grouped_anime,
+        "metadata_tab_available": metadata_tab_available,
+        "metadata_item": metadata_item,
+        "general_fields": general_fields,
+        "metadata_fields": metadata_fields,
+        "image_field": image_field,
+        "image_save_item_id": metadata_item.id if media and metadata_item else None,
+        "track_form_id": track_form_id,
+        "initial_active_tab": initial_active_tab,
+        "episode_plays_tab_available": episode_plays_tab_available,
+        "episode_plays_form": episode_plays_form,
+        "episode_plays_domain": _episode_domain_template_payload(episode_plays_domain),
+        "episode_plays_mode_notice": (
+            episode_plays_domain.get("mode_notice", "")
+            if episode_plays_domain
+            else ""
+        ),
+        "episode_plays_domain_script_id": f"{track_form_id}-episode-domain",
+    }
+    response = render(
+        request,
+        "app/components/fill_track.html",
+        context,
+    )
+    response["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response["Pragma"] = "no-cache"
+    response["Expires"] = "0"
+    return response
+
+
 @never_cache
 @require_GET
 def track_modal(
@@ -6339,269 +6720,13 @@ def track_modal(
                 },
             )
 
-    instance_id = request.GET.get("instance_id")
-    if instance_id:
-        media = BasicMedia.objects.get_media(
-            request.user,
-            media_type,
-            instance_id,
-        )
-    elif request.GET.get("is_create"):
-        media = None
-    else:
-        # no specific instance, try to find the first one
-        user_medias = BasicMedia.objects.filter_media(
-            request.user,
-            media_id,
-            media_type,
-            source,
-            season_number=season_number,
-        )
-        media = user_medias.first()
-        if media:
-            instance_id = media.id
-
-    initial_data = {
-        "media_id": media_id,
-        "source": source,
-        "media_type": media_type,
-        "season_number": season_number,
-        "instance_id": instance_id,
-    }
-    route_identity_media_type = None
-    route_library_media_type = None
-
-    max_progress = None
-    metadata_resolution_result = None
-    metadata_item = None
-    base_metadata = None
-    if media:
-        title = media.item
-        metadata_item = media.item
-        if (
-            media_type == MediaTypes.ANIME.value
-            and media.item.media_type == MediaTypes.TV.value
-            and media.item.library_media_type == MediaTypes.ANIME.value
-        ):
-            route_identity_media_type = MediaTypes.TV.value
-            route_library_media_type = MediaTypes.ANIME.value
-        if media_type == MediaTypes.GAME.value:
-            initial_data["progress"] = helpers.minutes_to_hhmm(media.progress)
-        elif media_type in (MediaTypes.BOOK.value, MediaTypes.COMIC.value, MediaTypes.MANGA.value):
-            # Get max_progress for percentage conversion
-            if media_type == MediaTypes.BOOK.value:
-                if media.item.number_of_pages:
-                    max_progress = media.item.number_of_pages
-                else:
-                    # Try to fetch from metadata
-                    try:
-                        metadata = services.get_media_metadata(
-                            media.item.media_type,
-                            media.item.media_id,
-                            media.item.source,
-                        )
-                        number_of_pages = metadata.get("max_progress") or metadata.get("details", {}).get("number_of_pages")
-                        if number_of_pages:
-                            media.item.number_of_pages = number_of_pages
-                            media.item.save(update_fields=["number_of_pages"])
-                            max_progress = number_of_pages
-                    except Exception:
-                        pass
-            else:
-                # For comics and manga, annotate max_progress from events
-                media_list = [media]
-                BasicMedia.objects.annotate_max_progress(media_list, media_type)
-                if hasattr(media, "max_progress"):
-                    max_progress = media.max_progress
-            
-            # Convert progress to percentage if preference is enabled
-            if request.user.book_comic_manga_progress_percentage and max_progress and media.progress:
-                percentage = round((media.progress / max_progress) * 100, 1)
-                initial_data["progress"] = percentage
-    else:
-        metadata = services.get_media_metadata(
-            media_type,
-            media_id,
-            source,
-            [season_number],
-        )
-        base_metadata = metadata
-        title = metadata["title"]
-        route_identity_media_type = metadata.get("identity_media_type")
-        route_library_media_type = metadata.get("library_media_type")
-        if media_type == MediaTypes.SEASON.value:
-            title += f" S{season_number}"
-        item_lookup = {
-            "media_id": media_id,
-            "source": source,
-            "media_type": metadata_resolution.get_tracking_media_type(
-                media_type,
-                source=source,
-                identity_media_type=route_identity_media_type,
-            ),
-            "season_number": season_number,
-        }
-        if metadata_resolution.is_grouped_anime_route(
-            media_type,
-            source=source,
-            identity_media_type=route_identity_media_type,
-            library_media_type=route_library_media_type,
-        ):
-            item_lookup["library_media_type"] = MediaTypes.ANIME.value
-        metadata_item = Item.objects.filter(**item_lookup).first()
-
-    if route_identity_media_type:
-        initial_data["identity_media_type"] = route_identity_media_type
-    if route_library_media_type:
-        initial_data["library_media_type"] = route_library_media_type
-    if "image_url" not in initial_data:
-        preferred_image = None
-        if metadata_item and metadata_item.image and metadata_item.image != settings.IMG_NONE:
-            preferred_image = metadata_item.image
-        elif base_metadata and base_metadata.get("image") and base_metadata["image"] != settings.IMG_NONE:
-            preferred_image = base_metadata["image"]
-        if preferred_image:
-            initial_data["image_url"] = preferred_image
-
-    form_media_type = metadata_resolution.get_tracking_media_type(
-        media_type,
-        source=source,
-        identity_media_type=route_identity_media_type,
-    )
-    form_class = get_form_class(form_media_type)
-    # Only pass user and max_progress for book/comic/manga forms that handle them
-    if media_type in (MediaTypes.BOOK.value, MediaTypes.COMIC.value, MediaTypes.MANGA.value):
-        form = form_class(
-            instance=media,
-            initial=initial_data,
-            user=request.user,
-            max_progress=max_progress,
-        )
-    else:
-        form = form_class(
-            instance=media,
-            initial=initial_data,
-            user=request.user,
-        )
-
-    hidden_field_names = {
-        "instance_id",
-        "media_type",
-        "identity_media_type",
-        "library_media_type",
-        "source",
-        "media_id",
-        "season_number",
-    }
-    metadata_field_names = {"image_url"}
-    ordered_general_field_names = [
-        field_name
-        for field_name in ("score", "status", "progress", "start_date", "end_date")
-        if field_name in form.fields
-    ]
-    remaining_general_field_names = [
-        field_name
-        for field_name in form.fields
-        if field_name not in hidden_field_names
-        and field_name not in metadata_field_names
-        and field_name != "notes"
-        and field_name not in ordered_general_field_names
-    ]
-    general_fields = [
-        form[field_name]
-        for field_name in ordered_general_field_names + remaining_general_field_names
-    ]
-    metadata_fields = [
-        form[field_name]
-        for field_name in form.fields
-        if field_name in metadata_field_names
-    ]
-    image_field = form["image_url"] if "image_url" in form.fields else None
-
-    display_provider = source
-    identity_provider = source
-    grouped_preview = None
-    grouped_preview_target = None
-    can_update_metadata_provider = False
-    can_migrate_grouped_anime = False
-    metadata_provider_mapping_status = "identity"
-    metadata_provider_options = []
-
-    if media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
-        if base_metadata is None:
-            base_metadata = services.get_media_metadata(
-                media_type,
-                media_id,
-                source,
-                [season_number],
-            )
-        metadata_resolution_result = metadata_resolution.resolve_detail_metadata(
-            request.user,
-            item=metadata_item,
-            route_media_type=media_type,
-            media_id=media_id,
-            source=source,
-            base_metadata=base_metadata,
-        )
-        display_provider = metadata_resolution_result.display_provider
-        identity_provider = metadata_resolution_result.identity_provider
-        grouped_preview = metadata_resolution_result.grouped_preview
-        grouped_preview_target = metadata_resolution_result.grouped_preview_target
-        metadata_provider_mapping_status = metadata_resolution_result.mapping_status
-        metadata_provider_options = metadata_resolution.available_metadata_sources(
-            media_type,
-        )
-        can_update_metadata_provider = bool(
-            metadata_item is not None
-            and media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value)
-        )
-        can_migrate_grouped_anime = bool(
-            metadata_item is not None
-            and metadata_item.source == Sources.MAL.value
-            and metadata_item.media_type == MediaTypes.ANIME.value
-            and display_provider in {Sources.TMDB.value, Sources.TVDB.value}
-            and grouped_preview
-            and Anime.objects.filter(user=request.user, item=metadata_item).exists()
-        )
-
-    metadata_tab_available = bool(
-        metadata_fields or can_update_metadata_provider or can_migrate_grouped_anime
-    )
-
-    response = render(
+    return _render_standard_track_modal(
         request,
-        "app/components/fill_track.html",
-        {
-            "user": request.user,
-            "title": title,
-            "media_type": media_type,
-            "form": form,
-            "media": media,
-            "return_url": request.GET.get("return_url", ""),
-            "max_progress": max_progress,
-            "display_provider": display_provider,
-            "identity_provider": identity_provider,
-            "grouped_preview": grouped_preview,
-            "grouped_preview_target": grouped_preview_target,
-            "metadata_provider_mapping_status": metadata_provider_mapping_status,
-            "metadata_provider_options": metadata_provider_options,
-            "can_update_metadata_provider": can_update_metadata_provider,
-            "can_migrate_grouped_anime": can_migrate_grouped_anime,
-            "metadata_tab_available": metadata_tab_available,
-            "metadata_item": metadata_item,
-            "general_fields": general_fields,
-            "metadata_fields": metadata_fields,
-            "image_field": image_field,
-            "image_save_item_id": metadata_item.id if media and metadata_item else None,
-            "track_form_id": f"track-form-{uuid4().hex}",
-        },
+        source,
+        media_type,
+        media_id,
+        season_number=season_number,
     )
-    # Explicitly set cache control headers for Safari compatibility
-    # @never_cache should handle this, but Safari can be aggressive with caching
-    response["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    response["Pragma"] = "no-cache"
-    response["Expires"] = "0"
-    return response
 
 @require_POST
 def media_save(request):
@@ -6841,6 +6966,141 @@ def episode_save(request):
     related_season.watch(episode_number, form.cleaned_data["end_date"])
 
     return helpers.redirect_back(request)
+
+
+def _episode_bulk_redirect_url(request, result):
+    """Return the full-page destination after a successful bulk episode save."""
+    if result.grouped_item and result.grouped_redirect_media_type:
+        title = result.grouped_item.get_display_title(request.user) or result.grouped_item.title or "item"
+        return reverse(
+            "media_details",
+            kwargs={
+                "source": result.grouped_item.source,
+                "media_type": result.grouped_redirect_media_type,
+                "media_id": result.grouped_item.media_id,
+                "title": slugify(title),
+            },
+        )
+
+    redirect_response = helpers.redirect_back(request)
+    return redirect_response.url
+
+
+@require_POST
+def episode_bulk_save(request):
+    """Persist a bulk range of episode plays from the TV/anime track modal."""
+    media_id = request.POST["media_id"]
+    source = request.POST["source"]
+    media_type = request.POST["media_type"]
+    fallback_media_type = request.POST.get("library_media_type") or media_type
+    discover_tab_cache.mark_active_from_request(
+        request,
+        fallback_media_type=fallback_media_type,
+    )
+
+    metadata_item = None
+    item_lookup = {
+        "media_id": media_id,
+        "source": source,
+        "media_type": metadata_resolution.get_tracking_media_type(
+            media_type,
+            source=source,
+            identity_media_type=request.POST.get("identity_media_type") or None,
+        ),
+    }
+    if media_type == MediaTypes.ANIME.value and source in {
+        Sources.TMDB.value,
+        Sources.TVDB.value,
+    }:
+        item_lookup["library_media_type"] = MediaTypes.ANIME.value
+    metadata_item = Item.objects.filter(**item_lookup).first()
+
+    base_metadata = services.get_media_metadata(
+        media_type,
+        media_id,
+        source,
+    )
+    metadata_resolution_result = None
+    if media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
+        metadata_resolution_result = metadata_resolution.resolve_detail_metadata(
+            request.user,
+            item=metadata_item,
+            route_media_type=media_type,
+            media_id=media_id,
+            source=source,
+            base_metadata=base_metadata,
+        )
+
+    episode_domain = bulk_episode_tracking.build_episode_play_domain(
+        request.user,
+        media_type,
+        source,
+        media_id,
+        metadata_item=metadata_item,
+        base_metadata=base_metadata,
+        metadata_resolution_result=metadata_resolution_result,
+    )
+    if not episode_domain:
+        messages.error(
+            request,
+            "Bulk episode tracking is not available for this title.",
+        )
+        redirect_url = _episode_bulk_redirect_url(
+            request,
+            bulk_episode_tracking.BulkEpisodePlayResult(
+                created_count=0,
+                replaced_episode_count=0,
+            ),
+        )
+        if request.headers.get("HX-Request"):
+            return HttpResponse(status=400, headers={"HX-Redirect": redirect_url})
+        return redirect(redirect_url)
+
+    bulk_form = BulkEpisodeTrackForm(
+        request.POST,
+        domain=episode_domain,
+    )
+    if not bulk_form.is_valid():
+        return _render_standard_track_modal(
+            request,
+            source,
+            media_type,
+            media_id,
+            form_override=None,
+            bulk_form_override=bulk_form,
+            initial_active_tab="episode-plays",
+        )
+
+    result = bulk_episode_tracking.apply_bulk_episode_plays(
+        request.user,
+        episode_domain,
+        selected_episodes=bulk_form.cleaned_data["selected_domain_episodes"],
+        write_mode=bulk_form.cleaned_data["write_mode"],
+        distribution_mode=bulk_form.cleaned_data["distribution_mode"],
+        start_date=bulk_form.cleaned_data.get("start_date"),
+        end_date=bulk_form.cleaned_data.get("end_date"),
+    )
+
+    action_verb = (
+        "Replaced"
+        if bulk_form.cleaned_data["write_mode"] == BulkEpisodeTrackForm.WRITE_MODE_REPLACE
+        else "Added"
+    )
+    detail_bits = []
+    if result.migrated_flat_anime:
+        detail_bits.append("after migrating grouped anime tracking")
+    elif result.created_grouped_tracking and result.grouped_item:
+        detail_bits.append("after creating grouped anime tracking")
+    detail_suffix = f" {' '.join(detail_bits)}" if detail_bits else ""
+    messages.success(
+        request,
+        f"{action_verb} {result.created_count} episode play{'s' if result.created_count != 1 else ''}{detail_suffix}.",
+    )
+
+    redirect_url = _episode_bulk_redirect_url(request, result)
+    if request.headers.get("HX-Request"):
+        return HttpResponse(status=204, headers={"HX-Redirect": redirect_url})
+    return redirect(redirect_url)
 
 
 @require_http_methods(["GET", "POST"])
