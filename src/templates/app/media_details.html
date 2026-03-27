@@ -237,7 +237,7 @@
               <span class="mx-2 text-gray-600">•</span>
               <span>
                 {% if play_stats.first_played and play_stats.last_played %}
-                  {% if play_stats.first_played == play_stats.last_played %}
+                  {% if play_stats.same_play_day or play_stats.first_played == play_stats.last_played %}
                     {{ play_stats.first_played|user_date_format:user }}
                   {% else %}
                     {{ play_stats.first_played|user_date_format:user }} - {{ play_stats.last_played|user_date_format:user }}

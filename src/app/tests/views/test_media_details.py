@@ -882,6 +882,79 @@ class MediaDetailsViewTests(TestCase):
         self.assertNotContains(response, "TOTAL HOURS")
 
     @patch("app.providers.services.get_media_metadata")
+    def test_movie_media_details_uses_play_date_range_when_repeats_only_have_end_dates(
+        self,
+        mock_get_metadata,
+    ):
+        self.user.date_format = DateFormatChoices.ISO_8601
+        self.user.save(update_fields=["date_format"])
+        mock_get_metadata.return_value = {
+            "media_id": "238",
+            "title": "Test Movie",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "image": "http://example.com/image.jpg",
+            "max_progress": 1,
+            "score": 7.6,
+            "score_count": 42000,
+            "details": {},
+            "related": {},
+        }
+        item = Item.objects.create(
+            media_id="238",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Test Movie",
+            image="http://example.com/image.jpg",
+            runtime_minutes=95,
+        )
+        Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            end_date=datetime(2019, 11, 19, 21, 0, tzinfo=UTC),
+        )
+        Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            end_date=datetime(2020, 11, 28, 20, 0, tzinfo=UTC),
+        )
+        Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            end_date=datetime(2025, 11, 28, 19, 0, tzinfo=UTC),
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "238",
+                    "title": "test-movie",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context["play_stats"]["first_played"],
+            datetime(2019, 11, 19, 21, 0, tzinfo=UTC),
+        )
+        self.assertEqual(
+            response.context["play_stats"]["last_played"],
+            datetime(2025, 11, 28, 19, 0, tzinfo=UTC),
+        )
+        self.assertContains(response, "Watched 3 times")
+        self.assertContains(response, "2019-11-19 - 2025-11-28")
+
+    @patch("app.providers.services.get_media_metadata")
     def test_media_details_renders_your_score_chip_with_edit_rating(self, mock_get_metadata):
         mock_get_metadata.return_value = {
             "media_id": "238",

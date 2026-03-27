@@ -5043,6 +5043,31 @@ def media_details(
                 total_plays = int(aggregated_progress or 0)
                 play_stats["total_plays"] = total_plays
 
+                range_start_candidates = []
+                range_end_candidates = []
+                for entry in user_medias:
+                    range_start = entry.start_date or entry.end_date or entry.created_at
+                    range_end = entry.end_date or entry.start_date or entry.created_at
+                    if range_start:
+                        range_start_candidates.append(range_start)
+                    if range_end:
+                        range_end_candidates.append(range_end)
+
+                if range_start_candidates:
+                    play_stats["first_played"] = min(range_start_candidates)
+                if range_end_candidates:
+                    play_stats["last_played"] = max(range_end_candidates)
+
+                first_played = play_stats.get("first_played")
+                last_played = play_stats.get("last_played")
+                if first_played and last_played:
+                    first_played_local = stats._localize_datetime(first_played)
+                    last_played_local = stats._localize_datetime(last_played)
+                    if first_played_local and last_played_local:
+                        play_stats["same_play_day"] = (
+                            first_played_local.date() == last_played_local.date()
+                        )
+
                 runtime_minutes = current_instance._get_known_item_runtime_minutes()
                 if runtime_minutes and total_plays > 0:
                     total_minutes = runtime_minutes * total_plays
