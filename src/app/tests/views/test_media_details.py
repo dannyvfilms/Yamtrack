@@ -150,6 +150,11 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
         self.assertIn('class="mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center"', content)
+        self.assertIn('class="flex w-full items-center gap-2 sm:w-auto sm:flex-wrap"', content)
+        self.assertIn(
+            'class="inline-flex h-11 w-full items-center justify-center rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer sm:size-11 sm:w-11"',
+            content,
+        )
         self.assertIn("Add to tracker", content)
         self.assertIn('title="Add to custom lists"', content)
         self.assertIn('title="Manage tags"', content)

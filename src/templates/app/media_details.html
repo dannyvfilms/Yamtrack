@@ -510,15 +510,15 @@
             {% endif %}
           </div>
 
-          <div class="flex flex-wrap items-center gap-2">
+          <div class="flex w-full items-center gap-2 sm:w-auto sm:flex-wrap">
             {% if detail_link_sections %}
               <div x-data="{ linksOpen: false, linksPinned: false }"
-                   class="relative"
+                   class="relative flex-1 sm:flex-none"
                    @mouseenter="linksOpen = true"
                    @mouseleave="if (!linksPinned) linksOpen = false"
                    @keydown.escape.window="linksOpen = false; linksPinned = false"
                    @click.outside="linksOpen = false; linksPinned = false">
-                <button class="size-11 inline-flex items-center justify-center shrink-0 rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer"
+                <button class="inline-flex h-11 w-full items-center justify-center rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer sm:size-11 sm:w-11"
                         title="View source and external links"
                         aria-haspopup="true"
                         :aria-expanded="linksOpen.toString()"
@@ -565,14 +565,14 @@
             {% component_id 'tag-preview' media as detail_tag_preview_id %}
             {% component_id 'tag-preview-genres' media as detail_tag_preview_genres_id %}
             <div x-data="{ tagsOpen: false, tagsPreviewOpen: false, hasTagPreview() { return this.$refs.tagsPreviewHost?.firstElementChild?.dataset.hasPreview === 'true' } }"
-                 class="relative"
+                 class="relative flex-1 sm:flex-none"
                  @mouseenter="if (hasTagPreview()) tagsPreviewOpen = true"
                  @mouseleave="tagsPreviewOpen = false">
               <input id="{{ detail_tag_preview_genres_id }}"
                      type="hidden"
                      name="preview_genres_json"
                      value="{{ detail_tag_preview_genres_json|escape }}">
-              <button class="size-11 inline-flex items-center justify-center shrink-0 rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer"
+              <button class="inline-flex h-11 w-full items-center justify-center rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer sm:size-11 sm:w-11"
                       title="Manage tags"
                       hx-get="{% media_view_url 'tags_modal' media %}"
                       hx-include="#{{ detail_tag_preview_genres_id }}"
@@ -604,8 +604,8 @@
               </div>
             </div>
 
-            <div x-data="{ listsOpen: false }">
-              <button class="size-11 inline-flex items-center justify-center shrink-0 rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer"
+            <div x-data="{ listsOpen: false }" class="flex-1 sm:flex-none">
+              <button class="inline-flex h-11 w-full items-center justify-center rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer sm:size-11 sm:w-11"
                       title="Add to custom lists"
                       hx-get="{% media_view_url 'lists_modal' media %}"
                       hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
@@ -623,7 +623,7 @@
               </div>
             </div>
 
-            <a class="size-11 inline-flex items-center justify-center shrink-0 rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer"
+            <a class="inline-flex h-11 w-full flex-1 items-center justify-center rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer sm:size-11 sm:w-11 sm:flex-none"
                title="View your activity history"
                href="{% url 'history' %}?{% if media_type == MediaTypes.SEASON.value %}media_type={{ MediaTypes.TV.value }}&media_id={{ media.media_id|urlencode }}&source={{ media.source|urlencode }}&season_number={{ media.season_number }}{% elif media_type == MediaTypes.TV.value %}media_type={{ MediaTypes.TV.value }}&media_id={{ media.media_id|urlencode }}&source={{ media.source|urlencode }}{% elif media_type == MediaTypes.PODCAST.value and podcast_show %}media_type={{ MediaTypes.PODCAST.value }}&podcast_show={{ podcast_show.id }}{% else %}media_type={{ media_type }}&media_id={{ media.media_id|urlencode }}&source={{ media.source|urlencode }}{% endif %}{% if media_type == MediaTypes.GAME.value or media_type == MediaTypes.BOARDGAME.value %}&logging_style=sessions{% endif %}">
               {% include "app/icons/history.svg" with classes="w-4 h-4" %}
@@ -631,7 +631,7 @@
 
             <button type="button"
                     title="Sync metadata with provider"
-                    class="size-11 inline-flex items-center justify-center shrink-0 rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer disabled:opacity-75"
+                    class="inline-flex h-11 w-full flex-1 items-center justify-center rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer disabled:opacity-75 sm:size-11 sm:w-11 sm:flex-none"
                     hx-post="{% media_view_url 'sync_metadata' media %}"
                     hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
                     hx-vals='{"next": "{{ request.get_full_path|urlencode }}"}'
