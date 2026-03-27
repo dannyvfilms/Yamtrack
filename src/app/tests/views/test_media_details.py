@@ -3478,6 +3478,7 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Dear Hank &amp; John")
         self.assertContains(response, "Episode One")
+        self.assertNotContains(response, "Mark All Played")
 
     def test_podcast_episode_fragment_renders_for_show_with_no_user_plays(self):
         """Podcast episode HTMX fragments should render when no play history exists."""

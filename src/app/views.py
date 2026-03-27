@@ -89,6 +89,7 @@ from app.models import (
     Movie,
     Music,
     Person,
+    PodcastShow,
     Season,
     Sources,
     Status,
@@ -4333,20 +4334,10 @@ def media_details(
                 ).select_related("episode", "item"))
                 total_listened = len(user_podcasts)
                 total_minutes = sum(podcast.progress or 0 for podcast in user_podcasts)
-
-                # Count unplayed episodes (episodes without a completed Podcast entry for this user)
-                completed_episode_ids = set(podcast.episode.id for podcast in user_podcasts if podcast.episode and podcast.end_date)
-                if completed_episode_ids:
-                    unplayed_count = episodes.exclude(id__in=completed_episode_ids).count()
-                else:
-                    # If no episodes have been completed, all episodes are unplayed
-                    unplayed_count = episodes.count()
             else:
                 user_podcasts = []
                 total_listened = 0
                 total_minutes = 0
-                # For public views, still count total episodes (but button won't show due to public_view check)
-                unplayed_count = episodes.count()
 
             # Build episode items - create Item objects for enrichment
             # Initially load first 20 episodes, rest will be loaded via infinite scroll
@@ -4657,7 +4648,6 @@ def media_details(
                 "has_more": has_more,  # For fragment compatibility
                 "next_page": next_page,
                 "show_id": show.id,  # For API endpoint
-                "unplayed_episodes_count": unplayed_count,  # Count of unplayed episodes
             }
             return render(request, "app/media_details.html", context)
 
@@ -6891,6 +6881,7 @@ def _episode_domain_template_payload(domain):
                 "season_number": episode["season_number"],
                 "episode_number": episode["episode_number"],
                 "episode_title": episode["episode_title"],
+                "selector_label": episode.get("selector_label", ""),
                 "existing_play_count": episode["existing_play_count"],
                 "air_date": episode["air_date"].isoformat() if episode["air_date"] else "",
             }
@@ -6903,7 +6894,45 @@ def _episode_domain_template_payload(domain):
         "defaultFirst": domain["default_first"],
         "defaultLast": domain["default_last"],
         "lockedSeasonNumber": domain["locked_season_number"],
+        "hideSeasonSelectors": domain.get("hide_season_selectors", False),
+        "firstSelectionTitle": domain.get("first_selection_title", ""),
+        "lastSelectionTitle": domain.get("last_selection_title", ""),
+        "episodeFieldLabel": domain.get("episode_field_label", ""),
         "modeNotice": domain.get("mode_notice", ""),
+    }
+
+
+def _track_modal_field_groups(form, *, hidden_field_names, metadata_field_names=None):
+    """Split a track form into hidden, general, and metadata field groups."""
+    metadata_field_names = metadata_field_names or set()
+    ordered_general_field_names = [
+        field_name
+        for field_name in ("score", "status", "progress", "start_date", "end_date")
+        if field_name in form.fields
+    ]
+    remaining_general_field_names = [
+        field_name
+        for field_name in form.fields
+        if field_name not in hidden_field_names
+        and field_name not in metadata_field_names
+        and field_name != "notes"
+        and field_name not in ordered_general_field_names
+    ]
+    return {
+        "general_fields": [
+            form[field_name]
+            for field_name in ordered_general_field_names + remaining_general_field_names
+        ],
+        "metadata_fields": [
+            form[field_name]
+            for field_name in form.fields
+            if field_name in metadata_field_names
+        ],
+        "hidden_fields": [
+            form[field_name]
+            for field_name in form.fields
+            if field_name in hidden_field_names
+        ],
     }
 
 
@@ -7089,28 +7118,14 @@ def _render_standard_track_modal(
         "season_number",
     }
     metadata_field_names = {"image_url"}
-    ordered_general_field_names = [
-        field_name
-        for field_name in ("score", "status", "progress", "start_date", "end_date")
-        if field_name in form.fields
-    ]
-    remaining_general_field_names = [
-        field_name
-        for field_name in form.fields
-        if field_name not in hidden_field_names
-        and field_name not in metadata_field_names
-        and field_name != "notes"
-        and field_name not in ordered_general_field_names
-    ]
-    general_fields = [
-        form[field_name]
-        for field_name in ordered_general_field_names + remaining_general_field_names
-    ]
-    metadata_fields = [
-        form[field_name]
-        for field_name in form.fields
-        if field_name in metadata_field_names
-    ]
+    field_groups = _track_modal_field_groups(
+        form,
+        hidden_field_names=hidden_field_names,
+        metadata_field_names=metadata_field_names,
+    )
+    general_fields = field_groups["general_fields"]
+    metadata_fields = field_groups["metadata_fields"]
+    hidden_fields = field_groups["hidden_fields"]
     image_field = form["image_url"] if "image_url" in form.fields else None
 
     display_provider = source
@@ -7206,7 +7221,11 @@ def _render_standard_track_modal(
         "can_migrate_grouped_anime": can_migrate_grouped_anime,
         "metadata_tab_available": metadata_tab_available,
         "metadata_item": metadata_item,
+        "general_hidden_fields": hidden_fields,
         "general_fields": general_fields,
+        "general_submit_formaction": f"{reverse('media_save')}?next={return_url}",
+        "general_delete_formaction": f"{reverse('media_delete')}?next={return_url}",
+        "general_existing_instance": media,
         "metadata_fields": metadata_fields,
         "image_field": image_field,
         "image_save_item_id": metadata_item.id if media and metadata_item else None,
@@ -7233,6 +7252,104 @@ def _render_standard_track_modal(
     return response
 
 
+def _render_podcast_show_track_modal(
+    request,
+    show,
+    *,
+    form_override=None,
+    bulk_form_override=None,
+    initial_active_tab="general",
+):
+    """Build and render the podcast show tracking modal with bulk episode plays."""
+    from app.forms import PodcastShowTrackerForm
+    from app.models import PodcastShowTracker
+
+    tracker = PodcastShowTracker.objects.filter(user=request.user, show=show).first()
+    return_url = request.GET.get("return_url") or request.POST.get("return_url", "")
+
+    if form_override is not None:
+        form = form_override
+    else:
+        form = PodcastShowTrackerForm(
+            instance=tracker,
+            initial={"show_id": show.id},
+            user=request.user,
+        )
+
+    field_groups = _track_modal_field_groups(
+        form,
+        hidden_field_names={"show_id"},
+        metadata_field_names=set(),
+    )
+    episode_plays_domain = bulk_episode_tracking.build_episode_play_domain(
+        request.user,
+        MediaTypes.PODCAST.value,
+        Sources.POCKETCASTS.value,
+        show.podcast_uuid,
+        podcast_show=show,
+    )
+    episode_plays_tab_available = bool(episode_plays_domain)
+    if episode_plays_tab_available:
+        if bulk_form_override is not None:
+            episode_plays_form = bulk_form_override
+        else:
+            bulk_initial = _bulk_episode_form_initial_data(
+                return_url,
+                episode_plays_domain,
+            )
+            bulk_initial["instance_id"] = tracker.id if tracker else ""
+            episode_plays_form = BulkEpisodeTrackForm(
+                initial=bulk_initial,
+                domain=episode_plays_domain,
+            )
+    else:
+        episode_plays_form = None
+
+    track_form_id = f"track-form-{uuid4().hex}"
+    response = render(
+        request,
+        "app/components/fill_track.html",
+        {
+            "user": request.user,
+            "title": show.title,
+            "media_type": MediaTypes.PODCAST.value,
+            "form": form,
+            "media": tracker,
+            "return_url": return_url,
+            "metadata_tab_available": False,
+            "metadata_fields": [],
+            "general_hidden_fields": field_groups["hidden_fields"],
+            "general_fields": field_groups["general_fields"],
+            "general_submit_formaction": (
+                f"{reverse('podcast_show_save')}?next={return_url}"
+            ),
+            "general_delete_formaction": (
+                f"{reverse('podcast_show_delete')}?next={return_url}"
+            ),
+            "general_existing_instance": tracker,
+            "image_field": None,
+            "image_save_item_id": None,
+            "track_form_id": track_form_id,
+            "initial_active_tab": initial_active_tab,
+            "episode_plays_tab_available": episode_plays_tab_available,
+            "episode_plays_form": episode_plays_form,
+            "episode_plays_domain": _episode_domain_template_payload(
+                episode_plays_domain,
+            ),
+            "episode_plays_mode_notice": (
+                episode_plays_domain.get("mode_notice", "")
+                if episode_plays_domain
+                else ""
+            ),
+            "episode_plays_domain_script_id": f"{track_form_id}-episode-domain",
+        },
+    )
+    response["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response["Pragma"] = "no-cache"
+    response["Expires"] = "0"
+    return response
+
+
 @never_cache
 @require_GET
 def track_modal(
@@ -7245,33 +7362,12 @@ def track_modal(
     """Return the tracking form for a media item."""
     # Handle podcast shows (identified by podcast_uuid)
     if media_type == MediaTypes.PODCAST.value and source == Sources.POCKETCASTS.value:
-        from app.forms import PodcastShowTrackerForm
-        from app.models import PodcastEpisode, PodcastShow, PodcastShowTracker
+        from app.models import PodcastEpisode, PodcastShow
 
         # Check if this is a show (podcast_uuid) or an episode (episode_uuid)
         show = PodcastShow.objects.filter(podcast_uuid=media_id).first()
         if show:
-            # This is a show - use PodcastShowTracker form
-            tracker = PodcastShowTracker.objects.filter(user=request.user, show=show).first()
-            return_url = request.GET.get("return_url", "")
-
-            initial_data = {"show_id": show.id}
-            form = PodcastShowTrackerForm(
-                instance=tracker,
-                initial=initial_data,
-                user=request.user,
-            )
-
-            return render(
-                request,
-                "app/components/podcast_show_track_modal.html",
-                {
-                    "show": show,
-                    "tracker": tracker,
-                    "form": form,
-                    "return_url": return_url,
-                },
-            )
+            return _render_podcast_show_track_modal(request, show)
 
         # This is an episode (episode_uuid) - use music-style modal
         episode = PodcastEpisode.objects.filter(episode_uuid=media_id).first()
@@ -7708,7 +7804,7 @@ def _episode_bulk_redirect_url(request, result):
 
 @require_POST
 def episode_bulk_save(request):
-    """Persist a bulk range of episode plays from the TV/anime track modal."""
+    """Persist a bulk range of episode plays from track modal tabs."""
     media_id = request.POST["media_id"]
     source = request.POST["source"]
     media_type = request.POST["media_type"]
@@ -7719,37 +7815,43 @@ def episode_bulk_save(request):
     )
 
     metadata_item = None
-    item_lookup = {
-        "media_id": media_id,
-        "source": source,
-        "media_type": metadata_resolution.get_tracking_media_type(
-            media_type,
-            source=source,
-            identity_media_type=request.POST.get("identity_media_type") or None,
-        ),
-    }
-    if media_type == MediaTypes.ANIME.value and source in {
-        Sources.TMDB.value,
-        Sources.TVDB.value,
-    }:
-        item_lookup["library_media_type"] = MediaTypes.ANIME.value
-    metadata_item = Item.objects.filter(**item_lookup).first()
-
-    base_metadata = services.get_media_metadata(
-        media_type,
-        media_id,
-        source,
-    )
+    base_metadata = None
     metadata_resolution_result = None
-    if media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
-        metadata_resolution_result = metadata_resolution.resolve_detail_metadata(
-            request.user,
-            item=metadata_item,
-            route_media_type=media_type,
-            media_id=media_id,
-            source=source,
-            base_metadata=base_metadata,
+    podcast_show = None
+
+    if media_type == MediaTypes.PODCAST.value and source == Sources.POCKETCASTS.value:
+        podcast_show = PodcastShow.objects.filter(podcast_uuid=media_id).first()
+    else:
+        item_lookup = {
+            "media_id": media_id,
+            "source": source,
+            "media_type": metadata_resolution.get_tracking_media_type(
+                media_type,
+                source=source,
+                identity_media_type=request.POST.get("identity_media_type") or None,
+            ),
+        }
+        if media_type == MediaTypes.ANIME.value and source in {
+            Sources.TMDB.value,
+            Sources.TVDB.value,
+        }:
+            item_lookup["library_media_type"] = MediaTypes.ANIME.value
+        metadata_item = Item.objects.filter(**item_lookup).first()
+
+        base_metadata = services.get_media_metadata(
+            media_type,
+            media_id,
+            source,
         )
+        if media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
+            metadata_resolution_result = metadata_resolution.resolve_detail_metadata(
+                request.user,
+                item=metadata_item,
+                route_media_type=media_type,
+                media_id=media_id,
+                source=source,
+                base_metadata=base_metadata,
+            )
 
     episode_domain = bulk_episode_tracking.build_episode_play_domain(
         request.user,
@@ -7759,6 +7861,7 @@ def episode_bulk_save(request):
         metadata_item=metadata_item,
         base_metadata=base_metadata,
         metadata_resolution_result=metadata_resolution_result,
+        podcast_show=podcast_show,
     )
     if not episode_domain:
         messages.error(
@@ -7781,6 +7884,13 @@ def episode_bulk_save(request):
         domain=episode_domain,
     )
     if not bulk_form.is_valid():
+        if podcast_show is not None:
+            return _render_podcast_show_track_modal(
+                request,
+                podcast_show,
+                bulk_form_override=bulk_form,
+                initial_active_tab="episode-plays",
+            )
         return _render_standard_track_modal(
             request,
             source,
@@ -10128,35 +10238,13 @@ def podcast_show_detail(request, show_id):
 
 @require_GET
 def podcast_show_track_modal(request, show_id):
-    """Return the tracking form modal for a podcast show - mirrors artist_track_modal."""
+    """Return the tracking form modal for a podcast show."""
     from django.shortcuts import get_object_or_404
 
-    from app.forms import PodcastShowTrackerForm
-    from app.models import PodcastShow, PodcastShowTracker
+    from app.models import PodcastShow
 
     show = get_object_or_404(PodcastShow, id=show_id)
-    return_url = request.GET.get("return_url", "")
-
-    # Get existing tracker if any
-    tracker = PodcastShowTracker.objects.filter(user=request.user, show=show).first()
-
-    initial_data = {"show_id": show.id}
-    form = PodcastShowTrackerForm(
-        instance=tracker,
-        initial=initial_data,
-        user=request.user,
-    )
-
-    return render(
-        request,
-        "app/components/podcast_show_track_modal.html",
-        {
-            "show": show,
-            "tracker": tracker,
-            "form": form,
-            "return_url": return_url,
-        },
-    )
+    return _render_podcast_show_track_modal(request, show)
 
 
 @require_GET

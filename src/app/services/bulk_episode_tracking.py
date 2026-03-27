@@ -1,4 +1,4 @@
-"""Bulk episode play helpers for TV and anime tracking."""
+"""Bulk episode play helpers for TV, anime, and podcast tracking."""
 
 from __future__ import annotations
 
@@ -22,6 +22,10 @@ from app.models import (
     Item,
     MediaTypes,
     MetadataProviderPreference,
+    Podcast,
+    PodcastEpisode,
+    PodcastShow,
+    PodcastShowTracker,
     Season,
     Sources,
     Status,
@@ -227,6 +231,116 @@ def _episode_title_from_payload(payload, episode_number):
         or payload.get("title")
         or f"Episode {episode_number}"
     )
+
+
+def _podcast_selector_label(episode, selector_number):
+    """Return a readable dropdown label for podcast episode ranges."""
+    prefix = (
+        f"E{episode.episode_number}"
+        if episode.episode_number is not None
+        else f"#{selector_number}"
+    )
+    label = f"{prefix} - {episode.title or f'Episode {selector_number}'}"
+    if episode.published:
+        label += f" ({timezone.localtime(episode.published).date().isoformat()})"
+    return label
+
+
+def _podcast_play_counts_for_show(user, show):
+    """Return completed podcast play counts keyed by episode id."""
+    rows = (
+        Podcast.objects.filter(
+            user=user,
+            show=show,
+            episode__isnull=False,
+            end_date__isnull=False,
+        )
+        .values("episode_id")
+        .annotate(play_count=Count("id"))
+    )
+    return {
+        row["episode_id"]: row["play_count"]
+        for row in rows
+        if row["episode_id"] is not None
+    }
+
+
+def _podcast_domain(user, show):
+    """Build a bulk-play selector domain for podcast shows."""
+    episodes = list(PodcastEpisode.objects.filter(show=show))
+    if not episodes:
+        return None
+
+    sort_fallback = timezone.now()
+    episodes.sort(
+        key=lambda episode: (
+            episode.published is None,
+            episode.published or sort_fallback,
+            episode.episode_number is None,
+            episode.episode_number or 0,
+            episode.id,
+        ),
+    )
+
+    play_counts = _podcast_play_counts_for_show(user, show)
+    selector_episodes = []
+    for order, episode in enumerate(episodes):
+        selector_number = order + 1
+        runtime_minutes = episode.duration // 60 if episode.duration else 0
+        selector_episodes.append(
+            {
+                "order": order,
+                "season_number": 1,
+                "season_title": "Episodes",
+                "episode_number": selector_number,
+                "episode_title": episode.title or f"Episode {selector_number}",
+                "selector_label": _podcast_selector_label(episode, selector_number),
+                "air_date": coerce_episode_datetime(episode.published),
+                "release_datetime": coerce_episode_datetime(episode.published),
+                "existing_play_count": play_counts.get(episode.id, 0),
+                "podcast_episode_id": episode.id,
+                "podcast_episode_uuid": episode.episode_uuid,
+                "runtime_minutes": runtime_minutes,
+            },
+        )
+
+    return {
+        "route_media_type": MediaTypes.PODCAST.value,
+        "tracking_source": Sources.POCKETCASTS.value,
+        "tracking_media_id": show.podcast_uuid,
+        "tracking_media_type": MediaTypes.PODCAST.value,
+        "identity_media_type": None,
+        "library_media_type": MediaTypes.PODCAST.value,
+        "season_payloads": {},
+        "episodes": selector_episodes,
+        "episode_lookup": {
+            (1, episode["episode_number"]): episode
+            for episode in selector_episodes
+        },
+        "season_episode_map": {1: selector_episodes},
+        "seasons": [
+            {
+                "season_number": 1,
+                "season_title": "Episodes",
+                "episode_count": len(selector_episodes),
+                "locked": True,
+            }
+        ],
+        "default_first": {
+            "season_number": 1,
+            "episode_number": selector_episodes[0]["episode_number"],
+        },
+        "default_last": {
+            "season_number": 1,
+            "episode_number": selector_episodes[-1]["episode_number"],
+        },
+        "locked_season_number": 1,
+        "hide_season_selectors": True,
+        "mode_notice": "",
+        "is_flat_anime_grouped_slice": False,
+        "is_podcast_range": True,
+        "podcast_show_id": show.id,
+    }
 
 
 def _play_counts_for_grouped_target(user, *, source, media_id, library_media_type):
@@ -499,8 +613,17 @@ def build_episode_play_domain(
     metadata_item=None,
     base_metadata=None,
     metadata_resolution_result=None,
+    podcast_show=None,
 ):
-    """Return an episode selection domain for TV/anime track modal tabs."""
+    """Return an episode selection domain for detail track modal tabs."""
+    if route_media_type == MediaTypes.PODCAST.value:
+        if source != Sources.POCKETCASTS.value:
+            return None
+        show = podcast_show or PodcastShow.objects.filter(podcast_uuid=media_id).first()
+        if show is None:
+            return None
+        return _podcast_domain(user, show)
+
     if route_media_type not in {MediaTypes.TV.value, MediaTypes.ANIME.value}:
         return None
 
@@ -693,6 +816,131 @@ def _episode_delete_filter(selected_episodes):
     return filters
 
 
+def _get_or_create_podcast_episode_item(show, episode):
+    """Return the trackable item for a podcast episode."""
+    runtime_minutes = episode.duration // 60 if episode.duration else None
+    defaults = {
+        "title": episode.title,
+        "image": show.image or settings.IMG_NONE,
+    }
+    if runtime_minutes:
+        defaults["runtime_minutes"] = runtime_minutes
+    if episode.published:
+        defaults["release_datetime"] = episode.published
+
+    item, created = Item.objects.get_or_create(
+        media_id=episode.episode_uuid,
+        source=Sources.POCKETCASTS.value,
+        media_type=MediaTypes.PODCAST.value,
+        defaults=defaults,
+    )
+
+    update_fields = []
+    if item.title != episode.title:
+        item.title = episode.title
+        update_fields.append("title")
+    if runtime_minutes and item.runtime_minutes != runtime_minutes:
+        item.runtime_minutes = runtime_minutes
+        update_fields.append("runtime_minutes")
+    if episode.published and item.release_datetime != episode.published:
+        item.release_datetime = episode.published
+        update_fields.append("release_datetime")
+    if update_fields:
+        item.save(update_fields=update_fields)
+
+    return item, created
+
+
+def _apply_bulk_podcast_plays(
+    user,
+    domain,
+    *,
+    selected_episodes,
+    write_mode: str,
+    distribution_mode: str,
+    start_date=None,
+    end_date=None,
+):
+    """Persist a bulk range of podcast episode plays."""
+    show = PodcastShow.objects.get(id=domain["podcast_show_id"])
+    PodcastShowTracker.objects.get_or_create(
+        user=user,
+        show=show,
+        defaults={"status": Status.IN_PROGRESS.value},
+    )
+
+    if distribution_mode == "air_date":
+        timestamps = distribute_target_timestamps(
+            [episode["air_date"] for episode in selected_episodes],
+            start_date,
+            end_date,
+            fallback_dt=timezone.now().replace(second=0, microsecond=0),
+        )
+    else:
+        timestamps = distribute_timestamps(
+            start_date,
+            end_date,
+            len(selected_episodes),
+            fallback_dt=timezone.now().replace(second=0, microsecond=0),
+        )
+
+    selected_episode_ids = [
+        episode["podcast_episode_id"]
+        for episode in selected_episodes
+    ]
+    episode_map = PodcastEpisode.objects.in_bulk(selected_episode_ids)
+    created_count = 0
+    replaced_episode_count = 0
+    created_items = []
+
+    with disable_fetch_releases():
+        if write_mode == "replace" and selected_episode_ids:
+            existing_entries = Podcast.objects.filter(
+                user=user,
+                show=show,
+                episode_id__in=selected_episode_ids,
+            )
+            replaced_episode_count = existing_entries.count()
+            if replaced_episode_count:
+                existing_entries.delete()
+
+        episodes_to_create = []
+        for episode_payload, watched_at in zip(selected_episodes, timestamps, strict=False):
+            episode = episode_map.get(episode_payload["podcast_episode_id"])
+            if episode is None:
+                continue
+            item, item_created = _get_or_create_podcast_episode_item(show, episode)
+            if item_created:
+                created_items.append(item)
+            episodes_to_create.append(
+                Podcast(
+                    item=item,
+                    user=user,
+                    show=show,
+                    episode=episode,
+                    status=Status.COMPLETED.value,
+                    end_date=watched_at,
+                    progress=episode_payload.get("runtime_minutes") or 0,
+                ),
+            )
+
+        if episodes_to_create:
+            bulk_create_with_history(episodes_to_create, Podcast)
+            created_count = len(episodes_to_create)
+
+    cache_utils.clear_time_left_cache_for_user(user.id)
+    if created_items:
+        events.tasks.reload_calendar.apply_async(
+            kwargs={"items_to_process": created_items},
+            countdown=3,
+        )
+
+    return BulkEpisodePlayResult(
+        created_count=created_count,
+        replaced_episode_count=replaced_episode_count,
+    )
+
+
 def apply_bulk_episode_plays(
     user,
     domain,
@@ -704,6 +952,17 @@ def apply_bulk_episode_plays(
     end_date=None,
 ):
     """Persist a bulk episode play range against grouped TV/anime tracking."""
+    if domain.get("is_podcast_range"):
+        return _apply_bulk_podcast_plays(
+            user,
+            domain,
+            selected_episodes=selected_episodes,
+            write_mode=write_mode,
+            distribution_mode=distribution_mode,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
     grouped_tv, migrated_flat_anime, created_grouped_tracking = _resolve_grouped_target(
         user,
         domain,

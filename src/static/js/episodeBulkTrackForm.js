@@ -105,7 +105,9 @@ document.addEventListener("alpine:init", () => {
       episodes.forEach((episode) => {
         const option = document.createElement("option");
         option.value = String(episode.episode_number);
-        option.textContent = `E${episode.episode_number} - ${episode.episode_title}`;
+        option.textContent =
+          episode.selector_label ||
+          `E${episode.episode_number} - ${episode.episode_title}`;
         select.appendChild(option);
       });
 

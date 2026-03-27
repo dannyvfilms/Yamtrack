@@ -5,7 +5,19 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
-from app.models import TV, Episode, Item, MediaTypes, Season, Sources, Status
+from app.models import (
+    TV,
+    Episode,
+    Item,
+    MediaTypes,
+    Podcast,
+    PodcastEpisode,
+    PodcastShow,
+    PodcastShowTracker,
+    Season,
+    Sources,
+    Status,
+)
 from app.services.metadata_resolution import MetadataResolutionResult
 
 
@@ -82,6 +94,76 @@ class EpisodeBulkSaveViewTests(TestCase):
             f"{reverse('episode_bulk_save')}?next={next_url or self.return_url}",
             data,
             HTTP_HX_REQUEST="true",
+        )
+
+    def test_podcast_bulk_add_creates_show_tracker_and_completed_entries(self):
+        show = PodcastShow.objects.create(
+            podcast_uuid="show-uuid-1",
+            title="Podcast Show",
+            image="https://example.com/show.jpg",
+        )
+        first_episode = PodcastEpisode.objects.create(
+            show=show,
+            episode_uuid="pod-ep-1",
+            title="Episode One",
+            published=datetime(2024, 1, 1, 12, 0, tzinfo=UTC),
+            duration=1800,
+        )
+        second_episode = PodcastEpisode.objects.create(
+            show=show,
+            episode_uuid="pod-ep-2",
+            title="Episode Two",
+            published=datetime(2024, 1, 2, 12, 0, tzinfo=UTC),
+            duration=2100,
+        )
+
+        response = self._post_bulk(
+            {
+                "media_id": show.podcast_uuid,
+                "source": Sources.POCKETCASTS.value,
+                "media_type": MediaTypes.PODCAST.value,
+                "library_media_type": MediaTypes.PODCAST.value,
+                "identity_media_type": "",
+                "instance_id": "",
+                "return_url": "/details/pocketcasts/podcast/show-uuid-1/podcast-show",
+                "first_season_number": 1,
+                "first_episode_number": 1,
+                "last_season_number": 1,
+                "last_episode_number": 2,
+                "write_mode": "add",
+                "distribution_mode": "air_date",
+                "start_date": "2024-02-01T00:00",
+                "end_date": "2024-02-03T00:00",
+            },
+            next_url="/details/pocketcasts/podcast/show-uuid-1/podcast-show",
+        )
+
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(
+            response["HX-Redirect"],
+            "/details/pocketcasts/podcast/show-uuid-1/podcast-show",
+        )
+        self.assertTrue(
+            PodcastShowTracker.objects.filter(user=self.user, show=show).exists(),
+        )
+        plays = list(
+            Podcast.objects.filter(user=self.user, show=show)
+            .select_related("episode")
+            .order_by("end_date", "episode_id")
+        )
+        self.assertEqual(len(plays), 2)
+        self.assertEqual(
+            [play.episode_id for play in plays],
+            [first_episode.id, second_episode.id],
+        )
+        self.assertTrue(all(play.status == Status.COMPLETED.value for play in plays))
+        self.assertLess(plays[0].end_date, plays[1].end_date)
+        self.assertTrue(
+            Item.objects.filter(
+                media_id="pod-ep-1",
+                source=Sources.POCKETCASTS.value,
+                media_type=MediaTypes.PODCAST.value,
+            ).exists(),
         )
 
     @patch("app.views.metadata_resolution.resolve_detail_metadata")

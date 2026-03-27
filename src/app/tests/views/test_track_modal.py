@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -13,6 +14,7 @@ from app.models import (
     Podcast,
     PodcastEpisode,
     PodcastShow,
+    PodcastShowTracker,
     Sources,
     Status,
 )
@@ -687,3 +689,52 @@ class PodcastTrackModalViewTests(TestCase):
             html=False,
         )
         self.assertContains(response, 'name="media_type" value="podcast"', html=False)
+
+    def test_podcast_show_track_modal_renders_episode_plays_tab(self):
+        """Podcast show modal should expose bulk episode plays instead of mark-all CTA."""
+        show = PodcastShow.objects.create(
+            podcast_uuid="show-uuid-2",
+            title="Show Title",
+            image="http://example.com/show.jpg",
+        )
+        PodcastShowTracker.objects.create(
+            user=self.user,
+            show=show,
+            status=Status.IN_PROGRESS.value,
+        )
+        PodcastEpisode.objects.create(
+            show=show,
+            episode_uuid="episode-uuid-2",
+            title="Episode One",
+            published=datetime(2024, 1, 1, 12, 0, tzinfo=UTC),
+            duration=1200,
+        )
+        PodcastEpisode.objects.create(
+            show=show,
+            episode_uuid="episode-uuid-3",
+            title="Episode Two",
+            published=datetime(2024, 1, 2, 12, 0, tzinfo=UTC),
+            duration=1500,
+        )
+
+        response = self.client.get(
+            reverse("podcast_show_track_modal", kwargs={"show_id": show.id})
+            + "?return_url=/details/pocketcasts/podcast/show-uuid-2/show-title",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "app/components/fill_track.html")
+        self.assertContains(response, "General")
+        self.assertContains(response, "Episode Plays")
+        self.assertNotContains(response, "Metadata")
+        self.assertNotContains(response, "Mark All Played")
+        self.assertContains(response, 'name="show_id"', html=False)
+        self.assertEqual(
+            response.context["episode_plays_form"].initial["first_episode_number"],
+            1,
+        )
+        self.assertEqual(
+            response.context["episode_plays_form"].initial["last_episode_number"],
+            2,
+        )
+        self.assertTrue(response.context["episode_plays_domain"]["hideSeasonSelectors"])
