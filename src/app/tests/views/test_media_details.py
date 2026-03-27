@@ -32,7 +32,7 @@ from app.models import (
 from app.services import game_lengths as game_length_services
 from app.services.metadata_resolution import MetadataResolutionResult
 from integrations.models import PlexAccount
-from users.models import DateFormatChoices
+from users.models import DateFormatChoices, RatingScaleChoices
 
 
 class MediaDetailsViewTests(TestCase):
@@ -918,7 +918,56 @@ class MediaDetailsViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Edit rating")
-        self.assertContains(response, "x-text=\"rating || ''\">8<", html=False)
+        self.assertContains(response, "x-text=\"formatRating(rating)\">8<", html=False)
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_renders_your_score_chip_with_five_point_scale_suffix(
+        self,
+        mock_get_metadata,
+    ):
+        self.user.rating_scale = RatingScaleChoices.FIVE.value
+        self.user.save(update_fields=["rating_scale"])
+        mock_get_metadata.return_value = {
+            "media_id": "238",
+            "title": "Test Movie",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "image": "http://example.com/image.jpg",
+            "max_progress": 1,
+            "details": {},
+            "related": {},
+        }
+        item = Item.objects.create(
+            media_id="238",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Test Movie",
+            image="http://example.com/image.jpg",
+        )
+        Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            score=8,
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "238",
+                    "title": "test-movie",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Edit rating")
+        self.assertContains(response, "ratingScaleMax: 5", html=False)
+        self.assertContains(response, "x-text=\"formatRating(rating)\">4/5<", html=False)
 
     @patch("app.providers.services.get_media_metadata")
     def test_media_details_renders_your_score_chip_with_add_rating_when_empty(self, mock_get_metadata):

@@ -321,7 +321,7 @@
           {% endif %}
 
           {% if user_medias and current_instance and not public_view|default:False %}
-            <div x-data="{ showRatingPopup: false, rating: {{ current_instance.score|score_display:user|default:'null' }}, hoverRating: null, isHovering: false }"
+            <div x-data="{ showRatingPopup: false, rating: {{ current_instance.score|score_display:user|default:'null' }}, ratingScaleMax: {{ user|rating_scale_max }}, hoverRating: null, isHovering: false, formatRating(value) { if (value === null || value === undefined || value === '') { return ''; } return this.ratingScaleMax === 5 ? String(value) + '/5' : String(value); } }"
                  class="relative">
               <button type="button"
                       @click="showRatingPopup = !showRatingPopup"
@@ -333,7 +333,7 @@
                 <span class="inline-flex items-center gap-2">
                   <span class="text-sm font-semibold text-white {% if current_instance.score is None %}hidden{% endif %}"
                         :class="rating ? '' : 'hidden'"
-                        x-text="rating || ''">{% if current_instance.score is not None %}{{ current_instance.score|score_display:user }}{% endif %}</span>
+                        x-text="formatRating(rating)">{% if current_instance.score is not None %}{% if user|rating_scale_max == 5 %}{{ current_instance.score|score_display:user }}/5{% else %}{{ current_instance.score|score_display:user }}{% endif %}{% endif %}</span>
                   <span class="text-sm text-gray-500 {% if current_instance.score is None %}hidden{% endif %}"
                         :class="rating ? '' : 'hidden'">|</span>
                   <span class="text-sm font-medium text-gray-200"
