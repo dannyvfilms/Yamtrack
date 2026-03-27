@@ -105,7 +105,7 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.context["media"]["title"], "Test Movie")
         self.assertContains(
             response,
-            'class="mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center"',
+            'class="mt-5 mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center"',
             html=False,
         )
 

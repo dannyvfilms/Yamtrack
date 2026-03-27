@@ -372,7 +372,13 @@
       {% endif %}
 
       {% if not public_view|default:False %}
-        <div class="mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+        {% if not activity_subtitle and media.score_count is None and not trakt_score and not user_medias %}
+          <div class="mt-5 mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+        {% elif not activity_subtitle and media.score_count is None and not trakt_score and user_medias and not current_instance %}
+          <div class="mt-5 mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+        {% else %}
+          <div class="mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+        {% endif %}
           <div x-data="{ trackOpen: false }" class="sm:shrink-0">
             {% if media_type == MediaTypes.PODCAST.value and podcast_show %}
               <button type="button"
