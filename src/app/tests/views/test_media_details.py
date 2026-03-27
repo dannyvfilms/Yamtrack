@@ -156,6 +156,74 @@ class MediaDetailsViewTests(TestCase):
         self.assertLess(content.index("Add to tracker"), content.index("Test overview"))
 
     @patch("app.providers.services.get_media_metadata")
+    def test_media_details_renders_notes_as_section_above_related_content(self, mock_get_metadata):
+        mock_get_metadata.return_value = {
+            "media_id": "238",
+            "title": "Test Movie",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "image": "http://example.com/image.jpg",
+            "max_progress": 1,
+            "synopsis": "Test overview",
+            "details": {},
+            "related": {},
+            "cast": [
+                {
+                    "name": "Actor One",
+                    "image": "http://example.com/person.jpg",
+                    "role": "Lead",
+                }
+            ],
+            "crew": [],
+        }
+        item = Item.objects.create(
+            media_id="238",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Test Movie",
+            image="http://example.com/image.jpg",
+        )
+        Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            end_date=datetime(2026, 3, 20, 18, 0, tzinfo=UTC),
+            notes="## Great notes\n\nThis movie rules.",
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "238",
+                    "title": "test-movie",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertContains(response, '<h2 class="text-xl font-bold">Your Notes</h2>', html=False)
+        self.assertContains(response, 'aria-label="Edit notes"', html=False)
+        self.assertContains(
+            response,
+            'style="max-height: 12rem; overflow: hidden;"',
+            html=False,
+        )
+        self.assertContains(
+            response,
+            ":style=\"isExpanded ? 'max-height: none; overflow: visible;' : 'max-height: 12rem; overflow: hidden;'\"",
+            html=False,
+        )
+        self.assertLess(content.index("Test overview"), content.index("Your Notes"))
+        self.assertLess(content.index("Your Notes"), content.index("Cast"))
+        self.assertNotIn(">Edit<", content)
+        self.assertNotIn("YOUR NOTES", content)
+
+    @patch("app.providers.services.get_media_metadata")
     def test_media_details_renders_links_action_with_source_and_external_links(
         self,
         mock_get_metadata,

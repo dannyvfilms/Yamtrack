@@ -650,54 +650,6 @@
             <span x-text="isExpanded ? 'Show less' : 'Read more'"></span>
           </button>
         </div>
-
-        {% if not public_view|default:False and notes_entry %}
-          <div class="my-3 border-t border-gray-700"></div>
-
-          <div class="flex items-start mt-2">
-            {% include "app/icons/page-empty.svg" with classes="w-5 h-5 mr-2 text-yellow-400 shrink-0 mt-0.5" %}
-            <div class="font-medium text-gray-400 mb-1">YOUR NOTES</div>
-          </div>
-
-          {% with notes_modal_id=notes_entry.id|stringformat:"s"|add:"-notes" notes_content_id=notes_entry.id|stringformat:"s"|add:"-notes-content" %}
-            {{ notes_entry.notes|json_script:notes_content_id }}
-            <div x-data="{ isExpanded: false, isClamped: false, trackOpen: false, checkClamp() { const element = this.$refs.notesPreview; this.isClamped = element.scrollHeight > element.clientHeight; } }"
-                 x-init="$nextTick(() => checkClamp())">
-              <div x-ref="notesPreview"
-                   data-markdown-preview
-                   data-markdown-source="{{ notes_content_id }}"
-                   :class="isExpanded ? 'max-h-72 overflow-y-auto' : 'max-h-20 overflow-hidden'"
-                   class="text-gray-200 rounded-md border border-gray-700 bg-[#2a2f35] p-3 text-sm"></div>
-              <div class="flex items-center gap-2 mt-2">
-                <button x-show="isClamped"
-                        @click="isExpanded = !isExpanded"
-                        class="text-indigo-400 hover:text-indigo-300 text-xs focus:outline-none transition-colors cursor-pointer inline-flex items-center gap-1">
-                  {% include "app/icons/book-open.svg" with classes="w-3.5 h-3.5" %}
-                  <span x-text="isExpanded ? 'Show less' : 'Show more'"></span>
-                </button>
-
-                <button class="text-indigo-400 hover:text-indigo-300 text-xs focus:outline-none transition-colors cursor-pointer inline-flex items-center gap-1"
-                        hx-get="{% media_view_url 'track_modal' media %}?instance_id={{ notes_entry.id }}&return_url={{ request.get_full_path|urlencode }}"
-                        hx-target="#{% component_id 'track' media notes_modal_id %}"
-                        hx-trigger="click"
-                        @click="trackOpen = true">
-                  {% include "app/icons/edit.svg" with classes="w-3.5 h-3.5" %}
-                  Edit
-                </button>
-              </div>
-
-              <div x-show="trackOpen"
-                   @keydown.escape.window="trackOpen = false"
-                   class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
-                     style="width: min(96vw, 72rem);"
-                     @click.outside="trackOpen = false">
-                  <div id="{% component_id 'track' media notes_modal_id %}"></div>
-                </div>
-              </div>
-            </div>
-          {% endwith %}
-        {% endif %}
       </div>
 
       {# Play stats - 3x2/3x3 grid on mobile, flex-wrap on desktop #}
@@ -1107,8 +1059,11 @@
 
     {# Related Media #}
     {% if media_type != MediaTypes.PODCAST.value %}
-      {% if media.related or media.cast or media.crew or media_type == MediaTypes.GAME.value %}
+      {% if notes_entry or media.related or media.cast or media.crew or media_type == MediaTypes.GAME.value %}
         <div class="w-full md:w-3/4">
+        {% if not public_view|default:False and notes_entry %}
+          {% include "app/components/detail_notes_section.html" %}
+        {% endif %}
         {% if media.related %}
           {% for name, related_items in media.related.items %}
             {% if name != "seasons" and name != "recommendations" and related_items %}
@@ -1292,6 +1247,12 @@
 
         </div>
       {% endif %}
+    {% endif %}
+
+    {% if media_type == MediaTypes.PODCAST.value and not public_view|default:False and notes_entry %}
+      <div class="w-full">
+        {% include "app/components/detail_notes_section.html" %}
+      </div>
     {% endif %}
 
     {# Episodes List #}
