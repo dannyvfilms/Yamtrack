@@ -125,6 +125,52 @@ class MediaDetailsViewTests(TestCase):
         self.assertLess(content.index("Add to tracker"), content.index("Test overview"))
 
     @patch("app.providers.services.get_media_metadata")
+    def test_media_details_hides_streaming_section_when_watch_provider_region_disabled(
+        self,
+        mock_get_metadata,
+    ):
+        self.user.watch_provider_region = "UNSET"
+        self.user.save(update_fields=["watch_provider_region"])
+        mock_get_metadata.return_value = {
+            "media_id": "238",
+            "title": "Test Movie",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "image": "http://example.com/image.jpg",
+            "providers": {
+                "US": {
+                    "flatrate": [
+                        {
+                            "provider_name": "Netflix",
+                            "logo_path": "/netflix.jpg",
+                        },
+                    ],
+                },
+            },
+            "details": {},
+            "related": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "238",
+                    "title": "test-movie",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "STREAMING")
+        self.assertNotContains(
+            response,
+            "Watch provider region is not configured.",
+        )
+
+    @patch("app.providers.services.get_media_metadata")
     def test_media_details_prefers_stored_item_image_over_provider_image(
         self,
         mock_get_metadata,
