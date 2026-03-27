@@ -383,6 +383,7 @@
                       hx-target="#podcast-show-track-modal"
                       hx-trigger="click"
                       @click="trackOpen = true">
+                {% include "app/icons/edit.svg" with classes="w-5 h-5 shrink-0" %}
                 <span class="font-medium">
                   {% if podcast_tracker %}
                     {{ podcast_tracker.status_readable }}
@@ -390,8 +391,6 @@
                     Add to Library
                   {% endif %}
                 </span>
-                <span class="h-5 w-px bg-white/30"></span>
-                {% include "app/icons/edit.svg" with classes="w-5 h-5 shrink-0" %}
               </button>
 
               <div x-show="trackOpen"
@@ -409,22 +408,24 @@
                 <div x-data="{ editTrackOpen: false, createTrackOpen: false, trackMenuOpen: false }"
                      class="relative inline-flex w-full sm:w-auto"
                      @click.outside="trackMenuOpen = false">
-                  <button type="button"
-                          class="flex h-10 flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-l-md border-r border-indigo-500 bg-indigo-600 px-4 text-white transition-colors cursor-pointer hover:bg-indigo-700 sm:flex-none"
-                          hx-get="{% media_view_url 'track_modal' media %}"
-                          hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}", "instance_id": "{{ current_instance.id }}"}'
-                          hx-target="#{% component_id 'track' media current_instance.id %}"
-                          hx-trigger="click"
-                          @click="editTrackOpen = true">
-                    {% include "app/icons/edit.svg" with classes="w-5 h-5 shrink-0" %}
-                    <span class="font-medium">{{ current_instance.status|media_status_readable }}</span>
-                  </button>
-                  <button @click="trackMenuOpen = !trackMenuOpen"
-                          class="flex h-10 shrink-0 items-center rounded-r-md bg-indigo-600 px-2 text-white transition-colors cursor-pointer hover:bg-indigo-700"
-                          aria-label="More tracking actions"
-                          type="button">
-                    {% include "app/icons/chevron-down.svg" with classes="w-4 h-4" %}
-                  </button>
+                  <div class="inline-flex w-full overflow-hidden rounded-xl shadow-sm sm:w-auto">
+                    <button type="button"
+                            class="inline-flex flex-1 items-center justify-center gap-2 whitespace-nowrap border-r border-indigo-500 bg-indigo-600 px-5 py-3 text-white transition duration-300 hover:bg-indigo-700 cursor-pointer sm:flex-none"
+                            hx-get="{% media_view_url 'track_modal' media %}"
+                            hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}", "instance_id": "{{ current_instance.id }}"}'
+                            hx-target="#{% component_id 'track' media current_instance.id %}"
+                            hx-trigger="click"
+                            @click="editTrackOpen = true">
+                      {% include "app/icons/edit.svg" with classes="w-5 h-5 shrink-0" %}
+                      <span class="font-medium">{{ current_instance.status|media_status_readable }}</span>
+                    </button>
+                    <button @click="trackMenuOpen = !trackMenuOpen"
+                            class="inline-flex shrink-0 items-center bg-indigo-600 px-3 py-3 text-white transition duration-300 hover:bg-indigo-700 cursor-pointer"
+                            aria-label="More tracking actions"
+                            type="button">
+                      {% include "app/icons/chevron-down.svg" with classes="w-4 h-4" %}
+                    </button>
+                  </div>
                   <div class="absolute left-0 top-full mt-2 w-52 rounded-md border border-gray-700 bg-[#39404b] py-1 shadow-lg overflow-hidden z-50"
                        x-cloak
                        x-show="trackMenuOpen"
@@ -441,15 +442,7 @@
                             hx-target="#{% component_id 'track' media %}"
                             hx-trigger="click"
                             @click.stop="trackMenuOpen = false; createTrackOpen = true">
-                      {% if media_type == MediaTypes.GAME.value or media_type == MediaTypes.BOARDGAME.value %}
-                        Add new session
-                      {% elif media_type == MediaTypes.MUSIC.value %}
-                        Add new listen
-                      {% elif media_type == MediaTypes.MOVIE.value or media_type == MediaTypes.PODCAST.value %}
-                        Add new play
-                      {% else %}
-                        Add new entry
-                      {% endif %}
+                      Add new entry
                     </button>
                   </div>
 
@@ -483,6 +476,7 @@
                         hx-target="#{% if current_instance %}{% component_id 'track' media current_instance.id %}{% else %}{% component_id 'track' media %}{% endif %}"
                         hx-trigger="click"
                         @click="trackOpen = true">
+                  {% include "app/icons/edit.svg" with classes="w-5 h-5 shrink-0" %}
                   <span class="font-medium">
                     {% if user_medias %}
                       {{ current_instance.status|media_status_readable }}
@@ -490,8 +484,6 @@
                       Add to tracker
                     {% endif %}
                   </span>
-                  <span class="h-5 w-px bg-white/30"></span>
-                  {% include "app/icons/edit.svg" with classes="w-5 h-5 shrink-0" %}
                 </button>
 
                 <div x-show="trackOpen"
