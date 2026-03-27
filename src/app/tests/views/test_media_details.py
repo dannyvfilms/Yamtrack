@@ -763,6 +763,7 @@ class MediaDetailsViewTests(TestCase):
             image="http://example.com/episode1.jpg",
             season_number=1,
             episode_number=1,
+            runtime_minutes=45,
         )
         Episode.objects.create(
             item=episode_item,
@@ -800,7 +801,11 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Progress: 1/8")
         self.assertContains(response, "2026-03-01 - 2026-03-12")
+        self.assertContains(response, "1h 30min watched")
         self.assertNotContains(response, "Your History")
+        self.assertNotContains(response, "FIRST PLAYED")
+        self.assertNotContains(response, "LAST PLAYED")
+        self.assertNotContains(response, "WATCHED HOURS")
 
     @patch("app.providers.services.get_media_metadata")
     def test_media_details_renders_your_score_chip_with_edit_rating(self, mock_get_metadata):
@@ -2712,7 +2717,7 @@ class MediaDetailsViewTests(TestCase):
         self,
         mock_get_metadata,
     ):
-        """TV details should show shared total runtime while play stats remain watched hours."""
+        """TV details should show shared total runtime while watched time moves into the subtitle."""
         now = timezone.now()
         show_item = Item.objects.create(
             media_id="fallout-runtime-shared",
@@ -2826,9 +2831,12 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(detail_response.context["media"]["details"]["runtime"], "25m")
         self.assertEqual(detail_response.context["media"]["details"]["total_runtime"], "2h 37min")
         self.assertEqual(detail_response.context["play_stats"]["total_minutes"], 110)
-        self.assertContains(detail_response, "WATCHED HOURS")
+        self.assertContains(detail_response, "1h 50min watched")
         self.assertContains(detail_response, "TOTAL RUNTIME")
         self.assertContains(detail_response, "2h 37min")
+        self.assertNotContains(detail_response, "FIRST PLAYED")
+        self.assertNotContains(detail_response, "LAST PLAYED")
+        self.assertNotContains(detail_response, "WATCHED HOURS")
 
         list_response = self.client.get(
             reverse("medialist", args=[MediaTypes.TV.value])

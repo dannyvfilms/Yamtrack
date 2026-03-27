@@ -212,6 +212,16 @@
                 {% endif %}
               </span>
             {% endif %}
+            {% if play_stats and play_stats.total_minutes %}
+              <span class="mx-2 text-gray-600">•</span>
+              <span>
+                {% if play_stats.total_hours > 0 %}
+                  {{ play_stats.total_hours }}h {{ play_stats.total_minutes_remainder|default:0 }}min watched
+                {% else %}
+                  {{ play_stats.total_minutes|default:0 }}min watched
+                {% endif %}
+              </span>
+            {% endif %}
           </div>
         {% endif %}
         {% if media.media_type == MediaTypes.BOOK.value and media.series_name %}
@@ -591,7 +601,7 @@
       </div>
 
       {# Play stats - 3x2/3x3 grid on mobile, flex-wrap on desktop #}
-      {% if play_stats %}
+      {% if play_stats and media_type != MediaTypes.TV.value %}
         <div class="stats-card-grid">
           {# First Played - mobile: order-3, desktop: order-4 #}
           <div class="bg-[#2a2f35] p-3 rounded-lg" data-mobile-order="3" data-desktop-order="4">
