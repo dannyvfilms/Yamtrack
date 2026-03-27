@@ -4952,7 +4952,13 @@ def media_details(
         not public_view
         and current_instance
         and user_medias
-        and media_type in [MediaTypes.GAME.value, MediaTypes.BOARDGAME.value, MediaTypes.TV.value]
+        and media_type
+        in [
+            MediaTypes.GAME.value,
+            MediaTypes.BOARDGAME.value,
+            MediaTypes.TV.value,
+            MediaTypes.MOVIE.value,
+        ]
     ):
         if media_type == MediaTypes.TV.value:
             # Calculate TV show play stats from watched episodes
@@ -4997,7 +5003,7 @@ def media_details(
                     "episode_count": episode_count,
                 }
         else:
-            # Games and boardgames calculation (existing logic)
+            # Games, boardgames, and movies calculation
             BasicMedia.objects._aggregate_item_data(current_instance, user_medias)
             aggregated_progress = getattr(current_instance, "aggregated_progress", None)
             if aggregated_progress is None:
@@ -5033,6 +5039,20 @@ def media_details(
                 else:
                     avg_minutes = 0
                 play_stats["avg_time_per_day"] = helpers.minutes_to_hhmm(avg_minutes)
+            elif media_type == MediaTypes.MOVIE.value:
+                total_plays = int(aggregated_progress or 0)
+                play_stats["total_plays"] = total_plays
+
+                runtime_minutes = current_instance._get_known_item_runtime_minutes()
+                if runtime_minutes and total_plays > 0:
+                    total_minutes = runtime_minutes * total_plays
+                    play_stats.update(
+                        {
+                            "total_minutes": total_minutes,
+                            "total_hours": total_minutes // 60,
+                            "total_minutes_remainder": total_minutes % 60,
+                        },
+                    )
             else:
                 play_stats["total_plays"] = int(aggregated_progress or 0)
 
