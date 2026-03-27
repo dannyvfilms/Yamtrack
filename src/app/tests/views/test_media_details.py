@@ -11,18 +11,25 @@ from django.utils import timezone
 from app import statistics_cache
 from app.models import (
     Anime,
+    BoardGame,
     Book,
+    Comic,
     CreditRoleType,
     Episode,
+    Game,
     Item,
     ItemTag,
     ItemPersonCredit,
+    Manga,
     MetadataProviderPreference,
     MediaTypes,
+    Music,
     Movie,
     Person,
+    Podcast,
     PodcastEpisode,
     PodcastShow,
+    PodcastShowTracker,
     Season,
     Sources,
     Status,
@@ -43,6 +50,28 @@ class MediaDetailsViewTests(TestCase):
         self.credentials = {"username": "test", "password": "12345"}
         self.user = get_user_model().objects.create_user(**self.credentials)
         self.client.login(**self.credentials)
+
+    def _use_iso_dates(self):
+        self.user.date_format = DateFormatChoices.ISO_8601
+        self.user.save(update_fields=["date_format"])
+
+    def _assert_activity_subtitle_without_stats_cards(
+        self,
+        response,
+        primary_text,
+        date_text,
+        duration_text=None,
+    ):
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, primary_text)
+        self.assertContains(response, date_text)
+        if duration_text is not None:
+            self.assertContains(response, duration_text)
+        self.assertNotContains(response, "FIRST PLAYED")
+        self.assertNotContains(response, "LAST PLAYED")
+        self.assertNotContains(response, "WATCHED HOURS")
+        self.assertNotContains(response, "TOTAL HOURS")
+        self.assertNotContains(response, "AVG TIME")
 
     @patch("app.providers.services.get_media_metadata")
     def test_media_details_view(self, mock_get_metadata):
@@ -953,6 +982,329 @@ class MediaDetailsViewTests(TestCase):
         )
         self.assertContains(response, "Watched 3 times")
         self.assertContains(response, "2019-11-19 - 2025-11-28")
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_reading_media_details_render_activity_subtitle_without_stats_cards(
+        self,
+        mock_get_metadata,
+    ):
+        self._use_iso_dates()
+        cases = [
+            (
+                MediaTypes.BOOK.value,
+                Sources.OPENLIBRARY.value,
+                "OL100M",
+                "Tracked Book",
+                Book,
+            ),
+            (
+                MediaTypes.MANGA.value,
+                Sources.MANGAUPDATES.value,
+                "72274276213",
+                "Tracked Manga",
+                Manga,
+            ),
+            (
+                MediaTypes.COMIC.value,
+                Sources.COMICVINE.value,
+                "4000-1",
+                "Tracked Comic",
+                Comic,
+            ),
+        ]
+
+        for media_type, source, media_id, title, model in cases:
+            with self.subTest(media_type=media_type):
+                mock_get_metadata.return_value = {
+                    "media_id": media_id,
+                    "title": title,
+                    "media_type": media_type,
+                    "source": source,
+                    "image": "http://example.com/cover.jpg",
+                    "max_progress": 320,
+                    "details": {},
+                    "related": {},
+                }
+                item = Item.objects.create(
+                    media_id=media_id,
+                    source=source,
+                    media_type=media_type,
+                    title=title,
+                    image="http://example.com/cover.jpg",
+                )
+                model.objects.create(
+                    item=item,
+                    user=self.user,
+                    status=Status.IN_PROGRESS.value,
+                    progress=120,
+                    start_date=datetime(2026, 3, 1, 12, 0, tzinfo=UTC),
+                    end_date=datetime(2026, 3, 12, 12, 0, tzinfo=UTC),
+                )
+
+                response = self.client.get(
+                    reverse(
+                        "media_details",
+                        kwargs={
+                            "source": source,
+                            "media_type": media_type,
+                            "media_id": media_id,
+                            "title": title.lower().replace(" ", "-"),
+                        },
+                    ),
+                )
+
+                self._assert_activity_subtitle_without_stats_cards(
+                    response,
+                    "Progress: 120/320",
+                    "2026-03-01 - 2026-03-12",
+                )
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_game_media_details_renders_activity_subtitle_without_stats_cards(
+        self,
+        mock_get_metadata,
+    ):
+        self._use_iso_dates()
+        mock_get_metadata.return_value = {
+            "media_id": "game-123",
+            "title": "Tracked Game",
+            "media_type": MediaTypes.GAME.value,
+            "source": Sources.IGDB.value,
+            "image": "http://example.com/game.jpg",
+            "max_progress": 1000,
+            "details": {},
+            "related": {},
+        }
+        item = Item.objects.create(
+            media_id="game-123",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Tracked Game",
+            image="http://example.com/game.jpg",
+            provider_game_lengths={"igdb": {"summary": {"normally_seconds": 8100}}},
+            provider_game_lengths_source="igdb",
+        )
+        Game.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            progress=135,
+            start_date=datetime(2026, 3, 1, 12, 0, tzinfo=UTC),
+            end_date=datetime(2026, 3, 12, 12, 0, tzinfo=UTC),
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.IGDB.value,
+                    "media_type": MediaTypes.GAME.value,
+                    "media_id": "game-123",
+                    "title": "tracked-game",
+                },
+            ),
+        )
+
+        self._assert_activity_subtitle_without_stats_cards(
+            response,
+            "Progress: 2h 15min",
+            "2026-03-01 - 2026-03-12",
+        )
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_boardgame_media_details_renders_activity_subtitle_without_stats_cards(
+        self,
+        mock_get_metadata,
+    ):
+        self._use_iso_dates()
+        mock_get_metadata.return_value = {
+            "media_id": "13",
+            "title": "Tracked Board Game",
+            "media_type": MediaTypes.BOARDGAME.value,
+            "source": Sources.BGG.value,
+            "image": "http://example.com/boardgame.jpg",
+            "max_progress": 20,
+            "details": {},
+            "related": {},
+        }
+        item = Item.objects.create(
+            media_id="13",
+            source=Sources.BGG.value,
+            media_type=MediaTypes.BOARDGAME.value,
+            title="Tracked Board Game",
+            image="http://example.com/boardgame.jpg",
+        )
+        BoardGame.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=7,
+            start_date=datetime(2026, 3, 1, 12, 0, tzinfo=UTC),
+            end_date=datetime(2026, 3, 12, 12, 0, tzinfo=UTC),
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.BGG.value,
+                    "media_type": MediaTypes.BOARDGAME.value,
+                    "media_id": "13",
+                    "title": "tracked-board-game",
+                },
+            ),
+        )
+
+        self._assert_activity_subtitle_without_stats_cards(
+            response,
+            "Progress: 7 plays",
+            "2026-03-01 - 2026-03-12",
+        )
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_music_media_details_renders_activity_subtitle_without_stats_cards(
+        self,
+        mock_get_metadata,
+    ):
+        self._use_iso_dates()
+        mock_get_metadata.return_value = {
+            "media_id": "track-1",
+            "title": "Tracked Song",
+            "media_type": MediaTypes.MUSIC.value,
+            "source": Sources.MUSICBRAINZ.value,
+            "image": "http://example.com/track.jpg",
+            "details": {},
+            "related": {},
+        }
+        item = Item.objects.create(
+            media_id="track-1",
+            source=Sources.MUSICBRAINZ.value,
+            media_type=MediaTypes.MUSIC.value,
+            title="Tracked Song",
+            image="http://example.com/track.jpg",
+            runtime_minutes=4,
+        )
+        Music.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=3,
+            start_date=datetime(2026, 3, 1, 12, 0, tzinfo=UTC),
+            end_date=datetime(2026, 3, 1, 12, 10, tzinfo=UTC),
+        )
+        Music.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=4,
+            start_date=datetime(2026, 3, 12, 12, 0, tzinfo=UTC),
+            end_date=datetime(2026, 3, 12, 12, 10, tzinfo=UTC),
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.MUSICBRAINZ.value,
+                    "media_type": MediaTypes.MUSIC.value,
+                    "media_id": "track-1",
+                    "title": "tracked-song",
+                },
+            ),
+        )
+
+        self._assert_activity_subtitle_without_stats_cards(
+            response,
+            "Progress: 7 plays",
+            "2026-03-01 - 2026-03-12",
+            "28min listened",
+        )
+
+    def test_podcast_show_media_details_renders_activity_subtitle(self):
+        self._use_iso_dates()
+        show = PodcastShow.objects.create(
+            podcast_uuid="itunes:1002937870",
+            title="Tracked Podcast",
+            author="Host",
+            image="http://example.com/podcast.jpg",
+            rss_feed_url="",
+        )
+        PodcastShowTracker.objects.create(
+            user=self.user,
+            show=show,
+            status=Status.IN_PROGRESS.value,
+        )
+        episode_one = PodcastEpisode.objects.create(
+            show=show,
+            episode_uuid="pod-ep-1",
+            title="Episode One",
+            duration=1800,
+        )
+        episode_two = PodcastEpisode.objects.create(
+            show=show,
+            episode_uuid="pod-ep-2",
+            title="Episode Two",
+            duration=2700,
+        )
+        PodcastEpisode.objects.create(
+            show=show,
+            episode_uuid="pod-ep-3",
+            title="Episode Three",
+            duration=1800,
+        )
+        item_one = Item.objects.create(
+            media_id="pod-ep-1",
+            source=Sources.POCKETCASTS.value,
+            media_type=MediaTypes.PODCAST.value,
+            title="Episode One",
+            image="http://example.com/podcast.jpg",
+        )
+        item_two = Item.objects.create(
+            media_id="pod-ep-2",
+            source=Sources.POCKETCASTS.value,
+            media_type=MediaTypes.PODCAST.value,
+            title="Episode Two",
+            image="http://example.com/podcast.jpg",
+        )
+        Podcast.objects.create(
+            item=item_one,
+            user=self.user,
+            show=show,
+            episode=episode_one,
+            status=Status.COMPLETED.value,
+            progress=1800,
+            start_date=datetime(2026, 3, 1, 12, 0, tzinfo=UTC),
+            end_date=datetime(2026, 3, 1, 12, 30, tzinfo=UTC),
+        )
+        Podcast.objects.create(
+            item=item_two,
+            user=self.user,
+            show=show,
+            episode=episode_two,
+            status=Status.COMPLETED.value,
+            progress=2700,
+            start_date=datetime(2026, 3, 12, 12, 0, tzinfo=UTC),
+            end_date=datetime(2026, 3, 12, 12, 45, tzinfo=UTC),
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.POCKETCASTS.value,
+                    "media_type": MediaTypes.PODCAST.value,
+                    "media_id": show.podcast_uuid,
+                    "title": "tracked-podcast",
+                },
+            ),
+        )
+
+        self._assert_activity_subtitle_without_stats_cards(
+            response,
+            "Progress: 2/3",
+            "2026-03-01 - 2026-03-12",
+            "1h 15min listened",
+        )
 
     @patch("app.providers.services.get_media_metadata")
     def test_media_details_renders_your_score_chip_with_edit_rating(self, mock_get_metadata):

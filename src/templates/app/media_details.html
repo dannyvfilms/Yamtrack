@@ -223,73 +223,30 @@
             </div>
           </div>
         {% endwith %}
-        {% if not public_view|default:False and current_instance %}
-          {% if media.media_type == MediaTypes.TV.value or media.media_type == MediaTypes.ANIME.value %}
-            <div class="mb-3 flex flex-wrap items-center justify-center gap-y-1 text-center text-sm font-medium text-gray-400 md:justify-start md:text-start">
-              <span>
-                Progress: {{ current_instance.formatted_progress }}{% if media.max_progress %}/{{ media.max_progress }}{% endif %}
-              </span>
-              {% with subtitle_start=current_instance.subtitle_start_date|default:current_instance.start_date subtitle_end=current_instance.subtitle_end_date|default:current_instance.end_date %}
-                {% if subtitle_start or subtitle_end %}
-                  <span class="mx-2 text-gray-600">•</span>
-                  <span>
-                    {% if subtitle_start and subtitle_end %}
-                      {{ subtitle_start|user_date_format:user }} - {{ subtitle_end|user_date_format:user }}
-                    {% elif subtitle_start %}
-                      {{ subtitle_start|user_date_format:user }}
-                    {% else %}
-                      {{ subtitle_end|user_date_format:user }}
-                    {% endif %}
-                  </span>
-                {% endif %}
-              {% endwith %}
-              {% if play_stats and play_stats.total_minutes %}
-                <span class="mx-2 text-gray-600">•</span>
-                <span>
-                  {% if play_stats.total_hours > 0 %}
-                    {{ play_stats.total_hours }}h {{ play_stats.total_minutes_remainder|default:0 }}min watched
-                  {% else %}
-                    {{ play_stats.total_minutes|default:0 }}min watched
-                  {% endif %}
-                </span>
-              {% endif %}
-            </div>
-          {% endif %}
-        {% endif %}
-        {% if media.media_type == MediaTypes.MOVIE.value and not public_view|default:False and current_instance and play_stats and play_stats.total_plays %}
+        {% if activity_subtitle %}
           <div class="mb-3 flex flex-wrap items-center justify-center gap-y-1 text-center text-sm font-medium text-gray-400 md:justify-start md:text-start">
-            <span>
-              {% if play_stats.total_plays == 1 %}
-                Watched once
-              {% else %}
-                Watched {{ play_stats.total_plays }} times
-              {% endif %}
-            </span>
-            {% if play_stats.first_played or play_stats.last_played %}
+            {% if activity_subtitle.primary_text %}
+              <span>{{ activity_subtitle.primary_text }}</span>
+            {% endif %}
+            {% if activity_subtitle.date_start or activity_subtitle.date_end %}
               <span class="mx-2 text-gray-600">•</span>
               <span>
-                {% if play_stats.first_played and play_stats.last_played %}
-                  {% if play_stats.same_play_day or play_stats.first_played == play_stats.last_played %}
-                    {{ play_stats.first_played|user_date_format:user }}
+                {% if activity_subtitle.date_start and activity_subtitle.date_end %}
+                  {% if activity_subtitle.collapse_same_day or activity_subtitle.date_start == activity_subtitle.date_end %}
+                    {{ activity_subtitle.date_start|user_date_format:user }}
                   {% else %}
-                    {{ play_stats.first_played|user_date_format:user }} - {{ play_stats.last_played|user_date_format:user }}
+                    {{ activity_subtitle.date_start|user_date_format:user }} - {{ activity_subtitle.date_end|user_date_format:user }}
                   {% endif %}
-                {% elif play_stats.first_played %}
-                  {{ play_stats.first_played|user_date_format:user }}
+                {% elif activity_subtitle.date_start %}
+                  {{ activity_subtitle.date_start|user_date_format:user }}
                 {% else %}
-                  {{ play_stats.last_played|user_date_format:user }}
+                  {{ activity_subtitle.date_end|user_date_format:user }}
                 {% endif %}
               </span>
             {% endif %}
-            {% if play_stats.total_minutes %}
+            {% if activity_subtitle.duration_text %}
               <span class="mx-2 text-gray-600">•</span>
-              <span>
-                {% if play_stats.total_hours > 0 %}
-                  {{ play_stats.total_hours }}h {{ play_stats.total_minutes_remainder|default:0 }}min watched
-                {% else %}
-                  {{ play_stats.total_minutes|default:0 }}min watched
-                {% endif %}
-              </span>
+              <span>{{ activity_subtitle.duration_text }}</span>
             {% endif %}
           </div>
         {% endif %}
@@ -309,7 +266,7 @@
 
       {# Score chips #}
       {% if media.score_count is not None or trakt_score or user_medias and current_instance and not public_view|default:False %}
-        <div class="{% if media.media_type == MediaTypes.TV.value or media.media_type == MediaTypes.SEASON.value %}mt-4 mb-5{% elif media.media_type == MediaTypes.ANIME.value and not public_view|default:False and current_instance %}mt-4 mb-5{% elif media.media_type == MediaTypes.MOVIE.value and not public_view|default:False and current_instance and play_stats and play_stats.total_plays %}mt-4 mb-5{% else %}mb-4{% endif %} flex flex-wrap gap-2">
+        <div class="{% if media.media_type == MediaTypes.SEASON.value or activity_subtitle %}mt-4 mb-5{% else %}mb-4{% endif %} flex flex-wrap gap-2">
           {% if media.score_count is not None %}
             <div class="inline-flex h-8 items-center gap-2 rounded-full border border-cyan-400/18 bg-cyan-500/[0.07] pl-0 pr-3 text-sm text-white shadow-sm">
               <span class="sr-only">{{ display_provider|source_readable }} score</span>
@@ -734,7 +691,7 @@
       </div>
 
       {# Play stats - 3x2/3x3 grid on mobile, flex-wrap on desktop #}
-      {% if play_stats and media_type != MediaTypes.TV.value and media_type != MediaTypes.MOVIE.value and media_type != MediaTypes.ANIME.value %}
+      {% if play_stats and not activity_subtitle %}
         <div class="stats-card-grid">
           {# First Played - mobile: order-3, desktop: order-4 #}
           <div class="bg-[#2a2f35] p-3 rounded-lg" data-mobile-order="3" data-desktop-order="4">

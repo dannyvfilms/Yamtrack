@@ -761,6 +761,123 @@ def _build_detail_link_sections(media_metadata, media_type, identity_provider, d
     return sections
 
 
+def _format_detail_activity_duration(total_minutes, suffix):
+    """Return a detail subtitle duration string for a total-minute value."""
+    if not total_minutes:
+        return None
+
+    total_minutes = int(total_minutes)
+    total_hours, remainder_minutes = divmod(total_minutes, 60)
+    if total_hours > 0:
+        return f"{total_hours}h {remainder_minutes}min {suffix}"
+    return f"{total_minutes}min {suffix}"
+
+
+def _build_detail_activity_subtitle(media_type, media_metadata, current_instance=None, play_stats=None):
+    """Return a shared subtitle payload for tracked detail pages."""
+    if not current_instance and not play_stats:
+        return None
+
+    media_metadata = media_metadata if isinstance(media_metadata, dict) else {}
+    play_stats = play_stats if isinstance(play_stats, dict) else {}
+    max_progress = media_metadata.get("max_progress")
+
+    def build_progress_text(value, include_max=False):
+        if value in (None, ""):
+            return None
+        progress_text = f"Progress: {value}"
+        if include_max and max_progress:
+            progress_text += f"/{max_progress}"
+        return progress_text
+
+    date_start = (
+        play_stats.get("first_played")
+        or getattr(current_instance, "subtitle_start_date", None)
+        or getattr(current_instance, "aggregated_start_date", None)
+        or getattr(current_instance, "start_date", None)
+    )
+    date_end = (
+        play_stats.get("last_played")
+        or getattr(current_instance, "subtitle_end_date", None)
+        or getattr(current_instance, "aggregated_end_date", None)
+        or getattr(current_instance, "end_date", None)
+    )
+    duration_text = None
+    collapse_same_day = bool(play_stats.get("same_play_day"))
+
+    if media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
+        primary_text = build_progress_text(
+            getattr(current_instance, "formatted_progress", None),
+            include_max=True,
+        )
+        duration_text = _format_detail_activity_duration(
+            play_stats.get("total_minutes"),
+            "watched",
+        )
+    elif media_type == MediaTypes.MOVIE.value:
+        total_plays = play_stats.get("total_plays")
+        if not total_plays:
+            return None
+        primary_text = "Watched once" if total_plays == 1 else f"Watched {total_plays} times"
+        duration_text = _format_detail_activity_duration(
+            play_stats.get("total_minutes"),
+            "watched",
+        )
+    elif media_type in (
+        MediaTypes.BOOK.value,
+        MediaTypes.COMIC.value,
+        MediaTypes.MANGA.value,
+    ):
+        primary_text = build_progress_text(
+            getattr(current_instance, "formatted_progress", None),
+            include_max=True,
+        )
+    elif media_type == MediaTypes.GAME.value:
+        progress_value = (
+            getattr(current_instance, "formatted_aggregated_progress", None)
+            if getattr(current_instance, "aggregated_progress", None) is not None
+            else getattr(current_instance, "formatted_progress", None)
+        )
+        primary_text = build_progress_text(progress_value)
+    elif media_type in (MediaTypes.BOARDGAME.value, MediaTypes.MUSIC.value):
+        progress_value = (
+            getattr(current_instance, "formatted_aggregated_progress", None)
+            if getattr(current_instance, "aggregated_progress", None) is not None
+            else getattr(current_instance, "formatted_progress", None)
+        )
+        primary_text = build_progress_text(progress_value)
+        if media_type == MediaTypes.MUSIC.value:
+            duration_text = _format_detail_activity_duration(
+                play_stats.get("total_minutes"),
+                "listened",
+            )
+    elif media_type == MediaTypes.PODCAST.value:
+        total_plays = play_stats.get("total_plays")
+        if max_progress and total_plays:
+            primary_text = f"Progress: {total_plays}/{max_progress}"
+        else:
+            primary_text = build_progress_text(
+                getattr(current_instance, "formatted_progress", None),
+            )
+        duration_text = _format_detail_activity_duration(
+            play_stats.get("total_minutes"),
+            "listened",
+        )
+    else:
+        return None
+
+    if not primary_text and not date_start and not date_end and not duration_text:
+        return None
+
+    return {
+        "primary_text": primary_text,
+        "date_start": date_start,
+        "date_end": date_end,
+        "duration_text": duration_text,
+        "collapse_same_day": collapse_same_day,
+    }
+
+
 def _resolve_detail_tag_genres(media_metadata, item, fallback_genres=None):
     """Return detail-page genres sourced from metadata, request state, or stored item data."""
     genres = []
@@ -4479,6 +4596,42 @@ def media_details(
             total_episodes_count = episodes.count()
             has_more = total_episodes_count > initial_limit
             next_page = 2 if has_more else None
+            media_metadata["max_progress"] = total_episodes_count
+
+            podcast_play_stats = None
+            activity_subtitle = None
+            if not public_view and user_podcasts:
+                range_start_candidates = []
+                range_end_candidates = []
+                completed_entries = 0
+                total_progress_seconds = 0
+
+                for entry in user_podcasts:
+                    range_start = entry.start_date or entry.end_date or entry.created_at
+                    range_end = entry.end_date or entry.start_date or entry.created_at
+                    if range_start:
+                        range_start_candidates.append(range_start)
+                    if range_end:
+                        range_end_candidates.append(range_end)
+                    if entry.end_date or entry.status == Status.COMPLETED.value:
+                        completed_entries += 1
+                    total_progress_seconds += int(entry.progress or 0)
+
+                total_listened_minutes = total_progress_seconds // 60
+                podcast_play_stats = {
+                    "first_played": min(range_start_candidates) if range_start_candidates else None,
+                    "last_played": max(range_end_candidates) if range_end_candidates else None,
+                    "total_minutes": total_listened_minutes,
+                    "total_hours": total_listened_minutes // 60,
+                    "total_minutes_remainder": total_listened_minutes % 60,
+                    "total_plays": completed_entries or total_listened,
+                }
+                activity_subtitle = _build_detail_activity_subtitle(
+                    MediaTypes.PODCAST.value,
+                    media_metadata,
+                    tracker,
+                    podcast_play_stats,
+                )
 
             context = {
                 "user": request.user,
@@ -4494,6 +4647,8 @@ def media_details(
                 "total_listened": total_listened,
                 "total_minutes": total_minutes,
                 "public_view": public_view,
+                "play_stats": podcast_play_stats,
+                "activity_subtitle": activity_subtitle,
                 "IMG_NONE": settings.IMG_NONE,
                 "TRACK_TIME": True,
                 "has_more_episodes": has_more,  # Keep for backward compatibility
@@ -4948,17 +5103,23 @@ def media_details(
                 )
 
     play_stats = None
+    activity_subtitle = None
     if (
         not public_view
         and current_instance
         and user_medias
         and media_type
         in [
+            MediaTypes.BOOK.value,
+            MediaTypes.COMIC.value,
             MediaTypes.GAME.value,
             MediaTypes.BOARDGAME.value,
-            MediaTypes.TV.value,
             MediaTypes.ANIME.value,
+            MediaTypes.MANGA.value,
             MediaTypes.MOVIE.value,
+            MediaTypes.MUSIC.value,
+            MediaTypes.PODCAST.value,
+            MediaTypes.TV.value,
         ]
     ):
         if media_type == MediaTypes.TV.value or (
@@ -5034,7 +5195,7 @@ def media_details(
                     },
                 )
         else:
-            # Games, boardgames, and movies calculation
+            # Generic non-TV calculation based on aggregated item activity.
             BasicMedia.objects._aggregate_item_data(current_instance, user_medias)
             aggregated_progress = getattr(current_instance, "aggregated_progress", None)
             if aggregated_progress is None:
@@ -5109,8 +5270,45 @@ def media_details(
                             "total_minutes_remainder": total_minutes % 60,
                         },
                     )
+            elif media_type == MediaTypes.MUSIC.value:
+                total_plays = int(aggregated_progress or 0)
+                play_stats["total_plays"] = total_plays
+
+                runtime_minutes = current_instance._get_known_item_runtime_minutes()
+                if runtime_minutes and total_plays > 0:
+                    total_minutes = runtime_minutes * total_plays
+                    play_stats.update(
+                        {
+                            "total_minutes": total_minutes,
+                            "total_hours": total_minutes // 60,
+                            "total_minutes_remainder": total_minutes % 60,
+                        },
+                    )
+            elif media_type == MediaTypes.PODCAST.value:
+                total_progress_seconds = int(aggregated_progress or 0)
+                total_minutes = total_progress_seconds // 60
+                completed_entries = sum(
+                    1
+                    for entry in user_medias
+                    if entry.end_date or entry.status == Status.COMPLETED.value
+                )
+                play_stats.update(
+                    {
+                        "total_minutes": total_minutes,
+                        "total_hours": total_minutes // 60,
+                        "total_minutes_remainder": total_minutes % 60,
+                        "total_plays": completed_entries or len(user_medias),
+                    },
+                )
             else:
                 play_stats["total_plays"] = int(aggregated_progress or 0)
+
+        activity_subtitle = _build_detail_activity_subtitle(
+            media_type,
+            media_metadata,
+            current_instance,
+            play_stats,
+        )
 
     # Enrich related items with user tracking data
     # For public views, use list owner's data if available
@@ -5280,6 +5478,7 @@ def media_details(
         "music_album": music_album,
         "public_view": public_view,
         "play_stats": play_stats,
+        "activity_subtitle": activity_subtitle,
         "trakt_score": trakt_score,
         "game_lengths": game_lengths,
         "game_lengths_pending": game_lengths_refresh_pending

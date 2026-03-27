@@ -2191,8 +2191,12 @@ class Media(models.Model):
         if self.progress < 0:
             self.progress = 0
         elif self.status == Status.IN_PROGRESS.value:
-            # For podcasts/music use local runtime data; other types use provider metadata.
-            if self.item.media_type in (MediaTypes.PODCAST.value, MediaTypes.MUSIC.value):
+            # Music and board games are play-count based; podcasts use local runtime data.
+            if self.item.media_type in (
+                MediaTypes.PODCAST.value,
+                MediaTypes.MUSIC.value,
+                MediaTypes.BOARDGAME.value,
+            ):
                 max_progress = self._get_local_max_progress()
             else:
                 try:
@@ -2225,8 +2229,8 @@ class Media(models.Model):
     def process_status(self):
         """Update fields depending on the status of the media."""
         if self.status == Status.COMPLETED.value:
-            # Music progress is play-count based; don't clamp/overwrite on status transitions.
-            if self.item.media_type == MediaTypes.MUSIC.value:
+            # Music and board game progress are play-count based; don't overwrite on status changes.
+            if self.item.media_type in (MediaTypes.MUSIC.value, MediaTypes.BOARDGAME.value):
                 max_progress = None
             # For podcasts, use runtime_minutes from Item instead of external metadata.
             elif self.item.media_type == MediaTypes.PODCAST.value:
