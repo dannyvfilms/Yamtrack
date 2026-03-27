@@ -15,6 +15,7 @@ from app.models import (
     CreditRoleType,
     Episode,
     Item,
+    ItemTag,
     ItemPersonCredit,
     MetadataProviderPreference,
     MediaTypes,
@@ -25,6 +26,7 @@ from app.models import (
     Season,
     Sources,
     Status,
+    Tag,
     TV,
 )
 from app.services import game_lengths as game_length_services
@@ -123,6 +125,228 @@ class MediaDetailsViewTests(TestCase):
         self.assertIn(":class=\"isExpanded ? '' : 'line-clamp-3'\"", content)
         self.assertLess(content.index("tmdb-logo.png"), content.index("Add to tracker"))
         self.assertLess(content.index("Add to tracker"), content.index("Test overview"))
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_renders_links_action_with_source_and_external_links(
+        self,
+        mock_get_metadata,
+    ):
+        mock_get_metadata.return_value = {
+            "media_id": "238",
+            "title": "Test Movie",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "image": "http://example.com/image.jpg",
+            "source_url": "https://www.themoviedb.org/movie/238",
+            "external_links": {
+                "IMDb": "https://www.imdb.com/title/tt0111161/",
+            },
+            "synopsis": "Test overview",
+            "details": {},
+            "related": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "238",
+                    "title": "test-movie",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertIn('title="View source and external links"', content)
+        self.assertIn("Source", content)
+        self.assertIn("The Movie Database", content)
+        self.assertIn("External links", content)
+        self.assertIn("Letterboxd", content)
+        self.assertIn("IMDb", content)
+        self.assertIn("imdb-logo.png", content)
+        self.assertIn("https://www.themoviedb.org/movie/238", content)
+        self.assertIn("https://www.imdb.com/title/tt0111161/", content)
+        self.assertNotIn("Tracking Source", content)
+        self.assertNotIn("Metadata Source", content)
+        self.assertNotIn("EXTERNAL LINKS", content)
+        self.assertEqual(
+            response.context["detail_link_sections"],
+            [
+                {
+                    "title": "Source",
+                    "entries": [
+                        {
+                            "label": "The Movie Database",
+                            "url": "https://www.themoviedb.org/movie/238",
+                            "chip_classes": "border-cyan-400/18 bg-cyan-500/[0.07]",
+                            "badge_classes": "border-cyan-400/28 bg-cyan-500/14",
+                            "accent_classes": "text-cyan-100",
+                            "logo_src": "/static/img/tmdb-logo.png",
+                            "fallback_text": "TMDB",
+                        }
+                    ],
+                },
+                {
+                    "title": "External links",
+                    "entries": [
+                        {
+                            "label": "Letterboxd",
+                            "url": "https://letterboxd.com/tmdb/238",
+                            "chip_classes": "border-emerald-400/18 bg-emerald-500/[0.07]",
+                            "badge_classes": "border-emerald-400/28 bg-emerald-500/14",
+                            "accent_classes": "text-emerald-100",
+                            "logo_src": None,
+                            "fallback_text": "LB",
+                        },
+                        {
+                            "label": "IMDb",
+                            "url": "https://www.imdb.com/title/tt0111161/",
+                            "chip_classes": "border-amber-400/18 bg-amber-500/[0.07]",
+                            "badge_classes": "border-amber-400/28 bg-amber-500/14",
+                            "accent_classes": "text-amber-100",
+                            "logo_src": "/static/img/imdb-logo.png",
+                            "fallback_text": "IMDb",
+                        },
+                    ],
+                },
+            ],
+        )
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_uses_tvdb_and_wikidata_logos_in_link_sections(
+        self,
+        mock_get_metadata,
+    ):
+        mock_get_metadata.return_value = {
+            "media_id": "81189",
+            "title": "Test Show",
+            "media_type": MediaTypes.TV.value,
+            "source": Sources.TVDB.value,
+            "image": "http://example.com/image.jpg",
+            "source_url": "https://www.thetvdb.com/dereferrer/series/81189",
+            "external_links": {
+                "Wikidata": "https://www.wikidata.org/wiki/Q83495",
+            },
+            "synopsis": "Test overview",
+            "details": {},
+            "related": {},
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TVDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "media_id": "81189",
+                    "title": "test-show",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertIn("tvdb-logo.png", content)
+        self.assertIn("wikidata-logo.png", content)
+
+        source_entry = response.context["detail_link_sections"][0]["entries"][0]
+        external_entry = response.context["detail_link_sections"][1]["entries"][0]
+        self.assertEqual(source_entry["label"], "TheTVDB")
+        self.assertEqual(source_entry["chip_classes"], "border-teal-400/18 bg-teal-500/[0.07]")
+        self.assertEqual(source_entry["logo_src"], "/static/img/tvdb-logo.png")
+        self.assertEqual(external_entry["label"], "Wikidata")
+        self.assertEqual(external_entry["chip_classes"], "border-sky-400/18 bg-sky-500/[0.07]")
+        self.assertEqual(external_entry["logo_src"], "/static/img/wikidata-logo.png")
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_renders_tag_preview_sections_next_to_links(
+        self,
+        mock_get_metadata,
+    ):
+        item = Item.objects.create(
+            media_id="238",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Test Movie",
+            image="http://example.com/image.jpg",
+            genres=["Drama", "Mystery"],
+        )
+        tag = Tag.objects.create(user=self.user, name="Prestige TV")
+        ItemTag.objects.create(tag=tag, item=item)
+
+        mock_get_metadata.return_value = {
+            "media_id": "238",
+            "title": "Test Movie",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "image": "http://example.com/image.jpg",
+            "source_url": "https://www.themoviedb.org/movie/238",
+            "genres": ["Drama", "Mystery"],
+            "synopsis": "Test overview",
+            "details": {},
+            "related": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "238",
+                    "title": "test-movie",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertLess(
+            content.index('title="View source and external links"'),
+            content.index('title="Manage tags"'),
+        )
+        self.assertLess(
+            content.index('title="Manage tags"'),
+            content.index('title="Add to custom lists"'),
+        )
+        self.assertIn("Genres", content)
+        self.assertIn("Tags", content)
+        self.assertIn("Drama", content)
+        self.assertIn("Mystery", content)
+        self.assertIn("Prestige TV", content)
+        self.assertEqual(
+            response.context["detail_tag_sections"],
+            [
+                {
+                    "title": "Genres",
+                    "entries": [
+                        {
+                            "label": "Drama",
+                            "chip_classes": "border-violet-400/18 bg-violet-500/[0.07] text-violet-100",
+                        },
+                        {
+                            "label": "Mystery",
+                            "chip_classes": "border-violet-400/18 bg-violet-500/[0.07] text-violet-100",
+                        },
+                    ],
+                },
+                {
+                    "title": "Tags",
+                    "entries": [
+                        {
+                            "label": "Prestige TV",
+                            "chip_classes": "border-slate-400/18 bg-slate-500/[0.07] text-slate-100",
+                        }
+                    ],
+                },
+            ],
+        )
 
     @patch("app.providers.services.get_media_metadata")
     def test_media_details_hides_streaming_section_when_watch_provider_region_disabled(

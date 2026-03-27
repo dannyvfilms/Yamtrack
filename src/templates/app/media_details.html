@@ -228,8 +228,8 @@
         {% endif %}
       {% endif %}
 
-      {# Score chips and genres #}
-      {% if media.score_count is not None or trakt_score or user_medias and current_instance and not public_view|default:False or media.genres %}
+      {# Score chips #}
+      {% if media.score_count is not None or trakt_score or user_medias and current_instance and not public_view|default:False %}
         <div class="{% if media.media_type == MediaTypes.TV.value or media.media_type == MediaTypes.SEASON.value %}mt-4 mb-5{% else %}mb-4{% endif %} flex flex-wrap gap-2">
           {% if media.score_count is not None %}
             <div class="inline-flex h-8 items-center gap-2 rounded-full border border-cyan-400/18 bg-cyan-500/[0.07] pl-0 pr-3 text-sm text-white shadow-sm">
@@ -322,9 +322,6 @@
             </div>
           {% endif %}
 
-          {% for genre in media.genres %}
-            <span class="px-3 py-1 bg-violet-600 text-white rounded-full text-sm">{{ genre }}</span>
-          {% endfor %}
         </div>
       {% endif %}
 
@@ -393,6 +390,99 @@
           </div>
 
           <div class="flex flex-wrap items-center gap-2">
+            {% if detail_link_sections %}
+              <div x-data="{ linksOpen: false, linksPinned: false }"
+                   class="relative"
+                   @mouseenter="linksOpen = true"
+                   @mouseleave="if (!linksPinned) linksOpen = false"
+                   @keydown.escape.window="linksOpen = false; linksPinned = false"
+                   @click.outside="linksOpen = false; linksPinned = false">
+                <button class="size-11 inline-flex items-center justify-center shrink-0 rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer"
+                        title="View source and external links"
+                        aria-haspopup="true"
+                        :aria-expanded="linksOpen.toString()"
+                        @click="linksPinned = !linksPinned; linksOpen = linksPinned">{% include "app/icons/link.svg" with classes="w-4 h-4" %}</button>
+
+                <div x-show="linksOpen"
+                     x-cloak
+                     x-transition:enter="transition ease-out duration-150"
+                     x-transition:enter-start="opacity-0 -translate-y-1"
+                     x-transition:enter-end="opacity-100 translate-y-0"
+                     x-transition:leave="transition ease-in duration-100"
+                     x-transition:leave-start="opacity-100 translate-y-0"
+                     x-transition:leave-end="opacity-0 -translate-y-1"
+                     class="absolute left-0 top-full z-20 mt-3 w-80 max-w-[calc(100vw-2rem)] rounded-2xl border border-white/10 bg-[#20252b]/95 p-3 shadow-2xl backdrop-blur-sm">
+                  {% for detail_link_section in detail_link_sections %}
+                    <div class="{% if not forloop.first %}mt-3 border-t border-white/10 pt-3{% endif %}">
+                      <div class="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-gray-400">{{ detail_link_section.title }}</div>
+                      <div class="flex flex-wrap gap-2">
+                        {% for detail_link in detail_link_section.entries %}
+                          <a href="{{ detail_link.url }}"
+                             target="_blank"
+                             rel="noreferrer"
+                             class="inline-flex h-8 items-center gap-2 rounded-full border {{ detail_link.chip_classes }} pl-0 pr-3 text-sm text-white shadow-sm transition-colors duration-200 hover:brightness-110">
+                            <span class="-my-px -ml-px flex h-8 w-8 shrink-0 items-center justify-center rounded-full border {{ detail_link.badge_classes }}">
+                              {% if detail_link.logo_src %}
+                                <img src="{{ detail_link.logo_src }}"
+                                     alt=""
+                                     aria-hidden="true"
+                                     class="h-4 w-4 object-contain">
+                              {% else %}
+                                <span class="text-[9px] font-black tracking-[0.12em] {{ detail_link.accent_classes }}">{{ detail_link.fallback_text|slice:":4" }}</span>
+                              {% endif %}
+                            </span>
+                            <span class="text-sm font-medium text-white">{{ detail_link.label }}</span>
+                          </a>
+                        {% endfor %}
+                      </div>
+                    </div>
+                    {% endfor %}
+                </div>
+              </div>
+            {% endif %}
+
+            {% component_id 'tag-preview' media as detail_tag_preview_id %}
+            {% component_id 'tag-preview-genres' media as detail_tag_preview_genres_id %}
+            <div x-data="{ tagsOpen: false, tagsPreviewOpen: false, hasTagPreview() { return this.$refs.tagsPreviewHost?.firstElementChild?.dataset.hasPreview === 'true' } }"
+                 class="relative"
+                 @mouseenter="if (hasTagPreview()) tagsPreviewOpen = true"
+                 @mouseleave="tagsPreviewOpen = false">
+              <input id="{{ detail_tag_preview_genres_id }}"
+                     type="hidden"
+                     name="preview_genres_json"
+                     value="{{ detail_tag_preview_genres_json|escape }}">
+              <button class="size-11 inline-flex items-center justify-center shrink-0 rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer"
+                      title="Manage tags"
+                      hx-get="{% media_view_url 'tags_modal' media %}"
+                      hx-include="#{{ detail_tag_preview_genres_id }}"
+                      hx-target="#{% component_id 'tags' media %}"
+                      hx-trigger="click once"
+                      @click="tagsOpen = true">{% include "app/icons/tag.svg" with classes="w-4 h-4" %}</button>
+
+              <div x-show="tagsPreviewOpen && hasTagPreview()"
+                   x-cloak
+                   x-transition:enter="transition ease-out duration-150"
+                   x-transition:enter-start="opacity-0 -translate-y-1"
+                   x-transition:enter-end="opacity-100 translate-y-0"
+                   x-transition:leave="transition ease-in duration-100"
+                   x-transition:leave-start="opacity-100 translate-y-0"
+                   x-transition:leave-end="opacity-0 -translate-y-1"
+                   class="absolute left-0 top-full z-20 mt-3 w-80 max-w-[calc(100vw-2rem)] rounded-2xl border border-white/10 bg-[#20252b]/95 p-3 shadow-2xl backdrop-blur-sm">
+                <div x-ref="tagsPreviewHost">
+                  {% include "app/components/detail_tag_preview.html" with preview_id=detail_tag_preview_id detail_tag_sections=detail_tag_sections only %}
+                </div>
+              </div>
+
+              <div x-show="tagsOpen"
+                   @keydown.escape.window="tagsOpen = false"
+                   class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
+                     @click.outside="tagsOpen = false">
+                  <div id="{% component_id 'tags' media %}"></div>
+                </div>
+              </div>
+            </div>
+
             <div x-data="{ listsOpen: false }">
               <button class="size-11 inline-flex items-center justify-center shrink-0 rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer"
                       title="Add to custom lists"
@@ -408,24 +498,6 @@
                 <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
                      @click.outside="listsOpen = false">
                   <div id="{% component_id 'lists' media %}"></div>
-                </div>
-              </div>
-            </div>
-
-            <div x-data="{ tagsOpen: false }">
-              <button class="size-11 inline-flex items-center justify-center shrink-0 rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer"
-                      title="Manage tags"
-                      hx-get="{% media_view_url 'tags_modal' media %}"
-                      hx-target="#{% component_id 'tags' media %}"
-                      hx-trigger="click once"
-                      @click="tagsOpen = true">{% include "app/icons/tag.svg" with classes="w-4 h-4" %}</button>
-
-              <div x-show="tagsOpen"
-                   @keydown.escape.window="tagsOpen = false"
-                   class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
-                     @click.outside="tagsOpen = false">
-                  <div id="{% component_id 'tags' media %}"></div>
                 </div>
               </div>
             </div>
@@ -977,51 +1049,6 @@
                      class="text-gray-200 hover:text-indigo-500 transition-colors duration-200">{{ author.name }}</a>
                 {% endfor %}
               </div>
-            </div>
-          {% endif %}
-          <div>
-            <h3 class="text-sm font-semibold text-gray-400">
-              {% if display_provider != identity_provider %}
-                Tracking Source
-              {% else %}
-                Source
-              {% endif %}
-            </h3>
-            <div class="flex flex-col gap-1">
-              {% if media.tracking_source_url %}
-                <a href="{{ media.tracking_source_url }}"
-                   class="text-gray-200 hover:text-indigo-500 transition-colors duration-200"
-                   target="_blank">{{ identity_provider|source_readable }}</a>
-              {% elif media.source_url %}
-                <a href="{{ media.source_url }}"
-                   class="text-gray-200 hover:text-indigo-500 transition-colors duration-200"
-                   target="_blank">{{ identity_provider|source_readable }}</a>
-              {% else %}
-                <span class="text-gray-200">{{ identity_provider|source_readable }}</span>
-              {% endif %}
-              {% if media_type == MediaTypes.MOVIE.value and identity_provider == Sources.TMDB.value and media.media_id %}
-                <a href="https://letterboxd.com/tmdb/{{ media.media_id }}"
-                   class="text-gray-200 hover:text-indigo-500 transition-colors duration-200"
-                   target="_blank">Letterboxd</a>
-              {% endif %}
-            </div>
-          </div>
-          {% if display_provider != identity_provider and media.display_source_url %}
-            <div class="mt-4">
-              <h3 class="text-sm font-semibold text-gray-400">Metadata Source</h3>
-              <a href="{{ media.display_source_url }}"
-                 class="text-gray-200 hover:text-indigo-500 transition-colors duration-200 block"
-                 target="_blank">{{ display_provider|source_readable }}</a>
-            </div>
-          {% endif %}
-          {% if media.external_links %}
-            <div class="mt-4">
-              <h3 class="text-sm font-semibold text-gray-400">EXTERNAL LINKS</h3>
-              {% for name, url in media.external_links.items %}
-                <a href="{{ url }}"
-                   class="text-gray-200 hover:text-indigo-500 transition-colors duration-200 block"
-                   target="_blank">{{ name }}</a>
-              {% endfor %}
             </div>
           {% endif %}
         {% else %}

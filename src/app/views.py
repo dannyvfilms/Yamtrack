@@ -24,6 +24,7 @@ from django.db.models.functions import ExtractDay, ExtractMonth
 from django.db.utils import OperationalError
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.templatetags.static import static
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils import formats, timezone
@@ -500,6 +501,343 @@ def _apply_cached_hltb_link(media_metadata, detail_item):
         search_url = game_length_services.get_hltb_search_url(media_metadata.get("title"))
         if search_url:
             external_links["HowLongToBeat"] = search_url
+
+
+_DETAIL_LINK_BRANDS = {
+    Sources.TMDB.value: {
+        "logo_src": static("img/tmdb-logo.png"),
+        "chip_classes": "border-cyan-400/18 bg-cyan-500/[0.07]",
+        "badge_classes": "border-cyan-400/28 bg-cyan-500/14",
+        "accent_classes": "text-cyan-100",
+        "fallback_text": "TMDB",
+    },
+    Sources.TVDB.value: {
+        "logo_src": static("img/tvdb-logo.png"),
+        "chip_classes": "border-teal-400/18 bg-teal-500/[0.07]",
+        "badge_classes": "border-teal-400/28 bg-teal-500/14",
+        "accent_classes": "text-teal-100",
+        "fallback_text": "TVDB",
+    },
+    Sources.MAL.value: {
+        "logo_src": static("img/mal-logo.ico"),
+        "chip_classes": "border-indigo-400/18 bg-indigo-500/[0.07]",
+        "badge_classes": "border-indigo-400/28 bg-indigo-500/14",
+        "accent_classes": "text-indigo-100",
+        "fallback_text": "MAL",
+    },
+    Sources.MANGAUPDATES.value: {
+        "chip_classes": "border-fuchsia-400/18 bg-fuchsia-500/[0.07]",
+        "badge_classes": "border-fuchsia-400/28 bg-fuchsia-500/14",
+        "accent_classes": "text-fuchsia-100",
+        "fallback_text": "MU",
+    },
+    Sources.IGDB.value: {
+        "chip_classes": "border-orange-400/18 bg-orange-500/[0.07]",
+        "badge_classes": "border-orange-400/28 bg-orange-500/14",
+        "accent_classes": "text-orange-100",
+        "fallback_text": "IGDB",
+    },
+    Sources.OPENLIBRARY.value: {
+        "chip_classes": "border-sky-400/18 bg-sky-500/[0.07]",
+        "badge_classes": "border-sky-400/28 bg-sky-500/14",
+        "accent_classes": "text-sky-100",
+        "fallback_text": "OL",
+    },
+    Sources.HARDCOVER.value: {
+        "logo_src": static("img/hardcover-logo.png"),
+        "chip_classes": "border-amber-400/18 bg-amber-500/[0.07]",
+        "badge_classes": "border-amber-400/28 bg-amber-500/14",
+        "accent_classes": "text-amber-100",
+        "fallback_text": "HC",
+    },
+    Sources.COMICVINE.value: {
+        "chip_classes": "border-lime-400/18 bg-lime-500/[0.07]",
+        "badge_classes": "border-lime-400/28 bg-lime-500/14",
+        "accent_classes": "text-lime-100",
+        "fallback_text": "CV",
+    },
+    Sources.BGG.value: {
+        "chip_classes": "border-stone-400/18 bg-stone-500/[0.07]",
+        "badge_classes": "border-stone-400/28 bg-stone-500/14",
+        "accent_classes": "text-stone-100",
+        "fallback_text": "BGG",
+    },
+    Sources.MUSICBRAINZ.value: {
+        "chip_classes": "border-rose-400/18 bg-rose-500/[0.07]",
+        "badge_classes": "border-rose-400/28 bg-rose-500/14",
+        "accent_classes": "text-rose-100",
+        "fallback_text": "MB",
+    },
+    Sources.POCKETCASTS.value: {
+        "chip_classes": "border-orange-400/18 bg-orange-500/[0.07]",
+        "badge_classes": "border-orange-400/28 bg-orange-500/14",
+        "accent_classes": "text-orange-100",
+        "fallback_text": "PC",
+    },
+    Sources.AUDIOBOOKSHELF.value: {
+        "chip_classes": "border-teal-400/18 bg-teal-500/[0.07]",
+        "badge_classes": "border-teal-400/28 bg-teal-500/14",
+        "accent_classes": "text-teal-100",
+        "fallback_text": "ABS",
+    },
+    Sources.MANUAL.value: {
+        "chip_classes": "border-slate-400/18 bg-slate-500/[0.07]",
+        "badge_classes": "border-slate-400/28 bg-slate-500/14",
+        "accent_classes": "text-slate-100",
+        "fallback_text": "MAN",
+    },
+    "anilist": {
+        "logo_src": static("img/anilist-logo.svg"),
+        "chip_classes": "border-sky-400/18 bg-sky-500/[0.07]",
+        "badge_classes": "border-sky-400/28 bg-sky-500/14",
+        "accent_classes": "text-sky-100",
+        "fallback_text": "AL",
+    },
+    "kitsu": {
+        "logo_src": static("img/kitsu-logo.png"),
+        "chip_classes": "border-orange-400/18 bg-orange-500/[0.07]",
+        "badge_classes": "border-orange-400/28 bg-orange-500/14",
+        "accent_classes": "text-orange-100",
+        "fallback_text": "KT",
+    },
+    "simkl": {
+        "logo_src": static("img/simkl-logo.png"),
+        "chip_classes": "border-violet-400/18 bg-violet-500/[0.07]",
+        "badge_classes": "border-violet-400/28 bg-violet-500/14",
+        "accent_classes": "text-violet-100",
+        "fallback_text": "SK",
+    },
+    "steam": {
+        "logo_src": static("img/steam-logo.ico"),
+        "chip_classes": "border-slate-400/18 bg-slate-500/[0.07]",
+        "badge_classes": "border-slate-400/28 bg-slate-500/14",
+        "accent_classes": "text-slate-100",
+        "fallback_text": "STM",
+    },
+    "plex": {
+        "logo_src": static("img/plex-logo.svg"),
+        "chip_classes": "border-amber-400/18 bg-amber-500/[0.07]",
+        "badge_classes": "border-amber-400/28 bg-amber-500/14",
+        "accent_classes": "text-amber-100",
+        "fallback_text": "PLX",
+    },
+    "lastfm": {
+        "logo_src": static("img/lastfm-logo.png"),
+        "chip_classes": "border-rose-400/18 bg-rose-500/[0.07]",
+        "badge_classes": "border-rose-400/28 bg-rose-500/14",
+        "accent_classes": "text-rose-100",
+        "fallback_text": "LFM",
+    },
+    "imdb": {
+        "logo_src": static("img/imdb-logo.png"),
+        "chip_classes": "border-amber-400/18 bg-amber-500/[0.07]",
+        "badge_classes": "border-amber-400/28 bg-amber-500/14",
+        "accent_classes": "text-amber-100",
+        "fallback_text": "IMDb",
+    },
+    "trakt": {
+        "logo_src": static("img/trakt-logo.svg"),
+        "chip_classes": "border-rose-400/18 bg-rose-500/[0.07]",
+        "badge_classes": "border-rose-400/28 bg-rose-500/14",
+        "accent_classes": "text-rose-100",
+        "fallback_text": "Trakt",
+    },
+    "wikidata": {
+        "logo_src": static("img/wikidata-logo.png"),
+        "chip_classes": "border-sky-400/18 bg-sky-500/[0.07]",
+        "badge_classes": "border-sky-400/28 bg-sky-500/14",
+        "accent_classes": "text-sky-100",
+        "fallback_text": "WD",
+    },
+    "letterboxd": {
+        "chip_classes": "border-emerald-400/18 bg-emerald-500/[0.07]",
+        "badge_classes": "border-emerald-400/28 bg-emerald-500/14",
+        "accent_classes": "text-emerald-100",
+        "fallback_text": "LB",
+    },
+    "howlongtobeat": {
+        "chip_classes": "border-amber-400/18 bg-amber-500/[0.07]",
+        "badge_classes": "border-amber-400/28 bg-amber-500/14",
+        "accent_classes": "text-amber-100",
+        "fallback_text": "HLTB",
+    },
+}
+
+_DEFAULT_DETAIL_LINK_BRAND = {
+    "chip_classes": "border-slate-400/18 bg-slate-500/[0.07]",
+    "badge_classes": "border-slate-400/28 bg-slate-500/14",
+    "accent_classes": "text-slate-100",
+    "fallback_text": "LINK",
+}
+
+
+def _normalize_detail_link_brand_key(value):
+    """Return a normalized lookup key for link-provider branding."""
+    return slugify(str(value or "")).replace("-", "")
+
+
+def _build_detail_link_entry(label, url, brand_key):
+    """Return a template-ready chip payload for a media detail link."""
+    if not url:
+        return None
+
+    brand = _DETAIL_LINK_BRANDS.get(
+        _normalize_detail_link_brand_key(brand_key),
+        _DEFAULT_DETAIL_LINK_BRAND,
+    )
+    fallback_text = brand.get("fallback_text") or slugify(label).replace("-", "")[:4].upper() or "LINK"
+    return {
+        "label": label,
+        "url": url,
+        "chip_classes": brand["chip_classes"],
+        "badge_classes": brand["badge_classes"],
+        "accent_classes": brand["accent_classes"],
+        "logo_src": brand.get("logo_src"),
+        "fallback_text": fallback_text,
+    }
+
+
+def _build_detail_link_sections(media_metadata, media_type, identity_provider, display_provider):
+    """Return grouped source and external link chips for the media detail action row."""
+    if not isinstance(media_metadata, dict):
+        return []
+
+    source_entries = []
+    external_entries = []
+    seen_urls = set()
+
+    def append_entry(collection, label, url, brand_key):
+        if not url or url in seen_urls:
+            return
+        entry = _build_detail_link_entry(label, url, brand_key)
+        if entry is None:
+            return
+        seen_urls.add(url)
+        collection.append(entry)
+
+    primary_source_url = media_metadata.get("tracking_source_url") or media_metadata.get("source_url")
+    if primary_source_url:
+        append_entry(
+            source_entries,
+            app_tags.source_readable(identity_provider),
+            primary_source_url,
+            identity_provider,
+        )
+
+    display_source_url = media_metadata.get("display_source_url")
+    if display_provider != identity_provider and display_source_url:
+        append_entry(
+            source_entries,
+            f"Metadata: {app_tags.source_readable(display_provider)}",
+            display_source_url,
+            display_provider,
+        )
+
+    if media_type == MediaTypes.MOVIE.value and identity_provider == Sources.TMDB.value:
+        media_id = media_metadata.get("media_id")
+        if media_id:
+            append_entry(
+                external_entries,
+                "Letterboxd",
+                f"https://letterboxd.com/tmdb/{media_id}",
+                "letterboxd",
+            )
+
+    external_links = media_metadata.get("external_links")
+    if isinstance(external_links, dict):
+        for name, url in external_links.items():
+            append_entry(external_entries, name, url, name)
+
+    sections = []
+    if source_entries:
+        sections.append(
+            {
+                "title": "Sources" if len(source_entries) > 1 else "Source",
+                "entries": source_entries,
+            }
+        )
+    if external_entries:
+        sections.append({"title": "External links", "entries": external_entries})
+    return sections
+
+
+def _resolve_detail_tag_genres(media_metadata, item, fallback_genres=None):
+    """Return detail-page genres sourced from metadata, request state, or stored item data."""
+    genres = []
+    if isinstance(media_metadata, dict):
+        details = media_metadata.get("details")
+        genres = stats._coerce_genre_list(
+            media_metadata.get("genres")
+            or (details.get("genres") if isinstance(details, dict) else None)
+            or media_metadata.get("genre")
+            or (details.get("genre") if isinstance(details, dict) else None),
+        )
+    if not genres and fallback_genres:
+        genres = stats._coerce_genre_list(fallback_genres)
+    if not genres and item is not None:
+        genres = list(item.genres or [])
+    return genres
+
+
+def _build_detail_tag_sections(media_metadata, item, user, fallback_genres=None):
+    """Return grouped genre and user-tag chips for the media detail action row."""
+    sections = []
+
+    genres = _resolve_detail_tag_genres(
+        media_metadata,
+        item,
+        fallback_genres=fallback_genres,
+    )
+
+    if genres:
+        sections.append(
+            {
+                "title": "Genres",
+                "entries": [
+                    {
+                        "label": genre,
+                        "chip_classes": "border-violet-400/18 bg-violet-500/[0.07] text-violet-100",
+                    }
+                    for genre in genres
+                ],
+            }
+        )
+
+    tag_names = []
+    if item is not None and getattr(user, "is_authenticated", False):
+        tag_names = list(
+            ItemTag.objects.filter(item=item, tag__user=user)
+            .select_related("tag")
+            .order_by("tag__name")
+            .values_list("tag__name", flat=True)
+        )
+
+    if tag_names:
+        sections.append(
+            {
+                "title": "Tags",
+                "entries": [
+                    {
+                        "label": tag_name,
+                        "chip_classes": "border-slate-400/18 bg-slate-500/[0.07] text-slate-100",
+                    }
+                    for tag_name in tag_names
+                ],
+            }
+        )
+
+    return sections
+
+
+def _parse_detail_tag_preview_genres(raw_value):
+    """Return a normalized genre list from a serialized detail-tag preview payload."""
+    if not raw_value:
+        return []
+    try:
+        parsed_value = json.loads(raw_value)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return stats._coerce_genre_list(parsed_value)
 
 
 def _should_queue_game_lengths_refresh(detail_item):
@@ -4879,6 +5217,20 @@ def media_details(
         "item_id_for_polling": item_id_for_polling if not public_view else None,
         "watch_providers": watch_providers,
         "watch_provider_region": request.user.watch_provider_region,
+        "detail_link_sections": _build_detail_link_sections(
+            media_metadata,
+            media_type,
+            identity_provider,
+            display_provider,
+        ),
+        "detail_tag_sections": _build_detail_tag_sections(
+            media_metadata,
+            detail_item,
+            request.user,
+        ),
+        "detail_tag_preview_genres_json": json.dumps(
+            _resolve_detail_tag_genres(media_metadata, detail_item)
+        ),
         "display_provider": display_provider,
         "identity_provider": identity_provider,
         "metadata_provider_options": metadata_resolution.available_metadata_sources(
@@ -5552,6 +5904,20 @@ def season_details(
             season_metadata.get("providers"), request.user.watch_provider_region
         ),
         "watch_provider_region": request.user.watch_provider_region,
+        "detail_link_sections": _build_detail_link_sections(
+            season_metadata,
+            MediaTypes.SEASON.value,
+            source,
+            source,
+        ),
+        "detail_tag_sections": _build_detail_tag_sections(
+            season_metadata,
+            season_item,
+            request.user,
+        ),
+        "detail_tag_preview_genres_json": json.dumps(
+            _resolve_detail_tag_genres(season_metadata, season_item)
+        ),
         "display_provider": source,
         "identity_provider": source,
     }
@@ -12261,6 +12627,12 @@ def tags_modal(
 
     from django.db import models as db_models
 
+    preview_genres = _parse_detail_tag_preview_genres(
+        request.GET.get("preview_genres_json"),
+    )
+    if not preview_genres:
+        preview_genres = _resolve_detail_tag_genres({}, item)
+
     user_tags = (
         Tag.objects.filter(user=request.user)
         .annotate(
@@ -12277,13 +12649,19 @@ def tags_modal(
     return render(
         request,
         "app/components/fill_tags.html",
-        {"item": item, "user_tags": user_tags},
+        {
+            "item": item,
+            "user_tags": user_tags,
+            "preview_genres_json": json.dumps(preview_genres),
+        },
     )
 
 
 @require_POST
 def tag_item_toggle(request):
     """Add or remove a tag from an item."""
+    from django.template.loader import render_to_string
+
     item_id = request.POST["item_id"]
     tag_id = request.POST["tag_id"]
 
@@ -12298,16 +12676,42 @@ def tag_item_toggle(request):
         ItemTag.objects.create(tag=tag, item=item)
         has_tag = True
 
-    return render(
-        request,
-        "app/components/tag_item_button.html",
-        {"tag": tag, "item": item, "has_tag": has_tag},
+    preview_genres = _parse_detail_tag_preview_genres(
+        request.POST.get("preview_genres_json"),
     )
+    preview_sections = _build_detail_tag_sections(
+        {},
+        item,
+        request.user,
+        fallback_genres=preview_genres,
+    )
+    button_html = render_to_string(
+        "app/components/tag_item_button.html",
+        {
+            "tag": tag,
+            "item": item,
+            "has_tag": has_tag,
+            "preview_genres_json": json.dumps(preview_genres),
+        },
+        request=request,
+    )
+    preview_html = render_to_string(
+        "app/components/detail_tag_preview.html",
+        {
+            "preview_id": app_tags.component_id("tag-preview", item),
+            "detail_tag_sections": preview_sections,
+            "swap_oob": True,
+        },
+        request=request,
+    )
+    return HttpResponse(button_html + preview_html)
 
 
 @require_POST
 def tag_create(request):
     """Create a new tag for the user and optionally apply it to an item."""
+    from django.template.loader import render_to_string
+
     name = (request.POST.get("name") or "").strip()
     item_id = request.POST.get("item_id")
 
@@ -12335,6 +12739,10 @@ def tag_create(request):
 
         from django.db import models as db_models
 
+        preview_genres = _parse_detail_tag_preview_genres(
+            request.POST.get("preview_genres_json"),
+        )
+
         user_tags = (
             Tag.objects.filter(user=request.user)
             .annotate(
@@ -12348,10 +12756,29 @@ def tag_create(request):
             .order_by("name")
         )
 
-        return render(
-            request,
+        modal_html = render_to_string(
             "app/components/fill_tags.html",
-            {"item": item, "user_tags": user_tags},
+            {
+                "item": item,
+                "user_tags": user_tags,
+                "preview_genres_json": json.dumps(preview_genres),
+            },
+            request=request,
         )
+        preview_html = render_to_string(
+            "app/components/detail_tag_preview.html",
+            {
+                "preview_id": app_tags.component_id("tag-preview", item),
+                "detail_tag_sections": _build_detail_tag_sections(
+                    {},
+                    item,
+                    request.user,
+                    fallback_genres=preview_genres,
+                ),
+                "swap_oob": True,
+            },
+            request=request,
+        )
+        return HttpResponse(modal_html + preview_html)
 
     return HttpResponse(status=204)

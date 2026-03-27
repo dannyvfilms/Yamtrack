@@ -1,0 +1,16 @@
+<div id="{{ preview_id }}"
+     {% if swap_oob %}hx-swap-oob="outerHTML"{% endif %}
+     data-has-preview="{% if detail_tag_sections %}true{% else %}false{% endif %}">
+  {% if detail_tag_sections %}
+    {% for detail_tag_section in detail_tag_sections %}
+      <div class="{% if not forloop.first %}mt-3 border-t border-white/10 pt-3{% endif %}">
+        <div class="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-gray-400">{{ detail_tag_section.title }}</div>
+        <div class="flex flex-wrap gap-2">
+          {% for detail_tag in detail_tag_section.entries %}
+            <span class="inline-flex h-8 items-center rounded-full border px-3 text-sm font-medium shadow-sm {{ detail_tag.chip_classes }}">{{ detail_tag.label }}</span>
+          {% endfor %}
+        </div>
+      </div>
+    {% endfor %}
+  {% endif %}
+</div>
