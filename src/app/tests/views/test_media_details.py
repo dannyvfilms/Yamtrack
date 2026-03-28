@@ -161,7 +161,20 @@ class MediaDetailsViewTests(TestCase):
         self.assertIn('title="Sync metadata with provider"', content)
         self.assertNotIn('<h2 class="text-xl font-bold mb-4">Actions</h2>', content)
         self.assertNotIn('mt-4 p-3 rounded-lg w-full flex items-center', content)
-        self.assertIn(":class=\"isExpanded ? '' : 'line-clamp-3'\"", content)
+        self.assertIn("mobilePreviewText", content)
+        self.assertIn("fullSynopsisText:", content)
+        self.assertIn(
+            'class="inline whitespace-nowrap align-baseline ml-1 text-[13px] font-medium text-indigo-400 hover:text-indigo-300 focus:outline-none transition-colors cursor-pointer"',
+            content,
+        )
+        self.assertIn(
+            'class="mt-2 inline-flex text-[13px] font-medium text-indigo-400 hover:text-indigo-300 focus:outline-none transition-colors cursor-pointer sm:hidden"',
+            content,
+        )
+        self.assertIn(
+            'class="hidden text-indigo-400 hover:text-indigo-300 text-sm mt-2 focus:outline-none transition-colors cursor-pointer sm:inline-flex"',
+            content,
+        )
         self.assertLess(content.index("tmdb-logo.png"), content.index("Add to tracker"))
         self.assertLess(content.index("Add to tracker"), content.index("Test overview"))
 

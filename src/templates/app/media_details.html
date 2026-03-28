@@ -652,14 +652,105 @@
 
       {# Description #}
       <div class="mb-6">
-        <div x-data="{ isExpanded: false, isClamped: false, checkClamp() { const element = this.$refs.synopsisText; this.isClamped = element.scrollHeight > element.clientHeight; } }"
-             x-init="$nextTick(() => checkClamp())">
-          <p x-ref="synopsisText"
-             :class="isExpanded ? '' : 'line-clamp-3'"
-             class="text-gray-300 text-pretty">{{ media.synopsis|linebreaksbr|safe }}</p>
+        <div class="relative"
+             x-data="{
+               isExpanded: false,
+               isClamped: false,
+               mobilePreviewText: '',
+               fullSynopsisText: '{{ media.synopsis|striptags|escapejs }}',
+               checkClamp() {
+                 const measure = this.$refs.mobilePreviewMeasure;
+                 const fullText = (this.fullSynopsisText || '').replace(/\s+/g, ' ').trim();
+                 if (!measure || !fullText) {
+                   this.isClamped = false;
+                   this.mobilePreviewText = '';
+                   return;
+                 }
+                 measure.textContent = fullText;
+                 const lineHeight = parseFloat(window.getComputedStyle(measure).lineHeight);
+                 const maxHeight = Math.ceil(lineHeight * 3);
+                 this.isClamped = measure.scrollHeight > maxHeight;
+                 if (this.isClamped && window.innerWidth < 640) {
+                   this.$nextTick(() => this.updateMobilePreview());
+                 } else {
+                   this.mobilePreviewText = '';
+                 }
+               },
+               updateMobilePreview() {
+                 const measure = this.$refs.mobilePreviewMeasure;
+                 const fullText = (this.fullSynopsisText || '').replace(/\s+/g, ' ').trim();
+                 if (!measure || !fullText) {
+                   this.mobilePreviewText = '';
+                   return;
+                 }
+                 const suffix = ' Read more';
+                 const maxHeight = Math.ceil(parseFloat(window.getComputedStyle(measure).lineHeight) * 3);
+                 let low = 0;
+                 let high = fullText.length;
+                 let best = '';
+
+                 while (low <= high) {
+                   const mid = Math.floor((low + high) / 2);
+                   let candidate = fullText.slice(0, mid).trimEnd();
+                   const lastSpace = candidate.lastIndexOf(' ');
+                   if (lastSpace > 0) {
+                     candidate = candidate.slice(0, lastSpace).trimEnd();
+                   }
+                   measure.textContent = candidate ? `${candidate}...${suffix}` : fullText;
+                   if (measure.scrollHeight <= maxHeight) {
+                     best = candidate;
+                     low = mid + 1;
+                   } else {
+                     high = mid - 1;
+                   }
+                 }
+
+                 if (!best) {
+                   this.mobilePreviewText = fullText;
+                   return;
+                 }
+
+                 let preview = best.replace(/[\s.,;:!?-]+$/u, '');
+                 measure.textContent = `${preview}...${suffix}`;
+                 while (preview && measure.scrollHeight > maxHeight) {
+                   preview = preview.replace(/\s+\S*$/u, '').replace(/[\s.,;:!?-]+$/u, '');
+                   measure.textContent = `${preview}...${suffix}`;
+                 }
+
+                 this.mobilePreviewText = preview ? `${preview}...` : fullText;
+               }
+             }"
+             x-init="$nextTick(() => checkClamp())"
+             @resize.window="$nextTick(() => checkClamp())">
+          <div x-ref="mobilePreviewMeasure"
+               aria-hidden="true"
+               class="pointer-events-none invisible absolute inset-x-0 top-0 -z-10 text-gray-300 text-pretty"></div>
+          <p :class="isClamped && !isExpanded ? 'block' : 'hidden'"
+             class="text-gray-300 text-pretty sm:hidden">
+            <span x-text="mobilePreviewText"></span>
+            <button @click="isExpanded = true"
+                    class="inline whitespace-nowrap align-baseline ml-1 text-[13px] font-medium text-indigo-400 hover:text-indigo-300 focus:outline-none transition-colors cursor-pointer">
+              Read more
+            </button>
+          </p>
+          <p x-show="!isClamped || isExpanded"
+             class="text-gray-300 text-pretty sm:hidden">
+            {{ media.synopsis|linebreaksbr|safe }}
+          </p>
+          <button x-show="isClamped && isExpanded"
+                  @click="isExpanded = false"
+                  class="mt-2 inline-flex text-[13px] font-medium text-indigo-400 hover:text-indigo-300 focus:outline-none transition-colors cursor-pointer sm:hidden">
+            Show less
+          </button>
+          <div class="hidden sm:block">
+            <p :class="isExpanded || !isClamped ? '' : 'line-clamp-3'"
+               class="text-gray-300 text-pretty">
+              {{ media.synopsis|linebreaksbr|safe }}
+            </p>
+          </div>
           <button x-show="isClamped"
                   @click="isExpanded = !isExpanded"
-                  class="text-indigo-400 hover:text-indigo-300 text-sm mt-2 focus:outline-none transition-colors cursor-pointer">
+                  class="hidden text-indigo-400 hover:text-indigo-300 text-sm mt-2 focus:outline-none transition-colors cursor-pointer sm:inline-flex">
             <span x-text="isExpanded ? 'Show less' : 'Read more'"></span>
           </button>
         </div>
