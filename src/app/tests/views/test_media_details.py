@@ -179,6 +179,67 @@ class MediaDetailsViewTests(TestCase):
         self.assertLess(content.index("Add to tracker"), content.index("Test overview"))
 
     @patch("app.providers.services.get_media_metadata")
+    def test_media_details_related_sections_use_mobile_card_grid_preferences(self, mock_get_metadata):
+        mock_get_metadata.return_value = {
+            "media_id": "238",
+            "title": "Test Show",
+            "media_type": MediaTypes.TV.value,
+            "source": Sources.TMDB.value,
+            "image": "http://example.com/image.jpg",
+            "synopsis": "Test overview",
+            "details": {},
+            "related": {
+                "seasons": [
+                    {
+                        "media_id": "238",
+                        "title": "Test Show",
+                        "media_type": MediaTypes.SEASON.value,
+                        "source": Sources.TMDB.value,
+                        "season_number": 1,
+                        "season_title": "Season 1",
+                        "image": "http://example.com/season1.jpg",
+                    }
+                ],
+            },
+            "cast": [
+                {
+                    "name": "Actor One",
+                    "image": "http://example.com/person.jpg",
+                    "role": "Lead",
+                }
+            ],
+            "crew": [
+                {
+                    "name": "Crew One",
+                    "image": "http://example.com/person2.jpg",
+                    "department": "Directing",
+                }
+            ],
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "media_id": "238",
+                    "title": "test-show",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertIn('class="detail-media-grid"', content)
+        self.assertIn("window.matchMedia('(max-width: 768px)').matches", content)
+        self.assertIn("document.body.dataset.mobileGrid === 'comfortable' ? 4 : 6", content)
+        self.assertIn(
+            'class="mt-4 inline-flex text-sm font-medium text-indigo-400 hover:text-indigo-300 focus:outline-none transition-colors cursor-pointer md:hidden"',
+            content,
+        )
+
+    @patch("app.providers.services.get_media_metadata")
     def test_media_details_renders_notes_as_section_above_related_content(self, mock_get_metadata):
         mock_get_metadata.return_value = {
             "media_id": "238",
