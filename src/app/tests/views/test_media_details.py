@@ -231,9 +231,13 @@ class MediaDetailsViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
+        self.assertIn('class="flex flex-col md:flex-row gap-8 md:gap-10 mb-2 md:mb-8"', content)
+        self.assertIn('class="flex flex-col md:flex-row gap-0 md:gap-10"', content)
         self.assertIn('class="detail-media-grid"', content)
         self.assertIn("window.matchMedia('(max-width: 768px)').matches", content)
         self.assertIn("document.body.dataset.mobileGrid === 'comfortable' ? 4 : 6", content)
+        self.assertIn('class="order-2 w-full md:order-1 md:w-1/4 md:max-w-[250px] mx-auto lg:mx-0"', content)
+        self.assertIn('class="order-1 w-full md:order-2 md:w-3/4"', content)
         self.assertIn(
             'class="mt-4 inline-flex text-sm font-medium text-indigo-400 hover:text-indigo-300 focus:outline-none transition-colors cursor-pointer md:hidden"',
             content,
