@@ -232,12 +232,12 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
         self.assertIn('class="flex flex-col md:flex-row gap-8 md:gap-10 mb-2 md:mb-8"', content)
-        self.assertIn('class="flex flex-col md:flex-row gap-0 md:gap-10"', content)
+        self.assertIn('class="flex flex-col-reverse md:flex-row gap-0 md:gap-10"', content)
         self.assertIn('class="detail-media-grid"', content)
         self.assertIn("window.matchMedia('(max-width: 768px)').matches", content)
         self.assertIn("document.body.dataset.mobileGrid === 'comfortable' ? 4 : 6", content)
-        self.assertIn('class="order-2 w-full md:order-1 md:w-1/4 md:max-w-[250px] mx-auto lg:mx-0"', content)
-        self.assertIn('class="order-1 w-full md:order-2 md:w-3/4"', content)
+        self.assertIn('class="w-full md:w-1/4 md:max-w-[250px] mx-auto lg:mx-0"', content)
+        self.assertIn('class="w-full md:w-3/4"', content)
         self.assertIn(
             'class="mt-4 inline-flex text-sm font-medium text-indigo-400 hover:text-indigo-300 focus:outline-none transition-colors cursor-pointer md:hidden"',
             content,
@@ -1269,12 +1269,7 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(
             response,
-            '<div class="mb-1 text-center md:text-start">',
-            html=False,
-        )
-        self.assertContains(
-            response,
-            'class="mt-4 mb-5 flex flex-wrap gap-2"',
+            '<div class="mb-3 sm:mb-1 text-center md:text-start">',
             html=False,
         )
         self.assertContains(response, '<h1 class="text-3xl font-bold">Test TV Show</h1>', html=False)
@@ -1356,9 +1351,17 @@ class MediaDetailsViewTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
         self.assertContains(response, "Progress: 1/8")
         self.assertContains(response, "2026-03-01 - 2026-03-12")
         self.assertContains(response, "1h 30min watched")
+        self.assertIn('<div class="mb-3 sm:mb-1 text-center md:text-start">', content)
+        self.assertIn(
+            'class="flex items-center justify-center gap-0.5 whitespace-nowrap text-[13px] tracking-[-0.01em] sm:hidden"',
+            content,
+        )
+        self.assertIn("1h 30min (1/8)", content)
+        self.assertIn('class="hidden flex-wrap items-center justify-center gap-y-1 sm:flex md:justify-start"', content)
         self.assertNotContains(response, "Your History")
         self.assertNotContains(response, "FIRST PLAYED")
         self.assertNotContains(response, "LAST PLAYED")
@@ -1427,7 +1430,7 @@ class MediaDetailsViewTests(TestCase):
         self.assertContains(response, "3h 10min watched")
         self.assertContains(
             response,
-            'class="mt-4 mb-5 flex flex-wrap gap-2"',
+            'class="order-2 mt-0 mb-5 flex w-full items-center justify-between gap-0.5 sm:order-1 sm:mt-4 sm:flex-wrap sm:justify-start sm:gap-2"',
             html=False,
         )
         self.assertContains(response, 'aria-label="More tracking actions"', html=False)
@@ -2976,17 +2979,18 @@ class MediaDetailsViewTests(TestCase):
         content = response.content.decode()
         self.assertRegex(
             content,
-            r'<h1 class="text-3xl font-bold cursor-pointer hover:text-indigo-500 transition-colors duration-200 mb-0 text-center md:text-start">\s*<a href="[^"]+">Test TV Show</a>\s*</h1>',
-        )
-        self.assertRegex(
-            content,
-            r'<h2 class="text-sm font-medium text-gray-400">Season 1</h2>',
+            r'<div class="mb-1 text-center md:text-start">\s*<div class="inline-flex items-center gap-2 md:flex md:gap-2">\s*<h1 class="text-3xl font-bold cursor-pointer hover:text-indigo-500 transition-colors duration-200">\s*<a href="[^"]+">Test TV Show</a>\s*</h1>',
         )
         self.assertIn(
-            'class="flex flex-col md:flex-row gap-y-4 md:gap-y-0 items-center justify-between mb-1"',
+            'class="flex flex-col gap-y-4 md:flex-row md:gap-y-0 items-center justify-between mb-1"',
             content,
         )
-        self.assertIn('class="mt-4 mb-5 flex flex-wrap gap-2"', content)
+        self.assertIn('class="relative hidden md:block"', content)
+        self.assertIn('<h2 class="text-sm font-medium text-gray-400 md:hidden">Season 1</h2>', content)
+        self.assertIn(
+            'class="hidden flex-wrap items-center justify-start gap-y-1 text-center text-sm font-medium text-gray-400 md:flex md:text-start"',
+            content,
+        )
 
     @patch("app.providers.services.get_media_metadata")
     @patch("app.providers.tmdb.process_episodes")
@@ -3137,9 +3141,14 @@ class MediaDetailsViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
+        self.assertIn('<h2 class="text-sm font-medium text-gray-400 md:hidden">Season 1</h2>', content)
+        self.assertIn(
+            'class="mt-3 flex flex-wrap items-center justify-center gap-y-1 text-center text-sm font-medium text-gray-400 md:hidden"',
+            content,
+        )
         self.assertRegex(
             content,
-            r'Season 1</h2>\s*<span class="mx-2 text-gray-600">•</span>\s*<span class="text-sm font-medium text-gray-400">\s*Progress: 2/8\s*</span>\s*<span class="mx-2 text-gray-600">•</span>\s*<span class="text-sm font-medium text-gray-400">\s*2026-03-01 - 2026-03-12\s*</span>',
+            r'class="hidden flex-wrap items-center justify-start gap-y-1 text-center text-sm font-medium text-gray-400 md:flex md:text-start">\s*<h2 class="text-sm font-medium text-gray-400">Season 1</h2>\s*<span class="mx-2 text-gray-600">•</span>\s*<span class="text-sm font-medium text-gray-400">\s*Progress: 2/8\s*</span>\s*<span class="mx-2 text-gray-600">•</span>\s*<span class="text-sm font-medium text-gray-400">\s*2026-03-01 - 2026-03-12\s*</span>',
         )
         self.assertNotIn("Your History", content)
 
