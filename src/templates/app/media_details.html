@@ -269,78 +269,79 @@
         {% endif %}
       {% endif %}
 
+      <div class="flex flex-col sm:contents">
       {# Score chips #}
       {% if media.score_count is not None or trakt_score or user_medias and current_instance and not public_view|default:False %}
-        <div class="mt-4 mb-5 flex flex-wrap gap-2">
+        <div class="order-2 mt-0 mb-5 flex w-full items-center justify-between gap-0.5 sm:order-1 sm:mt-4 sm:flex-wrap sm:justify-start sm:gap-2">
           {% if media.score_count is not None %}
-            <div class="inline-flex h-8 items-center gap-2 rounded-full border border-cyan-400/18 bg-cyan-500/[0.07] pl-0 pr-3 text-sm text-white shadow-sm">
+            <div class="inline-flex h-[1.875rem] shrink-0 items-center gap-0.5 rounded-full border border-cyan-400/18 bg-cyan-500/[0.07] pl-0 pr-1.5 text-[12px] text-white shadow-sm sm:h-8 sm:gap-2 sm:pr-3 sm:text-sm">
               <span class="sr-only">{{ display_provider|source_readable }} score</span>
-              <span class="-my-px -ml-px flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-cyan-400/28 bg-cyan-500/14">
+              <span class="-my-px -ml-px flex h-[1.875rem] w-[1.875rem] shrink-0 items-center justify-center rounded-full border border-cyan-400/28 bg-cyan-500/14 sm:h-8 sm:w-8">
                 {% if display_provider == Sources.TMDB.value %}
                   <img src="{% static 'img/tmdb-logo.png' %}"
                        alt=""
                        aria-hidden="true"
-                       class="h-3.5 w-3.5 object-contain">
+                       class="h-3 w-3 object-contain sm:h-3.5 sm:w-3.5">
                 {% elif display_provider == Sources.MAL.value %}
                   <img src="{% static 'img/myanimelist-logo.svg' %}"
                        alt=""
                        aria-hidden="true"
-                       class="h-3.5 w-3.5 object-contain">
+                       class="h-3 w-3 object-contain sm:h-3.5 sm:w-3.5">
                 {% elif display_provider == Sources.IGDB.value %}
                   <img src="{% static 'img/igdb-logo.png' %}"
                        alt=""
                        aria-hidden="true"
-                       class="h-3.5 w-3.5 object-contain">
+                       class="h-3 w-3 object-contain sm:h-3.5 sm:w-3.5">
                 {% else %}
                   <span class="text-[9px] font-black tracking-[0.12em] text-cyan-100">{{ display_provider|upper|slice:":4" }}</span>
                 {% endif %}
               </span>
               {% if media.score is not None %}
-                <span class="text-sm font-semibold text-white">{{ media.score }}</span>
+                <span class="text-[12px] font-semibold text-white sm:text-sm">{{ media.score }}</span>
               {% else %}
-                <span class="text-sm font-semibold text-gray-400">-</span>
+                <span class="text-[12px] font-semibold text-gray-400 sm:text-sm">-</span>
               {% endif %}
-              <span class="text-sm text-gray-500">|</span>
-              <span class="text-sm text-gray-300">{{ media.score_count|intcomma }} vote{{ media.score_count|pluralize }}</span>
+              <span class="text-[12px] text-gray-500 sm:text-sm">|</span>
+              <span class="text-[12px] text-gray-300 sm:text-sm">{{ media.score_count|intcomma }} vote{{ media.score_count|pluralize }}</span>
             </div>
           {% endif %}
 
           {% if trakt_score %}
-            <div class="inline-flex h-8 items-center gap-2 rounded-full border border-rose-400/18 bg-rose-500/[0.07] pl-0 pr-3 text-sm text-white shadow-sm">
+            <div class="inline-flex h-[1.875rem] shrink-0 items-center gap-0.5 rounded-full border border-rose-400/18 bg-rose-500/[0.07] pl-0 pr-1.5 text-[12px] text-white shadow-sm sm:h-8 sm:gap-2 sm:pr-3 sm:text-sm">
               <span class="sr-only">Trakt score</span>
-              <span class="-my-px -ml-px flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-rose-400/28 bg-rose-500/14">
+              <span class="-my-px -ml-px flex h-[1.875rem] w-[1.875rem] shrink-0 items-center justify-center rounded-full border border-rose-400/28 bg-rose-500/14 sm:h-8 sm:w-8">
                 <img src="{% static 'img/trakt-logo.svg' %}"
                      alt=""
                      aria-hidden="true"
-                     class="h-4 w-4 object-contain">
+                     class="h-3.5 w-3.5 object-contain sm:h-4 sm:w-4">
               </span>
               {% if trakt_score.rating is not None %}
-                <span class="text-sm font-semibold text-white">{{ trakt_score.rating }}</span>
+                <span class="text-[12px] font-semibold text-white sm:text-sm">{{ trakt_score.rating }}</span>
               {% else %}
-                <span class="text-sm font-semibold text-gray-400">-</span>
+                <span class="text-[12px] font-semibold text-gray-400 sm:text-sm">-</span>
               {% endif %}
-              <span class="text-sm text-gray-500">|</span>
-              <span class="text-sm text-gray-300">{{ trakt_score.rating_count|intcomma }} rating{{ trakt_score.rating_count|pluralize }}</span>
+              <span class="text-[12px] text-gray-500 sm:text-sm">|</span>
+              <span class="text-[12px] text-gray-300 sm:text-sm">{{ trakt_score.rating_count|intcomma }} rating{{ trakt_score.rating_count|pluralize }}</span>
             </div>
           {% endif %}
 
           {% if user_medias and current_instance and not public_view|default:False %}
             <div x-data="{ showRatingPopup: false, rating: {{ current_instance.score|score_display:user|default:'null' }}, ratingScaleMax: {{ user|rating_scale_max }}, hoverRating: null, isHovering: false, formatRating(value) { if (value === null || value === undefined || value === '') { return ''; } return this.ratingScaleMax === 5 ? String(value) + '/5' : String(value); } }"
-                 class="relative">
+                 class="relative shrink-0 sm:w-auto">
               <button type="button"
                       @click="showRatingPopup = !showRatingPopup"
-                      class="inline-flex h-8 items-center gap-2 rounded-full border border-amber-400/18 bg-amber-500/[0.07] pl-0 pr-3 text-sm text-white shadow-sm transition-colors duration-200 hover:border-amber-300/28 hover:bg-amber-500/[0.11]">
+                      class="inline-flex h-[1.875rem] shrink-0 items-center gap-0.5 rounded-full border border-amber-400/18 bg-amber-500/[0.07] pl-0 pr-1.5 text-[12px] text-white shadow-sm transition-colors duration-200 hover:border-amber-300/28 hover:bg-amber-500/[0.11] sm:h-8 sm:gap-2 sm:pr-3 sm:text-sm">
                 <span class="sr-only">Your score</span>
-                <span class="-my-px -ml-px flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-amber-400/28 bg-amber-500/14">
-                  {% include "app/icons/star.svg" with classes="h-4 w-4 text-yellow-400 fill-yellow-400" %}
+                <span class="-my-px -ml-px flex h-[1.875rem] w-[1.875rem] shrink-0 items-center justify-center rounded-full border border-amber-400/28 bg-amber-500/14 sm:h-8 sm:w-8">
+                  {% include "app/icons/star.svg" with classes="h-3.5 w-3.5 text-yellow-400 fill-yellow-400 sm:h-4 sm:w-4" %}
                 </span>
-                <span class="inline-flex items-center gap-2">
-                  <span class="text-sm font-semibold text-white {% if current_instance.score is None %}hidden{% endif %}"
+                <span class="inline-flex items-center gap-1 sm:gap-2">
+                  <span class="text-[12px] font-semibold text-white sm:text-sm {% if current_instance.score is None %}hidden{% endif %}"
                         :class="rating ? '' : 'hidden'"
                         x-text="formatRating(rating)">{% if current_instance.score is not None %}{% if user|rating_scale_max == 5 %}{{ current_instance.score|score_display:user }}/5{% else %}{{ current_instance.score|score_display:user }}{% endif %}{% endif %}</span>
-                  <span class="text-sm text-gray-500 {% if current_instance.score is None %}hidden{% endif %}"
+                  <span class="text-[12px] text-gray-500 sm:text-sm {% if current_instance.score is None %}hidden{% endif %}"
                         :class="rating ? '' : 'hidden'">|</span>
-                  <span class="text-sm font-medium text-gray-200"
+                  <span class="text-[12px] font-medium text-gray-200 sm:text-sm"
                         x-text="rating ? 'Edit rating' : 'Add rating'">{% if current_instance.score is not None %}Edit rating{% else %}Add rating{% endif %}</span>
                 </span>
               </button>
@@ -378,11 +379,11 @@
 
       {% if not public_view|default:False %}
         {% if not activity_subtitle and media.score_count is None and not trakt_score and not user_medias %}
-          <div class="mt-5 mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+          <div class="order-1 mt-5 mb-6 flex flex-col gap-3 sm:order-2 sm:flex-row sm:flex-wrap sm:items-center">
         {% elif not activity_subtitle and media.score_count is None and not trakt_score and user_medias and not current_instance %}
-          <div class="mt-5 mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+          <div class="order-1 mt-5 mb-6 flex flex-col gap-3 sm:order-2 sm:flex-row sm:flex-wrap sm:items-center">
         {% else %}
-          <div class="mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+          <div class="order-1 mb-6 flex flex-col gap-3 sm:order-2 sm:flex-row sm:flex-wrap sm:items-center">
         {% endif %}
           <div x-data="{ trackOpen: false }" class="sm:shrink-0">
             {% if media_type == MediaTypes.PODCAST.value and podcast_show %}
@@ -647,6 +648,7 @@
           </div>
         </div>
       {% endif %}
+      </div>
 
       {# Description #}
       <div class="mb-6">

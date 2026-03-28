@@ -110,7 +110,7 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.context["media"]["title"], "Test Movie")
         self.assertContains(
             response,
-            'class="mt-5 mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center"',
+            'class="order-1 mt-5 mb-6 flex flex-col gap-3 sm:order-2 sm:flex-row sm:flex-wrap sm:items-center"',
             html=False,
         )
 
@@ -149,7 +149,7 @@ class MediaDetailsViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         content = response.content.decode()
-        self.assertIn('class="mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center"', content)
+        self.assertIn('class="order-1 mb-6 flex flex-col gap-3 sm:order-2 sm:flex-row sm:flex-wrap sm:items-center"', content)
         self.assertIn('class="flex w-full items-center gap-2 sm:w-auto sm:flex-wrap"', content)
         self.assertIn(
             'class="inline-flex h-11 w-full items-center justify-center rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer sm:size-11 sm:w-11"',
@@ -1019,6 +1019,11 @@ class MediaDetailsViewTests(TestCase):
         self.assertContains(response, "7.8")
         self.assertNotContains(response, "7.88048")
         self.assertContains(response, "123,456 ratings")
+        self.assertContains(
+            response,
+            'class="order-2 mt-0 mb-5 flex w-full items-center justify-between gap-0.5 sm:order-1 sm:mt-4 sm:flex-wrap sm:justify-start sm:gap-2"',
+            html=False,
+        )
 
     @patch("app.providers.services.get_media_metadata")
     def test_media_details_hides_trakt_score_card_without_data(self, mock_get_metadata):
@@ -1086,7 +1091,7 @@ class MediaDetailsViewTests(TestCase):
         self.assertContains(response, "42,000 votes")
         self.assertContains(
             response,
-            'class="mt-4 mb-5 flex flex-wrap gap-2"',
+            'class="order-2 mt-0 mb-5 flex w-full items-center justify-between gap-0.5 sm:order-1 sm:mt-4 sm:flex-wrap sm:justify-start sm:gap-2"',
             html=False,
         )
 
@@ -1793,6 +1798,7 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Edit rating")
         self.assertContains(response, "x-text=\"formatRating(rating)\">8<", html=False)
+        self.assertContains(response, "x-text=\"rating ? 'Edit rating' : 'Add rating'\"", html=False)
 
     @patch("app.providers.services.get_media_metadata")
     def test_media_details_renders_your_score_chip_with_five_point_scale_suffix(
@@ -1842,6 +1848,7 @@ class MediaDetailsViewTests(TestCase):
         self.assertContains(response, "Edit rating")
         self.assertContains(response, "ratingScaleMax: 5", html=False)
         self.assertContains(response, "x-text=\"formatRating(rating)\">4/5<", html=False)
+        self.assertContains(response, "x-text=\"rating ? 'Edit rating' : 'Add rating'\"", html=False)
 
     @patch("app.providers.services.get_media_metadata")
     def test_media_details_renders_your_score_chip_with_add_rating_when_empty(self, mock_get_metadata):
@@ -1884,6 +1891,7 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Add rating")
         self.assertNotContains(response, "Click to edit")
+        self.assertContains(response, "x-text=\"rating ? 'Edit rating' : 'Add rating'\"", html=False)
 
     @override_settings(TVDB_API_KEY="test-tvdb-key")
     @patch("app.views.metadata_resolution.resolve_detail_metadata")
