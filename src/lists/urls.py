@@ -42,6 +42,21 @@ urlpatterns = [
         name="list_reorder_item",
     ),
     path(
+        "list/<int:list_id>/add",
+        views.add_list_item_page,
+        name="list_add_item",
+    ),
+    path(
+        "list/<int:list_id>/add/search",
+        views.add_list_item_search,
+        name="list_add_item_search",
+    ),
+    path(
+        "list/<int:list_id>/add/submit",
+        views.add_list_item_submit,
+        name="list_add_item_submit",
+    ),
+    path(
         "lists/import/trakt/credentials",
         views.trakt_lists_credentials,
         name="trakt_lists_credentials",
