@@ -965,24 +965,33 @@ class MediaManager(models.Manager):
 
     def _aggregate_duplicate_data(self, queryset, user, media_type):
         """Aggregate data from duplicate entries for each item."""
-        # Get all media entries for the user to aggregate data
+        # Collect the item_ids present in the current (deduplicated) queryset.
+        # Scoping to these ids avoids fetching all user items when a status filter
+        # is active — e.g. only 50 in-progress items out of 1000 total.
+        queried_item_ids = {media.item_id for media in queryset}
+
+        if not queried_item_ids:
+            return queryset
+
+        # Fetch ALL entries (across all statuses) for only the queried items.
+        # Using all statuses is intentional: an item filtered as IN_PROGRESS may have
+        # a more-recent COMPLETED entry that should determine its aggregated_status.
         model = apps.get_model(app_label="app", model_name=media_type)
-        all_media = model.objects.filter(user=user.id).select_related("item")
+        all_media = model.objects.filter(
+            user=user.id,
+            item_id__in=queried_item_ids,
+        ).select_related("item")
 
         # Group media by item_id
         media_by_item = {}
         for media in all_media:
-            item_id = media.item.id
-            if item_id not in media_by_item:
-                media_by_item[item_id] = []
-            media_by_item[item_id].append(media)
+            media_by_item.setdefault(media.item_id, []).append(media)
 
         # Aggregate data for each item in the queryset
         for media in queryset:
-            item_id = media.item.id
-            if item_id in media_by_item and len(media_by_item[item_id]) > 1:
-                # Aggregate data from all duplicates
-                self._aggregate_item_data(media, media_by_item[item_id])
+            entries = media_by_item.get(media.item_id, [])
+            if len(entries) > 1:
+                self._aggregate_item_data(media, entries)
 
         return queryset
 
@@ -2143,6 +2152,10 @@ class Media(models.Model):
 
         abstract = True
         ordering = ["user", "item", "-created_at"]
+        indexes = [
+            models.Index(fields=["user", "status"]),
+            models.Index(fields=["user", "created_at"]),
+        ]
 
     def __str__(self):
         """Return the title of the media."""
