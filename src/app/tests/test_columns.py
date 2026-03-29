@@ -45,6 +45,21 @@ class ResolveColumnsTests(TestCase):
         self.assertIn("popularity", keys)
         self.assertNotIn("time_to_beat", keys)
 
+    def test_list_table_inherits_media_columns_and_adds_media_type(self):
+        columns = resolve_columns(
+            media_type=MediaTypes.MOVIE.value,
+            current_sort="score",
+            user=self.user,
+            table_type="list",
+        )
+        keys = [column.key for column in columns]
+
+        self.assertEqual(keys[:3], ["image", "title", "media_type"])
+        self.assertIn("runtime", keys)
+        self.assertIn("popularity", keys)
+        self.assertIn("status", keys)
+        self.assertNotIn("progress", keys)
+
     def test_game_columns_include_time_to_beat(self):
         columns = resolve_columns(
             media_type=MediaTypes.GAME.value,

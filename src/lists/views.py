@@ -10,7 +10,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_not_required, login_required
 from django.core.paginator import Paginator
 from django.db.models import Count, Exists, F, OuterRef, Prefetch, Q, Subquery
-from django.http import Http404, HttpResponse, JsonResponse
+from django.http import Http404, HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -19,6 +19,12 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_POST
 
 from app import helpers
+from app.columns import (
+    resolve_column_config,
+    resolve_columns,
+    resolve_default_column_config,
+    sanitize_column_prefs,
+)
 from app.discover import tab_cache as discover_tab_cache
 from app.models import Item, MediaManager, MediaTypes
 from app.providers import services
@@ -82,6 +88,43 @@ def _resolve_list_sort_direction(sort_by, direction):
     if direction in {"asc", "desc"}:
         return direction
     return _default_list_sort_direction(sort_by)
+
+
+class _ListTableRowAdapter:
+    """Expose list items through the shared media-table row contract."""
+
+    def __init__(self, list_item):
+        self._list_item = list_item
+        self._source_media = getattr(list_item, "media", None)
+        self.item = list_item
+        self.id = getattr(self._source_media, "id", None)
+        self.track_media_id = self.id
+        self.created_at = getattr(list_item, "list_date_added", None)
+        self.repeats = getattr(self._source_media, "repeats", 1) or 1
+
+    def __getattr__(self, attr):
+        if self._source_media is not None and hasattr(self._source_media, attr):
+            return getattr(self._source_media, attr)
+        return getattr(self._list_item, attr)
+
+
+def _adapt_list_items_for_table(items_page):
+    """Replace page rows with adapters that satisfy shared media-table cells."""
+    items_page.object_list = [
+        _ListTableRowAdapter(item) for item in items_page.object_list
+    ]
+    return items_page
+
+
+def _resolve_list_table_media_type(selected_media_types, filtered_media_types):
+    if len(selected_media_types) == 1:
+        return selected_media_types[0]
+
+    unique_filtered_media_types = list(dict.fromkeys(filtered_media_types))
+    if len(unique_filtered_media_types) == 1:
+        return unique_filtered_media_types[0]
+
+    return "all"
 
 
 def _order_expression(field_name, direction, *, nulls_last=True):
@@ -592,6 +635,7 @@ def _smart_list_detail_response(
         ),
     )
     total_items_count = items.count()
+    filtered_media_types = list(items.values_list("media_type", flat=True).distinct())
 
     def _attach_media_with_aggregation(item_list):
         media_by_item_id = {}
@@ -763,6 +807,9 @@ def _smart_list_detail_response(
         filtered_items_count = paginator.count
         _attach_media_with_aggregation(items_page)
 
+    if layout == "table":
+        _adapt_list_items_for_table(items_page)
+
     status_choices = [("all", "All"), *[
         (value, label)
         for value, label in MediaStatusChoices.choices
@@ -787,6 +834,7 @@ def _smart_list_detail_response(
     }
 
     is_partial = bool(request.headers.get("HX-Request"))
+    is_pagination = is_partial and page > 1
     has_active_filters = bool(active_rules.get("media_types")) or any(
         [
             active_rules.get("status") not in {"", "all"},
@@ -802,6 +850,10 @@ def _smart_list_detail_response(
             active_rules.get("origin"),
             active_rules.get("search"),
         ],
+    )
+    current_media_type = _resolve_list_table_media_type(
+        active_rules["media_types"],
+        filtered_media_types,
     )
     context = {
         "user": request.user,
@@ -827,6 +879,7 @@ def _smart_list_detail_response(
         "recommendation_count": recommendation_count,
         "base_template": "base_public.html" if public_view else "base.html",
         "is_partial": is_partial,
+        "is_pagination": is_pagination,
         "is_smart_list": True,
         "smart_edit_mode": smart_edit_mode,
         "saved_smart_rules": saved_rules,
@@ -838,12 +891,49 @@ def _smart_list_detail_response(
         "has_media_type_filter": bool(active_rules["media_types"]),
         "has_active_filters": has_active_filters,
         "collaborators_count": custom_list.collaborators.count() + 1,
+        "column_config": resolve_column_config(
+            current_media_type,
+            sort_by,
+            request.user,
+            "list",
+        ),
+        "default_column_config": resolve_default_column_config(
+            current_media_type,
+            sort_by,
+            "list",
+        ),
+        "table_type": "list",
+        "table_column_update_url": reverse(
+            "list_detail_columns",
+            args=[custom_list.id],
+        ),
+        "table_column_media_type": current_media_type,
+        "table_refresh_url": reverse("list_detail", args=[custom_list.id]),
+        "table_refresh_target": "#items-view",
+        "table_refresh_include_selector": "#smart-filter-form",
     }
+
+    if layout == "table":
+        context.update(
+            {
+                "media_list": items_page,
+                "resolved_columns": resolve_columns(
+                    current_media_type,
+                    sort_by,
+                    request.user,
+                    "list",
+                ),
+                "table_body_id": "list-table-body",
+                "table_pagination_url": reverse("list_detail", args=[custom_list.id]),
+                "table_target_selector": "#list-table-body",
+                "table_include_selector": "#smart-filter-form",
+            },
+        )
 
     if is_partial:
         if layout == "table":
-            if page > 1:
-                return render(request, "lists/components/list_table_rows.html", context)
+            if is_pagination:
+                return render(request, "app/components/table_items.html", context)
             return render(request, "lists/components/list_table.html", context)
         return render(request, "lists/components/media_grid.html", context)
 
@@ -976,6 +1066,9 @@ def list_detail(request, list_id):
         legacy_media_type = request.GET.get("type", "all")
         if legacy_media_type and legacy_media_type != "all":
             selected_media_types = [legacy_media_type]
+    layout = request.GET.get("layout", "grid")
+    if layout not in {"grid", "table"}:
+        layout = "grid"
     valid_media_types = set(MediaTypes.values)
     selected_media_types = [
         media_type for media_type in selected_media_types if media_type in valid_media_types
@@ -1113,6 +1206,7 @@ def list_detail(request, list_id):
         )
         # Filter items to only those with the specified status
         items = items.filter(id__in=media_by_item_id.keys())
+    filtered_media_types = list(items.values_list("media_type", flat=True).distinct())
 
     # Apply sorting
     sort_mapping = {
@@ -1199,6 +1293,9 @@ def list_detail(request, list_id):
 
         _attach_media_with_aggregation(items_page)
 
+    if layout == "table":
+        _adapt_list_items_for_table(items_page)
+
     # Get recommendation count for owners/collaborators
     recommendation_count = 0
     if can_edit and custom_list.allow_recommendations:
@@ -1207,6 +1304,11 @@ def list_detail(request, list_id):
     # Base context for both full and partial responses
     chip_sort = "score" if params["sort_by"] == "rating" else params["sort_by"]
     is_partial = bool(request.headers.get("HX-Request"))
+    is_pagination = is_partial and params["page"] > 1
+    current_media_type = _resolve_list_table_media_type(
+        params["media_types"],
+        filtered_media_types,
+    )
     context = {
         "user": request.user,
         "custom_list": custom_list,
@@ -1221,6 +1323,7 @@ def list_detail(request, list_id):
         "current_direction": params["direction"],
         "chip_sort": chip_sort,
         "current_status": params["status_filter"] or MediaStatusChoices.ALL,
+        "current_layout": layout,
         "sort_choices": ListDetailSortChoices.choices,
         "status_choices": MediaStatusChoices.choices,
         "public_view": public_view,
@@ -1230,9 +1333,47 @@ def list_detail(request, list_id):
         "recommendation_count": recommendation_count,
         "base_template": "base_public.html" if public_view else "base.html",
         "is_partial": is_partial,
+        "is_pagination": is_pagination,
         "current_media_types": params["media_types"],
         "has_media_type_filter": bool(params["media_types"]),
+        "column_config": resolve_column_config(
+            current_media_type,
+            params["sort_by"],
+            request.user,
+            "list",
+        ),
+        "default_column_config": resolve_default_column_config(
+            current_media_type,
+            params["sort_by"],
+            "list",
+        ),
+        "table_type": "list",
+        "table_column_update_url": reverse(
+            "list_detail_columns",
+            args=[custom_list.id],
+        ),
+        "table_column_media_type": current_media_type,
+        "table_refresh_url": reverse("list_detail", args=[custom_list.id]),
+        "table_refresh_target": "#items-view",
+        "table_refresh_include_selector": "#filter-form",
     }
+
+    if layout == "table":
+        context.update(
+            {
+                "media_list": items_page,
+                "resolved_columns": resolve_columns(
+                    current_media_type,
+                    params["sort_by"],
+                    request.user,
+                    "list",
+                ),
+                "table_body_id": "list-table-body",
+                "table_pagination_url": reverse("list_detail", args=[custom_list.id]),
+                "table_target_selector": "#list-table-body",
+                "table_include_selector": "#filter-form",
+            },
+        )
 
     # Additional context for full page render
     if not is_partial:
@@ -1250,7 +1391,77 @@ def list_detail(request, list_id):
         return render(request, "lists/list_detail.html", context)
 
     # HTMX partial response
+    if layout == "table":
+        if is_pagination:
+            return render(request, "app/components/table_items.html", context)
+        return render(request, "lists/components/list_table.html", context)
     return render(request, "lists/components/media_grid.html", context)
+
+
+@require_POST
+def update_list_table_columns(request, list_id):
+    """Persist list-table column prefs without overwriting regular media-list prefs."""
+    if not request.user.is_authenticated:
+        return HttpResponseBadRequest("Authentication required")
+
+    custom_list = get_object_or_404(
+        CustomList.objects.select_related("owner").prefetch_related("collaborators"),
+        id=list_id,
+    )
+    if not custom_list.user_can_view(request.user):
+        raise Http404("List not found")
+
+    media_type = request.POST.get("media_type_key", "all")
+    if media_type != "all" and media_type not in MediaTypes.values:
+        media_type = "all"
+
+    raw_order = request.POST.get("order", "[]")
+    raw_hidden = request.POST.get("hidden", "[]")
+
+    try:
+        parsed_order = json.loads(raw_order)
+    except json.JSONDecodeError:
+        parsed_order = []
+    try:
+        parsed_hidden = json.loads(raw_hidden)
+    except json.JSONDecodeError:
+        parsed_hidden = []
+
+    order = (
+        [value for value in parsed_order if isinstance(value, str)]
+        if isinstance(parsed_order, list)
+        else []
+    )
+    hidden = (
+        [value for value in parsed_hidden if isinstance(value, str)]
+        if isinstance(parsed_hidden, list)
+        else []
+    )
+
+    valid_sorts = {choice[0] for choice in ListDetailSortChoices.choices}
+    current_sort = request.POST.get("sort", ListDetailSortChoices.DATE_ADDED)
+    if current_sort not in valid_sorts:
+        current_sort = ListDetailSortChoices.DATE_ADDED
+
+    clean_order, clean_hidden = sanitize_column_prefs(
+        media_type=media_type,
+        current_sort=current_sort,
+        user=request.user,
+        table_type="list",
+        order=order,
+        hidden=hidden,
+    )
+
+    request.user.update_column_prefs(
+        media_type=media_type,
+        table_type="list",
+        order=clean_order,
+        hidden=clean_hidden,
+    )
+
+    response = HttpResponse(status=204)
+    response["HX-Trigger"] = json.dumps({"refreshTableColumns": True})
+    return response
 
 
 @require_POST

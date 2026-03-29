@@ -242,6 +242,7 @@
     sort: '{{ current_sort }}',
     direction: '{{ current_direction|default:'desc' }}',
     layout: '{{ current_layout|default:'grid' }}',
+    renderedLayout: '{{ current_layout|default:'grid' }}',
     status: '{{ current_status }}',
     type: '{{ request.GET.type|default:'all' }}',
     query: '{{ request.GET.q|default:''|escapejs }}',
@@ -275,6 +276,7 @@
       }
     }
   }"
+       x-init="$refs.itemsView.addEventListener('htmx:afterSwap', () => { renderedLayout = layout })"
        @open-list-edit-modal.window="showModal = true">
 
     <!-- Form to manage state -->
@@ -286,6 +288,10 @@
       <input type="hidden" name="status" x-model="status">
       <input type="hidden" name="q" x-model="query">
     </form>
+    {% if column_config %}
+      {{ column_config|json_script:"media-column-config-data" }}
+      {{ default_column_config|json_script:"media-column-default-config-data" }}
+    {% endif %}
     {% if can_edit %}
       {% include "lists/components/list_form.html" %}
     {% endif %}
@@ -479,6 +485,9 @@
           </div>
 
           <div class="ml-auto flex items-center gap-2">
+            {% if column_config %}
+              {% include "app/components/table_column_menu.html" with table_column_update_url=table_column_update_url table_refresh_url=table_refresh_url table_refresh_target=table_refresh_target table_refresh_include_selector=table_refresh_include_selector table_loading_indicator="#loading-indicator" table_type=table_type table_column_media_type=table_column_media_type %}
+            {% endif %}
             {% if can_edit %}
               {% if not custom_list.can_recommend %}
                 <div class="relative" x-data="{ tooltipOpen: false }">
@@ -539,8 +548,9 @@
     </div>
 
     <div id="items-view"
+         x-ref="itemsView"
          hx-history="false"
-         :class="layout === 'grid' ? 'media-grid' : ''">
+         :class="renderedLayout === 'grid' ? 'media-grid' : ''">
       {% if items %}
         {% if current_layout == 'table' %}
           {% include "lists/components/list_table.html" %}
@@ -644,6 +654,8 @@
       htmx.config.getCacheBusterParam = true;
     }
   </script>
+
+  {% include "app/components/table_column_config_scripts.html" %}
 
   <script>
     function refreshCustomListGrid() {

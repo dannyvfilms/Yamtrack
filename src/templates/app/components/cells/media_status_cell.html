@@ -8,6 +8,8 @@
       </div>
     {% endif %}
   {% endif %}
-{% else %}
+{% elif media.status %}
   {{ media.status|media_status_readable }}
+{% else %}
+  <span class="text-gray-500">-</span>
 {% endif %}

@@ -13,6 +13,10 @@
 {# djlint:off #}
 {% block content %}
   {{ smart_filter_data|json_script:"smart-filter-data" }}
+  {% if column_config %}
+    {{ column_config|json_script:"media-column-config-data" }}
+    {{ default_column_config|json_script:"media-column-default-config-data" }}
+  {% endif %}
 
   <div x-data="{
     showModal: false,
@@ -24,6 +28,7 @@
     sort: '{{ current_sort }}',
     direction: '{{ current_direction|default:'desc' }}',
     layout: '{{ current_layout }}',
+    renderedLayout: '{{ current_layout }}',
     query: '{{ active_smart_rules.search|default:''|escapejs }}',
     status: '{{ active_smart_rules.status|default:'all'|escapejs }}',
     rating: '{{ active_smart_rules.rating|default:'all'|escapejs }}',
@@ -256,7 +261,7 @@
       }
     }
   }"
-  x-init="init()">
+  x-init="init(); $refs.itemsView.addEventListener('htmx:afterSwap', () => { renderedLayout = layout })">
 
     <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
       <div class="w-full min-w-0">
@@ -527,8 +532,9 @@
     </div>
 
     <div id="items-view"
+         x-ref="itemsView"
          hx-history="false"
-         :class="layout === 'grid' ? 'media-grid' : ''">
+         :class="renderedLayout === 'grid' ? 'media-grid' : ''">
       {% if current_layout == 'table' %}
         {% include "lists/components/list_table.html" %}
       {% else %}
@@ -660,4 +666,5 @@
       htmx.config.getCacheBusterParam = true;
     }
   </script>
+  {% include "app/components/table_column_config_scripts.html" %}
 {% endblock js %}

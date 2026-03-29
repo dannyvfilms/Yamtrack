@@ -101,6 +101,15 @@ MEDIA_COLUMNS: list[ColumnDef] = [
         default_order=25,
     ),
     ColumnDef(
+        key="media_type",
+        label="Media Type",
+        th_classes="p-2 text-center",
+        td_classes="p-2 text-center",
+        cell_template="app/components/cells/media_media_type_cell.html",
+        table_types=("list",),
+        default_order=27,
+    ),
+    ColumnDef(
         key="score",
         label="Score",
         th_classes="p-2 text-center",
@@ -301,6 +310,12 @@ MEDIA_COLUMNS: list[ColumnDef] = [
 ]
 
 
+def _matches_table_type(column: ColumnDef, table_type: TableType) -> bool:
+    if table_type in column.table_types:
+        return True
+    return table_type == "list" and "media" in column.table_types
+
+
 def _get_media_type_prefs(
     user: Any,
     media_type: str,
@@ -328,7 +343,9 @@ def _base_columns(
     user: Any,
     table_type: TableType,
 ) -> list[ColumnDef]:
-    columns = [column for column in MEDIA_COLUMNS if table_type in column.table_types]
+    columns = [
+        column for column in MEDIA_COLUMNS if _matches_table_type(column, table_type)
+    ]
     visible_columns = []
     for column in columns:
         if column.is_visible and not column.is_visible(media_type, current_sort, user):

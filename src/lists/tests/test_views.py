@@ -678,6 +678,123 @@ class ListDetailViewTests(TestCase):
         self.assertTemplateUsed(response, "lists/components/media_grid.html")
         self.assertNotIn("form", response.context)
 
+    @patch.object(get_user_model(), "update_preference")
+    @patch.object(CustomList, "user_can_view")
+    @patch("app.providers.services.get_media_metadata")
+    def test_list_detail_view_table_layout_full_render(
+        self,
+        mock_get_media_metadata,
+        mock_user_can_view,
+        mock_update_preference,
+    ):
+        """Full list detail renders the table layout when requested."""
+        mock_update_preference.side_effect = ["date_added", None]
+        mock_user_can_view.return_value = True
+        mock_get_media_metadata.return_value = {
+            "max_progress": 1,
+            "related": {"seasons": []},
+            "title": "Test Movie",
+        }
+
+        Movie.objects.create(
+            item=self.movie_item,
+            status=Status.COMPLETED.value,
+            user=self.user,
+        )
+
+        response = self.client.get(
+            reverse("list_detail", args=[self.custom_list.id]) + "?layout=table",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_layout"], "table")
+        self.assertEqual(
+            [column.key for column in response.context["resolved_columns"]],
+            [
+                "image",
+                "title",
+                "media_type",
+                "score",
+                "progress",
+                "status",
+                "release_date",
+                "date_added",
+                "start_date",
+                "end_date",
+            ],
+        )
+        self.assertContains(response, 'id="list-table-body"')
+        self.assertContains(response, 'min-w-10 w-10 h-10 object-cover rounded-md')
+        self.assertContains(response, 'id="media-column-config-data"')
+
+    @patch.object(get_user_model(), "update_preference")
+    @patch.object(CustomList, "user_can_view")
+    @patch("app.providers.services.get_media_metadata")
+    def test_list_detail_view_table_partial(
+        self,
+        mock_get_media_metadata,
+        mock_user_can_view,
+        mock_update_preference,
+    ):
+        """HTMX table layout requests should return the list-table partial."""
+        mock_update_preference.side_effect = ["date_added", None]
+        mock_user_can_view.return_value = True
+        mock_get_media_metadata.return_value = {
+            "max_progress": 1,
+            "related": {"seasons": []},
+            "title": "Test Movie",
+        }
+
+        Movie.objects.create(
+            item=self.movie_item,
+            status=Status.COMPLETED.value,
+            user=self.user,
+        )
+
+        response = self.client.get(
+            reverse("list_detail", args=[self.custom_list.id]) + "?layout=table",
+            headers={"hx-request": "true"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "lists/components/list_table.html")
+        self.assertContains(response, 'class="w-full bg-[#2a2f35] media-table"')
+
+    @patch.object(get_user_model(), "update_preference")
+    @patch.object(CustomList, "user_can_view")
+    def test_list_table_column_preferences_are_scoped_to_lists(self, mock_user_can_view, mock_update_preference):
+        mock_update_preference.side_effect = ["date_added", None]
+        mock_user_can_view.return_value = True
+
+        self.client.post(
+            reverse("list_detail_columns", args=[self.custom_list.id]),
+            {
+                "table_type": "list",
+                "media_type_key": MediaTypes.MOVIE.value,
+                "sort": "rating",
+                "order": json.dumps(["media_type", "status"]),
+                "hidden": json.dumps(["status"]),
+            },
+            headers={"hx-request": "true"},
+        )
+
+        self.user.refresh_from_db()
+        self.assertEqual(
+            self.user.table_column_prefs[MediaTypes.MOVIE.value]["list"],
+            {
+                "order": [
+                    "media_type",
+                    "status",
+                    "score",
+                    "runtime",
+                    "popularity",
+                    "release_date",
+                    "date_added",
+                    "start_date",
+                    "end_date",
+                ],
+                "hidden": ["status"],
+            },
+        )
+
     def test_smart_list_detail_uses_smart_template(self):
         """Smart lists should render the dedicated smart detail view."""
         Movie.objects.create(
@@ -698,8 +815,14 @@ class ListDetailViewTests(TestCase):
         self.assertTemplateUsed(response, "lists/smart_list_detail.html")
         self.assertTrue(response.context["is_smart_list"])
 
-    def test_smart_list_detail_table_partial(self):
+    @patch("app.providers.services.get_media_metadata")
+    def test_smart_list_detail_table_partial(self, mock_get_media_metadata):
         """Smart list table layout should return list-table partials for HTMX."""
+        mock_get_media_metadata.return_value = {
+            "max_progress": 1,
+            "related": {"seasons": []},
+            "title": "Test Movie",
+        }
         Movie.objects.create(
             item=self.movie_item,
             status=Status.COMPLETED.value,

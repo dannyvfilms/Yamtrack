@@ -1,23 +1,10 @@
 {% load app_tags %}
 {% load user_tags %}
 
-{% if items %}
-  <div class="bg-[#2a2f35] p-4 rounded-lg overflow-x-auto">
-    <table class="w-full min-w-[860px] text-left">
-      <thead>
-        <tr class="text-xs uppercase tracking-wide text-gray-400">
-          <th class="px-4 py-3 font-medium">Title</th>
-          <th class="px-4 py-3 font-medium">Media Type</th>
-          <th class="px-4 py-3 font-medium">Status</th>
-          <th class="px-4 py-3 font-medium">Rating</th>
-          <th class="px-4 py-3 font-medium">Progress</th>
-          <th class="px-4 py-3 font-medium">Release Date</th>
-          <th class="px-4 py-3 font-medium">Date Added</th>
-        </tr>
-      </thead>
-      <tbody id="list-table-body">
-        {% include "lists/components/list_table_rows.html" %}
-      </tbody>
+{% if media_list %}
+  <div class="bg-[#2a2f35] p-4 rounded-lg overflow-hidden max-w-[calc(100svw-4rem)] overflow-x-scroll">
+    <table class="w-full bg-[#2a2f35] media-table">
+      {% include "app/components/table_items.html" %}
     </table>
   </div>
 {% elif items_count %}

@@ -22,6 +22,11 @@ urlpatterns = [
     ),
     path("list/<int:list_id>", views.list_detail, name="list_detail"),
     path(
+        "list/<int:list_id>/columns",
+        views.update_list_table_columns,
+        name="list_detail_columns",
+    ),
+    path(
         "list/<int:list_id>/smart-rules",
         views.smart_rules_update,
         name="list_smart_rules_update",

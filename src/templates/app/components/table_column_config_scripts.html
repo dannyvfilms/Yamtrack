@@ -1,0 +1,172 @@
+<script>
+  const COLUMN_UI_DEBUG = (
+    window.location.hostname === 'localhost' ||
+    window.location.hostname === '127.0.0.1'
+  );
+
+  function columnUiDebugLog(message) {
+    if (!COLUMN_UI_DEBUG) {
+      return;
+    }
+    console.log(`[COLUMN_UI_DEBUG] ${message}`);
+  }
+
+  window.columnUiDebugLog = columnUiDebugLog;
+  let columnRefreshInFlight = false;
+  let columnRefreshQueued = false;
+
+  function refreshTableAfterColumnSave(options = {}) {
+    if (!window.htmx || !options.refreshUrl) {
+      return;
+    }
+
+    const includeSelector = options.refreshInclude || '#filter-form';
+    const target = options.refreshTarget || '.media-table';
+    const indicatorSelector = options.loadingIndicator || '#loading-indicator';
+    const indicator = document.querySelector(indicatorSelector);
+    const includeEl = document.querySelector(includeSelector);
+    const filterValues = includeEl ? htmx.values(includeEl) : {};
+    const values = {
+      ...filterValues,
+      column_refresh_nonce: Date.now().toString(),
+    };
+
+    if (columnRefreshInFlight) {
+      columnRefreshQueued = true;
+      columnUiDebugLog('refresh_request_skipped in_flight=true');
+      return;
+    }
+
+    columnRefreshInFlight = true;
+    columnUiDebugLog('refresh_dispatch source=save_after_request');
+    columnUiDebugLog('refresh_request_start');
+    if (indicator) {
+      indicator.classList.add('htmx-request');
+    }
+
+    const request = htmx.ajax('GET', options.refreshUrl, {
+      source: includeEl || document.body,
+      target,
+      swap: 'innerHTML',
+      values,
+      headers: { 'HX-Request': 'true' },
+    });
+
+    const completeRefresh = () => {
+      if (indicator) {
+        indicator.classList.remove('htmx-request');
+      }
+      columnRefreshInFlight = false;
+      columnUiDebugLog('refresh_request_complete');
+      if (columnRefreshQueued) {
+        columnRefreshQueued = false;
+        columnUiDebugLog('refresh_request_dequeue');
+        refreshTableAfterColumnSave(options);
+      }
+    };
+
+    if (request && typeof request.finally === 'function') {
+      request.finally(completeRefresh);
+    } else {
+      completeRefresh();
+    }
+  }
+
+  function columnConfigMenu(options = {}) {
+    const configEl = document.getElementById('media-column-config-data');
+    const defaultsEl = document.getElementById('media-column-default-config-data');
+    const initialColumns = configEl ? JSON.parse(configEl.textContent) : [];
+    const defaultColumns = defaultsEl ? JSON.parse(defaultsEl.textContent) : initialColumns;
+
+    return {
+      open: false,
+      dragIndex: null,
+      isSaving: false,
+      queuedSave: false,
+      columns: initialColumns.map(column => ({ ...column })),
+      defaultColumns: defaultColumns.map(column => ({ ...column, visible: true })),
+      init() {
+        if (!this.$refs.form) {
+          return;
+        }
+        this.$refs.form.addEventListener('htmx:beforeRequest', (event) => {
+          if (event?.detail?.elt !== this.$refs.form) {
+            return;
+          }
+          this.isSaving = true;
+        });
+        this.$refs.form.addEventListener('htmx:afterRequest', (event) => {
+          if (event?.detail?.elt !== this.$refs.form) {
+            return;
+          }
+          const requestConfig = event?.detail?.requestConfig;
+          const requestVerb = String(requestConfig?.verb || '').toLowerCase();
+          if (requestVerb && requestVerb !== 'post') {
+            return;
+          }
+          const requestPath = String(requestConfig?.path || '');
+          const savePath = this.$refs.form.getAttribute('hx-post') || '';
+          if (requestPath && savePath && !requestPath.includes(savePath)) {
+            return;
+          }
+          const successful = Boolean(event?.detail?.successful);
+          columnUiDebugLog(`save_after_request successful=${successful}`);
+          this.isSaving = false;
+          if (this.queuedSave) {
+            this.queuedSave = false;
+            this.save();
+          }
+          if (successful) {
+            refreshTableAfterColumnSave(options);
+          }
+        });
+      },
+      startDrag(index, event) {
+        this.dragIndex = index;
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = 'move';
+        }
+      },
+      drop(index) {
+        if (this.dragIndex === null || this.dragIndex === index) {
+          return;
+        }
+        const [moved] = this.columns.splice(this.dragIndex, 1);
+        this.columns.splice(index, 0, moved);
+        this.dragIndex = null;
+        this.save();
+      },
+      endDrag() {
+        this.dragIndex = null;
+      },
+      toggleVisibility(index) {
+        this.columns[index].visible = !this.columns[index].visible;
+        this.save();
+      },
+      resetDefaults() {
+        this.columns = this.defaultColumns.map(column => ({ ...column }));
+        this.save();
+      },
+      save() {
+        this.$nextTick(() => {
+          if (!this.$refs.form) {
+            return;
+          }
+          if (this.isSaving) {
+            this.queuedSave = true;
+            return;
+          }
+
+          this.isSaving = true;
+          this.queuedSave = false;
+          columnUiDebugLog('save_submit');
+          if (typeof this.$refs.form.requestSubmit === 'function') {
+            this.$refs.form.requestSubmit();
+          } else {
+            htmx.trigger(this.$refs.form, 'submit');
+          }
+        });
+      },
+    };
+  }
+</script>

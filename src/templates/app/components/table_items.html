@@ -9,15 +9,15 @@
       {% endfor %}
     </tr>
   </thead>
-  <tbody id="media-table-body">
+  <tbody id="{{ table_body_id|default:'media-table-body' }}">
 {% endif %}
 {% for media in media_list %}
   <tr class="hover:bg-[#39404b] transition-colors cursor-pointer hover-tap{% if forloop.last and media_list.has_next %} pagination-trigger{% endif %}"
       x-data="{ trackOpen: false }"
-      {% if forloop.last and media_list.has_next %} hx-get="{% url 'medialist' media_type %}?page={{ media_list.next_page_number }}" hx-trigger="revealed threshold:150px once" hx-swap="beforeend" hx-target="#media-table-body" hx-include="#filter-form" hx-indicator="#loading-indicator" data-page="{{ media_list.next_page_number }}" {% endif %}>
+      {% if forloop.last and media_list.has_next %}hx-get="{% if table_pagination_url %}{{ table_pagination_url }}{% else %}{% url 'medialist' media_type %}{% endif %}?page={{ media_list.next_page_number }}" hx-trigger="revealed threshold:150px once" hx-swap="beforeend" hx-target="{{ table_target_selector|default:'#media-table-body' }}" hx-include="{{ table_include_selector|default:'#filter-form' }}" hx-indicator="#loading-indicator" data-page="{{ media_list.next_page_number }}"{% endif %}>
     {% for col in resolved_columns %}
       <td class="{{ col.td_classes }}">
-        {% include col.cell_template with media=media user=user %}
+        {% include col.cell_template with media=media user=user public_view=public_view %}
       </td>
     {% endfor %}
   </tr>

@@ -972,6 +972,9 @@
     </div>
 
     <div class="ml-auto flex items-center gap-2">
+      {% if column_config %}
+        {% include "app/components/table_column_menu.html" with table_column_update_url=table_column_update_url table_refresh_url=table_refresh_url table_refresh_target=table_refresh_target table_refresh_include_selector=table_refresh_include_selector table_loading_indicator="#loading-indicator" table_type=table_type table_column_media_type=table_column_media_type %}
+      {% endif %}
       {% if can_edit and not custom_list.can_recommend %}
         <div class="relative hidden sm:flex" x-data="{ tooltipOpen: false }">
           <button @click="showModal = true"

@@ -1080,17 +1080,47 @@ class User(AbstractUser):
         prefs = dict(self.table_column_prefs or {})
         existing = prefs.get(media_type, {})
 
-        # Preserve shape compatibility with future table-type scoped prefs.
-        if isinstance(existing, dict) and ("order" in existing or "hidden" in existing):
-            media_prefs = dict(existing)
-            media_prefs["order"] = list(order)
-            media_prefs["hidden"] = list(hidden)
-            prefs[media_type] = media_prefs
+        if table_type == "media":
+            if isinstance(existing, dict) and (
+                not existing or "order" in existing or "hidden" in existing
+            ):
+                media_prefs = dict(existing)
+                media_prefs["order"] = list(order)
+                media_prefs["hidden"] = list(hidden)
+                prefs[media_type] = media_prefs
+            elif isinstance(existing, dict):
+                scoped_prefs = dict(existing)
+                scoped_prefs["media"] = {
+                    "order": list(order),
+                    "hidden": list(hidden),
+                }
+                prefs[media_type] = scoped_prefs
+            else:
+                prefs[media_type] = {
+                    "order": list(order),
+                    "hidden": list(hidden),
+                }
         else:
-            prefs[media_type] = {
+            if isinstance(existing, dict) and ("order" in existing or "hidden" in existing):
+                scoped_prefs = {
+                    key: value
+                    for key, value in existing.items()
+                    if key not in {"order", "hidden"}
+                }
+                scoped_prefs["media"] = {
+                    "order": list(existing.get("order", [])),
+                    "hidden": list(existing.get("hidden", [])),
+                }
+            elif isinstance(existing, dict):
+                scoped_prefs = dict(existing)
+            else:
+                scoped_prefs = {}
+
+            scoped_prefs[table_type] = {
                 "order": list(order),
                 "hidden": list(hidden),
             }
+            prefs[media_type] = scoped_prefs
 
         if prefs != self.table_column_prefs:
             self.table_column_prefs = prefs
