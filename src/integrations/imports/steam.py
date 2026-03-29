@@ -15,6 +15,7 @@ from integrations.imports.helpers import MediaImportError, MediaImportUnexpected
 logger = logging.getLogger(__name__)
 
 STEAM_API_BASE_URL = "https://api.steampowered.com"
+IMPORT_NOTE = "Imported from Steam"
 
 
 def importer(steam_id, user, mode):
@@ -48,6 +49,8 @@ class SteamImporter:
 
         self.to_delete = defaultdict(lambda: defaultdict(set))
 
+        self.to_update = []
+
         self.bulk_media = defaultdict(list)
 
         logger.info(
@@ -69,6 +72,18 @@ class SteamImporter:
 
         helpers.cleanup_existing_media(self.to_delete, self.user)
         helpers.bulk_create_media(self.bulk_media, self.user)
+
+        # Update existing games
+        if self.to_update:
+            app.models.Game.objects.bulk_update(
+                self.to_update,
+                fields=['progress', 'status']
+            )
+            logger.info(
+                "Updated %d existing games for user %s",
+                len(self.to_update),
+                self.user.username,
+            )
 
         imported_counts = {
             media_type: len(media_list)
@@ -174,43 +189,48 @@ class SteamImporter:
                 )
                 return
 
-            if not helpers.should_process_media(
-                self.existing_media,
-                self.to_delete,
-                MediaTypes.GAME.value,
-                Sources.IGDB.value,
-                str(igdb_game["media_id"]),
-                self.mode,
-            ):
-                return
+            media_id = str(igdb_game["media_id"])
+            existing = self.existing_media[MediaTypes.GAME.value][Sources.IGDB.value].get(media_id)
+            if existing:
+                if self.mode == "overwrite":
+                    existing.progress = playtime_forever
+                    # Conscious choice: User manually set status to Completed/Dropped, we should not change it
+                    if existing.status not in (Status.COMPLETED.value, Status.DROPPED.value):
+                        existing.status = self._determine_game_status(playtime_forever, playtime_2weeks)
+                    self.to_update.append(existing)
+                # In "new" mode, skip existing games
+            else: 
+                if not helpers.should_process_media(
+                    self.existing_media,
+                    self.to_delete,
+                    MediaTypes.GAME.value,
+                    Sources.IGDB.value,
+                    media_id,
+                    self.mode,
+                ):
+                    return
+                
+                item, _ = app.models.Item.objects.get_or_create(
+                    media_id=media_id,
+                    source=Sources.IGDB.value,
+                    media_type=MediaTypes.GAME.value,
+                    defaults={
+                        "title": igdb_game["title"],
+                        "image": igdb_game["image"],
+                    },
+                )
+                game = app.models.Game(
+                    item=item,
+                    user=self.user,
+                    status=self._determine_game_status(playtime_forever, playtime_2weeks),
+                    score=None,
+                    progress=playtime_forever,
+                    notes=IMPORT_NOTE,
+                    start_date=None,
+                    end_date=None,
+                )
 
-            # Use IGDB data if found
-            item, _ = app.models.Item.objects.get_or_create(
-                media_id=str(igdb_game["media_id"]),
-                source=Sources.IGDB.value,
-                media_type=MediaTypes.GAME.value,
-                defaults={
-                    "title": igdb_game["title"],
-                    "image": igdb_game["image"],
-                },
-            )
-
-            # Determine status based on playtime
-            status = self._determine_game_status(playtime_forever, playtime_2weeks)
-
-            # Create game object
-            game = app.models.Game(
-                item=item,
-                user=self.user,
-                status=status,
-                score=None,
-                progress=playtime_forever,
-                notes="Imported from Steam",
-                start_date=None,
-                end_date=None,
-            )
-
-            self.bulk_media[MediaTypes.GAME.value].append(game)
+                self.bulk_media[MediaTypes.GAME.value].append(game)
 
         except services.ProviderAPIError as e:
             msg = str(e).lower()
