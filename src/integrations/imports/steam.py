@@ -47,8 +47,6 @@ class SteamImporter:
 
         self.existing_media = helpers.get_existing_media(user)
 
-        self.to_delete = defaultdict(lambda: defaultdict(set))
-
         self.to_update = []
 
         self.bulk_media = defaultdict(list)
@@ -70,7 +68,6 @@ class SteamImporter:
         for game_data in owned_games:
             self._process_game(game_data)
 
-        helpers.cleanup_existing_media(self.to_delete, self.user)
         helpers.bulk_create_media(self.bulk_media, self.user)
 
         # Update existing games
@@ -195,21 +192,11 @@ class SteamImporter:
                 if self.mode == "overwrite":
                     existing.progress = playtime_forever
                     # Conscious choice: User manually set status to Completed/Dropped, we should not change it
-                    if existing.status not in (Status.COMPLETED.value, Status.DROPPED.value):
+                    if existing.status not in {Status.COMPLETED.value, Status.DROPPED.value}:
                         existing.status = self._determine_game_status(playtime_forever, playtime_2weeks)
                     self.to_update.append(existing)
                 # In "new" mode, skip existing games
             else: 
-                if not helpers.should_process_media(
-                    self.existing_media,
-                    self.to_delete,
-                    MediaTypes.GAME.value,
-                    Sources.IGDB.value,
-                    media_id,
-                    self.mode,
-                ):
-                    return
-                
                 item, _ = app.models.Item.objects.get_or_create(
                     media_id=media_id,
                     source=Sources.IGDB.value,
