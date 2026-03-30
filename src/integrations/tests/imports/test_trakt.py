@@ -5,9 +5,14 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 
 from app.models import (
+    Episode,
+    Item,
     MediaTypes,
     Movie,
+    Season,
+    Sources,
     Status,
+    TV,
 )
 from integrations.imports import (
     helpers,
@@ -273,3 +278,78 @@ class ImportTrakt(TestCase):
         self.assertEqual(importer.username, "testuser")
         self.assertIsNone(importer.refresh_token)
         self.assertEqual(importer.mode, "new")
+
+    @patch("integrations.imports.trakt.TraktImporter._make_api_request")
+    def test_process_episode_rating(self, mock_make_request):
+        """Episode ratings from Trakt are applied to existing Episode records."""
+        # Build the minimum DB state: TV → Season → Episode
+        tv_item = Item.objects.get_or_create(
+            media_id="12345",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            defaults={"title": "Test Show"},
+        )[0]
+        tv_obj = TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        season_item = Item.objects.get_or_create(
+            media_id="12345",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            defaults={"title": "Season 1"},
+        )[0]
+        season_obj = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=tv_obj,
+            status=Status.IN_PROGRESS.value,
+        )
+        episode_item = Item.objects.get_or_create(
+            media_id="12345",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=1,
+            defaults={"title": "Pilot"},
+        )[0]
+        episode_obj = Episode.objects.create(
+            item=episode_item,
+            related_season=season_obj,
+        )
+
+        rating_entry = {
+            "rated_at": "2023-01-01T00:00:00.000Z",
+            "type": "episode",
+            "show": {"title": "Test Show", "ids": {"tmdb": 12345}},
+            "episode": {"season": 1, "number": 1, "title": "Pilot"},
+            "rating": 8,
+        }
+        mock_make_request.return_value = [rating_entry]
+
+        trakt_importer = TraktImporter("testuser", self.user, "new")
+        trakt_importer.process_ratings()
+
+        episode_obj.refresh_from_db()
+        # Trakt rating 8 on a 10-point scale → stored as 8.0 (no scaling needed)
+        self.assertIsNotNone(episode_obj.score)
+        self.assertEqual(float(episode_obj.score), 8.0)
+
+    @patch("integrations.imports.trakt.TraktImporter._make_api_request")
+    def test_process_episode_rating_no_season(self, mock_make_request):
+        """Episode rating is silently skipped when the season isn't tracked."""
+        rating_entry = {
+            "rated_at": "2023-01-01T00:00:00.000Z",
+            "type": "episode",
+            "show": {"title": "Untracked Show", "ids": {"tmdb": 99999}},
+            "episode": {"season": 1, "number": 1, "title": "Pilot"},
+            "rating": 7,
+        }
+        mock_make_request.return_value = [rating_entry]
+
+        trakt_importer = TraktImporter("testuser", self.user, "new")
+        # Should not raise; simply skips because no matching Season exists
+        trakt_importer.process_ratings()
+        self.assertEqual(Episode.objects.filter(related_season__user=self.user).count(), 0)

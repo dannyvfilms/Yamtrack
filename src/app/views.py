@@ -6004,8 +6004,13 @@ def season_details(
             episode_number__in=episode_numbers,
         )
         
-        # Get all collection entries for these episodes in one query
-        episode_item_ids = list(episode_items.values_list('id', flat=True))
+        # Build episode_number → Item map for item references and collection lookups
+        item_by_episode_number = {
+            item.episode_number: item
+            for item in episode_items
+            if item.episode_number is not None
+        }
+        episode_item_ids = list(item_by_episode_number[ep_num].id for ep_num in item_by_episode_number)
         collection_entries = {}
         if episode_item_ids:
             collection_entries_qs = (
@@ -6016,16 +6021,17 @@ def season_details(
                 .select_related("item")
                 .order_by("-collected_at", "-id")
             )
-            # Map by (season_number, episode_number) for quick lookup
+            # Map by episode_number for quick lookup
             for entry in collection_entries_qs:
-                episode_number = entry.item.episode_number
-                if episode_number is not None and episode_number not in collection_entries:
-                    collection_entries[episode_number] = entry
-        
-        # Add collection_entry to each episode
+                ep_num = entry.item.episode_number
+                if ep_num is not None and ep_num not in collection_entries:
+                    collection_entries[ep_num] = entry
+
+        # Add collection_entry and item reference to each episode
         for episode in season_metadata["episodes"]:
             episode_number = episode.get("episode_number")
             episode["collection_entry"] = collection_entries.get(episode_number)
+            episode["item"] = item_by_episode_number.get(episode_number)
 
     # Enrich related items with user tracking data
     # For public views, use list owner's data if available
@@ -6239,6 +6245,53 @@ def update_media_score(request, media_type, instance_id):
         "%s score updated to %s",
         media,
         score,
+    )
+
+    return JsonResponse(
+        {
+            "success": True,
+            "score": request.user.format_score_for_display(score) if score is not None else None,
+        },
+    )
+
+
+@login_required
+@require_POST
+def update_episode_score(request, season_id, episode_number):
+    """Update the user's score for a specific episode."""
+    season = get_object_or_404(Season, id=season_id, user=request.user)
+
+    score_raw = request.POST.get("score")
+    toggle = request.POST.get("toggle")
+    score = None
+    if score_raw is not None:
+        score_raw = score_raw.strip()
+        if score_raw and score_raw.lower() != "null":
+            try:
+                score = Decimal(score_raw)
+            except (InvalidOperation, TypeError):
+                return HttpResponseBadRequest("Invalid score.")
+            score = request.user.scale_score_for_storage(score)
+            if score is None:
+                return HttpResponseBadRequest("Invalid score.")
+
+    episodes = Episode.objects.filter(
+        related_season=season,
+        item__episode_number=episode_number,
+    )
+
+    if toggle and score is not None:
+        existing = episodes.values_list("score", flat=True).first()
+        if existing == score:
+            score = None
+
+    episodes.update(score=score)
+    logger.info(
+        "Episode S%sE%s score updated to %s for user %s",
+        season.item.season_number,
+        episode_number,
+        score,
+        request.user,
     )
 
     return JsonResponse(

@@ -3424,7 +3424,7 @@ class Episode(models.Model):
 
     history = HistoricalRecords(
         cascade_delete_history=True,
-        excluded_fields=["item", "related_season", "created_at"],
+        excluded_fields=["item", "related_season", "created_at", "score"],
     )
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -3435,6 +3435,17 @@ class Episode(models.Model):
         related_name="episodes",
     )
     end_date = models.DateTimeField(null=True, blank=True)
+    score = models.DecimalField(
+        null=True,
+        blank=True,
+        max_digits=3,
+        decimal_places=1,
+        validators=[
+            DecimalValidator(3, 1),
+            MinValueValidator(0),
+            MaxValueValidator(10),
+        ],
+    )
 
     class Meta:
         """Meta options for the model."""
@@ -3461,15 +3472,6 @@ class Episode(models.Model):
     @status.setter
     def status(self, value):
         self._status_override = value
-
-    @property
-    def score(self):
-        """Episodes do not carry standalone ratings in Yamtrack."""
-        return getattr(self, "_score_override", None)
-
-    @score.setter
-    def score(self, value):
-        self._score_override = value
 
     @property
     def progress(self):
