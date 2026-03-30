@@ -560,6 +560,16 @@ def _build_specials_season_from_tvdb(media_id, tv_data):
             },
         )
         return None
+    except services.ProviderAPIError as error:
+        logger.warning(
+            "Skipping TMDB specials fallback due to TVDB API error: %s",
+            error,
+            extra={
+                "media_id": media_id,
+                "tvdb_id": tv_data.get("tvdb_id"),
+            },
+        )
+        return None
 
     if season_data is None:
         return None
@@ -600,7 +610,7 @@ def fetch_and_cache_seasons(media_id, season_numbers, tv_data):
 
         # Cache TV metadata if we haven't fetched it yet
         if fetched_tv_data is None:
-            fetched_tv_data = process_tv(response)
+            fetched_tv_data = process_tv(response, media_id=media_id)
             tv_cache_key = f"{Sources.TMDB.value}_{MediaTypes.TV.value}_{media_id}"
             cache.set(tv_cache_key, fetched_tv_data)
 
@@ -705,7 +715,7 @@ def tv(media_id):
         except requests.exceptions.HTTPError as error:
             handle_error(error)
 
-        data = process_tv(response)
+        data = process_tv(response, media_id=media_id)
         cache.set(cache_key, data)
     else:
         data, changed = _apply_tvdb_id_override_to_tv_data(media_id, data)
@@ -715,9 +725,9 @@ def tv(media_id):
     return data
 
 
-def process_tv(response):
+def process_tv(response, media_id=None):
     """Process the metadata for the selected tv show from The Movie Database."""
-    media_id = str(response["id"])
+    media_id = str(media_id) if media_id is not None else str(response["id"])
     num_episodes = response["number_of_episodes"]
     next_episode = response.get("next_episode_to_air")
     last_episode = response.get("last_episode_to_air")
@@ -764,6 +774,7 @@ def process_tv(response):
                 response["seasons"],
                 MediaTypes.SEASON.value,
                 response,
+                tv_media_id=media_id,
             ),
             "recommendations": get_related(
                 response.get("recommendations", {}).get("results", [])[:15],
@@ -1225,7 +1236,7 @@ def get_score(score):
     return round(score, 1)
 
 
-def get_related(related_medias, media_type, parent_response=None):
+def get_related(related_medias, media_type, parent_response=None, tv_media_id=None):
     """Return list of related media for the selected media."""
     related = []
     for media in related_medias:
@@ -1247,7 +1258,7 @@ def get_related(related_medias, media_type, parent_response=None):
         }
         if media_type == MediaTypes.SEASON.value:
             episode_count = media.get("episode_count")
-            data["media_id"] = parent_response["id"]
+            data["media_id"] = tv_media_id if tv_media_id is not None else parent_response["id"]
             data["title"] = get_title(parent_response)
             data["original_title"] = get_original_title(parent_response)
             data["localized_title"] = get_localized_title(parent_response)
