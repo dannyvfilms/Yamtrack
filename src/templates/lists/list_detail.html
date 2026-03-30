@@ -134,34 +134,29 @@
                  x-transition:leave-end="transform opacity-0 scale-95">
               <a href="{% url 'list_add_item' custom_list.id %}"
                  class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors">
-                Search and Add Item
+                Add New Item
               </a>
               {% if custom_list.can_recommend %}
-                {% if recommendation_count > 0 %}
-                  <a href="{% url 'list_recommendations' custom_list.id %}"
-                     class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors">
-                    View Recommendations
-                  </a>
-                  <a href="{% url 'recommend_item' custom_list.id %}"
-                     class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors">
-                    Recommend Item
-                  </a>
-                {% else %}
-                  <a href="{% url 'recommend_item' custom_list.id %}"
-                     class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors">
-                    Recommend Item
-                  </a>
-                {% endif %}
+                <a href="{% url 'recommend_item' custom_list.id %}"
+                   class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors">
+                  Add Recommendation
+                </a>
               {% endif %}
-              <a href="{% url 'list_activity' custom_list.id %}"
-                 class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors">
-                View Activity History
-              </a>
               <button class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors cursor-pointer"
                       @click="open = false; window.dispatchEvent(new CustomEvent('open-list-edit-modal'))"
                       type="button">
                 Edit List
               </button>
+              <a href="{% url 'list_activity' custom_list.id %}"
+                 class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors">
+                View Activity History
+              </a>
+              {% if custom_list.can_recommend and recommendation_count > 0 %}
+                <a href="{% url 'list_recommendations' custom_list.id %}"
+                   class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors">
+                  View Recommendations
+                </a>
+              {% endif %}
             </div>
           </div>
         </div>
@@ -242,34 +237,29 @@
              x-transition:leave-end="transform opacity-0 scale-95">
           <a href="{% url 'list_add_item' custom_list.id %}"
              class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors">
-            Search and Add Item
+            Add New Item
           </a>
           {% if custom_list.can_recommend %}
-            {% if recommendation_count > 0 %}
-              <a href="{% url 'list_recommendations' custom_list.id %}"
-                 class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors">
-                View Recommendations
-              </a>
-              <a href="{% url 'recommend_item' custom_list.id %}"
-                 class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors">
-                Recommend Item
-              </a>
-            {% else %}
-              <a href="{% url 'recommend_item' custom_list.id %}"
-                 class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors">
-                Recommend Item
-              </a>
-            {% endif %}
+            <a href="{% url 'recommend_item' custom_list.id %}"
+               class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors">
+              Add Recommendation
+            </a>
           {% endif %}
-          <a href="{% url 'list_activity' custom_list.id %}"
-             class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors">
-            View Activity History
-          </a>
           <button class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors cursor-pointer"
                   @click="open = false; window.dispatchEvent(new CustomEvent('open-list-edit-modal'))"
                   type="button">
             Edit List
           </button>
+          <a href="{% url 'list_activity' custom_list.id %}"
+             class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors">
+            View Activity History
+          </a>
+          {% if custom_list.can_recommend and recommendation_count > 0 %}
+            <a href="{% url 'list_recommendations' custom_list.id %}"
+               class="block w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-[#454d5a] hover:text-white transition-colors">
+              View Recommendations
+            </a>
+          {% endif %}
         </div>
       </div>
     </div>

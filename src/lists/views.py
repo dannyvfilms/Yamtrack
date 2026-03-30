@@ -811,7 +811,7 @@ def _smart_list_detail_response(
         for value, label in MediaStatusChoices.choices
         if value != MediaStatusChoices.ALL
     ]]
-    sort_choices = ListDetailSortChoices.choices
+    sort_choices = sorted(ListDetailSortChoices.choices, key=lambda x: x[1])
 
     filter_data = smart_rules.build_rule_filter_data(
         owner=custom_list.owner,
@@ -819,7 +819,10 @@ def _smart_list_detail_response(
         status=active_rules["status"],
         search=active_rules["search"],
     )
-    available_media_types = smart_rules.get_available_media_types(custom_list.owner)
+    available_media_types = sorted(
+        smart_rules.get_available_media_types(custom_list.owner),
+        key=lambda v: MediaTypes(v).label,
+    )
     available_media_type_labels = {
         media_type: MediaTypes(media_type).label
         for media_type in available_media_types
@@ -1316,7 +1319,7 @@ def list_detail(request, list_id):
         "chip_sort": chip_sort,
         "current_status": params["status_filter"] or MediaStatusChoices.ALL,
         "current_layout": layout,
-        "sort_choices": ListDetailSortChoices.choices,
+        "sort_choices": sorted(ListDetailSortChoices.choices, key=lambda x: x[1]),
         "status_choices": MediaStatusChoices.choices,
         "public_view": public_view,
         "can_edit": can_edit,
@@ -1374,7 +1377,7 @@ def list_detail(request, list_id):
                 "form": CustomListForm(instance=custom_list, user=request.user)
                 if can_edit
                 else None,
-                "media_types": MediaTypes.values,
+                "media_types": sorted(MediaTypes.values, key=lambda v: MediaTypes(v).label),
                 "collaborators_count": custom_list.collaborators.count() + 1,
                 "completion_percent": completion_percent,
                 "completed_count": completed_count,
