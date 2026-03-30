@@ -42,6 +42,11 @@ urlpatterns = [
         name="list_reorder_item",
     ),
     path(
+        "list/<int:list_id>/reorder-all",
+        views.reorder_list_items_all,
+        name="list_reorder_all",
+    ),
+    path(
         "list/<int:list_id>/add",
         views.add_list_item_page,
         name="list_add_item",

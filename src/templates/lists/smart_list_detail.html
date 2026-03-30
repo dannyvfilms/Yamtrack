@@ -20,6 +20,8 @@
 
   <div x-data="{
     showModal: false,
+    isOrderEditing: false,
+    canEdit: {% if can_edit %}true{% else %}false{% endif %},
     editMode: {{ smart_edit_mode|yesno:'true,false' }},
     itemsCount: {{ items_count }},
     saveState: 'idle',
@@ -84,10 +86,17 @@
       return ['title', 'media_type', 'release_date', 'start_date'].includes(value) ? 'asc' : 'desc';
     },
     setSort(value) {
+      if (value === 'custom') {
+        this.sort = value;
+        this.direction = 'asc';
+        this.isOrderEditing = false;
+        return;
+      }
       this.direction = (this.sort === value)
         ? (this.direction === 'asc' ? 'desc' : 'asc')
         : this.defaultDirection(value);
       this.sort = value;
+      this.isOrderEditing = false;
     },
     init() {
       if (this.selectedTypes.length === 0 && this.availableMediaTypes.length > 0) {
@@ -261,7 +270,14 @@
       }
     }
   }"
-  x-init="init(); $refs.itemsView.addEventListener('htmx:afterSwap', () => { renderedLayout = layout })">
+  x-init="
+    init();
+    $refs.itemsView.addEventListener('htmx:afterSwap', () => {
+      renderedLayout = layout;
+      if (isOrderEditing) initListSortable(layout);
+    });
+    $watch('isOrderEditing', v => v ? initListSortable(layout) : destroyListSortable());
+  ">
 
     <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
       <div class="w-full min-w-0">
@@ -723,4 +739,54 @@
     }
   </script>
   {% include "app/components/table_column_config_scripts.html" %}
+
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/Sortable.min.js"></script>
+  <script>
+    let _listSortable = null;
+
+    function initListSortable(layout) {
+      destroyListSortable();
+      const container = layout === 'table'
+        ? document.getElementById('list-table-body')
+        : document.getElementById('items-view');
+      if (!container || typeof Sortable === 'undefined') return;
+      _listSortable = Sortable.create(container, {
+        animation: 150,
+        handle: '.drag-handle',
+        delay: 100,
+        delayOnTouchOnly: true,
+        onEnd() {
+          const els = container.querySelectorAll('[data-item-id]');
+          const ids = Array.from(els).map(el => el.dataset.itemId);
+          const params = new URLSearchParams(ids.map(id => ['item_ids[]', id]));
+          fetch('{% url "list_reorder_all" custom_list.id %}', {
+            method: 'POST',
+            headers: { 'X-CSRFToken': '{{ csrf_token }}' },
+            body: params,
+          });
+        }
+      });
+    }
+
+    function destroyListSortable() {
+      if (_listSortable) { _listSortable.destroy(); _listSortable = null; }
+    }
+
+    function refreshCustomListGrid() {
+      if (!window.htmx) return;
+      const filterForm = document.getElementById('smart-filter-form');
+      const values = filterForm ? htmx.values(filterForm) : {};
+      htmx.ajax('GET', '{% url "list_detail" custom_list.id %}', {
+        source: filterForm || document.body,
+        target: '#items-view',
+        swap: 'innerHTML',
+        values,
+        headers: { 'HX-Request': 'true' },
+      });
+    }
+
+    window.initListSortable = initListSortable;
+    window.destroyListSortable = destroyListSortable;
+    window.refreshCustomListGrid = refreshCustomListGrid;
+  </script>
 {% endblock js %}

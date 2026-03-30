@@ -255,9 +255,10 @@
               </div>
 
               {% if list_ordering_enabled|default:False %}
-                <div class="relative z-10 flex items-center justify-center gap-2"
+                <div class="relative z-10 flex flex-col items-center gap-2"
                      x-cloak
                      x-show="isOrderEditing">
+                  <div class="flex items-center justify-center gap-2">
                   <button class="min-w-9 h-9 px-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-500 transition-colors cursor-pointer text-sm font-semibold"
                           title="Move to first"
                           hx-post="{% url 'list_reorder_item' custom_list.id %}"
@@ -298,6 +299,13 @@
                           hx-swap="none"
                           hx-on::after-request="if(event.detail.successful){window.refreshCustomListGrid();}"
                           type="button">&gt;&gt;</button>
+                  </div>
+                  {% if from_grid %}
+                    <div class="drag-handle cursor-grab px-4 py-1 text-gray-400 hover:text-white w-full flex justify-center"
+                         title="Drag to reorder">
+                      {% include "app/icons/drag-handle.svg" with classes="w-5 h-5" %}
+                    </div>
+                  {% endif %}
                 </div>
               {% endif %}
             </div>

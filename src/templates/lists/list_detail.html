@@ -374,7 +374,13 @@
       }
     }
   }"
-       x-init="$refs.itemsView.addEventListener('htmx:afterSwap', () => { renderedLayout = layout })"
+       x-init="
+         $refs.itemsView.addEventListener('htmx:afterSwap', () => {
+           renderedLayout = layout;
+           if (isOrderEditing) initListSortable(layout);
+         });
+         $watch('isOrderEditing', v => v ? initListSortable(layout) : destroyListSortable());
+       "
        @open-list-edit-modal.window="showModal = true">
 
     <!-- Form to manage state -->
@@ -512,8 +518,8 @@
             <div class="inline-flex"
                  x-cloak
                  x-show="!(sort === 'custom' && canEdit && isOrderEditing)">
-              <button class="flex items-center gap-2 px-2 py-2 text-gray-200 hover:text-white transition-colors cursor-pointer"
-                      :class="sort === 'custom' && canEdit ? 'rounded-l-md' : 'rounded-md'"
+              <button class="flex items-center gap-2 px-2 py-2 transition-colors cursor-pointer"
+                      :class="sort === 'custom' && canEdit ? 'rounded-l-md bg-indigo-600 text-white hover:bg-indigo-700' : 'rounded-md text-gray-200 hover:text-white'"
                       @click="sortOpen = !sortOpen; orderOpen = false"
                       type="button">
                 <span class="text-sm" x-text="sortLabels[sort] || sort"></span>
@@ -534,7 +540,7 @@
                   </svg>
                 </span>
               </button>
-              <button class="flex items-center px-2 py-2 rounded-r-md border-l border-gray-700 text-gray-200 hover:text-white transition-colors cursor-pointer"
+              <button class="flex items-center px-2 py-2 rounded-r-md border-l border-indigo-500 bg-indigo-600 text-white hover:bg-indigo-700 transition-colors cursor-pointer"
                       x-cloak
                       x-show="sort === 'custom' && canEdit"
                       @click="orderOpen = !orderOpen; sortOpen = false"
@@ -830,5 +836,41 @@
     document.body.addEventListener('htmx:afterSwap', function() {
       setTimeout(loadVisibleReleaseYears, 50);
     });
+  </script>
+
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/Sortable.min.js"></script>
+  <script>
+    let _listSortable = null;
+
+    function initListSortable(layout) {
+      destroyListSortable();
+      const container = layout === 'table'
+        ? document.getElementById('list-table-body')
+        : document.getElementById('items-view');
+      if (!container || typeof Sortable === 'undefined') return;
+      _listSortable = Sortable.create(container, {
+        animation: 150,
+        handle: '.drag-handle',
+        delay: 100,
+        delayOnTouchOnly: true,
+        onEnd() {
+          const els = container.querySelectorAll('[data-item-id]');
+          const ids = Array.from(els).map(el => el.dataset.itemId);
+          const params = new URLSearchParams(ids.map(id => ['item_ids[]', id]));
+          fetch('{% url "list_reorder_all" custom_list.id %}', {
+            method: 'POST',
+            headers: { 'X-CSRFToken': '{{ csrf_token }}' },
+            body: params,
+          });
+        }
+      });
+    }
+
+    function destroyListSortable() {
+      if (_listSortable) { _listSortable.destroy(); _listSortable = null; }
+    }
+
+    window.initListSortable = initListSortable;
+    window.destroyListSortable = destroyListSortable;
   </script>
 {% endblock js %}

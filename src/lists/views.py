@@ -557,11 +557,7 @@ def _smart_list_detail_response(
     media_user,
 ):
     """Render smart-list detail page and HTMX partial responses."""
-    valid_sorts = [
-        choice[0]
-        for choice in ListDetailSortChoices.choices
-        if choice[0] != ListDetailSortChoices.CUSTOM
-    ]
+    valid_sorts = [choice[0] for choice in ListDetailSortChoices.choices]
     sort_by = request.GET.get("sort", ListDetailSortChoices.DATE_ADDED)
     if sort_by not in valid_sorts:
         sort_by = ListDetailSortChoices.DATE_ADDED
@@ -815,11 +811,7 @@ def _smart_list_detail_response(
         for value, label in MediaStatusChoices.choices
         if value != MediaStatusChoices.ALL
     ]]
-    sort_choices = [
-        (value, label)
-        for value, label in ListDetailSortChoices.choices
-        if value != ListDetailSortChoices.CUSTOM
-    ]
+    sort_choices = ListDetailSortChoices.choices
 
     filter_data = smart_rules.build_rule_filter_data(
         owner=custom_list.owner,
@@ -874,7 +866,7 @@ def _smart_list_detail_response(
         "status_choices": status_choices,
         "public_view": public_view,
         "can_edit": can_edit,
-        "list_ordering_enabled": False,
+        "list_ordering_enabled": can_edit and sort_by == ListDetailSortChoices.CUSTOM,
         "is_public_view": is_public_view,
         "recommendation_count": recommendation_count,
         "base_template": "base_public.html" if public_view else "base.html",
@@ -2014,6 +2006,44 @@ def reorder_list_item(request, list_id):
     for index, custom_list_item in enumerate(list_items):
         custom_list_item.date_added = base_time + datetime.timedelta(seconds=index)
     CustomListItem.objects.bulk_update(list_items, ["date_added"])
+
+    return HttpResponse(status=204)
+
+
+@login_required
+@require_POST
+def reorder_list_items_all(request, list_id):
+    """Reorder list items by full ordered ID list (drag-and-drop)."""
+    custom_list = get_object_or_404(CustomList, id=list_id)
+    if not custom_list.user_can_edit(request.user):
+        return HttpResponse(status=403)
+
+    item_ids = request.POST.getlist("item_ids[]")
+    if not item_ids:
+        return HttpResponse(status=400)
+
+    all_items = list(
+        CustomListItem.objects.filter(custom_list=custom_list).order_by("date_added", "id"),
+    )
+    submitted_set = {str(i) for i in item_ids}
+    item_map = {str(li.item_id): li for li in all_items}
+
+    # Positions in the full list currently occupied by the submitted subset
+    original_positions = sorted(
+        i for i, li in enumerate(all_items) if str(li.item_id) in submitted_set
+    )
+    if not original_positions:
+        return HttpResponse(status=400)
+
+    # Place submitted items in their new DnD order at those same positions
+    for pos, item_id in zip(original_positions, item_ids):
+        if str(item_id) in item_map:
+            all_items[pos] = item_map[str(item_id)]
+
+    base_time = timezone.now().replace(microsecond=0)
+    for index, li in enumerate(all_items):
+        li.date_added = base_time + datetime.timedelta(seconds=index)
+    CustomListItem.objects.bulk_update(all_items, ["date_added"])
 
     return HttpResponse(status=204)
 
