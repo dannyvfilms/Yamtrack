@@ -1,0 +1,229 @@
+{% load widget_tweaks %}
+
+<form method="post"
+      hx-post="{% url 'episode_bulk_save' %}?next={{ return_url }}"
+      hx-target="closest [data-track-modal-root]"
+      hx-swap="outerHTML"
+      x-data="episodeBulkTrackForm('{{ episode_plays_domain_script_id }}')"
+      x-init="init">
+  {% csrf_token %}
+  {{ episode_plays_form.media_id }}
+  {{ episode_plays_form.source }}
+  {{ episode_plays_form.media_type }}
+  {{ episode_plays_form.identity_media_type }}
+  {{ episode_plays_form.library_media_type }}
+  {{ episode_plays_form.instance_id }}
+  {{ episode_plays_form.return_url }}
+
+  {% if episode_plays_mode_notice %}
+    <div class="mb-5 rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-4 py-3 text-sm text-indigo-100">
+      {{ episode_plays_mode_notice }}
+    </div>
+  {% endif %}
+
+  {% if episode_plays_form.non_field_errors %}
+    <div class="mb-5 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+      {% for error in episode_plays_form.non_field_errors %}
+        <p>{{ error }}</p>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  <div class="grid grid-cols-1 gap-5 lg:grid-cols-2">
+    <div class="rounded-lg border border-[#39404b] bg-[#2a2f35] p-4">
+      <p class="mb-4 text-sm font-semibold uppercase tracking-wide text-gray-400">{{ episode_plays_domain.firstSelectionTitle|default:"First Play" }}</p>
+
+      {% if episode_plays_domain.hideSeasonSelectors %}
+        <input type="hidden"
+               id="{{ episode_plays_form.first_season_number.id_for_label }}"
+               name="{{ episode_plays_form.first_season_number.html_name }}"
+               x-ref="firstSeason"
+               x-model="firstSeason"
+               value="{{ episode_plays_form.first_season_number.value|default_if_none:'' }}">
+      {% else %}
+        <div class="mb-4">
+          <label class="mb-1 block text-sm font-medium text-gray-300"
+                 for="{{ episode_plays_form.first_season_number.id_for_label }}">Season</label>
+          <select id="{{ episode_plays_form.first_season_number.id_for_label }}"
+                  name="{{ episode_plays_form.first_season_number.html_name }}"
+                  x-ref="firstSeason"
+                  x-model="firstSeason"
+                  @change="syncEpisodeOptions('first')"
+                  class="w-full p-2 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff] appearance-none">
+            {% with selected_value=episode_plays_form.first_season_number.value %}
+              {% for value, label in episode_plays_form.fields.first_season_number.choices %}
+                <option value="{{ value }}" {% if selected_value|stringformat:"s" == value|stringformat:"s" %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            {% endwith %}
+          </select>
+          {% for error in episode_plays_form.first_season_number.errors %}
+            <p class="mt-1 text-sm text-red-300">{{ error }}</p>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      <div>
+        <label class="mb-1 block text-sm font-medium text-gray-300"
+               for="{{ episode_plays_form.first_episode_number.id_for_label }}">{{ episode_plays_domain.episodeFieldLabel|default:"Episode" }}</label>
+        <select id="{{ episode_plays_form.first_episode_number.id_for_label }}"
+                name="{{ episode_plays_form.first_episode_number.html_name }}"
+                x-ref="firstEpisode"
+                data-current-value="{{ episode_plays_form.first_episode_number.value|default_if_none:'' }}"
+                x-model="firstEpisode"
+                @change="refreshSummary"
+                class="w-full p-2 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff] appearance-none"></select>
+        {% for error in episode_plays_form.first_episode_number.errors %}
+          <p class="mt-1 text-sm text-red-300">{{ error }}</p>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="rounded-lg border border-[#39404b] bg-[#2a2f35] p-4">
+      <p class="mb-4 text-sm font-semibold uppercase tracking-wide text-gray-400">{{ episode_plays_domain.lastSelectionTitle|default:"Last Play" }}</p>
+
+      {% if episode_plays_domain.hideSeasonSelectors %}
+        <input type="hidden"
+               id="{{ episode_plays_form.last_season_number.id_for_label }}"
+               name="{{ episode_plays_form.last_season_number.html_name }}"
+               x-ref="lastSeason"
+               x-model="lastSeason"
+               value="{{ episode_plays_form.last_season_number.value|default_if_none:'' }}">
+      {% else %}
+        <div class="mb-4">
+          <label class="mb-1 block text-sm font-medium text-gray-300"
+                 for="{{ episode_plays_form.last_season_number.id_for_label }}">Season</label>
+          <select id="{{ episode_plays_form.last_season_number.id_for_label }}"
+                  name="{{ episode_plays_form.last_season_number.html_name }}"
+                  x-ref="lastSeason"
+                  x-model="lastSeason"
+                  @change="syncEpisodeOptions('last')"
+                  class="w-full p-2 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff] appearance-none">
+            {% with selected_value=episode_plays_form.last_season_number.value %}
+              {% for value, label in episode_plays_form.fields.last_season_number.choices %}
+                <option value="{{ value }}" {% if selected_value|stringformat:"s" == value|stringformat:"s" %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            {% endwith %}
+          </select>
+          {% for error in episode_plays_form.last_season_number.errors %}
+            <p class="mt-1 text-sm text-red-300">{{ error }}</p>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      <div>
+        <label class="mb-1 block text-sm font-medium text-gray-300"
+               for="{{ episode_plays_form.last_episode_number.id_for_label }}">{{ episode_plays_domain.episodeFieldLabel|default:"Episode" }}</label>
+        <select id="{{ episode_plays_form.last_episode_number.id_for_label }}"
+                name="{{ episode_plays_form.last_episode_number.html_name }}"
+                x-ref="lastEpisode"
+                data-current-value="{{ episode_plays_form.last_episode_number.value|default_if_none:'' }}"
+                x-model="lastEpisode"
+                @change="refreshSummary"
+                class="w-full p-2 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff] appearance-none"></select>
+        {% for error in episode_plays_form.last_episode_number.errors %}
+          <p class="mt-1 text-sm text-red-300">{{ error }}</p>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  {% if episode_plays_domain.lockedSeasonNumber and not episode_plays_domain.hideSeasonSelectors %}
+    <p class="mt-3 text-sm text-gray-400">This range is locked to one mapped season.</p>
+  {% endif %}
+
+  <div class="mt-5 rounded-lg border border-[#39404b] bg-[#2a2f35] p-4">
+    <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+      <div>
+        <label class="mb-1 block text-sm font-medium text-gray-300"
+               for="{{ episode_plays_form.start_date.id_for_label }}">Start date</label>
+        <div class="relative">
+          {{ episode_plays_form.start_date|add_class:"w-full p-2 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff] pr-28"|attr:"x-ref:startDate" }}
+          <button type="button"
+                  x-show="selectedEpisodeAirDate('first')"
+                  x-cloak
+                  @click="applyEpisodeAirDate('first', 'startDate')"
+                  class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center text-sm text-indigo-400 hover:text-indigo-300 transition-colors bg-[#2a2f35] px-2 py-1 rounded cursor-pointer">
+            {% include "app/icons/calendar.svg" with classes="w-4 h-4 mr-1" %}
+            Air date
+          </button>
+        </div>
+        {% for error in episode_plays_form.start_date.errors %}
+          <p class="mt-1 text-sm text-red-300">{{ error }}</p>
+        {% endfor %}
+      </div>
+
+      <div>
+        <label class="mb-1 block text-sm font-medium text-gray-300"
+               for="{{ episode_plays_form.end_date.id_for_label }}">End date</label>
+        <div class="relative">
+          {{ episode_plays_form.end_date|add_class:"w-full p-2 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff] pr-28"|attr:"x-ref:endDate" }}
+          <button type="button"
+                  x-show="selectedEpisodeAirDate('last')"
+                  x-cloak
+                  @click="applyEpisodeAirDate('last', 'endDate')"
+                  class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center text-sm text-indigo-400 hover:text-indigo-300 transition-colors bg-[#2a2f35] px-2 py-1 rounded cursor-pointer">
+            {% include "app/icons/calendar.svg" with classes="w-4 h-4 mr-1" %}
+            Air date
+          </button>
+        </div>
+        {% for error in episode_plays_form.end_date.errors %}
+          <p class="mt-1 text-sm text-red-300">{{ error }}</p>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+      <div>
+        <label class="mb-2 block text-sm font-medium text-gray-300"
+               for="{{ episode_plays_form.write_mode.id_for_label }}">Play handling</label>
+        <select id="{{ episode_plays_form.write_mode.id_for_label }}"
+                name="{{ episode_plays_form.write_mode.html_name }}"
+                x-model="writeMode"
+                @change="refreshSummary"
+                class="w-full p-2 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff] appearance-none">
+          {% with selected_value=episode_plays_form.write_mode.value %}
+            {% for value, label in episode_plays_form.fields.write_mode.choices %}
+              <option value="{{ value }}" {% if selected_value == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          {% endwith %}
+        </select>
+        {% for error in episode_plays_form.write_mode.errors %}
+          <p class="mt-1 text-sm text-red-300">{{ error }}</p>
+        {% endfor %}
+      </div>
+
+      <div>
+        <label class="mb-2 block text-sm font-medium text-gray-300"
+               for="{{ episode_plays_form.distribution_mode.id_for_label }}">Distribution</label>
+        <select id="{{ episode_plays_form.distribution_mode.id_for_label }}"
+                name="{{ episode_plays_form.distribution_mode.html_name }}"
+                x-model="distributionMode"
+                @change="refreshSummary"
+                class="w-full p-2 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff] appearance-none">
+          {% with selected_value=episode_plays_form.distribution_mode.value %}
+            {% for value, label in episode_plays_form.fields.distribution_mode.choices %}
+              <option value="{{ value }}" {% if selected_value == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          {% endwith %}
+        </select>
+        {% for error in episode_plays_form.distribution_mode.errors %}
+          <p class="mt-1 text-sm text-red-300">{{ error }}</p>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="mt-5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+    <p x-text="summaryText"></p>
+    <template x-if="rangeWarning">
+      <p class="mt-2 text-amber-200" x-text="rangeWarning"></p>
+    </template>
+  </div>
+
+  <div class="mt-6 flex justify-end">
+    <button type="submit"
+            class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 cursor-pointer">
+      Save plays
+    </button>
+  </div>
+</form>

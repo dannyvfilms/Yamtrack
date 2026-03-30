@@ -42,7 +42,23 @@ class ResolveColumnsTests(TestCase):
         self.assertNotIn("episodes_left", keys)
         self.assertNotIn("time_left", keys)
         self.assertIn("runtime", keys)
+        self.assertIn("popularity", keys)
         self.assertNotIn("time_to_beat", keys)
+
+    def test_list_table_inherits_media_columns_and_adds_media_type(self):
+        columns = resolve_columns(
+            media_type=MediaTypes.MOVIE.value,
+            current_sort="score",
+            user=self.user,
+            table_type="list",
+        )
+        keys = [column.key for column in columns]
+
+        self.assertEqual(keys[:3], ["image", "title", "media_type"])
+        self.assertIn("runtime", keys)
+        self.assertIn("popularity", keys)
+        self.assertIn("status", keys)
+        self.assertNotIn("progress", keys)
 
     def test_game_columns_include_time_to_beat(self):
         columns = resolve_columns(
@@ -69,6 +85,7 @@ class ResolveColumnsTests(TestCase):
 
         self.assertIn("progress", keys)
         self.assertIn("runtime", keys)
+        self.assertIn("popularity", keys)
         self.assertNotIn("time_left", keys)
 
     def test_artist_table_uses_artist_name_column(self):
@@ -125,7 +142,17 @@ class ResolveColumnsTests(TestCase):
         # Fixed columns stay first, and hidden only applies to hideable columns.
         self.assertEqual(
             keys,
-            ["image", "title", "status", "runtime", "release_date", "date_added", "start_date", "end_date"],
+            [
+                "image",
+                "title",
+                "status",
+                "runtime",
+                "popularity",
+                "release_date",
+                "date_added",
+                "start_date",
+                "end_date",
+            ],
         )
 
     def test_new_columns_append_when_not_in_saved_order(self):
@@ -147,5 +174,16 @@ class ResolveColumnsTests(TestCase):
 
         self.assertEqual(
             keys,
-            ["image", "title", "status", "score", "runtime", "release_date", "date_added", "start_date", "end_date"],
+            [
+                "image",
+                "title",
+                "status",
+                "score",
+                "runtime",
+                "popularity",
+                "release_date",
+                "date_added",
+                "start_date",
+                "end_date",
+            ],
         )

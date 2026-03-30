@@ -1,5 +1,8 @@
 
 <div class="bg-[#2a2f35] p-6 rounded-lg max-h-[70svh] overflow-y-auto">
+  <input type="hidden"
+         name="preview_genres_json"
+         value="{{ preview_genres_json|default:'[]'|escape }}">
   <div class="flex items-center justify-between mb-6">
     <h2 class="text-2xl font-bold text-white">Tags</h2>
     <button class="text-gray-400 hover:text-white cursor-pointer"
@@ -22,6 +25,9 @@
         class="mt-4 flex gap-2">
     {% csrf_token %}
     <input type="hidden" name="item_id" value="{{ item.id }}">
+    <input type="hidden"
+           name="preview_genres_json"
+           value="{{ preview_genres_json|default:'[]'|escape }}">
     <input type="text" name="name"
            placeholder="New tag..."
            maxlength="50"

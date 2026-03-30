@@ -24,9 +24,11 @@ from app.models import (
     MetadataBackfillField,
     MetadataBackfillState,
     Sources,
+    TRAKT_POPULARITY_BACKFILL_VERSION,
 )
 from app.providers import services
 from app.services import game_lengths as game_length_services
+from app.services import trakt_popularity as trakt_popularity_service
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +58,9 @@ CREDITS_BACKFILL_SOURCES = (Sources.TMDB.value,)
 CREDITS_BACKFILL_QUEUE_TTL = 60 * 60  # 1 hour
 CREDITS_BACKFILL_ITEMS_QUEUE_KEY = "credits_backfill_items_queue"
 CREDITS_BACKFILL_ITEMS_SCHEDULED_KEY = "credits_backfill_items_scheduled"
+TRAKT_POPULARITY_BACKFILL_QUEUE_TTL = 60 * 60  # 1 hour
+TRAKT_POPULARITY_BACKFILL_ITEMS_QUEUE_KEY = "trakt_popularity_backfill_items_queue"
+TRAKT_POPULARITY_BACKFILL_ITEMS_SCHEDULED_KEY = "trakt_popularity_backfill_items_scheduled"
 RELEASE_BACKFILL_SOURCES = (
     Sources.TMDB.value,
     Sources.MAL.value,
@@ -88,10 +93,12 @@ NIGHTLY_METADATA_QUALITY_RUNTIME_BATCH_SIZE = 500
 NIGHTLY_METADATA_QUALITY_EPISODE_SEASONS_BATCH_SIZE = 300
 NIGHTLY_METADATA_QUALITY_CREDITS_BATCH_SIZE = 2500
 NIGHTLY_METADATA_QUALITY_CREDITS_SCAN_MULTIPLIER = 20
+NIGHTLY_METADATA_QUALITY_TRAKT_POPULARITY_BATCH_SIZE = 300
 NIGHTLY_METADATA_QUALITY_GENRE_COUNTDOWN = 5
 NIGHTLY_METADATA_QUALITY_RUNTIME_COUNTDOWN = 15
 NIGHTLY_METADATA_QUALITY_EPISODE_COUNTDOWN = 30
 NIGHTLY_METADATA_QUALITY_CREDITS_COUNTDOWN = 45
+NIGHTLY_METADATA_QUALITY_TRAKT_POPULARITY_COUNTDOWN = 60
 DISCOVER_METADATA_REFRESH_DEBOUNCE_SECONDS = 60 * 10
 DISCOVER_METADATA_REFRESH_COUNTDOWN_SECONDS = 60
 
@@ -840,6 +847,34 @@ def enqueue_credits_backfill_items(item_ids, countdown=10):
     return len(normalized)
 
 
+def enqueue_trakt_popularity_backfill_items(item_ids, countdown=10, *, force=False):
+    normalized = _normalize_item_ids(item_ids)
+    normalized = _filter_backfill_item_ids(normalized, MetadataBackfillField.TRAKT_POPULARITY)
+    if not normalized:
+        return 0
+    try:
+        queue = cache.get(TRAKT_POPULARITY_BACKFILL_ITEMS_QUEUE_KEY) or []
+        queue = list(set(queue).union(normalized))
+        cache.set(
+            TRAKT_POPULARITY_BACKFILL_ITEMS_QUEUE_KEY,
+            queue,
+            timeout=TRAKT_POPULARITY_BACKFILL_QUEUE_TTL,
+        )
+        if cache.add(TRAKT_POPULARITY_BACKFILL_ITEMS_SCHEDULED_KEY, force, timeout=30):
+            populate_trakt_popularity_backfill_queue.apply_async(
+                kwargs={"force": force},
+                countdown=countdown,
+            )
+    except Exception as exc:  # pragma: no cover - cache unavailable
+        logger.debug("Trakt popularity backfill queue unavailable: %s", exception_summary(exc))
+        populate_trakt_popularity_data_for_items.apply_async(
+            args=[normalized],
+            kwargs={"force": force},
+            countdown=countdown,
+        )
+    return len(normalized)
+
+
 def _extract_genres_from_metadata(metadata):
     from app.statistics import _coerce_genre_list
 
@@ -1198,6 +1233,70 @@ def populate_credits_data_for_items(item_ids: list[int], delay_seconds: float = 
 
 
 @shared_task
+def populate_trakt_popularity_data_for_items(
+    item_ids: list[int],
+    delay_seconds: float = 0.0,
+    force: bool = False,
+):
+    """Refresh persisted Trakt popularity metadata for targeted items."""
+    normalized = _normalize_item_ids(item_ids)
+    normalized = _filter_backfill_item_ids(normalized, MetadataBackfillField.TRAKT_POPULARITY)
+    if not normalized:
+        return {"updated": 0, "errors": 0, "message": "No item IDs provided"}
+    if not trakt_popularity_service.trakt_provider.is_configured():
+        return {"updated": 0, "errors": 0, "message": "TRAKT_API is not configured"}
+
+    items = list(
+        trakt_popularity_service.tracked_items_queryset().filter(id__in=normalized),
+    )
+    if not force:
+        items = [item for item in items if trakt_popularity_service.needs_refresh(item)]
+    if not items:
+        logger.info("No targeted items need Trakt popularity data")
+        return {"updated": 0, "errors": 0, "message": "No targeted items need Trakt popularity data"}
+
+    updated_count = 0
+    error_count = 0
+    for item in items:
+        try:
+            trakt_popularity_service.refresh_trakt_popularity(
+                item,
+                route_media_type=trakt_popularity_service.route_media_type_for_item(item),
+                force=force,
+            )
+            _record_backfill_success(
+                item,
+                MetadataBackfillField.TRAKT_POPULARITY,
+                strategy_version=TRAKT_POPULARITY_BACKFILL_VERSION,
+            )
+            updated_count += 1
+
+            if delay_seconds > 0:
+                import time
+
+                time.sleep(delay_seconds)
+        except Exception as exc:
+            error_count += 1
+            logger.warning(
+                "trakt_popularity_backfill_error item_id=%s media_id=%s error=%s",
+                item.id,
+                item.media_id,
+                exception_summary(exc),
+            )
+            _record_backfill_failure(
+                item,
+                MetadataBackfillField.TRAKT_POPULARITY,
+                f"exception: {exception_summary(exc)}",
+            )
+
+    return {
+        "updated": updated_count,
+        "errors": error_count,
+        "message": f"Processed {len(items)} targeted items",
+    }
+
+
+@shared_task
 def populate_runtime_backfill_queue(batch_size: int = 50, delay_seconds: float = 0.0):
     """Drain the runtime backfill queue and process items in small batches."""
     queue = cache.get(RUNTIME_BACKFILL_ITEMS_QUEUE_KEY) or []
@@ -1261,6 +1360,99 @@ def populate_credits_backfill_queue(batch_size: int = 50, delay_seconds: float =
 
 
 @shared_task
+def populate_trakt_popularity_backfill_queue(
+    batch_size: int = 50,
+    delay_seconds: float = 0.0,
+    force: bool = False,
+):
+    """Drain the Trakt popularity queue and process items in small batches."""
+    queue = cache.get(TRAKT_POPULARITY_BACKFILL_ITEMS_QUEUE_KEY) or []
+    if not queue:
+        cache.delete(TRAKT_POPULARITY_BACKFILL_ITEMS_SCHEDULED_KEY)
+        return {"processed": 0, "message": "No queued Trakt popularity items"}
+
+    cache.delete(TRAKT_POPULARITY_BACKFILL_ITEMS_SCHEDULED_KEY)
+    batch = queue[:batch_size]
+    remaining = queue[batch_size:]
+    if remaining:
+        cache.set(
+            TRAKT_POPULARITY_BACKFILL_ITEMS_QUEUE_KEY,
+            remaining,
+            timeout=TRAKT_POPULARITY_BACKFILL_QUEUE_TTL,
+        )
+        if cache.add(TRAKT_POPULARITY_BACKFILL_ITEMS_SCHEDULED_KEY, force, timeout=30):
+            populate_trakt_popularity_backfill_queue.apply_async(
+                kwargs={"force": force},
+                countdown=10,
+            )
+    else:
+        cache.delete(TRAKT_POPULARITY_BACKFILL_ITEMS_QUEUE_KEY)
+        logger.info("trakt_popularity_backfill_complete: queue fully drained")
+
+    return populate_trakt_popularity_data_for_items(
+        batch,
+        delay_seconds=delay_seconds,
+        force=force,
+    )
+
+
+@shared_task
+def reconcile_trakt_popularity(score_version: int | None = None):
+    """Reconcile Trakt popularity data for all tracked items on startup.
+
+    For items that have already been fetched from Trakt (trakt_popularity_fetched_at
+    is set), recomputes score and rank locally from stored rating/votes — no API
+    calls.  For items that have never been fetched, enqueues them for the normal
+    API backfill so they converge without waiting for the nightly beat schedule.
+
+    On success, stamps a permanent version cache key so this version's recompute
+    does not fire again until the formula version advances.
+    """
+    from app.models import Item
+
+    all_items = list(trakt_popularity_service.tracked_items_queryset().iterator(chunk_size=500))
+
+    recomputed = 0
+    never_fetched_ids = []
+
+    for item in all_items:
+        if item.trakt_popularity_fetched_at is not None:
+            # Already have Trakt data — recompute derived fields locally.
+            new_score = trakt_popularity_service.compute_popularity_score(
+                item.trakt_rating,
+                item.trakt_rating_count,
+            )
+            new_rank = trakt_popularity_service.estimate_rank_from_score(new_score)
+            Item.objects.filter(pk=item.pk).update(
+                trakt_popularity_score=new_score,
+                trakt_popularity_rank=new_rank,
+            )
+            recomputed += 1
+        else:
+            never_fetched_ids.append(item.id)
+
+    enqueued = 0
+    if never_fetched_ids and trakt_popularity_service.trakt_provider.is_configured():
+        enqueued = enqueue_trakt_popularity_backfill_items(never_fetched_ids, countdown=10)
+
+    # Mark this formula version as fully reconciled so restarts don't re-run it.
+    if score_version is not None:
+        cache.set(
+            f"trakt_popularity_reconciled_v{score_version}",
+            "done",
+            timeout=None,
+        )
+
+    logger.info(
+        "reconcile_trakt_popularity recomputed=%d enqueued_for_fetch=%d version=%s",
+        recomputed,
+        enqueued,
+        score_version,
+    )
+    return {"recomputed": recomputed, "enqueued_for_fetch": enqueued}
+
+
+@shared_task
 def populate_episode_runtime_queue(batch_size: int = 20):
     """Drain the episode runtime queue and process seasons in small batches."""
     queue = cache.get(RUNTIME_BACKFILL_EPISODES_QUEUE_KEY) or []
@@ -1288,6 +1480,7 @@ def nightly_metadata_quality_backfill_task(
     episode_season_batch_size: int = NIGHTLY_METADATA_QUALITY_EPISODE_SEASONS_BATCH_SIZE,
     credits_batch_size: int = NIGHTLY_METADATA_QUALITY_CREDITS_BATCH_SIZE,
     credits_scan_multiplier: int = NIGHTLY_METADATA_QUALITY_CREDITS_SCAN_MULTIPLIER,
+    trakt_popularity_batch_size: int = NIGHTLY_METADATA_QUALITY_TRAKT_POPULARITY_BATCH_SIZE,
 ):
     """Queue targeted metadata backfill batches for genres/runtime/credits.
 
@@ -1299,6 +1492,7 @@ def nightly_metadata_quality_backfill_task(
     episode_season_batch_size = max(int(episode_season_batch_size), 0)
     credits_batch_size = max(int(credits_batch_size), 0)
     credits_scan_multiplier = max(int(credits_scan_multiplier), 1)
+    trakt_popularity_batch_size = max(int(trakt_popularity_batch_size), 0)
 
     genre_item_ids = []
     if genre_batch_size:
@@ -1326,6 +1520,14 @@ def nightly_metadata_quality_backfill_task(
         credits_batch_size,
         scan_multiplier=credits_scan_multiplier,
     )
+    trakt_popularity_item_ids = []
+    if trakt_popularity_batch_size and trakt_popularity_service.trakt_provider.is_configured():
+        trakt_popularity_item_ids = [
+            item.id
+            for item in trakt_popularity_service.select_items_for_refresh(
+                limit=trakt_popularity_batch_size,
+            )
+        ]
 
     queued_genres = 0
     if genre_item_ids:
@@ -1355,23 +1557,37 @@ def nightly_metadata_quality_backfill_task(
             countdown=NIGHTLY_METADATA_QUALITY_CREDITS_COUNTDOWN,
         )
 
+    queued_trakt_popularity = 0
+    if trakt_popularity_item_ids:
+        queued_trakt_popularity = enqueue_trakt_popularity_backfill_items(
+            trakt_popularity_item_ids,
+            countdown=NIGHTLY_METADATA_QUALITY_TRAKT_POPULARITY_COUNTDOWN,
+        )
+
     summary = {
         "selected": {
             "genres": len(genre_item_ids),
             "runtime": len(runtime_item_ids),
             "episode_seasons": len(episode_season_keys),
             "credits": len(credits_item_ids),
+            "trakt_popularity": len(trakt_popularity_item_ids),
         },
         "queued": {
             "genres": queued_genres,
             "runtime": queued_runtime,
             "episode_seasons": queued_episode_seasons,
             "credits": queued_credits,
+            "trakt_popularity": queued_trakt_popularity,
         },
         "remaining": {
             "genres": _genre_items_queryset().count(),
             "runtime": _runtime_items_queryset().count(),
             "episode_runtime": _episode_runtime_items_queryset().count(),
+            "trakt_popularity": len(
+                trakt_popularity_service.select_items_for_refresh(),
+            )
+            if trakt_popularity_service.trakt_provider.is_configured()
+            else 0,
         },
     }
     logger.info("nightly_metadata_quality_backfill summary=%s", summary)

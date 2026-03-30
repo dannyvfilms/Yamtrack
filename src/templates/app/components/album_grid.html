@@ -5,7 +5,7 @@
     <div class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative search-result-card-square hover:ring-2 hover:ring-indigo-500 transition-all group{% if request.user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %}"
          data-media-type="music">
       <div class="relative">
-        <a href="{% url 'album_detail' album.id %}">
+        <a href="{{ album|music_album_url }}">
           {# Cover art #}
           {% if album.image and album.image != IMG_NONE %}
             <img alt="{{ album.title }}"
@@ -29,7 +29,7 @@
       
       <div class="media-card-body p-3 bg-card-body">
         <div class="flex items-center gap-2 min-w-0">
-          <a href="{% url 'album_detail' album.id %}"
+          <a href="{{ album|music_album_url }}"
              class="media-card-title text-sm font-semibold text-white hover:text-indigo-400 transition duration-300 line-clamp-2 min-w-0"
              title="{{ album.title }}">
             {{ album.title }}

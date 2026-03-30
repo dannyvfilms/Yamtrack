@@ -1,11 +1,12 @@
 import logging
 from unittest import mock
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from django.test import TestCase
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 
-from app.models import MediaTypes, Movie, TV, Episode, Sources
+from app.models import Episode, Item, MediaTypes, Movie, Sources, Status, TV
 from app.providers import services
 from integrations.imports import plex
 from integrations.imports.plex import PlexHistoryImporter
@@ -233,6 +234,69 @@ class TestPlexHybridImport(TestCase):
             ).count(),
             1,
         )
+
+    def test_existing_tv_import_keeps_resolved_metadata_when_cache_key_differs(self):
+        """Existing-show imports should not lose fallback metadata when IDs differ."""
+        tv_item = Item.objects.create(
+            title="Yellowstone",
+            media_id="73586",
+            media_type=MediaTypes.TV.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/show.jpg",
+        )
+        existing_tv = TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+
+        importer = PlexHistoryImporter(
+            user=self.user,
+            account=self.account,
+            mode="new",
+            library="machine::1",
+        )
+        importer._episode_records = [
+            {
+                "tmdb_id": "1515183",
+                "season_number": 1,
+                "episode_number": 4,
+                "watched_at": timezone.now().replace(second=0, microsecond=0),
+                "viewed_at_ts": 1700000000,
+                "plex_rating_key": "rk-yellowstone",
+                "rating": None,
+                "title": "Going Back to Cali",
+                "series_title": "Yellowstone",
+            }
+        ]
+        importer._tv_metadata_cache = {
+            "1515183": {
+                "media_id": "73586",
+                "title": "Yellowstone",
+                "original_title": "Yellowstone",
+                "localized_title": "Yellowstone",
+                "image": "https://example.com/show.jpg",
+                "tvdb_id": "361315",
+                "season/1": {
+                    "image": "https://example.com/season1.jpg",
+                    "episodes": [{"episode_number": 4}],
+                },
+            }
+        }
+
+        importer._build_bulk_media()
+
+        self.assertEqual(len(importer.bulk_media[MediaTypes.SEASON.value]), 1)
+        self.assertEqual(len(importer.bulk_media[MediaTypes.EPISODE.value]), 1)
+
+        season = importer.bulk_media[MediaTypes.SEASON.value][0]
+        episode = importer.bulk_media[MediaTypes.EPISODE.value][0]
+
+        self.assertEqual(season.related_tv, existing_tv)
+        self.assertEqual(season.item.media_id, "73586")
+        self.assertEqual(season.item.title, "Yellowstone")
+        self.assertEqual(episode.item.media_id, "1515183")
+        self.assertEqual(episode.item.title, "Yellowstone")
 
 
 class TestPlexImportScenarios(TestCase):

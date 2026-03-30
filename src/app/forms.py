@@ -1,4 +1,5 @@
 import re
+from datetime import datetime, time as datetime_time
 from decimal import Decimal, InvalidOperation
 
 from django import forms
@@ -573,6 +574,255 @@ class EpisodeForm(forms.ModelForm):
             self.fields["end_date"].widget = forms.DateInput(
                 attrs={"type": "date"},
             )
+
+
+class BulkEpisodeTrackForm(forms.Form):
+    """Form for bulk tracking episode plays across a TV/anime range."""
+
+    WRITE_MODE_ADD = "add"
+    WRITE_MODE_REPLACE = "replace"
+    DISTRIBUTION_MODE_EVEN = "even"
+    DISTRIBUTION_MODE_AIR_DATE = "air_date"
+
+    WRITE_MODE_CHOICES = (
+        (WRITE_MODE_ADD, "Add additional plays"),
+        (WRITE_MODE_REPLACE, "Replace all plays"),
+    )
+    DISTRIBUTION_MODE_CHOICES = (
+        (DISTRIBUTION_MODE_AIR_DATE, "Target air date"),
+        (DISTRIBUTION_MODE_EVEN, "Even distribution"),
+    )
+
+    media_id = forms.CharField(widget=forms.HiddenInput(), required=True)
+    source = forms.CharField(widget=forms.HiddenInput(), required=True)
+    media_type = forms.CharField(widget=forms.HiddenInput(), required=True)
+    identity_media_type = forms.CharField(widget=forms.HiddenInput(), required=False)
+    library_media_type = forms.CharField(widget=forms.HiddenInput(), required=False)
+    instance_id = forms.CharField(widget=forms.HiddenInput(), required=False)
+    return_url = forms.CharField(widget=forms.HiddenInput(), required=False)
+
+    first_season_number = forms.TypedChoiceField(
+        label="First season",
+        coerce=int,
+        choices=(),
+    )
+    first_episode_number = forms.TypedChoiceField(
+        label="First episode",
+        coerce=int,
+        choices=(),
+    )
+    last_season_number = forms.TypedChoiceField(
+        label="Last season",
+        coerce=int,
+        choices=(),
+    )
+    last_episode_number = forms.TypedChoiceField(
+        label="Last episode",
+        coerce=int,
+        choices=(),
+    )
+    write_mode = forms.ChoiceField(
+        label="Play handling",
+        choices=WRITE_MODE_CHOICES,
+        initial=WRITE_MODE_ADD,
+    )
+    distribution_mode = forms.ChoiceField(
+        label="Distribution",
+        choices=DISTRIBUTION_MODE_CHOICES,
+        initial=DISTRIBUTION_MODE_AIR_DATE,
+    )
+    if settings.TRACK_TIME:
+        start_date = forms.DateTimeField(
+            required=False,
+            widget=forms.DateTimeInput(attrs={"type": "datetime-local"}),
+        )
+        end_date = forms.DateTimeField(
+            required=False,
+            widget=forms.DateTimeInput(attrs={"type": "datetime-local"}),
+        )
+    else:
+        start_date = forms.DateField(
+            required=False,
+            widget=forms.DateInput(attrs={"type": "date"}),
+        )
+        end_date = forms.DateField(
+            required=False,
+            widget=forms.DateInput(attrs={"type": "date"}),
+        )
+
+    def __init__(self, *args, **kwargs):
+        """Initialize dynamic selector choices from the episode domain."""
+        self.domain = kwargs.pop("domain", None) or {}
+        super().__init__(*args, **kwargs)
+
+        seasons = self.domain.get("seasons", [])
+        season_choices = [
+            (season["season_number"], season["season_title"])
+            for season in seasons
+        ]
+        self.fields["first_season_number"].choices = season_choices
+        self.fields["last_season_number"].choices = season_choices
+
+        for field_name in ("start_date", "end_date"):
+            if field_name in self.fields:
+                self.fields[field_name].required = False
+                self.fields[field_name].widget.attrs.pop("required", None)
+
+        default_first = self.domain.get("default_first") or {}
+        default_last = self.domain.get("default_last") or {}
+        if not self.is_bound:
+            self.initial.setdefault(
+                "first_season_number",
+                default_first.get("season_number"),
+            )
+            self.initial.setdefault(
+                "first_episode_number",
+                default_first.get("episode_number"),
+            )
+            self.initial.setdefault(
+                "last_season_number",
+                default_last.get("season_number"),
+            )
+            self.initial.setdefault(
+                "last_episode_number",
+                default_last.get("episode_number"),
+            )
+
+        self._bind_episode_choices(
+            "first_episode_number",
+            "first_season_number",
+            default_first.get("season_number"),
+        )
+        self._bind_episode_choices(
+            "last_episode_number",
+            "last_season_number",
+            default_last.get("season_number"),
+        )
+
+    def _season_value(self, field_name, fallback_season_number):
+        """Return the selected season number for a dependent episode dropdown."""
+        if self.is_bound:
+            raw_value = self.data.get(self.add_prefix(field_name))
+        else:
+            raw_value = self.initial.get(field_name, fallback_season_number)
+
+        try:
+            return int(raw_value)
+        except (TypeError, ValueError):
+            return fallback_season_number
+
+    def _bind_episode_choices(
+        self,
+        episode_field_name,
+        season_field_name,
+        fallback_season_number,
+    ):
+        """Populate episode choices for the selected season."""
+        season_number = self._season_value(season_field_name, fallback_season_number)
+        season_episode_map = self.domain.get("season_episode_map", {})
+        episode_choices = [
+            (
+                episode["episode_number"],
+                f"E{episode['episode_number']} - {episode['episode_title']}",
+            )
+            for episode in season_episode_map.get(season_number, [])
+        ]
+        self.fields[episode_field_name].choices = episode_choices
+
+    def _normalize_datetime_value(self, value):
+        """Convert date-only values into aware datetimes for downstream services."""
+        if value in (None, ""):
+            return None
+
+        if hasattr(value, "hour"):
+            if timezone.is_naive(value):
+                return timezone.make_aware(
+                    value,
+                    timezone.get_current_timezone(),
+                )
+            return value
+
+        combined = datetime.combine(value, datetime_time.min)
+        return timezone.make_aware(
+            combined,
+            timezone.get_current_timezone(),
+        )
+
+    def clean_start_date(self):
+        """Normalize start dates for both date and datetime inputs."""
+        return self._normalize_datetime_value(self.cleaned_data.get("start_date"))
+
+    def clean_end_date(self):
+        """Normalize end dates for both date and datetime inputs."""
+        return self._normalize_datetime_value(self.cleaned_data.get("end_date"))
+
+    def clean(self):
+        """Validate the selected episode range against the resolved domain."""
+        cleaned_data = super().clean()
+        episode_lookup = self.domain.get("episode_lookup", {})
+
+        first_key = (
+            cleaned_data.get("first_season_number"),
+            cleaned_data.get("first_episode_number"),
+        )
+        last_key = (
+            cleaned_data.get("last_season_number"),
+            cleaned_data.get("last_episode_number"),
+        )
+        first_episode = episode_lookup.get(first_key)
+        last_episode = episode_lookup.get(last_key)
+
+        if first_episode is None:
+            self.add_error(
+                "first_episode_number",
+                "Select an episode that exists in the available range.",
+            )
+        if last_episode is None:
+            self.add_error(
+                "last_episode_number",
+                "Select an episode that exists in the available range.",
+            )
+        if self.errors:
+            return cleaned_data
+
+        if first_episode["order"] > last_episode["order"]:
+            self.add_error(
+                "last_episode_number",
+                "The last play must come after or match the first play.",
+            )
+            return cleaned_data
+
+        selected_episodes = [
+            episode
+            for episode in self.domain.get("episodes", [])
+            if first_episode["order"] <= episode["order"] <= last_episode["order"]
+        ]
+        cleaned_data["selected_domain_episodes"] = selected_episodes
+
+        distribution_mode = cleaned_data.get("distribution_mode")
+        start_date = cleaned_data.get("start_date")
+        end_date = cleaned_data.get("end_date")
+
+        if not start_date:
+            self.add_error("start_date", "Start date is required.")
+        if not end_date:
+            self.add_error("end_date", "End date is required.")
+        if start_date and end_date and start_date > end_date:
+            self.add_error("end_date", "End date must be on or after the start date.")
+
+        if distribution_mode == self.DISTRIBUTION_MODE_AIR_DATE:
+            missing_air_dates = [
+                episode
+                for episode in selected_episodes
+                if not episode.get("air_date")
+            ]
+            if missing_air_dates:
+                self.add_error(
+                    "distribution_mode",
+                    "One or more selected episodes are missing air dates. Use even distribution instead.",
+                )
+
+        return cleaned_data
 
 
 class MusicForm(MediaForm):

@@ -1,0 +1,74 @@
+<div class="relative filter-control"
+     x-cloak
+     x-show="layout === 'table'"
+     x-data="columnConfigMenu({
+       refreshUrl: '{{ table_refresh_url|escapejs }}',
+       refreshTarget: '{{ table_refresh_target|escapejs }}',
+       refreshInclude: '{{ table_refresh_include_selector|escapejs }}',
+       loadingIndicator: '{{ table_loading_indicator|default:'#loading-indicator'|escapejs }}'
+     })"
+     @click.outside="open = false">
+  <form x-ref="form"
+        id="{{ table_column_form_id|default:'column-pref-form' }}"
+        class="hidden"
+        hx-post="{{ table_column_update_url }}"
+        hx-include="{{ table_refresh_include_selector }}"
+        hx-swap="none">
+    {% csrf_token %}
+    <input type="hidden" name="table_type" value="{{ table_type|default:'media' }}">
+    {% if table_column_media_type %}
+      <input type="hidden" name="media_type_key" value="{{ table_column_media_type }}">
+    {% endif %}
+    <input type="hidden"
+           name="order"
+           :value="JSON.stringify(columns.map(column => column.key))">
+    <input type="hidden"
+           name="hidden"
+           :value="JSON.stringify(columns.filter(column => !column.visible).map(column => column.key))">
+  </form>
+  <button class="p-2 rounded-md border border-gray-700 bg-[#39404b] hover:bg-[#454d5a] text-gray-200 transition-colors cursor-pointer"
+          title="Configure Table Columns"
+          @click="open = !open"
+          type="button">
+    {% include "app/icons/vertical-sliders.svg" with classes="w-5 h-5" %}
+  </button>
+  <div class="absolute right-0 z-40 mt-2 w-64 bg-[#39404b] rounded-md shadow-lg overflow-hidden border border-gray-700"
+       x-cloak
+       x-show="open"
+       x-transition:enter="transition ease-out duration-100"
+       x-transition:enter-start="transform opacity-0 scale-95"
+       x-transition:enter-end="transform opacity-100 scale-100"
+       x-transition:leave="transition ease-in duration-75"
+       x-transition:leave-start="transform opacity-100 scale-100"
+       x-transition:leave-end="transform opacity-0 scale-95">
+    <div class="px-3 py-2 text-xs uppercase tracking-wide text-gray-300 border-b border-gray-700">Columns</div>
+    <template x-for="(column, index) in columns" :key="column.key">
+      <div class="flex items-center gap-2 px-3 py-2 text-sm text-gray-200 border-b border-gray-700/60 last:border-b-0"
+           :class="dragIndex === index ? 'bg-[#454d5a]' : ''"
+           draggable="true"
+           @dragstart="startDrag(index, $event)"
+           @dragover.prevent
+           @drop.prevent="drop(index)"
+           @dragend="endDrag">
+        <button type="button"
+                class="cursor-grab text-gray-400 hover:text-gray-200"
+                title="Drag to reorder">
+          {% include "app/icons/hamburger.svg" with classes="w-4 h-4" %}
+        </button>
+        <span class="flex-1 truncate" x-text="column.label"></span>
+        <button class="text-gray-300 hover:text-white transition-colors cursor-pointer"
+                type="button"
+                :title="column.visible ? 'Hide column' : 'Show column'"
+                @click="toggleVisibility(index)">
+          <span x-show="column.visible">{% include "app/icons/eye.svg" with classes="w-4 h-4" %}</span>
+          <span x-show="!column.visible">{% include "app/icons/eye-closed.svg" with classes="w-4 h-4" %}</span>
+        </button>
+      </div>
+    </template>
+    <button class="w-full text-left px-3 py-2 text-sm text-indigo-300 hover:text-indigo-200 hover:bg-[#454d5a] transition-colors cursor-pointer border-t border-gray-700"
+            type="button"
+            @click="resetDefaults()">
+      Reset to defaults
+    </button>
+  </div>
+</div>

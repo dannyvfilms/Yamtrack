@@ -851,6 +851,7 @@ CELERY_BEAT_SCHEDULE = {
             "episode_season_batch_size": 300,
             "credits_batch_size": 2500,
             "credits_scan_multiplier": 20,
+            "trakt_popularity_batch_size": 300,
         },
     },
     "warm_discover_api_cache": {

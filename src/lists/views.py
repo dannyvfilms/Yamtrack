@@ -10,7 +10,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_not_required, login_required
 from django.core.paginator import Paginator
 from django.db.models import Count, Exists, F, OuterRef, Prefetch, Q, Subquery
-from django.http import Http404, HttpResponse, JsonResponse
+from django.http import Http404, HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -19,6 +19,12 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_POST
 
 from app import helpers
+from app.columns import (
+    resolve_column_config,
+    resolve_columns,
+    resolve_default_column_config,
+    sanitize_column_prefs,
+)
 from app.discover import tab_cache as discover_tab_cache
 from app.models import Item, MediaManager, MediaTypes
 from app.providers import services
@@ -82,6 +88,43 @@ def _resolve_list_sort_direction(sort_by, direction):
     if direction in {"asc", "desc"}:
         return direction
     return _default_list_sort_direction(sort_by)
+
+
+class _ListTableRowAdapter:
+    """Expose list items through the shared media-table row contract."""
+
+    def __init__(self, list_item):
+        self._list_item = list_item
+        self._source_media = getattr(list_item, "media", None)
+        self.item = list_item
+        self.id = getattr(self._source_media, "id", None)
+        self.track_media_id = self.id
+        self.created_at = getattr(list_item, "list_date_added", None)
+        self.repeats = getattr(self._source_media, "repeats", 1) or 1
+
+    def __getattr__(self, attr):
+        if self._source_media is not None and hasattr(self._source_media, attr):
+            return getattr(self._source_media, attr)
+        return getattr(self._list_item, attr)
+
+
+def _adapt_list_items_for_table(items_page):
+    """Replace page rows with adapters that satisfy shared media-table cells."""
+    items_page.object_list = [
+        _ListTableRowAdapter(item) for item in items_page.object_list
+    ]
+    return items_page
+
+
+def _resolve_list_table_media_type(selected_media_types, filtered_media_types):
+    if len(selected_media_types) == 1:
+        return selected_media_types[0]
+
+    unique_filtered_media_types = list(dict.fromkeys(filtered_media_types))
+    if len(unique_filtered_media_types) == 1:
+        return unique_filtered_media_types[0]
+
+    return "all"
 
 
 def _order_expression(field_name, direction, *, nulls_last=True):
@@ -514,11 +557,7 @@ def _smart_list_detail_response(
     media_user,
 ):
     """Render smart-list detail page and HTMX partial responses."""
-    valid_sorts = [
-        choice[0]
-        for choice in ListDetailSortChoices.choices
-        if choice[0] != ListDetailSortChoices.CUSTOM
-    ]
+    valid_sorts = [choice[0] for choice in ListDetailSortChoices.choices]
     sort_by = request.GET.get("sort", ListDetailSortChoices.DATE_ADDED)
     if sort_by not in valid_sorts:
         sort_by = ListDetailSortChoices.DATE_ADDED
@@ -592,6 +631,7 @@ def _smart_list_detail_response(
         ),
     )
     total_items_count = items.count()
+    filtered_media_types = list(items.values_list("media_type", flat=True).distinct())
 
     def _attach_media_with_aggregation(item_list):
         media_by_item_id = {}
@@ -763,16 +803,15 @@ def _smart_list_detail_response(
         filtered_items_count = paginator.count
         _attach_media_with_aggregation(items_page)
 
+    if layout == "table":
+        _adapt_list_items_for_table(items_page)
+
     status_choices = [("all", "All"), *[
         (value, label)
         for value, label in MediaStatusChoices.choices
         if value != MediaStatusChoices.ALL
     ]]
-    sort_choices = [
-        (value, label)
-        for value, label in ListDetailSortChoices.choices
-        if value != ListDetailSortChoices.CUSTOM
-    ]
+    sort_choices = sorted(ListDetailSortChoices.choices, key=lambda x: x[1])
 
     filter_data = smart_rules.build_rule_filter_data(
         owner=custom_list.owner,
@@ -780,13 +819,17 @@ def _smart_list_detail_response(
         status=active_rules["status"],
         search=active_rules["search"],
     )
-    available_media_types = smart_rules.get_available_media_types(custom_list.owner)
+    available_media_types = sorted(
+        smart_rules.get_available_media_types(custom_list.owner),
+        key=lambda v: MediaTypes(v).label,
+    )
     available_media_type_labels = {
         media_type: MediaTypes(media_type).label
         for media_type in available_media_types
     }
 
     is_partial = bool(request.headers.get("HX-Request"))
+    is_pagination = is_partial and page > 1
     has_active_filters = bool(active_rules.get("media_types")) or any(
         [
             active_rules.get("status") not in {"", "all"},
@@ -802,6 +845,10 @@ def _smart_list_detail_response(
             active_rules.get("origin"),
             active_rules.get("search"),
         ],
+    )
+    current_media_type = _resolve_list_table_media_type(
+        active_rules["media_types"],
+        filtered_media_types,
     )
     context = {
         "user": request.user,
@@ -822,11 +869,12 @@ def _smart_list_detail_response(
         "status_choices": status_choices,
         "public_view": public_view,
         "can_edit": can_edit,
-        "list_ordering_enabled": False,
+        "list_ordering_enabled": can_edit and sort_by == ListDetailSortChoices.CUSTOM,
         "is_public_view": is_public_view,
         "recommendation_count": recommendation_count,
         "base_template": "base_public.html" if public_view else "base.html",
         "is_partial": is_partial,
+        "is_pagination": is_pagination,
         "is_smart_list": True,
         "smart_edit_mode": smart_edit_mode,
         "saved_smart_rules": saved_rules,
@@ -838,12 +886,49 @@ def _smart_list_detail_response(
         "has_media_type_filter": bool(active_rules["media_types"]),
         "has_active_filters": has_active_filters,
         "collaborators_count": custom_list.collaborators.count() + 1,
+        "column_config": resolve_column_config(
+            current_media_type,
+            sort_by,
+            request.user,
+            "list",
+        ),
+        "default_column_config": resolve_default_column_config(
+            current_media_type,
+            sort_by,
+            "list",
+        ),
+        "table_type": "list",
+        "table_column_update_url": reverse(
+            "list_detail_columns",
+            args=[custom_list.id],
+        ),
+        "table_column_media_type": current_media_type,
+        "table_refresh_url": reverse("list_detail", args=[custom_list.id]),
+        "table_refresh_target": "#items-view",
+        "table_refresh_include_selector": "#smart-filter-form",
     }
+
+    if layout == "table":
+        context.update(
+            {
+                "media_list": items_page,
+                "resolved_columns": resolve_columns(
+                    current_media_type,
+                    sort_by,
+                    request.user,
+                    "list",
+                ),
+                "table_body_id": "list-table-body",
+                "table_pagination_url": reverse("list_detail", args=[custom_list.id]),
+                "table_target_selector": "#list-table-body",
+                "table_include_selector": "#smart-filter-form",
+            },
+        )
 
     if is_partial:
         if layout == "table":
-            if page > 1:
-                return render(request, "lists/components/list_table_rows.html", context)
+            if is_pagination:
+                return render(request, "app/components/table_items.html", context)
             return render(request, "lists/components/list_table.html", context)
         return render(request, "lists/components/media_grid.html", context)
 
@@ -976,6 +1061,9 @@ def list_detail(request, list_id):
         legacy_media_type = request.GET.get("type", "all")
         if legacy_media_type and legacy_media_type != "all":
             selected_media_types = [legacy_media_type]
+    layout = request.GET.get("layout", "grid")
+    if layout not in {"grid", "table"}:
+        layout = "grid"
     valid_media_types = set(MediaTypes.values)
     selected_media_types = [
         media_type for media_type in selected_media_types if media_type in valid_media_types
@@ -1113,6 +1201,7 @@ def list_detail(request, list_id):
         )
         # Filter items to only those with the specified status
         items = items.filter(id__in=media_by_item_id.keys())
+    filtered_media_types = list(items.values_list("media_type", flat=True).distinct())
 
     # Apply sorting
     sort_mapping = {
@@ -1199,6 +1288,9 @@ def list_detail(request, list_id):
 
         _attach_media_with_aggregation(items_page)
 
+    if layout == "table":
+        _adapt_list_items_for_table(items_page)
+
     # Get recommendation count for owners/collaborators
     recommendation_count = 0
     if can_edit and custom_list.allow_recommendations:
@@ -1207,6 +1299,11 @@ def list_detail(request, list_id):
     # Base context for both full and partial responses
     chip_sort = "score" if params["sort_by"] == "rating" else params["sort_by"]
     is_partial = bool(request.headers.get("HX-Request"))
+    is_pagination = is_partial and params["page"] > 1
+    current_media_type = _resolve_list_table_media_type(
+        params["media_types"],
+        filtered_media_types,
+    )
     context = {
         "user": request.user,
         "custom_list": custom_list,
@@ -1221,7 +1318,8 @@ def list_detail(request, list_id):
         "current_direction": params["direction"],
         "chip_sort": chip_sort,
         "current_status": params["status_filter"] or MediaStatusChoices.ALL,
-        "sort_choices": ListDetailSortChoices.choices,
+        "current_layout": layout,
+        "sort_choices": sorted(ListDetailSortChoices.choices, key=lambda x: x[1]),
         "status_choices": MediaStatusChoices.choices,
         "public_view": public_view,
         "can_edit": can_edit,
@@ -1230,9 +1328,47 @@ def list_detail(request, list_id):
         "recommendation_count": recommendation_count,
         "base_template": "base_public.html" if public_view else "base.html",
         "is_partial": is_partial,
+        "is_pagination": is_pagination,
         "current_media_types": params["media_types"],
         "has_media_type_filter": bool(params["media_types"]),
+        "column_config": resolve_column_config(
+            current_media_type,
+            params["sort_by"],
+            request.user,
+            "list",
+        ),
+        "default_column_config": resolve_default_column_config(
+            current_media_type,
+            params["sort_by"],
+            "list",
+        ),
+        "table_type": "list",
+        "table_column_update_url": reverse(
+            "list_detail_columns",
+            args=[custom_list.id],
+        ),
+        "table_column_media_type": current_media_type,
+        "table_refresh_url": reverse("list_detail", args=[custom_list.id]),
+        "table_refresh_target": "#items-view",
+        "table_refresh_include_selector": "#filter-form",
     }
+
+    if layout == "table":
+        context.update(
+            {
+                "media_list": items_page,
+                "resolved_columns": resolve_columns(
+                    current_media_type,
+                    params["sort_by"],
+                    request.user,
+                    "list",
+                ),
+                "table_body_id": "list-table-body",
+                "table_pagination_url": reverse("list_detail", args=[custom_list.id]),
+                "table_target_selector": "#list-table-body",
+                "table_include_selector": "#filter-form",
+            },
+        )
 
     # Additional context for full page render
     if not is_partial:
@@ -1241,7 +1377,7 @@ def list_detail(request, list_id):
                 "form": CustomListForm(instance=custom_list, user=request.user)
                 if can_edit
                 else None,
-                "media_types": MediaTypes.values,
+                "media_types": sorted(MediaTypes.values, key=lambda v: MediaTypes(v).label),
                 "collaborators_count": custom_list.collaborators.count() + 1,
                 "completion_percent": completion_percent,
                 "completed_count": completed_count,
@@ -1250,7 +1386,77 @@ def list_detail(request, list_id):
         return render(request, "lists/list_detail.html", context)
 
     # HTMX partial response
+    if layout == "table":
+        if is_pagination:
+            return render(request, "app/components/table_items.html", context)
+        return render(request, "lists/components/list_table.html", context)
     return render(request, "lists/components/media_grid.html", context)
+
+
+@require_POST
+def update_list_table_columns(request, list_id):
+    """Persist list-table column prefs without overwriting regular media-list prefs."""
+    if not request.user.is_authenticated:
+        return HttpResponseBadRequest("Authentication required")
+
+    custom_list = get_object_or_404(
+        CustomList.objects.select_related("owner").prefetch_related("collaborators"),
+        id=list_id,
+    )
+    if not custom_list.user_can_view(request.user):
+        raise Http404("List not found")
+
+    media_type = request.POST.get("media_type_key", "all")
+    if media_type != "all" and media_type not in MediaTypes.values:
+        media_type = "all"
+
+    raw_order = request.POST.get("order", "[]")
+    raw_hidden = request.POST.get("hidden", "[]")
+
+    try:
+        parsed_order = json.loads(raw_order)
+    except json.JSONDecodeError:
+        parsed_order = []
+    try:
+        parsed_hidden = json.loads(raw_hidden)
+    except json.JSONDecodeError:
+        parsed_hidden = []
+
+    order = (
+        [value for value in parsed_order if isinstance(value, str)]
+        if isinstance(parsed_order, list)
+        else []
+    )
+    hidden = (
+        [value for value in parsed_hidden if isinstance(value, str)]
+        if isinstance(parsed_hidden, list)
+        else []
+    )
+
+    valid_sorts = {choice[0] for choice in ListDetailSortChoices.choices}
+    current_sort = request.POST.get("sort", ListDetailSortChoices.DATE_ADDED)
+    if current_sort not in valid_sorts:
+        current_sort = ListDetailSortChoices.DATE_ADDED
+
+    clean_order, clean_hidden = sanitize_column_prefs(
+        media_type=media_type,
+        current_sort=current_sort,
+        user=request.user,
+        table_type="list",
+        order=order,
+        hidden=hidden,
+    )
+
+    request.user.update_column_prefs(
+        media_type=media_type,
+        table_type="list",
+        order=clean_order,
+        hidden=clean_hidden,
+    )
+
+    response = HttpResponse(status=204)
+    response["HX-Trigger"] = json.dumps({"refreshTableColumns": True})
+    return response
 
 
 @require_POST
@@ -1467,6 +1673,291 @@ def list_item_toggle(request):
     )
 
 
+@require_GET
+def add_list_item_page(request, list_id):
+    """Show the owner/collaborator quick-add page for a manual list."""
+    custom_list = get_object_or_404(
+        CustomList.objects.select_related("owner").prefetch_related("collaborators"),
+        id=list_id,
+    )
+
+    if not custom_list.user_can_edit(request.user):
+        msg = "You do not have permission to add items to this list"
+        raise Http404(msg)
+
+    if custom_list.is_smart:
+        messages.info(
+            request,
+            "Smart lists update from their rules. Edit the rules to change items.",
+        )
+        return redirect("list_detail", list_id=list_id)
+
+    enabled_media_types = request.user.get_enabled_media_types()
+
+    initial_query = request.GET.get("q", "").strip()
+    initial_media_type = request.GET.get("media_type") or enabled_media_types[0]
+    if initial_media_type not in enabled_media_types:
+        initial_media_type = enabled_media_types[0]
+
+    try:
+        initial_page = int(request.GET.get("page", 1))
+    except (TypeError, ValueError):
+        initial_page = 1
+    if initial_page < 1:
+        initial_page = 1
+
+    context = {
+        "custom_list": custom_list,
+        "media_types": enabled_media_types,
+        "initial_query": initial_query,
+        "initial_media_type": initial_media_type,
+        "initial_page": initial_page,
+    }
+
+    return render(request, "lists/add_item.html", context)
+
+
+@require_GET
+def add_list_item_search(request, list_id):
+    """Search for items to add directly to an editable manual list."""
+    custom_list = get_object_or_404(
+        CustomList.objects.select_related("owner").prefetch_related("collaborators"),
+        id=list_id,
+    )
+
+    if not custom_list.user_can_edit(request.user):
+        msg = "You do not have permission to add items to this list"
+        raise Http404(msg)
+
+    if custom_list.is_smart:
+        return render(
+            request,
+            "lists/components/add_item_search_results.html",
+            {
+                "results": [],
+                "custom_list": custom_list,
+                "error": "Smart lists update from their rules and do not support manual additions.",
+            },
+            status=200,
+        )
+
+    show_preview = request.GET.get("show_preview")
+    if show_preview:
+        media_id = request.GET.get("media_id")
+        media_type = request.GET.get("media_type")
+        source = request.GET.get("source")
+
+        try:
+            media_metadata = services.get_media_metadata(media_type, media_id, source)
+        except Exception as exc:
+            logger.exception(
+                "Quick add preview failed: list_id=%s media_type=%s media_id=%s",
+                custom_list.id,
+                media_type,
+                media_id,
+                exc_info=exc,
+            )
+            return JsonResponse(
+                {"error": "Unable to load details right now. Please try again."},
+                status=502,
+            )
+
+        item = Item.objects.filter(
+            media_id=media_id,
+            media_type=media_type,
+            source=source,
+        ).first()
+
+        already_in_list = False
+        if item:
+            already_in_list = custom_list.items.filter(id=item.id).exists()
+
+        query = request.GET.get("q", "").strip()
+        search_media_type = request.GET.get("search_media_type")
+        page = request.GET.get("page", "1")
+
+        next_params = {}
+        if query:
+            next_params["q"] = query
+        if search_media_type:
+            next_params["media_type"] = search_media_type
+        if page:
+            next_params["page"] = page
+
+        next_url = reverse("list_add_item", kwargs={"list_id": custom_list.id})
+        if next_params:
+            next_url = f"{next_url}?{urlencode(next_params)}"
+
+        context = {
+            "custom_list": custom_list,
+            "media": media_metadata,
+            "media_id": media_id,
+            "media_type": media_type,
+            "source": source,
+            "already_in_list": already_in_list,
+            "next_url": next_url,
+        }
+        return render(request, "lists/components/add_item_preview_modal.html", context)
+
+    query = request.GET.get("q", "").strip()
+    media_type = request.GET.get("media_type") or MediaTypes.TV.value
+    if media_type not in MediaTypes.values and media_type != "tv_with_seasons":
+        media_type = MediaTypes.TV.value
+
+    try:
+        page = int(request.GET.get("page", 1))
+    except (TypeError, ValueError):
+        page = 1
+
+    if not query or len(query) < 2:
+        return render(
+            request,
+            "lists/components/add_item_search_results.html",
+            {"results": [], "custom_list": custom_list},
+        )
+
+    from app import config
+
+    source = config.get_default_source_name(media_type).value
+
+    try:
+        data = services.search(media_type, query, page, source)
+    except Exception as exc:
+        logger.exception(
+            "Quick add search failed: list_id=%s media_type=%s query=%s",
+            custom_list.id,
+            media_type,
+            query,
+            exc_info=exc,
+        )
+        context = {
+            "results": [],
+            "custom_list": custom_list,
+            "query": query,
+            "media_type": media_type,
+            "page": page,
+            "total_pages": 1,
+            "error": "Search is temporarily unavailable. Please try again.",
+        }
+        return render(
+            request,
+            "lists/components/add_item_search_results.html",
+            context,
+            status=200,
+        )
+
+    existing_items = set(
+        custom_list.items.values_list("media_id", "source"),
+    )
+
+    results = data.get("results", [])
+    for result in results:
+        key = (str(result["media_id"]), result["source"])
+        result["already_in_list"] = key in existing_items
+
+    enriched_results = helpers.enrich_items_with_user_data(request, results)
+
+    context = {
+        "results": enriched_results,
+        "custom_list": custom_list,
+        "query": query,
+        "media_type": media_type,
+        "page": page,
+        "total_pages": data.get("total_pages", 1),
+    }
+
+    return render(request, "lists/components/add_item_search_results.html", context)
+
+
+@require_POST
+def add_list_item_submit(request, list_id):
+    """Add a searched item directly to an editable manual list."""
+    custom_list = get_object_or_404(
+        CustomList.objects.select_related("owner").prefetch_related("collaborators"),
+        id=list_id,
+    )
+
+    if not custom_list.user_can_edit(request.user):
+        messages.error(request, "You do not have permission to edit this list.")
+        return helpers.redirect_back(request)
+
+    if custom_list.is_smart:
+        messages.error(
+            request,
+            "Smart lists update from their rules and do not support manual additions.",
+        )
+        return redirect("list_detail", list_id=list_id)
+
+    next_url = request.POST.get("next")
+
+    def _redirect_after_submit(fallback):
+        if next_url and url_has_allowed_host_and_scheme(next_url, allowed_hosts=None):
+            return redirect(next_url)
+        return fallback
+
+    media_id = request.POST.get("media_id")
+    media_type = request.POST.get("media_type")
+    source = request.POST.get("source")
+    season_number = request.POST.get("season_number")
+    episode_number = request.POST.get("episode_number")
+
+    season_number = int(season_number) if season_number else None
+    episode_number = int(episode_number) if episode_number else None
+
+    try:
+        item = Item.objects.get(
+            media_id=media_id,
+            source=source,
+            media_type=media_type,
+            season_number=season_number,
+            episode_number=episode_number,
+        )
+    except Item.DoesNotExist:
+        metadata = services.get_media_metadata(
+            media_type,
+            media_id,
+            source,
+            [season_number] if season_number else None,
+            episode_number,
+        )
+        release_datetime = helpers.extract_release_datetime(metadata)
+        item = Item.objects.create(
+            media_id=media_id,
+            source=source,
+            media_type=media_type,
+            season_number=season_number,
+            episode_number=episode_number,
+            title=metadata["title"],
+            image=metadata["image"],
+            release_datetime=release_datetime,
+        )
+
+    discover_tab_cache.mark_active_from_request(
+        request,
+        fallback_media_type=item.media_type,
+    )
+
+    if custom_list.items.filter(id=item.id).exists():
+        messages.info(request, f'"{item.title}" is already in this list.')
+        return _redirect_after_submit(redirect("list_add_item", list_id=list_id))
+
+    CustomListItem.objects.create(
+        custom_list=custom_list,
+        item=item,
+        added_by=request.user,
+    )
+    logger.info("%s added to %s from quick add search.", item, custom_list)
+    ListActivity.objects.create(
+        custom_list=custom_list,
+        user=request.user,
+        activity_type=ListActivityType.ITEM_ADDED,
+        item=item,
+    )
+    messages.success(request, f'"{item.title}" has been added to the list.')
+
+    return _redirect_after_submit(redirect("list_detail", list_id=list_id))
+
+
 @login_required
 @require_POST
 def reorder_list_item(request, list_id):
@@ -1518,6 +2009,44 @@ def reorder_list_item(request, list_id):
     for index, custom_list_item in enumerate(list_items):
         custom_list_item.date_added = base_time + datetime.timedelta(seconds=index)
     CustomListItem.objects.bulk_update(list_items, ["date_added"])
+
+    return HttpResponse(status=204)
+
+
+@login_required
+@require_POST
+def reorder_list_items_all(request, list_id):
+    """Reorder list items by full ordered ID list (drag-and-drop)."""
+    custom_list = get_object_or_404(CustomList, id=list_id)
+    if not custom_list.user_can_edit(request.user):
+        return HttpResponse(status=403)
+
+    item_ids = request.POST.getlist("item_ids[]")
+    if not item_ids:
+        return HttpResponse(status=400)
+
+    all_items = list(
+        CustomListItem.objects.filter(custom_list=custom_list).order_by("date_added", "id"),
+    )
+    submitted_set = {str(i) for i in item_ids}
+    item_map = {str(li.item_id): li for li in all_items}
+
+    # Positions in the full list currently occupied by the submitted subset
+    original_positions = sorted(
+        i for i, li in enumerate(all_items) if str(li.item_id) in submitted_set
+    )
+    if not original_positions:
+        return HttpResponse(status=400)
+
+    # Place submitted items in their new DnD order at those same positions
+    for pos, item_id in zip(original_positions, item_ids):
+        if str(item_id) in item_map:
+            all_items[pos] = item_map[str(item_id)]
+
+    base_time = timezone.now().replace(microsecond=0)
+    for index, li in enumerate(all_items):
+        li.date_added = base_time + datetime.timedelta(seconds=index)
+    CustomListItem.objects.bulk_update(all_items, ["date_added"])
 
     return HttpResponse(status=204)
 

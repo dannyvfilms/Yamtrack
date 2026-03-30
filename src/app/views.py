@@ -1,10 +1,11 @@
 import calendar
 import json
 import logging
+import math
 import re
 import time
 from collections import defaultdict
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from datetime import UTC, date, timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -23,10 +24,12 @@ from django.db.models.functions import ExtractDay, ExtractMonth
 from django.db.utils import OperationalError
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.templatetags.static import static
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils import formats, timezone
 from django.utils.dateparse import parse_date
+from django.utils.text import slugify
 from django.utils.timezone import datetime
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
@@ -56,6 +59,7 @@ from app import (
     statistics as stats,
 )
 from app.forms import (
+    BulkEpisodeTrackForm,
     CollectionEntryForm,
     EpisodeForm,
     ManualItemForm,
@@ -85,6 +89,7 @@ from app.models import (
     Movie,
     Music,
     Person,
+    PodcastShow,
     Season,
     Sources,
     Status,
@@ -93,9 +98,13 @@ from app.models import (
 )
 from app.providers import comicvine, hardcover, mangaupdates, manual, openlibrary, services, tmdb
 from app.services import game_lengths as game_length_services
-from app.services import anime_migration, metadata_resolution
+from app.services import anime_migration, bulk_episode_tracking, metadata_resolution
 from app.services import music as sync_services
-from app.services.tracking_hydration import ensure_item_metadata
+from app.services import trakt_popularity as trakt_popularity_service
+from app.services.tracking_hydration import (
+    ensure_item_metadata,
+    ensure_item_metadata_from_discover_seed,
+)
 from app.templatetags import app_tags
 from app.signals import suppress_media_cache_change_signals
 from lists.models import CustomList
@@ -124,6 +133,10 @@ DISCOVER_ALLOWED_MEDIA_TYPES = {
     MediaTypes.MANGA.value,
     MediaTypes.GAME.value,
     MediaTypes.BOARDGAME.value,
+}
+DISCOVER_FAST_LOCAL_PLANNING_MEDIA_TYPES = {
+    MediaTypes.TV.value,
+    MediaTypes.ANIME.value,
 }
 
 STATISTICS_COMPARE_PREVIOUS_PERIOD = "previous_period"
@@ -435,6 +448,41 @@ def _build_game_lengths_context(detail_item):
     return None
 
 
+def _build_trakt_popularity_context(detail_item, route_media_type):
+    """Return template-ready stored Trakt popularity metadata for a detail item."""
+    if (
+        not detail_item
+        or route_media_type not in (
+            MediaTypes.MOVIE.value,
+            MediaTypes.TV.value,
+            MediaTypes.ANIME.value,
+            MediaTypes.SEASON.value,
+        )
+        or not trakt_popularity_service.trakt_provider.is_configured()
+        or detail_item.trakt_rating_count is None
+    ):
+        return None
+
+    rating = detail_item.trakt_rating
+    if rating is not None:
+        try:
+            rating = float(
+                Decimal(str(rating)).quantize(
+                    Decimal("0.1"),
+                    rounding=ROUND_DOWN,
+                ),
+            )
+        except (InvalidOperation, TypeError, ValueError):
+            pass
+
+    return {
+        "rating": rating,
+        "rating_count": detail_item.trakt_rating_count,
+        "rank": detail_item.trakt_popularity_rank,
+        "score": detail_item.trakt_popularity_score,
+        "fetched_at": detail_item.trakt_popularity_fetched_at,
+    }
+
 def _apply_cached_hltb_link(media_metadata, detail_item):
     """Prefer a stored direct HLTB link when one has already been resolved."""
     if not detail_item or not isinstance(media_metadata, dict):
@@ -454,6 +502,462 @@ def _apply_cached_hltb_link(media_metadata, detail_item):
         search_url = game_length_services.get_hltb_search_url(media_metadata.get("title"))
         if search_url:
             external_links["HowLongToBeat"] = search_url
+
+
+_DETAIL_LINK_BRANDS = {
+    Sources.TMDB.value: {
+        "logo_src": static("img/tmdb-logo.png"),
+        "chip_classes": "border-cyan-400/18 bg-cyan-500/[0.07]",
+        "badge_classes": "border-cyan-400/28 bg-cyan-500/14",
+        "accent_classes": "text-cyan-100",
+        "fallback_text": "TMDB",
+    },
+    Sources.TVDB.value: {
+        "logo_src": static("img/tvdb-logo.png"),
+        "chip_classes": "border-teal-400/18 bg-teal-500/[0.07]",
+        "badge_classes": "border-teal-400/28 bg-teal-500/14",
+        "accent_classes": "text-teal-100",
+        "fallback_text": "TVDB",
+    },
+    Sources.MAL.value: {
+        "logo_src": static("img/myanimelist-logo.svg"),
+        "chip_classes": "border-indigo-400/18 bg-indigo-500/[0.07]",
+        "badge_classes": "border-indigo-400/28 bg-indigo-500/14",
+        "accent_classes": "text-indigo-100",
+        "fallback_text": "MAL",
+    },
+    Sources.MANGAUPDATES.value: {
+        "chip_classes": "border-fuchsia-400/18 bg-fuchsia-500/[0.07]",
+        "badge_classes": "border-fuchsia-400/28 bg-fuchsia-500/14",
+        "accent_classes": "text-fuchsia-100",
+        "fallback_text": "MU",
+    },
+    Sources.IGDB.value: {
+        "logo_src": static("img/igdb-logo.png"),
+        "chip_classes": "border-orange-400/18 bg-orange-500/[0.07]",
+        "badge_classes": "border-orange-400/28 bg-orange-500/14",
+        "accent_classes": "text-orange-100",
+        "fallback_text": "IGDB",
+    },
+    Sources.OPENLIBRARY.value: {
+        "chip_classes": "border-sky-400/18 bg-sky-500/[0.07]",
+        "badge_classes": "border-sky-400/28 bg-sky-500/14",
+        "accent_classes": "text-sky-100",
+        "fallback_text": "OL",
+    },
+    Sources.HARDCOVER.value: {
+        "logo_src": static("img/hardcover-logo.png"),
+        "chip_classes": "border-amber-400/18 bg-amber-500/[0.07]",
+        "badge_classes": "border-amber-400/28 bg-amber-500/14",
+        "accent_classes": "text-amber-100",
+        "fallback_text": "HC",
+    },
+    Sources.COMICVINE.value: {
+        "chip_classes": "border-lime-400/18 bg-lime-500/[0.07]",
+        "badge_classes": "border-lime-400/28 bg-lime-500/14",
+        "accent_classes": "text-lime-100",
+        "fallback_text": "CV",
+    },
+    Sources.BGG.value: {
+        "chip_classes": "border-stone-400/18 bg-stone-500/[0.07]",
+        "badge_classes": "border-stone-400/28 bg-stone-500/14",
+        "accent_classes": "text-stone-100",
+        "fallback_text": "BGG",
+    },
+    Sources.MUSICBRAINZ.value: {
+        "chip_classes": "border-rose-400/18 bg-rose-500/[0.07]",
+        "badge_classes": "border-rose-400/28 bg-rose-500/14",
+        "accent_classes": "text-rose-100",
+        "fallback_text": "MB",
+    },
+    Sources.POCKETCASTS.value: {
+        "chip_classes": "border-orange-400/18 bg-orange-500/[0.07]",
+        "badge_classes": "border-orange-400/28 bg-orange-500/14",
+        "accent_classes": "text-orange-100",
+        "fallback_text": "PC",
+    },
+    Sources.AUDIOBOOKSHELF.value: {
+        "chip_classes": "border-teal-400/18 bg-teal-500/[0.07]",
+        "badge_classes": "border-teal-400/28 bg-teal-500/14",
+        "accent_classes": "text-teal-100",
+        "fallback_text": "ABS",
+    },
+    Sources.MANUAL.value: {
+        "chip_classes": "border-slate-400/18 bg-slate-500/[0.07]",
+        "badge_classes": "border-slate-400/28 bg-slate-500/14",
+        "accent_classes": "text-slate-100",
+        "fallback_text": "MAN",
+    },
+    "anilist": {
+        "logo_src": static("img/anilist-logo.svg"),
+        "chip_classes": "border-sky-400/18 bg-sky-500/[0.07]",
+        "badge_classes": "border-sky-400/28 bg-sky-500/14",
+        "accent_classes": "text-sky-100",
+        "fallback_text": "AL",
+    },
+    "kitsu": {
+        "logo_src": static("img/kitsu-logo.png"),
+        "chip_classes": "border-orange-400/18 bg-orange-500/[0.07]",
+        "badge_classes": "border-orange-400/28 bg-orange-500/14",
+        "accent_classes": "text-orange-100",
+        "fallback_text": "KT",
+    },
+    "simkl": {
+        "logo_src": static("img/simkl-logo.png"),
+        "chip_classes": "border-violet-400/18 bg-violet-500/[0.07]",
+        "badge_classes": "border-violet-400/28 bg-violet-500/14",
+        "accent_classes": "text-violet-100",
+        "fallback_text": "SK",
+    },
+    "steam": {
+        "logo_src": static("img/steam-logo.ico"),
+        "chip_classes": "border-slate-400/18 bg-slate-500/[0.07]",
+        "badge_classes": "border-slate-400/28 bg-slate-500/14",
+        "accent_classes": "text-slate-100",
+        "fallback_text": "STM",
+    },
+    "plex": {
+        "logo_src": static("img/plex-logo.svg"),
+        "chip_classes": "border-amber-400/18 bg-amber-500/[0.07]",
+        "badge_classes": "border-amber-400/28 bg-amber-500/14",
+        "accent_classes": "text-amber-100",
+        "fallback_text": "PLX",
+    },
+    "lastfm": {
+        "logo_src": static("img/lastfm-logo.png"),
+        "chip_classes": "border-rose-400/18 bg-rose-500/[0.07]",
+        "badge_classes": "border-rose-400/28 bg-rose-500/14",
+        "accent_classes": "text-rose-100",
+        "fallback_text": "LFM",
+    },
+    "imdb": {
+        "logo_src": static("img/imdb-logo.png"),
+        "chip_classes": "border-amber-400/18 bg-amber-500/[0.07]",
+        "badge_classes": "border-amber-400/28 bg-amber-500/14",
+        "accent_classes": "text-amber-100",
+        "fallback_text": "IMDb",
+    },
+    "trakt": {
+        "logo_src": static("img/trakt-logo.svg"),
+        "chip_classes": "border-rose-400/18 bg-rose-500/[0.07]",
+        "badge_classes": "border-rose-400/28 bg-rose-500/14",
+        "accent_classes": "text-rose-100",
+        "fallback_text": "Trakt",
+    },
+    "wikidata": {
+        "logo_src": static("img/wikidata-logo.png"),
+        "chip_classes": "border-sky-400/18 bg-sky-500/[0.07]",
+        "badge_classes": "border-sky-400/28 bg-sky-500/14",
+        "accent_classes": "text-sky-100",
+        "fallback_text": "WD",
+    },
+    "letterboxd": {
+        "chip_classes": "border-emerald-400/18 bg-emerald-500/[0.07]",
+        "badge_classes": "border-emerald-400/28 bg-emerald-500/14",
+        "accent_classes": "text-emerald-100",
+        "fallback_text": "LB",
+    },
+    "howlongtobeat": {
+        "logo_src": static("img/hltb-logo.png"),
+        "chip_classes": "border-amber-400/18 bg-amber-500/[0.07]",
+        "badge_classes": "border-amber-400/28 bg-amber-500/14",
+        "accent_classes": "text-amber-100",
+        "fallback_text": "HLTB",
+    },
+}
+
+_DEFAULT_DETAIL_LINK_BRAND = {
+    "chip_classes": "border-slate-400/18 bg-slate-500/[0.07]",
+    "badge_classes": "border-slate-400/28 bg-slate-500/14",
+    "accent_classes": "text-slate-100",
+    "fallback_text": "LINK",
+}
+
+
+def _normalize_detail_link_brand_key(value):
+    """Return a normalized lookup key for link-provider branding."""
+    return slugify(str(value or "")).replace("-", "")
+
+
+def _build_detail_link_entry(label, url, brand_key):
+    """Return a template-ready chip payload for a media detail link."""
+    if not url:
+        return None
+
+    brand = _DETAIL_LINK_BRANDS.get(
+        _normalize_detail_link_brand_key(brand_key),
+        _DEFAULT_DETAIL_LINK_BRAND,
+    )
+    fallback_text = brand.get("fallback_text") or slugify(label).replace("-", "")[:4].upper() or "LINK"
+    return {
+        "label": label,
+        "url": url,
+        "chip_classes": brand["chip_classes"],
+        "badge_classes": brand["badge_classes"],
+        "accent_classes": brand["accent_classes"],
+        "logo_src": brand.get("logo_src"),
+        "fallback_text": fallback_text,
+    }
+
+
+def _build_detail_link_sections(media_metadata, media_type, identity_provider, display_provider):
+    """Return grouped source and external link chips for the media detail action row."""
+    if not isinstance(media_metadata, dict):
+        return []
+
+    source_entries = []
+    external_entries = []
+    seen_urls = set()
+
+    def append_entry(collection, label, url, brand_key):
+        if not url or url in seen_urls:
+            return
+        entry = _build_detail_link_entry(label, url, brand_key)
+        if entry is None:
+            return
+        seen_urls.add(url)
+        collection.append(entry)
+
+    primary_source_url = media_metadata.get("tracking_source_url") or media_metadata.get("source_url")
+    if primary_source_url:
+        append_entry(
+            source_entries,
+            app_tags.source_readable(identity_provider),
+            primary_source_url,
+            identity_provider,
+        )
+
+    display_source_url = media_metadata.get("display_source_url")
+    if display_provider != identity_provider and display_source_url:
+        append_entry(
+            source_entries,
+            f"Metadata: {app_tags.source_readable(display_provider)}",
+            display_source_url,
+            display_provider,
+        )
+
+    if media_type == MediaTypes.MOVIE.value and identity_provider == Sources.TMDB.value:
+        media_id = media_metadata.get("media_id")
+        if media_id:
+            append_entry(
+                external_entries,
+                "Letterboxd",
+                f"https://letterboxd.com/tmdb/{media_id}",
+                "letterboxd",
+            )
+
+    external_links = media_metadata.get("external_links")
+    if isinstance(external_links, dict):
+        for name, url in external_links.items():
+            append_entry(external_entries, name, url, name)
+
+    sections = []
+    if source_entries:
+        sections.append(
+            {
+                "title": "Sources" if len(source_entries) > 1 else "Source",
+                "entries": source_entries,
+            }
+        )
+    if external_entries:
+        sections.append({"title": "External links", "entries": external_entries})
+    return sections
+
+
+def _format_detail_activity_duration(total_minutes, suffix):
+    """Return a detail subtitle duration string for a total-minute value."""
+    if not total_minutes:
+        return None
+
+    total_minutes = int(total_minutes)
+    total_hours, remainder_minutes = divmod(total_minutes, 60)
+    if total_hours > 0:
+        return f"{total_hours}h {remainder_minutes}min {suffix}"
+    return f"{total_minutes}min {suffix}"
+
+
+def _build_detail_activity_subtitle(media_type, media_metadata, current_instance=None, play_stats=None):
+    """Return a shared subtitle payload for tracked detail pages."""
+    if not current_instance and not play_stats:
+        return None
+
+    media_metadata = media_metadata if isinstance(media_metadata, dict) else {}
+    play_stats = play_stats if isinstance(play_stats, dict) else {}
+    max_progress = media_metadata.get("max_progress")
+
+    def build_progress_text(value, include_max=False):
+        if value in (None, ""):
+            return None
+        progress_text = f"Progress: {value}"
+        if include_max and max_progress:
+            progress_text += f"/{max_progress}"
+        return progress_text
+
+    date_start = (
+        play_stats.get("first_played")
+        or getattr(current_instance, "subtitle_start_date", None)
+        or getattr(current_instance, "aggregated_start_date", None)
+        or getattr(current_instance, "start_date", None)
+    )
+    date_end = (
+        play_stats.get("last_played")
+        or getattr(current_instance, "subtitle_end_date", None)
+        or getattr(current_instance, "aggregated_end_date", None)
+        or getattr(current_instance, "end_date", None)
+    )
+    duration_text = None
+    collapse_same_day = bool(play_stats.get("same_play_day"))
+
+    if media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
+        primary_text = build_progress_text(
+            getattr(current_instance, "formatted_progress", None),
+            include_max=True,
+        )
+        duration_text = _format_detail_activity_duration(
+            play_stats.get("total_minutes"),
+            "watched",
+        )
+    elif media_type == MediaTypes.MOVIE.value:
+        total_plays = play_stats.get("total_plays")
+        if not total_plays:
+            return None
+        primary_text = "Watched once" if total_plays == 1 else f"Watched {total_plays} times"
+        duration_text = _format_detail_activity_duration(
+            play_stats.get("total_minutes"),
+            "watched",
+        )
+    elif media_type in (
+        MediaTypes.BOOK.value,
+        MediaTypes.COMIC.value,
+        MediaTypes.MANGA.value,
+    ):
+        primary_text = build_progress_text(
+            getattr(current_instance, "formatted_progress", None),
+            include_max=True,
+        )
+    elif media_type == MediaTypes.GAME.value:
+        progress_value = (
+            getattr(current_instance, "formatted_aggregated_progress", None)
+            if getattr(current_instance, "aggregated_progress", None) is not None
+            else getattr(current_instance, "formatted_progress", None)
+        )
+        primary_text = build_progress_text(progress_value)
+    elif media_type in (MediaTypes.BOARDGAME.value, MediaTypes.MUSIC.value):
+        progress_value = (
+            getattr(current_instance, "formatted_aggregated_progress", None)
+            if getattr(current_instance, "aggregated_progress", None) is not None
+            else getattr(current_instance, "formatted_progress", None)
+        )
+        primary_text = build_progress_text(progress_value)
+        if media_type == MediaTypes.MUSIC.value:
+            duration_text = _format_detail_activity_duration(
+                play_stats.get("total_minutes"),
+                "listened",
+            )
+    elif media_type == MediaTypes.PODCAST.value:
+        total_plays = play_stats.get("total_plays")
+        if max_progress and total_plays:
+            primary_text = f"Progress: {total_plays}/{max_progress}"
+        else:
+            primary_text = build_progress_text(
+                getattr(current_instance, "formatted_progress", None),
+            )
+        duration_text = _format_detail_activity_duration(
+            play_stats.get("total_minutes"),
+            "listened",
+        )
+    else:
+        return None
+
+    if not primary_text and not date_start and not date_end and not duration_text:
+        return None
+
+    return {
+        "primary_text": primary_text,
+        "date_start": date_start,
+        "date_end": date_end,
+        "duration_text": duration_text,
+        "collapse_same_day": collapse_same_day,
+    }
+
+
+def _resolve_detail_tag_genres(media_metadata, item, fallback_genres=None):
+    """Return detail-page genres sourced from metadata, request state, or stored item data."""
+    genres = []
+    if isinstance(media_metadata, dict):
+        details = media_metadata.get("details")
+        genres = stats._coerce_genre_list(
+            media_metadata.get("genres")
+            or (details.get("genres") if isinstance(details, dict) else None)
+            or media_metadata.get("genre")
+            or (details.get("genre") if isinstance(details, dict) else None),
+        )
+    if not genres and fallback_genres:
+        genres = stats._coerce_genre_list(fallback_genres)
+    if not genres and item is not None:
+        genres = list(item.genres or [])
+    return genres
+
+
+def _build_detail_tag_sections(media_metadata, item, user, fallback_genres=None):
+    """Return grouped genre and user-tag chips for the media detail action row."""
+    sections = []
+
+    genres = _resolve_detail_tag_genres(
+        media_metadata,
+        item,
+        fallback_genres=fallback_genres,
+    )
+
+    if genres:
+        sections.append(
+            {
+                "title": "Genres",
+                "entries": [
+                    {
+                        "label": genre,
+                        "chip_classes": "border-violet-400/18 bg-violet-500/[0.07] text-violet-100",
+                    }
+                    for genre in genres
+                ],
+            }
+        )
+
+    tag_names = []
+    if item is not None and getattr(user, "is_authenticated", False):
+        tag_names = list(
+            ItemTag.objects.filter(item=item, tag__user=user)
+            .select_related("tag")
+            .order_by("tag__name")
+            .values_list("tag__name", flat=True)
+        )
+
+    if tag_names:
+        sections.append(
+            {
+                "title": "Tags",
+                "entries": [
+                    {
+                        "label": tag_name,
+                        "chip_classes": "border-slate-400/18 bg-slate-500/[0.07] text-slate-100",
+                    }
+                    for tag_name in tag_names
+                ],
+            }
+        )
+
+    return sections
+
+
+def _parse_detail_tag_preview_genres(raw_value):
+    """Return a normalized genre list from a serialized detail-tag preview payload."""
+    if not raw_value:
+        return []
+    try:
+        parsed_value = json.loads(raw_value)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return stats._coerce_genre_list(parsed_value)
 
 
 def _should_queue_game_lengths_refresh(detail_item):
@@ -1312,17 +1816,31 @@ def discover_action(request):
     _action_payloads: list[dict] | None = None
     action_stage_started = time.monotonic()
     mutation_ms = 0
+    metadata_strategy = "-"
     if action == "planning":
-        hydrated = ensure_item_metadata(
-            request.user,
-            candidate_media_type,
-            media_id,
-            source,
-            season_number,
-            identity_media_type=identity_media_type,
-            library_media_type=library_media_type,
-            **candidate_seed,
-        )
+        if candidate_media_type in DISCOVER_FAST_LOCAL_PLANNING_MEDIA_TYPES:
+            hydrated = ensure_item_metadata_from_discover_seed(
+                candidate_media_type,
+                media_id,
+                source,
+                season_number,
+                identity_media_type=identity_media_type,
+                library_media_type=library_media_type,
+                **candidate_seed,
+            )
+            metadata_strategy = "local_seed"
+        else:
+            hydrated = ensure_item_metadata(
+                request.user,
+                candidate_media_type,
+                media_id,
+                source,
+                season_number,
+                identity_media_type=identity_media_type,
+                library_media_type=library_media_type,
+                **candidate_seed,
+            )
+            metadata_strategy = "provider_fetch"
         existing_instance = _discover_planning_instance(
             request.user,
             candidate_media_type,
@@ -1356,16 +1874,18 @@ def discover_action(request):
                 source=source,
                 identity_media_type=identity_media_type,
             )
-            instance = model(
-                item=hydrated.item,
-                user=request.user,
-                status=Status.PLANNING.value,
-                score=None,
-                progress=0,
-                start_date=None,
-                end_date=None,
-                notes="",
-            )
+            instance_kwargs = {
+                "item": hydrated.item,
+                "user": request.user,
+                "status": Status.PLANNING.value,
+                "score": None,
+                "notes": "",
+            }
+            if model not in {TV, Season}:
+                instance_kwargs["progress"] = 0
+                instance_kwargs["start_date"] = None
+                instance_kwargs["end_date"] = None
+            instance = model(**instance_kwargs)
             if candidate_media_type == MediaTypes.MUSIC.value:
                 instance.artist = hydrated.artist
                 instance.album = hydrated.album
@@ -1512,7 +2032,7 @@ def discover_action(request):
     logger.info(
         "discover_action_complete request_id=%s user_id=%s action=%s active_media_type=%s "
         "candidate_media_type=%s source=%s media_id=%s row_key=%s rows=%s undo=%s "
-        "mutation_ms=%s cache_patch_ms=%s row_fetch_ms=%s render_ms=%s total_ms=%s",
+        "metadata_strategy=%s mutation_ms=%s cache_patch_ms=%s row_fetch_ms=%s render_ms=%s total_ms=%s",
         request_id,
         request.user.id,
         action,
@@ -1523,6 +2043,7 @@ def discover_action(request):
         row_key or "-",
         len(rows or []),
         int(bool(undo_token)),
+        metadata_strategy,
         mutation_ms,
         cache_patch_ms,
         row_fetch_ms,
@@ -1583,6 +2104,11 @@ def media_list(request, media_type):
         MediaTypes.MANGA.value,
         MediaTypes.COMIC.value,
     )
+    popularity_media_types = {
+        MediaTypes.MOVIE.value,
+        MediaTypes.TV.value,
+        MediaTypes.ANIME.value,
+    }
     runtime_media_types = {
         MediaTypes.MOVIE.value,
         MediaTypes.TV.value,
@@ -1629,6 +2155,10 @@ def media_list(request, media_type):
         # Update the user's preference to the fallback
         request.user.update_preference(f"{media_type}_sort", "title")
         # Reset direction to the default for the fallback sort
+        direction_param = None
+    elif sort_filter == "popularity" and media_type not in popularity_media_types:
+        sort_filter = "title"
+        request.user.update_preference(f"{media_type}_sort", "title")
         direction_param = None
 
     # Resolve and persist sort direction with the same preference flow as sort
@@ -2439,6 +2969,11 @@ def media_list(request, media_type):
             if sort_filter == "release_date":
                 release_dt = getattr(item, "release_datetime", None)
                 return (_sortable_dt(release_dt), title.lower())
+            if sort_filter == "popularity":
+                rank = getattr(item, "trakt_popularity_rank", None)
+                if rank is None:
+                    rank = math.inf if direction == "asc" else -math.inf
+                return (rank, title.lower())
             if sort_filter == "date_added":
                 return (_sortable_dt(getattr(media, "created_at", None)), title.lower())
             if sort_filter == "start_date":
@@ -3135,6 +3670,12 @@ def update_table_columns(request, media_type):
         current_sort = "title"
     elif current_sort == "plays" and media_type != MediaTypes.MOVIE.value:
         current_sort = "title"
+    elif current_sort == "popularity" and media_type not in {
+        MediaTypes.MOVIE.value,
+        MediaTypes.TV.value,
+        MediaTypes.ANIME.value,
+    }:
+        current_sort = "title"
 
     if settings.DEBUG:
         logger.info(
@@ -3793,20 +4334,10 @@ def media_details(
                 ).select_related("episode", "item"))
                 total_listened = len(user_podcasts)
                 total_minutes = sum(podcast.progress or 0 for podcast in user_podcasts)
-
-                # Count unplayed episodes (episodes without a completed Podcast entry for this user)
-                completed_episode_ids = set(podcast.episode.id for podcast in user_podcasts if podcast.episode and podcast.end_date)
-                if completed_episode_ids:
-                    unplayed_count = episodes.exclude(id__in=completed_episode_ids).count()
-                else:
-                    # If no episodes have been completed, all episodes are unplayed
-                    unplayed_count = episodes.count()
             else:
                 user_podcasts = []
                 total_listened = 0
                 total_minutes = 0
-                # For public views, still count total episodes (but button won't show due to public_view check)
-                unplayed_count = episodes.count()
 
             # Build episode items - create Item objects for enrichment
             # Initially load first 20 episodes, rest will be loaded via infinite scroll
@@ -4058,6 +4589,42 @@ def media_details(
             total_episodes_count = episodes.count()
             has_more = total_episodes_count > initial_limit
             next_page = 2 if has_more else None
+            media_metadata["max_progress"] = total_episodes_count
+
+            podcast_play_stats = None
+            activity_subtitle = None
+            if not public_view and user_podcasts:
+                range_start_candidates = []
+                range_end_candidates = []
+                completed_entries = 0
+                total_progress_seconds = 0
+
+                for entry in user_podcasts:
+                    range_start = entry.start_date or entry.end_date or entry.created_at
+                    range_end = entry.end_date or entry.start_date or entry.created_at
+                    if range_start:
+                        range_start_candidates.append(range_start)
+                    if range_end:
+                        range_end_candidates.append(range_end)
+                    if entry.end_date or entry.status == Status.COMPLETED.value:
+                        completed_entries += 1
+                    total_progress_seconds += int(entry.progress or 0)
+
+                total_listened_minutes = total_progress_seconds // 60
+                podcast_play_stats = {
+                    "first_played": min(range_start_candidates) if range_start_candidates else None,
+                    "last_played": max(range_end_candidates) if range_end_candidates else None,
+                    "total_minutes": total_listened_minutes,
+                    "total_hours": total_listened_minutes // 60,
+                    "total_minutes_remainder": total_listened_minutes % 60,
+                    "total_plays": completed_entries or total_listened,
+                }
+                activity_subtitle = _build_detail_activity_subtitle(
+                    MediaTypes.PODCAST.value,
+                    media_metadata,
+                    tracker,
+                    podcast_play_stats,
+                )
 
             context = {
                 "user": request.user,
@@ -4073,13 +4640,14 @@ def media_details(
                 "total_listened": total_listened,
                 "total_minutes": total_minutes,
                 "public_view": public_view,
+                "play_stats": podcast_play_stats,
+                "activity_subtitle": activity_subtitle,
                 "IMG_NONE": settings.IMG_NONE,
                 "TRACK_TIME": True,
                 "has_more_episodes": has_more,  # Keep for backward compatibility
                 "has_more": has_more,  # For fragment compatibility
                 "next_page": next_page,
                 "show_id": show.id,  # For API endpoint
-                "unplayed_episodes_count": unplayed_count,  # Count of unplayed episodes
             }
             return render(request, "app/media_details.html", context)
 
@@ -4284,6 +4852,7 @@ def media_details(
                 )
                 is not None
             )
+    trakt_score = _build_trakt_popularity_context(detail_item, media_type)
 
     author_detail_keys = ("author", "authors", "people")
     authors_linked = []
@@ -4532,14 +5101,30 @@ def media_details(
                 )
 
     play_stats = None
+    activity_subtitle = None
     if (
         not public_view
         and current_instance
         and user_medias
-        and media_type in [MediaTypes.GAME.value, MediaTypes.BOARDGAME.value, MediaTypes.TV.value]
+        and media_type
+        in [
+            MediaTypes.BOOK.value,
+            MediaTypes.COMIC.value,
+            MediaTypes.GAME.value,
+            MediaTypes.BOARDGAME.value,
+            MediaTypes.ANIME.value,
+            MediaTypes.MANGA.value,
+            MediaTypes.MOVIE.value,
+            MediaTypes.MUSIC.value,
+            MediaTypes.PODCAST.value,
+            MediaTypes.TV.value,
+        ]
     ):
-        if media_type == MediaTypes.TV.value:
-            # Calculate TV show play stats from watched episodes
+        if media_type == MediaTypes.TV.value or (
+            media_type == MediaTypes.ANIME.value
+            and hasattr(current_instance, "seasons")
+        ):
+            # Calculate TV and grouped-anime play stats from watched episodes.
             total_minutes = 0
             episode_count = 0
             first_played = None
@@ -4580,8 +5165,35 @@ def media_details(
                     "total_minutes_remainder": total_minutes % 60,
                     "episode_count": episode_count,
                 }
+        elif media_type == MediaTypes.ANIME.value:
+            # Flat anime entries track episode progress directly on the media row.
+            BasicMedia.objects._aggregate_item_data(current_instance, user_medias)
+            aggregated_progress = getattr(current_instance, "aggregated_progress", None)
+            if aggregated_progress is None:
+                aggregated_progress = current_instance.progress or 0
+
+            play_stats = {
+                "first_played": getattr(current_instance, "aggregated_start_date", None)
+                or current_instance.start_date,
+                "last_played": getattr(current_instance, "aggregated_end_date", None)
+                or current_instance.end_date,
+            }
+            current_instance.subtitle_start_date = play_stats["first_played"]
+            current_instance.subtitle_end_date = play_stats["last_played"]
+
+            runtime_minutes = current_instance._get_known_item_runtime_minutes()
+            total_progress = int(aggregated_progress or 0)
+            if runtime_minutes and total_progress > 0:
+                total_minutes = runtime_minutes * total_progress
+                play_stats.update(
+                    {
+                        "total_minutes": total_minutes,
+                        "total_hours": total_minutes // 60,
+                        "total_minutes_remainder": total_minutes % 60,
+                    },
+                )
         else:
-            # Games and boardgames calculation (existing logic)
+            # Generic non-TV calculation based on aggregated item activity.
             BasicMedia.objects._aggregate_item_data(current_instance, user_medias)
             aggregated_progress = getattr(current_instance, "aggregated_progress", None)
             if aggregated_progress is None:
@@ -4617,8 +5229,84 @@ def media_details(
                 else:
                     avg_minutes = 0
                 play_stats["avg_time_per_day"] = helpers.minutes_to_hhmm(avg_minutes)
+            elif media_type == MediaTypes.MOVIE.value:
+                total_plays = int(aggregated_progress or 0)
+                play_stats["total_plays"] = total_plays
+
+                range_start_candidates = []
+                range_end_candidates = []
+                for entry in user_medias:
+                    range_start = entry.start_date or entry.end_date or entry.created_at
+                    range_end = entry.end_date or entry.start_date or entry.created_at
+                    if range_start:
+                        range_start_candidates.append(range_start)
+                    if range_end:
+                        range_end_candidates.append(range_end)
+
+                if range_start_candidates:
+                    play_stats["first_played"] = min(range_start_candidates)
+                if range_end_candidates:
+                    play_stats["last_played"] = max(range_end_candidates)
+
+                first_played = play_stats.get("first_played")
+                last_played = play_stats.get("last_played")
+                if first_played and last_played:
+                    first_played_local = stats._localize_datetime(first_played)
+                    last_played_local = stats._localize_datetime(last_played)
+                    if first_played_local and last_played_local:
+                        play_stats["same_play_day"] = (
+                            first_played_local.date() == last_played_local.date()
+                        )
+
+                runtime_minutes = current_instance._get_known_item_runtime_minutes()
+                if runtime_minutes and total_plays > 0:
+                    total_minutes = runtime_minutes * total_plays
+                    play_stats.update(
+                        {
+                            "total_minutes": total_minutes,
+                            "total_hours": total_minutes // 60,
+                            "total_minutes_remainder": total_minutes % 60,
+                        },
+                    )
+            elif media_type == MediaTypes.MUSIC.value:
+                total_plays = int(aggregated_progress or 0)
+                play_stats["total_plays"] = total_plays
+
+                runtime_minutes = current_instance._get_known_item_runtime_minutes()
+                if runtime_minutes and total_plays > 0:
+                    total_minutes = runtime_minutes * total_plays
+                    play_stats.update(
+                        {
+                            "total_minutes": total_minutes,
+                            "total_hours": total_minutes // 60,
+                            "total_minutes_remainder": total_minutes % 60,
+                        },
+                    )
+            elif media_type == MediaTypes.PODCAST.value:
+                total_progress_seconds = int(aggregated_progress or 0)
+                total_minutes = total_progress_seconds // 60
+                completed_entries = sum(
+                    1
+                    for entry in user_medias
+                    if entry.end_date or entry.status == Status.COMPLETED.value
+                )
+                play_stats.update(
+                    {
+                        "total_minutes": total_minutes,
+                        "total_hours": total_minutes // 60,
+                        "total_minutes_remainder": total_minutes % 60,
+                        "total_plays": completed_entries or len(user_medias),
+                    },
+                )
             else:
                 play_stats["total_plays"] = int(aggregated_progress or 0)
+
+        activity_subtitle = _build_detail_activity_subtitle(
+            media_type,
+            media_metadata,
+            current_instance,
+            play_stats,
+        )
 
     # Enrich related items with user tracking data
     # For public views, use list owner's data if available
@@ -4788,6 +5476,8 @@ def media_details(
         "music_album": music_album,
         "public_view": public_view,
         "play_stats": play_stats,
+        "activity_subtitle": activity_subtitle,
+        "trakt_score": trakt_score,
         "game_lengths": game_lengths,
         "game_lengths_pending": game_lengths_refresh_pending
         and not (game_lengths and game_lengths.get("available")),
@@ -4800,6 +5490,20 @@ def media_details(
         "item_id_for_polling": item_id_for_polling if not public_view else None,
         "watch_providers": watch_providers,
         "watch_provider_region": request.user.watch_provider_region,
+        "detail_link_sections": _build_detail_link_sections(
+            media_metadata,
+            media_type,
+            identity_provider,
+            display_provider,
+        ),
+        "detail_tag_sections": _build_detail_tag_sections(
+            media_metadata,
+            detail_item,
+            request.user,
+        ),
+        "detail_tag_preview_genres_json": json.dumps(
+            _resolve_detail_tag_genres(media_metadata, detail_item)
+        ),
         "display_provider": display_provider,
         "identity_provider": identity_provider,
         "metadata_provider_options": metadata_resolution.available_metadata_sources(
@@ -5144,6 +5848,22 @@ def season_details(
                 "Season metadata was not found for this show. Showing local activity only.",
             )
 
+    default_season_title = "Specials" if season_number == 0 else f"Season {season_number}"
+    anime_show_item = Item.objects.filter(
+        media_id=media_id,
+        source=source,
+        media_type=MediaTypes.TV.value,
+        library_media_type=MediaTypes.ANIME.value,
+    ).first()
+    if isinstance(season_metadata, dict):
+        season_metadata.setdefault("season_header_title", season_metadata.get("season_title") or default_season_title)
+        season_metadata.setdefault("season_alternative_title", None)
+        if anime_show_item:
+            provider_season_title = (season_metadata.get("season_title") or "").strip()
+            if provider_season_title and provider_season_title != default_season_title:
+                season_metadata["season_header_title"] = default_season_title
+                season_metadata["season_alternative_title"] = provider_season_title
+
     # Apply the same rating aggregation logic as in the media list
     if user_medias and len(user_medias) > 1:
         # Find the most recent rating among all entries
@@ -5169,6 +5889,27 @@ def season_details(
         # Update the current_instance score to use the most recent rating
         if latest_rating is not None:
             current_instance.score = latest_rating
+
+    if season_item is None:
+        season_defaults = {
+            **Item.title_fields_from_metadata(
+                season_metadata if isinstance(season_metadata, dict) else {},
+                fallback_title=((season_metadata or {}).get("title") or ""),
+            ),
+            "image": (
+                (season_metadata or {}).get("image")
+                if isinstance(season_metadata, dict)
+                else settings.IMG_NONE
+            )
+            or settings.IMG_NONE,
+        }
+        season_item, _ = Item.objects.get_or_create(
+            media_id=media_id,
+            source=source,
+            media_type=MediaTypes.SEASON.value,
+            season_number=season_number,
+            defaults=season_defaults,
+        )
 
     # Save episode runtimes from raw metadata before processing for display
     # This ensures runtime data is persisted when viewing the season page
@@ -5269,8 +6010,13 @@ def season_details(
             episode_number__in=episode_numbers,
         )
         
-        # Get all collection entries for these episodes in one query
-        episode_item_ids = list(episode_items.values_list('id', flat=True))
+        # Build episode_number → Item map for item references and collection lookups
+        item_by_episode_number = {
+            item.episode_number: item
+            for item in episode_items
+            if item.episode_number is not None
+        }
+        episode_item_ids = list(item_by_episode_number[ep_num].id for ep_num in item_by_episode_number)
         collection_entries = {}
         if episode_item_ids:
             collection_entries_qs = (
@@ -5281,16 +6027,17 @@ def season_details(
                 .select_related("item")
                 .order_by("-collected_at", "-id")
             )
-            # Map by (season_number, episode_number) for quick lookup
+            # Map by episode_number for quick lookup
             for entry in collection_entries_qs:
-                episode_number = entry.item.episode_number
-                if episode_number is not None and episode_number not in collection_entries:
-                    collection_entries[episode_number] = entry
-        
-        # Add collection_entry to each episode
+                ep_num = entry.item.episode_number
+                if ep_num is not None and ep_num not in collection_entries:
+                    collection_entries[ep_num] = entry
+
+        # Add collection_entry and item reference to each episode
         for episode in season_metadata["episodes"]:
             episode_number = episode.get("episode_number")
             episode["collection_entry"] = collection_entries.get(episode_number)
+            episode["item"] = item_by_episode_number.get(episode_number)
 
     # Enrich related items with user tracking data
     # For public views, use list owner's data if available
@@ -5404,7 +6151,34 @@ def season_details(
         except ItemModel.DoesNotExist:
             pass
 
+    if (
+        season_item
+        and current_instance
+        and season_number > 0
+        and trakt_popularity_service.trakt_provider.is_configured()
+        and trakt_popularity_service.needs_refresh(season_item)
+    ):
+        try:
+            trakt_popularity_service.refresh_trakt_popularity(
+                season_item,
+                route_media_type=MediaTypes.SEASON.value,
+                force=False,
+            )
+            season_item.refresh_from_db()
+        except Exception as exc:
+            logger.warning(
+                "trakt_popularity_season_refresh_failed item_id=%s media_id=%s season=%s error=%s",
+                season_item.id,
+                season_item.media_id,
+                season_number,
+                exception_summary(exc),
+            )
+
     has_collection_data = bool(collection_entries) or collection_entry is not None
+    trakt_score = _build_trakt_popularity_context(
+        season_item,
+        MediaTypes.SEASON.value,
+    )
 
     context = {
         "user": request.user,
@@ -5420,10 +6194,25 @@ def season_details(
         "has_collection_data": has_collection_data,
         "fetching_collection_data": fetching_collection_data if not public_view else False,
         "item_id_for_polling": item_id_for_polling if not public_view else None,
+        "trakt_score": trakt_score,
         "watch_providers": tmdb.filter_providers(
             season_metadata.get("providers"), request.user.watch_provider_region
         ),
         "watch_provider_region": request.user.watch_provider_region,
+        "detail_link_sections": _build_detail_link_sections(
+            season_metadata,
+            MediaTypes.SEASON.value,
+            source,
+            source,
+        ),
+        "detail_tag_sections": _build_detail_tag_sections(
+            season_metadata,
+            season_item,
+            request.user,
+        ),
+        "detail_tag_preview_genres_json": json.dumps(
+            _resolve_detail_tag_genres(season_metadata, season_item)
+        ),
         "display_provider": source,
         "identity_provider": source,
     }
@@ -5462,6 +6251,53 @@ def update_media_score(request, media_type, instance_id):
         "%s score updated to %s",
         media,
         score,
+    )
+
+    return JsonResponse(
+        {
+            "success": True,
+            "score": request.user.format_score_for_display(score) if score is not None else None,
+        },
+    )
+
+
+@login_required
+@require_POST
+def update_episode_score(request, season_id, episode_number):
+    """Update the user's score for a specific episode."""
+    season = get_object_or_404(Season, id=season_id, user=request.user)
+
+    score_raw = request.POST.get("score")
+    toggle = request.POST.get("toggle")
+    score = None
+    if score_raw is not None:
+        score_raw = score_raw.strip()
+        if score_raw and score_raw.lower() != "null":
+            try:
+                score = Decimal(score_raw)
+            except (InvalidOperation, TypeError):
+                return HttpResponseBadRequest("Invalid score.")
+            score = request.user.scale_score_for_storage(score)
+            if score is None:
+                return HttpResponseBadRequest("Invalid score.")
+
+    episodes = Episode.objects.filter(
+        related_season=season,
+        item__episode_number=episode_number,
+    )
+
+    if toggle and score is not None:
+        existing = episodes.values_list("score", flat=True).first()
+        if existing == score:
+            score = None
+
+    episodes.update(score=score)
+    logger.info(
+        "Episode S%sE%s score updated to %s for user %s",
+        season.item.season_number,
+        episode_number,
+        score,
+        request.user,
     )
 
     return JsonResponse(
@@ -5668,6 +6504,25 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
             provider_media_type=tracking_media_type,
             season_number=season_number,
         )
+
+        if trakt_popularity_service.supports_route_media_type(media_type):
+            try:
+                trakt_popularity_service.refresh_trakt_popularity(
+                    item,
+                    route_media_type=media_type,
+                    force=True,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "trakt_popularity_manual_refresh_failed item_id=%s media_id=%s error=%s",
+                    item.id,
+                    item.media_id,
+                    exception_summary(exc),
+                )
+                messages.warning(
+                    request,
+                    "Trakt popularity metadata could not be refreshed. Cached data will be used if available.",
+                )
 
         if source == Sources.TMDB.value and tracking_media_type in (
             MediaTypes.MOVIE.value,
@@ -6048,6 +6903,512 @@ def _sync_plex_rating(request, item, media_type):
             logger.info("Created TV instance from Plex rating sync")
 
 
+def _bulk_episode_form_initial_data(return_url, domain):
+    """Return initial form values for the bulk episode-play tab."""
+    now = timezone.localtime(timezone.now()).replace(second=0, microsecond=0)
+    date_initial = now if settings.TRACK_TIME else now.date()
+
+    return {
+        "media_id": domain["tracking_media_id"],
+        "source": domain["tracking_source"],
+        "media_type": domain["route_media_type"],
+        "identity_media_type": domain.get("identity_media_type") or "",
+        "library_media_type": domain.get("library_media_type") or "",
+        "instance_id": "",
+        "return_url": return_url,
+        "first_season_number": domain["default_first"]["season_number"],
+        "first_episode_number": domain["default_first"]["episode_number"],
+        "last_season_number": domain["default_last"]["season_number"],
+        "last_episode_number": domain["default_last"]["episode_number"],
+        "write_mode": BulkEpisodeTrackForm.WRITE_MODE_ADD,
+        "distribution_mode": BulkEpisodeTrackForm.DISTRIBUTION_MODE_AIR_DATE,
+        "start_date": date_initial,
+        "end_date": date_initial,
+    }
+
+
+def _episode_domain_template_payload(domain):
+    """Return the JSON-friendly episode selector payload for Alpine."""
+    if not domain:
+        return None
+
+    season_episode_map = {}
+    for season_number, episodes in domain["season_episode_map"].items():
+        season_episode_map[str(season_number)] = [
+            {
+                "order": episode["order"],
+                "season_number": episode["season_number"],
+                "episode_number": episode["episode_number"],
+                "episode_title": episode["episode_title"],
+                "selector_label": episode.get("selector_label", ""),
+                "existing_play_count": episode["existing_play_count"],
+                "air_date": episode["air_date"].isoformat() if episode["air_date"] else "",
+            }
+            for episode in episodes
+        ]
+
+    return {
+        "seasons": domain["seasons"],
+        "seasonEpisodeMap": season_episode_map,
+        "defaultFirst": domain["default_first"],
+        "defaultLast": domain["default_last"],
+        "lockedSeasonNumber": domain["locked_season_number"],
+        "hideSeasonSelectors": domain.get("hide_season_selectors", False),
+        "firstSelectionTitle": domain.get("first_selection_title", ""),
+        "lastSelectionTitle": domain.get("last_selection_title", ""),
+        "episodeFieldLabel": domain.get("episode_field_label", ""),
+        "modeNotice": domain.get("mode_notice", ""),
+    }
+
+
+def _track_modal_field_groups(form, *, hidden_field_names, metadata_field_names=None):
+    """Split a track form into hidden, general, and metadata field groups."""
+    metadata_field_names = metadata_field_names or set()
+    ordered_general_field_names = [
+        field_name
+        for field_name in ("score", "status", "progress", "start_date", "end_date")
+        if field_name in form.fields
+    ]
+    remaining_general_field_names = [
+        field_name
+        for field_name in form.fields
+        if field_name not in hidden_field_names
+        and field_name not in metadata_field_names
+        and field_name != "notes"
+        and field_name not in ordered_general_field_names
+    ]
+    return {
+        "general_fields": [
+            form[field_name]
+            for field_name in ordered_general_field_names + remaining_general_field_names
+        ],
+        "metadata_fields": [
+            form[field_name]
+            for field_name in form.fields
+            if field_name in metadata_field_names
+        ],
+        "hidden_fields": [
+            form[field_name]
+            for field_name in form.fields
+            if field_name in hidden_field_names
+        ],
+    }
+
+
+def _render_standard_track_modal(
+    request,
+    source,
+    media_type,
+    media_id,
+    season_number=None,
+    *,
+    form_override=None,
+    bulk_form_override=None,
+    initial_active_tab="general",
+):
+    """Build and render the standard media track modal context."""
+    instance_id = request.GET.get("instance_id") or request.POST.get("instance_id")
+    if instance_id:
+        media = BasicMedia.objects.get_media(
+            request.user,
+            media_type,
+            instance_id,
+        )
+    elif request.GET.get("is_create"):
+        media = None
+    else:
+        user_medias = BasicMedia.objects.filter_media(
+            request.user,
+            media_id,
+            media_type,
+            source,
+            season_number=season_number,
+        )
+        media = user_medias.first()
+        if media:
+            instance_id = media.id
+
+    initial_data = {
+        "media_id": media_id,
+        "source": source,
+        "media_type": media_type,
+        "season_number": season_number,
+        "instance_id": instance_id,
+    }
+    route_identity_media_type = None
+    route_library_media_type = None
+
+    max_progress = None
+    metadata_resolution_result = None
+    metadata_item = None
+    base_metadata = None
+    if media:
+        title = media.item
+        metadata_item = media.item
+        if (
+            media_type == MediaTypes.ANIME.value
+            and media.item.media_type == MediaTypes.TV.value
+            and media.item.library_media_type == MediaTypes.ANIME.value
+        ):
+            route_identity_media_type = MediaTypes.TV.value
+            route_library_media_type = MediaTypes.ANIME.value
+        if media_type == MediaTypes.GAME.value:
+            initial_data["progress"] = helpers.minutes_to_hhmm(media.progress)
+        elif media_type in (
+            MediaTypes.BOOK.value,
+            MediaTypes.COMIC.value,
+            MediaTypes.MANGA.value,
+        ):
+            if media_type == MediaTypes.BOOK.value:
+                if media.item.number_of_pages:
+                    max_progress = media.item.number_of_pages
+                else:
+                    try:
+                        metadata = services.get_media_metadata(
+                            media.item.media_type,
+                            media.item.media_id,
+                            media.item.source,
+                        )
+                        number_of_pages = metadata.get("max_progress") or metadata.get(
+                            "details",
+                            {},
+                        ).get("number_of_pages")
+                        if number_of_pages:
+                            media.item.number_of_pages = number_of_pages
+                            media.item.save(update_fields=["number_of_pages"])
+                            max_progress = number_of_pages
+                    except Exception:
+                        pass
+            else:
+                media_list = [media]
+                BasicMedia.objects.annotate_max_progress(media_list, media_type)
+                if hasattr(media, "max_progress"):
+                    max_progress = media.max_progress
+
+            if (
+                request.user.book_comic_manga_progress_percentage
+                and max_progress
+                and media.progress
+            ):
+                percentage = round((media.progress / max_progress) * 100, 1)
+                initial_data["progress"] = percentage
+    else:
+        metadata = services.get_media_metadata(
+            media_type,
+            media_id,
+            source,
+            [season_number],
+        )
+        base_metadata = metadata
+        title = metadata["title"]
+        route_identity_media_type = metadata.get("identity_media_type")
+        route_library_media_type = metadata.get("library_media_type")
+        if media_type == MediaTypes.SEASON.value:
+            title += f" S{season_number}"
+        item_lookup = {
+            "media_id": media_id,
+            "source": source,
+            "media_type": metadata_resolution.get_tracking_media_type(
+                media_type,
+                source=source,
+                identity_media_type=route_identity_media_type,
+            ),
+            "season_number": season_number,
+        }
+        if metadata_resolution.is_grouped_anime_route(
+            media_type,
+            source=source,
+            identity_media_type=route_identity_media_type,
+            library_media_type=route_library_media_type,
+        ):
+            item_lookup["library_media_type"] = MediaTypes.ANIME.value
+        metadata_item = Item.objects.filter(**item_lookup).first()
+
+    if route_identity_media_type:
+        initial_data["identity_media_type"] = route_identity_media_type
+    if route_library_media_type:
+        initial_data["library_media_type"] = route_library_media_type
+    if "image_url" not in initial_data:
+        preferred_image = None
+        if metadata_item and metadata_item.image and metadata_item.image != settings.IMG_NONE:
+            preferred_image = metadata_item.image
+        elif (
+            base_metadata
+            and base_metadata.get("image")
+            and base_metadata["image"] != settings.IMG_NONE
+        ):
+            preferred_image = base_metadata["image"]
+        if preferred_image:
+            initial_data["image_url"] = preferred_image
+
+    form_media_type = metadata_resolution.get_tracking_media_type(
+        media_type,
+        source=source,
+        identity_media_type=route_identity_media_type,
+    )
+    form_class = get_form_class(form_media_type)
+    if form_override is not None:
+        form = form_override
+    elif media_type in (
+        MediaTypes.BOOK.value,
+        MediaTypes.COMIC.value,
+        MediaTypes.MANGA.value,
+    ):
+        form = form_class(
+            instance=media,
+            initial=initial_data,
+            user=request.user,
+            max_progress=max_progress,
+        )
+    else:
+        form = form_class(
+            instance=media,
+            initial=initial_data,
+            user=request.user,
+        )
+
+    hidden_field_names = {
+        "instance_id",
+        "media_type",
+        "identity_media_type",
+        "library_media_type",
+        "source",
+        "media_id",
+        "season_number",
+    }
+    metadata_field_names = {"image_url"}
+    field_groups = _track_modal_field_groups(
+        form,
+        hidden_field_names=hidden_field_names,
+        metadata_field_names=metadata_field_names,
+    )
+    general_fields = field_groups["general_fields"]
+    metadata_fields = field_groups["metadata_fields"]
+    hidden_fields = field_groups["hidden_fields"]
+    image_field = form["image_url"] if "image_url" in form.fields else None
+
+    display_provider = source
+    identity_provider = source
+    grouped_preview = None
+    grouped_preview_target = None
+    can_update_metadata_provider = False
+    can_migrate_grouped_anime = False
+    metadata_provider_mapping_status = "identity"
+    metadata_provider_options = []
+
+    if media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
+        if base_metadata is None:
+            base_metadata = services.get_media_metadata(
+                media_type,
+                media_id,
+                source,
+                [season_number],
+            )
+        metadata_resolution_result = metadata_resolution.resolve_detail_metadata(
+            request.user,
+            item=metadata_item,
+            route_media_type=media_type,
+            media_id=media_id,
+            source=source,
+            base_metadata=base_metadata,
+        )
+        display_provider = metadata_resolution_result.display_provider
+        identity_provider = metadata_resolution_result.identity_provider
+        grouped_preview = metadata_resolution_result.grouped_preview
+        grouped_preview_target = metadata_resolution_result.grouped_preview_target
+        metadata_provider_mapping_status = metadata_resolution_result.mapping_status
+        metadata_provider_options = metadata_resolution.available_metadata_sources(
+            media_type,
+        )
+        can_update_metadata_provider = bool(
+            metadata_item is not None
+            and media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value)
+        )
+        can_migrate_grouped_anime = bool(
+            metadata_item is not None
+            and metadata_item.source == Sources.MAL.value
+            and metadata_item.media_type == MediaTypes.ANIME.value
+            and display_provider in {Sources.TMDB.value, Sources.TVDB.value}
+            and grouped_preview
+            and Anime.objects.filter(user=request.user, item=metadata_item).exists()
+        )
+
+    metadata_tab_available = bool(
+        metadata_fields or can_update_metadata_provider or can_migrate_grouped_anime
+    )
+
+    episode_plays_domain = bulk_episode_tracking.build_episode_play_domain(
+        request.user,
+        media_type,
+        source,
+        media_id,
+        metadata_item=metadata_item,
+        base_metadata=base_metadata,
+        metadata_resolution_result=metadata_resolution_result,
+    )
+    episode_plays_tab_available = bool(episode_plays_domain)
+    return_url = request.GET.get("return_url") or request.POST.get("return_url", "")
+    if episode_plays_tab_available:
+        if bulk_form_override is not None:
+            episode_plays_form = bulk_form_override
+        else:
+            bulk_initial = _bulk_episode_form_initial_data(return_url, episode_plays_domain)
+            bulk_initial["instance_id"] = instance_id or ""
+            episode_plays_form = BulkEpisodeTrackForm(
+                initial=bulk_initial,
+                domain=episode_plays_domain,
+            )
+    else:
+        episode_plays_form = None
+
+    track_form_id = f"track-form-{uuid4().hex}"
+    context = {
+        "user": request.user,
+        "title": title,
+        "media_type": media_type,
+        "form": form,
+        "media": media,
+        "return_url": return_url,
+        "max_progress": max_progress,
+        "display_provider": display_provider,
+        "identity_provider": identity_provider,
+        "grouped_preview": grouped_preview,
+        "grouped_preview_target": grouped_preview_target,
+        "metadata_provider_mapping_status": metadata_provider_mapping_status,
+        "metadata_provider_options": metadata_provider_options,
+        "can_update_metadata_provider": can_update_metadata_provider,
+        "can_migrate_grouped_anime": can_migrate_grouped_anime,
+        "metadata_tab_available": metadata_tab_available,
+        "metadata_item": metadata_item,
+        "general_hidden_fields": hidden_fields,
+        "general_fields": general_fields,
+        "general_submit_formaction": f"{reverse('media_save')}?next={return_url}",
+        "general_delete_formaction": f"{reverse('media_delete')}?next={return_url}",
+        "general_existing_instance": media,
+        "metadata_fields": metadata_fields,
+        "image_field": image_field,
+        "image_save_item_id": metadata_item.id if media and metadata_item else None,
+        "track_form_id": track_form_id,
+        "initial_active_tab": initial_active_tab,
+        "episode_plays_tab_available": episode_plays_tab_available,
+        "episode_plays_form": episode_plays_form,
+        "episode_plays_domain": _episode_domain_template_payload(episode_plays_domain),
+        "episode_plays_mode_notice": (
+            episode_plays_domain.get("mode_notice", "")
+            if episode_plays_domain
+            else ""
+        ),
+        "episode_plays_domain_script_id": f"{track_form_id}-episode-domain",
+    }
+    response = render(
+        request,
+        "app/components/fill_track.html",
+        context,
+    )
+    response["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response["Pragma"] = "no-cache"
+    response["Expires"] = "0"
+    return response
+
+
+def _render_podcast_show_track_modal(
+    request,
+    show,
+    *,
+    form_override=None,
+    bulk_form_override=None,
+    initial_active_tab="general",
+):
+    """Build and render the podcast show tracking modal with bulk episode plays."""
+    from app.forms import PodcastShowTrackerForm
+    from app.models import PodcastShowTracker
+
+    tracker = PodcastShowTracker.objects.filter(user=request.user, show=show).first()
+    return_url = request.GET.get("return_url") or request.POST.get("return_url", "")
+
+    if form_override is not None:
+        form = form_override
+    else:
+        form = PodcastShowTrackerForm(
+            instance=tracker,
+            initial={"show_id": show.id},
+            user=request.user,
+        )
+
+    field_groups = _track_modal_field_groups(
+        form,
+        hidden_field_names={"show_id"},
+        metadata_field_names=set(),
+    )
+    episode_plays_domain = bulk_episode_tracking.build_episode_play_domain(
+        request.user,
+        MediaTypes.PODCAST.value,
+        Sources.POCKETCASTS.value,
+        show.podcast_uuid,
+        podcast_show=show,
+    )
+    episode_plays_tab_available = bool(episode_plays_domain)
+    if episode_plays_tab_available:
+        if bulk_form_override is not None:
+            episode_plays_form = bulk_form_override
+        else:
+            bulk_initial = _bulk_episode_form_initial_data(
+                return_url,
+                episode_plays_domain,
+            )
+            bulk_initial["instance_id"] = tracker.id if tracker else ""
+            episode_plays_form = BulkEpisodeTrackForm(
+                initial=bulk_initial,
+                domain=episode_plays_domain,
+            )
+    else:
+        episode_plays_form = None
+
+    track_form_id = f"track-form-{uuid4().hex}"
+    response = render(
+        request,
+        "app/components/fill_track.html",
+        {
+            "user": request.user,
+            "title": show.title,
+            "media_type": MediaTypes.PODCAST.value,
+            "form": form,
+            "media": tracker,
+            "return_url": return_url,
+            "metadata_tab_available": False,
+            "metadata_fields": [],
+            "general_hidden_fields": field_groups["hidden_fields"],
+            "general_fields": field_groups["general_fields"],
+            "general_submit_formaction": (
+                f"{reverse('podcast_show_save')}?next={return_url}"
+            ),
+            "general_delete_formaction": (
+                f"{reverse('podcast_show_delete')}?next={return_url}"
+            ),
+            "general_existing_instance": tracker,
+            "image_field": None,
+            "image_save_item_id": None,
+            "track_form_id": track_form_id,
+            "initial_active_tab": initial_active_tab,
+            "episode_plays_tab_available": episode_plays_tab_available,
+            "episode_plays_form": episode_plays_form,
+            "episode_plays_domain": _episode_domain_template_payload(
+                episode_plays_domain,
+            ),
+            "episode_plays_mode_notice": (
+                episode_plays_domain.get("mode_notice", "")
+                if episode_plays_domain
+                else ""
+            ),
+            "episode_plays_domain_script_id": f"{track_form_id}-episode-domain",
+        },
+    )
+    response["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response["Pragma"] = "no-cache"
+    response["Expires"] = "0"
+    return response
+
+
 @never_cache
 @require_GET
 def track_modal(
@@ -6060,33 +7421,12 @@ def track_modal(
     """Return the tracking form for a media item."""
     # Handle podcast shows (identified by podcast_uuid)
     if media_type == MediaTypes.PODCAST.value and source == Sources.POCKETCASTS.value:
-        from app.forms import PodcastShowTrackerForm
-        from app.models import PodcastEpisode, PodcastShow, PodcastShowTracker
+        from app.models import PodcastEpisode, PodcastShow
 
         # Check if this is a show (podcast_uuid) or an episode (episode_uuid)
         show = PodcastShow.objects.filter(podcast_uuid=media_id).first()
         if show:
-            # This is a show - use PodcastShowTracker form
-            tracker = PodcastShowTracker.objects.filter(user=request.user, show=show).first()
-            return_url = request.GET.get("return_url", "")
-
-            initial_data = {"show_id": show.id}
-            form = PodcastShowTrackerForm(
-                instance=tracker,
-                initial=initial_data,
-                user=request.user,
-            )
-
-            return render(
-                request,
-                "app/components/podcast_show_track_modal.html",
-                {
-                    "show": show,
-                    "tracker": tracker,
-                    "form": form,
-                    "return_url": return_url,
-                },
-            )
+            return _render_podcast_show_track_modal(request, show)
 
         # This is an episode (episode_uuid) - use music-style modal
         episode = PodcastEpisode.objects.filter(episode_uuid=media_id).first()
@@ -6255,269 +7595,13 @@ def track_modal(
                 },
             )
 
-    instance_id = request.GET.get("instance_id")
-    if instance_id:
-        media = BasicMedia.objects.get_media(
-            request.user,
-            media_type,
-            instance_id,
-        )
-    elif request.GET.get("is_create"):
-        media = None
-    else:
-        # no specific instance, try to find the first one
-        user_medias = BasicMedia.objects.filter_media(
-            request.user,
-            media_id,
-            media_type,
-            source,
-            season_number=season_number,
-        )
-        media = user_medias.first()
-        if media:
-            instance_id = media.id
-
-    initial_data = {
-        "media_id": media_id,
-        "source": source,
-        "media_type": media_type,
-        "season_number": season_number,
-        "instance_id": instance_id,
-    }
-    route_identity_media_type = None
-    route_library_media_type = None
-
-    max_progress = None
-    metadata_resolution_result = None
-    metadata_item = None
-    base_metadata = None
-    if media:
-        title = media.item
-        metadata_item = media.item
-        if (
-            media_type == MediaTypes.ANIME.value
-            and media.item.media_type == MediaTypes.TV.value
-            and media.item.library_media_type == MediaTypes.ANIME.value
-        ):
-            route_identity_media_type = MediaTypes.TV.value
-            route_library_media_type = MediaTypes.ANIME.value
-        if media_type == MediaTypes.GAME.value:
-            initial_data["progress"] = helpers.minutes_to_hhmm(media.progress)
-        elif media_type in (MediaTypes.BOOK.value, MediaTypes.COMIC.value, MediaTypes.MANGA.value):
-            # Get max_progress for percentage conversion
-            if media_type == MediaTypes.BOOK.value:
-                if media.item.number_of_pages:
-                    max_progress = media.item.number_of_pages
-                else:
-                    # Try to fetch from metadata
-                    try:
-                        metadata = services.get_media_metadata(
-                            media.item.media_type,
-                            media.item.media_id,
-                            media.item.source,
-                        )
-                        number_of_pages = metadata.get("max_progress") or metadata.get("details", {}).get("number_of_pages")
-                        if number_of_pages:
-                            media.item.number_of_pages = number_of_pages
-                            media.item.save(update_fields=["number_of_pages"])
-                            max_progress = number_of_pages
-                    except Exception:
-                        pass
-            else:
-                # For comics and manga, annotate max_progress from events
-                media_list = [media]
-                BasicMedia.objects.annotate_max_progress(media_list, media_type)
-                if hasattr(media, "max_progress"):
-                    max_progress = media.max_progress
-            
-            # Convert progress to percentage if preference is enabled
-            if request.user.book_comic_manga_progress_percentage and max_progress and media.progress:
-                percentage = round((media.progress / max_progress) * 100, 1)
-                initial_data["progress"] = percentage
-    else:
-        metadata = services.get_media_metadata(
-            media_type,
-            media_id,
-            source,
-            [season_number],
-        )
-        base_metadata = metadata
-        title = metadata["title"]
-        route_identity_media_type = metadata.get("identity_media_type")
-        route_library_media_type = metadata.get("library_media_type")
-        if media_type == MediaTypes.SEASON.value:
-            title += f" S{season_number}"
-        item_lookup = {
-            "media_id": media_id,
-            "source": source,
-            "media_type": metadata_resolution.get_tracking_media_type(
-                media_type,
-                source=source,
-                identity_media_type=route_identity_media_type,
-            ),
-            "season_number": season_number,
-        }
-        if metadata_resolution.is_grouped_anime_route(
-            media_type,
-            source=source,
-            identity_media_type=route_identity_media_type,
-            library_media_type=route_library_media_type,
-        ):
-            item_lookup["library_media_type"] = MediaTypes.ANIME.value
-        metadata_item = Item.objects.filter(**item_lookup).first()
-
-    if route_identity_media_type:
-        initial_data["identity_media_type"] = route_identity_media_type
-    if route_library_media_type:
-        initial_data["library_media_type"] = route_library_media_type
-    if "image_url" not in initial_data:
-        preferred_image = None
-        if metadata_item and metadata_item.image and metadata_item.image != settings.IMG_NONE:
-            preferred_image = metadata_item.image
-        elif base_metadata and base_metadata.get("image") and base_metadata["image"] != settings.IMG_NONE:
-            preferred_image = base_metadata["image"]
-        if preferred_image:
-            initial_data["image_url"] = preferred_image
-
-    form_media_type = metadata_resolution.get_tracking_media_type(
-        media_type,
-        source=source,
-        identity_media_type=route_identity_media_type,
-    )
-    form_class = get_form_class(form_media_type)
-    # Only pass user and max_progress for book/comic/manga forms that handle them
-    if media_type in (MediaTypes.BOOK.value, MediaTypes.COMIC.value, MediaTypes.MANGA.value):
-        form = form_class(
-            instance=media,
-            initial=initial_data,
-            user=request.user,
-            max_progress=max_progress,
-        )
-    else:
-        form = form_class(
-            instance=media,
-            initial=initial_data,
-            user=request.user,
-        )
-
-    hidden_field_names = {
-        "instance_id",
-        "media_type",
-        "identity_media_type",
-        "library_media_type",
-        "source",
-        "media_id",
-        "season_number",
-    }
-    metadata_field_names = {"image_url"}
-    ordered_general_field_names = [
-        field_name
-        for field_name in ("score", "status", "progress", "start_date", "end_date")
-        if field_name in form.fields
-    ]
-    remaining_general_field_names = [
-        field_name
-        for field_name in form.fields
-        if field_name not in hidden_field_names
-        and field_name not in metadata_field_names
-        and field_name != "notes"
-        and field_name not in ordered_general_field_names
-    ]
-    general_fields = [
-        form[field_name]
-        for field_name in ordered_general_field_names + remaining_general_field_names
-    ]
-    metadata_fields = [
-        form[field_name]
-        for field_name in form.fields
-        if field_name in metadata_field_names
-    ]
-    image_field = form["image_url"] if "image_url" in form.fields else None
-
-    display_provider = source
-    identity_provider = source
-    grouped_preview = None
-    grouped_preview_target = None
-    can_update_metadata_provider = False
-    can_migrate_grouped_anime = False
-    metadata_provider_mapping_status = "identity"
-    metadata_provider_options = []
-
-    if media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
-        if base_metadata is None:
-            base_metadata = services.get_media_metadata(
-                media_type,
-                media_id,
-                source,
-                [season_number],
-            )
-        metadata_resolution_result = metadata_resolution.resolve_detail_metadata(
-            request.user,
-            item=metadata_item,
-            route_media_type=media_type,
-            media_id=media_id,
-            source=source,
-            base_metadata=base_metadata,
-        )
-        display_provider = metadata_resolution_result.display_provider
-        identity_provider = metadata_resolution_result.identity_provider
-        grouped_preview = metadata_resolution_result.grouped_preview
-        grouped_preview_target = metadata_resolution_result.grouped_preview_target
-        metadata_provider_mapping_status = metadata_resolution_result.mapping_status
-        metadata_provider_options = metadata_resolution.available_metadata_sources(
-            media_type,
-        )
-        can_update_metadata_provider = bool(
-            metadata_item is not None
-            and media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value)
-        )
-        can_migrate_grouped_anime = bool(
-            metadata_item is not None
-            and metadata_item.source == Sources.MAL.value
-            and metadata_item.media_type == MediaTypes.ANIME.value
-            and display_provider in {Sources.TMDB.value, Sources.TVDB.value}
-            and grouped_preview
-            and Anime.objects.filter(user=request.user, item=metadata_item).exists()
-        )
-
-    metadata_tab_available = bool(
-        metadata_fields or can_update_metadata_provider or can_migrate_grouped_anime
-    )
-
-    response = render(
+    return _render_standard_track_modal(
         request,
-        "app/components/fill_track.html",
-        {
-            "user": request.user,
-            "title": title,
-            "media_type": media_type,
-            "form": form,
-            "media": media,
-            "return_url": request.GET.get("return_url", ""),
-            "max_progress": max_progress,
-            "display_provider": display_provider,
-            "identity_provider": identity_provider,
-            "grouped_preview": grouped_preview,
-            "grouped_preview_target": grouped_preview_target,
-            "metadata_provider_mapping_status": metadata_provider_mapping_status,
-            "metadata_provider_options": metadata_provider_options,
-            "can_update_metadata_provider": can_update_metadata_provider,
-            "can_migrate_grouped_anime": can_migrate_grouped_anime,
-            "metadata_tab_available": metadata_tab_available,
-            "metadata_item": metadata_item,
-            "general_fields": general_fields,
-            "metadata_fields": metadata_fields,
-            "image_field": image_field,
-            "image_save_item_id": metadata_item.id if media and metadata_item else None,
-            "track_form_id": f"track-form-{uuid4().hex}",
-        },
+        source,
+        media_type,
+        media_id,
+        season_number=season_number,
     )
-    # Explicitly set cache control headers for Safari compatibility
-    # @never_cache should handle this, but Safari can be aggressive with caching
-    response["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    response["Pragma"] = "no-cache"
-    response["Expires"] = "0"
-    return response
 
 @require_POST
 def media_save(request):
@@ -6757,6 +7841,155 @@ def episode_save(request):
     related_season.watch(episode_number, form.cleaned_data["end_date"])
 
     return helpers.redirect_back(request)
+
+
+def _episode_bulk_redirect_url(request, result):
+    """Return the full-page destination after a successful bulk episode save."""
+    if result.grouped_item and result.grouped_redirect_media_type:
+        title = result.grouped_item.get_display_title(request.user) or result.grouped_item.title or "item"
+        return reverse(
+            "media_details",
+            kwargs={
+                "source": result.grouped_item.source,
+                "media_type": result.grouped_redirect_media_type,
+                "media_id": result.grouped_item.media_id,
+                "title": slugify(title),
+            },
+        )
+
+    redirect_response = helpers.redirect_back(request)
+    return redirect_response.url
+
+
+@require_POST
+def episode_bulk_save(request):
+    """Persist a bulk range of episode plays from track modal tabs."""
+    media_id = request.POST["media_id"]
+    source = request.POST["source"]
+    media_type = request.POST["media_type"]
+    fallback_media_type = request.POST.get("library_media_type") or media_type
+    discover_tab_cache.mark_active_from_request(
+        request,
+        fallback_media_type=fallback_media_type,
+    )
+
+    metadata_item = None
+    base_metadata = None
+    metadata_resolution_result = None
+    podcast_show = None
+
+    if media_type == MediaTypes.PODCAST.value and source == Sources.POCKETCASTS.value:
+        podcast_show = PodcastShow.objects.filter(podcast_uuid=media_id).first()
+    else:
+        item_lookup = {
+            "media_id": media_id,
+            "source": source,
+            "media_type": metadata_resolution.get_tracking_media_type(
+                media_type,
+                source=source,
+                identity_media_type=request.POST.get("identity_media_type") or None,
+            ),
+        }
+        if media_type == MediaTypes.ANIME.value and source in {
+            Sources.TMDB.value,
+            Sources.TVDB.value,
+        }:
+            item_lookup["library_media_type"] = MediaTypes.ANIME.value
+        metadata_item = Item.objects.filter(**item_lookup).first()
+
+        base_metadata = services.get_media_metadata(
+            media_type,
+            media_id,
+            source,
+        )
+        if media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
+            metadata_resolution_result = metadata_resolution.resolve_detail_metadata(
+                request.user,
+                item=metadata_item,
+                route_media_type=media_type,
+                media_id=media_id,
+                source=source,
+                base_metadata=base_metadata,
+            )
+
+    episode_domain = bulk_episode_tracking.build_episode_play_domain(
+        request.user,
+        media_type,
+        source,
+        media_id,
+        metadata_item=metadata_item,
+        base_metadata=base_metadata,
+        metadata_resolution_result=metadata_resolution_result,
+        podcast_show=podcast_show,
+    )
+    if not episode_domain:
+        messages.error(
+            request,
+            "Bulk episode tracking is not available for this title.",
+        )
+        redirect_url = _episode_bulk_redirect_url(
+            request,
+            bulk_episode_tracking.BulkEpisodePlayResult(
+                created_count=0,
+                replaced_episode_count=0,
+            ),
+        )
+        if request.headers.get("HX-Request"):
+            return HttpResponse(status=400, headers={"HX-Redirect": redirect_url})
+        return redirect(redirect_url)
+
+    bulk_form = BulkEpisodeTrackForm(
+        request.POST,
+        domain=episode_domain,
+    )
+    if not bulk_form.is_valid():
+        if podcast_show is not None:
+            return _render_podcast_show_track_modal(
+                request,
+                podcast_show,
+                bulk_form_override=bulk_form,
+                initial_active_tab="episode-plays",
+            )
+        return _render_standard_track_modal(
+            request,
+            source,
+            media_type,
+            media_id,
+            form_override=None,
+            bulk_form_override=bulk_form,
+            initial_active_tab="episode-plays",
+        )
+
+    result = bulk_episode_tracking.apply_bulk_episode_plays(
+        request.user,
+        episode_domain,
+        selected_episodes=bulk_form.cleaned_data["selected_domain_episodes"],
+        write_mode=bulk_form.cleaned_data["write_mode"],
+        distribution_mode=bulk_form.cleaned_data["distribution_mode"],
+        start_date=bulk_form.cleaned_data.get("start_date"),
+        end_date=bulk_form.cleaned_data.get("end_date"),
+    )
+
+    action_verb = (
+        "Replaced"
+        if bulk_form.cleaned_data["write_mode"] == BulkEpisodeTrackForm.WRITE_MODE_REPLACE
+        else "Added"
+    )
+    detail_bits = []
+    if result.migrated_flat_anime:
+        detail_bits.append("after migrating grouped anime tracking")
+    elif result.created_grouped_tracking and result.grouped_item:
+        detail_bits.append("after creating grouped anime tracking")
+    detail_suffix = f" {' '.join(detail_bits)}" if detail_bits else ""
+    messages.success(
+        request,
+        f"{action_verb} {result.created_count} episode play{'s' if result.created_count != 1 else ''}{detail_suffix}.",
+    )
+
+    redirect_url = _episode_bulk_redirect_url(request, result)
+    if request.headers.get("HX-Request"):
+        return HttpResponse(status=204, headers={"HX-Redirect": redirect_url})
+    return redirect(redirect_url)
 
 
 @require_http_methods(["GET", "POST"])
@@ -8247,6 +9480,682 @@ def person_detail(request, source, person_id, name):
     return render(request, "app/person_detail.html", context)
 
 
+def _music_artist_detail_url(artist):
+    """Return the canonical shared media-details URL for a music artist."""
+    return app_tags.music_artist_url(artist)
+
+
+def _music_album_detail_url(album):
+    """Return the canonical shared media-details URL for a music album."""
+    return app_tags.music_album_url(album)
+
+
+def _music_activity_date_range(entries):
+    """Return the earliest and latest meaningful activity dates from music entries."""
+    start_candidates = []
+    end_candidates = []
+    for entry in entries:
+        if entry.start_date or entry.end_date:
+            start_candidates.append(entry.start_date or entry.end_date)
+            end_candidates.append(entry.end_date or entry.start_date)
+
+    first_date = min(start_candidates) if start_candidates else None
+    last_date = max(end_candidates) if end_candidates else None
+    collapse_same_day = bool(
+        first_date
+        and last_date
+        and first_date.date() == last_date.date()
+    )
+    return first_date, last_date, collapse_same_day
+
+
+def _build_music_artist_activity_subtitle(artist_tracker, total_plays, first_date, last_date, collapse_same_day):
+    """Return the shared subtitle payload for a music artist detail page."""
+    if not artist_tracker and not total_plays and not first_date and not last_date:
+        return None
+
+    primary_text = None
+    if total_plays:
+        primary_text = "Played once" if total_plays == 1 else f"Played {total_plays} times"
+
+    return {
+        "primary_text": primary_text,
+        "date_start": first_date or getattr(artist_tracker, "start_date", None),
+        "date_end": last_date or getattr(artist_tracker, "end_date", None),
+        "collapse_same_day": collapse_same_day,
+    }
+
+
+def _build_music_album_activity_subtitle(
+    album,
+    album_tracker,
+    library_track_count,
+    total_tracks,
+    first_date,
+    last_date,
+    collapse_same_day,
+):
+    """Return the shared subtitle payload for a music album detail page."""
+    if (
+        not album
+        and not album_tracker
+        and not total_tracks
+        and not first_date
+        and not last_date
+    ):
+        return None
+
+    progress_text = None
+    if total_tracks:
+        progress_text = f"Progress: {library_track_count}/{total_tracks}"
+
+    return {
+        "title": album.title if album else "",
+        "progress_text": progress_text,
+        "date_start": first_date or getattr(album_tracker, "start_date", None),
+        "date_end": last_date or getattr(album_tracker, "end_date", None),
+        "collapse_same_day": collapse_same_day,
+    }
+
+
+def _build_music_detail_secondary_actions(*, history_url, sync_url, sync_title, delete_url, delete_title, delete_confirm):
+    """Return shared secondary action metadata for music detail pages."""
+    return [
+        {
+            "kind": "link",
+            "title": "View your activity history",
+            "url": history_url,
+            "icon": "history",
+        },
+        {
+            "kind": "button",
+            "title": sync_title,
+            "hx_post": sync_url,
+            "icon": "circle-spinning-clockwise",
+        },
+        {
+            "kind": "button",
+            "title": delete_title,
+            "hx_post": delete_url,
+            "icon": "trashcan",
+            "confirm": delete_confirm,
+            "button_classes": "border-red-500/20 bg-red-500/10 text-red-100 hover:bg-red-500/20",
+        },
+    ]
+
+
+def _render_music_tracker_modal(
+    request,
+    *,
+    title,
+    tracker,
+    form,
+    save_url,
+    delete_url,
+):
+    """Render a non-item music tracker modal through the shared shell."""
+    return_url = request.GET.get("return_url") or request.POST.get("return_url", "")
+    track_form_id = f"track-form-{uuid4().hex}"
+    field_groups = _track_modal_field_groups(
+        form,
+        hidden_field_names=set(field_name for field_name in form.fields if field_name.endswith("_id")),
+        metadata_field_names=set(),
+    )
+    response = render(
+        request,
+        "app/components/fill_track.html",
+        {
+            "user": request.user,
+            "title": title,
+            "media_type": MediaTypes.MUSIC.value,
+            "form": form,
+            "media": tracker,
+            "return_url": return_url,
+            "metadata_tab_available": False,
+            "metadata_fields": [],
+            "general_hidden_fields": field_groups["hidden_fields"],
+            "general_fields": field_groups["general_fields"],
+            "general_submit_formaction": f"{save_url}?next={return_url}",
+            "general_delete_formaction": f"{delete_url}?next={return_url}",
+            "general_existing_instance": tracker,
+            "image_field": None,
+            "image_save_item_id": None,
+            "track_form_id": track_form_id,
+            "initial_active_tab": "general",
+            "episode_plays_tab_available": False,
+            "episode_plays_form": None,
+            "episode_plays_domain": None,
+            "episode_plays_mode_notice": "",
+            "episode_plays_domain_script_id": f"{track_form_id}-episode-domain",
+        },
+    )
+    response["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response["Pragma"] = "no-cache"
+    response["Expires"] = "0"
+    return response
+
+
+def _render_music_artist_details(request, artist):
+    """Render a music artist through the shared media details template."""
+    from app.providers import musicbrainz
+    from app.services.music import (
+        build_discography_groups,
+        needs_discography_sync,
+        sync_artist_discography,
+    )
+    from app.services.music_scrobble import dedupe_artist_albums
+
+    from app.models import ArtistTracker, AlbumTracker
+    from app.helpers import get_artist_collection_stats
+
+    if not artist.musicbrainz_id:
+        try:
+            mbid, cand_count, variant = sync_services.resolve_artist_mbid(
+                artist.name or "",
+                artist.sort_name or "",
+            )
+            if mbid:
+                try:
+                    artist.musicbrainz_id = mbid
+                    artist.discography_synced_at = None
+                    artist.save(update_fields=["musicbrainz_id", "discography_synced_at"])
+                    logger.info(
+                        "Attached MBID %s to artist %s on view via '%s' (candidates=%d)",
+                        mbid,
+                        artist.name,
+                        variant,
+                        cand_count,
+                    )
+                except IntegrityError:
+                    from app.services.music import merge_artist_records
+
+                    existing = Artist.objects.filter(musicbrainz_id=mbid).first()
+                    if existing:
+                        artist = merge_artist_records(artist, existing)
+                        logger.info(
+                            "Merged artist %s into existing MBID %s via '%s'",
+                            artist.name,
+                            mbid,
+                            variant,
+                        )
+                        return redirect(_music_artist_detail_url(artist))
+            else:
+                logger.debug(
+                    "No MBID attached on view for %s after searching variants (candidates=%d)",
+                    artist.name,
+                    cand_count,
+                )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Artist MBID attach failed on view for %s: %s", artist.name, exception_summary(exc))
+
+    dedupe_artist_albums(artist)
+
+    albums_qs = Album.objects.filter(artist=artist)
+    existing_album_count = albums_qs.count()
+    missing_mbids = albums_qs.filter(
+        musicbrainz_release_id__isnull=True,
+        musicbrainz_release_group_id__isnull=True,
+    ).exists()
+    should_sync = (
+        needs_discography_sync(artist, max_age_days=1)
+        or existing_album_count == 0
+        or missing_mbids
+    )
+    force_sync = existing_album_count == 0 or missing_mbids
+
+    synced_count = 0
+    if should_sync and artist.musicbrainz_id:
+        synced_count = sync_artist_discography(artist, force=force_sync)
+        if synced_count:
+            dedupe_artist_albums(artist)
+    elif should_sync and not artist.musicbrainz_id:
+        logger.debug("Skipping discography sync for %s due to missing MBID", artist.name)
+
+    all_albums = list(Album.objects.filter(artist=artist).order_by("-release_date", "title"))
+
+    user_music_entries = list(
+        Music.objects.filter(
+            user=request.user,
+            album__artist=artist,
+        ).select_related("album", "item")
+    )
+
+    album_play_counts = {}
+    total_plays = 0
+    for music in user_music_entries:
+        if music.album_id:
+            play_count = music.history.count()
+            album_play_counts[music.album_id] = album_play_counts.get(music.album_id, 0) + play_count
+            total_plays += play_count
+
+    album_trackers = AlbumTracker.objects.filter(
+        user=request.user,
+        album__in=all_albums,
+    ).select_related("album")
+    album_scores = {
+        tracker.album_id: tracker.score
+        for tracker in album_trackers
+        if tracker.score is not None
+    }
+
+    for album in all_albums:
+        album.play_count = album_play_counts.get(album.id, 0)
+        album.score = album_scores.get(album.id)
+
+    discography_groups = build_discography_groups(all_albums)
+    missing_cover_count = sum(
+        1
+        for album in all_albums
+        if not album.image or album.image == settings.IMG_NONE
+    )
+
+    artist_tracker = ArtistTracker.objects.filter(
+        user=request.user,
+        artist=artist,
+    ).first()
+
+    first_listened, last_listened, collapse_same_day = _music_activity_date_range(
+        user_music_entries,
+    )
+    artist_activity_subtitle = _build_music_artist_activity_subtitle(
+        artist_tracker,
+        total_plays,
+        first_listened,
+        last_listened,
+        collapse_same_day,
+    )
+
+    artist_metadata = {}
+    genres = []
+    tags = []
+    mb_rating = None
+    mb_rating_count = 0
+    bio = ""
+
+    if artist.musicbrainz_id:
+        try:
+            mb_data = musicbrainz.get_artist(artist.musicbrainz_id)
+            artist_metadata = {
+                "type": mb_data.get("type", ""),
+                "country": mb_data.get("country", ""),
+                "area": mb_data.get("area", ""),
+                "begin_date": mb_data.get("begin_date", ""),
+                "end_date": mb_data.get("end_date", ""),
+                "ended": mb_data.get("ended", False),
+                "disambiguation": mb_data.get("disambiguation", ""),
+            }
+            genres = mb_data.get("genres", [])
+            tags = mb_data.get("tags", [])
+            mb_rating = mb_data.get("rating")
+            mb_rating_count = mb_data.get("rating_count", 0)
+            bio = mb_data.get("bio", "")
+
+            updated_fields = []
+            if mb_data.get("country") and mb_data.get("country") != artist.country:
+                artist.country = mb_data.get("country", "")
+                updated_fields.append("country")
+            if mb_data.get("genres"):
+                genre_names = [g.get("name") for g in mb_data.get("genres") if g.get("name")]
+                if genre_names != artist.genres:
+                    artist.genres = genre_names
+                    updated_fields.append("genres")
+            if updated_fields:
+                artist.save(update_fields=updated_fields)
+
+            wiki_image = mb_data.get("image")
+            if wiki_image and (not artist.image or artist.image == settings.IMG_NONE):
+                artist.image = wiki_image
+                artist.save(update_fields=["image"])
+        except Exception as exc:
+            logger.debug("Failed to fetch artist metadata from MusicBrainz: %s", exc)
+
+    genre_chips = []
+    if genres:
+        genre_chips = [g["name"].title() for g in genres[:6]]
+    elif tags:
+        genre_chips = [t["name"].title() for t in tags[:6]]
+
+    collection_stats = get_artist_collection_stats(request.user, artist)
+    notes_entry = artist_tracker if artist_tracker and artist_tracker.notes else None
+    detail_link_sections = _build_detail_link_sections(
+        {
+            "source_url": (
+                f"https://musicbrainz.org/artist/{artist.musicbrainz_id}"
+                if artist.musicbrainz_id
+                else ""
+            ),
+        },
+        MediaTypes.MUSIC.value,
+        Sources.MUSICBRAINZ.value,
+        Sources.MUSICBRAINZ.value,
+    )
+    detail_primary_action = {
+        "label": artist_tracker.status_readable if artist_tracker else "Add to Library",
+        "modal_url": reverse("artist_track_modal", args=[artist.id]),
+        "target_id": f"artist-track-modal-{artist.id}",
+        "active": bool(artist_tracker),
+    }
+    detail_history_url = f"{reverse('history')}?artist={artist.id}"
+
+    context = {
+        "user": request.user,
+        "music_detail_kind": "artist",
+        "media_type": MediaTypes.MUSIC.value,
+        "artist": artist,
+        "media": {
+            "media_type": MediaTypes.MUSIC.value,
+            "source": Sources.MUSICBRAINZ.value,
+            "media_id": artist.musicbrainz_id or f"artist-{artist.id}",
+            "title": artist.name,
+            "image": artist.image or settings.IMG_NONE,
+            "synopsis": bio or artist_metadata.get("disambiguation", ""),
+            "details": {},
+            "related": {},
+        },
+        "artist_tracker": artist_tracker,
+        "notes_entry": notes_entry,
+        "detail_notes_modal_url": reverse("artist_track_modal", args=[artist.id]),
+        "detail_notes_target_id": f"artist-track-modal-{artist.id}",
+        "detail_history_url": detail_history_url,
+        "detail_primary_action": detail_primary_action,
+        "detail_secondary_actions": _build_music_detail_secondary_actions(
+            history_url=detail_history_url,
+            sync_url=reverse("sync_artist_discography", args=[artist.id]),
+            sync_title="Sync discography from MusicBrainz",
+            delete_url=reverse("delete_all_artist_plays", args=[artist.id]),
+            delete_title="Delete all plays for this artist",
+            delete_confirm="Are you sure you want to delete all plays for this artist? This cannot be undone.",
+        ),
+        "detail_collection_mode": "music_artist",
+        "detail_link_sections": detail_link_sections,
+        "discography_groups": discography_groups,
+        "collection_stats": collection_stats,
+        "music_artist_metadata": artist_metadata,
+        "music_artist_rating": {
+            "rating": mb_rating,
+            "rating_count": mb_rating_count,
+        },
+        "music_artist_activity_subtitle": artist_activity_subtitle,
+        "genre_chips": genre_chips,
+        "total_plays": total_plays,
+        "total_releases": len(all_albums),
+        "missing_cover_count": missing_cover_count,
+        "poll_for_covers": missing_cover_count > 0,
+        "bio": bio,
+    }
+    return render(request, "app/media_details.html", context)
+
+
+def _render_music_album_details(request, artist, album):
+    """Render a music album through the shared media details template."""
+    from app.providers import musicbrainz
+    from app.services.music import (
+        album_has_musicbrainz_id,
+        ensure_album_has_release_id,
+        sync_artist_discography,
+    )
+    from app.services.music_scrobble import (
+        _choose_primary_album,
+        _normalize,
+        dedupe_artist_albums,
+        is_incomplete_album,
+    )
+
+    from app.helpers import get_album_collection_metadata
+    from app.models import AlbumTracker
+
+    original_artist = album.artist
+    original_title = album.title
+    original_norm = _normalize(original_title)
+
+    if album.artist_id and artist and album.artist_id != artist.id:
+        return redirect(_music_album_detail_url(album))
+
+    if original_artist:
+        dedupe_artist_albums(original_artist)
+        try:
+            album.refresh_from_db()
+        except Album.DoesNotExist:
+            replacement = (
+                Album.objects.filter(artist=original_artist, title__iexact=original_title)
+                .order_by("id")
+                .first()
+            )
+            if not replacement:
+                for cand in Album.objects.filter(artist=original_artist):
+                    if _normalize(cand.title) == original_norm:
+                        replacement = cand
+                        break
+            if replacement:
+                return redirect(_music_album_detail_url(replacement))
+            raise
+
+        if is_incomplete_album(album) and original_artist.musicbrainz_id:
+            try:
+                sync_artist_discography(original_artist, force=True)
+                dedupe_artist_albums(original_artist)
+                candidates = [
+                    candidate
+                    for candidate in Album.objects.filter(artist=original_artist)
+                    if _normalize(candidate.title) == original_norm
+                ]
+                if candidates:
+                    best = _choose_primary_album(candidates, album)
+                    if best.id != album.id:
+                        return redirect(_music_album_detail_url(best))
+                    album = best
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("Failed to heal album %s via discography: %s", album.id, exception_summary(exc))
+
+    if not album.musicbrainz_release_id and album.musicbrainz_release_group_id:
+        ensure_album_has_release_id(album)
+
+    has_mb_identity = album_has_musicbrainz_id(album)
+    if not album.tracks_populated and has_mb_identity:
+        try:
+            if album.musicbrainz_release_id:
+                release_data = musicbrainz.get_release(album.musicbrainz_release_id)
+                tracks_data = release_data.get("tracks", [])
+
+                if release_data.get("genres") and not album.genres:
+                    album.genres = release_data.get("genres")
+                    album.save(update_fields=["genres"])
+
+                for track_data in tracks_data:
+                    Track.objects.update_or_create(
+                        album=album,
+                        disc_number=track_data.get("disc_number", 1),
+                        track_number=track_data.get("track_number"),
+                        defaults={
+                            "title": track_data.get("title", "Unknown Track"),
+                            "musicbrainz_recording_id": track_data.get("recording_id"),
+                            "duration_ms": track_data.get("duration_ms"),
+                            "genres": track_data.get("genres", []) or release_data.get("genres", []),
+                        },
+                    )
+
+                if not album.image or album.image == settings.IMG_NONE:
+                    new_image = release_data.get("image", "")
+                    if new_image and new_image != settings.IMG_NONE:
+                        album.image = new_image
+
+                album.tracks_populated = True
+                album.save(update_fields=["tracks_populated", "image"])
+            else:
+                logger.warning("Album %s has release_group but no release found for tracks", album.title)
+        except Exception as exc:
+            logger.warning("Failed to populate tracks for album %s: %s", album.title, exc)
+
+    all_tracks = Track.objects.filter(album=album).order_by("disc_number", "track_number", "title")
+    user_music_entries = list(
+        Music.objects.filter(
+            user=request.user,
+            album=album,
+        ).select_related("item", "track")
+    )
+
+    user_music_by_track = {}
+    for music in user_music_entries:
+        if music.track_id:
+            user_music_by_track[music.track_id] = music
+        if music.item and music.item.media_id:
+            user_music_by_track[f"recording_{music.item.media_id}"] = music
+
+    collection_entries_by_item_id = {}
+    music_item_ids = [music.item_id for music in user_music_entries if music.item_id]
+    if music_item_ids:
+        collection_entries = CollectionEntry.objects.filter(
+            user=request.user,
+            item_id__in=music_item_ids,
+        ).order_by("-collected_at", "-id")
+        for collection_entry in collection_entries:
+            collection_entries_by_item_id.setdefault(collection_entry.item_id, collection_entry)
+
+    tracks_with_data = []
+    total_duration_ms = 0
+    for track in all_tracks:
+        music_entry = user_music_by_track.get(track.id)
+        if not music_entry and track.musicbrainz_recording_id:
+            music_entry = user_music_by_track.get(f"recording_{track.musicbrainz_recording_id}")
+
+        collection_entry = None
+        if music_entry and music_entry.item_id:
+            collection_entry = collection_entries_by_item_id.get(music_entry.item_id)
+
+        tracks_with_data.append(
+            {
+                "track": track,
+                "music": music_entry,
+                "history": list(music_entry.history.all().order_by("-end_date")) if music_entry else [],
+                "collection_entry": collection_entry,
+            }
+        )
+        if track.duration_ms:
+            total_duration_ms += track.duration_ms
+
+    library_track_count = sum(1 for track_data in tracks_with_data if track_data["music"])
+    first_listened, last_listened, collapse_same_day = _music_activity_date_range(
+        user_music_entries,
+    )
+
+    album_tracker = AlbumTracker.objects.filter(
+        user=request.user,
+        album=album,
+    ).first()
+
+    total_runtime = None
+    if total_duration_ms:
+        total_minutes = total_duration_ms // 60000
+        if total_minutes >= 60:
+            hours = total_minutes // 60
+            minutes = total_minutes % 60
+            total_runtime = f"{hours}h {minutes}m"
+        else:
+            total_runtime = f"{total_minutes}m"
+
+    album_activity_subtitle = _build_music_album_activity_subtitle(
+        album,
+        album_tracker,
+        library_track_count,
+        len(tracks_with_data),
+        first_listened,
+        last_listened,
+        collapse_same_day,
+    )
+
+    album_details = {
+        "format": album.release_type or "Album",
+        "release_date": album.release_date,
+        "tracks": len(tracks_with_data),
+        "runtime": total_runtime,
+    }
+    if album.musicbrainz_release_id:
+        album_details["musicbrainz_id"] = album.musicbrainz_release_id
+        album_details["musicbrainz_url"] = f"https://musicbrainz.org/release/{album.musicbrainz_release_id}"
+    elif album.musicbrainz_release_group_id:
+        album_details["musicbrainz_id"] = album.musicbrainz_release_group_id
+        album_details["musicbrainz_url"] = f"https://musicbrainz.org/release-group/{album.musicbrainz_release_group_id}"
+
+    collection_metadata = get_album_collection_metadata(request.user, album)
+    notes_entry = album_tracker if album_tracker and album_tracker.notes else None
+    detail_link_sections = _build_detail_link_sections(
+        {
+            "source_url": album_details.get("musicbrainz_url", ""),
+        },
+        MediaTypes.MUSIC.value,
+        Sources.MUSICBRAINZ.value,
+        Sources.MUSICBRAINZ.value,
+    )
+    detail_primary_action = {
+        "label": album_tracker.status_readable if album_tracker else "Add to Library",
+        "modal_url": reverse("album_track_modal", args=[album.id]),
+        "target_id": f"album-track-modal-{album.id}",
+        "active": bool(album_tracker),
+    }
+    detail_history_url = f"{reverse('history')}?album={album.id}"
+
+    context = {
+        "user": request.user,
+        "music_detail_kind": "album",
+        "media_type": MediaTypes.MUSIC.value,
+        "artist": artist or album.artist,
+        "album": album,
+        "media": {
+            "media_type": MediaTypes.MUSIC.value,
+            "source": Sources.MUSICBRAINZ.value,
+            "media_id": album.musicbrainz_release_id or album.musicbrainz_release_group_id or f"album-{album.id}",
+            "title": album.title,
+            "image": album.image or settings.IMG_NONE,
+            "synopsis": "",
+            "details": {},
+            "related": {},
+        },
+        "tracks": tracks_with_data,
+        "has_mb_identity": has_mb_identity,
+        "album_tracker": album_tracker,
+        "total_tracks": len(tracks_with_data),
+        "library_track_count": library_track_count,
+        "total_runtime": total_runtime,
+        "music_album_metadata": album_details,
+        "album_collection_metadata": collection_metadata,
+        "album_collection_stats": None,
+        "music_album_activity_subtitle": album_activity_subtitle,
+        "detail_notes_modal_url": reverse("album_track_modal", args=[album.id]),
+        "detail_notes_target_id": f"album-track-modal-{album.id}",
+        "detail_history_url": detail_history_url,
+        "detail_primary_action": detail_primary_action,
+        "detail_secondary_actions": _build_music_detail_secondary_actions(
+            history_url=detail_history_url,
+            sync_url=reverse("sync_album_metadata", args=[album.id]),
+            sync_title="Sync album metadata and tracks from MusicBrainz",
+            delete_url=reverse("delete_all_album_plays", args=[album.id]),
+            delete_title="Delete all plays for this album",
+            delete_confirm="Are you sure you want to delete all plays for this album? This cannot be undone.",
+        ),
+        "detail_collection_mode": "music_album",
+        "detail_link_sections": detail_link_sections,
+        "notes_entry": notes_entry,
+    }
+    return render(request, "app/media_details.html", context)
+
+
+@require_GET
+def music_artist_details(request, artist_id, artist_slug):
+    """Return the canonical shared music artist detail page."""
+    artist = get_object_or_404(Artist, id=artist_id)
+    return _render_music_artist_details(request, artist)
+
+
+@require_GET
+def music_album_details(request, artist_id, artist_slug, album_id, album_slug):
+    """Return the canonical shared music album detail page."""
+    album = get_object_or_404(Album.objects.select_related("artist"), id=album_id)
+    if album.artist_id and album.artist_id != artist_id:
+        return redirect(_music_album_detail_url(album))
+    artist = album.artist
+    return _render_music_album_details(request, artist, album)
+
+
 @require_GET
 def create_artist_from_search(request, musicbrainz_artist_id):
     """Create an Artist from MusicBrainz search and redirect to artist page."""
@@ -8272,7 +10181,7 @@ def create_artist_from_search(request, musicbrainz_artist_id):
         # Sync discography immediately after creating artist
         sync_artist_discography(artist)
 
-    return redirect("artist_detail", artist_id=artist.id)
+    return redirect(_music_artist_detail_url(artist))
 
 
 @require_GET
@@ -8341,243 +10250,14 @@ def create_album_from_search(request, musicbrainz_release_id):
             album.genres = release_data.get("genres", [])
             album.save(update_fields=["genres"])
 
-    return redirect("album_detail", album_id=album.id)
+    return redirect(_music_album_detail_url(album))
 
 
 @require_GET
 def artist_detail(request, artist_id):
-    """Return the detail page for a music artist."""
-    from django.db.models import Max, Min
-    from django.shortcuts import get_object_or_404
-
-    from app.models import ArtistTracker
-    from app.providers import musicbrainz
-    from app.services.music import (
-        build_discography_groups,
-        needs_discography_sync,
-        sync_artist_discography,
-    )
-    from app.services.music_scrobble import dedupe_artist_albums
-
+    """Redirect legacy music artist URLs to the canonical shared detail page."""
     artist = get_object_or_404(Artist, id=artist_id)
-
-    # If we don't have an MBID yet, attempt a quick lookup so discography can sync
-    if not artist.musicbrainz_id:
-        try:
-            mbid, cand_count, variant = sync_services.resolve_artist_mbid(
-                artist.name or "",
-                artist.sort_name or "",
-            )
-            if mbid:
-                try:
-                    artist.musicbrainz_id = mbid
-                    artist.discography_synced_at = None  # force a fresh sync
-                    artist.save(update_fields=["musicbrainz_id", "discography_synced_at"])
-                    logger.info(
-                        "Attached MBID %s to artist %s on view via '%s' (candidates=%d)",
-                        mbid,
-                        artist.name,
-                        variant,
-                        cand_count,
-                    )
-                except IntegrityError:
-                    # Merge this artist into the existing MBID owner to avoid dupes
-                    from app.services.music import merge_artist_records
-
-                    existing = Artist.objects.filter(musicbrainz_id=mbid).first()
-                    if existing:
-                        existing = merge_artist_records(artist, existing)
-                        artist = existing
-                        logger.info(
-                            "Merged artist %s into existing MBID %s via '%s'",
-                            artist.name,
-                            mbid,
-                            variant,
-                        )
-                    else:
-                        logger.debug(
-                            "Artist MBID attach conflicted for %s with %s via '%s' but no target found",
-                            artist.name,
-                            mbid,
-                            variant,
-                        )
-            else:
-                logger.debug(
-                    "No MBID attached on view for %s after searching variants (candidates=%d)",
-                    artist.name,
-                    cand_count,
-                )
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.debug("Artist MBID attach failed on view for %s: %s", artist.name, exception_summary(exc))
-
-    # Heal duplicate albums for this artist (caused by noisy metadata)
-    dedupe_artist_albums(artist)
-
-    # Decide whether we should force a fresh discography sync (e.g., after fast import)
-    albums_qs = Album.objects.filter(artist=artist)
-    existing_album_count = albums_qs.count()
-    missing_mbids = albums_qs.filter(
-        musicbrainz_release_id__isnull=True,
-        musicbrainz_release_group_id__isnull=True,
-    ).exists()
-    # Refresh more aggressively on view: daily, if no albums yet, or if placeholders lack IDs
-    should_sync = (
-        needs_discography_sync(artist, max_age_days=1)
-        or existing_album_count == 0
-        or missing_mbids
-    )
-    force_sync = existing_album_count == 0 or missing_mbids
-
-    # Sync discography from MusicBrainz if needed (like TV populates seasons from TMDB)
-    synced_count = 0
-    if should_sync and artist.musicbrainz_id:
-        synced_count = sync_artist_discography(artist, force=force_sync)
-        if synced_count:
-            dedupe_artist_albums(artist)
-    elif should_sync and not artist.musicbrainz_id:
-        logger.debug("Skipping discography sync for %s due to missing MBID", artist.name)
-
-    # Get ALL albums for this artist (metadata-driven, like Seasons)
-    # Note: Album covers are prefetched asynchronously via HTMX after page load
-    all_albums = list(Album.objects.filter(artist=artist).order_by("-release_date", "title"))
-
-    # Get user's music entries for this artist to calculate play counts
-    user_music_entries = Music.objects.filter(
-        user=request.user,
-        album__artist=artist,
-    ).select_related("album")
-
-    # Calculate play counts per album (history entries = listens)
-    album_play_counts = {}
-    total_plays = 0
-    for music in user_music_entries:
-        if music.album_id:
-            play_count = music.history.count()
-            album_play_counts[music.album_id] = album_play_counts.get(music.album_id, 0) + play_count
-            total_plays += play_count
-
-    # Get user's album trackers for these albums
-    from app.models import AlbumTracker
-    album_trackers = AlbumTracker.objects.filter(
-        user=request.user,
-        album__in=all_albums,
-    ).select_related('album')
-
-    # Build a dict mapping album_id -> tracker score
-    album_scores = {}
-    for tracker in album_trackers:
-        if tracker.score is not None:
-            album_scores[tracker.album_id] = tracker.score
-
-    # Attach play_count and score to each album
-    for album in all_albums:
-        album.play_count = album_play_counts.get(album.id, 0)
-        album.score = album_scores.get(album.id)  # None if no tracker/score
-
-    discography_groups = build_discography_groups(all_albums)
-    missing_cover_count = sum(
-        1
-        for album in all_albums
-        if not album.image or album.image == settings.IMG_NONE
-    )
-
-    # Artist image is set from Wikipedia when fetching metadata below
-
-    # Get user's tracker for this artist
-    artist_tracker = ArtistTracker.objects.filter(
-        user=request.user,
-        artist=artist,
-    ).first()
-
-    # Get user's music entries for this artist
-    user_music_for_artist = Music.objects.filter(
-        user=request.user,
-        album__artist=artist,
-    )
-
-    # History summary - just get date ranges, not historical record counts
-    history_stats = user_music_for_artist.aggregate(
-        first_listened=Min("start_date"),
-        last_listened=Max("end_date"),
-    )
-
-    # Fetch detailed artist metadata from MusicBrainz
-    artist_metadata = {}
-    genres = []
-    tags = []
-    mb_rating = None
-    mb_rating_count = 0
-    bio = ""
-
-    if artist.musicbrainz_id:
-        try:
-            mb_data = musicbrainz.get_artist(artist.musicbrainz_id)
-            artist_metadata = {
-                "type": mb_data.get("type", ""),
-                "country": mb_data.get("country", ""),
-                "area": mb_data.get("area", ""),
-                "begin_date": mb_data.get("begin_date", ""),
-                "end_date": mb_data.get("end_date", ""),
-                "ended": mb_data.get("ended", False),
-                "disambiguation": mb_data.get("disambiguation", ""),
-            }
-            genres = mb_data.get("genres", [])
-            tags = mb_data.get("tags", [])
-            mb_rating = mb_data.get("rating")
-            mb_rating_count = mb_data.get("rating_count", 0)
-            bio = mb_data.get("bio", "")  # Wikipedia extract
-
-            # Persist country/genres locally for statistics rollups
-            updated_fields = []
-            if mb_data.get("country") and mb_data.get("country") != artist.country:
-                artist.country = mb_data.get("country", "")
-                updated_fields.append("country")
-            if mb_data.get("genres"):
-                genre_names = [g.get("name") for g in mb_data.get("genres") if g.get("name")]
-                if genre_names != artist.genres:
-                    artist.genres = genre_names
-                    updated_fields.append("genres")
-            if updated_fields:
-                artist.save(update_fields=updated_fields)
-
-            # Save Wikipedia image to Artist if not already set
-            wiki_image = mb_data.get("image")
-            if wiki_image and (not artist.image or artist.image == settings.IMG_NONE):
-                artist.image = wiki_image
-                artist.save(update_fields=["image"])
-        except Exception as e:
-            logger.debug("Failed to fetch artist metadata from MusicBrainz: %s", e)
-
-    # Build genre chips (prefer genres, fall back to tags)
-    genre_chips = []
-    if genres:
-        genre_chips = [g["name"].title() for g in genres[:6]]
-    elif tags:
-        # Use top tags as genre chips if no official genres
-        genre_chips = [t["name"].title() for t in tags[:6]]
-
-    # Get collection statistics for this artist
-    from app.helpers import get_artist_collection_stats
-    collection_stats = get_artist_collection_stats(request.user, artist)
-
-    context = {
-        "user": request.user,
-        "artist": artist,
-        "discography_groups": discography_groups,  # All releases from discography
-        "total_plays": total_plays,
-        "total_releases": len(all_albums),
-        "missing_cover_count": missing_cover_count,
-        "poll_for_covers": missing_cover_count > 0,
-        "artist_tracker": artist_tracker,
-        "history_stats": history_stats,
-        "artist_metadata": artist_metadata,
-        "genre_chips": genre_chips,
-        "bio": bio,  # Wikipedia extract
-        "mb_rating": mb_rating,
-        "mb_rating_count": mb_rating_count,
-        "collection_stats": collection_stats,
-    }
-    return render(request, "app/music_artist_detail.html", context)
+    return redirect(_music_artist_detail_url(artist))
 
 
 @require_GET
@@ -8644,236 +10324,9 @@ def prefetch_artist_covers(request, artist_id):
 
 @require_GET
 def album_detail(request, album_id):
-    """Return the detail page for a music album."""
-    from django.db.models import Max, Min
-    from django.shortcuts import get_object_or_404
-
-    from app.models import Track
-    from app.providers import musicbrainz
-    from app.services.music import (
-        album_has_musicbrainz_id,
-        ensure_album_has_release_id,
-        sync_artist_discography,
-    )
-    from app.services.music_scrobble import (
-        _choose_primary_album,
-        _normalize,
-        dedupe_artist_albums,
-        is_incomplete_album,
-    )
-
+    """Redirect legacy music album URLs to the canonical shared detail page."""
     album = get_object_or_404(Album.objects.select_related("artist"), id=album_id)
-    original_artist = album.artist
-    original_title = album.title
-    original_norm = _normalize(original_title)
-
-    # Heal duplicate albums for this artist so detail pages are consistent
-    dedupe_artist_albums(original_artist)
-    try:
-        album.refresh_from_db()
-    except Album.DoesNotExist:
-        # Find the canonical album by normalized title
-        replacement = (
-            Album.objects.filter(artist=original_artist, title__iexact=original_title)
-            .order_by("id")
-            .first()
-        )
-        if not replacement:
-            for cand in Album.objects.filter(artist=original_artist):
-                if _normalize(cand.title) == original_norm:
-                    replacement = cand
-                    break
-        if replacement:
-            return redirect("album_detail", album_id=replacement.id)
-        raise
-
-    # If we only have a sparse placeholder, try to repopulate via discography and re-dedupe
-    if is_incomplete_album(album) and original_artist.musicbrainz_id:
-        try:
-            sync_artist_discography(original_artist, force=True)
-            dedupe_artist_albums(original_artist)
-            candidates = [
-                a
-                for a in Album.objects.filter(artist=original_artist)
-                if _normalize(a.title) == original_norm
-            ]
-            if candidates:
-                best = _choose_primary_album(candidates, album)
-                if best.id != album.id:
-                    return redirect("album_detail", album_id=best.id)
-                album = best
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.debug("Failed to heal album %s via discography: %s", album_id, exception_summary(exc))
-
-    # Ensure album has a release_id (fetch from release_group if needed)
-    # This fixes albums that came from discography sync with only release_group_id
-    if not album.musicbrainz_release_id and album.musicbrainz_release_group_id:
-        ensure_album_has_release_id(album)
-
-    # Populate tracks from MusicBrainz if not done yet (like Season populates episodes)
-    # Now we accept albums that have EITHER release_id OR release_group_id
-    has_mb_identity = album_has_musicbrainz_id(album)
-    if not album.tracks_populated and has_mb_identity:
-        try:
-            # If we still don't have release_id after ensure_album_has_release_id,
-            # we can't fetch tracks (need a specific release for track listing)
-            if album.musicbrainz_release_id:
-                release_data = musicbrainz.get_release(album.musicbrainz_release_id)
-                tracks_data = release_data.get("tracks", [])
-
-                # Update genres from release if available
-                if release_data.get("genres") and not album.genres:
-                    album.genres = release_data.get("genres")
-                    album.save(update_fields=["genres"])
-
-                for track_data in tracks_data:
-                    Track.objects.update_or_create(
-                        album=album,
-                        disc_number=track_data.get("disc_number", 1),
-                        track_number=track_data.get("track_number"),
-                        defaults={
-                            "title": track_data.get("title", "Unknown Track"),
-                            "musicbrainz_recording_id": track_data.get("recording_id"),
-                            "duration_ms": track_data.get("duration_ms"),
-                            "genres": track_data.get("genres", []) or release_data.get("genres", []),
-                        },
-                    )
-
-                # Also update album image if missing
-                if not album.image or album.image == settings.IMG_NONE:
-                    new_image = release_data.get("image", "")
-                    if new_image and new_image != settings.IMG_NONE:
-                        album.image = new_image
-
-                album.tracks_populated = True
-                album.save(update_fields=["tracks_populated", "image"])
-                logger.info("Populated %d tracks for album %s", len(tracks_data), album.title)
-            else:
-                logger.warning("Album %s has release_group but no release found for tracks", album.title)
-        except Exception as e:
-            logger.warning("Failed to populate tracks for album %s: %s", album.title, e)
-
-    # Get ALL tracks for this album (metadata-driven, like Episodes)
-    all_tracks = Track.objects.filter(album=album).order_by("disc_number", "track_number", "title")
-
-    # Get user's Music entries for these tracks
-    user_music_by_track = {}
-    user_music_entries = Music.objects.filter(
-        user=request.user,
-        album=album,
-    ).select_related("item", "track")
-
-    for music in user_music_entries:
-        if music.track_id:
-            user_music_by_track[music.track_id] = music
-        # Also index by recording ID for legacy data
-        if music.item and music.item.media_id:
-            user_music_by_track[f"recording_{music.item.media_id}"] = music
-
-    # Build track data with user's tracking info (like Episodes)
-    tracks_with_data = []
-    total_duration_ms = 0
-    
-    # Get collection entries for all tracks in one query (if user is authenticated)
-    from app.models import CollectionEntry
-    
-    collection_entries_by_item_id = {}
-    if request.user.is_authenticated:
-        # Get all item IDs from music entries
-        music_item_ids = [m.item_id for m in user_music_entries if m.item_id]
-        if music_item_ids:
-            # Fetch all collection entries for these items in one query
-            collection_entries = CollectionEntry.objects.filter(
-                user=request.user,
-                item_id__in=music_item_ids,
-            ).order_by("-collected_at", "-id")
-            for collection_entry in collection_entries:
-                collection_entries_by_item_id.setdefault(collection_entry.item_id, collection_entry)
-    
-    for track in all_tracks:
-        # Look up user's Music entry for this track
-        music_entry = user_music_by_track.get(track.id)
-        if not music_entry and track.musicbrainz_recording_id:
-            music_entry = user_music_by_track.get(f"recording_{track.musicbrainz_recording_id}")
-
-        # Get collection entry for this track
-        collection_entry = None
-        if music_entry and music_entry.item_id:
-            collection_entry = collection_entries_by_item_id.get(music_entry.item_id)
-
-        track_data = {
-            "track": track,
-            "music": music_entry,
-            "history": list(music_entry.history.all().order_by("-end_date")) if music_entry else [],
-            "collection_entry": collection_entry,
-        }
-        tracks_with_data.append(track_data)
-        if track.duration_ms:
-            total_duration_ms += track.duration_ms
-
-    # Count tracks in library
-    library_track_count = sum(1 for t in tracks_with_data if t["music"])
-
-    # History summary for this album (like Season history)
-    history_stats = user_music_entries.aggregate(
-        first_listened=Min("start_date"),
-        last_listened=Max("end_date"),
-    )
-
-    # Get the current/primary Music instance for this album (most recently updated)
-    current_instance = user_music_entries.order_by("-end_date", "-start_date").first()
-
-    # Get user's tracker for this album
-    from app.models import AlbumTracker
-    album_tracker = AlbumTracker.objects.filter(
-        user=request.user, album=album,
-    ).first()
-
-    # Calculate total runtime
-    total_runtime = None
-    if total_duration_ms:
-        total_minutes = total_duration_ms // 60000
-        if total_minutes >= 60:
-            hours = total_minutes // 60
-            minutes = total_minutes % 60
-            total_runtime = f"{hours}h {minutes}m"
-        else:
-            total_runtime = f"{total_minutes}m"
-
-    # Album details (like Season details)
-    album_details = {
-        "format": album.release_type or "Album",
-        "release_date": album.release_date,
-        "tracks": len(tracks_with_data),
-        "runtime": total_runtime,
-    }
-    # Show either release_id or release_group_id for the source link
-    if album.musicbrainz_release_id:
-        album_details["musicbrainz_id"] = album.musicbrainz_release_id
-        album_details["musicbrainz_url"] = f"https://musicbrainz.org/release/{album.musicbrainz_release_id}"
-    elif album.musicbrainz_release_group_id:
-        album_details["musicbrainz_id"] = album.musicbrainz_release_group_id
-        album_details["musicbrainz_url"] = f"https://musicbrainz.org/release-group/{album.musicbrainz_release_group_id}"
-
-    # Get collection metadata for this album (aggregated from tracks)
-    from app.helpers import get_album_collection_metadata
-    collection_metadata = get_album_collection_metadata(request.user, album)
-
-    context = {
-        "user": request.user,
-        "album": album,
-        "tracks": tracks_with_data,  # All tracks from metadata
-        "library_track_count": library_track_count,
-        "total_tracks": len(tracks_with_data),
-        "history_stats": history_stats,
-        "current_instance": current_instance,
-        "album_details": album_details,
-        "total_runtime": total_runtime,
-        "has_mb_identity": has_mb_identity,  # For template to show correct message
-        "album_tracker": album_tracker,  # User's tracking for this album
-        "collection_metadata": collection_metadata,  # Collection metadata aggregated from tracks
-    }
-    return render(request, "app/music_album_detail.html", context)
+    return redirect(_music_album_detail_url(album))
 
 
 @require_POST
@@ -8920,34 +10373,26 @@ def sync_artist_discography_view(request, artist_id):
 
 
 def artist_track_modal(request, artist_id):
-    """Return the tracking form modal for an artist - mirrors TV's track_modal."""
+    """Return the shared tracking form modal for a music artist."""
     from django.shortcuts import get_object_or_404
 
     from app.forms import ArtistTrackerForm
     from app.models import ArtistTracker
 
     artist = get_object_or_404(Artist, id=artist_id)
-    return_url = request.GET.get("return_url", "")
-
-    # Get existing tracker if any
     tracker = ArtistTracker.objects.filter(user=request.user, artist=artist).first()
-
-    initial_data = {"artist_id": artist.id}
     form = ArtistTrackerForm(
         instance=tracker,
-        initial=initial_data,
+        initial={"artist_id": artist.id},
         user=request.user,
     )
-
-    return render(
+    return _render_music_tracker_modal(
         request,
-        "app/components/artist_track_modal.html",
-        {
-            "artist": artist,
-            "tracker": tracker,
-            "form": form,
-            "return_url": return_url,
-        },
+        title=artist.name,
+        tracker=tracker,
+        form=form,
+        save_url=reverse("artist_save"),
+        delete_url=reverse("artist_delete"),
     )
 
 
@@ -8982,7 +10427,7 @@ def artist_save(request):
     next_url = request.GET.get("next", "")
     if next_url:
         return redirect(next_url)
-    return redirect("artist_detail", artist_id=artist.id)
+    return redirect(_music_artist_detail_url(artist))
 
 
 @require_POST
@@ -9007,7 +10452,7 @@ def artist_delete(request):
     next_url = request.GET.get("next", "")
     if next_url:
         return redirect(next_url)
-    return redirect("artist_detail", artist_id=artist.id)
+    return redirect(_music_artist_detail_url(artist))
 
 
 @require_GET
@@ -9064,35 +10509,13 @@ def podcast_show_detail(request, show_id):
 
 @require_GET
 def podcast_show_track_modal(request, show_id):
-    """Return the tracking form modal for a podcast show - mirrors artist_track_modal."""
+    """Return the tracking form modal for a podcast show."""
     from django.shortcuts import get_object_or_404
 
-    from app.forms import PodcastShowTrackerForm
-    from app.models import PodcastShow, PodcastShowTracker
+    from app.models import PodcastShow
 
     show = get_object_or_404(PodcastShow, id=show_id)
-    return_url = request.GET.get("return_url", "")
-
-    # Get existing tracker if any
-    tracker = PodcastShowTracker.objects.filter(user=request.user, show=show).first()
-
-    initial_data = {"show_id": show.id}
-    form = PodcastShowTrackerForm(
-        instance=tracker,
-        initial=initial_data,
-        user=request.user,
-    )
-
-    return render(
-        request,
-        "app/components/podcast_show_track_modal.html",
-        {
-            "show": show,
-            "tracker": tracker,
-            "form": form,
-            "return_url": return_url,
-        },
-    )
+    return _render_podcast_show_track_modal(request, show)
 
 
 @require_GET
@@ -9607,34 +11030,26 @@ def podcast_mark_all_played(request, show_id):
 
 
 def album_track_modal(request, album_id):
-    """Return the tracking form modal for an album - mirrors artist_track_modal."""
+    """Return the shared tracking form modal for a music album."""
     from django.shortcuts import get_object_or_404
 
     from app.forms import AlbumTrackerForm
     from app.models import AlbumTracker
 
     album = get_object_or_404(Album, id=album_id)
-    return_url = request.GET.get("return_url", "")
-
-    # Get existing tracker if any
     tracker = AlbumTracker.objects.filter(user=request.user, album=album).first()
-
-    initial_data = {"album_id": album.id}
     form = AlbumTrackerForm(
         instance=tracker,
-        initial=initial_data,
+        initial={"album_id": album.id},
         user=request.user,
     )
-
-    return render(
+    return _render_music_tracker_modal(
         request,
-        "app/components/album_track_modal.html",
-        {
-            "album": album,
-            "tracker": tracker,
-            "form": form,
-            "return_url": return_url,
-        },
+        title=album.title,
+        tracker=tracker,
+        form=form,
+        save_url=reverse("album_save"),
+        delete_url=reverse("album_delete"),
     )
 
 
@@ -9669,7 +11084,7 @@ def album_save(request):
     next_url = request.GET.get("next", "")
     if next_url:
         return redirect(next_url)
-    return redirect("album_detail", album_id=album.id)
+    return redirect(_music_album_detail_url(album))
 
 
 @require_POST
@@ -9694,7 +11109,7 @@ def album_delete(request):
     next_url = request.GET.get("next", "")
     if next_url:
         return redirect(next_url)
-    return redirect("album_detail", album_id=album.id)
+    return redirect(_music_album_detail_url(album))
 
 
 @require_POST
@@ -9804,7 +11219,7 @@ def song_save(request):
     next_url = request.GET.get("next", "")
     if next_url:
         return redirect(next_url)
-    return redirect("album_detail", album_id=album.id)
+    return redirect(_music_album_detail_url(album))
 
 
 @require_POST
@@ -11856,6 +13271,12 @@ def tags_modal(
 
     from django.db import models as db_models
 
+    preview_genres = _parse_detail_tag_preview_genres(
+        request.GET.get("preview_genres_json"),
+    )
+    if not preview_genres:
+        preview_genres = _resolve_detail_tag_genres({}, item)
+
     user_tags = (
         Tag.objects.filter(user=request.user)
         .annotate(
@@ -11872,13 +13293,19 @@ def tags_modal(
     return render(
         request,
         "app/components/fill_tags.html",
-        {"item": item, "user_tags": user_tags},
+        {
+            "item": item,
+            "user_tags": user_tags,
+            "preview_genres_json": json.dumps(preview_genres),
+        },
     )
 
 
 @require_POST
 def tag_item_toggle(request):
     """Add or remove a tag from an item."""
+    from django.template.loader import render_to_string
+
     item_id = request.POST["item_id"]
     tag_id = request.POST["tag_id"]
 
@@ -11893,16 +13320,42 @@ def tag_item_toggle(request):
         ItemTag.objects.create(tag=tag, item=item)
         has_tag = True
 
-    return render(
-        request,
-        "app/components/tag_item_button.html",
-        {"tag": tag, "item": item, "has_tag": has_tag},
+    preview_genres = _parse_detail_tag_preview_genres(
+        request.POST.get("preview_genres_json"),
     )
+    preview_sections = _build_detail_tag_sections(
+        {},
+        item,
+        request.user,
+        fallback_genres=preview_genres,
+    )
+    button_html = render_to_string(
+        "app/components/tag_item_button.html",
+        {
+            "tag": tag,
+            "item": item,
+            "has_tag": has_tag,
+            "preview_genres_json": json.dumps(preview_genres),
+        },
+        request=request,
+    )
+    preview_html = render_to_string(
+        "app/components/detail_tag_preview.html",
+        {
+            "preview_id": app_tags.component_id("tag-preview", item),
+            "detail_tag_sections": preview_sections,
+            "swap_oob": True,
+        },
+        request=request,
+    )
+    return HttpResponse(button_html + preview_html)
 
 
 @require_POST
 def tag_create(request):
     """Create a new tag for the user and optionally apply it to an item."""
+    from django.template.loader import render_to_string
+
     name = (request.POST.get("name") or "").strip()
     item_id = request.POST.get("item_id")
 
@@ -11930,6 +13383,10 @@ def tag_create(request):
 
         from django.db import models as db_models
 
+        preview_genres = _parse_detail_tag_preview_genres(
+            request.POST.get("preview_genres_json"),
+        )
+
         user_tags = (
             Tag.objects.filter(user=request.user)
             .annotate(
@@ -11943,10 +13400,29 @@ def tag_create(request):
             .order_by("name")
         )
 
-        return render(
-            request,
+        modal_html = render_to_string(
             "app/components/fill_tags.html",
-            {"item": item, "user_tags": user_tags},
+            {
+                "item": item,
+                "user_tags": user_tags,
+                "preview_genres_json": json.dumps(preview_genres),
+            },
+            request=request,
         )
+        preview_html = render_to_string(
+            "app/components/detail_tag_preview.html",
+            {
+                "preview_id": app_tags.component_id("tag-preview", item),
+                "detail_tag_sections": _build_detail_tag_sections(
+                    {},
+                    item,
+                    request.user,
+                    fallback_genres=preview_genres,
+                ),
+                "swap_oob": True,
+            },
+            request=request,
+        )
+        return HttpResponse(modal_html + preview_html)
 
     return HttpResponse(status=204)

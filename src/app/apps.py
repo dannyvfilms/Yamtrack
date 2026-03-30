@@ -54,6 +54,9 @@ class AppConfig(AppConfig):
         ):
             self._schedule_discover_startup_warmup()
 
+        if not settings.TESTING and not is_celery_worker:
+            self._schedule_trakt_popularity_reconcile()
+
     def _add_startup_cache_key(self, cache_key: str) -> bool:
         """Return whether a once-per-day startup task can be scheduled."""
         try:
@@ -84,3 +87,49 @@ class AppConfig(AppConfig):
             logger.info("Scheduled Discover startup warmup")
         except Exception as error:  # noqa: BLE001
             logger.warning("Failed to schedule Discover startup warmup: %s", error)
+
+    def _schedule_trakt_popularity_reconcile(self):
+        """Schedule Trakt popularity reconciliation on startup.
+
+        Fires immediately when the formula version advances; once per day otherwise
+        for catch-up.  Cache keys are only written after the task is successfully
+        queued so a broker hiccup at startup never silently blocks future restarts.
+        """
+        try:
+            from app.services.trakt_popularity import TRAKT_POPULARITY_SCORE_VERSION
+
+            version_key = f"trakt_popularity_reconciled_v{TRAKT_POPULARITY_SCORE_VERSION}"
+            daily_key = "trakt_popularity_reconcile_daily"
+
+            version_status = cache.get(version_key)   # None | "pending" | "done"
+            daily_status = cache.get(daily_key)        # None | 1
+
+            version_done = version_status == "done"
+            version_pending = version_status == "pending"
+
+            if version_done and daily_status:
+                return  # Already reconciled this version; daily catch-up also ran
+
+            if version_pending and daily_status:
+                return  # Task queued in the last 5 minutes; don't queue again
+
+            is_version_recompute = not version_done
+
+            tasks = import_module("app.tasks")
+            tasks.reconcile_trakt_popularity.apply_async(
+                kwargs={"score_version": TRAKT_POPULARITY_SCORE_VERSION},
+                countdown=0 if is_version_recompute else 30,
+            )
+
+            # Set keys only after successful queue so a failed apply_async
+            # doesn't permanently block the next restart from trying again.
+            if is_version_recompute:
+                cache.set(version_key, "pending", timeout=300)
+            cache.set(daily_key, 1, timeout=86400)
+
+            logger.info(
+                "Scheduled Trakt popularity reconcile (version_trigger=%s)",
+                is_version_recompute,
+            )
+        except Exception as error:  # noqa: BLE001
+            logger.warning("Failed to schedule Trakt popularity reconcile: %s", error)

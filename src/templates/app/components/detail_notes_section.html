@@ -1,0 +1,100 @@
+{% load app_tags %}
+
+{% with notes_modal_id=notes_entry.id|stringformat:"s"|add:"-notes" notes_content_id=notes_entry.id|stringformat:"s"|add:"-notes-content" %}
+  {% if detail_notes_target_id %}
+    {% with notes_modal_target_id=detail_notes_target_id %}
+  {{ notes_entry.notes|json_script:notes_content_id }}
+  <section class="mb-8">
+    <div class="mb-4 flex items-center gap-2">
+      <h2 class="text-xl font-bold">Your Notes</h2>
+      <div x-data="{ trackOpen: false }" class="shrink-0">
+        <button type="button"
+                class="inline-flex items-center justify-center rounded-md p-1.5 text-gray-300 transition-colors duration-200 hover:bg-gray-700 hover:text-white cursor-pointer"
+                title="Edit notes"
+                aria-label="Edit notes"
+                hx-get="{% if detail_notes_modal_url %}{{ detail_notes_modal_url }}{% else %}{% media_view_url 'track_modal' media %}{% endif %}?instance_id={{ notes_entry.id }}&return_url={{ request.get_full_path|urlencode }}"
+                hx-target="#{{ notes_modal_target_id }}"
+                hx-trigger="click"
+                @click="trackOpen = true">
+          {% include "app/icons/edit.svg" with classes="w-4 h-4" %}
+        </button>
+
+        <div x-show="trackOpen"
+             @keydown.escape.window="trackOpen = false"
+             class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
+               style="width: min(96vw, 72rem);"
+               @click.outside="trackOpen = false">
+            <div id="{{ notes_modal_target_id }}"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div x-data="{ isExpanded: false, isClamped: false, checkClamp() { const element = this.$refs.notesPreview; this.isClamped = element.scrollHeight > element.clientHeight; } }"
+         x-init="$nextTick(() => checkClamp())">
+      <div x-ref="notesPreview"
+           data-markdown-preview
+           data-markdown-source="{{ notes_content_id }}"
+           style="max-height: 12rem; overflow: hidden;"
+           :style="isExpanded ? 'max-height: none; overflow: visible;' : 'max-height: 12rem; overflow: hidden;'"
+           class="rounded-lg border border-gray-700 bg-[#2a2f35] p-4 text-sm text-gray-200"></div>
+      <div class="mt-3 flex items-center gap-2">
+        <button x-show="isClamped"
+                @click="isExpanded = !isExpanded"
+                class="text-sm text-indigo-400 transition-colors hover:text-indigo-300 focus:outline-none cursor-pointer">
+          <span x-text="isExpanded ? 'Show less' : 'Show more'"></span>
+        </button>
+      </div>
+    </div>
+  </section>
+    {% endwith %}
+  {% else %}
+    {% component_id 'track' media notes_modal_id as notes_modal_target_id %}
+  {{ notes_entry.notes|json_script:notes_content_id }}
+  <section class="mb-8">
+    <div class="mb-4 flex items-center gap-2">
+      <h2 class="text-xl font-bold">Your Notes</h2>
+      <div x-data="{ trackOpen: false }" class="shrink-0">
+        <button type="button"
+                class="inline-flex items-center justify-center rounded-md p-1.5 text-gray-300 transition-colors duration-200 hover:bg-gray-700 hover:text-white cursor-pointer"
+                title="Edit notes"
+                aria-label="Edit notes"
+                hx-get="{% media_view_url 'track_modal' media %}?instance_id={{ notes_entry.id }}&return_url={{ request.get_full_path|urlencode }}"
+                hx-target="#{{ notes_modal_target_id }}"
+                hx-trigger="click"
+                @click="trackOpen = true">
+          {% include "app/icons/edit.svg" with classes="w-4 h-4" %}
+        </button>
+
+        <div x-show="trackOpen"
+             @keydown.escape.window="trackOpen = false"
+             class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
+               style="width: min(96vw, 72rem);"
+               @click.outside="trackOpen = false">
+            <div id="{{ notes_modal_target_id }}"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div x-data="{ isExpanded: false, isClamped: false, checkClamp() { const element = this.$refs.notesPreview; this.isClamped = element.scrollHeight > element.clientHeight; } }"
+         x-init="$nextTick(() => checkClamp())">
+      <div x-ref="notesPreview"
+           data-markdown-preview
+           data-markdown-source="{{ notes_content_id }}"
+           style="max-height: 12rem; overflow: hidden;"
+           :style="isExpanded ? 'max-height: none; overflow: visible;' : 'max-height: 12rem; overflow: hidden;'"
+           class="rounded-lg border border-gray-700 bg-[#2a2f35] p-4 text-sm text-gray-200"></div>
+      <div class="mt-3 flex items-center gap-2">
+        <button x-show="isClamped"
+                @click="isExpanded = !isExpanded"
+                class="text-sm text-indigo-400 transition-colors hover:text-indigo-300 focus:outline-none cursor-pointer">
+          <span x-text="isExpanded ? 'Show less' : 'Show more'"></span>
+        </button>
+      </div>
+    </div>
+  </section>
+  {% endif %}
+{% endwith %}

@@ -10,6 +10,10 @@
     {% endif %}
   {% endif %}
 {% else %}
-  {{ media.formatted_progress }}
-  {% if media.max_progress %}/ {{ media.max_progress }}{% endif %}
+  {% if media.progress is not None %}
+    {{ media.formatted_progress|default:media.progress }}
+    {% if media.max_progress %}/ {{ media.max_progress }}{% endif %}
+  {% else %}
+    <span class="text-gray-500">-</span>
+  {% endif %}
 {% endif %}

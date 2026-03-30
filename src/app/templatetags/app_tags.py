@@ -342,6 +342,136 @@ def alternative_title(item, user):
     return alternative
 
 
+def _resolve_music_artist_url_target(value):
+    """Resolve a music-artist-like value into an object or dict with id/name."""
+    if not value:
+        return None
+
+    if isinstance(value, dict):
+        nested_artist = value.get("artist")
+        if nested_artist:
+            return _resolve_music_artist_url_target(nested_artist)
+        if value.get("id") is not None and value.get("name"):
+            return value
+        return None
+
+    nested_artist = getattr(value, "artist", None)
+    if nested_artist is not None and not (
+        getattr(value, "id", None) is not None and getattr(value, "name", None)
+    ):
+        return _resolve_music_artist_url_target(nested_artist)
+
+    if getattr(value, "id", None) is not None and getattr(value, "name", None):
+        return value
+
+    return None
+
+
+def _resolve_music_album_url_target(value):
+    """Resolve a music-album-like value into an object or dict with id/title."""
+    if not value:
+        return None
+
+    if isinstance(value, dict):
+        if value.get("album_id") is not None and value.get("album"):
+            return {
+                "id": value.get("album_id"),
+                "title": value.get("album"),
+                "artist_id": value.get("album_artist_id"),
+                "artist_name": value.get("album_artist_name"),
+            }
+        nested_album = value.get("album")
+        if isinstance(nested_album, dict):
+            return _resolve_music_album_url_target(nested_album)
+        if value.get("id") is not None and value.get("title"):
+            return value
+        return None
+
+    nested_album = getattr(value, "album", None)
+    if nested_album is not None and not (
+        getattr(value, "id", None) is not None and getattr(value, "title", None)
+    ):
+        return _resolve_music_album_url_target(nested_album)
+
+    if getattr(value, "id", None) is not None and getattr(value, "title", None):
+        return value
+
+    return None
+
+
+def _music_slug(value, fallback):
+    """Return a stable slug with a safe fallback."""
+    normalized = slug(value or "")
+    if normalized:
+        return normalized
+    fallback_value = str(fallback or "item")
+    return slug(fallback_value) or "item"
+
+
+@register.filter
+def music_artist_url(artist):
+    """Return the canonical shared media-details URL for a music artist."""
+    resolved_artist = _resolve_music_artist_url_target(artist)
+    if not resolved_artist:
+        return ""
+
+    if isinstance(resolved_artist, dict):
+        artist_id = resolved_artist.get("id")
+        artist_name = resolved_artist.get("name")
+    else:
+        artist_id = resolved_artist.id
+        artist_name = resolved_artist.name
+
+    if artist_id is None:
+        return ""
+
+    return reverse(
+        "music_artist_details",
+        kwargs={
+            "artist_id": artist_id,
+            "artist_slug": _music_slug(artist_name, artist_id),
+        },
+    )
+
+
+@register.filter
+def music_album_url(album):
+    """Return the canonical shared media-details URL for a music album."""
+    resolved_album = _resolve_music_album_url_target(album)
+    if not resolved_album:
+        return ""
+
+    if isinstance(resolved_album, dict):
+        album_id = resolved_album.get("id")
+        album_title = resolved_album.get("title")
+        artist = resolved_album.get("artist")
+        artist_id = resolved_album.get("artist_id")
+        artist_name = resolved_album.get("artist_name")
+    else:
+        album_id = resolved_album.id
+        album_title = resolved_album.title
+        artist = getattr(resolved_album, "artist", None)
+        artist_id = getattr(artist, "id", None)
+        artist_name = getattr(artist, "name", None)
+
+    if isinstance(artist, dict):
+        artist_id = artist.get("id", artist_id)
+        artist_name = artist.get("name", artist_name)
+
+    if album_id is None:
+        return ""
+
+    return reverse(
+        "music_album_details",
+        kwargs={
+            "artist_id": artist_id or 0,
+            "artist_slug": _music_slug(artist_name or "Unknown Artist", artist_id or "artist"),
+            "album_id": album_id,
+            "album_slug": _music_slug(album_title, album_id),
+        },
+    )
+
+
 @register.filter
 def release_year(item, media=None):
     """Return a best-effort release year from dicts or model instances."""

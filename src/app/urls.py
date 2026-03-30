@@ -20,6 +20,16 @@ urlpatterns = [
     ),
     path("search", views.media_search, name="search"),
     path(
+        "details/music/artist/<int:artist_id>/<slug:artist_slug>/",
+        views.music_artist_details,
+        name="music_artist_details",
+    ),
+    path(
+        "details/music/artist/<int:artist_id>/<slug:artist_slug>/album/<int:album_id>/<slug:album_slug>/",
+        views.music_album_details,
+        name="music_album_details",
+    ),
+    path(
         "details/<source:source>/tv/<str:media_id>/<str:title>/season/<int:season_number>",
         views.season_details,
         name="season_details",
@@ -33,6 +43,11 @@ urlpatterns = [
         "update-score/<media_type:media_type>/<int:instance_id>",
         views.update_media_score,
         name="update_media_score",
+    ),
+    path(
+        "update-episode-score/<int:season_id>/<int:episode_number>",
+        views.update_episode_score,
+        name="update_episode_score",
     ),
     path(
         "details/sync/<source:source>/<media_type:media_type>/<path:media_id>/<int:season_number>",
@@ -77,6 +92,7 @@ urlpatterns = [
     path("media_save", views.media_save, name="media_save"),
     path("media_delete", views.media_delete, name="media_delete"),
     path("episode_save", views.episode_save, name="episode_save"),
+    path("episode_bulk_save", views.episode_bulk_save, name="episode_bulk_save"),
     path(
         "history_modal/<source:source>/<media_type:media_type>/<path:media_id>/<int:season_number>/<int:episode_number>",
         views.history_modal,

@@ -1,0 +1,330 @@
+{% load app_tags %}
+{% load user_tags %}
+{% load humanize %}
+{% load static %}
+
+<div class="flex flex-col md:flex-row gap-8 md:gap-10 mb-12 md:mb-8">
+  <div class="w-full md:w-1/4 max-w-[250px] mx-auto md:mx-0">
+    {% if artist.image and artist.image != IMG_NONE %}
+      <img alt="{{ artist.name }}"
+           class="w-full rounded-lg shadow-lg bg-[#2a2f35] object-cover"
+           src="{{ artist.image }}">
+    {% else %}
+      <div class="w-full aspect-square rounded-lg shadow-lg bg-[#2a2f35] flex items-center justify-center">
+        {% icon 'music' is_active=False extra_classes="w-24 h-24 text-gray-500" %}
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="md:w-3/4">
+    <div class="mb-1 text-center md:text-start">
+      <h1 class="text-3xl font-bold">{{ artist.name }}</h1>
+    </div>
+
+    {% if music_artist_activity_subtitle %}
+      <div class="mb-3 flex flex-wrap items-center justify-center gap-y-1 text-center text-sm font-medium text-gray-400 md:justify-start md:text-start">
+        {% if music_artist_activity_subtitle.primary_text %}
+          <span>{{ music_artist_activity_subtitle.primary_text }}</span>
+        {% endif %}
+        {% if music_artist_activity_subtitle.date_start or music_artist_activity_subtitle.date_end %}
+          {% if music_artist_activity_subtitle.primary_text %}
+            <span class="mx-2 text-gray-600">•</span>
+          {% endif %}
+          <span>
+            {% if music_artist_activity_subtitle.date_start and music_artist_activity_subtitle.date_end %}
+              {% if music_artist_activity_subtitle.collapse_same_day or music_artist_activity_subtitle.date_start == music_artist_activity_subtitle.date_end %}
+                {{ music_artist_activity_subtitle.date_start|user_date_format:user }}
+              {% else %}
+                {{ music_artist_activity_subtitle.date_start|user_date_format:user }} - {{ music_artist_activity_subtitle.date_end|user_date_format:user }}
+              {% endif %}
+            {% elif music_artist_activity_subtitle.date_start %}
+              {{ music_artist_activity_subtitle.date_start|user_date_format:user }}
+            {% else %}
+              {{ music_artist_activity_subtitle.date_end|user_date_format:user }}
+            {% endif %}
+          </span>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    {% if music_artist_rating.rating or artist_tracker %}
+      <div class="mt-4 mb-5 flex flex-wrap gap-2">
+        {% if music_artist_rating.rating %}
+          <div class="inline-flex h-8 items-center gap-2 rounded-full border border-rose-400/18 bg-rose-500/[0.07] pl-0 pr-3 text-sm text-white shadow-sm">
+            <span class="sr-only">MusicBrainz score</span>
+            <span class="-my-px -ml-px flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-rose-400/28 bg-rose-500/14">
+              <span class="text-[9px] font-black tracking-[0.12em] text-rose-100">MB</span>
+            </span>
+            <span class="text-sm font-semibold text-white">{{ music_artist_rating.rating|floatformat:1 }}</span>
+            <span class="text-sm text-gray-500">|</span>
+            <span class="text-sm text-gray-300">{{ music_artist_rating.rating_count|intcomma }} vote{{ music_artist_rating.rating_count|pluralize }}</span>
+          </div>
+        {% endif %}
+
+        {% if artist_tracker %}
+          <div x-data="{ showRatingPopup: false, rating: {{ artist_tracker.score|score_display:user|default:'null' }}, ratingScaleMax: {{ user|rating_scale_max }}, hoverRating: null, isHovering: false, formatRating(value) { if (value === null || value === undefined || value === '') { return ''; } return this.ratingScaleMax === 5 ? String(value) + '/5' : String(value); } }"
+               class="relative">
+            <button type="button"
+                    @click="showRatingPopup = !showRatingPopup"
+                    class="inline-flex h-8 items-center gap-2 rounded-full border border-amber-400/18 bg-amber-500/[0.07] pl-0 pr-3 text-sm text-white shadow-sm transition-colors duration-200 hover:border-amber-300/28 hover:bg-amber-500/[0.11]">
+              <span class="sr-only">Your score</span>
+              <span class="-my-px -ml-px flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-amber-400/28 bg-amber-500/14">
+                {% include "app/icons/star.svg" with classes="h-4 w-4 text-yellow-400 fill-yellow-400" %}
+              </span>
+              <span class="inline-flex items-center gap-2">
+                <span class="text-sm font-semibold text-white {% if artist_tracker.score is None %}hidden{% endif %}"
+                      :class="rating ? '' : 'hidden'"
+                      x-text="formatRating(rating)">{% if artist_tracker.score is not None %}{% if user|rating_scale_max == 5 %}{{ artist_tracker.score|score_display:user }}/5{% else %}{{ artist_tracker.score|score_display:user }}{% endif %}{% endif %}</span>
+                <span class="text-sm text-gray-500 {% if artist_tracker.score is None %}hidden{% endif %}"
+                      :class="rating ? '' : 'hidden'">|</span>
+                <span class="text-sm font-medium text-gray-200"
+                      x-text="rating ? 'Edit rating' : 'Add rating'">{% if artist_tracker.score is not None %}Edit rating{% else %}Add rating{% endif %}</span>
+              </span>
+            </button>
+
+            <div x-show="showRatingPopup"
+                 @click.outside="showRatingPopup = false; isHovering = false"
+                 class="absolute left-0 top-full mt-2 w-[250px] rounded-lg border border-gray-700 bg-[#2a2f35] p-3 shadow-lg z-10"
+                 @mouseenter="isHovering = true"
+                 @mouseleave="isHovering = false; hoverRating = null">
+              <div class="flex justify-between mb-1">
+                {% with rating_range=user|rating_scale_max|get_range %}
+                  {% for rating_value in rating_range %}
+                    <button @click="if (rating === {{ rating_value }}) { rating = null; } else { rating = {{ rating_value }}; } showRatingPopup = false; isHovering = false"
+                            @mouseenter="hoverRating = {{ rating_value }}"
+                            hx-post="{% url 'update_artist_score' artist.id %}"
+                            hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+                            hx-vals='{"score": {{ rating_value }} }'
+                            hx-trigger="click"
+                            hx-swap="none"
+                            class="focus:outline-none flex flex-col items-center cursor-pointer">
+                      <div :class="{ 'text-yellow-400': {{ rating_value }} <= (isHovering ? hoverRating : rating), 'text-gray-600': {{ rating_value }} > (isHovering ? hoverRating : rating) }">
+                        {% include "app/icons/star.svg" with classes="w-5 h-5 hover:scale-110 transition-transform" %}
+                      </div>
+                      <span class="text-xs mt-1 text-gray-400">{{ rating_value }}</span>
+                    </button>
+                  {% endfor %}
+                {% endwith %}
+              </div>
+            </div>
+          </div>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    <div class="{% if not music_artist_activity_subtitle and not music_artist_rating.rating and not artist_tracker %}mt-5 {% endif %}mb-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+      <div x-data="{ trackOpen: false }" class="sm:shrink-0">
+        <button type="button"
+                class="inline-flex w-full items-center justify-center gap-3 rounded-xl px-5 py-3 text-white shadow-sm transition duration-300 cursor-pointer sm:w-auto {% if detail_primary_action.active %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}"
+                hx-get="{{ detail_primary_action.modal_url }}"
+                hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
+                hx-target="#{{ detail_primary_action.target_id }}"
+                hx-trigger="click"
+                @click="trackOpen = true">
+          {% include "app/icons/edit.svg" with classes="w-5 h-5 shrink-0" %}
+          <span class="font-medium">{{ detail_primary_action.label }}</span>
+        </button>
+
+        <div x-show="trackOpen"
+             @keydown.escape.window="trackOpen = false"
+             class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div class="modal-max-height overflow-y-auto px-4 md:px-0 relative z-60 w-full"
+               style="width: min(96vw, 72rem);"
+               @click.outside="trackOpen = false"
+               @click.stop>
+            <div id="{{ detail_primary_action.target_id }}"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2">
+        {% if detail_link_sections %}
+          <div x-data="{ linksOpen: false, linksPinned: false }"
+               class="relative"
+               @mouseenter="linksOpen = true"
+               @mouseleave="if (!linksPinned) linksOpen = false"
+               @keydown.escape.window="linksOpen = false; linksPinned = false"
+               @click.outside="linksOpen = false; linksPinned = false">
+            <button class="size-11 inline-flex items-center justify-center shrink-0 rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer"
+                    title="View source and external links"
+                    aria-haspopup="true"
+                    :aria-expanded="linksOpen.toString()"
+                    @click="linksPinned = !linksPinned; linksOpen = linksPinned">{% include "app/icons/link.svg" with classes="w-4 h-4" %}</button>
+
+            <div x-show="linksOpen"
+                 x-cloak
+                 x-transition:enter="transition ease-out duration-150"
+                 x-transition:enter-start="opacity-0 -translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0"
+                 x-transition:leave="transition ease-in duration-100"
+                 x-transition:leave-start="opacity-100 translate-y-0"
+                 x-transition:leave-end="opacity-0 -translate-y-1"
+                 class="absolute left-0 top-full z-20 mt-3 w-80 max-w-[calc(100vw-2rem)] rounded-2xl border border-white/10 bg-[#20252b]/95 p-3 shadow-2xl backdrop-blur-sm">
+              {% for detail_link_section in detail_link_sections %}
+                <div class="{% if not forloop.first %}mt-3 border-t border-white/10 pt-3{% endif %}">
+                  <div class="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-gray-400">{{ detail_link_section.title }}</div>
+                  <div class="flex flex-wrap gap-2">
+                    {% for detail_link in detail_link_section.entries %}
+                      <a href="{{ detail_link.url }}"
+                         target="_blank"
+                         rel="noreferrer"
+                         class="inline-flex h-8 items-center gap-2 rounded-full border {{ detail_link.chip_classes }} pl-0 pr-3 text-sm text-white shadow-sm transition-colors duration-200 hover:brightness-110">
+                        <span class="-my-px -ml-px flex h-8 w-8 shrink-0 items-center justify-center rounded-full border {{ detail_link.badge_classes }}">
+                          {% if detail_link.logo_src %}
+                            <img src="{{ detail_link.logo_src }}"
+                                 alt=""
+                                 aria-hidden="true"
+                                 class="h-4 w-4 object-contain">
+                          {% else %}
+                            <span class="text-[9px] font-black tracking-[0.12em] {{ detail_link.accent_classes }}">{{ detail_link.fallback_text|slice:":4" }}</span>
+                          {% endif %}
+                        </span>
+                        <span class="text-sm font-medium text-white">{{ detail_link.label }}</span>
+                      </a>
+                    {% endfor %}
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          </div>
+        {% endif %}
+
+        {% for action in detail_secondary_actions %}
+          {% if action.kind == "link" %}
+            <a class="size-11 inline-flex items-center justify-center shrink-0 rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer"
+               title="{{ action.title }}"
+               href="{{ action.url }}">
+              {% if action.icon == "history" %}
+                {% include "app/icons/history.svg" with classes="w-4 h-4" %}
+              {% endif %}
+            </a>
+          {% else %}
+            <button type="button"
+                    title="{{ action.title }}"
+                    class="size-11 inline-flex items-center justify-center shrink-0 rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer disabled:opacity-75 {% if action.button_classes %}{{ action.button_classes }}{% endif %}"
+                    hx-post="{{ action.hx_post }}"
+                    hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+                    hx-swap="none"
+                    {% if action.confirm %}hx-confirm="{{ action.confirm }}"{% endif %}
+                    x-data="{ loading: false }"
+                    @click="loading = true"
+                    :disabled="loading">
+              <div :class="{ 'animate-spin': loading }">
+                {% if action.icon == "circle-spinning-clockwise" %}
+                  {% include "app/icons/circle-spinning-clockwise.svg" with classes="w-4 h-4" %}
+                {% elif action.icon == "trashcan" %}
+                  {% include "app/icons/trashcan.svg" with classes="w-4 h-4" %}
+                {% endif %}
+              </div>
+            </button>
+          {% endif %}
+        {% endfor %}
+      </div>
+    </div>
+
+    {% if media.synopsis %}
+      <div class="mb-6">
+        <div x-data="{ isExpanded: false, isClamped: false, checkClamp() { const element = this.$refs.synopsisText; this.isClamped = element.scrollHeight > element.clientHeight; } }"
+             x-init="$nextTick(() => checkClamp())">
+          <p x-ref="synopsisText"
+             :class="isExpanded ? '' : 'line-clamp-3'"
+             class="text-gray-300 text-pretty">{{ media.synopsis|linebreaksbr|safe }}</p>
+          <button x-show="isClamped"
+                  @click="isExpanded = !isExpanded"
+                  class="text-indigo-400 hover:text-indigo-300 text-sm mt-2 focus:outline-none transition-colors cursor-pointer">
+            <span x-text="isExpanded ? 'Show less' : 'Read more'"></span>
+          </button>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="flex flex-col md:flex-row gap-12 md:gap-10">
+  <div class="w-full md:w-1/4 md:max-w-[250px] mx-auto lg:mx-0">
+    <h2 class="text-xl font-bold mb-4">Details</h2>
+    <div class="bg-[#2a2f35] p-4 rounded-lg text-center md:text-start">
+      {% if music_artist_metadata.type %}
+        <div class="mb-4">
+          <h3 class="text-sm font-semibold text-gray-400">TYPE</h3>
+          <p class="text-gray-200">{{ music_artist_metadata.type }}</p>
+        </div>
+      {% endif %}
+      {% if music_artist_metadata.area or music_artist_metadata.country %}
+        <div class="mb-4">
+          <h3 class="text-sm font-semibold text-gray-400">ORIGIN</h3>
+          <p class="text-gray-200">{{ music_artist_metadata.area|default:music_artist_metadata.country }}</p>
+        </div>
+      {% endif %}
+      {% if music_artist_metadata.begin_date %}
+        <div class="mb-4">
+          <h3 class="text-sm font-semibold text-gray-400">{% if music_artist_metadata.type == 'Group' %}FORMED{% else %}BORN{% endif %}</h3>
+          <p class="text-gray-200">{{ music_artist_metadata.begin_date }}</p>
+        </div>
+      {% endif %}
+      {% if music_artist_metadata.end_date %}
+        <div class="mb-4">
+          <h3 class="text-sm font-semibold text-gray-400">{% if music_artist_metadata.type == 'Group' %}DISBANDED{% else %}DIED{% endif %}</h3>
+          <p class="text-gray-200">{{ music_artist_metadata.end_date }}</p>
+        </div>
+      {% endif %}
+      <div>
+        <h3 class="text-sm font-semibold text-gray-400">RELEASES</h3>
+        <p class="text-gray-200">{{ total_releases }}</p>
+      </div>
+    </div>
+
+    <h2 class="text-xl font-bold mb-4 mt-6">Collection</h2>
+    <div class="bg-[#2a2f35] p-4 rounded-lg text-center md:text-start">
+      <div class="mb-4">
+        <h3 class="text-sm font-semibold text-gray-400">COLLECTED ALBUMS</h3>
+        <p class="text-gray-200">
+          {{ collection_stats.collected_albums }}/{{ collection_stats.total_albums }}
+          {% if collection_stats.total_albums > 0 %}
+            {% widthratio collection_stats.collected_albums collection_stats.total_albums 100 as album_percentage %}
+            <span class="text-gray-400 mx-1">•</span>
+            <span>{{ album_percentage }}%</span>
+          {% endif %}
+        </p>
+      </div>
+      <div>
+        <h3 class="text-sm font-semibold text-gray-400">COLLECTED TRACKS</h3>
+        <p class="text-gray-200">
+          {{ collection_stats.collected_tracks }}/{{ collection_stats.total_tracks }}
+          {% if collection_stats.total_tracks > 0 %}
+            {% widthratio collection_stats.collected_tracks collection_stats.total_tracks 100 as track_percentage %}
+            <span class="text-gray-400 mx-1">•</span>
+            <span>{{ track_percentage }}%</span>
+          {% endif %}
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="w-full md:w-3/4">
+    {% if notes_entry %}
+      {% include "app/components/detail_notes_section.html" %}
+    {% endif %}
+
+    <section class="mb-8">
+      <h2 class="text-xl font-bold mb-4">Discography</h2>
+      {% if discography_groups %}
+        {% include "app/components/artist_discography_container.html" with discography_groups=discography_groups artist=artist missing_cover_count=missing_cover_count poll_for_covers=poll_for_covers only %}
+      {% else %}
+        <div class="bg-[#2a2f35] p-6 rounded-lg text-center">
+          <p class="text-gray-400">
+            {% if artist.musicbrainz_id %}
+              No releases found for this artist on MusicBrainz.
+            {% else %}
+              This artist doesn't have a MusicBrainz ID, so releases can't be populated automatically.
+            {% endif %}
+          </p>
+          <a href="{% url 'search' %}?q={{ artist.name|urlencode }}&media_type=music"
+             class="inline-block mt-4 px-4 py-2 bg-rose-600 text-white rounded-md hover:bg-rose-700 transition-colors">
+            Search for {{ artist.name }}
+          </a>
+        </div>
+      {% endif %}
+    </section>
+  </div>
+</div>

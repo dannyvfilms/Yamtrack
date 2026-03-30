@@ -35,32 +35,35 @@
   max-height: calc(100vh - 4rem);
 }
 
-/* Game/Boardgame stats cards: 3x2 grid on mobile, flex-wrap on desktop */
+/* Game/Boardgame stats cards: 3-column grid on mobile, flex-wrap on desktop */
 .stats-card-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: calc(var(--spacing) * 2);
 }
 
-/* Mobile order (3x2 grid) - only apply on mobile */
+/* Mobile order - only apply on mobile */
 @media (max-width: 47.999rem) {
   .stats-card-grid>[data-mobile-order="1"] {
-    order: 1; /* Source Score - row 1, col 1 */
+    order: 1;
   }
   .stats-card-grid>[data-mobile-order="2"] {
-    order: 2; /* First Played - row 1, col 2 */
+    order: 2;
   }
   .stats-card-grid>[data-mobile-order="3"] {
-    order: 3; /* Total Hours - row 1, col 3 */
+    order: 3;
   }
   .stats-card-grid>[data-mobile-order="4"] {
-    order: 4; /* Your Score - row 2, col 1 */
+    order: 4;
   }
   .stats-card-grid>[data-mobile-order="5"] {
-    order: 5; /* Last Played - row 2, col 2 */
+    order: 5;
   }
   .stats-card-grid>[data-mobile-order="6"] {
-    order: 6; /* Avg Time - row 2, col 3 */
+    order: 6;
+  }
+  .stats-card-grid>[data-mobile-order="7"] {
+    order: 7;
   }
 }
 
@@ -77,22 +80,25 @@
 
   /* Desktop order (grouped: scores, dates, time stats) */
   .stats-card-grid>[data-desktop-order="1"] {
-    order: 1; /* Source Score */
+    order: 1;
   }
   .stats-card-grid>[data-desktop-order="2"] {
-    order: 2; /* Your Score - group with Source Score */
+    order: 2;
   }
   .stats-card-grid>[data-desktop-order="3"] {
-    order: 3; /* First Played */
+    order: 3;
   }
   .stats-card-grid>[data-desktop-order="4"] {
-    order: 4; /* Last Played - group with First Played */
+    order: 4;
   }
   .stats-card-grid>[data-desktop-order="5"] {
-    order: 5; /* Total Hours */
+    order: 5;
   }
   .stats-card-grid>[data-desktop-order="6"] {
-    order: 6; /* Avg Time - group with Total Hours */
+    order: 6;
+  }
+  .stats-card-grid>[data-desktop-order="7"] {
+    order: 7;
   }
 }
 
@@ -117,6 +123,12 @@
   .media-grid-square {
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)) !important;
   }
+}
+
+.detail-media-grid {
+  display: grid;
+  gap: calc(var(--spacing) * 4);
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
 }
 
 /* Mobile default: active playback card spans all columns on very small screens */
@@ -471,12 +483,24 @@
     gap: calc(var(--spacing) * 3);
   }
 
+  .detail-media-grid {
+    gap: calc(var(--spacing) * 3);
+  }
+
   /* Mobile grid layout preference */
   [data-mobile-grid="comfortable"] .media-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   }
 
+  [data-mobile-grid="comfortable"] .detail-media-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
   [data-mobile-grid="compact"] .media-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  [data-mobile-grid="compact"] .detail-media-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
   }
 
@@ -561,6 +585,10 @@
   }
 
   .media-grid .p-3 {
+    padding: calc(var(--spacing) * 2);
+  }
+
+  .detail-media-grid .p-3 {
     padding: calc(var(--spacing) * 2);
   }
 

@@ -132,6 +132,31 @@ class Item(CalendarTriggerMixin, models.Model):
         blank=True,
         help_text="Rating count from provider metadata",
     )
+    trakt_rating = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Average rating value from Trakt metadata",
+    )
+    trakt_rating_count = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Rating count from Trakt metadata",
+    )
+    trakt_popularity_score = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Derived Trakt popularity score computed from rating and votes",
+    )
+    trakt_popularity_rank = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Estimated Trakt popularity rank derived from the local score model",
+    )
+    trakt_popularity_fetched_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When Trakt popularity metadata was last fetched",
+    )
     provider_keywords = models.JSONField(default=list, blank=True, help_text="Provider keywords")
     provider_certification = models.CharField(
         max_length=20,
@@ -630,10 +655,12 @@ class MetadataBackfillField(models.TextChoices):
     RELEASE = "release", "Release Date"
     DISCOVER = "discover", "Discover Metadata"
     GAME_LENGTHS = "game_lengths", "Game Lengths"
+    TRAKT_POPULARITY = "trakt_popularity", "Trakt Popularity"
 
 
 CREDITS_BACKFILL_VERSION = 2
 DISCOVER_MOVIE_METADATA_BACKFILL_VERSION = 1
+TRAKT_POPULARITY_BACKFILL_VERSION = 1
 
 
 class MetadataBackfillState(models.Model):
@@ -853,6 +880,7 @@ class MediaManager(models.Manager):
         """Return default direction for a sort key."""
         if sort_filter in (
             "author",
+            "popularity",
             "runtime",
             "start_date",
             "title",
@@ -937,24 +965,33 @@ class MediaManager(models.Manager):
 
     def _aggregate_duplicate_data(self, queryset, user, media_type):
         """Aggregate data from duplicate entries for each item."""
-        # Get all media entries for the user to aggregate data
+        # Collect the item_ids present in the current (deduplicated) queryset.
+        # Scoping to these ids avoids fetching all user items when a status filter
+        # is active — e.g. only 50 in-progress items out of 1000 total.
+        queried_item_ids = {media.item_id for media in queryset}
+
+        if not queried_item_ids:
+            return queryset
+
+        # Fetch ALL entries (across all statuses) for only the queried items.
+        # Using all statuses is intentional: an item filtered as IN_PROGRESS may have
+        # a more-recent COMPLETED entry that should determine its aggregated_status.
         model = apps.get_model(app_label="app", model_name=media_type)
-        all_media = model.objects.filter(user=user.id).select_related("item")
+        all_media = model.objects.filter(
+            user=user.id,
+            item_id__in=queried_item_ids,
+        ).select_related("item")
 
         # Group media by item_id
         media_by_item = {}
         for media in all_media:
-            item_id = media.item.id
-            if item_id not in media_by_item:
-                media_by_item[item_id] = []
-            media_by_item[item_id].append(media)
+            media_by_item.setdefault(media.item_id, []).append(media)
 
         # Aggregate data for each item in the queryset
         for media in queryset:
-            item_id = media.item.id
-            if item_id in media_by_item and len(media_by_item[item_id]) > 1:
-                # Aggregate data from all duplicates
-                self._aggregate_item_data(media, media_by_item[item_id])
+            entries = media_by_item.get(media.item_id, [])
+            if len(entries) > 1:
+                self._aggregate_item_data(media, entries)
 
         return queryset
 
@@ -1209,6 +1246,14 @@ class MediaManager(models.Manager):
                 models.F("item__release_datetime").asc(nulls_last=True)
                 if direction == "asc"
                 else models.F("item__release_datetime").desc(nulls_last=True)
+            )
+            return queryset.order_by(order, models.functions.Lower("item__title"))
+
+        if sort_filter == "popularity":
+            order = (
+                models.F("item__trakt_popularity_rank").asc(nulls_last=True)
+                if direction == "asc"
+                else models.F("item__trakt_popularity_rank").desc(nulls_last=True)
             )
             return queryset.order_by(order, models.functions.Lower("item__title"))
 
@@ -2107,6 +2152,10 @@ class Media(models.Model):
 
         abstract = True
         ordering = ["user", "item", "-created_at"]
+        indexes = [
+            models.Index(fields=["user", "status"]),
+            models.Index(fields=["user", "created_at"]),
+        ]
 
     def __str__(self):
         """Return the title of the media."""
@@ -2155,8 +2204,12 @@ class Media(models.Model):
         if self.progress < 0:
             self.progress = 0
         elif self.status == Status.IN_PROGRESS.value:
-            # For podcasts/music use local runtime data; other types use provider metadata.
-            if self.item.media_type in (MediaTypes.PODCAST.value, MediaTypes.MUSIC.value):
+            # Music and board games are play-count based; podcasts use local runtime data.
+            if self.item.media_type in (
+                MediaTypes.PODCAST.value,
+                MediaTypes.MUSIC.value,
+                MediaTypes.BOARDGAME.value,
+            ):
                 max_progress = self._get_local_max_progress()
             else:
                 try:
@@ -2189,8 +2242,8 @@ class Media(models.Model):
     def process_status(self):
         """Update fields depending on the status of the media."""
         if self.status == Status.COMPLETED.value:
-            # Music progress is play-count based; don't clamp/overwrite on status transitions.
-            if self.item.media_type == MediaTypes.MUSIC.value:
+            # Music and board game progress are play-count based; don't overwrite on status changes.
+            if self.item.media_type in (MediaTypes.MUSIC.value, MediaTypes.BOARDGAME.value):
                 max_progress = None
             # For podcasts, use runtime_minutes from Item instead of external metadata.
             elif self.item.media_type == MediaTypes.PODCAST.value:
@@ -3371,7 +3424,7 @@ class Episode(models.Model):
 
     history = HistoricalRecords(
         cascade_delete_history=True,
-        excluded_fields=["item", "related_season", "created_at"],
+        excluded_fields=["item", "related_season", "created_at", "score"],
     )
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -3382,6 +3435,17 @@ class Episode(models.Model):
         related_name="episodes",
     )
     end_date = models.DateTimeField(null=True, blank=True)
+    score = models.DecimalField(
+        null=True,
+        blank=True,
+        max_digits=3,
+        decimal_places=1,
+        validators=[
+            DecimalValidator(3, 1),
+            MinValueValidator(0),
+            MaxValueValidator(10),
+        ],
+    )
 
     class Meta:
         """Meta options for the model."""
@@ -3408,15 +3472,6 @@ class Episode(models.Model):
     @status.setter
     def status(self, value):
         self._status_override = value
-
-    @property
-    def score(self):
-        """Episodes do not carry standalone ratings in Yamtrack."""
-        return getattr(self, "_score_override", None)
-
-    @score.setter
-    def score(self, value):
-        self._score_override = value
 
     @property
     def progress(self):

@@ -21,6 +21,7 @@ class JellyfinWebhookTests(TestCase):
         self.url = reverse("jellyfin_webhook", kwargs={"token": "test-token"})
 
     def tearDown(self):
+        """Clear cached playback state created by webhook tests."""
         live_playback.clear_user_playback_state(self.user.id)
 
     def test_invalid_token(self):
@@ -166,6 +167,173 @@ class JellyfinWebhookTests(TestCase):
         )
         self.assertEqual(anime.status, Status.IN_PROGRESS.value)
         self.assertEqual(anime.progress, 1)
+
+    @patch("integrations.webhooks.base.anime_mapping.load_mapping_data")
+    @patch("app.providers.mal.anime")
+    @patch("app.providers.tmdb.tv_with_seasons")
+    @patch("app.providers.tmdb.find")
+    def test_anime_episode_prefers_tmdb_mapping_for_later_season(
+        self,
+        mock_find,
+        mock_tv_with_seasons,
+        mock_mal_anime,
+        mock_load_mapping_data,
+    ):
+        """TMDB grouped-anime mappings should win when TVDB mapping disagrees."""
+        mock_find.return_value = {
+            "tv_episode_results": [
+                {
+                    "show_id": 12345,
+                    "season_number": 2,
+                    "episode_number": 11,
+                },
+            ],
+            "tv_results": [],
+        }
+        mock_tv_with_seasons.return_value = {
+            "media_id": "12345",
+            "title": "Hell's Paradise",
+            "tvdb_id": "402474",
+            "season/2": {"episodes": [{"episode_number": 11}]},
+        }
+        mock_load_mapping_data.return_value = {
+            "hells-paradise-tvdb": {
+                "tvdb_id": "402474",
+                "tvdb_season": 2,
+                "tvdb_epoffset": -13,
+                "mal_id": "46569",
+            },
+            "hells-paradise-tmdb": {
+                "tmdb_show_id": "12345",
+                "tmdb_season": 2,
+                "tmdb_epoffset": 0,
+                "mal_id": "60067",
+            },
+        }
+
+        def mal_side_effect(media_id):
+            if str(media_id) == "60067":
+                return {
+                    "media_id": "60067",
+                    "title": "Hell's Paradise 2nd Season",
+                    "image": "https://example.com/hells-paradise-s2.jpg",
+                    "max_progress": 12,
+                }
+            if str(media_id) == "46569":
+                return {
+                    "media_id": "46569",
+                    "title": "Hell's Paradise",
+                    "image": "https://example.com/hells-paradise-s1.jpg",
+                    "max_progress": 13,
+                }
+            msg = f"Unexpected MAL ID requested: {media_id}"
+            raise AssertionError(msg)
+
+        mock_mal_anime.side_effect = mal_side_effect
+
+        payload = {
+            "Event": "Stop",
+            "Item": {
+                "Type": "Episode",
+                "Name": "Episode 11",
+                "ProviderIds": {
+                    "Tmdb": "12345",
+                    "Tvdb": "402474",
+                },
+                "UserData": {"Played": True},
+                "SeriesName": "Hell's Paradise",
+                "ParentIndexNumber": 2,
+                "IndexNumber": 11,
+            },
+        }
+
+        response = self.client.post(
+            self.url,
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        anime = Anime.objects.get(item__media_id="60067", user=self.user)
+        self.assertEqual(anime.status, Status.IN_PROGRESS.value)
+        self.assertEqual(anime.progress, 11)
+        self.assertFalse(
+            Anime.objects.filter(item__media_id="46569", user=self.user).exists(),
+        )
+
+    @patch("integrations.webhooks.base.BaseWebhookProcessor._handle_tv_episode")
+    @patch("integrations.webhooks.base.anime_mapping.load_mapping_data")
+    @patch("app.providers.mal.anime")
+    @patch("app.providers.tmdb.tv_with_seasons")
+    @patch("app.providers.tmdb.find")
+    def test_anime_episode_falls_back_to_tv_when_mapping_progress_is_impossible(
+        self,
+        mock_find,
+        mock_tv_with_seasons,
+        mock_mal_anime,
+        mock_load_mapping_data,
+        mock_handle_tv_episode,
+    ):
+        """Impossible anime progress should not create a bogus flat anime entry."""
+        mock_find.return_value = {
+            "tv_episode_results": [
+                {
+                    "show_id": 12345,
+                    "season_number": 2,
+                    "episode_number": 11,
+                },
+            ],
+            "tv_results": [],
+        }
+        mock_tv_with_seasons.return_value = {
+            "media_id": "12345",
+            "title": "Hell's Paradise",
+            "tvdb_id": "402474",
+            "season/2": {"episodes": [{"episode_number": 11}]},
+        }
+        mock_load_mapping_data.return_value = {
+            "hells-paradise-tvdb": {
+                "tvdb_id": "402474",
+                "tvdb_season": 2,
+                "tvdb_epoffset": -13,
+                "mal_id": "46569",
+            },
+        }
+        mock_mal_anime.return_value = {
+            "media_id": "46569",
+            "title": "Hell's Paradise",
+            "image": "https://example.com/hells-paradise-s1.jpg",
+            "max_progress": 13,
+        }
+
+        payload = {
+            "Event": "Stop",
+            "Item": {
+                "Type": "Episode",
+                "Name": "Episode 11",
+                "ProviderIds": {
+                    "Tvdb": "402474",
+                },
+                "UserData": {"Played": True},
+                "SeriesName": "Hell's Paradise",
+                "ParentIndexNumber": 2,
+                "IndexNumber": 11,
+            },
+        }
+
+        response = self.client.post(
+            self.url,
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Anime.objects.count(), 0)
+        mock_handle_tv_episode.assert_called_once()
+        self.assertEqual(
+            mock_handle_tv_episode.call_args.args[:3],
+            (12345, 2, 11),
+        )
 
     def test_ignored_event_types(self):
         """Test webhook ignores irrelevant event types."""

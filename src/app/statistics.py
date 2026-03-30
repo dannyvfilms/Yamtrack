@@ -3412,8 +3412,32 @@ def _compute_music_top_lists(play_details, limit=5):
 
     # Aggregate by artist, album, and track
     artist_stats = defaultdict(lambda: {"minutes": 0, "plays": 0, "name": "", "image": "", "id": None})
-    album_stats = defaultdict(lambda: {"minutes": 0, "plays": 0, "title": "", "artist": "", "image": "", "id": None})
-    track_stats = defaultdict(lambda: {"minutes": 0, "plays": 0, "title": "", "artist": "", "album": "", "album_image": "", "album_id": None, "id": None})
+    album_stats = defaultdict(
+        lambda: {
+            "minutes": 0,
+            "plays": 0,
+            "title": "",
+            "artist": "",
+            "artist_id": None,
+            "artist_name": "",
+            "image": "",
+            "id": None,
+        },
+    )
+    track_stats = defaultdict(
+        lambda: {
+            "minutes": 0,
+            "plays": 0,
+            "title": "",
+            "artist": "",
+            "album": "",
+            "album_image": "",
+            "album_id": None,
+            "album_artist_id": None,
+            "album_artist_name": "",
+            "id": None,
+        },
+    )
 
     for music, dt, runtime in play_details:
         # Track stats (use music.id as key since each Music is a unique track entry)
@@ -3423,9 +3447,10 @@ def _compute_music_top_lists(play_details, limit=5):
         track_stats[track_key]["title"] = music.item.title if music.item else "Unknown"
         track_stats[track_key]["id"] = music.id
 
-        # Get artist and album info
-        artist = music.artist
+        # Prefer the explicit music.artist link, but fall back to album.artist so
+        # canonical artist/album URLs can still be built from rolled-up stats data.
         album = music.album
+        artist = music.artist or getattr(album, "artist", None)
 
         if artist:
             track_stats[track_key]["artist"] = artist.name
@@ -3439,10 +3464,14 @@ def _compute_music_top_lists(play_details, limit=5):
             track_stats[track_key]["album"] = album.title
             track_stats[track_key]["album_image"] = album.image or track_stats[track_key]["album_image"]
             track_stats[track_key]["album_id"] = album.id
+            track_stats[track_key]["album_artist_id"] = artist.id if artist else None
+            track_stats[track_key]["album_artist_name"] = artist.name if artist else ""
             album_stats[album.id]["minutes"] += runtime
             album_stats[album.id]["plays"] += 1
             album_stats[album.id]["title"] = album.title
             album_stats[album.id]["artist"] = artist.name if artist else "Unknown"
+            album_stats[album.id]["artist_id"] = artist.id if artist else None
+            album_stats[album.id]["artist_name"] = artist.name if artist else ""
             album_stats[album.id]["image"] = album.image or ""
             album_stats[album.id]["id"] = album.id
 
@@ -3450,6 +3479,33 @@ def _compute_music_top_lists(play_details, limit=5):
     top_artists = sorted(artist_stats.values(), key=lambda x: x["minutes"], reverse=True)[:limit]
     top_albums = sorted(album_stats.values(), key=lambda x: x["minutes"], reverse=True)[:limit]
     top_tracks = sorted(track_stats.values(), key=lambda x: x["minutes"], reverse=True)[:limit]
+
+    album_artist_lookup = {
+        album_id: {
+            "artist_id": values.get("artist_id"),
+            "artist_name": values.get("artist_name"),
+        }
+        for album_id, values in album_stats.items()
+        if values.get("artist_id") is not None or values.get("artist_name")
+    }
+
+    for album_item in top_albums:
+        artist_data = album_artist_lookup.get(album_item.get("id"))
+        if not artist_data:
+            continue
+        if album_item.get("artist_id") is None:
+            album_item["artist_id"] = artist_data.get("artist_id")
+        if not album_item.get("artist_name"):
+            album_item["artist_name"] = artist_data.get("artist_name", "")
+
+    for track_item in top_tracks:
+        artist_data = album_artist_lookup.get(track_item.get("album_id"))
+        if not artist_data:
+            continue
+        if track_item.get("album_artist_id") is None:
+            track_item["album_artist_id"] = artist_data.get("artist_id")
+        if not track_item.get("album_artist_name"):
+            track_item["album_artist_name"] = artist_data.get("artist_name", "")
 
     # Format durations
     for item in top_artists + top_albums + top_tracks:

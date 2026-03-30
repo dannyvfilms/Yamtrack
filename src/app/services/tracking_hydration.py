@@ -470,3 +470,84 @@ def ensure_item_metadata(
         track=track,
         podcast_show=podcast_show,
     )
+
+
+def ensure_item_metadata_from_discover_seed(
+    media_type: str,
+    media_id: str,
+    source: str,
+    season_number=None,
+    *,
+    episode_number=None,
+    identity_media_type: str | None = None,
+    library_media_type: str | None = None,
+    fallback_title: str = "",
+    fallback_image: str | None = None,
+    fallback_release_date: str | None = None,
+) -> HydratedItemResult:
+    """Create or update a lightweight Item from Discover card seed data only."""
+    metadata = _fallback_metadata(
+        {},
+        media_type=media_type,
+        source=source,
+        fallback_title=fallback_title,
+        fallback_image=fallback_image,
+        fallback_release_date=fallback_release_date,
+    )
+    title_fields = Item.title_fields_from_metadata(metadata, fallback_title=fallback_title)
+    release_datetime = helpers.extract_release_datetime(metadata)
+    tracking_media_type = get_tracking_media_type(
+        media_type,
+        source=source,
+        identity_media_type=identity_media_type,
+    )
+    resolved_library_media_type = get_library_media_type(
+        media_type,
+        library_media_type=library_media_type,
+    )
+
+    item, created = Item.objects.get_or_create(
+        media_id=media_id,
+        source=source,
+        media_type=tracking_media_type,
+        season_number=season_number,
+        episode_number=episode_number,
+        defaults={
+            **title_fields,
+            "library_media_type": resolved_library_media_type,
+            "image": metadata.get("image") or settings.IMG_NONE,
+            "release_datetime": release_datetime,
+        },
+    )
+
+    update_fields: list[str] = []
+    if item.library_media_type != resolved_library_media_type:
+        item.library_media_type = resolved_library_media_type
+        update_fields.append("library_media_type")
+    if not item.title and title_fields["title"]:
+        item.title = title_fields["title"]
+        update_fields.append("title")
+    if not item.original_title and title_fields["original_title"]:
+        item.original_title = title_fields["original_title"]
+        update_fields.append("original_title")
+    if not item.localized_title and title_fields["localized_title"]:
+        item.localized_title = title_fields["localized_title"]
+        update_fields.append("localized_title")
+    if (
+        (not item.image or item.image == settings.IMG_NONE)
+        and metadata.get("image")
+        and metadata.get("image") != settings.IMG_NONE
+    ):
+        item.image = metadata["image"]
+        update_fields.append("image")
+    if not item.release_datetime and release_datetime:
+        item.release_datetime = release_datetime
+        update_fields.append("release_datetime")
+    if update_fields:
+        item.save(update_fields=list(dict.fromkeys(update_fields)))
+
+    return HydratedItemResult(
+        item=item,
+        metadata=metadata,
+        created=created,
+    )

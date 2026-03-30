@@ -3,12 +3,15 @@ import re
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
+from django.template.loader import render_to_string
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
 from app.models import (
+    Album,
     Anime,
+    Artist,
     Book,
     Comic,
     CollectionEntry,
@@ -16,6 +19,7 @@ from app.models import (
     Item,
     Manga,
     MediaTypes,
+    Music,
     Movie,
     Sources,
     Status,
@@ -159,6 +163,31 @@ class MediaListViewTests(TestCase):
         )
         return item
 
+    def _create_movie_popularity_entry(self, media_id, title, rank):
+        item = Item.objects.create(
+            media_id=str(media_id),
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title=title,
+            image="http://example.com/movie-popularity.jpg",
+            trakt_rating=8.0,
+            trakt_rating_count=1000,
+            trakt_popularity_score=1000.0 / rank,
+            trakt_popularity_rank=rank,
+            trakt_popularity_fetched_at=timezone.now() - timedelta(days=1),
+        )
+        Movie.objects.bulk_create(
+            [
+                Movie(
+                    item=item,
+                    user=self.user,
+                    status=Status.IN_PROGRESS.value,
+                    progress=0,
+                ),
+            ],
+        )
+        return item
+
     def _create_tv_runtime_entry(self, media_id, title, episode_runtimes):
         item = Item.objects.create(
             media_id=str(media_id),
@@ -235,6 +264,44 @@ class MediaListViewTests(TestCase):
         self.assertEqual(
             response.context["media_type_plural"],
             app_tags.media_type_readable_plural(MediaTypes.MOVIE.value).lower(),
+        )
+
+    def test_music_media_list_uses_canonical_artist_links(self):
+        """Music list should render artist cells with canonical shared-detail URLs."""
+        artist = Artist.objects.create(name="List Artist")
+        album = Album.objects.create(title="List Album", artist=artist)
+        item = Item.objects.create(
+            media_id="list-track-1",
+            source=Sources.MUSICBRAINZ.value,
+            media_type=MediaTypes.MUSIC.value,
+            title="List Track",
+            image="http://example.com/list-track.jpg",
+        )
+        media = Music.objects.create(
+            item=item,
+            user=self.user,
+            artist=artist,
+            album=album,
+            status=Status.COMPLETED.value,
+            progress=1,
+        )
+
+        response = self.client.get(reverse("medialist", args=[MediaTypes.MUSIC.value]))
+
+        self.assertEqual(response.status_code, 200)
+        rendered_cell = render_to_string(
+            "app/components/cells/artist_name_cell.html",
+            {"media": media},
+        )
+        self.assertIn(
+            reverse(
+                "music_artist_details",
+                kwargs={
+                    "artist_id": artist.id,
+                    "artist_slug": "list-artist",
+                },
+            ),
+            rendered_cell,
         )
 
     def test_movie_grid_aggregates_duplicate_completed_plays(self):
@@ -378,6 +445,12 @@ class MediaListViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "toggleSort('runtime')")
 
+    def test_supported_media_sort_dropdown_includes_popularity_option(self):
+        response = self.client.get(reverse("medialist", args=[MediaTypes.MOVIE.value]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "toggleSort('popularity')")
+
     def test_non_game_sort_hides_time_to_beat_option_and_falls_back(self):
         response = self.client.get(
             reverse("medialist", args=[MediaTypes.MOVIE.value]) + "?sort=time_to_beat",
@@ -398,6 +471,18 @@ class MediaListViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["current_sort"], "title")
         self.assertNotContains(response, "toggleSort('runtime')")
+
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.book_sort, "title")
+
+    def test_non_popularity_media_sort_hides_popularity_option_and_falls_back(self):
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.BOOK.value]) + "?sort=popularity",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "title")
+        self.assertNotContains(response, "toggleSort('popularity')")
 
         self.user.refresh_from_db()
         self.assertEqual(self.user.book_sort, "title")
@@ -647,6 +732,20 @@ class MediaListViewTests(TestCase):
         self.assertContains(response, "Runtime")
         self.assertContains(response, "2h 22min")
 
+    def test_movie_table_renders_popularity_column(self):
+        self._create_movie_popularity_entry("popularity-column-movie", "Popularity Column Movie", 7)
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.MOVIE.value])
+            + "?layout=table&search=Popularity+Column+Movie",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        column_keys = [column.key for column in response.context["resolved_columns"]]
+        self.assertIn("popularity", column_keys)
+        self.assertContains(response, "Popularity")
+        self.assertContains(response, "#7")
+
     def test_movie_sort_by_runtime_orders_shortest_first(self):
         self._create_movie_runtime_entry("runtime-sort-movie-1", "Runtime Sort Long", 160)
         self._create_movie_runtime_entry("runtime-sort-movie-2", "Runtime Sort Short", 95)
@@ -666,6 +765,31 @@ class MediaListViewTests(TestCase):
         )
         self.assertContains(response, "1h 35min")
         self.assertContains(response, "2h 40min")
+
+    def test_movie_sort_by_popularity_orders_lowest_rank_first(self):
+        self._create_movie_popularity_entry("popularity-sort-movie-1", "Popularity Rank Two", 2)
+        self._create_movie_popularity_entry("popularity-sort-movie-2", "Popularity Rank One", 1)
+        self._create_movie_popularity_entry("popularity-sort-movie-3", "Popularity Rank Missing", 50)
+        Item.objects.filter(media_id="popularity-sort-movie-3").update(
+            trakt_popularity_rank=None,
+            trakt_popularity_score=None,
+            trakt_rating=None,
+            trakt_rating_count=None,
+            trakt_popularity_fetched_at=None,
+        )
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.MOVIE.value])
+            + "?layout=grid&search=Popularity+Rank&sort=popularity",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "popularity")
+        self.assertEqual(response.context["current_direction"], "asc")
+        self.assertEqual(
+            [media.item.title for media in response.context["media_list"].object_list[:3]],
+            ["Popularity Rank One", "Popularity Rank Two", "Popularity Rank Missing"],
+        )
 
     def test_tv_sort_by_runtime_uses_total_show_runtime(self):
         self._create_tv_runtime_entry("tv-runtime-1", "TV Runtime Short", [24, 24, 24])
@@ -1140,7 +1264,16 @@ class MediaListViewTests(TestCase):
         self.assertEqual(
             self.user.table_column_prefs[MediaTypes.MOVIE.value],
             {
-                "order": ["status", "score", "runtime", "release_date", "date_added", "start_date", "end_date"],
+                "order": [
+                    "status",
+                    "score",
+                    "runtime",
+                    "popularity",
+                    "release_date",
+                    "date_added",
+                    "start_date",
+                    "end_date",
+                ],
                 "hidden": ["status"],
             },
         )
@@ -1195,7 +1328,16 @@ class MediaListViewTests(TestCase):
         self.user.refresh_from_db()
         self.assertEqual(
             self.user.table_column_prefs[MediaTypes.MOVIE.value]["order"],
-            ["score", "start_date", "runtime", "status", "release_date", "date_added", "end_date"],
+            [
+                "score",
+                "start_date",
+                "runtime",
+                "popularity",
+                "status",
+                "release_date",
+                "date_added",
+                "end_date",
+            ],
         )
 
         response = self.client.get(
@@ -1204,7 +1346,18 @@ class MediaListViewTests(TestCase):
         column_keys = [column.key for column in response.context["resolved_columns"]]
         self.assertEqual(
             column_keys,
-            ["image", "title", "score", "start_date", "runtime", "status", "release_date", "date_added", "end_date"],
+            [
+                "image",
+                "title",
+                "score",
+                "start_date",
+                "runtime",
+                "popularity",
+                "status",
+                "release_date",
+                "date_added",
+                "end_date",
+            ],
         )
 
     def test_consecutive_column_reorder_full_round_trip(self):
@@ -1252,7 +1405,18 @@ class MediaListViewTests(TestCase):
         first_refresh = self.client.get(f"{list_url}{list_query}", **htmx_headers)
         assert_partial_table_refresh(
             first_refresh,
-            ["", "Title", "End Date", "Status", "Score", "Start Date", "Runtime", "Release Date", "Date Added"],
+            [
+                "",
+                "Title",
+                "End Date",
+                "Status",
+                "Score",
+                "Start Date",
+                "Runtime",
+                "Popularity",
+                "Release Date",
+                "Date Added",
+            ],
         )
 
         second_order = ["score", "start_date", "end_date", "status"]
@@ -1276,7 +1440,18 @@ class MediaListViewTests(TestCase):
         second_refresh = self.client.get(f"{list_url}{list_query}", **htmx_headers)
         assert_partial_table_refresh(
             second_refresh,
-            ["", "Title", "Score", "Start Date", "End Date", "Status", "Runtime", "Release Date", "Date Added"],
+            [
+                "",
+                "Title",
+                "Score",
+                "Start Date",
+                "End Date",
+                "Status",
+                "Runtime",
+                "Popularity",
+                "Release Date",
+                "Date Added",
+            ],
         )
 
         full_page = self.client.get(f"{list_url}{list_query}")
@@ -1299,13 +1474,24 @@ class MediaListViewTests(TestCase):
             column_config = json.loads(config_match.group(1))
             self.assertEqual(
                 [column["key"] for column in column_config],
-                second_order + ["runtime", "release_date", "date_added"],
+                second_order + ["runtime", "popularity", "release_date", "date_added"],
             )
 
         resolved_keys = [column.key for column in full_page.context["resolved_columns"]]
         self.assertEqual(
             resolved_keys,
-            ["image", "title", "score", "start_date", "end_date", "status", "runtime", "release_date", "date_added"],
+            [
+                "image",
+                "title",
+                "score",
+                "start_date",
+                "end_date",
+                "status",
+                "runtime",
+                "popularity",
+                "release_date",
+                "date_added",
+            ],
         )
 
     def test_grouped_anime_library_mode_routes_grouped_titles(self):
@@ -1347,3 +1533,56 @@ class MediaListViewTests(TestCase):
 
         self.assertNotIn("Frieren: Beyond Journey's End", anime_titles)
         self.assertIn("Frieren: Beyond Journey's End", tv_titles)
+
+    def test_grouped_anime_sort_by_popularity_uses_shared_rank_field(self):
+        grouped_low = Item.objects.create(
+            media_id="9350138",
+            source=Sources.TVDB.value,
+            media_type=MediaTypes.TV.value,
+            library_media_type=MediaTypes.ANIME.value,
+            title="Grouped Anime Low Rank",
+            image="https://example.com/grouped-anime-low.jpg",
+            trakt_rating=8.0,
+            trakt_rating_count=1000,
+            trakt_popularity_score=5000,
+            trakt_popularity_rank=2,
+            trakt_popularity_fetched_at=timezone.now() - timedelta(days=1),
+        )
+        grouped_high = Item.objects.create(
+            media_id="9350139",
+            source=Sources.TVDB.value,
+            media_type=MediaTypes.TV.value,
+            library_media_type=MediaTypes.ANIME.value,
+            title="Grouped Anime High Rank",
+            image="https://example.com/grouped-anime-high.jpg",
+            trakt_rating=8.0,
+            trakt_rating_count=1000,
+            trakt_popularity_score=2500,
+            trakt_popularity_rank=8,
+            trakt_popularity_fetched_at=timezone.now() - timedelta(days=1),
+        )
+        TV.objects.create(
+            item=grouped_low,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        TV.objects.create(
+            item=grouped_high,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+
+        self.user.anime_library_mode = MediaTypes.ANIME.value
+        self.user.save(update_fields=["anime_library_mode"])
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.ANIME.value])
+            + "?search=Grouped+Anime&sort=popularity",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "popularity")
+        self.assertEqual(
+            [media.item.title for media in response.context["media_list"].object_list[:2]],
+            ["Grouped Anime Low Rank", "Grouped Anime High Rank"],
+        )

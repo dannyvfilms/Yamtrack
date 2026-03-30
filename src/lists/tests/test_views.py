@@ -8,7 +8,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from app.models import TV, Anime, Episode, Item, MediaTypes, Movie, Season, Sources, Status
-from lists.models import CustomList, CustomListItem
+from lists.models import CustomList, CustomListItem, ListActivity
 from users.models import DateFormatChoices
 
 
@@ -168,6 +168,32 @@ class ListsViewTests(TestCase):
         response = self.client.get(reverse("lists") + "?page=2")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.context["custom_lists"]), 7)  # 7 remaining items
+
+    @patch.object(get_user_model(), "update_preference")
+    def test_lists_view_keeps_card_actions_as_edit_buttons(
+        self,
+        mock_update_preference,
+    ):
+        """The list overview should keep card controls as edit buttons only."""
+        mock_update_preference.return_value = "name"
+        self.client.login(**self.credentials)
+
+        smart_list = CustomList.objects.create(
+            name="Smart List",
+            description="Automatic",
+            owner=self.user,
+            is_smart=True,
+        )
+
+        response = self.client.get(reverse("lists"))
+
+        self.assertContains(response, 'title="Edit list"')
+        self.assertNotContains(response, reverse("list_add_item", args=[self.list1.id]))
+        self.assertNotContains(
+            response,
+            f'{reverse("list_detail", args=[smart_list.id])}?edit_smart_rules=1',
+        )
+        self.assertContains(response, "More list actions")
 
 
 class ListDetailViewTests(TestCase):
@@ -678,6 +704,123 @@ class ListDetailViewTests(TestCase):
         self.assertTemplateUsed(response, "lists/components/media_grid.html")
         self.assertNotIn("form", response.context)
 
+    @patch.object(get_user_model(), "update_preference")
+    @patch.object(CustomList, "user_can_view")
+    @patch("app.providers.services.get_media_metadata")
+    def test_list_detail_view_table_layout_full_render(
+        self,
+        mock_get_media_metadata,
+        mock_user_can_view,
+        mock_update_preference,
+    ):
+        """Full list detail renders the table layout when requested."""
+        mock_update_preference.side_effect = ["date_added", None]
+        mock_user_can_view.return_value = True
+        mock_get_media_metadata.return_value = {
+            "max_progress": 1,
+            "related": {"seasons": []},
+            "title": "Test Movie",
+        }
+
+        Movie.objects.create(
+            item=self.movie_item,
+            status=Status.COMPLETED.value,
+            user=self.user,
+        )
+
+        response = self.client.get(
+            reverse("list_detail", args=[self.custom_list.id]) + "?layout=table",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_layout"], "table")
+        self.assertEqual(
+            [column.key for column in response.context["resolved_columns"]],
+            [
+                "image",
+                "title",
+                "media_type",
+                "score",
+                "progress",
+                "status",
+                "release_date",
+                "date_added",
+                "start_date",
+                "end_date",
+            ],
+        )
+        self.assertContains(response, 'id="list-table-body"')
+        self.assertContains(response, 'min-w-10 w-10 h-10 object-cover rounded-md')
+        self.assertContains(response, 'id="media-column-config-data"')
+
+    @patch.object(get_user_model(), "update_preference")
+    @patch.object(CustomList, "user_can_view")
+    @patch("app.providers.services.get_media_metadata")
+    def test_list_detail_view_table_partial(
+        self,
+        mock_get_media_metadata,
+        mock_user_can_view,
+        mock_update_preference,
+    ):
+        """HTMX table layout requests should return the list-table partial."""
+        mock_update_preference.side_effect = ["date_added", None]
+        mock_user_can_view.return_value = True
+        mock_get_media_metadata.return_value = {
+            "max_progress": 1,
+            "related": {"seasons": []},
+            "title": "Test Movie",
+        }
+
+        Movie.objects.create(
+            item=self.movie_item,
+            status=Status.COMPLETED.value,
+            user=self.user,
+        )
+
+        response = self.client.get(
+            reverse("list_detail", args=[self.custom_list.id]) + "?layout=table",
+            headers={"hx-request": "true"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "lists/components/list_table.html")
+        self.assertContains(response, 'class="w-full bg-[#2a2f35] media-table"')
+
+    @patch.object(get_user_model(), "update_preference")
+    @patch.object(CustomList, "user_can_view")
+    def test_list_table_column_preferences_are_scoped_to_lists(self, mock_user_can_view, mock_update_preference):
+        mock_update_preference.side_effect = ["date_added", None]
+        mock_user_can_view.return_value = True
+
+        self.client.post(
+            reverse("list_detail_columns", args=[self.custom_list.id]),
+            {
+                "table_type": "list",
+                "media_type_key": MediaTypes.MOVIE.value,
+                "sort": "rating",
+                "order": json.dumps(["media_type", "status"]),
+                "hidden": json.dumps(["status"]),
+            },
+            headers={"hx-request": "true"},
+        )
+
+        self.user.refresh_from_db()
+        self.assertEqual(
+            self.user.table_column_prefs[MediaTypes.MOVIE.value]["list"],
+            {
+                "order": [
+                    "media_type",
+                    "status",
+                    "score",
+                    "runtime",
+                    "popularity",
+                    "release_date",
+                    "date_added",
+                    "start_date",
+                    "end_date",
+                ],
+                "hidden": ["status"],
+            },
+        )
+
     def test_smart_list_detail_uses_smart_template(self):
         """Smart lists should render the dedicated smart detail view."""
         Movie.objects.create(
@@ -698,8 +841,58 @@ class ListDetailViewTests(TestCase):
         self.assertTemplateUsed(response, "lists/smart_list_detail.html")
         self.assertTrue(response.context["is_smart_list"])
 
-    def test_smart_list_detail_table_partial(self):
+    def test_manual_list_detail_exposes_quick_add_split_actions(self):
+        """Editable manual lists should use quick-add actions in the detail header."""
+        response = self.client.get(reverse("list_detail", args=[self.custom_list.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, reverse("list_add_item", args=[self.custom_list.id]))
+        self.assertContains(response, "Search and Add Item")
+        self.assertContains(response, "More list actions")
+        self.assertNotContains(response, 'aria-label="Edit list"')
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_smart_list_detail_exposes_smart_rule_split_actions(
+        self,
+        mock_get_media_metadata,
+    ):
+        """Editable smart lists should use the smart-rule split button in the header."""
+        mock_get_media_metadata.return_value = {
+            "max_progress": 1,
+            "related": {"seasons": []},
+            "title": "Test Movie",
+        }
+        Movie.objects.create(
+            item=self.movie_item,
+            status=Status.COMPLETED.value,
+            user=self.user,
+        )
+        smart_list = CustomList.objects.create(
+            name="Smart List",
+            owner=self.user,
+            is_smart=True,
+            smart_media_types=[MediaTypes.MOVIE.value],
+            smart_filters={"status": "all"},
+        )
+
+        response = self.client.get(reverse("list_detail", args=[smart_list.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            f'{reverse("list_detail", args=[smart_list.id])}?edit_smart_rules=1',
+        )
+        self.assertContains(response, "More list actions")
+        self.assertNotContains(response, 'aria-label="Edit list metadata"')
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_smart_list_detail_table_partial(self, mock_get_media_metadata):
         """Smart list table layout should return list-table partials for HTMX."""
+        mock_get_media_metadata.return_value = {
+            "max_progress": 1,
+            "related": {"seasons": []},
+            "title": "Test Movie",
+        }
         Movie.objects.create(
             item=self.movie_item,
             status=Status.COMPLETED.value,
@@ -1738,6 +1931,125 @@ class RecommendationRedirectTests(TestCase):
         """External next URLs should be rejected for security."""
         response = self.client.post(
             reverse("submit_recommendation", args=[self.custom_list.id]),
+            {
+                "media_id": self.item.media_id,
+                "media_type": self.item.media_type,
+                "source": self.item.source,
+                "next": "https://evil.example/path",
+            },
+        )
+
+        self.assertRedirects(
+            response,
+            reverse("list_detail", args=[self.custom_list.id]),
+            fetch_redirect_response=False,
+        )
+
+
+class QuickAddListItemTests(TestCase):
+    """Tests for the owner quick-add list search flow."""
+
+    def setUp(self):
+        self.client = Client()
+        self.user = get_user_model().objects.create_user("owner", "owner@example.com", "pw")
+        self.client.force_login(self.user)
+        self.custom_list = CustomList.objects.create(
+            name="Manual List",
+            owner=self.user,
+        )
+        self.smart_list = CustomList.objects.create(
+            name="Smart List",
+            owner=self.user,
+            is_smart=True,
+        )
+        self.item = Item.objects.create(
+            media_id="100",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Quick Add Target",
+            image="https://example.com/poster.jpg",
+        )
+
+    def test_add_list_item_page_uses_add_template(self):
+        """Editable manual lists should render the quick-add search page."""
+        response = self.client.get(reverse("list_add_item", args=[self.custom_list.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "lists/add_item.html")
+
+    def test_add_list_item_page_redirects_for_smart_lists(self):
+        """Smart lists should redirect back to detail instead of opening quick add."""
+        response = self.client.get(reverse("list_add_item", args=[self.smart_list.id]))
+
+        self.assertRedirects(
+            response,
+            reverse("list_detail", args=[self.smart_list.id]),
+            fetch_redirect_response=False,
+        )
+
+    @patch("lists.views.services.get_media_metadata")
+    def test_add_list_item_search_preview_renders_owner_add_modal(self, mock_get_metadata):
+        """Preview requests should use the direct-add modal instead of recommendations."""
+        mock_get_metadata.return_value = {
+            "title": "Preview Movie",
+            "image": "https://example.com/preview.jpg",
+            "details": {},
+            "genres": [],
+            "synopsis": "",
+        }
+
+        response = self.client.get(
+            reverse("list_add_item_search", args=[self.custom_list.id]),
+            {
+                "show_preview": "true",
+                "media_id": self.item.media_id,
+                "media_type": self.item.media_type,
+                "source": self.item.source,
+                "q": "dark",
+                "search_media_type": self.item.media_type,
+                "page": 2,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "lists/components/add_item_preview_modal.html")
+        self.assertContains(response, reverse("list_add_item_submit", args=[self.custom_list.id]))
+        self.assertContains(
+            response,
+            f'{reverse("list_add_item", args=[self.custom_list.id])}?q=dark&amp;media_type=movie&amp;page=2',
+        )
+
+    def test_add_list_item_submit_redirects_to_next_search_page(self):
+        """Quick-add submit should preserve the search page via next."""
+        next_url = (
+            f"{reverse('list_add_item', args=[self.custom_list.id])}"
+            "?q=dark&media_type=movie&page=2"
+        )
+        response = self.client.post(
+            reverse("list_add_item_submit", args=[self.custom_list.id]),
+            {
+                "media_id": self.item.media_id,
+                "media_type": self.item.media_type,
+                "source": self.item.source,
+                "next": next_url,
+            },
+        )
+
+        self.assertRedirects(response, next_url, fetch_redirect_response=False)
+        self.assertTrue(
+            CustomListItem.objects.filter(custom_list=self.custom_list, item=self.item).exists(),
+        )
+        self.assertTrue(
+            ListActivity.objects.filter(
+                custom_list=self.custom_list,
+                item=self.item,
+            ).exists(),
+        )
+
+    def test_add_list_item_submit_ignores_external_next_url(self):
+        """External next URLs should be rejected for security."""
+        response = self.client.post(
+            reverse("list_add_item_submit", args=[self.custom_list.id]),
             {
                 "media_id": self.item.media_id,
                 "media_type": self.item.media_type,

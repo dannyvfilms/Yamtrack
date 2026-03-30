@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% load static %}
+{% load app_tags %}
+
+{% block title %}
+  Add Item - {{ custom_list.name }} - Yamtrack
+{% endblock title %}
+
+{# djlint:off #}
+{% block content %}
+  <div class="max-w-8xl mx-auto">
+    <div class="mb-6">
+      <a href="{% url 'list_detail' custom_list.id %}"
+         class="inline-flex items-center text-gray-400 hover:text-white transition-colors mb-4">
+        {% include "app/icons/chevron-left.svg" with classes="w-4 h-4 mr-1" %}
+        Back to {{ custom_list.name }}
+      </a>
+      <h1 class="text-3xl font-bold mb-2">Add a New Item</h1>
+      <p class="text-gray-400">Search for media to add directly to "{{ custom_list.name }}"</p>
+    </div>
+
+    <div class="bg-[#2a2f35] rounded-lg p-6"
+         x-data="{
+           selectedType: { display: '{{ initial_media_type|media_type_readable }}', value: '{{ initial_media_type }}' },
+           mediaTypes: [{% for media_type in media_types %}{ display: '{{ media_type|media_type_readable }}', value: '{{ media_type }}' }{% if not forloop.last %},{% endif %}{% endfor %}],
+           isOpen: false,
+           getPlaceholder() { return 'Search ' + this.selectedType.display.toLowerCase() + '...'; }
+         }">
+
+      <form id="add-item-search-form"
+            class="mb-6"
+            hx-get="{% url 'list_add_item_search' custom_list.id %}"
+            hx-trigger="submit, keyup changed delay:300ms from:#add-item-search-input"
+            hx-target="#search-results"
+            hx-include="#add-item-search-form"
+            hx-indicator="#search-spinner"
+            @submit.prevent>
+        <div class="flex relative">
+          <div class="relative grow">
+            <input type="search"
+                   id="add-item-search-input"
+                   name="q"
+                   value="{{ initial_query }}"
+                   :placeholder="getPlaceholder()"
+                   class="w-full py-3 pl-10 pr-4 text-gray-300 bg-[#39404b] rounded-l-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-inset placeholder-gray-500"
+                   autocomplete="off"
+                   @keydown.enter.prevent="$nextTick(() => htmx.trigger('#add-item-search-form', 'submit'))">
+            {% include "app/icons/magnifying-glass.svg" with classes="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" %}
+            <div id="search-spinner" class="htmx-indicator absolute left-2 top-1/2 transform -translate-y-1/2">
+              <div class="animate-spin rounded-full h-7 w-7 border-b-2 border-indigo-500"></div>
+            </div>
+          </div>
+
+          <input type="hidden" name="media_type" :value="selectedType.value">
+          <input type="hidden" name="page" value="{{ initial_page }}">
+
+          <div class="relative">
+            <button type="button"
+                    @click="isOpen = !isOpen"
+                    @click.away="isOpen = false"
+                    class="flex items-center justify-between w-36 px-4 py-3 h-full text-gray-300 bg-[#39404b] rounded-r-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-inset hover:bg-[#454d5a] transition-colors duration-200 cursor-pointer">
+              <span class="truncate" x-text="selectedType.display"></span>
+              {% include "app/icons/chevron-down.svg" with classes="w-4 h-4 ml-2" %}
+            </button>
+            <ul x-cloak
+                x-show="isOpen"
+                @keydown.escape.window="isOpen = false"
+                x-transition:enter="transition ease-out duration-100"
+                x-transition:enter-start="transform opacity-0 scale-95"
+                x-transition:enter-end="transform opacity-100 scale-100"
+                x-transition:leave="transition ease-in duration-75"
+                x-transition:leave-start="transform opacity-100 scale-100"
+                x-transition:leave-end="transform opacity-0 scale-95"
+                class="absolute z-20 py-1 mt-1 overflow-auto text-gray-300 bg-[#39404b] rounded-lg shadow-lg right-0 w-36">
+              <template x-for="type in mediaTypes" :key="type.value">
+                <li @click="selectedType = type; isOpen = false; $nextTick(() => { const form = document.getElementById('add-item-search-form'); if (form) { htmx.trigger(form, 'submit'); } })"
+                    class="px-4 py-2 cursor-pointer hover:bg-[#454d5a] transition duration-150 ease-in-out"
+                    x-text="type.display"></li>
+              </template>
+            </ul>
+          </div>
+        </div>
+      </form>
+
+      <div id="search-results">
+        <div class="text-center py-12 text-gray-400">
+          <div class="bg-[#39404b] rounded-full p-4 w-16 h-16 mx-auto mb-4 flex items-center justify-center">
+            {% include "app/icons/magnifying-glass.svg" with classes="w-8 h-8 text-gray-500" %}
+          </div>
+          <p>Search for media above to get started</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% if initial_query %}
+    <script>
+      document.addEventListener('DOMContentLoaded', () => {
+        const form = document.getElementById('add-item-search-form');
+        if (form) {
+          htmx.trigger(form, 'submit');
+        }
+      });
+    </script>
+  {% endif %}
+
+  <div id="add-item-modal-container"></div>
+{% endblock content %}
+{# djlint:on #}

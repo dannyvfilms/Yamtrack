@@ -235,6 +235,31 @@ class UserColumnPrefsTests(TestCase):
             {"order": ["progress", "score"], "hidden": []},
         )
 
+    def test_update_column_prefs_scopes_list_prefs_separately(self):
+        self.user.table_column_prefs = {
+            MediaTypes.TV.value: {"order": ["score"], "hidden": ["status"]},
+        }
+        self.user.save(update_fields=["table_column_prefs"])
+
+        self.user.update_column_prefs(
+            media_type=MediaTypes.TV.value,
+            table_type="list",
+            order=["media_type", "status"],
+            hidden=["status"],
+        )
+
+        self.user.refresh_from_db()
+        self.assertEqual(
+            self.user.table_column_prefs[MediaTypes.TV.value],
+            {
+                "media": {"order": ["score"], "hidden": ["status"]},
+                "list": {
+                    "order": ["media_type", "status"],
+                    "hidden": ["status"],
+                },
+            },
+        )
+
 
 class UserGetImportTasksTests(TestCase):
     """Tests for the User.get_import_tasks method."""

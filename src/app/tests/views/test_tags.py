@@ -1,3 +1,5 @@
+import json
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
@@ -69,6 +71,7 @@ class TagItemToggleViewTest(TestCase):
             media_type=MediaTypes.MOVIE.value,
             title="The Shawshank Redemption",
             image="http://example.com/image.jpg",
+            genres=["Drama"],
         )
         self.tag = Tag.objects.create(user=self.user, name="Favorite")
 
@@ -82,6 +85,26 @@ class TagItemToggleViewTest(TestCase):
         self.assertTrue(
             ItemTag.objects.filter(tag=self.tag, item=self.item).exists()
         )
+
+    def test_toggle_returns_oob_preview_refresh(self):
+        """Toggle response refreshes the detail-tag preview via OOB swap."""
+        url = reverse("tag_item_toggle")
+        response = self.client.post(
+            url,
+            {
+                "tag_id": self.tag.id,
+                "item_id": self.item.id,
+                "preview_genres_json": json.dumps(["Drama"]),
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'hx-swap-oob="outerHTML"')
+        self.assertContains(response, 'id="tag-preview-movie-278"')
+        self.assertContains(response, 'data-has-preview="true"')
+        self.assertContains(response, "Genres")
+        self.assertContains(response, "Drama")
+        self.assertContains(response, "Tags")
+        self.assertContains(response, "Favorite")
 
     def test_remove_tag_from_item(self):
         """Toggle removes tag when already present."""
@@ -122,6 +145,7 @@ class TagCreateViewTest(TestCase):
             media_type=MediaTypes.MOVIE.value,
             title="The Shawshank Redemption",
             image="http://example.com/image.jpg",
+            genres=["Drama"],
         )
 
     def test_create_tag(self):
@@ -134,6 +158,25 @@ class TagCreateViewTest(TestCase):
         self.assertTrue(
             Tag.objects.filter(user=self.user, name="New Tag").exists()
         )
+
+    def test_create_returns_oob_preview_refresh(self):
+        """Create response refreshes the detail-tag preview via OOB swap."""
+        url = reverse("tag_create")
+        response = self.client.post(
+            url,
+            {
+                "name": "New Tag",
+                "item_id": self.item.id,
+                "preview_genres_json": json.dumps(["Drama"]),
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'hx-swap-oob="outerHTML"')
+        self.assertContains(response, 'id="tag-preview-movie-278"')
+        self.assertContains(response, "Genres")
+        self.assertContains(response, "Drama")
+        self.assertContains(response, "Tags")
+        self.assertContains(response, "New Tag")
 
     def test_create_tag_auto_applies(self):
         """Tag is auto-applied to item when item_id provided."""

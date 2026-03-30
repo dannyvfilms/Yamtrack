@@ -1,2 +1,3 @@
-<a href="{% url 'artist_detail' media.artist.id %}"
+{% load app_tags %}
+<a href="{{ media.artist|music_artist_url }}"
    class="hover:text-indigo-400 transition-colors line-clamp-1">{{ media.artist.name }}</a>

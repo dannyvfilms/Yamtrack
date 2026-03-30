@@ -2624,7 +2624,7 @@
               {% if music_consumption.top_artists %}
                 <div class="overflow-y-auto pr-1 statistics-card-scroll">
                   {% for artist in music_consumption.top_artists %}
-                  <a href="{% url 'artist_detail' artist.id %}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
+                  <a href="{{ artist|music_artist_url }}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
                     <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
                     {% if artist.image %}
                     <img src="{{ artist.image }}" alt="{{ artist.name }}" class="w-10 h-10 rounded-full object-cover">
@@ -2655,7 +2655,7 @@
               {% if music_consumption.top_albums %}
                 <div class="overflow-y-auto pr-1 statistics-card-scroll">
                   {% for album in music_consumption.top_albums %}
-                  <a href="{% url 'album_detail' album.id %}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
+                  <a href="{{ album|music_album_url }}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
                     <span class="text-gray-500 text-sm font-medium w-4">{{ forloop.counter }}</span>
                     {% if album.image %}
                     <img src="{{ album.image }}" alt="{{ album.title }}" class="w-10 h-10 rounded object-cover">
@@ -2687,7 +2687,7 @@
                 <div class="overflow-y-auto pr-1 statistics-card-scroll">
                   {% for track in music_consumption.top_tracks %}
                   {% if track.album_id %}
-                  <a href="{% url 'album_detail' track.album_id %}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
+                  <a href="{{ track|music_album_url }}" class="flex items-center space-x-3 hover:bg-[#2a2f35] rounded-md p-1 -m-1 transition-colors cursor-pointer">
                   {% else %}
                   <div class="flex items-center space-x-3">
                   {% endif %}

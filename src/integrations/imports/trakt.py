@@ -668,6 +668,51 @@ class TraktImporter:
                 attribute_updates,
                 entry["season"]["number"],
             )
+        elif entry["type"] == "episode":
+            logger.info(
+                "Processing episode %s S%sE%s for %s",
+                entry["show"]["title"],
+                entry["episode"]["season"],
+                entry["episode"]["number"],
+                entry_type,
+            )
+            self._process_episode_attribute(
+                entry["show"],
+                entry["episode"],
+                attribute_updates,
+            )
+
+    def _process_episode_attribute(self, show_data, episode_data, attribute_updates):
+        """Apply attribute updates (e.g. score) to existing Episode instances."""
+        from decimal import Decimal
+
+        tmdb_id = self._get_tmdb_id(show_data)
+        if not tmdb_id:
+            return
+
+        score = attribute_updates.get("score")
+        if score is None:
+            return
+
+        season_number = episode_data["season"]
+        episode_number = episode_data["number"]
+
+        season_obj = app.models.Season.objects.filter(
+            item__media_id=str(tmdb_id),
+            item__source=Sources.TMDB.value,
+            item__season_number=season_number,
+            user=self.user,
+        ).first()
+        if not season_obj:
+            return  # Only apply episode ratings when the season is already tracked
+
+        episodes = app.models.Episode.objects.filter(
+            related_season=season_obj,
+            item__episode_number=episode_number,
+        )
+        if episodes.exists():
+            scaled_score = self.user.scale_score_for_storage(Decimal(str(score)))
+            episodes.update(score=scaled_score)
 
     def _process_media_item(
         self,
