@@ -2241,39 +2241,55 @@ def media_list(request, media_type):
 
     def apply_collection_filter(media_items, filter_value, user, media_type):
         """Filter media items based on collection status.
-        
+
         For TV shows, checks both show-level and episode-level collection entries.
+        Uses one CollectionEntry query and bulk episode lookup instead of per-item queries.
         """
         if filter_value == "all":
             return media_items
-        
+
         from app.models import Item, CollectionEntry, MediaTypes
-        
+
+        collected_item_ids = frozenset(
+            CollectionEntry.objects.filter(user=user).values_list("item_id", flat=True),
+        )
+
+        tv_anime_types = (MediaTypes.TV.value, MediaTypes.ANIME.value)
+        episode_ids_by_show = {}
+        if media_type in tv_anime_types and media_items:
+            show_keys = {
+                (m.item.media_id, m.item.source)
+                for m in media_items
+                if getattr(m, "item", None)
+            }
+            if show_keys:
+                media_ids = {k[0] for k in show_keys}
+                sources = {k[1] for k in show_keys}
+                episode_rows = Item.objects.filter(
+                    media_type=MediaTypes.EPISODE.value,
+                    media_id__in=media_ids,
+                    source__in=sources,
+                ).values_list("id", "media_id", "source")
+                for eid, mid, src in episode_rows:
+                    key = (mid, src)
+                    if key in show_keys:
+                        episode_ids_by_show.setdefault(key, []).append(eid)
+
+        def show_has_episode_collection(media):
+            key = (media.item.media_id, media.item.source)
+            return any(eid in collected_item_ids for eid in episode_ids_by_show.get(key, ()))
+
         filtered_items = []
         for media in media_items:
-            # Check show/item-level collection entry
-            has_collection = helpers.is_item_collected(user, media.item) is not None
-            
-            # For TV shows, also check episode-level collection entries
-            if not has_collection and media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
-                episode_items = Item.objects.filter(
-                    media_id=media.item.media_id,
-                    source=media.item.source,
-                    media_type=MediaTypes.EPISODE.value
-                )
-                if episode_items.exists():
-                    has_episode_collection = CollectionEntry.objects.filter(
-                        user=user,
-                        item__in=episode_items
-                    ).exists()
-                    has_collection = has_episode_collection
-            
-            # Apply filter
+            has_collection = media.item_id in collected_item_ids
+            if not has_collection and media_type in tv_anime_types:
+                has_collection = show_has_episode_collection(media)
+
             if filter_value == "collected" and has_collection:
                 filtered_items.append(media)
             elif filter_value == "not_collected" and not has_collection:
                 filtered_items.append(media)
-        
+
         return filtered_items
 
     def _normalize_filter_value(value):
@@ -2308,197 +2324,58 @@ def media_list(request, media_type):
             return release_date > today
         return True
 
-    _metadata_cache = {}
-
-    def _cached_metadata_for_item(item):
+    def _extract_item_languages(item):
+        """Extract languages from database fields only."""
         if not item:
-            return None
-        cache_key = f"{item.source}_{item.media_type}_{item.media_id}"
-        if cache_key in _metadata_cache:
-            return _metadata_cache[cache_key]
-        cached = cache.get(cache_key)
-        _metadata_cache[cache_key] = cached
-        return cached
-
-    def _extract_cached_languages(item):
-        """Extract languages from database or cached metadata."""
-        # First try database (authoritative source)
-        if item and hasattr(item, 'languages') and item.languages:
-            if isinstance(item.languages, list):
-                return [str(lang).strip() for lang in item.languages if str(lang).strip()]
-            return [str(item.languages).strip()] if str(item.languages).strip() else []
-
-        # Fall back to cache for backwards compatibility
-        cached = _cached_metadata_for_item(item)
-        if not isinstance(cached, dict):
             return []
-        details = cached.get("details") if isinstance(cached.get("details"), dict) else {}
-        languages = details.get("languages") or cached.get("languages") or details.get("language")
+        languages = getattr(item, "languages", None)
         if not languages:
             return []
         if isinstance(languages, list):
             return [str(lang).strip() for lang in languages if str(lang).strip()]
         return [str(languages).strip()] if str(languages).strip() else []
 
-    def _extract_cached_country(item):
-        """Extract country from database or cached metadata."""
-        # First try database (authoritative source)
-        if item and hasattr(item, 'country') and item.country:
-            return item.country.strip()
-
-        # Fall back to cache for backwards compatibility
-        cached = _cached_metadata_for_item(item)
-        if not isinstance(cached, dict):
+    def _extract_item_country(item):
+        """Extract country from database fields only."""
+        if not item:
             return ""
-        details = cached.get("details") if isinstance(cached.get("details"), dict) else {}
-        country = details.get("country") or cached.get("country")
+        country = getattr(item, "country", None)
         return str(country).strip() if country else ""
 
-    def _extract_cached_platforms(item):
-        """Extract platforms from database or cached metadata."""
-        # First try database (authoritative source)
-        if item and hasattr(item, 'platforms') and item.platforms:
-            if isinstance(item.platforms, list):
-                return [str(platform).strip() for platform in item.platforms if str(platform).strip()]
-            return [str(item.platforms).strip()] if str(item.platforms).strip() else []
-
-        # Fall back to cache for backwards compatibility
-        cached = _cached_metadata_for_item(item)
-        if not isinstance(cached, dict):
+    def _extract_item_platforms(item):
+        """Extract platforms from database fields only."""
+        if not item:
             return []
-        details = cached.get("details") if isinstance(cached.get("details"), dict) else {}
-        platforms = details.get("platforms") or cached.get("platforms")
+        platforms = getattr(item, "platforms", None)
         if not platforms:
             return []
         if isinstance(platforms, list):
-            return [str(platform).strip() for platform in platforms if str(platform).strip()]
+            return [str(p).strip() for p in platforms if str(p).strip()]
         return [str(platforms).strip()] if str(platforms).strip() else []
 
-    def _extract_cached_authors(item):
-        """Extract authors from database or cached metadata."""
-        def _normalize_author_names(raw_authors):
-            if not raw_authors:
-                return []
-            if not isinstance(raw_authors, list):
-                raw_authors = [raw_authors]
-
-            normalized = []
-            for raw_author in raw_authors:
-                if isinstance(raw_author, dict):
-                    author_name = (
-                        raw_author.get("name")
-                        or raw_author.get("person")
-                        or raw_author.get("author")
-                    )
-                else:
-                    author_name = raw_author
-                author_text = str(author_name).strip() if author_name else ""
-                if author_text:
-                    normalized.append(author_text)
-            return normalized
-
-        # First try database (authoritative source)
-        if item and hasattr(item, "authors") and item.authors:
-            return _normalize_author_names(item.authors)
-
-        # Fall back to cache for backwards compatibility
-        cached = _cached_metadata_for_item(item)
-        if not isinstance(cached, dict):
+    def _extract_item_authors(item):
+        """Extract authors from database fields only."""
+        if not item:
             return []
-        details = cached.get("details") if isinstance(cached.get("details"), dict) else {}
-        raw_authors = (
-            details.get("authors")
-            or details.get("author")
-            or details.get("people")
-            or cached.get("authors")
-            or cached.get("author")
-        )
-        return _normalize_author_names(raw_authors)
-
-    def apply_genre_filter(media_items, filter_value):
-        if not filter_value:
-            return media_items
-        target = _normalize_filter_value(filter_value)
-        filtered_items = []
-        for media in media_items:
-            item = getattr(media, "item", None)
-            genres = getattr(item, "genres", None) or []
-            if any(_normalize_filter_value(genre) == target for genre in genres):
-                filtered_items.append(media)
-        return filtered_items
-
-    def apply_year_filter(media_items, filter_value):
-        if not filter_value:
-            return media_items
-        target = _normalize_filter_value(filter_value)
-        if target == "unknown":
-            return [
-                media
-                for media in media_items
-                if not getattr(getattr(media, "item", None), "release_datetime", None)
-            ]
-        try:
-            target_year = int(target)
-        except (TypeError, ValueError):
-            return media_items
-        return [
-            media
-            for media in media_items
-            if getattr(getattr(media, "item", None), "release_datetime", None)
-            and getattr(media.item.release_datetime, "year", None) == target_year
-        ]
-
-    def apply_source_filter(media_items, filter_value):
-        if not filter_value:
-            return media_items
-        target = str(filter_value).strip()
-        return [
-            media
-            for media in media_items
-            if getattr(getattr(media, "item", None), "source", None) == target
-        ]
-
-    def apply_release_filter(media_items, filter_value):
-        if filter_value == "all":
-            return media_items
-        today = timezone.localdate()
-        return [
-            media
-            for media in media_items
-            if _matches_release_filter_value(
-                getattr(getattr(media, "item", None), "release_datetime", None),
-                filter_value,
-                today,
-            )
-        ]
-
-    def apply_language_filter(media_items, filter_value):
-        if not filter_value:
-            return media_items
-        target = _normalize_filter_value(filter_value)
-        filtered_items = []
-        for media in media_items:
-            item = getattr(media, "item", None)
-            if not item:
-                continue
-            languages = _extract_cached_languages(item)
-            if any(_normalize_filter_value(language) == target for language in languages):
-                filtered_items.append(media)
-        return filtered_items
-
-    def apply_country_filter(media_items, filter_value):
-        if not filter_value:
-            return media_items
-        target = _normalize_filter_value(filter_value)
-        filtered_items = []
-        for media in media_items:
-            item = getattr(media, "item", None)
-            if not item:
-                continue
-            country = _extract_cached_country(item)
-            if country and _normalize_filter_value(country) == target:
-                filtered_items.append(media)
-        return filtered_items
+        authors = getattr(item, "authors", None)
+        if not authors:
+            return []
+        if not isinstance(authors, list):
+            authors = [authors]
+        normalized = []
+        for raw_author in authors:
+            if isinstance(raw_author, dict):
+                author_name = (
+                    raw_author.get("name")
+                    or raw_author.get("person")
+                    or raw_author.get("author")
+                )
+            else:
+                author_name = raw_author
+            author_text = str(author_name).strip() if author_name else ""
+            if author_text:
+                normalized.append(author_text)
+        return normalized
 
     collection_formats_by_item_id = defaultdict(set)
     collection_platforms_by_item_id = defaultdict(set)
@@ -2516,7 +2393,7 @@ def media_list(request, media_type):
 
         return formats
 
-    def _extract_item_platforms(item):
+    def _extract_item_platforms_with_collection(item):
         """Extract platform values, preferring explicit collection platform entries."""
         if not item:
             return []
@@ -2525,7 +2402,7 @@ def media_list(request, media_type):
         if explicit_platforms:
             return sorted(explicit_platforms, key=lambda value: value.lower())
 
-        return _extract_cached_platforms(item)
+        return _extract_item_platforms(item)
 
     def apply_format_filter(media_items, filter_value):
         if not filter_value:
@@ -2541,20 +2418,6 @@ def media_list(request, media_type):
                 filtered_items.append(media)
         return filtered_items
 
-    def apply_platform_filter(media_items, filter_value):
-        if not filter_value:
-            return media_items
-        target = _normalize_filter_value(filter_value)
-        filtered_items = []
-        for media in media_items:
-            item = getattr(media, "item", None)
-            if not item:
-                continue
-            platforms = _extract_item_platforms(item)
-            if any(_normalize_filter_value(platform) == target for platform in platforms):
-                filtered_items.append(media)
-        return filtered_items
-
     def apply_author_filter(media_items, filter_value):
         if not filter_value:
             return media_items
@@ -2564,14 +2427,14 @@ def media_list(request, media_type):
             item = getattr(media, "item", None)
             if not item:
                 continue
-            authors = _extract_cached_authors(item)
+            authors = _extract_item_authors(item)
             if any(_normalize_filter_value(author) == target for author in authors):
                 filtered_items.append(media)
         return filtered_items
 
     def _author_sort_value(media):
         item = getattr(media, "item", None)
-        authors = _extract_cached_authors(item)
+        authors = _extract_item_authors(item)
         return authors[0].strip() if authors else ""
 
     def sort_media_items_by_author(media_items, sort_direction):
@@ -2669,7 +2532,7 @@ def media_list(request, media_type):
 
     def annotate_media_authors(media_items):
         for media in media_items:
-            media.display_authors = _extract_cached_authors(getattr(media, "item", None))
+            media.display_authors = _extract_item_authors(getattr(media, "item", None))
 
     FORMAT_LABELS = {
         "hardcover": "Hardcover",
@@ -2695,16 +2558,6 @@ def media_list(request, media_type):
                 tag__name__iexact=tag_exclude_filter,
             ).values_list("item_id", flat=True)
         )
-
-    def apply_tag_filter(media_items, included_ids, excluded_ids):
-        if included_ids is None and excluded_ids is None:
-            return media_items
-        result = media_items
-        if included_ids is not None:
-            result = [m for m in result if m.item_id in included_ids]
-        if excluded_ids is not None:
-            result = [m for m in result if m.item_id not in excluded_ids]
-        return result
 
     def build_filter_data_from_items(media_items):
         from app.models import Sources
@@ -2733,16 +2586,16 @@ def media_list(request, media_type):
                 has_unknown_year = True
             if getattr(item, "source", None):
                 sources_set.add(item.source)
-            cached_languages = _extract_cached_languages(item)
-            if cached_languages:
-                languages_set.update(cached_languages)
-            country_value = _extract_cached_country(item)
+            db_languages = _extract_item_languages(item)
+            if db_languages:
+                languages_set.update(db_languages)
+            country_value = _extract_item_country(item)
             if country_value:
                 countries_set.add(country_value)
-            platforms = _extract_item_platforms(item)
+            platforms = _extract_item_platforms_with_collection(item)
             if platforms:
                 platforms_set.update(platforms)
-            authors = _extract_cached_authors(item)
+            authors = _extract_item_authors(item)
             if authors:
                 authors_set.update(authors)
             item_formats = _extract_item_formats(item)
@@ -2812,6 +2665,18 @@ def media_list(request, media_type):
     # Get media list with filters applied
     query_sort_filter = "title" if sort_filter in {"author", "runtime", "time_to_beat"} else sort_filter
 
+    list_sql_filters = {
+        "genre": genre_filter,
+        "year": year_filter,
+        "release": release_filter,
+        "source": source_filter,
+        "language": language_filter,
+        "country": country_filter,
+        "platform": platform_filter,
+        "tag_included_ids": tag_included_ids,
+        "tag_excluded_ids": tag_excluded_ids,
+    }
+
     media_queryset = BasicMedia.objects.get_media_list(
         user=request.user,
         media_type=media_type,
@@ -2819,6 +2684,7 @@ def media_list(request, media_type):
         sort_filter=query_sort_filter,
         search=search_query,
         direction=direction,
+        list_sql_filters=list_sql_filters,
     )
 
     anime_library_mode = getattr(
@@ -2853,6 +2719,7 @@ def media_list(request, media_type):
                 sort_filter=query_sort_filter,
                 search=search_query,
                 direction=direction,
+                list_sql_filters=list_sql_filters,
             ),
         )
         grouped_anime_media = [
@@ -2920,19 +2787,9 @@ def media_list(request, media_type):
     filter_data["tags"] = user_tags
     media_list = apply_rating_filter(media_list, rating_filter)
     media_list = apply_collection_filter(media_list, collection_filter, request.user, media_type)
-    media_list = apply_genre_filter(media_list, genre_filter)
-    media_list = apply_year_filter(media_list, year_filter)
-    media_list = apply_release_filter(media_list, release_filter)
-    media_list = apply_source_filter(media_list, source_filter)
-    if media_type in (MediaTypes.TV.value, MediaTypes.MOVIE.value, MediaTypes.ANIME.value):
-        media_list = apply_language_filter(media_list, language_filter)
-        media_list = apply_country_filter(media_list, country_filter)
-    if media_type == MediaTypes.GAME.value:
-        media_list = apply_platform_filter(media_list, platform_filter)
     if media_type in author_media_types:
         media_list = apply_author_filter(media_list, author_filter)
         media_list = apply_format_filter(media_list, format_filter)
-    media_list = apply_tag_filter(media_list, tag_included_ids, tag_excluded_ids)
     if sort_filter == "author" and media_type in author_media_types:
         media_list = sort_media_items_by_author(media_list, direction)
     if sort_filter == "runtime" and media_type in runtime_media_types:

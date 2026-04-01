@@ -1,6 +1,6 @@
-from collections import defaultdict
 import ast
 import logging
+from collections import defaultdict
 from datetime import timedelta
 
 from django.apps import apps
@@ -10,13 +10,15 @@ from django.core.validators import (
     MaxValueValidator,
     MinValueValidator,
 )
-from django.db import models
+from django.db import connection, models
 from django.db.models import (
     CheckConstraint,
     Count,
+    Exists,
     F,
     IntegerField,
     Max,
+    OuterRef,
     Prefetch,
     Q,
     UniqueConstraint,
@@ -862,6 +864,58 @@ class ItemStudioCredit(models.Model):
         return f"{self.studio} - {self.item}"
 
 
+def _normalize_media_list_filter_value(value):
+    return str(value or "").strip().lower()
+
+
+def _filter_queryset_by_item_json_array_ci(
+    queryset,
+    item_json_field: str,
+    normalized_target: str,
+):
+    """Match Item JSON string arrays with case-insensitive element compare."""
+    if not normalized_target:
+        return queryset
+    media_table = queryset.model._meta.db_table
+    item_table = Item._meta.db_table
+    col = Item._meta.get_field(item_json_field).column
+    mt = connection.ops.quote_name(media_table)
+    it = connection.ops.quote_name(item_table)
+    cc = connection.ops.quote_name(col)
+    id_col = connection.ops.quote_name("id")
+    item_fk = connection.ops.quote_name("item_id")
+    if connection.vendor == "postgresql":
+        where_sql = f"""
+            EXISTS (
+                SELECT 1 FROM jsonb_array_elements_text(
+                    COALESCE(
+                        (SELECT {it}.{cc}::jsonb FROM {it}
+                         WHERE {it}.{id_col} = {mt}.{item_fk}),
+                        '[]'::jsonb
+                    )
+                ) AS _arr_el
+                WHERE LOWER(_arr_el::text) = %s
+            )
+        """
+    elif connection.vendor == "sqlite":
+        where_sql = f"""
+            EXISTS (
+                SELECT 1 FROM json_each(
+                    COALESCE(
+                        (SELECT {it}.{cc} FROM {it}
+                         WHERE {it}.{id_col} = {mt}.{item_fk}),
+                        '[]'
+                    )
+                )
+                WHERE LOWER(json_each.value) = %s
+            )
+        """
+    else:
+        kw = {f"item__{item_json_field}__contains": [normalized_target]}
+        return queryset.filter(**kw)
+    return queryset.extra(where=[where_sql], params=[normalized_target])
+
+
 class MediaManager(models.Manager):
     """Custom manager for media models."""
 
@@ -890,10 +944,108 @@ class MediaManager(models.Manager):
             return "asc"
         return "desc"
 
-    def get_media_list(self, user, media_type, status_filter, sort_filter, search=None, direction=None):
+    def _apply_list_sql_filters(self, queryset, user, media_type, filters):
+        """Apply Item-level filters in SQL before window deduplication and materialization."""
+        if not filters:
+            return queryset
+
+        genre = str(filters.get("genre") or "").strip()
+        if genre:
+            queryset = _filter_queryset_by_item_json_array_ci(
+                queryset,
+                "genres",
+                _normalize_media_list_filter_value(genre),
+            )
+
+        year = str(filters.get("year") or "").strip()
+        if year:
+            normalized_year = _normalize_media_list_filter_value(year)
+            if normalized_year == "unknown":
+                queryset = queryset.filter(item__release_datetime__isnull=True)
+            else:
+                try:
+                    queryset = queryset.filter(item__release_datetime__year=int(year))
+                except (TypeError, ValueError):
+                    pass
+
+        release = str(filters.get("release") or "all").strip().lower()
+        today = timezone.localdate()
+        if release == "released":
+            queryset = queryset.filter(
+                item__release_datetime__isnull=False,
+                item__release_datetime__date__lte=today,
+            )
+        elif release == "not_released":
+            queryset = queryset.filter(
+                Q(item__release_datetime__isnull=True)
+                | Q(item__release_datetime__date__gt=today),
+            )
+
+        source = str(filters.get("source") or "").strip()
+        if source:
+            queryset = queryset.filter(item__source=source)
+
+        if media_type in (MediaTypes.TV.value, MediaTypes.MOVIE.value, MediaTypes.ANIME.value):
+            language = str(filters.get("language") or "").strip()
+            if language:
+                queryset = _filter_queryset_by_item_json_array_ci(
+                    queryset,
+                    "languages",
+                    _normalize_media_list_filter_value(language),
+                )
+            country = str(filters.get("country") or "").strip()
+            if country:
+                queryset = queryset.filter(item__country__iexact=country)
+
+        if media_type == MediaTypes.GAME.value:
+            platform = str(filters.get("platform") or "").strip()
+            if platform:
+                normalized_platform = _normalize_media_list_filter_value(platform)
+                CollectionEntry = apps.get_model("app", "CollectionEntry")
+                platform_json_qs = _filter_queryset_by_item_json_array_ci(
+                    queryset,
+                    "platforms",
+                    normalized_platform,
+                )
+                queryset = queryset.filter(
+                    Q(pk__in=platform_json_qs.values("pk"))
+                    | Q(
+                        Exists(
+                            CollectionEntry.objects.filter(
+                                user=user,
+                                item_id=OuterRef("item_id"),
+                            )
+                            .exclude(resolution="")
+                            .filter(resolution__iexact=platform),
+                        ),
+                    ),
+                )
+
+        tag_included_ids = filters.get("tag_included_ids")
+        if tag_included_ids is not None:
+            queryset = queryset.filter(item_id__in=tag_included_ids)
+
+        tag_excluded_ids = filters.get("tag_excluded_ids")
+        if tag_excluded_ids is not None:
+            queryset = queryset.exclude(item_id__in=tag_excluded_ids)
+
+        return queryset
+
+    def get_media_list(
+        self,
+        user,
+        media_type,
+        status_filter,
+        sort_filter,
+        search=None,
+        direction=None,
+        *,
+        list_sql_filters=None,
+    ):
         """Get a media list by type with filtering and sorting."""
         model = apps.get_model(app_label="app", model_name=media_type)
         direction = self.resolve_direction(sort_filter, direction)
+        dup_state = {}
 
         # Build base queryset
         queryset = model.objects.filter(user=user.id)
@@ -908,6 +1060,8 @@ class MediaManager(models.Manager):
                 models.Q(item__title__icontains=search)
                 | models.Q(item__media_id__icontains=search),
             )
+
+        queryset = self._apply_list_sql_filters(queryset, user, media_type, list_sql_filters or {})
 
         # Handle duplicate entries by selecting the most recent record for each item
         has_progress_field = any(
@@ -942,7 +1096,32 @@ class MediaManager(models.Manager):
                 ),
             ).filter(row_number=1)
 
-        queryset = queryset.select_related("item")
+        queryset = queryset.select_related("item").defer(
+            "item__isbn",
+            "item__creators",
+            "item__provider_keywords",
+            "item__provider_external_ids",
+            "item__provider_certification",
+            "item__provider_collection_id",
+            "item__provider_collection_name",
+            "item__provider_game_lengths_match",
+            "item__provider_game_lengths_fetched_at",
+            "item__trakt_popularity_fetched_at",
+            "item__metadata_fetched_at",
+            "item__themes",
+            "item__studios",
+            "item__runtime",
+            "item__provider_popularity",
+            "item__provider_rating",
+            "item__provider_rating_count",
+            "item__trakt_rating",
+            "item__trakt_rating_count",
+            "item__trakt_popularity_score",
+            "item__publishers",
+            "item__source_material",
+            "item__series_name",
+            "item__series_position",
+        )
         queryset = self._apply_prefetch_related(queryset, media_type)
 
         requires_presort_aggregation = (
@@ -953,7 +1132,7 @@ class MediaManager(models.Manager):
         # Generic progress sorting uses Python and reads aggregated_progress, so
         # duplicates must be aggregated before sorting in that specific path.
         if requires_presort_aggregation:
-            queryset = self._aggregate_duplicate_data(queryset, user, media_type)
+            queryset = self._aggregate_duplicate_data(queryset, user, media_type, dup_state)
 
         # Apply sorting AFTER aggregation
         if sort_filter:
@@ -961,31 +1140,43 @@ class MediaManager(models.Manager):
 
         # Re-apply duplicate aggregation because SQL queryset operations in sorting
         # can materialize fresh model instances and drop dynamic aggregated attrs.
-        return self._aggregate_duplicate_data(queryset, user, media_type)
+        return self._aggregate_duplicate_data(queryset, user, media_type, dup_state)
 
-    def _aggregate_duplicate_data(self, queryset, user, media_type):
+    def _aggregate_duplicate_data(self, queryset, user, media_type, dup_state=None):
         """Aggregate data from duplicate entries for each item."""
         # Collect the item_ids present in the current (deduplicated) queryset.
         # Scoping to these ids avoids fetching all user items when a status filter
         # is active — e.g. only 50 in-progress items out of 1000 total.
-        queried_item_ids = {media.item_id for media in queryset}
+        queried_item_ids = frozenset(media.item_id for media in queryset)
 
         if not queried_item_ids:
             return queryset
 
-        # Fetch ALL entries (across all statuses) for only the queried items.
-        # Using all statuses is intentional: an item filtered as IN_PROGRESS may have
-        # a more-recent COMPLETED entry that should determine its aggregated_status.
         model = apps.get_model(app_label="app", model_name=media_type)
-        all_media = model.objects.filter(
-            user=user.id,
-            item_id__in=queried_item_ids,
-        ).select_related("item")
 
-        # Group media by item_id
-        media_by_item = {}
-        for media in all_media:
-            media_by_item.setdefault(media.item_id, []).append(media)
+        if (
+            dup_state is not None
+            and dup_state.get("ids") == queried_item_ids
+            and dup_state.get("groups") is not None
+        ):
+            media_by_item = dup_state["groups"]
+        else:
+            # Fetch ALL entries (across all statuses) for only the queried items.
+            # Using all statuses is intentional: an item filtered as IN_PROGRESS may have
+            # a more-recent COMPLETED entry that should determine its aggregated_status.
+            all_media = model.objects.filter(
+                user=user.id,
+                item_id__in=queried_item_ids,
+            ).select_related("item")
+
+            # Group media by item_id
+            media_by_item = {}
+            for media in all_media:
+                media_by_item.setdefault(media.item_id, []).append(media)
+
+            if dup_state is not None:
+                dup_state["ids"] = queried_item_ids
+                dup_state["groups"] = media_by_item
 
         # Aggregate data for each item in the queryset
         for media in queryset:
@@ -3349,6 +3540,7 @@ class Season(Media):
                 air_date = episode.get("air_date")
                 if air_date:
                     from datetime import datetime
+
                     from django.utils import timezone
                     
                     try:
