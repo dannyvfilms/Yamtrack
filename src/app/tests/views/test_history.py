@@ -1,4 +1,5 @@
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -10,6 +11,7 @@ from app.models import (
     Comic,
     CreditRoleType,
     Episode,
+    Game,
     Item,
     ItemPersonCredit,
     Manga,
@@ -24,11 +26,25 @@ from app.models import (
 )
 
 
+def _start_model_metadata_patches(test_case):
+    """Prevent history view tests from making provider calls during model saves."""
+    mock_get_media_metadata = patch(
+        "app.models.providers.services.get_media_metadata",
+        return_value={"max_progress": 1},
+    )
+    mock_fetch_releases = patch("app.models.Item.fetch_releases")
+    mock_get_media_metadata.start()
+    mock_fetch_releases.start()
+    test_case.addCleanup(mock_get_media_metadata.stop)
+    test_case.addCleanup(mock_fetch_releases.stop)
+
+
 class HistoryModalViewTests(TestCase):
     """Test the history modal view."""
 
     def setUp(self):
         """Create a user and log in."""
+        _start_model_metadata_patches(self)
         self.credentials = {"username": "test", "password": "12345"}
         self.user = get_user_model().objects.create_user(**self.credentials)
         self.client.login(**self.credentials)
@@ -77,12 +93,66 @@ class HistoryModalViewTests(TestCase):
         self.assertIn("changes", first_entry)
         self.assertGreater(len(first_entry["changes"]), 0)
 
+    def test_filtered_history_page_uses_full_track_modal_for_movie_cards(self):
+        """Filtered history cards should open the standard track modal for editable plays."""
+        response = self.client.get(
+            reverse("history")
+            + f"?media_type={MediaTypes.MOVIE.value}&media_id={self.item.media_id}&source={self.item.source}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            f'hx-get="{reverse("track_modal", kwargs={"source": Sources.TMDB.value, "media_type": MediaTypes.MOVIE.value, "media_id": "238"})}"',
+            html=False,
+        )
+        self.assertContains(
+            response,
+            f'"instance_id": "{self.movie.id}"',
+            html=False,
+        )
+        self.assertContains(response, '"standard_modal": "1"', html=False)
+        self.assertContains(response, ">8<", html=False)
+        self.assertNotContains(
+            response,
+            f'hx-get="{reverse("history_modal", kwargs={"source": Sources.TMDB.value, "media_type": MediaTypes.MOVIE.value, "media_id": "238"})}"',
+            html=False,
+        )
+
+    def test_filtered_history_page_shows_game_score_inline(self):
+        """Filtered game history cards should surface per-entry ratings without opening the editor."""
+        game_item = Item.objects.create(
+            media_id="game-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.GAME.value,
+            title="Test Game",
+            image="http://example.com/game.jpg",
+        )
+        Game.objects.create(
+            item=game_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=120,
+            score=9.5,
+            start_date=timezone.now() - timedelta(hours=2),
+            end_date=timezone.now(),
+        )
+
+        response = self.client.get(
+            reverse("history")
+            + f"?media_type={MediaTypes.GAME.value}&media_id={game_item.media_id}&source={game_item.source}&logging_style=sessions",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, ">9.5<", html=False)
+
 
 class DeleteHistoryRecordViewTests(TestCase):
     """Test the delete history record view."""
 
     def setUp(self):
         """Create a user and log in."""
+        _start_model_metadata_patches(self)
         self.credentials = {"username": "test", "password": "12345"}
         self.user = get_user_model().objects.create_user(**self.credentials)
         self.client.login(**self.credentials)
@@ -166,6 +236,7 @@ class HistoryViewPersonFilterTests(TestCase):
     """Test person-based filtering on the history page."""
 
     def setUp(self):
+        _start_model_metadata_patches(self)
         self.credentials = {"username": "test", "password": "12345"}
         self.user = get_user_model().objects.create_user(**self.credentials)
         self.client.login(**self.credentials)
@@ -438,6 +509,7 @@ class HistoryViewAuthorFilterTests(TestCase):
     """Test author-based reading filters on the history page."""
 
     def setUp(self):
+        _start_model_metadata_patches(self)
         self.credentials = {"username": "author-filter-user", "password": "12345"}
         self.user = get_user_model().objects.create_user(**self.credentials)
         self.client.login(**self.credentials)

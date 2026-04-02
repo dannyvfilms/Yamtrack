@@ -7928,8 +7928,17 @@ def track_modal(
     season_number=None,
 ):
     """Return the tracking form for a media item."""
+    standard_modal = (
+        request.GET.get("standard_modal") == "1"
+        or request.POST.get("standard_modal") == "1"
+    )
+
     # Handle podcast shows (identified by podcast_uuid)
-    if media_type == MediaTypes.PODCAST.value and source == Sources.POCKETCASTS.value:
+    if (
+        not standard_modal
+        and media_type == MediaTypes.PODCAST.value
+        and source == Sources.POCKETCASTS.value
+    ):
         from app.models import PodcastEpisode, PodcastShow
 
         # Check if this is a show (podcast_uuid) or an episode (episode_uuid)

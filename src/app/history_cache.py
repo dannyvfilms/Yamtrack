@@ -214,6 +214,17 @@ def _serialize_album(album):
     }
 
 
+def _attach_entry_score(entry, media):
+    """Attach a media score to a history card entry when available."""
+    if not entry or not media or entry.get("score") is not None:
+        return entry
+
+    score = getattr(media, "score", None)
+    if score is not None:
+        entry["score"] = score
+    return entry
+
+
 def _serialize_show(show):
     if not show:
         return None
@@ -345,6 +356,7 @@ def _build_episode_entry(episode, episode_title_map=None):
         "instance_id": episode.id,
         "entry_key": episode.id,
     }
+    _attach_entry_score(entry, episode)
     if genres:
         entry["genres"] = genres
     return entry
@@ -374,6 +386,7 @@ def _build_movie_entry(movie):
         "instance_id": movie.id,
         "entry_key": movie.id,
     }
+    _attach_entry_score(entry, movie)
     if genres:
         entry["genres"] = genres
     return entry
@@ -1098,6 +1111,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                         "instance_id": reading_entry.id,
                         "entry_key": f"{item.media_type}-{reading_entry.id}",
                     }
+                    _attach_entry_score(entry, reading_entry)
                     genres = _resolve_genres(item)
                     if genres:
                         entry["genres"] = genres
@@ -1277,28 +1291,28 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                 key = (podcast.item.media_id, podcast.item.source)
                 play_count = podcast_play_counts.get(key, 1)
 
-                entries.append(
-                    {
-                        "media_type": MediaTypes.PODCAST.value,
-                        "item": _serialize_item(podcast.item),
-                        "show": _serialize_show(show),
-                        "show_podcast_uuid": show_podcast_uuid,
-                        "show_slug": show_slug,
-                        "poster": poster,
-                        "title": podcast.item.title,
-                        "display_title": podcast.item.title,
-                        "progress_display": f"{minutes_listened}m",
-                        "date_range_display": None,
-                        "episode_label": None,
-                        "episode_code": None,
-                        "played_at_local": played_at_local,
-                        "runtime_minutes": runtime_minutes,
-                        "runtime_display": helpers.minutes_to_hhmm(runtime_minutes) if runtime_minutes else None,
-                        "play_count": play_count,
-                        "instance_id": podcast.id,
-                        "entry_key": history_record.history_id,
-                    },
-                )
+                entry = {
+                    "media_type": MediaTypes.PODCAST.value,
+                    "item": _serialize_item(podcast.item),
+                    "show": _serialize_show(show),
+                    "show_podcast_uuid": show_podcast_uuid,
+                    "show_slug": show_slug,
+                    "poster": poster,
+                    "title": podcast.item.title,
+                    "display_title": podcast.item.title,
+                    "progress_display": f"{minutes_listened}m",
+                    "date_range_display": None,
+                    "episode_label": None,
+                    "episode_code": None,
+                    "played_at_local": played_at_local,
+                    "runtime_minutes": runtime_minutes,
+                    "runtime_display": helpers.minutes_to_hhmm(runtime_minutes) if runtime_minutes else None,
+                    "play_count": play_count,
+                    "instance_id": podcast.id,
+                    "entry_key": history_record.history_id,
+                }
+                _attach_entry_score(entry, podcast)
+                entries.append(entry)
                 entry_counts["podcasts"] += 1
             except Exception as e:
                 logger.error("Error processing podcast history record %s: %s", history_record.history_id, e, exc_info=True)
@@ -1353,6 +1367,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                         "instance_id": game.id,
                         "entry_key": game.id,
                     }
+                    _attach_entry_score(entry, game)
                     if genres:
                         entry["genres"] = genres
                     entries.append(entry)
@@ -1398,6 +1413,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                         "instance_id": boardgame.id,
                         "entry_key": boardgame.id,
                     }
+                    _attach_entry_score(entry, boardgame)
                     if genres:
                         entry["genres"] = genres
                     entries.append(entry)
@@ -1458,6 +1474,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                             "instance_id": game.id,
                             "entry_key": f"{game.id}-{day.strftime('%Y%m%d')}",
                         }
+                        _attach_entry_score(entry, game)
                         if genres:
                             entry["genres"] = genres
                         entries.append(entry)
@@ -1516,6 +1533,7 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
                             "instance_id": boardgame.id,
                             "entry_key": f"{boardgame.id}-{day.strftime('%Y%m%d')}",
                         }
+                        _attach_entry_score(entry, boardgame)
                         if genres:
                             entry["genres"] = genres
                         entries.append(entry)

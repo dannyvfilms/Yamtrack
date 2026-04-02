@@ -859,6 +859,56 @@ class PodcastTrackModalViewTests(TestCase):
         )
         self.assertContains(response, 'name="media_type" value="podcast"', html=False)
 
+    def test_podcast_track_modal_can_force_standard_editor(self):
+        """History cards should be able to request the full shared editor for podcast plays."""
+        show = PodcastShow.objects.create(
+            podcast_uuid="show-uuid-2",
+            title="Show Title",
+            image="http://example.com/show.jpg",
+        )
+        episode = PodcastEpisode.objects.create(
+            show=show,
+            episode_uuid="episode-uuid-2",
+            title="Episode Title",
+            duration=1577,
+        )
+        item = Item.objects.create(
+            media_id=episode.episode_uuid,
+            source=Sources.POCKETCASTS.value,
+            media_type=MediaTypes.PODCAST.value,
+            title=episode.title,
+            image=show.image,
+        )
+        podcast = Podcast.objects.create(
+            item=item,
+            user=self.user,
+            show=show,
+            episode=episode,
+            status=Status.COMPLETED.value,
+            progress=1800,
+            score=8,
+            notes="Needs a revisit",
+        )
+
+        response = self.client.get(
+            reverse(
+                "track_modal",
+                kwargs={
+                    "source": Sources.POCKETCASTS.value,
+                    "media_type": MediaTypes.PODCAST.value,
+                    "media_id": episode.episode_uuid,
+                },
+            )
+            + "?standard_modal=1"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "app/components/fill_track.html")
+        self.assertEqual(response.context["media"], podcast)
+        self.assertContains(response, "General")
+        self.assertContains(response, 'name="notes"', html=False)
+        self.assertContains(response, 'name="score"', html=False)
+
     def test_podcast_show_track_modal_renders_episode_plays_tab(self):
         """Podcast show modal should expose bulk episode plays instead of mark-all CTA."""
         show = PodcastShow.objects.create(
