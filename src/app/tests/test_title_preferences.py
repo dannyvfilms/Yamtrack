@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.utils.translation import override
 
 from app.models import Item, MediaTypes, Sources
 from app.templatetags import app_tags
@@ -43,6 +44,21 @@ class ItemTitlePreferenceTests(TestCase):
         )
         self.assertEqual(display, "Localized")
         self.assertEqual(alternative, "Original")
+
+    def test_resolve_title_preference_hides_non_latin_alternative_for_english_locale(self):
+        item = self._build_item(
+            title="The Sound of Music",
+            original_title="サウンド・オブ・ミュージック",
+            localized_title="The Sound of Music",
+        )
+
+        with override("en"):
+            display, alternative = item.resolve_title_preference(
+                TitleDisplayPreferenceChoices.LOCALIZED,
+            )
+
+        self.assertEqual(display, "The Sound of Music")
+        self.assertIsNone(alternative)
 
     def test_resolve_title_preference_falls_back_when_original_missing(self):
         item = self._build_item(original_title=None, localized_title="Localized")
@@ -101,6 +117,20 @@ class TitleTemplateFilterTests(TestCase):
 
     def test_alternative_title_filter(self):
         self.assertEqual(app_tags.alternative_title(self.item, self.user), "Localized")
+
+    def test_alternative_title_filter_hides_equivalent_variants(self):
+        item = Item(
+            media_id="100",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Pokemon",
+            original_title="Pokémon",
+            localized_title="Pokemon",
+            image="https://example.com/poster.jpg",
+        )
+
+        with override("en"):
+            self.assertIsNone(app_tags.alternative_title(item, self.user))
 
     def test_display_title_filter_normalizes_structured_provider_payloads(self):
         payload = {

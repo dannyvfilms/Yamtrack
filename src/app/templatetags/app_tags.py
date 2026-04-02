@@ -287,31 +287,12 @@ def _resolve_title_pair(item, preference):
         original_title = getattr(item, "original_title", None)
         localized_title = getattr(item, "localized_title", None)
 
-    original_title = _normalize_title_value(original_title)
-    localized_title = (
-        _normalize_title_value(localized_title)
-        or _normalize_title_value(title)
+    return Item.resolve_title_variants(
+        title=title,
+        original_title=original_title,
+        localized_title=localized_title,
+        preference=preference,
     )
-    fallback_title = (
-        _normalize_title_value(title)
-        or localized_title
-        or original_title
-        or ""
-    )
-
-    preference = (preference or "localized").lower()
-    if preference == "original":
-        display_title = original_title or localized_title or fallback_title
-        alternative_title = (
-            localized_title if localized_title and localized_title != display_title else None
-        )
-        return display_title, alternative_title
-
-    display_title = localized_title or original_title or fallback_title
-    alternative_title = (
-        original_title if original_title and original_title != display_title else None
-    )
-    return display_title, alternative_title
 
 
 @register.filter

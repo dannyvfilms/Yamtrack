@@ -859,12 +859,13 @@ def get_title(response):
 def get_original_title(response):
     """Return the original title/name for the media."""
     original_title = response.get("original_title") or response.get("original_name")
-    localized_title = get_localized_title(response)
-
-    if original_title and original_title != localized_title:
+    if original_title:
         return original_title
 
-    alternative_title = get_preferred_alternative_title(response, localized_title)
+    alternative_title = get_preferred_alternative_title(
+        response,
+        get_localized_title(response),
+    )
     if alternative_title:
         return alternative_title
 

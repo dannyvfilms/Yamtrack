@@ -7,6 +7,7 @@ from django.core.cache import cache
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.translation import override
 
 from app import statistics_cache
 from app.models import (
@@ -3625,6 +3626,42 @@ class MediaDetailsViewTests(TestCase):
             'class="hidden flex-wrap items-center justify-start gap-y-1 text-center text-sm font-medium text-gray-400 md:flex md:text-start"',
             content,
         )
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_hides_low_value_alternative_title_tooltip_for_english_locale(
+        self,
+        mock_get_metadata,
+    ):
+        mock_get_metadata.return_value = {
+            "media_id": "15121",
+            "title": "The Sound of Music",
+            "original_title": "サウンド・オブ・ミュージック",
+            "localized_title": "The Sound of Music",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "image": "http://example.com/image.jpg",
+            "synopsis": "Test overview",
+            "details": {},
+            "related": {},
+        }
+
+        with override("en"):
+            response = self.client.get(
+                reverse(
+                    "media_details",
+                    kwargs={
+                        "source": Sources.TMDB.value,
+                        "media_type": MediaTypes.MOVIE.value,
+                        "media_id": "15121",
+                        "title": "the-sound-of-music",
+                    },
+                ),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertIn("<h1 class=\"text-3xl font-bold\">The Sound of Music</h1>", content)
+        self.assertNotIn('aria-label="Show alternative title"', content)
 
     @patch("app.providers.services.get_media_metadata")
     @patch("app.providers.tmdb.process_episodes")

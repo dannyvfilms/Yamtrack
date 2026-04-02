@@ -1,5 +1,6 @@
 import ast
 import logging
+import unicodedata
 from collections import defaultdict
 from datetime import timedelta
 
@@ -25,11 +26,12 @@ from django.db.models import (
     Window,
 )
 from django.db.models.functions import Cast, RowNumber
-from django.utils import timezone
+from django.utils import timezone, translation
 from model_utils import FieldTracker
 from model_utils.fields import MonitorField
 from simple_history.models import HistoricalRecords
 from simple_history.utils import bulk_create_with_history, bulk_update_with_history
+from unidecode import unidecode
 
 import app
 import events
@@ -378,16 +380,131 @@ class Item(CalendarTriggerMixin, models.Model):
         preference = getattr(user, "title_display_preference", "localized")
         return self.resolve_title_preference(preference)
 
-    def resolve_title_preference(self, preference):
-        """Resolve display and alternative titles for a preference value."""
+    @classmethod
+    def _title_comparison_key(cls, value):
+        """Return a normalized key for comparing title variants."""
+        normalized = cls._normalize_title_value(value)
+        if not normalized:
+            return ""
+
+        ascii_text = unidecode(normalized)
+        return "".join(char for char in ascii_text.casefold() if char.isalnum())
+
+    @classmethod
+    def _title_script_bucket(cls, value):
+        """Return a coarse script bucket for a title."""
+        normalized = cls._normalize_title_value(value) or ""
+        bucket_counts = defaultdict(int)
+
+        for char in normalized:
+            if not char.isalpha():
+                continue
+
+            name = unicodedata.name(char, "")
+            if "LATIN" in name:
+                bucket = "latin"
+            elif any(
+                token in name
+                for token in ("HIRAGANA", "KATAKANA", "CJK", "IDEOGRAPH", "HAN")
+            ):
+                bucket = "cjk"
+            elif "HANGUL" in name:
+                bucket = "hangul"
+            elif "CYRILLIC" in name:
+                bucket = "cyrillic"
+            elif "GREEK" in name:
+                bucket = "greek"
+            elif "ARABIC" in name:
+                bucket = "arabic"
+            elif "HEBREW" in name:
+                bucket = "hebrew"
+            else:
+                bucket = "other"
+            bucket_counts[bucket] += 1
+
+        if not bucket_counts:
+            return "unknown"
+
+        return max(bucket_counts.items(), key=lambda row: row[1])[0]
+
+    @staticmethod
+    def _preferred_locale_scripts(active_language=None):
+        """Return likely title scripts for the active UI language."""
+        language = str(active_language or translation.get_language() or "")
+        base_language = language.split("-", 1)[0].split("_", 1)[0].lower()
+
+        script_map = {
+            "ja": {"cjk"},
+            "zh": {"cjk"},
+            "ko": {"hangul", "cjk"},
+            "ru": {"cyrillic"},
+            "uk": {"cyrillic"},
+            "bg": {"cyrillic"},
+            "be": {"cyrillic"},
+            "mk": {"cyrillic"},
+            "el": {"greek"},
+            "ar": {"arabic"},
+            "fa": {"arabic"},
+            "ur": {"arabic"},
+            "he": {"hebrew"},
+            "yi": {"hebrew"},
+        }
+        return script_map.get(base_language, {"latin"})
+
+    @classmethod
+    def _should_show_alternative_title(
+        cls,
+        display_title,
+        alternative_title,
+        *,
+        preference="localized",
+        active_language=None,
+    ):
+        """Return whether an alternate title is useful enough to display."""
+        if not display_title or not alternative_title:
+            return False
+
+        if cls._title_comparison_key(display_title) == cls._title_comparison_key(
+            alternative_title,
+        ):
+            return False
+
         preference = (preference or "localized").lower()
-        original_title = self._normalize_title_value(self.original_title)
+        if preference == "original":
+            return True
+
+        locale_scripts = cls._preferred_locale_scripts(active_language)
+        display_script = cls._title_script_bucket(display_title)
+        alternative_script = cls._title_script_bucket(alternative_title)
+
+        if (
+            display_script in locale_scripts
+            and alternative_script not in locale_scripts
+            and alternative_script != "unknown"
+        ):
+            return False
+
+        return True
+
+    @classmethod
+    def resolve_title_variants(
+        cls,
+        *,
+        title=None,
+        original_title=None,
+        localized_title=None,
+        preference="localized",
+        active_language=None,
+    ):
+        """Resolve display and alternate titles from raw title fields."""
+        preference = (preference or "localized").lower()
+        original_title = cls._normalize_title_value(original_title)
         localized_title = (
-            self._normalize_title_value(self.localized_title)
-            or self._normalize_title_value(self.title)
+            cls._normalize_title_value(localized_title)
+            or cls._normalize_title_value(title)
         )
         fallback_title = (
-            self._normalize_title_value(self.title)
+            cls._normalize_title_value(title)
             or localized_title
             or original_title
             or ""
@@ -396,16 +513,36 @@ class Item(CalendarTriggerMixin, models.Model):
         if preference == "original":
             display_title = original_title or localized_title or fallback_title
             alternative_title = (
-                localized_title if localized_title and localized_title != display_title else None
+                localized_title
+                if localized_title and localized_title != display_title
+                else None
             )
-            return display_title, alternative_title
+        else:
+            display_title = localized_title or original_title or fallback_title
+            alternative_title = (
+                original_title
+                if original_title and original_title != display_title
+                else None
+            )
 
-        # Auto currently prefers localized titles when available.
-        display_title = localized_title or original_title or fallback_title
-        alternative_title = (
-            original_title if original_title and original_title != display_title else None
-        )
+        if not cls._should_show_alternative_title(
+            display_title,
+            alternative_title,
+            preference=preference,
+            active_language=active_language,
+        ):
+            alternative_title = None
+
         return display_title, alternative_title
+
+    def resolve_title_preference(self, preference):
+        """Resolve display and alternative titles for a preference value."""
+        return self.resolve_title_variants(
+            title=self.title,
+            original_title=self.original_title,
+            localized_title=self.localized_title,
+            preference=preference,
+        )
 
     def get_display_title(self, user=None):
         """Return the preferred title to render for this item."""

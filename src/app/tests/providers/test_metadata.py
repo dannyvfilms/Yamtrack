@@ -76,6 +76,19 @@ class Metadata(TestCase):
         self.assertEqual(response["details"]["status"], "Ended")
         self.assertEqual(response["details"]["episodes"], 62)
 
+    def test_tmdb_original_title_does_not_backfill_from_random_alternative_when_original_exists(self):
+        response = {
+            "title": "The Sound of Music",
+            "original_title": "The Sound of Music",
+            "alternative_titles": {
+                "titles": [
+                    {"iso_3166_1": "JP", "title": "サウンド・オブ・ミュージック"},
+                ],
+            },
+        }
+
+        self.assertEqual(tmdb.get_original_title(response), "The Sound of Music")
+
     @patch("app.providers.tvdb.build_specials_season")
     @patch("app.providers.tmdb.services.api_request")
     @override_settings(TVDB_API_KEY="test-tvdb-key")
