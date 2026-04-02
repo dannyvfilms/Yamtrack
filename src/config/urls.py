@@ -79,8 +79,8 @@ urlpatterns.append(path("accounts/", include(account_patterns)))
 if settings.ADMIN_ENABLED:
     urlpatterns.append(path("admin/", admin.site.urls))
 
-# Add debug toolbar if in DEBUG mode
-if settings.DEBUG:
+# Add debug toolbar when explicitly enabled for local development
+if settings.ENABLE_DEBUG_TOOLBAR:
     urlpatterns.append(path("__debug__/", include("debug_toolbar.urls")))
 
 # Serve static files in development

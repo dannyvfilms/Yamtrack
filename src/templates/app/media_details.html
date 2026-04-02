@@ -1192,7 +1192,7 @@
 
     {# Related Media #}
     {% if media_type != MediaTypes.PODCAST.value %}
-      {% if notes_entry or media.related or media.cast or media.crew or media_type == MediaTypes.GAME.value %}
+      {% if notes_entry or media.related or media.cast or media.crew or media_type == MediaTypes.GAME.value or media.episodes %}
         <div class="w-full md:w-3/4">
         {% if not public_view|default:False and notes_entry %}
           {% include "app/components/detail_notes_section.html" %}
@@ -1201,24 +1201,20 @@
           {% for name, related_items in media.related.items %}
             {% if name != "seasons" and name != "recommendations" and related_items %}
               <section class="mb-8"
-                       x-data="{ detailGridExpanded: false, detailGridIsMobile: false, detailGridVisibleCount: 6, syncDetailGrid() { this.detailGridIsMobile = window.matchMedia('(max-width: 768px)').matches; this.detailGridVisibleCount = document.body.dataset.mobileGrid === 'comfortable' ? 4 : 6; }, shouldShowDetailCard(index) { return !this.detailGridIsMobile || this.detailGridExpanded || index < this.detailGridVisibleCount; }, canToggleDetailGrid(total) { return this.detailGridIsMobile && total > this.detailGridVisibleCount; } }"
+                       x-data="{ detailGridExpanded: false, detailGridVisibleCount: 0, syncDetailGrid() { this.$nextTick(() => { const grid = this.$refs.detailGrid; if (!grid) return; const templateColumns = window.getComputedStyle(grid).gridTemplateColumns || ''; const columnCount = templateColumns.split(' ').filter(Boolean).length || 1; this.detailGridVisibleCount = Math.max(columnCount, 1) * 2; }); }, shouldShowDetailCard(index) { return this.detailGridExpanded || index < this.detailGridVisibleCount; }, canToggleDetailGrid(total) { return this.detailGridVisibleCount > 0 && total > this.detailGridVisibleCount; } }"
                        x-init="syncDetailGrid()"
-                       @resize.window="syncDetailGrid()">
+                       @resize.window.debounce.100ms="syncDetailGrid()">
                 <h2 class="text-xl font-bold mb-4">{{ name|no_underscore|title }}</h2>
-                <div class="detail-media-grid">
+                <div x-ref="detailGrid" class="detail-media-grid">
                   {% for result in related_items %}
                     <div x-show="shouldShowDetailCard({{ forloop.counter0 }})">
-                      {% if media_type != MediaTypes.TV.value and media_type != MediaTypes.SEASON.value %}
-                        {% include "app/components/media_card.html" with item=result.item title=result.item.season_title|default:result.item.title media=result.media user=user active=media.media_id|str_equals:result.item.media_id from_grid=True %}
-                      {% else %}
-                        {% include "app/components/media_card.html" with item=result.item title=result.item.season_title|default:result.item.title media=result.media user=user from_grid=True show_progress_chip=False show_release_year_placeholder=True %}
-                      {% endif %}
+                      {% include "app/components/detail_related_card.html" with item=result.item title=result.item.season_title|default:result.item.title user=user active=media.media_id|str_equals:result.item.media_id show_release_year_placeholder=True %}
                     </div>
                   {% endfor %}
                 </div>
                 <button x-show="canToggleDetailGrid({{ related_items|length }})"
                         @click="detailGridExpanded = !detailGridExpanded"
-                        class="mt-4 inline-flex text-sm font-medium text-indigo-400 hover:text-indigo-300 focus:outline-none transition-colors cursor-pointer md:hidden">
+                        class="mt-4 inline-flex text-sm font-medium text-indigo-400 hover:text-indigo-300 focus:outline-none transition-colors cursor-pointer">
                   <span x-text="detailGridExpanded ? 'Show less' : 'Show more'"></span>
                 </button>
               </section>
@@ -1399,24 +1395,20 @@
 
         {% if media.related.recommendations %}
           <section class="mb-8"
-                   x-data="{ detailGridExpanded: false, detailGridIsMobile: false, detailGridVisibleCount: 6, syncDetailGrid() { this.detailGridIsMobile = window.matchMedia('(max-width: 768px)').matches; this.detailGridVisibleCount = document.body.dataset.mobileGrid === 'comfortable' ? 4 : 6; }, shouldShowDetailCard(index) { return !this.detailGridIsMobile || this.detailGridExpanded || index < this.detailGridVisibleCount; }, canToggleDetailGrid(total) { return this.detailGridIsMobile && total > this.detailGridVisibleCount; } }"
+                   x-data="{ detailGridExpanded: false, detailGridVisibleCount: 0, syncDetailGrid() { this.$nextTick(() => { const grid = this.$refs.detailGrid; if (!grid) return; const templateColumns = window.getComputedStyle(grid).gridTemplateColumns || ''; const columnCount = templateColumns.split(' ').filter(Boolean).length || 1; this.detailGridVisibleCount = Math.max(columnCount, 1) * 2; }); }, shouldShowDetailCard(index) { return this.detailGridExpanded || index < this.detailGridVisibleCount; }, canToggleDetailGrid(total) { return this.detailGridVisibleCount > 0 && total > this.detailGridVisibleCount; } }"
                    x-init="syncDetailGrid()"
-                   @resize.window="syncDetailGrid()">
+                   @resize.window.debounce.100ms="syncDetailGrid()">
             <h2 class="text-xl font-bold mb-4">Recommendations</h2>
-            <div class="detail-media-grid">
+            <div x-ref="detailGrid" class="detail-media-grid">
               {% for result in media.related.recommendations %}
                 <div x-show="shouldShowDetailCard({{ forloop.counter0 }})">
-                  {% if media_type != MediaTypes.TV.value and media_type != MediaTypes.SEASON.value %}
-                    {% include "app/components/media_card.html" with item=result.item title=result.item.season_title|default:result.item.title media=result.media user=user active=media.media_id|str_equals:result.item.media_id from_grid=True %}
-                  {% else %}
-                    {% include "app/components/media_card.html" with item=result.item title=result.item.season_title|default:result.item.title media=result.media user=user from_grid=True show_progress_chip=False show_release_year_placeholder=True %}
-                  {% endif %}
+                  {% include "app/components/detail_related_card.html" with item=result.item title=result.item.season_title|default:result.item.title user=user active=media.media_id|str_equals:result.item.media_id show_release_year_placeholder=True %}
                 </div>
               {% endfor %}
             </div>
             <button x-show="canToggleDetailGrid({{ media.related.recommendations|length }})"
                     @click="detailGridExpanded = !detailGridExpanded"
-                    class="mt-4 inline-flex text-sm font-medium text-indigo-400 hover:text-indigo-300 focus:outline-none transition-colors cursor-pointer md:hidden">
+                    class="mt-4 inline-flex text-sm font-medium text-indigo-400 hover:text-indigo-300 focus:outline-none transition-colors cursor-pointer">
               <span x-text="detailGridExpanded ? 'Show less' : 'Show more'"></span>
             </button>
           </section>
@@ -1426,6 +1418,227 @@
           {% include "app/components/game_lengths_section.html" %}
         {% endif %}
 
+        {# Episodes List #}
+        {% if media.episodes %}
+          <div class="w-full">
+            <h2 class="text-xl font-bold mb-4">Episodes</h2>
+            <div id="episodes-list">
+              {% if media_type == MediaTypes.PODCAST.value %}
+                {# Use fragment for podcasts to enable infinite scroll #}
+                {% include "app/components/podcast_episode_list.html" with episodes=paginated_episodes|default:media.episodes user=user show=podcast_show IMG_NONE=IMG_NONE TRACK_TIME=TRACK_TIME has_more=has_more|default:has_more_episodes|default:False next_page=next_page|default:2 show_id=show_id request=request csrf_token=csrf_token only %}
+              {% else %}
+              <div class="space-y-6" id="episodes-batch">
+                {% for episode in media.episodes %}
+                  <div class="bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg">
+                    <div class="flex flex-col md:flex-row">
+                      <img src="{{ IMG_NONE }}"
+                           alt="E{{ episode.episode_number }}"
+                           data-src="{{ episode.image }}"
+                           class="lazyload {% if media_type == MediaTypes.PODCAST.value %}md:w-40 md:h-40{% else %}md:w-64 md:h-40{% endif %} shrink-0 {% if episode.image != IMG_NONE %}object-cover{% endif %}">
+                      <div class="py-3 flex-1 flex flex-col">
+                        <div class="flex-1">
+                          <div class="flex justify-between items-start mb-2 space-x-2 px-4">
+                            <div>
+                              <h2 class="text-xl font-semibold mb-1 line-clamp-1">{{ episode.title }}</h2>
+                              <p class="text-sm text-gray-400">
+                                {% if episode.episode_number %}Episode {{ episode.episode_number }} • {% endif %}{{ episode.air_date|user_date_format:user|default_if_none:"Unknown date" }}{% if episode.runtime %} • {{ episode.runtime }}{% endif %}
+                              </p>
+                            </div>
+                            {% if not public_view|default:False and episode.actions_enabled %}
+                            <div class="flex space-x-2">
+                              <div x-data="{ trackOpen: false }">
+                                <button @click="trackOpen = true"
+                                        title="Track Episode"
+                                        class="p-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full transition duration-300 cursor-pointer">
+                                  {% if episode.history %}
+                                    {% include "app/icons/eye.svg" with classes="w-4 h-4" %}
+                                  {% else %}
+                                    {% include "app/icons/eye-closed.svg" with classes="w-4 h-4" %}
+                                  {% endif %}
+                                </button>
+
+                                {% include "app/components/fill_track_episode.html" with request=request media=media episode=episode episode_title=episode.title csrf_token=csrf_token TRACK_TIME=TRACK_TIME user=user only %}
+                              </div>
+
+                              <div x-data="{ listsOpen: false }">
+                                <button class="p-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full transition duration-300 cursor-pointer"
+                                        title="Add to custom lists"
+                                          hx-get="{% media_view_url 'lists_modal' episode %}"
+                                        hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
+                                          hx-target="#{% component_id 'lists' episode %}"
+                                        hx-trigger="click once"
+                                        @click="listsOpen = true">
+                                  {% include "app/icons/list-add.svg" with classes="w-4 h-4" %}
+                                </button>
+
+                                <div x-show="listsOpen"
+                                     @keydown.escape.window="listsOpen = false"
+                                     class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                                  <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
+                                       @click.outside="listsOpen = false">
+                                      <div id="{% component_id 'lists' episode %}"></div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {% if episode.item %}
+                                <div x-data="{ historyOpen: false }">
+                                  <button class="p-2 bg-amber-600 hover:bg-amber-700 text-white rounded-full transition duration-300 cursor-pointer"
+                                          title="View your activity history"
+                                            hx-get="{% media_view_url 'history_modal' episode.item %}"
+                                          hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
+                                            hx-target="#{% component_id 'history' episode.item %}"
+                                          hx-trigger="click once"
+                                          @click="historyOpen = true">
+                                    {% include "app/icons/history.svg" with classes="w-4 h-4" %}
+                                  </button>
+                                  <div x-show="historyOpen"
+                                       @keydown.escape.window="historyOpen = false"
+                                       class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                                    <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
+                                         @click.outside="historyOpen = false">
+                                        <div id="{% component_id 'history' episode.item %}"></div>
+                                      </div>
+                                    </div>
+                                  </div>
+                              {% endif %}
+
+                              {% if episode.history %}
+                                {% with ep_score=episode.history.0.score %}
+                                <div x-data="{
+                                  showRatingPopup: false,
+                                  rating: {% if ep_score is not None %}{{ ep_score|score_display:user }}{% else %}null{% endif %},
+                                  ratingScaleMax: {{ user|rating_scale_max }},
+                                  hoverRating: null,
+                                  isHovering: false,
+                                  formatRating(v) { return v !== null && v !== undefined ? (this.ratingScaleMax === 5 ? String(v) + '/5' : String(v)) : ''; }
+                                }"
+                                     class="relative">
+                                  <button type="button"
+                                          @click="showRatingPopup = !showRatingPopup"
+                                          title="Rate episode"
+                                          :class="rating !== null
+                                            ? 'border-amber-400/28 bg-amber-500/14 hover:bg-amber-500/20'
+                                            : 'border-gray-400/28 bg-gray-500/14 hover:bg-gray-500/20'"
+                                          class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border shadow-sm transition-colors duration-200 cursor-pointer">
+                                    <span x-show="rating === null">{% include "app/icons/star.svg" with classes="h-3.5 w-3.5 text-gray-300" %}</span>
+                                    <span x-show="rating !== null" class="text-xs font-semibold text-amber-300 leading-none" x-text="rating" style="display:none">{% if ep_score is not None %}{{ ep_score|score_display:user }}{% endif %}</span>
+                                  </button>
+
+                                  <div x-show="showRatingPopup"
+                                       @click.outside="showRatingPopup = false; isHovering = false"
+                                       class="absolute right-0 top-full mt-2 w-[250px] rounded-lg border border-gray-700 bg-[#2a2f35] p-3 shadow-lg z-50"
+                                       @mouseenter="isHovering = true"
+                                       @mouseleave="isHovering = false; hoverRating = null">
+                                    <div class="flex justify-between mb-1">
+                                      {% with rating_range=user|rating_scale_max|get_range %}
+                                        {% for rating_value in rating_range %}
+                                          <button @click="if (rating == {{ rating_value }}) { rating = null; } else { rating = {{ rating_value }}; } showRatingPopup = false; isHovering = false"
+                                                  @mouseenter="hoverRating = {{ rating_value }}"
+                                                  hx-post="{% url 'update_episode_score' current_instance.id episode.episode_number %}"
+                                                  hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
+                                                  hx-vals='{"score": {{ rating_value }}, "toggle": true}'
+                                                  hx-trigger="click"
+                                                  hx-swap="none"
+                                                  class="focus:outline-none flex flex-col items-center cursor-pointer">
+                                            <div :class="{ 'text-yellow-400': {{ rating_value }} <= (isHovering ? hoverRating : rating), 'text-gray-600': {{ rating_value }} > (isHovering ? hoverRating : rating) }">
+                                              {% include "app/icons/star.svg" with classes="w-5 h-5 hover:scale-110 transition-transform" %}
+                                            </div>
+                                            <span class="text-xs mt-1 text-gray-400">{{ rating_value }}</span>
+                                          </button>
+                                        {% endfor %}
+                                      {% endwith %}
+                                    </div>
+                                  </div>
+                                </div>
+                                {% endwith %}
+                              {% endif %}
+                            </div>
+                            {% endif %}
+                          </div>
+                          {% if episode.overview %}
+                          <div class="{% if episode.history or episode.collection_entry and episode.collection_entry.resolution %}md:h-[calc(2*1.5rem)]{% else %}md:h-[calc(3*1.5rem)]{% endif %} md:overflow-y-auto px-4">
+                            <p class="text-sm text-gray-300 leading-relaxed text-pretty">{{ episode.overview }}</p>
+                          </div>
+                          {% endif %}
+                        </div>
+                        {% if episode.history %}
+                          <p class="text-xs text-gray-400 mt-2 px-4">
+                            Last watched: {{ episode.history.0.end_date|user_date_format:user|default_if_none:"No date provided" }}
+                            {% if episode.history|length > 1 %}• Watched {{ episode.history|length }} times{% endif %}
+                            {% if episode.collection_entry and episode.collection_entry.resolution %}• Collected: {{ episode.collection_entry.resolution }}{% endif %}
+                          </p>
+                        {% elif episode.collection_entry and episode.collection_entry.resolution %}
+                          <p class="text-xs text-gray-400 mt-2 px-4">
+                            Collected: {{ episode.collection_entry.resolution }}
+                          </p>
+                        {% endif %}
+                      </div>
+                    </div>
+                  </div>
+                {% endfor %}
+                {% if episode_load_more %}
+                  <div class="detail-episode-load-more flex justify-center pt-2" data-episode-load-more>
+                    <a href="?{{ episode_load_more.querystring }}"
+                       hx-get="?{{ episode_load_more.querystring }}"
+                       hx-select="#episodes-batch > *"
+                       hx-target="closest [data-episode-load-more]"
+                       hx-swap="outerHTML"
+                       class="inline-flex items-center rounded-xl border border-white/10 bg-[#2a2f35] px-4 py-3 text-sm font-medium text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40]">
+                      Show {{ episode_load_more.label }}
+                    </a>
+                  </div>
+                {% endif %}
+              </div>
+              {% endif %}
+            </div>
+          </div>
+        {% elif media_type == MediaTypes.ANIME.value and identity_provider == Sources.MAL.value %}
+          <div class="w-full">
+            <h2 class="text-xl font-bold mb-4">Episodes</h2>
+            <div class="rounded-lg border border-[#2f3640] bg-[#252a30] p-4 text-sm text-gray-300 space-y-2">
+              <p>Episode cards are not available from MyAnimeList metadata. MAL only returns the total episode count for this title.</p>
+              {% if grouped_preview_target and display_provider != identity_provider %}
+                <p>
+                  This entry maps to {{ display_provider|upper }}
+                  {{ grouped_preview_target.season_title|default:"season" }}
+                  {% if grouped_preview_target.episode_start and grouped_preview_target.episode_end %}
+                    (episodes {{ grouped_preview_target.episode_start }}-{{ grouped_preview_target.episode_end }})
+                  {% elif grouped_preview_target.episode_start %}
+                    (starting at episode {{ grouped_preview_target.episode_start }})
+                  {% endif %}.
+                  Open Add to tracker to log grouped episode plays or convert it to the grouped series.
+                </p>
+              {% else %}
+                <p>Switch the metadata provider to TVDB or TMDB from Add to tracker to browse mapped episodes when that data is available.</p>
+              {% endif %}
+            </div>
+          </div>
+        {% endif %}
+
+        </div>
+      {% elif media_type == MediaTypes.ANIME.value and identity_provider == Sources.MAL.value %}
+        <div class="w-full md:w-3/4">
+          <div class="w-full">
+            <h2 class="text-xl font-bold mb-4">Episodes</h2>
+            <div class="rounded-lg border border-[#2f3640] bg-[#252a30] p-4 text-sm text-gray-300 space-y-2">
+              <p>Episode cards are not available from MyAnimeList metadata. MAL only returns the total episode count for this title.</p>
+              {% if grouped_preview_target and display_provider != identity_provider %}
+                <p>
+                  This entry maps to {{ display_provider|upper }}
+                  {{ grouped_preview_target.season_title|default:"season" }}
+                  {% if grouped_preview_target.episode_start and grouped_preview_target.episode_end %}
+                    (episodes {{ grouped_preview_target.episode_start }}-{{ grouped_preview_target.episode_end }})
+                  {% elif grouped_preview_target.episode_start %}
+                    (starting at episode {{ grouped_preview_target.episode_start }})
+                  {% endif %}.
+                  Open Add to tracker to log grouped episode plays or convert it to the grouped series.
+                </p>
+              {% else %}
+                <p>Switch the metadata provider to TVDB or TMDB from Add to tracker to browse mapped episodes when that data is available.</p>
+              {% endif %}
+            </div>
+          </div>
         </div>
       {% endif %}
     {% endif %}
@@ -1436,192 +1649,6 @@
       </div>
     {% endif %}
 
-    {# Episodes List #}
-    {% if media.episodes %}
-      <div class="w-full">
-        <h2 class="text-xl font-bold mb-4">Episodes</h2>
-        <div class="space-y-6" id="episodes-list">
-          {% if media_type == MediaTypes.PODCAST.value %}
-            {# Use fragment for podcasts to enable infinite scroll #}
-            {% include "app/components/podcast_episode_list.html" with episodes=paginated_episodes|default:media.episodes user=user show=podcast_show IMG_NONE=IMG_NONE TRACK_TIME=TRACK_TIME has_more=has_more|default:has_more_episodes|default:False next_page=next_page|default:2 show_id=show_id request=request csrf_token=csrf_token only %}
-          {% else %}
-          {% for episode in media.episodes %}
-            <div class="bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg">
-              <div class="flex flex-col md:flex-row">
-                <img src="{{ IMG_NONE }}"
-                     alt="E{{ episode.episode_number }}"
-                     data-src="{{ episode.image }}"
-                     class="lazyload {% if media_type == MediaTypes.PODCAST.value %}md:w-40 md:h-40{% else %}md:w-64 md:h-40{% endif %} shrink-0 {% if episode.image != IMG_NONE %}object-cover{% endif %}">
-                <div class="py-3 flex-1 flex flex-col">
-                  <div class="flex-1">
-                    <div class="flex justify-between items-start mb-2 space-x-2 px-4">
-                      <div>
-                        <h2 class="text-xl font-semibold mb-1 line-clamp-1">{{ episode.title }}</h2>
-                        <p class="text-sm text-gray-400">
-                          {% if episode.episode_number %}Episode {{ episode.episode_number }} • {% endif %}{{ episode.air_date|user_date_format:user|default_if_none:"Unknown date" }}{% if episode.runtime %} • {{ episode.runtime }}{% endif %}
-                        </p>
-                      </div>
-                      {% if not public_view|default:False %}
-                      <div class="flex space-x-2">
-                        {# Track Episode #}
-                        {% if media_type == MediaTypes.PODCAST.value %}
-                          {# Podcast episodes use music-style modal (fill_track_song.html) #}
-                          <div x-data="{ trackOpen: false }">
-                            <button @click="trackOpen = true"
-                                    title="Track Episode"
-                                    class="p-2 {% if episode.music_wrapper and episode.music_wrapper.history.count > 0 %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-500{% endif %} text-white rounded-full transition duration-300 cursor-pointer">
-                              {% if episode.music_wrapper and episode.music_wrapper.history.count > 0 %}
-                                {% include "app/icons/eye.svg" with classes="w-4 h-4" %}
-                              {% else %}
-                                {% include "app/icons/eye-closed.svg" with classes="w-4 h-4" %}
-                              {% endif %}
-                            </button>
-
-                            {# Include the music-style modal directly (like music tracks) #}
-                            {% include "app/components/fill_track_song.html" with request=request album=episode.album_adapter track=episode.track_adapter music=episode.music_wrapper csrf_token=csrf_token TRACK_TIME=TRACK_TIME user=user IMG_NONE=IMG_NONE only %}
-                          </div>
-                        {% else %}
-                          {# TV episodes use episode_save #}
-                        <div x-data="{ trackOpen: false }">
-                          <button @click="trackOpen = true"
-                                  title="Track Episode"
-                                  class="p-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full transition duration-300 cursor-pointer">
-                            {% if episode.history %}
-                              {% include "app/icons/eye.svg" with classes="w-4 h-4" %}
-                            {% else %}
-                              {% include "app/icons/eye-closed.svg" with classes="w-4 h-4" %}
-                            {% endif %}
-                          </button>
-
-                          {% include "app/components/fill_track_episode.html" with request=request media=media episode=episode episode_title=episode.title csrf_token=csrf_token TRACK_TIME=TRACK_TIME user=user only %}
-
-                        </div>
-                        {% endif %}
-
-                        {# Lists #}
-                        <div x-data="{ listsOpen: false }">
-                          <button class="p-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full transition duration-300 cursor-pointer"
-                                  title="Add to custom lists"
-                                    hx-get="{% media_view_url 'lists_modal' episode %}"
-                                  hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
-                                    hx-target="#{% component_id 'lists' episode %}"
-                                  hx-trigger="click once"
-                                  @click="listsOpen = true">
-                            {% include "app/icons/list-add.svg" with classes="w-4 h-4" %}
-                          </button>
-
-                          <div x-show="listsOpen"
-                               @keydown.escape.window="listsOpen = false"
-                               class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                            <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
-                                 @click.outside="listsOpen = false">
-                                <div id="{% component_id 'lists' episode %}"></div>
-                            </div>
-                          </div>
-                        </div>
-
-                        {# History #}
-                        {% if episode.item %}
-                          <div x-data="{ historyOpen: false }">
-                            <button class="p-2 bg-amber-600 hover:bg-amber-700 text-white rounded-full transition duration-300 cursor-pointer"
-                                    title="View your activity history"
-                                      hx-get="{% media_view_url 'history_modal' episode.item %}"
-                                    hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
-                                      hx-target="#{% component_id 'history' episode.item %}"
-                                    hx-trigger="click once"
-                                    @click="historyOpen = true">
-                              {% include "app/icons/history.svg" with classes="w-4 h-4" %}
-                            </button>
-                            <div x-show="historyOpen"
-                                 @keydown.escape.window="historyOpen = false"
-                                 class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                              <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
-                                   @click.outside="historyOpen = false">
-                                  <div id="{% component_id 'history' episode.item %}"></div>
-                                </div>
-                              </div>
-                            </div>
-                        {% endif %}
-
-                        {# Episode Rating #}
-                        {% if episode.history %}
-                          {% with ep_score=episode.history.0.score %}
-                          <div x-data="{
-                            showRatingPopup: false,
-                            rating: {% if ep_score is not None %}{{ ep_score|score_display:user }}{% else %}null{% endif %},
-                            ratingScaleMax: {{ user|rating_scale_max }},
-                            hoverRating: null,
-                            isHovering: false,
-                            formatRating(v) { return v !== null && v !== undefined ? (this.ratingScaleMax === 5 ? String(v) + '/5' : String(v)) : ''; }
-                          }"
-                               class="relative">
-                            <button type="button"
-                                    @click="showRatingPopup = !showRatingPopup"
-                                    title="Rate episode"
-                                    :class="rating !== null
-                                      ? 'border-amber-400/28 bg-amber-500/14 hover:bg-amber-500/20'
-                                      : 'border-gray-400/28 bg-gray-500/14 hover:bg-gray-500/20'"
-                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border shadow-sm transition-colors duration-200 cursor-pointer">
-                              <span x-show="rating === null">{% include "app/icons/star.svg" with classes="h-3.5 w-3.5 text-gray-300" %}</span>
-                              <span x-show="rating !== null" class="text-xs font-semibold text-amber-300 leading-none" x-text="rating" style="display:none">{% if ep_score is not None %}{{ ep_score|score_display:user }}{% endif %}</span>
-                            </button>
-
-                            <div x-show="showRatingPopup"
-                                 @click.outside="showRatingPopup = false; isHovering = false"
-                                 class="absolute right-0 top-full mt-2 w-[250px] rounded-lg border border-gray-700 bg-[#2a2f35] p-3 shadow-lg z-50"
-                                 @mouseenter="isHovering = true"
-                                 @mouseleave="isHovering = false; hoverRating = null">
-                              <div class="flex justify-between mb-1">
-                                {% with rating_range=user|rating_scale_max|get_range %}
-                                  {% for rating_value in rating_range %}
-                                    <button @click="if (rating == {{ rating_value }}) { rating = null; } else { rating = {{ rating_value }}; } showRatingPopup = false; isHovering = false"
-                                            @mouseenter="hoverRating = {{ rating_value }}"
-                                            hx-post="{% url 'update_episode_score' current_instance.id episode.episode_number %}"
-                                            hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'
-                                            hx-vals='{"score": {{ rating_value }}, "toggle": true}'
-                                            hx-trigger="click"
-                                            hx-swap="none"
-                                            class="focus:outline-none flex flex-col items-center cursor-pointer">
-                                      <div :class="{ 'text-yellow-400': {{ rating_value }} <= (isHovering ? hoverRating : rating), 'text-gray-600': {{ rating_value }} > (isHovering ? hoverRating : rating) }">
-                                        {% include "app/icons/star.svg" with classes="w-5 h-5 hover:scale-110 transition-transform" %}
-                                      </div>
-                                      <span class="text-xs mt-1 text-gray-400">{{ rating_value }}</span>
-                                    </button>
-                                  {% endfor %}
-                                {% endwith %}
-                              </div>
-                            </div>
-                          </div>
-                          {% endwith %}
-                        {% endif %}
-                      </div>
-                      {% endif %}
-                    </div>
-                    {% if episode.overview %}
-                    <div class="{% if episode.history or episode.collection_entry and episode.collection_entry.resolution %}md:h-[calc(2*1.5rem)]{% else %}md:h-[calc(3*1.5rem)]{% endif %} md:overflow-y-auto px-4">
-                      <p class="text-sm text-gray-300 leading-relaxed text-pretty">{{ episode.overview }}</p>
-                    </div>
-                    {% endif %}
-                  </div>
-                  {% if episode.history %}
-                    <p class="text-xs text-gray-400 mt-2 px-4">
-                      Last watched: {{ episode.history.0.end_date|user_date_format:user|default_if_none:"No date provided" }}
-                      {% if episode.history|length > 1 %}• Watched {{ episode.history|length }} times{% endif %}
-                      {% if episode.collection_entry and episode.collection_entry.resolution %}• Collected: {{ episode.collection_entry.resolution }}{% endif %}
-                    </p>
-                  {% elif episode.collection_entry and episode.collection_entry.resolution %}
-                    <p class="text-xs text-gray-400 mt-2 px-4">
-                      Collected: {{ episode.collection_entry.resolution }}
-                    </p>
-                  {% endif %}
-                </div>
-              </div>
-            </div>
-          {% endfor %}
-          {% endif %}
-        </div>
-      </div>
-    {% endif %}
   </div>
 
   {% endif %}

@@ -19,6 +19,7 @@ from decouple import (
     config,
     undefined,
 )
+from debug_toolbar.settings import PANELS_DEFAULTS
 from django.core.cache import CacheKeyWarning
 from django.db.backends.signals import connection_created
 
@@ -83,6 +84,16 @@ SECRET_KEY = config(
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config("DEBUG", default=True, cast=bool)
+ENABLE_DEBUG_TOOLBAR = DEBUG and config(
+    "ENABLE_DEBUG_TOOLBAR",
+    default=True,
+    cast=bool,
+)
+DEBUG_TOOLBAR_INCLUDE_TEMPLATES_PANEL = config(
+    "DEBUG_TOOLBAR_INCLUDE_TEMPLATES_PANEL",
+    default=False,
+    cast=bool,
+)
 
 INTERNAL_IPS = ["127.0.0.1"]
 
@@ -125,7 +136,6 @@ INSTALLED_APPS = [
     "integrations",
     "lists",
     "users",
-    "debug_toolbar",
     "django_celery_beat",
     "django_celery_results",
     "django_select2",
@@ -144,8 +154,10 @@ INSTALLED_APPS = [
     "django.contrib.humanize",
 ]
 
+if ENABLE_DEBUG_TOOLBAR:
+    INSTALLED_APPS.append("debug_toolbar")
+
 MIDDLEWARE = [
-    "debug_toolbar.middleware.DebugToolbarMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "app.middleware.DatabaseRetryMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -161,6 +173,9 @@ MIDDLEWARE = [
     "app.middleware.ProviderAPIErrorMiddleware",
     "app.middleware.ErrorCaptureMiddleware",
 ]
+
+if ENABLE_DEBUG_TOOLBAR:
+    MIDDLEWARE.insert(0, "debug_toolbar.middleware.DebugToolbarMiddleware")
 
 ROOT_URLCONF = "config.urls"
 
@@ -765,6 +780,14 @@ DEBUG_TOOLBAR_CONFIG = {
     ),
     "ROOT_TAG_EXTRA_ATTRS": "hx-preserve",
 }
+DEBUG_TOOLBAR_PANELS = [
+    panel
+    for panel in PANELS_DEFAULTS
+    if (
+        DEBUG_TOOLBAR_INCLUDE_TEMPLATES_PANEL
+        or panel != "debug_toolbar.panels.templates.TemplatesPanel"
+    )
+]
 
 SELECT2_CACHE_BACKEND = "default"
 SELECT2_JS = [

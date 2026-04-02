@@ -2153,6 +2153,561 @@ class MediaDetailsViewTests(TestCase):
         self.assertNotContains(response, "LAST PLAYED")
         self.assertNotContains(response, "WATCHED HOURS")
 
+    @patch("app.views.metadata_resolution.resolve_detail_metadata")
+    @patch("app.providers.services.get_media_metadata")
+    def test_flat_mal_anime_details_explain_missing_episode_cards(
+        self,
+        mock_get_metadata,
+        mock_resolve_detail_metadata,
+    ):
+        base_metadata = {
+            "media_id": "527",
+            "title": "Pokemon",
+            "original_title": "Pokemon",
+            "localized_title": "Pokemon",
+            "media_type": MediaTypes.ANIME.value,
+            "source": Sources.MAL.value,
+            "source_url": "https://myanimelist.net/anime/527",
+            "max_progress": 276,
+            "image": "https://example.com/pokemon.jpg",
+            "synopsis": "Pocket monsters.",
+            "details": {"episodes": 276},
+            "related": {},
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+        }
+        mock_get_metadata.return_value = base_metadata
+        item = Item.objects.create(
+            media_id="527",
+            source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME.value,
+            title="Pokemon",
+            image="https://example.com/pokemon.jpg",
+        )
+        mock_resolve_detail_metadata.side_effect = lambda *_args, **_kwargs: MetadataResolutionResult(
+            display_provider=Sources.MAL.value,
+            identity_provider=Sources.MAL.value,
+            mapping_status="identity",
+            header_metadata={
+                **base_metadata,
+                "details": dict(base_metadata["details"]),
+                "related": dict(base_metadata["related"]),
+                "cast": list(base_metadata["cast"]),
+                "crew": list(base_metadata["crew"]),
+                "studios_full": list(base_metadata["studios_full"]),
+            },
+            grouped_preview=None,
+            provider_media_id=item.media_id,
+            grouped_preview_target=None,
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.MAL.value,
+                    "media_type": MediaTypes.ANIME.value,
+                    "media_id": "527",
+                    "title": "pokemon",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            "Episode cards are not available from MyAnimeList metadata.",
+        )
+        self.assertContains(
+            response,
+            "Switch the metadata provider to TVDB or TMDB from Add to tracker",
+        )
+
+    @override_settings(TVDB_API_KEY="test-tvdb-key")
+    @patch("app.views.metadata_resolution.anime_mapping.find_entries_for_mal_id")
+    @patch("app.views.anime_mapping.resolve_provider_series_id")
+    @patch("app.views.metadata_resolution.resolve_detail_metadata")
+    @patch("app.providers.services.get_media_metadata")
+    def test_flat_mal_anime_details_render_cross_season_episode_cards(
+        self,
+        mock_get_metadata,
+        mock_resolve_detail_metadata,
+        mock_resolve_provider_series_id,
+        mock_find_entries_for_mal_id,
+    ):
+        base_metadata = {
+            "media_id": "527",
+            "title": "Pokemon",
+            "original_title": "Pokemon",
+            "localized_title": "Pokemon",
+            "media_type": MediaTypes.ANIME.value,
+            "source": Sources.MAL.value,
+            "source_url": "https://myanimelist.net/anime/527",
+            "max_progress": 4,
+            "image": "https://example.com/pokemon.jpg",
+            "synopsis": "Pocket monsters.",
+            "details": {"episodes": 4},
+            "related": {},
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+        }
+        grouped_series_metadata = {
+            "media_id": "76703",
+            "source": Sources.TVDB.value,
+            "media_type": MediaTypes.ANIME.value,
+            "title": "Pokemon",
+            "related": {
+                "seasons": [
+                    {
+                        "season_number": 1,
+                        "episode_count": 2,
+                    },
+                    {
+                        "season_number": 2,
+                        "episode_count": 2,
+                    },
+                ],
+            },
+        }
+        grouped_payload = grouped_series_metadata | {
+            "season/1": {
+                "media_id": "76703",
+                "source": Sources.TVDB.value,
+                "media_type": MediaTypes.SEASON.value,
+                "season_number": 1,
+                "season_title": "Indigo League",
+                "details": {"episodes": 2},
+                "episodes": [
+                    {
+                        "episode_number": 1,
+                        "air_date": "1997-04-01",
+                        "image": "https://example.com/pokemon-ep1.jpg",
+                        "name": "Pokemon, I Choose You!",
+                        "overview": "Episode one.",
+                        "runtime": 24,
+                    },
+                    {
+                        "episode_number": 2,
+                        "air_date": "1997-04-08",
+                        "image": "https://example.com/pokemon-ep2.jpg",
+                        "name": "Pokemon Emergency!",
+                        "overview": "Episode two.",
+                        "runtime": 24,
+                    },
+                ],
+            },
+            "season/2": {
+                "media_id": "76703",
+                "source": Sources.TVDB.value,
+                "media_type": MediaTypes.SEASON.value,
+                "season_number": 2,
+                "season_title": "Orange Islands",
+                "details": {"episodes": 2},
+                "episodes": [
+                    {
+                        "episode_number": 1,
+                        "air_date": "1999-01-28",
+                        "image": "https://example.com/pokemon-ep3.jpg",
+                        "name": "Pallet Party Panic",
+                        "overview": "Episode three.",
+                        "runtime": 24,
+                    },
+                    {
+                        "episode_number": 2,
+                        "air_date": "1999-02-04",
+                        "image": "https://example.com/pokemon-ep4.jpg",
+                        "name": "A Scare in the Air",
+                        "overview": "Episode four.",
+                        "runtime": 24,
+                    },
+                ],
+            },
+        }
+
+        def metadata_side_effect(
+            media_type,
+            media_id,
+            source,
+            season_numbers=None,
+            episode_number=None,
+        ):
+            del media_id, episode_number
+            if media_type == MediaTypes.ANIME.value and source == Sources.TVDB.value:
+                return grouped_series_metadata
+            if media_type == "tv_with_seasons" and source == Sources.TVDB.value:
+                self.assertEqual(season_numbers, [1, 2])
+                return grouped_payload
+            return base_metadata
+
+        mock_get_metadata.side_effect = metadata_side_effect
+        mock_resolve_provider_series_id.return_value = "76703"
+        mock_find_entries_for_mal_id.return_value = [
+            {
+                "tvdb_id": 76703,
+                "tvdb_season": -1,
+                "tvdb_epoffset": 0,
+                "mal_id": 527,
+            },
+        ]
+        item = Item.objects.create(
+            media_id="527",
+            source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME.value,
+            title="Pokemon",
+            image="https://example.com/pokemon.jpg",
+        )
+        mock_resolve_detail_metadata.side_effect = lambda *_args, **_kwargs: MetadataResolutionResult(
+            display_provider=Sources.MAL.value,
+            identity_provider=Sources.MAL.value,
+            mapping_status="identity",
+            header_metadata={
+                **base_metadata,
+                "details": dict(base_metadata["details"]),
+                "related": dict(base_metadata["related"]),
+                "cast": list(base_metadata["cast"]),
+                "crew": list(base_metadata["crew"]),
+                "studios_full": list(base_metadata["studios_full"]),
+            },
+            grouped_preview=None,
+            provider_media_id=item.media_id,
+            grouped_preview_target=None,
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.MAL.value,
+                    "media_type": MediaTypes.ANIME.value,
+                    "media_id": "527",
+                    "title": "pokemon",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Pokemon, I Choose You!")
+        self.assertContains(response, "Pokemon Emergency!")
+        self.assertContains(response, "Pallet Party Panic")
+        self.assertContains(response, "A Scare in the Air")
+        self.assertNotContains(
+            response,
+            "Episode cards are not available from MyAnimeList metadata.",
+        )
+
+    @override_settings(TVDB_API_KEY="test-tvdb-key")
+    @patch("app.views.metadata_resolution.resolve_detail_metadata")
+    @patch("app.providers.services.get_media_metadata")
+    def test_flat_mal_anime_details_render_mapped_episode_cards(
+        self,
+        mock_get_metadata,
+        mock_resolve_detail_metadata,
+    ):
+        base_metadata = {
+            "media_id": "52991",
+            "title": "Frieren",
+            "original_title": "Sousou no Frieren",
+            "localized_title": "Frieren",
+            "media_type": MediaTypes.ANIME.value,
+            "source": Sources.MAL.value,
+            "source_url": "https://myanimelist.net/anime/52991",
+            "max_progress": 3,
+            "image": "https://example.com/frieren.jpg",
+            "synopsis": "A mage looks back.",
+            "details": {"episodes": 3},
+            "related": {},
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+        }
+        grouped_payload = {
+            "media_id": "9350138",
+            "source": Sources.TVDB.value,
+            "media_type": MediaTypes.TV.value,
+            "title": "Frieren: Beyond Journey's End",
+            "related": {
+                "seasons": [
+                    {
+                        "season_number": 1,
+                        "episode_count": 3,
+                    },
+                ],
+            },
+            "season/1": {
+                "media_id": "9350138",
+                "source": Sources.TVDB.value,
+                "media_type": MediaTypes.SEASON.value,
+                "season_number": 1,
+                "season_title": "Season 1",
+                "details": {"episodes": 3},
+                "episodes": [
+                    {
+                        "episode_number": 1,
+                        "air_date": "2023-09-29",
+                        "image": "https://example.com/ep1.jpg",
+                        "name": "The Journey's End",
+                        "overview": "Episode one.",
+                        "runtime": 24,
+                    },
+                    {
+                        "episode_number": 2,
+                        "air_date": "2023-10-06",
+                        "image": "https://example.com/ep2.jpg",
+                        "name": "It Didn't Have to Be Magic...",
+                        "overview": "Episode two.",
+                        "runtime": 24,
+                    },
+                    {
+                        "episode_number": 3,
+                        "air_date": "2023-10-13",
+                        "image": "https://example.com/ep3.jpg",
+                        "name": "Killing Magic",
+                        "overview": "Episode three.",
+                        "runtime": 24,
+                    },
+                ],
+            },
+        }
+
+        def metadata_side_effect(media_type, *_args, **_kwargs):
+            if media_type == "tv_with_seasons":
+                return grouped_payload
+            return base_metadata
+
+        mock_get_metadata.side_effect = metadata_side_effect
+        item = Item.objects.create(
+            media_id="52991",
+            source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME.value,
+            title="Frieren",
+            image="https://example.com/frieren.jpg",
+        )
+        mock_resolve_detail_metadata.side_effect = lambda *_args, **_kwargs: MetadataResolutionResult(
+            display_provider=Sources.MAL.value,
+            identity_provider=Sources.MAL.value,
+            mapping_status="identity",
+            header_metadata={
+                **base_metadata,
+                "details": dict(base_metadata["details"]),
+                "related": dict(base_metadata["related"]),
+                "cast": list(base_metadata["cast"]),
+                "crew": list(base_metadata["crew"]),
+                "studios_full": list(base_metadata["studios_full"]),
+            },
+            grouped_preview=None,
+            provider_media_id=item.media_id,
+            grouped_preview_target=None,
+        )
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.MAL.value,
+                    "media_type": MediaTypes.ANIME.value,
+                    "media_id": "52991",
+                    "title": "frieren",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "The Journey&#x27;s End")
+        self.assertContains(response, "It Didn&#x27;t Have to Be Magic...")
+        self.assertContains(response, "Killing Magic")
+        self.assertNotContains(
+            response,
+            "Episode cards are not available from MyAnimeList metadata.",
+        )
+
+    @override_settings(TVDB_API_KEY="test-tvdb-key")
+    @patch("app.views.metadata_resolution.anime_mapping.find_entries_for_mal_id")
+    @patch("app.views.anime_mapping.resolve_provider_series_id")
+    @patch("app.views.metadata_resolution.resolve_detail_metadata")
+    @patch("app.providers.services.get_media_metadata")
+    def test_flat_mal_anime_details_paginate_long_episode_preview(
+        self,
+        mock_get_metadata,
+        mock_resolve_detail_metadata,
+        mock_resolve_provider_series_id,
+        mock_find_entries_for_mal_id,
+    ):
+        base_metadata = {
+            "media_id": "527",
+            "title": "Pokemon",
+            "original_title": "Pokemon",
+            "localized_title": "Pokemon",
+            "media_type": MediaTypes.ANIME.value,
+            "source": Sources.MAL.value,
+            "source_url": "https://myanimelist.net/anime/527",
+            "max_progress": 30,
+            "image": "https://example.com/pokemon.jpg",
+            "synopsis": "Pocket monsters.",
+            "details": {"episodes": 30},
+            "related": {},
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+        }
+        grouped_series_metadata = {
+            "media_id": "76703",
+            "source": Sources.TVDB.value,
+            "media_type": MediaTypes.ANIME.value,
+            "title": "Pokemon",
+            "related": {
+                "seasons": [
+                    {
+                        "season_number": 1,
+                        "episode_count": 30,
+                    },
+                ],
+            },
+        }
+        grouped_payload = grouped_series_metadata | {
+            "season/1": {
+                "media_id": "76703",
+                "source": Sources.TVDB.value,
+                "media_type": MediaTypes.SEASON.value,
+                "season_number": 1,
+                "season_title": "Indigo League",
+                "details": {"episodes": 30},
+                "episodes": [
+                    {
+                        "episode_number": number,
+                        "air_date": f"1997-04-{number:02d}",
+                        "image": f"https://example.com/pokemon-{number}.jpg",
+                        "name": f"Mapped Episode {number:02d}",
+                        "overview": f"Episode {number}.",
+                        "runtime": 24,
+                    }
+                    for number in range(1, 31)
+                ],
+            },
+        }
+
+        def metadata_side_effect(
+            media_type,
+            media_id,
+            source,
+            season_numbers=None,
+            episode_number=None,
+        ):
+            del media_id, episode_number
+            if media_type == MediaTypes.ANIME.value and source == Sources.TVDB.value:
+                return {
+                    **grouped_series_metadata,
+                    "related": {
+                        "seasons": list(grouped_series_metadata["related"]["seasons"]),
+                    },
+                }
+            if media_type == "tv_with_seasons" and source == Sources.TVDB.value:
+                self.assertEqual(season_numbers, [1])
+                return {
+                    **grouped_payload,
+                    "related": {
+                        "seasons": list(grouped_payload["related"]["seasons"]),
+                    },
+                    "season/1": {
+                        **grouped_payload["season/1"],
+                        "details": dict(grouped_payload["season/1"]["details"]),
+                        "episodes": list(grouped_payload["season/1"]["episodes"]),
+                    },
+                }
+            return {
+                **base_metadata,
+                "details": dict(base_metadata["details"]),
+                "related": dict(base_metadata["related"]),
+                "cast": list(base_metadata["cast"]),
+                "crew": list(base_metadata["crew"]),
+                "studios_full": list(base_metadata["studios_full"]),
+            }
+
+        mock_get_metadata.side_effect = metadata_side_effect
+        mock_resolve_provider_series_id.return_value = "76703"
+        mock_find_entries_for_mal_id.return_value = [
+            {
+                "tvdb_id": 76703,
+                "tvdb_season": 1,
+                "tvdb_epoffset": 0,
+                "mal_id": 527,
+            },
+        ]
+        item = Item.objects.create(
+            media_id="527",
+            source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME.value,
+            title="Pokemon",
+            image="https://example.com/pokemon.jpg",
+        )
+        mock_resolve_detail_metadata.side_effect = lambda *_args, **_kwargs: MetadataResolutionResult(
+            display_provider=Sources.MAL.value,
+            identity_provider=Sources.MAL.value,
+            mapping_status="identity",
+            header_metadata={
+                **base_metadata,
+                "details": dict(base_metadata["details"]),
+                "related": dict(base_metadata["related"]),
+                "cast": list(base_metadata["cast"]),
+                "crew": list(base_metadata["crew"]),
+                "studios_full": list(base_metadata["studios_full"]),
+            },
+            grouped_preview=None,
+            provider_media_id=item.media_id,
+            grouped_preview_target=None,
+        )
+
+        page_one = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.MAL.value,
+                    "media_type": MediaTypes.ANIME.value,
+                    "media_id": "527",
+                    "title": "pokemon",
+                },
+            ),
+        )
+
+        self.assertEqual(page_one.status_code, 200)
+        self.assertEqual(len(page_one.context["media"]["episodes"]), 25)
+        self.assertEqual(page_one.context["episode_load_more"]["label"], "Episodes 26-30")
+        self.assertContains(page_one, "Mapped Episode 25")
+        self.assertNotContains(page_one, "Mapped Episode 26")
+        self.assertContains(page_one, "Show Episodes 26-30")
+
+        page_two = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.MAL.value,
+                    "media_type": MediaTypes.ANIME.value,
+                    "media_id": "527",
+                    "title": "pokemon",
+                },
+            ),
+            {"episode_page": 2},
+        )
+
+        self.assertEqual(page_two.status_code, 200)
+        self.assertEqual(len(page_two.context["media"]["episodes"]), 5)
+        self.assertEqual(
+            [episode["episode_number"] for episode in page_two.context["media"]["episodes"]],
+            [26, 27, 28, 29, 30],
+        )
+        self.assertIsNone(page_two.context["episode_load_more"])
+        self.assertContains(page_two, "Mapped Episode 26")
+        self.assertContains(page_two, "Mapped Episode 30")
+        self.assertNotContains(page_two, "Mapped Episode 25")
+        self.assertNotContains(
+            page_one,
+            reverse(
+                "lists_modal",
+                args=[Sources.TVDB.value, MediaTypes.EPISODE.value, "76703", 1, 1],
+            ),
+        )
+
     @override_settings(TVDB_API_KEY="test-tvdb-key")
     @patch("app.views.metadata_resolution.resolve_detail_metadata")
     @patch("app.providers.services.get_media_metadata")
@@ -2718,7 +3273,7 @@ class MediaDetailsViewTests(TestCase):
     @patch("app.providers.tmdb.process_episodes")
     def test_season_details_view(self, mock_process_episodes, mock_get_metadata):
         """Test the season details view."""
-        mock_get_metadata.return_value = {
+        mock_get_metadata.side_effect = lambda *_args, **_kwargs: {
             "title": "Test TV Show",
             "media_id": "1668",
             "source": Sources.TMDB.value,
@@ -2726,6 +3281,7 @@ class MediaDetailsViewTests(TestCase):
             "image": "http://example.com/image.jpg",
             "season/1": {
                 "title": "Season 1",
+                "season_title": "Season 1",
                 "media_id": "1668",
                 "media_type": MediaTypes.SEASON.value,
                 "source": Sources.TMDB.value,
@@ -2781,6 +3337,84 @@ class MediaDetailsViewTests(TestCase):
             Sources.TMDB.value,
             [1],
         )
+
+    @patch("app.providers.services.get_media_metadata")
+    @patch("app.providers.tmdb.process_episodes")
+    def test_season_details_paginate_long_episode_lists(
+        self,
+        mock_process_episodes,
+        mock_get_metadata,
+    ):
+        mock_get_metadata.side_effect = lambda *_args, **_kwargs: {
+            "title": "Test TV Show",
+            "media_id": "1668",
+            "source": Sources.TMDB.value,
+            "media_type": MediaTypes.TV.value,
+            "image": "http://example.com/image.jpg",
+            "season/1": {
+                "title": "Season 1",
+                "season_title": "Season 1",
+                "media_id": "1668",
+                "media_type": MediaTypes.SEASON.value,
+                "source": Sources.TMDB.value,
+                "image": "http://example.com/season.jpg",
+                "episodes": [],
+            },
+        }
+        mock_process_episodes.return_value = [
+            {
+                "media_id": "1668",
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.EPISODE.value,
+                "season_number": 1,
+                "episode_number": number,
+                "title": f"Long Episode {number:02d}",
+                "image": "http://example.com/episode.jpg",
+                "air_date": f"2023-01-{number:02d}",
+                "overview": "",
+                "runtime": "24m",
+            }
+            for number in range(1, 31)
+        ]
+
+        page_one = self.client.get(
+            reverse(
+                "season_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_id": "1668",
+                    "title": "test-tv-show",
+                    "season_number": 1,
+                },
+            ),
+        )
+
+        self.assertEqual(page_one.status_code, 200)
+        self.assertEqual(len(page_one.context["media"]["episodes"]), 25)
+        self.assertEqual(page_one.context["episode_load_more"]["label"], "Episodes 26-30")
+        self.assertContains(page_one, "Long Episode 25")
+        self.assertNotContains(page_one, "Long Episode 26")
+        self.assertContains(page_one, "Show Episodes 26-30")
+
+        page_two = self.client.get(
+            reverse(
+                "season_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_id": "1668",
+                    "title": "test-tv-show",
+                    "season_number": 1,
+                },
+            ),
+            {"episode_page": 2},
+        )
+
+        self.assertEqual(page_two.status_code, 200)
+        self.assertEqual(len(page_two.context["media"]["episodes"]), 5)
+        self.assertIsNone(page_two.context["episode_load_more"])
+        self.assertContains(page_two, "Long Episode 26")
+        self.assertContains(page_two, "Long Episode 30")
+        self.assertNotContains(page_two, "Long Episode 25")
 
     @patch("app.views.trakt_popularity_service.refresh_trakt_popularity")
     @patch("app.providers.services.get_media_metadata")

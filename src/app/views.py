@@ -107,11 +107,13 @@ from app.services.tracking_hydration import (
 )
 from app.templatetags import app_tags
 from app.signals import suppress_media_cache_change_signals
+from integrations import anime_mapping
 from lists.models import CustomList
 from users.models import HomeSortChoices, MediaSortChoices, MediaStatusChoices
 from users.models import TopTalentSortChoices
 
 logger = logging.getLogger(__name__)
+DETAIL_EPISODES_PER_PAGE = 25
 
 MEDIA_RATING_CHOICES = (
     ("all", "All"),
@@ -879,6 +881,94 @@ def _build_detail_activity_subtitle(media_type, media_metadata, current_instance
         "duration_text": duration_text,
         "collapse_same_day": collapse_same_day,
     }
+
+
+def _detail_episode_number_for_pagination(episode):
+    """Return a display-friendly episode number from a detail episode payload."""
+    if isinstance(episode, dict):
+        episode_number = episode.get("episode_number")
+    else:
+        episode_number = getattr(episode, "episode_number", None)
+
+    try:
+        return int(episode_number) if episode_number is not None else None
+    except (TypeError, ValueError):
+        return episode_number
+
+
+def _detail_episode_page_label(page_episodes, start_index, end_index):
+    """Return a human-readable label for an episode page range."""
+    if page_episodes:
+        first_episode_number = _detail_episode_number_for_pagination(page_episodes[0])
+        last_episode_number = _detail_episode_number_for_pagination(page_episodes[-1])
+        if first_episode_number is not None and last_episode_number is not None:
+            if first_episode_number == last_episode_number:
+                return f"Episode {first_episode_number}"
+            return f"Episodes {first_episode_number}-{last_episode_number}"
+
+    display_start = start_index + 1
+    display_end = end_index
+    if display_start == display_end:
+        return f"Episode {display_start}"
+    return f"Episodes {display_start}-{display_end}"
+
+
+def _paginate_detail_episodes(
+    request,
+    episodes,
+    *,
+    page_param="episode_page",
+    per_page=DETAIL_EPISODES_PER_PAGE,
+):
+    """Slice long episode lists for detail pages and build the next batch link."""
+    episode_list = list(episodes or [])
+    if not episode_list:
+        return episode_list, None
+
+    paginator = Paginator(episode_list, per_page)
+
+    try:
+        requested_page = int(request.GET.get(page_param, 1))
+    except (TypeError, ValueError):
+        requested_page = 1
+    if requested_page < 1:
+        requested_page = 1
+
+    try:
+        page_obj = paginator.page(requested_page)
+    except EmptyPage:
+        page_obj = paginator.page(paginator.num_pages)
+
+    load_more = None
+    if page_obj.has_next():
+        next_page_number = page_obj.next_page_number()
+        next_start_index = (next_page_number - 1) * per_page
+        next_end_index = min(next_start_index + per_page, paginator.count)
+        next_query = request.GET.copy()
+        next_query[page_param] = str(next_page_number)
+        load_more = {
+            "querystring": next_query.urlencode(),
+            "label": _detail_episode_page_label(
+                episode_list[next_start_index:next_end_index],
+                next_start_index,
+                next_end_index,
+            ),
+        }
+
+    return list(page_obj.object_list), load_more
+
+
+def _normalize_detail_episode_actions(episodes):
+    """Ensure detail-page episode dicts default to enabled actions unless disabled."""
+    normalized_episodes = []
+    for episode in episodes or []:
+        if isinstance(episode, dict):
+            normalized_episode = dict(episode)
+            normalized_episode.setdefault("actions_enabled", True)
+            normalized_episodes.append(normalized_episode)
+            continue
+        normalized_episodes.append(episode)
+    return normalized_episodes
 
 
 def _resolve_detail_tag_genres(media_metadata, item, fallback_genres=None):
@@ -5298,6 +5388,17 @@ def media_details(
                     notes_entry = entry
                     break
 
+    if media_type == MediaTypes.ANIME.value and not media_metadata.get("episodes"):
+        flat_anime_episode_preview = _build_flat_anime_episode_preview(
+            request,
+            detail_item=detail_item,
+            media_id=media_id,
+            base_metadata=media_metadata,
+            metadata_resolution_result=metadata_resolution_result,
+        )
+        if flat_anime_episode_preview:
+            media_metadata["episodes"] = flat_anime_episode_preview
+
     # Get collection entries for this item (if not public view and not podcast)
     collection_entry = None
     collection_entries = []
@@ -5423,6 +5524,16 @@ def media_details(
             and Anime.objects.filter(user=request.user, item=detail_item).exists()
         )
 
+    episode_load_more = None
+    if media_type != MediaTypes.PODCAST.value and media_metadata.get("episodes"):
+        media_metadata["episodes"] = _normalize_detail_episode_actions(
+            media_metadata["episodes"],
+        )
+        media_metadata["episodes"], episode_load_more = _paginate_detail_episodes(
+            request,
+            media_metadata["episodes"],
+        )
+
     context = {
         "user": request.user,
         "media": media_metadata,
@@ -5479,6 +5590,7 @@ def media_details(
         "can_migrate_grouped_anime": can_migrate_grouped_anime,
         "migrated_grouped_item": migrated_grouped_item,
         "migrated_grouped_title": migrated_grouped_title,
+        "episode_load_more": episode_load_more,
     }
     return render(request, "app/media_details.html", context)
 
@@ -5725,6 +5837,434 @@ def _build_missing_season_metadata(
         "tvdb_id": tv_metadata.get("tvdb_id"),
         "external_links": tv_metadata.get("external_links"),
     }
+
+
+def _flat_anime_episode_preview_candidates(user, metadata_resolution_result=None):
+    """Return grouped providers to try for flat MAL anime episode previews."""
+    candidates = []
+
+    def add_candidate(provider):
+        if (
+            provider in metadata_resolution.GROUPED_ANIME_PROVIDERS
+            and metadata_resolution.provider_is_enabled(provider)
+            and provider not in candidates
+        ):
+            candidates.append(provider)
+
+    if metadata_resolution_result is not None:
+        add_candidate(metadata_resolution_result.display_provider)
+
+    if user and getattr(user, "is_authenticated", False):
+        add_candidate(
+            metadata_resolution.metadata_default_source(
+                user,
+                MediaTypes.ANIME.value,
+            ),
+        )
+
+    add_candidate(Sources.TVDB.value)
+    add_candidate(Sources.TMDB.value)
+    return candidates
+
+
+def _flat_anime_preview_season_numbers(
+    grouped_series_metadata,
+    grouped_preview_target,
+):
+    """Return grouped season numbers needed for a flat anime episode slice."""
+    if not isinstance(grouped_preview_target, dict):
+        return []
+
+    season_number = grouped_preview_target.get("season_number")
+    try:
+        season_number = int(season_number) if season_number is not None else None
+    except (TypeError, ValueError):
+        season_number = None
+
+    if season_number is not None and season_number >= 0:
+        return [season_number]
+
+    related = grouped_series_metadata.get("related") if isinstance(grouped_series_metadata, dict) else {}
+    seasons = related.get("seasons") if isinstance(related, dict) else []
+    target_total = grouped_preview_target.get("episode_total")
+    try:
+        target_total = int(target_total) if target_total is not None else None
+    except (TypeError, ValueError):
+        target_total = None
+    episode_offset = grouped_preview_target.get("episode_offset") or 0
+    try:
+        episode_offset = int(episode_offset)
+    except (TypeError, ValueError):
+        episode_offset = 0
+
+    sortable_seasons = []
+    for season in seasons:
+        if not isinstance(season, dict):
+            continue
+        raw_number = season.get("season_number")
+        try:
+            normalized_number = int(raw_number)
+        except (TypeError, ValueError):
+            continue
+        sortable_seasons.append((normalized_number, season))
+
+    sortable_seasons.sort(key=lambda pair: pair[0])
+
+    season_numbers = []
+    covered_episodes = 0
+    for normalized_number, season in sortable_seasons:
+        if normalized_number < 0 or normalized_number == 0:
+            continue
+        season_numbers.append(normalized_number)
+        episode_count = (
+            season.get("episode_count")
+            or (season.get("details") or {}).get("episodes")
+            or season.get("max_progress")
+        )
+        try:
+            episode_count = int(episode_count)
+        except (TypeError, ValueError):
+            episode_count = None
+        if episode_count is not None:
+            covered_episodes += episode_count
+        if (
+            target_total is not None
+            and episode_count is not None
+            and covered_episodes >= episode_offset + target_total
+        ):
+            break
+
+    if season_numbers:
+        return season_numbers
+
+    if any(number == 0 for number, _season in sortable_seasons):
+        return [0]
+    return []
+
+
+def _flat_anime_preview_episode_rows(grouped_preview, grouped_preview_target):
+    """Return mapped episode rows for a flat anime preview."""
+    if not isinstance(grouped_preview, dict) or not isinstance(grouped_preview_target, dict):
+        return []
+
+    target_total = grouped_preview_target.get("episode_total")
+    try:
+        target_total = int(target_total) if target_total is not None else None
+    except (TypeError, ValueError):
+        target_total = None
+    episode_offset = grouped_preview_target.get("episode_offset") or 0
+    try:
+        episode_offset = int(episode_offset)
+    except (TypeError, ValueError):
+        episode_offset = 0
+    target_season = grouped_preview_target.get("season_number")
+    try:
+        target_season = int(target_season) if target_season is not None else None
+    except (TypeError, ValueError):
+        target_season = None
+
+    def season_rows(season_number):
+        season_payload = grouped_preview.get(f"season/{season_number}")
+        if not isinstance(season_payload, dict):
+            return []
+        season_title = season_payload.get("season_title") or (
+            "Specials" if season_number == 0 else f"Season {season_number}"
+        )
+        rows = []
+        for raw_episode in season_payload.get("episodes") or []:
+            provider_episode_number = raw_episode.get("episode_number")
+            if provider_episode_number is None:
+                continue
+            rows.append(
+                {
+                    "season_number": season_number,
+                    "season_title": season_title,
+                    "provider_episode_number": provider_episode_number,
+                    "raw_episode": raw_episode,
+                },
+            )
+        return rows
+
+    ordered_rows = []
+    if target_season is not None and target_season >= 0:
+        ordered_rows.extend(season_rows(target_season))
+    else:
+        season_numbers = _flat_anime_preview_season_numbers(
+            grouped_preview,
+            grouped_preview_target,
+        )
+        if not season_numbers:
+            season_numbers = sorted(
+                {
+                    int(key.split("/", 1)[1])
+                    for key, value in grouped_preview.items()
+                    if key.startswith("season/")
+                    and isinstance(value, dict)
+                    and key.split("/", 1)[1].lstrip("-").isdigit()
+                    and int(key.split("/", 1)[1]) >= 0
+                },
+            )
+        for season_number in season_numbers:
+            ordered_rows.extend(season_rows(season_number))
+
+    if episode_offset > 0:
+        ordered_rows = ordered_rows[episode_offset:]
+    if target_total is not None:
+        ordered_rows = ordered_rows[:target_total]
+
+    mapped_rows = []
+    for mapped_episode_number, row in enumerate(ordered_rows, start=1):
+        mapped_rows.append(
+            {
+                **row,
+                "mapped_episode_number": mapped_episode_number,
+            },
+        )
+    return mapped_rows
+
+
+def _build_flat_anime_episode_preview(
+    request,
+    *,
+    detail_item,
+    media_id,
+    base_metadata,
+    metadata_resolution_result=None,
+):
+    """Return a read-only mapped episode slice for flat MAL anime details."""
+    if not isinstance(base_metadata, dict):
+        return None
+
+    identity_source = detail_item.source if detail_item else base_metadata.get("source")
+    identity_media_type = (
+        detail_item.media_type if detail_item else base_metadata.get("media_type")
+    )
+    if identity_source != Sources.MAL.value or identity_media_type != MediaTypes.ANIME.value:
+        return None
+
+    if base_metadata.get("episodes"):
+        return None
+
+    provider = None
+    provider_media_id = None
+    grouped_preview = None
+    grouped_preview_target = None
+
+    if metadata_resolution_result is not None:
+        provider = metadata_resolution_result.display_provider
+        provider_media_id = metadata_resolution_result.provider_media_id
+        grouped_preview = metadata_resolution_result.grouped_preview
+        grouped_preview_target = metadata_resolution_result.grouped_preview_target
+
+    if (
+        provider not in metadata_resolution.GROUPED_ANIME_PROVIDERS
+        or not provider_media_id
+        or not isinstance(grouped_preview, dict)
+        or not isinstance(grouped_preview_target, dict)
+    ):
+        provider = None
+        provider_media_id = None
+        grouped_preview = None
+        grouped_preview_target = None
+
+        for candidate in _flat_anime_episode_preview_candidates(
+            request.user if request.user.is_authenticated else None,
+            metadata_resolution_result,
+        ):
+            candidate_media_id = (
+                metadata_resolution.resolve_provider_media_id(
+                    detail_item,
+                    candidate,
+                    route_media_type=MediaTypes.ANIME.value,
+                )
+                if detail_item is not None
+                else anime_mapping.resolve_provider_series_id(media_id, candidate)
+            )
+            if not candidate_media_id:
+                continue
+
+            preview_target = metadata_resolution._grouped_preview_target(
+                item=detail_item,
+                media_id=media_id,
+                provider=candidate,
+                provider_media_id=candidate_media_id,
+                base_metadata=base_metadata,
+                grouped_preview=None,
+            )
+            if not isinstance(preview_target, dict):
+                continue
+
+            season_number = preview_target.get("season_number")
+            if season_number is None:
+                continue
+
+            season_numbers = _flat_anime_preview_season_numbers(
+                {},
+                preview_target,
+            )
+            if season_numbers:
+                preview_payload = services.get_media_metadata(
+                    "tv_with_seasons",
+                    candidate_media_id,
+                    candidate,
+                    season_numbers,
+                )
+            else:
+                grouped_series_metadata = services.get_media_metadata(
+                    MediaTypes.ANIME.value,
+                    candidate_media_id,
+                    candidate,
+                )
+                season_numbers = _flat_anime_preview_season_numbers(
+                    grouped_series_metadata,
+                    preview_target,
+                )
+                if not season_numbers:
+                    continue
+                preview_payload = services.get_media_metadata(
+                    "tv_with_seasons",
+                    candidate_media_id,
+                    candidate,
+                    season_numbers,
+                )
+
+            preview_payload = metadata_resolution._enrich_grouped_preview(
+                preview_payload,
+            )
+            if not any(
+                isinstance(preview_payload.get(f"season/{number}"), dict)
+                for number in season_numbers
+            ):
+                continue
+            preview_target = metadata_resolution._grouped_preview_target(
+                item=detail_item,
+                media_id=media_id,
+                provider=candidate,
+                provider_media_id=candidate_media_id,
+                base_metadata=base_metadata,
+                grouped_preview=preview_payload,
+            )
+            if not isinstance(preview_target, dict):
+                continue
+
+            provider = candidate
+            provider_media_id = candidate_media_id
+            grouped_preview = preview_payload
+            grouped_preview_target = preview_target
+            break
+
+    if not isinstance(grouped_preview_target, dict) or not isinstance(grouped_preview, dict):
+        return None
+
+    preview_rows = _flat_anime_preview_episode_rows(
+        grouped_preview,
+        grouped_preview_target,
+    )
+    if not preview_rows:
+        return None
+
+    history_by_episode_key = defaultdict(list)
+    item_by_episode_key = {}
+    collection_entry_by_episode_key = {}
+    preview_episode_keys = {
+        (row["season_number"], row["provider_episode_number"])
+        for row in preview_rows
+    }
+    preview_season_numbers = sorted({row["season_number"] for row in preview_rows})
+
+    if request.user.is_authenticated:
+        tracked_episodes = list(
+            Episode.objects.filter(
+                related_season__related_tv__user=request.user,
+                item__media_id=provider_media_id,
+                item__source=provider,
+                item__media_type=MediaTypes.EPISODE.value,
+                item__season_number__in=preview_season_numbers,
+            )
+            .select_related("item")
+            .order_by("-end_date", "-id"),
+        )
+
+        for tracked_episode in tracked_episodes:
+            episode_item = getattr(tracked_episode, "item", None)
+            episode_key = (
+                getattr(episode_item, "season_number", None),
+                getattr(episode_item, "episode_number", None),
+            )
+            if None in episode_key or episode_key not in preview_episode_keys:
+                continue
+            history_by_episode_key[episode_key].append(tracked_episode)
+            item_by_episode_key.setdefault(episode_key, episode_item)
+
+        if item_by_episode_key:
+            collection_entries = (
+                CollectionEntry.objects.filter(
+                    user=request.user,
+                    item_id__in=[item.id for item in item_by_episode_key.values()],
+                )
+                .select_related("item")
+                .order_by("-collected_at", "-id")
+            )
+            for entry in collection_entries:
+                episode_key = (
+                    entry.item.season_number,
+                    entry.item.episode_number,
+                )
+                if (
+                    None not in episode_key
+                    and episode_key in preview_episode_keys
+                    and episode_key not in collection_entry_by_episode_key
+                ):
+                    collection_entry_by_episode_key[episode_key] = entry
+
+    episodes = []
+    for row in preview_rows:
+        raw_episode = row["raw_episode"]
+        season_number = row["season_number"]
+        provider_episode_number = row["provider_episode_number"]
+        episode_key = (season_number, provider_episode_number)
+        episode_number = row["mapped_episode_number"]
+
+        if raw_episode.get("still_path"):
+            image = tmdb.get_image_url(raw_episode["still_path"])
+        else:
+            image = raw_episode.get("image") or settings.IMG_NONE
+
+        runtime_value = raw_episode.get("runtime")
+        runtime = (
+            tmdb.get_readable_duration(runtime_value)
+            if isinstance(runtime_value, (int, float)) and runtime_value > 0
+            else runtime_value
+        )
+
+        episodes.append(
+            {
+                "media_id": provider_media_id,
+                "media_type": MediaTypes.EPISODE.value,
+                "source": provider,
+                "season_number": season_number,
+                "episode_number": episode_number,
+                "provider_episode_number": provider_episode_number,
+                "season_title": row["season_title"],
+                "air_date": bulk_episode_tracking.coerce_episode_datetime(
+                    raw_episode.get("air_date"),
+                ),
+                "image": image,
+                "title": raw_episode.get("name")
+                or raw_episode.get("title")
+                or f"Episode {episode_number}",
+                "overview": raw_episode.get("overview") or "",
+                "runtime": runtime,
+                "history": history_by_episode_key.get(episode_key, []),
+                "item": item_by_episode_key.get(episode_key),
+                "collection_entry": collection_entry_by_episode_key.get(
+                    episode_key,
+                ),
+                "actions_enabled": False,
+            },
+        )
+
+    return episodes or None
 
 
 @login_not_required
@@ -6138,6 +6678,15 @@ def season_details(
         season_item,
         MediaTypes.SEASON.value,
     )
+    episode_load_more = None
+    if season_metadata.get("episodes"):
+        season_metadata["episodes"] = _normalize_detail_episode_actions(
+            season_metadata["episodes"],
+        )
+        season_metadata["episodes"], episode_load_more = _paginate_detail_episodes(
+            request,
+            season_metadata["episodes"],
+        )
 
     context = {
         "user": request.user,
@@ -6174,6 +6723,7 @@ def season_details(
         ),
         "display_provider": source,
         "identity_provider": source,
+        "episode_load_more": episode_load_more,
     }
     return render(request, "app/media_details.html", context)
 
