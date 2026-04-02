@@ -128,11 +128,7 @@ def generate_rows(user, media_types=None, include_lists=True):
         return
 
     # Export custom lists owned by the user
-    custom_lists = (
-        CustomList.objects.filter(owner=user)
-        .prefetch_related("customlistitem_set__item")
-        .order_by("name")
-    )
+    custom_lists = CustomList.objects.filter(owner=user).order_by("name")
 
     for custom_list in custom_lists:
         list_row = (
@@ -153,7 +149,11 @@ def generate_rows(user, media_types=None, include_lists=True):
         )
         yield writer.writerow(list_row)
 
-        for list_item in custom_list.customlistitem_set.all():
+        list_items = (
+            custom_list.customlistitem_set.select_related("item")
+            .order_by("date_added", "pk")
+        )
+        for list_item in list_items:
             item = list_item.item
             list_item_row = (
                 ["list_item"]

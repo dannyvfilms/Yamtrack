@@ -213,3 +213,35 @@ class ExportCSVTest(TestCase):
         exported_media_types = {r["media_type"] for r in list_item_rows}
         self.assertIn("movie", exported_media_types)
         self.assertIn("episode", exported_media_types)
+
+    def test_export_csv_includes_item_entries_for_each_list_membership(self):
+        """Items that appear on multiple lists should be exported once per list item."""
+        movie_item = Item.objects.get(media_id="10494", media_type=MediaTypes.MOVIE.value)
+        second_list = CustomList.objects.create(
+            name="Rewatch",
+            description="Need to revisit",
+            owner=self.user,
+            visibility="private",
+        )
+        CustomListItem.objects.create(
+            custom_list=second_list,
+            item=movie_item,
+            added_by=self.user,
+        )
+
+        response = self.client.get(reverse("export_csv"))
+        self.assertEqual(response.status_code, 200)
+
+        content = b"".join(response.streaming_content).decode("utf-8")
+        reader = csv.DictReader(StringIO(content))
+
+        movie_list_item_rows = [
+            row
+            for row in reader
+            if (row.get("row_type") or "media") == "list_item"
+            and row.get("media_id") == movie_item.media_id
+            and row.get("media_type") == movie_item.media_type
+        ]
+
+        exported_list_names = sorted({row["list_name"] for row in movie_list_item_rows})
+        self.assertEqual(exported_list_names, ["Favorites", "Rewatch"])
