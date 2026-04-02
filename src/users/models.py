@@ -45,6 +45,7 @@ class MediaSortChoices(models.TextChoices):
     RUNTIME = "runtime", "Runtime"
     TIME_TO_BEAT = "time_to_beat", "Time to Beat"
     PLAYS = "plays", "Plays"
+    TIME_WATCHED = "time_watched", "Time Watched"
     RELEASE_DATE = "release_date", "Release Date"
     DATE_ADDED = "date_added", "Date Added"
     START_DATE = "start_date", "Start Date"

@@ -2503,6 +2503,13 @@ class Media(models.Model):
 
         return None
 
+    def _plays_sort_value(self):
+        """Return the aggregated play/progress count used by plays-based UI."""
+        aggregated_progress = getattr(self, "aggregated_progress", None)
+        if aggregated_progress is not None:
+            return aggregated_progress
+        return self.progress or 0
+
     def _calc_total_runtime_from_items(self, total_episodes):
         """Estimate full released runtime from stored episode runtimes when possible."""
         if not total_episodes or total_episodes <= 0:
@@ -2595,6 +2602,45 @@ class Media(models.Model):
         """Return the total runtime in a readable display format."""
         total_runtime = self.total_runtime_minutes
         return app.helpers.minutes_to_hhmm(total_runtime) if total_runtime else "--"
+
+    @property
+    def average_runtime_minutes(self):
+        """Return the best runtime estimate for a single play/watch."""
+        runtime_minutes = self._get_known_item_runtime_minutes()
+        if runtime_minutes:
+            return runtime_minutes
+
+        total_runtime = self.total_runtime_minutes
+        if not total_runtime:
+            return None
+
+        max_progress = getattr(self, "max_progress", None)
+        if max_progress and max_progress > 0:
+            return max(1, round(total_runtime / max_progress))
+
+        if getattr(self.item, "media_type", None) == MediaTypes.MOVIE.value:
+            return total_runtime
+
+        return None
+
+    @property
+    def time_watched_minutes(self):
+        """Return the estimated total watched time in minutes."""
+        plays = self._plays_sort_value()
+        if plays <= 0:
+            return None
+
+        average_runtime = self.average_runtime_minutes
+        if not average_runtime:
+            return None
+
+        return plays * average_runtime
+
+    @property
+    def formatted_time_watched(self):
+        """Return total watched time in a readable display format."""
+        total_minutes = self.time_watched_minutes
+        return app.helpers.minutes_to_hhmm(total_minutes) if total_minutes else "--"
 
     @property
     def episodes_left(self):

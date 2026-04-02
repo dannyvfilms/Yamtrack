@@ -15,12 +15,14 @@ from app.models import (
     Book,
     Comic,
     CollectionEntry,
+    Episode,
     Game,
     Item,
     Manga,
     MediaTypes,
     Music,
     Movie,
+    Season,
     Sources,
     Status,
     TV,
@@ -410,18 +412,22 @@ class MediaListViewTests(TestCase):
         self.assertContains(response, "Test Movie 1")
         self.assertContains(response, "4 plays")
 
-    def test_movie_sort_dropdown_includes_plays_option(self):
-        """Movie sort dropdown should include the plays sort option."""
-        response = self.client.get(reverse("medialist", args=[MediaTypes.MOVIE.value]))
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "toggleSort('plays')")
-        self.assertContains(response, "toggleSort('release_date')")
-        self.assertContains(response, "toggleSort('date_added')")
+    def test_supported_media_sort_shows_plays_option(self):
+        """Movies, TV, and Anime should expose the plays sort option."""
+        movie_response = self.client.get(reverse("medialist", args=[MediaTypes.MOVIE.value]))
+        tv_response = self.client.get(reverse("medialist", args=[MediaTypes.TV.value]))
+        anime_response = self.client.get(reverse("medialist", args=[MediaTypes.ANIME.value]))
 
-    def test_non_movie_sort_hides_plays_option_and_falls_back(self):
-        """Non-movie media types should hide plays sort and fallback to title."""
+        self.assertContains(movie_response, "toggleSort('plays')")
+        self.assertContains(tv_response, "toggleSort('plays')")
+        self.assertContains(anime_response, "toggleSort('plays')")
+        self.assertContains(movie_response, "toggleSort('release_date')")
+        self.assertContains(movie_response, "toggleSort('date_added')")
+
+    def test_non_supported_media_sort_hides_plays_option_and_falls_back(self):
+        """Non movie/tv/anime media types should hide plays sort and fallback to title."""
         response = self.client.get(
-            reverse("medialist", args=[MediaTypes.ANIME.value]) + "?sort=plays",
+            reverse("medialist", args=[MediaTypes.BOOK.value]) + "?sort=plays",
         )
 
         self.assertEqual(response.status_code, 200)
@@ -429,7 +435,30 @@ class MediaListViewTests(TestCase):
         self.assertNotContains(response, "toggleSort('plays')")
 
         self.user.refresh_from_db()
-        self.assertEqual(self.user.anime_sort, "title")
+        self.assertEqual(self.user.book_sort, "title")
+
+    def test_supported_media_sort_shows_time_watched_option(self):
+        """Movies, TV, and Anime should expose the time watched sort option."""
+        movie_response = self.client.get(reverse("medialist", args=[MediaTypes.MOVIE.value]))
+        tv_response = self.client.get(reverse("medialist", args=[MediaTypes.TV.value]))
+        anime_response = self.client.get(reverse("medialist", args=[MediaTypes.ANIME.value]))
+
+        self.assertContains(movie_response, "toggleSort('time_watched')")
+        self.assertContains(tv_response, "toggleSort('time_watched')")
+        self.assertContains(anime_response, "toggleSort('time_watched')")
+
+    def test_non_supported_media_sort_hides_time_watched_option_and_falls_back(self):
+        """Non movie/tv/anime media types should hide time watched sort and fallback."""
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.BOOK.value]) + "?sort=time_watched",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "title")
+        self.assertNotContains(response, "toggleSort('time_watched')")
+
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.book_sort, "title")
 
     def test_game_sort_dropdown_includes_time_to_beat_option(self):
         self._create_game_entry("325609", "Dispatch", hltb_minutes=555)
@@ -523,6 +552,160 @@ class MediaListViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["current_sort"], "plays")
         self.assertEqual(response.context["media_list"].object_list[0].item.title, "Test Movie 1")
+
+    def test_movie_sort_by_time_watched_orders_by_total_minutes(self):
+        """Movie time watched sort should prioritize plays multiplied by runtime."""
+        item_one = Item.objects.get(
+            title="Test Movie 1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+        )
+        item_two = Item.objects.get(
+            title="Test Movie 2",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+        )
+
+        Item.objects.filter(id=item_one.id).update(runtime_minutes=30)
+        Item.objects.filter(id=item_two.id).update(runtime_minutes=100)
+
+        Movie.objects.bulk_create(
+            [
+                Movie(
+                    item=item_one,
+                    user=self.user,
+                    status=Status.COMPLETED.value,
+                    progress=1,
+                    end_date=timezone.now() - timedelta(days=7),
+                ),
+                Movie(
+                    item=item_one,
+                    user=self.user,
+                    status=Status.COMPLETED.value,
+                    progress=1,
+                    end_date=timezone.now() - timedelta(days=6),
+                ),
+                Movie(
+                    item=item_one,
+                    user=self.user,
+                    status=Status.COMPLETED.value,
+                    progress=1,
+                    end_date=timezone.now() - timedelta(days=5),
+                ),
+            ],
+        )
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.MOVIE.value])
+            + "?layout=grid&sort=time_watched&direction=desc",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "time_watched")
+        self.assertEqual(response.context["media_list"].object_list[0].item.title, "Test Movie 1")
+        self.assertContains(response, "2h 00min")
+
+    def test_tv_sort_by_plays_orders_by_episode_progress(self):
+        """TV plays sort should use total watched episode progress."""
+        first_item = Item.objects.create(
+            media_id="tv-plays-1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="TV Plays First",
+            image="http://example.com/tv1.jpg",
+        )
+        second_item = Item.objects.create(
+            media_id="tv-plays-2",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="TV Plays Second",
+            image="http://example.com/tv2.jpg",
+        )
+        first_tv = TV.objects.create(
+            item=first_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        second_tv = TV.objects.create(
+            item=second_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        first_season_item = Item.objects.create(
+            media_id="tv-plays-1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="TV Plays First",
+            image="http://example.com/tv1-season.jpg",
+            season_number=1,
+        )
+        second_season_item = Item.objects.create(
+            media_id="tv-plays-2",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="TV Plays Second",
+            image="http://example.com/tv2-season.jpg",
+            season_number=1,
+        )
+        first_season = Season.objects.create(
+            item=first_season_item,
+            user=self.user,
+            related_tv=first_tv,
+            status=Status.IN_PROGRESS.value,
+        )
+        second_season = Season.objects.create(
+            item=second_season_item,
+            user=self.user,
+            related_tv=second_tv,
+            status=Status.IN_PROGRESS.value,
+        )
+
+        first_episode_rows = []
+        for episode_number in (1, 2):
+            episode_item = Item.objects.create(
+                media_id="tv-plays-1",
+                source=Sources.TMDB.value,
+                media_type=MediaTypes.EPISODE.value,
+                title=f"TV Plays First Episode {episode_number}",
+                image="http://example.com/tv1-episode.jpg",
+                season_number=1,
+                episode_number=episode_number,
+            )
+            first_episode_rows.append(
+                Episode(
+                    item=episode_item,
+                    related_season=first_season,
+                    end_date=timezone.now() - timedelta(days=episode_number),
+                ),
+            )
+        Episode.objects.bulk_create(first_episode_rows)
+
+        episode_item = Item.objects.create(
+            media_id="tv-plays-2",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="TV Plays Second Episode 1",
+            image="http://example.com/tv2-episode.jpg",
+            season_number=1,
+            episode_number=1,
+        )
+        Episode.objects.bulk_create(
+            [
+                Episode(
+                    item=episode_item,
+                    related_season=second_season,
+                    end_date=timezone.now() - timedelta(days=1),
+                ),
+            ],
+        )
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.TV.value]) + "?sort=plays&direction=desc",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_sort"], "plays")
+        self.assertEqual(response.context["media_list"].object_list[0].item.title, "TV Plays First")
 
     def test_movie_sort_by_release_date_orders_items(self):
         """Release date sort should order by item.release_datetime."""
@@ -731,6 +914,45 @@ class MediaListViewTests(TestCase):
         self.assertIn("runtime", column_keys)
         self.assertContains(response, "Runtime")
         self.assertContains(response, "2h 22min")
+
+    def test_movie_table_renders_time_watched_column(self):
+        item = Item.objects.create(
+            media_id="time-watched-column-movie",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Time Watched Column Movie",
+            image="http://example.com/time-watched-column.jpg",
+            runtime_minutes=142,
+        )
+        Movie.objects.bulk_create(
+            [
+                Movie(
+                    item=item,
+                    user=self.user,
+                    status=Status.COMPLETED.value,
+                    progress=1,
+                    end_date=timezone.now() - timedelta(days=2),
+                ),
+                Movie(
+                    item=item,
+                    user=self.user,
+                    status=Status.COMPLETED.value,
+                    progress=1,
+                    end_date=timezone.now() - timedelta(days=1),
+                ),
+            ],
+        )
+
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.MOVIE.value])
+            + "?layout=table&search=Time+Watched+Column+Movie",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        column_keys = [column.key for column in response.context["resolved_columns"]]
+        self.assertIn("time_watched", column_keys)
+        self.assertContains(response, "Time Watched")
+        self.assertContains(response, "4h 44min")
 
     def test_movie_table_renders_popularity_column(self):
         self._create_movie_popularity_entry("popularity-column-movie", "Popularity Column Movie", 7)
@@ -1268,6 +1490,7 @@ class MediaListViewTests(TestCase):
                     "status",
                     "score",
                     "runtime",
+                    "time_watched",
                     "popularity",
                     "release_date",
                     "date_added",
@@ -1332,6 +1555,7 @@ class MediaListViewTests(TestCase):
                 "score",
                 "start_date",
                 "runtime",
+                "time_watched",
                 "popularity",
                 "status",
                 "release_date",
@@ -1352,6 +1576,7 @@ class MediaListViewTests(TestCase):
                 "score",
                 "start_date",
                 "runtime",
+                "time_watched",
                 "popularity",
                 "status",
                 "release_date",
@@ -1413,6 +1638,7 @@ class MediaListViewTests(TestCase):
                 "Score",
                 "Start Date",
                 "Runtime",
+                "Time Watched",
                 "Popularity",
                 "Release Date",
                 "Date Added",
@@ -1448,6 +1674,7 @@ class MediaListViewTests(TestCase):
                 "End Date",
                 "Status",
                 "Runtime",
+                "Time Watched",
                 "Popularity",
                 "Release Date",
                 "Date Added",
@@ -1459,8 +1686,8 @@ class MediaListViewTests(TestCase):
         self.assertContains(full_page, 'id="column-pref-form"')
         self.assertContains(full_page, f'hx-post="{columns_url}"')
         self.assertContains(full_page, 'hx-swap="none"')
-        self.assertContains(full_page, 'x-data="columnConfigMenu()"')
-        self.assertContains(full_page, "refreshMediaTableAfterColumnSave()")
+        self.assertContains(full_page, 'x-data="columnConfigMenu({')
+        self.assertContains(full_page, "refreshTableAfterColumnSave(options)")
 
         full_html = full_page.content.decode()
         config_match = re.search(
@@ -1474,7 +1701,7 @@ class MediaListViewTests(TestCase):
             column_config = json.loads(config_match.group(1))
             self.assertEqual(
                 [column["key"] for column in column_config],
-                second_order + ["runtime", "popularity", "release_date", "date_added"],
+                second_order + ["runtime", "time_watched", "popularity", "release_date", "date_added"],
             )
 
         resolved_keys = [column.key for column in full_page.context["resolved_columns"]]
@@ -1488,6 +1715,7 @@ class MediaListViewTests(TestCase):
                 "end_date",
                 "status",
                 "runtime",
+                "time_watched",
                 "popularity",
                 "release_date",
                 "date_added",

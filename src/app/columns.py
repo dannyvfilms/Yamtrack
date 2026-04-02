@@ -49,6 +49,14 @@ def _show_runtime(media_type: str, _current_sort: str, _user: Any) -> bool:
     )
 
 
+def _show_time_watched(media_type: str, _current_sort: str, _user: Any) -> bool:
+    return media_type in (
+        MediaTypes.MOVIE.value,
+        MediaTypes.TV.value,
+        MediaTypes.ANIME.value,
+    )
+
+
 def _show_popularity(media_type: str, _current_sort: str, _user: Any) -> bool:
     return media_type in (
         MediaTypes.MOVIE.value,
@@ -169,6 +177,16 @@ MEDIA_COLUMNS: list[ColumnDef] = [
         default_order=66,
     ),
     ColumnDef(
+        key="time_watched",
+        label="Time Watched",
+        th_classes="p-2 text-center w-28",
+        td_classes="p-2 text-center",
+        cell_template="app/components/cells/time_watched_cell.html",
+        table_types=("media",),
+        is_visible=_show_time_watched,
+        default_order=67,
+    ),
+    ColumnDef(
         key="popularity",
         label="Popularity",
         th_classes="p-2 text-center w-24",
@@ -176,7 +194,7 @@ MEDIA_COLUMNS: list[ColumnDef] = [
         cell_template="app/components/cells/popularity_cell.html",
         table_types=("media",),
         is_visible=_show_popularity,
-        default_order=67,
+        default_order=68,
     ),
     ColumnDef(
         key="last_watched",

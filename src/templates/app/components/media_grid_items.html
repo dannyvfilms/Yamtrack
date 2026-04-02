@@ -58,6 +58,10 @@
       {% if media.total_runtime_minutes %}
         <p class="mt-2 text-sm font-semibold text-white">{{ media.formatted_total_runtime }}</p>
       {% endif %}
+    {% elif current_sort == 'time_watched' %}
+      {% if media.time_watched_minutes %}
+        <p class="mt-2 text-sm font-semibold text-white">{{ media.formatted_time_watched }}</p>
+      {% endif %}
     {% endif %}
   </div>
 {% endfor %}

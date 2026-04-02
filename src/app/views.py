@@ -2109,6 +2109,11 @@ def media_list(request, media_type):
         MediaTypes.TV.value,
         MediaTypes.ANIME.value,
     }
+    plays_media_types = {
+        MediaTypes.MOVIE.value,
+        MediaTypes.TV.value,
+        MediaTypes.ANIME.value,
+    }
     runtime_media_types = {
         MediaTypes.MOVIE.value,
         MediaTypes.TV.value,
@@ -2144,7 +2149,13 @@ def media_list(request, media_type):
         request.user.update_preference(f"{media_type}_sort", "title")
         # Reset direction to the default for the fallback sort
         direction_param = None
-    elif sort_filter == "plays" and media_type != MediaTypes.MOVIE.value:
+    elif sort_filter == "plays" and media_type not in plays_media_types:
+        sort_filter = "title"  # Default fallback
+        # Update the user's preference to the fallback
+        request.user.update_preference(f"{media_type}_sort", "title")
+        # Reset direction to the default for the fallback sort
+        direction_param = None
+    elif sort_filter == "time_watched" and media_type not in runtime_media_types:
         sort_filter = "title"  # Default fallback
         # Update the user's preference to the fallback
         request.user.update_preference(f"{media_type}_sort", "title")
@@ -2499,6 +2510,77 @@ def media_list(request, media_type):
     def _runtime_sort_value(media):
         return getattr(media, "total_runtime_minutes", None)
 
+    def _plays_sort_value(media):
+        aggregated_progress = getattr(media, "aggregated_progress", None)
+        if aggregated_progress is not None:
+            return aggregated_progress
+        return getattr(media, "progress", 0) or 0
+
+    def sort_media_items_by_plays(media_items, sort_direction):
+        with_plays = []
+        without_plays = []
+
+        for media in media_items:
+            plays = _plays_sort_value(media)
+            if plays:
+                with_plays.append((media, plays))
+            else:
+                without_plays.append(media)
+
+        if sort_direction == "desc":
+            with_plays.sort(
+                key=lambda entry: (
+                    -entry[1],
+                    getattr(getattr(entry[0], "item", None), "title", "").lower(),
+                ),
+            )
+        else:
+            with_plays.sort(
+                key=lambda entry: (
+                    entry[1],
+                    getattr(getattr(entry[0], "item", None), "title", "").lower(),
+                ),
+            )
+
+        without_plays.sort(
+            key=lambda media: getattr(getattr(media, "item", None), "title", "").lower(),
+        )
+        return [media for media, _plays in with_plays] + without_plays
+
+    def _time_watched_sort_value(media):
+        return getattr(media, "time_watched_minutes", None)
+
+    def sort_media_items_by_time_watched(media_items, sort_direction):
+        with_time_watched = []
+        without_time_watched = []
+
+        for media in media_items:
+            total_minutes = _time_watched_sort_value(media)
+            if total_minutes:
+                with_time_watched.append((media, total_minutes))
+            else:
+                without_time_watched.append(media)
+
+        if sort_direction == "desc":
+            with_time_watched.sort(
+                key=lambda entry: (
+                    -entry[1],
+                    getattr(getattr(entry[0], "item", None), "title", "").lower(),
+                ),
+            )
+        else:
+            with_time_watched.sort(
+                key=lambda entry: (
+                    entry[1],
+                    getattr(getattr(entry[0], "item", None), "title", "").lower(),
+                ),
+            )
+
+        without_time_watched.sort(
+            key=lambda media: getattr(getattr(media, "item", None), "title", "").lower(),
+        )
+        return [media for media, _total_minutes in with_time_watched] + without_time_watched
+
     def sort_media_items_by_runtime(media_items, sort_direction):
         with_runtime = []
         without_runtime = []
@@ -2663,7 +2745,11 @@ def media_list(request, media_type):
         }
 
     # Get media list with filters applied
-    query_sort_filter = "title" if sort_filter in {"author", "runtime", "time_to_beat"} else sort_filter
+    query_sort_filter = (
+        "title"
+        if sort_filter in {"author", "runtime", "time_to_beat", "time_watched"}
+        else sort_filter
+    )
 
     list_sql_filters = {
         "genre": genre_filter,
@@ -2795,54 +2881,60 @@ def media_list(request, media_type):
     if sort_filter == "runtime" and media_type in runtime_media_types:
         BasicMedia.objects.annotate_max_progress(media_list, media_type)
         media_list = sort_media_items_by_runtime(media_list, direction)
+    if sort_filter == "plays" and media_type in plays_media_types:
+        media_list = sort_media_items_by_plays(media_list, direction)
+    if sort_filter == "time_watched" and media_type in runtime_media_types:
+        BasicMedia.objects.annotate_max_progress(media_list, media_type)
+        media_list = sort_media_items_by_time_watched(media_list, direction)
     if sort_filter == "time_to_beat" and media_type == MediaTypes.GAME.value:
         media_list = sort_media_items_by_game_time_to_beat(media_list, direction)
     if media_type == MediaTypes.ANIME.value and any(
         getattr(getattr(media, "item", None), "media_type", None) == MediaTypes.TV.value
         for media in media_list
     ):
-        def _sortable_dt(value):
-            if value is not None:
-                return value
-            return (
-                datetime.min.replace(tzinfo=UTC)
-                if direction == "desc"
-                else datetime.max.replace(tzinfo=UTC)
-            )
+        if sort_filter not in {"plays", "time_watched"}:
+            def _sortable_dt(value):
+                if value is not None:
+                    return value
+                return (
+                    datetime.min.replace(tzinfo=UTC)
+                    if direction == "desc"
+                    else datetime.max.replace(tzinfo=UTC)
+                )
 
-        def _mixed_sort_key(media):
-            item = getattr(media, "item", None)
-            title = getattr(item, "title", "") or ""
-            if sort_filter == "score":
-                score = getattr(media, "aggregated_score", None)
-                if score is None:
-                    score = getattr(media, "score", None)
-                return (score is None, score or 0, title.lower())
-            if sort_filter == "progress":
-                progress = getattr(media, "aggregated_progress", None)
-                if progress is None:
-                    progress = getattr(media, "progress", 0)
-                return (progress, title.lower())
-            if sort_filter == "release_date":
-                release_dt = getattr(item, "release_datetime", None)
-                return (_sortable_dt(release_dt), title.lower())
-            if sort_filter == "popularity":
-                rank = getattr(item, "trakt_popularity_rank", None)
-                if rank is None:
-                    rank = math.inf if direction == "asc" else -math.inf
-                return (rank, title.lower())
-            if sort_filter == "date_added":
-                return (_sortable_dt(getattr(media, "created_at", None)), title.lower())
-            if sort_filter == "start_date":
-                start_dt = getattr(media, "aggregated_start_date", None) or getattr(media, "start_date", None)
-                return (_sortable_dt(start_dt), title.lower())
-            if sort_filter == "end_date":
-                end_dt = getattr(media, "aggregated_end_date", None) or getattr(media, "end_date", None)
-                return (_sortable_dt(end_dt), title.lower())
-            return title.lower()
+            def _mixed_sort_key(media):
+                item = getattr(media, "item", None)
+                title = getattr(item, "title", "") or ""
+                if sort_filter == "score":
+                    score = getattr(media, "aggregated_score", None)
+                    if score is None:
+                        score = getattr(media, "score", None)
+                    return (score is None, score or 0, title.lower())
+                if sort_filter == "progress":
+                    progress = getattr(media, "aggregated_progress", None)
+                    if progress is None:
+                        progress = getattr(media, "progress", 0)
+                    return (progress, title.lower())
+                if sort_filter == "release_date":
+                    release_dt = getattr(item, "release_datetime", None)
+                    return (_sortable_dt(release_dt), title.lower())
+                if sort_filter == "popularity":
+                    rank = getattr(item, "trakt_popularity_rank", None)
+                    if rank is None:
+                        rank = math.inf if direction == "asc" else -math.inf
+                    return (rank, title.lower())
+                if sort_filter == "date_added":
+                    return (_sortable_dt(getattr(media, "created_at", None)), title.lower())
+                if sort_filter == "start_date":
+                    start_dt = getattr(media, "aggregated_start_date", None) or getattr(media, "start_date", None)
+                    return (_sortable_dt(start_dt), title.lower())
+                if sort_filter == "end_date":
+                    end_dt = getattr(media, "aggregated_end_date", None) or getattr(media, "end_date", None)
+                    return (_sortable_dt(end_dt), title.lower())
+                return title.lower()
 
-        reverse = direction == "desc"
-        media_list = sorted(media_list, key=_mixed_sort_key, reverse=reverse)
+            reverse = direction == "desc"
+            media_list = sorted(media_list, key=_mixed_sort_key, reverse=reverse)
 
     # Handle time_left sorting for TV shows
     if sort_filter == "time_left" and media_type == MediaTypes.TV.value:
@@ -3525,7 +3617,17 @@ def update_table_columns(request, media_type):
         current_sort = "title"
     elif current_sort == "time_to_beat" and media_type != MediaTypes.GAME.value:
         current_sort = "title"
-    elif current_sort == "plays" and media_type != MediaTypes.MOVIE.value:
+    elif current_sort == "plays" and media_type not in {
+        MediaTypes.MOVIE.value,
+        MediaTypes.TV.value,
+        MediaTypes.ANIME.value,
+    }:
+        current_sort = "title"
+    elif current_sort == "time_watched" and media_type not in {
+        MediaTypes.MOVIE.value,
+        MediaTypes.TV.value,
+        MediaTypes.ANIME.value,
+    }:
         current_sort = "title"
     elif current_sort == "popularity" and media_type not in {
         MediaTypes.MOVIE.value,

@@ -26,6 +26,7 @@ class ResolveColumnsTests(TestCase):
         self.assertIn("episodes_left", keys)
         self.assertIn("time_left", keys)
         self.assertIn("runtime", keys)
+        self.assertIn("time_watched", keys)
         self.assertNotIn("progress", keys)
         self.assertNotIn("last_watched", keys)
 
@@ -42,6 +43,7 @@ class ResolveColumnsTests(TestCase):
         self.assertNotIn("episodes_left", keys)
         self.assertNotIn("time_left", keys)
         self.assertIn("runtime", keys)
+        self.assertIn("time_watched", keys)
         self.assertIn("popularity", keys)
         self.assertNotIn("time_to_beat", keys)
 
@@ -56,6 +58,7 @@ class ResolveColumnsTests(TestCase):
 
         self.assertEqual(keys[:3], ["image", "title", "media_type"])
         self.assertIn("runtime", keys)
+        self.assertIn("time_watched", keys)
         self.assertIn("popularity", keys)
         self.assertIn("status", keys)
         self.assertNotIn("progress", keys)
@@ -85,6 +88,7 @@ class ResolveColumnsTests(TestCase):
 
         self.assertIn("progress", keys)
         self.assertIn("runtime", keys)
+        self.assertIn("time_watched", keys)
         self.assertIn("popularity", keys)
         self.assertNotIn("time_left", keys)
 
@@ -147,6 +151,7 @@ class ResolveColumnsTests(TestCase):
                 "title",
                 "status",
                 "runtime",
+                "time_watched",
                 "popularity",
                 "release_date",
                 "date_added",
@@ -180,6 +185,7 @@ class ResolveColumnsTests(TestCase):
                 "status",
                 "score",
                 "runtime",
+                "time_watched",
                 "popularity",
                 "release_date",
                 "date_added",
