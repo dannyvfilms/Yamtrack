@@ -204,7 +204,14 @@ class CustomList(models.Model):
         over the 2:3 poster for better display in list cards.
         For IGDB games, prefer widescreen screenshots or artworks over cover art.
         """
-        first_item = self.items.first()
+        first_item = None
+        prefetched_list_items = getattr(self, "_prefetched_objects_cache", {}).get(
+            "customlistitem_set",
+        )
+        if prefetched_list_items:
+            first_item = prefetched_list_items[0].item
+        if first_item is None:
+            first_item = self.items.first()
         if not first_item:
             return settings.IMG_NONE
         

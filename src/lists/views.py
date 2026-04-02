@@ -262,12 +262,8 @@ def lists(request):
     custom_lists = custom_lists.prefetch_related(
         "collaborators",
         Prefetch(
-            "items",
-            queryset=Item.objects.order_by("-customlistitem__date_added"),
-        ),
-        Prefetch(
             "customlistitem_set",
-            queryset=CustomListItem.objects.order_by("-date_added"),
+            queryset=CustomListItem.objects.select_related("item").order_by("-date_added"),
         ),
     )
     
@@ -293,64 +289,6 @@ def lists(request):
     paginator = Paginator(custom_lists, items_per_page)
     lists_page = paginator.get_page(page)
 
-    # Validate lists and filter out any broken ones
-    valid_lists = []
-    broken_list_ids = []
-    for custom_list in lists_page:
-        try:
-            # Verify the list still exists and is accessible
-            # This catches cases where lists were deleted between query and render
-            verified_list = CustomList.objects.get(id=custom_list.id)
-            # Verify owner still exists
-            if not verified_list.owner:
-                logger.warning(
-                    "List ID %s has no owner, excluding from display",
-                    custom_list.id,
-                )
-                broken_list_ids.append(custom_list.id)
-                continue
-            valid_lists.append(custom_list)
-        except CustomList.DoesNotExist:
-            logger.warning(
-                "List ID %s (%s) no longer exists, excluding from display",
-                custom_list.id,
-                custom_list.name,
-            )
-            broken_list_ids.append(custom_list.id)
-            continue
-        except Exception as e:
-            logger.error(
-                "Error validating list ID %s: %s",
-                custom_list.id,
-                e,
-                exc_info=True,
-            )
-            broken_list_ids.append(custom_list.id)
-            continue
-
-    if broken_list_ids:
-        logger.warning(
-            "Filtered out %s broken lists from display: %s",
-            len(broken_list_ids),
-            broken_list_ids,
-        )
-        messages.warning(
-            request,
-            f"Some lists were removed from display because they no longer exist "
-            f"(likely deleted during a re-import). Please refresh the page.",
-        )
-        # Re-fetch the page without broken lists
-        # This is a workaround - ideally we'd filter in the query, but pagination makes it complex
-        valid_list_ids = [l.id for l in valid_lists]
-        if valid_list_ids:
-            custom_lists = custom_lists.filter(id__in=valid_list_ids)
-            paginator = Paginator(custom_lists, items_per_page)
-            lists_page = paginator.get_page(page)
-        else:
-            # All lists on this page were broken, show empty page
-            lists_page = paginator.get_page(1)
-            lists_page.object_list = []
-
     available_tags = CustomListForm._normalize_tags(
         tag
         for custom_list in CustomList.objects.filter(
@@ -360,10 +298,20 @@ def lists(request):
     )
 
     # Compute completion percentages for each list (titles completed / total titles)
-    all_item_ids = {item.id for cl in lists_page for item in cl.items.all()}
+    page_list_ids = [custom_list.id for custom_list in lists_page]
+    list_item_pairs = CustomListItem.objects.filter(
+        custom_list_id__in=page_list_ids,
+    ).values_list("custom_list_id", "item_id")
+
+    item_ids_by_list = {}
+    all_item_ids = set()
+    for list_id, item_id in list_item_pairs:
+        item_ids_by_list.setdefault(list_id, set()).add(item_id)
+        all_item_ids.add(item_id)
+
     completed_item_ids = _get_completed_item_ids(request.user, all_item_ids)
     for cl in lists_page:
-        list_item_ids = {item.id for item in cl.items.all()}
+        list_item_ids = item_ids_by_list.get(cl.id, set())
         if list_item_ids:
             n_done = len(list_item_ids & completed_item_ids)
             cl.completed_count = n_done
