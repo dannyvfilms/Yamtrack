@@ -323,6 +323,39 @@ def alternative_title(item, user):
     return alternative
 
 
+@register.simple_tag
+def season_card_title(item):
+    """Return the best display title for a season card."""
+    if not item:
+        return ""
+
+    if isinstance(item, dict):
+        provider_title = item.get("season_title")
+        season_number = item.get("season_number")
+        fallback_title = item.get("title", "")
+    else:
+        provider_title = getattr(item, "season_title", None)
+        season_number = getattr(item, "season_number", None)
+        fallback_title = getattr(item, "title", "")
+
+    normalized_provider_title = _normalize_title_value(provider_title)
+    normalized_fallback_title = _normalize_title_value(fallback_title)
+    if normalized_provider_title and normalized_provider_title != normalized_fallback_title:
+        return normalized_provider_title
+
+    try:
+        season_number = int(season_number) if season_number is not None else None
+    except (TypeError, ValueError):
+        season_number = None
+
+    if season_number == 0:
+        return "Specials"
+    if season_number is not None:
+        return f"Season {season_number}"
+
+    return normalized_fallback_title or ""
+
+
 def _resolve_music_artist_url_target(value):
     """Resolve a music-artist-like value into an object or dict with id/name."""
     if not value:

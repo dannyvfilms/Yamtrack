@@ -1231,7 +1231,7 @@
             <div class="detail-media-grid">
               {% for result in media.related.seasons %}
                 <div x-show="shouldShowDetailCard({{ forloop.counter0 }})">
-                  {% include "app/components/media_card.html" with item=result.item title=result.item.season_title|default:result.item.title media=result.media user=user from_grid=True show_progress_chip=False show_release_year_placeholder=True %}
+                  {% include "app/components/media_card.html" with item=result.item title=result.item.season_title|default:result.item.title season_card_title_override=result.card_title media=result.media user=user from_grid=True show_progress_chip=False show_release_year_placeholder=True %}
                 </div>
               {% endfor %}
             </div>

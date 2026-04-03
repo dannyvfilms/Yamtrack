@@ -32,7 +32,7 @@
                         </div>
                         <div class="grid grid-cols-2 gap-3 items-stretch">
                             <div class="min-w-0">
-                                {% include "app/components/media_card.html" with item=rec.item title=rec.item.title media=None from_grid=True user=user current_sort=None media_type=rec.item.media_type score_chip_mode='conditional' progress_chip_mode='conditional' time_left_chip_mode='conditional' show_progress_chip=False %}
+                                {% include "app/components/media_card.html" with item=rec.item title=rec.item.title media=None from_grid=True user=user current_sort=None card_media_type=rec.item.media_type score_chip_mode='conditional' progress_chip_mode='conditional' time_left_chip_mode='conditional' show_progress_chip=False %}
                             </div>
                             <div class="grid grid-rows-3 gap-2 h-full self-stretch">
                                 <form method="post"

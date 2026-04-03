@@ -4991,8 +4991,11 @@ def media_details(
     ):
         media_metadata["image"] = detail_item.image
 
-    # For TV shows, apply fallback for seasons without posters (handles cached metadata)
-    if media_type == MediaTypes.TV.value and isinstance(media_metadata, dict):
+    # For TV shows and grouped anime, enrich season cards from season-detail metadata.
+    if media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value) and isinstance(
+        media_metadata,
+        dict,
+    ):
         details = media_metadata.get("details")
         if not isinstance(details, dict):
             details = {}
@@ -5001,6 +5004,7 @@ def media_details(
         related = media_metadata.setdefault("related", {})
         seasons = related.setdefault("seasons", [])
         has_specials = any(season.get("season_number") == 0 for season in seasons)
+        show_title = Item._normalize_title_value(media_metadata.get("title"))
 
         if source == Sources.TMDB.value and media_metadata.get("tvdb_id") and not has_specials:
             try:
@@ -5021,6 +5025,79 @@ def media_details(
                     "Skipping specials enrichment for media_id=%s due to provider API error",
                     media_id,
                 )
+
+        if seasons and source in {Sources.TMDB.value, Sources.TVDB.value}:
+            season_numbers = sorted(
+                {
+                    season_number
+                    for season in seasons
+                    for season_number in [season.get("season_number")]
+                    if season_number is not None
+                },
+            )
+            if season_numbers:
+                try:
+                    grouped_season_metadata = services.get_media_metadata(
+                        "tv_with_seasons",
+                        media_id,
+                        source,
+                        season_numbers,
+                    )
+                except services.ProviderAPIError:
+                    grouped_season_metadata = None
+                    logger.warning(
+                        "Skipping season card enrichment for media_id=%s due to provider API error",
+                        media_id,
+                    )
+                if isinstance(grouped_season_metadata, dict):
+                    for season in seasons:
+                        season_number = season.get("season_number")
+                        season_payload = grouped_season_metadata.get(
+                            f"season/{season_number}",
+                        )
+                        if not isinstance(season_payload, dict):
+                            continue
+
+                        detailed_title = Item._normalize_title_value(
+                            season_payload.get("season_title"),
+                        )
+                        if detailed_title and detailed_title != show_title:
+                            season["season_title"] = detailed_title
+                        elif season_number == 0:
+                            season["season_title"] = "Specials"
+                        elif season_number is not None:
+                            season["season_title"] = f"Season {season_number}"
+
+                        payload_details = season_payload.get("details") or {}
+                        if season.get("episode_count") in (None, ""):
+                            season["episode_count"] = (
+                                payload_details.get("episodes")
+                                or season_payload.get("max_progress")
+                            )
+                        if season.get("max_progress") in (None, ""):
+                            season["max_progress"] = season_payload.get(
+                                "max_progress",
+                            )
+                        merged_details = dict(season.get("details") or {})
+                        if merged_details.get("episodes") in (None, ""):
+                            merged_details["episodes"] = (
+                                season.get("episode_count")
+                                or payload_details.get("episodes")
+                                or season_payload.get("max_progress")
+                            )
+                        if merged_details.get("first_air_date") in (None, ""):
+                            merged_details["first_air_date"] = payload_details.get(
+                                "first_air_date",
+                            )
+                        season["details"] = merged_details
+                        if season.get("first_air_date") in (None, ""):
+                            season["first_air_date"] = payload_details.get(
+                                "first_air_date",
+                            )
+                        if season.get("image") in (None, "", settings.IMG_NONE):
+                            season["image"] = season_payload.get("image") or season.get(
+                                "image",
+                            )
 
         if not details.get("runtime"):
             fallback_runtime = _get_tv_runtime_display_fallback(detail_item, media_metadata)
@@ -5362,14 +5439,44 @@ def media_details(
     if media_metadata.get("related"):
         for section_name, related_items in media_metadata["related"].items():
             if related_items:
-                media_metadata["related"][section_name] = (
-                    helpers.enrich_items_with_user_data(
-                        request,
-                        related_items,
-                        section_name=section_name,
-                        user=list_owner,
-                    )
+                enriched_related_items = helpers.enrich_items_with_user_data(
+                    request,
+                    related_items,
+                    section_name=section_name,
+                    user=list_owner,
                 )
+                if section_name == "seasons":
+                    for enriched_item, raw_item in zip(
+                        enriched_related_items,
+                        related_items,
+                        strict=False,
+                    ):
+                        if not isinstance(raw_item, dict):
+                            continue
+                        season_title = Item._normalize_title_value(
+                            raw_item.get("season_title"),
+                        )
+                        show_title = Item._normalize_title_value(raw_item.get("title"))
+                        if season_title and season_title != show_title:
+                            enriched_item["card_title"] = season_title
+                            continue
+
+                        season_number = raw_item.get("season_number")
+                        try:
+                            season_number = (
+                                int(season_number)
+                                if season_number is not None
+                                else None
+                            )
+                        except (TypeError, ValueError):
+                            season_number = None
+
+                        if season_number == 0:
+                            enriched_item["card_title"] = "Specials"
+                        elif season_number is not None:
+                            enriched_item["card_title"] = f"Season {season_number}"
+
+                media_metadata["related"][section_name] = enriched_related_items
 
     # For music tracks, get linked artist and album for navigation
     music_artist = None

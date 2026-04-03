@@ -3942,77 +3942,94 @@ class MediaDetailsViewTests(TestCase):
     @patch("app.providers.services.get_media_metadata")
     def test_tv_details_view_adds_specials_from_regular_path(self, mock_get_metadata):
         """TV details should show a specials season when season 0 is enriched."""
-        mock_get_metadata.side_effect = [
-            {
-                "media_id": "114410",
-                "title": "Chainsaw Man",
-                "media_type": MediaTypes.TV.value,
-                "source": Sources.TMDB.value,
-                "image": "http://example.com/show.jpg",
-                "tvdb_id": "10196540",
-                "details": {
-                    "runtime": "24m",
-                    "first_air_date": "2022-10-12",
-                },
-                "related": {
-                    "seasons": [
-                        {
-                            "source": Sources.TMDB.value,
-                            "media_type": MediaTypes.SEASON.value,
-                            "media_id": "114410",
-                            "title": "Chainsaw Man",
-                            "season_number": 1,
-                            "season_title": "Season 1",
-                            "image": settings.IMG_NONE,
-                        },
-                    ],
-                },
-                "cast": [],
-                "crew": [],
-                "studios_full": [],
-            },
-            {
-                "media_id": "114410",
-                "title": "Chainsaw Man",
-                "media_type": MediaTypes.TV.value,
-                "source": Sources.TMDB.value,
-                "image": "http://example.com/show.jpg",
-                "tvdb_id": "10196540",
-                "details": {
-                    "runtime": "24m",
-                    "first_air_date": "2022-10-12",
-                },
+        def metadata_side_effect(
+            media_type,
+            media_id,
+            source,
+            season_numbers=None,
+            episode_number=None,
+        ):
+            del episode_number
+            self.assertEqual(media_id, "114410")
+            self.assertEqual(source, Sources.TMDB.value)
+            if media_type == MediaTypes.TV.value:
+                return {
+                    "media_id": "114410",
+                    "title": "Chainsaw Man",
+                    "media_type": MediaTypes.TV.value,
+                    "source": Sources.TMDB.value,
+                    "image": "http://example.com/show.jpg",
+                    "tvdb_id": "10196540",
+                    "details": {
+                        "runtime": "24m",
+                        "first_air_date": "2022-10-12",
+                    },
+                    "related": {
+                        "seasons": [
+                            {
+                                "source": Sources.TMDB.value,
+                                "media_type": MediaTypes.SEASON.value,
+                                "media_id": "114410",
+                                "title": "Chainsaw Man",
+                                "season_number": 1,
+                                "season_title": "Chainsaw Man",
+                                "image": settings.IMG_NONE,
+                            },
+                        ],
+                    },
+                    "cast": [],
+                    "crew": [],
+                    "studios_full": [],
+                }
+
+            self.assertEqual(media_type, "tv_with_seasons")
+            if season_numbers == [0]:
+                return {
+                    "season/0": {
+                        "season_number": 0,
+                        "season_title": "Specials",
+                    },
+                    "related": {
+                        "seasons": [
+                            {
+                                "source": Sources.TMDB.value,
+                                "media_type": MediaTypes.SEASON.value,
+                                "media_id": "114410",
+                                "title": "Chainsaw Man",
+                                "season_number": 0,
+                                "season_title": "Specials",
+                                "image": "http://example.com/specials.jpg",
+                            },
+                            {
+                                "source": Sources.TMDB.value,
+                                "media_type": MediaTypes.SEASON.value,
+                                "media_id": "114410",
+                                "title": "Chainsaw Man",
+                                "season_number": 1,
+                                "season_title": "Chainsaw Man",
+                                "image": "http://example.com/season1.jpg",
+                            },
+                        ],
+                    },
+                }
+
+            self.assertEqual(season_numbers, [0, 1])
+            return {
                 "season/0": {
                     "season_number": 0,
                     "season_title": "Specials",
+                    "image": "http://example.com/specials.jpg",
+                    "details": {"episodes": 1},
                 },
-                "related": {
-                    "seasons": [
-                        {
-                            "source": Sources.TMDB.value,
-                            "media_type": MediaTypes.SEASON.value,
-                            "media_id": "114410",
-                            "title": "Chainsaw Man",
-                            "season_number": 0,
-                            "season_title": "Specials",
-                            "image": "http://example.com/specials.jpg",
-                        },
-                        {
-                            "source": Sources.TMDB.value,
-                            "media_type": MediaTypes.SEASON.value,
-                            "media_id": "114410",
-                            "title": "Chainsaw Man",
-                            "season_number": 1,
-                            "season_title": "Season 1",
-                            "image": "http://example.com/season1.jpg",
-                        },
-                    ],
+                "season/1": {
+                    "season_number": 1,
+                    "season_title": "Season 1",
+                    "image": "http://example.com/season1.jpg",
+                    "details": {"episodes": 12},
                 },
-                "cast": [],
-                "crew": [],
-                "studios_full": [],
-            },
-        ]
+            }
+
+        mock_get_metadata.side_effect = metadata_side_effect
 
         response = self.client.get(
             reverse(
@@ -4041,7 +4058,7 @@ class MediaDetailsViewTests(TestCase):
                 },
             ),
         )
-        self.assertEqual(mock_get_metadata.call_count, 2)
+        self.assertEqual(mock_get_metadata.call_count, 3)
         self.assertEqual(
             mock_get_metadata.call_args_list[0].args,
             (
@@ -4057,6 +4074,15 @@ class MediaDetailsViewTests(TestCase):
                 "114410",
                 Sources.TMDB.value,
                 [0],
+            ),
+        )
+        self.assertEqual(
+            mock_get_metadata.call_args_list[2].args,
+            (
+                "tv_with_seasons",
+                "114410",
+                Sources.TMDB.value,
+                [0, 1],
             ),
         )
 
@@ -4189,6 +4215,100 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["current_instance"].end_date, watched_special)
         self.assertEqual(response.context["current_instance"].progress, 12)
+        self.assertContains(response, 'title="Specials">Specials</a>', html=False)
+        self.assertContains(response, 'title="Season 1">Season 1</a>', html=False)
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_anime_details_view_renders_named_season_card_titles(self, mock_get_metadata):
+        def metadata_side_effect(
+            media_type,
+            media_id,
+            source,
+            season_numbers=None,
+            episode_number=None,
+        ):
+            del episode_number
+            self.assertEqual(media_id, "76703")
+            self.assertEqual(source, Sources.TVDB.value)
+            if media_type == MediaTypes.ANIME.value:
+                return {
+                    "media_id": "76703",
+                    "title": "Pokemon",
+                    "media_type": MediaTypes.ANIME.value,
+                    "source": Sources.TVDB.value,
+                    "image": "https://example.com/pokemon.jpg",
+                    "details": {
+                        "episodes": 82,
+                    },
+                    "related": {
+                        "seasons": [
+                            {
+                                "source": Sources.TVDB.value,
+                                "media_type": MediaTypes.SEASON.value,
+                                "media_id": "76703",
+                                "title": "Pokemon",
+                                "season_number": 1,
+                                "season_title": "Pokemon",
+                                "image": "https://example.com/indigo-league.jpg",
+                            },
+                            {
+                                "source": Sources.TVDB.value,
+                                "media_type": MediaTypes.SEASON.value,
+                                "media_id": "76703",
+                                "title": "Pokemon",
+                                "season_number": 2,
+                                "season_title": "Pokemon",
+                                "image": "https://example.com/orange-islands.jpg",
+                            },
+                        ],
+                    },
+                    "cast": [],
+                    "crew": [],
+                    "studios_full": [],
+                }
+
+            self.assertEqual(media_type, "tv_with_seasons")
+            self.assertEqual(season_numbers, [1, 2])
+            return {
+                "season/1": {
+                    "season_number": 1,
+                    "season_title": "Indigo League",
+                    "image": "https://example.com/indigo-league.jpg",
+                    "details": {"episodes": 52},
+                },
+                "season/2": {
+                    "season_number": 2,
+                    "season_title": "Orange Islands",
+                    "image": "https://example.com/orange-islands.jpg",
+                    "details": {"episodes": 36},
+                },
+            }
+
+        mock_get_metadata.side_effect = metadata_side_effect
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TVDB.value,
+                    "media_type": MediaTypes.ANIME.value,
+                    "media_id": "76703",
+                    "title": "pokemon",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            'title="Indigo League">Indigo League</a>',
+            html=False,
+        )
+        self.assertContains(
+            response,
+            'title="Orange Islands">Orange Islands</a>',
+            html=False,
+        )
 
     @patch("app.providers.services.get_media_metadata")
     def test_media_details_backfills_author_credits_and_renders_links(
