@@ -84,6 +84,7 @@ RELEASE_BACKFILL_MEDIA_TYPES = (
     MediaTypes.BOARDGAME.value,
     MediaTypes.MUSIC.value,
 )
+TRACKED_TMDB_TV_REFRESH_STALE_AFTER = timedelta(days=1)
 METADATA_BACKFILL_BASE_DELAY_SECONDS = 60 * 60  # 1 hour
 METADATA_BACKFILL_MAX_DELAY_SECONDS = 60 * 60 * 24  # 1 day
 METADATA_BACKFILL_MAX_ATTEMPTS = 6
@@ -388,11 +389,23 @@ def _genre_items_queryset():
 
 
 def _release_items_queryset():
+    stale_tv_cutoff = timezone.now() - TRACKED_TMDB_TV_REFRESH_STALE_AFTER
     return Item.objects.filter(
-        release_datetime__isnull=True,
-        media_type__in=RELEASE_BACKFILL_MEDIA_TYPES,
-        source__in=RELEASE_BACKFILL_SOURCES,
-    )
+        Q(
+            release_datetime__isnull=True,
+            media_type__in=RELEASE_BACKFILL_MEDIA_TYPES,
+            source__in=RELEASE_BACKFILL_SOURCES,
+        )
+        | Q(
+            # Revisit tracked TMDB shows even after first-air date is stored so
+            # newly announced or started seasons can refresh time-left data.
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            metadata_fetched_at__isnull=False,
+            metadata_fetched_at__lte=stale_tv_cutoff,
+            tv__isnull=False,
+        ),
+    ).distinct()
 
 
 def count_release_backfill_items() -> int:
