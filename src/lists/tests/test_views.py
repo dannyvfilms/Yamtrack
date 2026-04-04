@@ -913,8 +913,17 @@ class ListDetailViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "lists/components/list_table.html")
 
-    def test_public_smart_list_filters_without_persisting_rules(self):
+    @patch("app.providers.services.get_media_metadata")
+    def test_public_smart_list_filters_without_persisting_rules(
+        self,
+        mock_get_media_metadata,
+    ):
         """Public smart-list filtering should not mutate saved rules."""
+        mock_get_media_metadata.return_value = {
+            "max_progress": 1,
+            "related": {"seasons": []},
+            "title": "Test Media",
+        }
         Movie.objects.create(
             item=self.movie_item,
             status=Status.COMPLETED.value,
@@ -964,6 +973,70 @@ class ListDetailViewTests(TestCase):
 
         smart_list.refresh_from_db()
         self.assertEqual(smart_list.smart_filters.get("status"), "all")
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_public_smart_list_anonymous_view_preserves_saved_media_types(
+        self,
+        mock_get_media_metadata,
+    ):
+        """Anonymous public smart-list loads must honor saved media-type rules."""
+        mock_get_media_metadata.return_value = {
+            "max_progress": 1,
+            "related": {"seasons": []},
+            "title": "Test Media",
+        }
+        Movie.objects.create(
+            item=self.movie_item,
+            status=Status.COMPLETED.value,
+            user=self.user,
+        )
+        TV.objects.create(
+            item=self.tv_item,
+            status=Status.COMPLETED.value,
+            user=self.user,
+        )
+
+        smart_list = CustomList.objects.create(
+            name="Public Movies",
+            owner=self.user,
+            is_smart=True,
+            visibility="public",
+            smart_media_types=[MediaTypes.MOVIE.value],
+            smart_filters={"status": "all"},
+        )
+
+        self.client.logout()
+
+        response = self.client.get(reverse("list_detail", args=[smart_list.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context["saved_smart_rules"]["media_types"],
+            [MediaTypes.MOVIE.value],
+        )
+        self.assertEqual(
+            response.context["active_smart_rules"]["media_types"],
+            [MediaTypes.MOVIE.value],
+        )
+        self.assertEqual(
+            [item.id for item in response.context["items"]],
+            [self.movie_item.id],
+        )
+
+        filtered_response = self.client.get(
+            reverse("list_detail", args=[smart_list.id])
+            + f"?status={Status.COMPLETED.value}",
+        )
+
+        self.assertEqual(filtered_response.status_code, 200)
+        self.assertEqual(
+            filtered_response.context["active_smart_rules"]["media_types"],
+            [MediaTypes.MOVIE.value],
+        )
+        self.assertEqual(
+            [item.id for item in filtered_response.context["items"]],
+            [self.movie_item.id],
+        )
 
     def test_smart_list_release_date_sort_honors_direction(self):
         """Smart-list release-date sort should reverse ordering by direction."""

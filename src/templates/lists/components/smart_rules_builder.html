@@ -17,6 +17,7 @@
   <input type="hidden" name="tag" x-model="tag">
   <input type="hidden" name="tag_exclude" x-model="tag_exclude">
   <input type="hidden" name="q" x-model="query">
+  <input type="hidden" name="type_mode" :value="allTypesSelected() ? 'all' : 'subset'">
   {% if can_edit %}
     <input type="hidden" name="edit_smart_rules" value="1">
   {% endif %}

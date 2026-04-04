@@ -545,9 +545,15 @@ def _smart_list_detail_response(
     active_rules = dict(saved_rules)
     allow_request_filters = smart_edit_mode or is_public_view
     if allow_request_filters:
+        request_media_types = saved_rules["media_types"]
+        if request.GET.get("type_mode") == "all":
+            request_media_types = []
+        elif "type" in request.GET:
+            request_media_types = request.GET.getlist("type")
+
         active_rules = smart_rules.normalize_rule_payload(
             {
-                "media_types": request.GET.getlist("type"),
+                "media_types": request_media_types,
                 "status": request.GET.get("status", saved_rules["status"]),
                 "rating": request.GET.get("rating", saved_rules["rating"]),
                 "collection": request.GET.get("collection", saved_rules["collection"]),
