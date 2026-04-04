@@ -409,24 +409,87 @@ AUTH_USER_MODEL = "users.User"
 FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10 MB
 
 
-def _get_commit_hash():
-    """Return the current commit hash from env or the local git metadata."""
-    env_commit = (
-        config("COMMIT_SHA", default=None)
-        or config("GIT_COMMIT", default=None)
-        or config("GITHUB_SHA", default=None)
-    )
+def _clean_metadata_value(value):
+    """Normalize version metadata values from the environment."""
+    if value is None:
+        return None
 
-    if env_commit and env_commit.lower() not in {"unknown", "none"}:
-        return env_commit.strip()
+    cleaned = str(value).strip()
+    if not cleaned or cleaned.lower() in {"unknown", "none"}:
+        return None
+    return cleaned
 
+
+def _find_git_dir(start_dir=BASE_DIR):
+    """Search upward from start_dir for a git directory or gitdir file."""
+    start_path = Path(start_dir).resolve()
+
+    for candidate in (start_path, *start_path.parents):
+        dot_git = candidate / ".git"
+        if dot_git.is_dir():
+            return dot_git
+
+        if not dot_git.is_file():
+            continue
+
+        try:
+            dot_git_contents = dot_git.read_text().strip()
+        except (OSError, UnicodeDecodeError):
+            continue
+
+        if not dot_git_contents.startswith("gitdir:"):
+            continue
+
+        _, git_dir_path = dot_git_contents.split(":", 1)
+        git_dir = (candidate / git_dir_path.strip()).resolve()
+        if git_dir.exists():
+            return git_dir
+
+    return None
+
+
+def _read_git_ref(git_dir, ref_path):
+    """Read a git ref from loose refs or packed-refs."""
+    ref_file = git_dir / ref_path
+    try:
+        ref_value = ref_file.read_text().strip()
+    except (FileNotFoundError, OSError, UnicodeDecodeError):
+        ref_value = None
+
+    if ref_value:
+        return ref_value
+
+    packed_refs = git_dir / "packed-refs"
+    try:
+        packed_ref_lines = packed_refs.read_text().splitlines()
+    except (FileNotFoundError, OSError, UnicodeDecodeError):
+        return None
+
+    for raw_line in packed_ref_lines:
+        line = raw_line.strip()
+        if not line or line.startswith(("#", "^")):
+            continue
+
+        try:
+            sha, name = line.split(" ", 1)
+        except ValueError:
+            continue
+
+        if name == ref_path:
+            return sha
+
+    return None
+
+
+def _get_local_commit_hash(base_dir=BASE_DIR):
+    """Return the current commit hash from the local git checkout if available."""
+    git_rev_parse_command = ["git", "rev-parse", "HEAD"]
     try:
         git_rev = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=BASE_DIR,
+            git_rev_parse_command,
+            cwd=base_dir,
             check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
         ).stdout.strip()
         if git_rev:
@@ -434,38 +497,93 @@ def _get_commit_hash():
     except (OSError, subprocess.SubprocessError):
         pass
 
-    git_dir = BASE_DIR / ".git"
+    git_dir = _find_git_dir(base_dir)
+    if git_dir is None:
+        return None
+
     head_file = git_dir / "HEAD"
     try:
         head_contents = head_file.read_text().strip()
     except (FileNotFoundError, OSError, UnicodeDecodeError):
         return None
 
-    if head_contents.startswith("gitdir:"):
-        _, git_dir_path = head_contents.split(":", 1)
-        git_dir = (BASE_DIR / git_dir_path.strip()).resolve()
-        head_file = git_dir / "HEAD"
-        try:
-            head_contents = head_file.read_text().strip()
-        except (FileNotFoundError, OSError, UnicodeDecodeError):
-            return None
-
     if head_contents.startswith("ref:"):
-        _, ref_path = head_contents.split(" ", 1)
-        ref_file = git_dir / ref_path
-        try:
-            return ref_file.read_text().strip()
-        except (FileNotFoundError, OSError, UnicodeDecodeError):
-            return None
+        _, ref_path = head_contents.split(":", 1)
+        return _read_git_ref(git_dir, ref_path.strip())
 
     return head_contents or None
 
 
-VERSION_RAW = config("VERSION", default=None)
-COMMIT_SHA = _get_commit_hash()
+def _get_env_commit_hash():
+    """Return the build/deployment commit hash from the environment."""
+    return _clean_metadata_value(
+        config("COMMIT_SHA", default=None)
+        or config("GIT_COMMIT", default=None)
+        or config("GITHUB_SHA", default=None),
+    )
+
+
+def _get_local_version(base_dir=BASE_DIR, commit_sha=None):
+    """Return a version string from the local git checkout if available."""
+    git_describe_command = ["git", "describe", "--tags", "--always", "--dirty"]
+    try:
+        git_describe = subprocess.run(
+            git_describe_command,
+            cwd=base_dir,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        if git_describe:
+            return git_describe
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+    local_commit = commit_sha or _get_local_commit_hash(base_dir)
+    if local_commit:
+        return local_commit[:7]
+    return None
+
+
+def _select_commit_hash(local_commit_sha, env_commit_sha):
+    """Prefer runtime checkout metadata over build metadata."""
+    return local_commit_sha or env_commit_sha
+
+
+def _select_version(local_version, local_commit_sha, env_version, env_commit_sha):
+    """Pick the most accurate version string available for the running code."""
+    if local_version:
+        return local_version
+
+    if env_version and (not local_commit_sha or local_commit_sha == env_commit_sha):
+        return env_version
+
+    if local_commit_sha:
+        return local_commit_sha[:7]
+
+    if env_version:
+        return env_version
+
+    if env_commit_sha:
+        return env_commit_sha[:7]
+
+    return "dev"
+
+
+ENV_VERSION_RAW = _clean_metadata_value(config("VERSION", default=None))
+ENV_COMMIT_SHA = _get_env_commit_hash()
+LOCAL_COMMIT_SHA = _get_local_commit_hash()
+LOCAL_VERSION = _get_local_version(commit_sha=LOCAL_COMMIT_SHA)
+
+COMMIT_SHA = _select_commit_hash(LOCAL_COMMIT_SHA, ENV_COMMIT_SHA)
 COMMIT_SHA_SHORT = COMMIT_SHA[:7] if COMMIT_SHA else None
 
-VERSION = VERSION_RAW or COMMIT_SHA_SHORT or "dev"
+VERSION = _select_version(
+    LOCAL_VERSION,
+    LOCAL_COMMIT_SHA,
+    ENV_VERSION_RAW,
+    ENV_COMMIT_SHA,
+)
 
 
 def _parse_repo_owner(value):
