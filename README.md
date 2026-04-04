@@ -473,6 +473,8 @@ Try the app at [yamtrack.dannyvfilms.com](https://yamtrack.dannyvfilms.com) usin
 - Username: `demo`
 - Password: `demodemo`
 
+This fork provisions that demo account automatically after migrations.
+
 ## 📚 Core Features (from Original Yamtrack)
 
 All the original Yamtrack features are preserved:
