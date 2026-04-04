@@ -24,7 +24,7 @@
                src="{{ episode.image }}">
           <div>
             <h3 class="text-lg font-semibold mb-1 line-clamp-1">{{ episode_title }}</h3>
-            <p class="text-sm text-gray-400">Episode {{ episode.episode_number }}</p>
+            <p class="text-sm text-gray-400">Episode {{ episode.display_episode_number|default:episode.episode_number }}</p>
             {% if episode.history %}
               {% if episode.history|length == 1 %}
                 <p class="text-sm text-gray-400 mt-1">Watched once</p>
@@ -72,6 +72,11 @@
           <input type="hidden" name="media_id" value="{{ media.media_id }}">
           <input type="hidden" name="season_number" value="{{ media.season_number }}">
           <input type="hidden" name="source" value="{{ media.source }}">
+          {% if media.library_media_type %}
+            <input type="hidden"
+                   name="library_media_type"
+                   value="{{ media.library_media_type }}">
+          {% endif %}
           <input type="hidden"
                  name="episode_number"
                  value="{{ episode.episode_number }}">

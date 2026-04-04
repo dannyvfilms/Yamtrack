@@ -376,6 +376,115 @@ class CreateMedia(TestCase):
             True,
         )
 
+    @patch("app.models.providers.services.get_media_metadata")
+    @patch("app.views.services.get_media_metadata")
+    def test_create_grouped_anime_episode_uses_provider_source(
+        self,
+        view_metadata_mock,
+        model_metadata_mock,
+    ):
+        """Grouped-anime episode saves should keep provider source and anime library type."""
+        tv_metadata = {
+            "media_id": "76703",
+            "source": Sources.TVDB.value,
+            "media_type": MediaTypes.TV.value,
+            "title": "Pokemon",
+            "original_title": "Pokemon",
+            "localized_title": "Pokemon",
+            "image": "http://example.com/pokemon.jpg",
+            "details": {"seasons": 2},
+            "related": {
+                "seasons": [
+                    {
+                        "season_number": 1,
+                        "image": "http://example.com/indigo.jpg",
+                    },
+                    {
+                        "season_number": 2,
+                        "image": "http://example.com/orange.jpg",
+                    },
+                ],
+            },
+        }
+        tv_with_seasons_metadata = {
+            **tv_metadata,
+            "season/2": {
+                "media_id": "76703",
+                "source": Sources.TVDB.value,
+                "media_type": MediaTypes.SEASON.value,
+                "season_number": 2,
+                "season_title": "Orange Islands",
+                "image": "http://example.com/orange.jpg",
+                "details": {"episodes": 2},
+                "episodes": [
+                    {
+                        "episode_number": 1,
+                        "air_date": "1999-01-28",
+                        "image": "http://example.com/orange-1.jpg",
+                        "name": "Pallet Party Panic",
+                    },
+                    {
+                        "episode_number": 2,
+                        "air_date": "1999-02-04",
+                        "image": "http://example.com/orange-2.jpg",
+                        "name": "A Scare in the Air",
+                    },
+                ],
+            },
+        }
+
+        def metadata_side_effect(
+            media_type,
+            media_id,
+            source,
+            season_numbers=None,
+            **_kwargs,
+        ):
+            self.assertEqual(media_id, "76703")
+            self.assertEqual(source, Sources.TVDB.value)
+            if media_type == "tv_with_seasons":
+                self.assertEqual(season_numbers, [2])
+                return tv_with_seasons_metadata
+            if media_type == MediaTypes.SEASON.value:
+                self.assertEqual(season_numbers, [2])
+                return tv_with_seasons_metadata["season/2"]
+            if media_type == MediaTypes.TV.value:
+                return tv_metadata
+            error_message = f"Unexpected metadata request: {media_type}"
+            raise AssertionError(error_message)
+
+        view_metadata_mock.side_effect = metadata_side_effect
+        model_metadata_mock.side_effect = metadata_side_effect
+
+        response = self.client.post(
+            reverse("episode_save"),
+            {
+                "media_id": "76703",
+                "season_number": 2,
+                "episode_number": 1,
+                "source": Sources.TVDB.value,
+                "library_media_type": MediaTypes.ANIME.value,
+                "end_date": "2024-01-01",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        created_episode = Episode.objects.get(
+            item__media_id="76703",
+            item__source=Sources.TVDB.value,
+            item__episode_number=1,
+            related_season__user=self.user,
+        )
+        self.assertEqual(created_episode.related_season.item.source, Sources.TVDB.value)
+        self.assertEqual(
+            created_episode.related_season.item.library_media_type,
+            MediaTypes.ANIME.value,
+        )
+        self.assertEqual(
+            created_episode.related_season.related_tv.item.library_media_type,
+            MediaTypes.ANIME.value,
+        )
+
 
 class EditMedia(TestCase):
     """Test the editing of media objects through views."""

@@ -6313,6 +6313,7 @@ def _build_flat_anime_episode_preview(
     history_by_episode_key = defaultdict(list)
     item_by_episode_key = {}
     collection_entry_by_episode_key = {}
+    rating_season_id_by_episode_key = {}
     preview_episode_keys = {
         (row["season_number"], row["provider_episode_number"])
         for row in preview_rows
@@ -6342,6 +6343,10 @@ def _build_flat_anime_episode_preview(
                 continue
             history_by_episode_key[episode_key].append(tracked_episode)
             item_by_episode_key.setdefault(episode_key, episode_item)
+            rating_season_id_by_episode_key.setdefault(
+                episode_key,
+                tracked_episode.related_season_id,
+            )
 
         if item_by_episode_key:
             collection_entries = (
@@ -6390,7 +6395,8 @@ def _build_flat_anime_episode_preview(
                 "media_type": MediaTypes.EPISODE.value,
                 "source": provider,
                 "season_number": season_number,
-                "episode_number": episode_number,
+                "episode_number": provider_episode_number,
+                "display_episode_number": episode_number,
                 "provider_episode_number": provider_episode_number,
                 "season_title": row["season_title"],
                 "air_date": bulk_episode_tracking.coerce_episode_datetime(
@@ -6407,7 +6413,10 @@ def _build_flat_anime_episode_preview(
                 "collection_entry": collection_entry_by_episode_key.get(
                     episode_key,
                 ),
-                "actions_enabled": False,
+                "rating_season_id": rating_season_id_by_episode_key.get(
+                    episode_key,
+                ),
+                "library_media_type": MediaTypes.ANIME.value,
             },
         )
 
@@ -8453,6 +8462,7 @@ def episode_save(request):
     season_number = int(request.POST["season_number"])
     episode_number = int(request.POST["episode_number"])
     source = request.POST["source"]
+    library_media_type = (request.POST.get("library_media_type") or "").strip()
     discover_tab_cache.mark_active_from_request(
         request,
         fallback_media_type=MediaTypes.TV.value,
@@ -8485,14 +8495,18 @@ def episode_save(request):
 
         item, _ = Item.objects.get_or_create(
             media_id=media_id,
-            source=Sources.TMDB.value,
+            source=source,
             media_type=MediaTypes.SEASON.value,
             season_number=season_number,
             defaults={
                 **Item.title_fields_from_metadata(tv_with_seasons_metadata),
+                "library_media_type": library_media_type,
                 "image": season_image,
             },
         )
+        if library_media_type and item.library_media_type != library_media_type:
+            item.library_media_type = library_media_type
+            item.save(update_fields=["library_media_type"])
         related_season = Season.objects.create(
             item=item,
             user=request.user,
@@ -8502,6 +8516,16 @@ def episode_save(request):
         )
 
         logger.info("%s did not exist, it was created successfully.", related_season)
+
+    if library_media_type and related_season.item.library_media_type != library_media_type:
+        related_season.item.library_media_type = library_media_type
+        related_season.item.save(update_fields=["library_media_type"])
+    if (
+        library_media_type
+        and related_season.related_tv.item.library_media_type != library_media_type
+    ):
+        related_season.related_tv.item.library_media_type = library_media_type
+        related_season.related_tv.item.save(update_fields=["library_media_type"])
 
     related_season.watch(episode_number, form.cleaned_data["end_date"])
 

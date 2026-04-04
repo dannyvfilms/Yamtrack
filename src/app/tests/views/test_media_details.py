@@ -2393,10 +2393,18 @@ class MediaDetailsViewTests(TestCase):
         self.assertContains(response, "Pokemon Emergency!")
         self.assertContains(response, "Pallet Party Panic")
         self.assertContains(response, "A Scare in the Air")
+        self.assertContains(response, 'title="Track Episode"', count=4)
         self.assertNotContains(
             response,
             "Episode cards are not available from MyAnimeList metadata.",
         )
+        preview_episodes = response.context["media"]["episodes"]
+        self.assertTrue(all(episode["actions_enabled"] for episode in preview_episodes))
+        self.assertEqual(preview_episodes[2]["season_number"], 2)
+        self.assertEqual(preview_episodes[2]["episode_number"], 1)
+        self.assertEqual(preview_episodes[2]["display_episode_number"], 3)
+        self.assertEqual(preview_episodes[2]["source"], Sources.TVDB.value)
+        self.assertEqual(preview_episodes[2]["media_id"], "76703")
 
     @override_settings(TVDB_API_KEY="test-tvdb-key")
     @patch("app.views.metadata_resolution.resolve_detail_metadata")
