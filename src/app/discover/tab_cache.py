@@ -191,6 +191,11 @@ def _get_activity_version(user_id: int, media_type: str) -> str:
     return version
 
 
+def get_activity_version(user_id: int, media_type: str) -> str:
+    """Return the current Discover activity version for a media type."""
+    return _get_activity_version(user_id, media_type)
+
+
 def bump_activity_version(user_id: int, media_type: str) -> str:
     """Advance the activity version for a Discover media type."""
     version = timezone.now().isoformat()
@@ -586,6 +591,9 @@ def refresh_tab_cache(
     from app.discover.service import get_discover_rows
 
     media_type = _normalize_media_type(media_type)
+    lock_key = _refresh_lock_key(user.id, media_type, show_more=show_more)
+    build_activity_version = _get_activity_version(user.id, media_type)
+    version_drifted = False
     try:
         if force:
             clear_row_cache(user.id, media_type)
@@ -599,16 +607,39 @@ def refresh_tab_cache(
             include_debug=False,
             defer_artwork=False,
         )
+        current_activity_version = _get_activity_version(user.id, media_type)
+        if current_activity_version != build_activity_version:
+            version_drifted = True
+            logger.info(
+                "discover_tab_refresh_version_drift user_id=%s media_type=%s show_more=%s "
+                "started_version=%s current_version=%s",
+                user.id,
+                media_type,
+                int(bool(show_more)),
+                build_activity_version,
+                current_activity_version,
+            )
+            return rows
         set_tab_cache(
             user.id,
             media_type,
             rows,
             show_more=show_more,
-            activity_version=_get_activity_version(user.id, media_type),
+            activity_version=build_activity_version,
         )
         return rows
     finally:
-        cache.delete(_refresh_lock_key(user.id, media_type, show_more=show_more))
+        cache.delete(lock_key)
+        if version_drifted:
+            schedule_tab_refresh(
+                user.id,
+                media_type,
+                show_more=show_more,
+                debounce_seconds=DISCOVER_PRIORITY_REFRESH_DEBOUNCE_SECONDS,
+                countdown=DISCOVER_PRIORITY_REFRESH_COUNTDOWN,
+                force=force,
+                clear_provider_cache=clear_provider_cache,
+            )
 
 
 def _collect_cached_action_payloads(

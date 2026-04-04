@@ -1513,8 +1513,34 @@ def _discover_rows_context(
         "show_more": show_more,
         "discover_debug": discover_debug,
         "discover_loading": bool(discover_status and discover_status["is_refreshing"]),
+        "discover_activity_version": (
+            discover_tab_cache.get_activity_version(
+                request.user.id,
+                selected_media_type,
+            )
+            if not discover_debug
+            else ""
+        ),
         "rows": rows,
     }
+
+
+def _apply_discover_response_headers(
+    response,
+    *,
+    user_id: int,
+    selected_media_type: str,
+    show_more: bool,
+    discover_debug: bool,
+):
+    response["X-Discover-Media-Type"] = selected_media_type
+    response["X-Discover-Show-More"] = "1" if show_more else "0"
+    if not discover_debug:
+        response["X-Discover-Activity-Version"] = discover_tab_cache.get_activity_version(
+            user_id,
+            selected_media_type,
+        )
+    return response
 
 
 def _render_discover_rows_fragment(
@@ -1525,7 +1551,7 @@ def _render_discover_rows_fragment(
     discover_debug: bool,
     rows,
 ):
-    return render(
+    response = render(
         request,
         "app/components/discover_rows.html",
         _discover_rows_context(
@@ -1535,6 +1561,13 @@ def _render_discover_rows_fragment(
             discover_debug=discover_debug,
             rows=rows,
         ),
+    )
+    return _apply_discover_response_headers(
+        response,
+        user_id=request.user.id,
+        selected_media_type=selected_media_type,
+        show_more=show_more,
+        discover_debug=discover_debug,
     )
 
 
@@ -1546,7 +1579,7 @@ def _render_discover_row_fragment(
     discover_debug: bool,
     row,
 ):
-    return render(
+    response = render(
         request,
         "app/components/discover_row.html",
         {
@@ -1555,6 +1588,13 @@ def _render_discover_row_fragment(
             "discover_debug": discover_debug,
             "row": row,
         },
+    )
+    return _apply_discover_response_headers(
+        response,
+        user_id=request.user.id,
+        selected_media_type=selected_media_type,
+        show_more=show_more,
+        discover_debug=discover_debug,
     )
 
 

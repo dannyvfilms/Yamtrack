@@ -432,6 +432,44 @@ class DiscoverTabCacheTests(TestCase):
         )
 
     @patch("app.discover.tab_cache.schedule_tab_refresh", return_value=True)
+    @patch("app.discover.service.get_discover_rows")
+    def test_refresh_tab_cache_skips_superseded_payloads(
+        self,
+        mock_get_discover_rows,
+        mock_schedule_tab_refresh,
+    ):
+        starting_version = tab_cache.get_activity_version(self.user.id, "movie")
+        tab_cache.set_tab_cache(
+            self.user.id,
+            "movie",
+            [self._row(title="Optimistic Movie")],
+            activity_version=starting_version,
+            optimistic_refreshing=True,
+        )
+
+        def build_rows(*args, **kwargs):
+            tab_cache.bump_activity_version(self.user.id, "movie")
+            return [self._row(title="Superseded Movie")]
+
+        mock_get_discover_rows.side_effect = build_rows
+
+        rows = tab_cache.refresh_tab_cache(self.user, "movie")
+
+        payload, is_stale = tab_cache.get_tab_cache(self.user.id, "movie", show_more=False)
+        self.assertEqual(rows[0].items[0].title, "Superseded Movie")
+        self.assertEqual(payload["rows"][0]["items"][0]["title"], "Optimistic Movie")
+        self.assertTrue(is_stale)
+        mock_schedule_tab_refresh.assert_called_once_with(
+            self.user.id,
+            "movie",
+            show_more=False,
+            debounce_seconds=tab_cache.DISCOVER_PRIORITY_REFRESH_DEBOUNCE_SECONDS,
+            countdown=tab_cache.DISCOVER_PRIORITY_REFRESH_COUNTDOWN,
+            force=False,
+            clear_provider_cache=False,
+        )
+
+    @patch("app.discover.tab_cache.schedule_tab_refresh", return_value=True)
     def test_invalidate_for_media_change_bumps_versions_and_clears_lower_caches(
         self, mock_schedule
     ):

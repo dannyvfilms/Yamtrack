@@ -16,7 +16,7 @@ from django.db import OperationalError
 from django.db.models import Count, Q
 from django.utils import timezone
 
-from app.discover import cache_repo
+from app.discover import cache_repo, tab_cache
 from app.discover.feature_metadata import (
     SIGNAL_LABEL_STOPLIST,
     is_director_credit,
@@ -68,6 +68,7 @@ TRAKT_POPULAR_DEFAULT_PULL_TARGET = 100
 TRAKT_POPULAR_MAX_PULL_TARGET = 2000
 ADAPTIVE_PULL_TARGET_META_KEY = "adaptive_pull_target"
 ROW_CACHE_SCHEMA_META_KEY = "schema_version"
+ROW_CACHE_ACTIVITY_VERSION_META_KEY = "activity_version"
 MOVIE_CANON_ROW_SCHEMA_VERSION = 2
 MOVIE_COMING_SOON_ROW_SCHEMA_VERSION = 1
 MOVIE_PERSONALIZED_ROW_SCHEMA_VERSION = 3
@@ -5657,6 +5658,7 @@ def _build_and_cache_row(
     show_more: bool = False,
 ) -> RowResult:
     started = timezone.now()
+    build_activity_version = tab_cache.get_activity_version(user.id, media_type)
     row_meta: dict | None = None
     if media_type in {MediaTypes.MOVIE.value, MediaTypes.TV.value, MediaTypes.ANIME.value} and row_definition.key in {
         "all_time_greats_unseen",
@@ -5679,10 +5681,11 @@ def _build_and_cache_row(
     else:
         candidates = _build_row_candidates(user, media_type, row_definition, profile_payload)
 
+    row_meta = dict(row_meta or {})
     required_schema_version = _required_row_cache_schema_version(media_type, row_definition.key)
     if required_schema_version is not None:
-        row_meta = dict(row_meta or {})
         row_meta[ROW_CACHE_SCHEMA_META_KEY] = required_schema_version
+    row_meta[ROW_CACHE_ACTIVITY_VERSION_META_KEY] = build_activity_version
 
     row, needs_async_artwork_refresh = _prepare_row_from_candidates(
         user,
@@ -5696,17 +5699,28 @@ def _build_and_cache_row(
     )
 
     cache_payload = row.to_dict()
-    if row_meta:
-        cache_payload["meta"] = row_meta
+    cache_payload["meta"] = row_meta
 
     try:
-        cache_repo.set_row_cache(
-            user.id,
-            media_type,
-            row_definition.key,
-            cache_payload,
-            ttl_seconds=_row_ttl_seconds(row_definition),
-        )
+        current_activity_version = tab_cache.get_activity_version(user.id, media_type)
+        if current_activity_version == build_activity_version:
+            cache_repo.set_row_cache(
+                user.id,
+                media_type,
+                row_definition.key,
+                cache_payload,
+                ttl_seconds=_row_ttl_seconds(row_definition),
+            )
+        else:
+            logger.info(
+                "discover_row_cache_skip_stale_build user_id=%s media_type=%s row_key=%s "
+                "started_version=%s current_version=%s",
+                user.id,
+                media_type,
+                row_definition.key,
+                build_activity_version,
+                current_activity_version,
+            )
     except OperationalError as error:
         logger.warning(
             "discover_row_cache_write_failed user_id=%s media_type=%s row_key=%s error=%s",
@@ -5804,6 +5818,22 @@ def _required_row_cache_schema_version(media_type: str, row_key: str) -> int | N
         if row_key in TV_ANIME_PERSONALIZED_ROW_KEYS:
             return TV_ANIME_PERSONALIZED_ROW_SCHEMA_VERSION
     return None
+
+
+def _row_cache_matches_activity_version(
+    user_id: int,
+    media_type: str,
+    cached_payload: dict,
+) -> bool:
+    meta = cached_payload.get("meta")
+    if not isinstance(meta, dict):
+        return True
+
+    cached_activity_version = str(meta.get(ROW_CACHE_ACTIVITY_VERSION_META_KEY) or "")
+    if not cached_activity_version:
+        return True
+
+    return cached_activity_version == tab_cache.get_activity_version(user_id, media_type)
 
 
 def _allow_empty_row(
@@ -5949,6 +5979,16 @@ def get_discover_rows(
                         show_more=show_more,
                     )
                 elif not _is_row_cache_compatible(media_type, row_definition, cached_payload):
+                    row = _build_and_cache_row(
+                        user,
+                        media_type,
+                        row_definition,
+                        profile_payload,
+                        seen_identities=seen_identities,
+                        defer_artwork=defer_artwork,
+                        show_more=show_more,
+                    )
+                elif not _row_cache_matches_activity_version(user.id, media_type, cached_payload):
                     row = _build_and_cache_row(
                         user,
                         media_type,

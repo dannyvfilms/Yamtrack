@@ -7,12 +7,13 @@ from django.db import OperationalError
 from django.test import TestCase
 from django.utils import timezone
 
-from app.discover import cache_repo
+from app.discover import cache_repo, tab_cache
 from app.discover.providers.trakt_adapter import TraktDiscoverAdapter
 from app.discover.registry import ALL_MEDIA_KEY
 from app.discover.schemas import CandidateItem, RowDefinition, RowResult
 from app.discover.service import (
     MAX_ITEMS_PER_ROW,
+    ROW_CACHE_ACTIVITY_VERSION_META_KEY,
     _apply_comfort_confidence,
     _apply_wildcard_novelty,
     _build_comfort_debug_payload,
@@ -65,6 +66,78 @@ class DiscoverServiceTests(TestCase):
             row.key: [f"{item.media_id}:{item.title}" for item in row.items[:6]]
             for row in rows
         }
+
+    @patch("app.discover.service._build_and_cache_row")
+    @patch("app.discover.service.get_rows")
+    @patch("app.discover.service.get_or_compute_taste_profile", return_value={})
+    def test_get_discover_rows_rebuilds_cache_when_activity_version_changes(
+        self,
+        _mock_profile,
+        mock_get_rows,
+        mock_build_and_cache_row,
+    ):
+        row_definition = RowDefinition(
+            key="custom_row",
+            title="Custom Row",
+            mission="Mission",
+            why="Why",
+            source="local",
+            min_items=1,
+        )
+        mock_get_rows.return_value = [row_definition]
+
+        cached_row = RowResult(
+            key="custom_row",
+            title="Custom Row",
+            mission="Mission",
+            why="Why",
+            source="local",
+            items=[
+                CandidateItem(
+                    media_type=MediaTypes.MOVIE.value,
+                    source=Sources.TMDB.value,
+                    media_id="100",
+                    title="Cached Movie",
+                    image="https://example.com/cached.jpg",
+                ),
+            ],
+        )
+        cached_version = tab_cache.get_activity_version(self.user.id, MediaTypes.MOVIE.value)
+        cached_payload = cached_row.to_dict()
+        cached_payload["meta"] = {
+            ROW_CACHE_ACTIVITY_VERSION_META_KEY: cached_version,
+        }
+        cache_repo.set_row_cache(
+            self.user.id,
+            MediaTypes.MOVIE.value,
+            row_definition.key,
+            cached_payload,
+            ttl_seconds=3600,
+        )
+        tab_cache.bump_activity_version(self.user.id, MediaTypes.MOVIE.value)
+
+        rebuilt_row = RowResult(
+            key="custom_row",
+            title="Custom Row",
+            mission="Mission",
+            why="Why",
+            source="local",
+            items=[
+                CandidateItem(
+                    media_type=MediaTypes.MOVIE.value,
+                    source=Sources.TMDB.value,
+                    media_id="101",
+                    title="Rebuilt Movie",
+                    image="https://example.com/rebuilt.jpg",
+                ),
+            ],
+        )
+        mock_build_and_cache_row.return_value = rebuilt_row
+
+        rows = get_discover_rows(self.user, MediaTypes.MOVIE.value, show_more=False)
+
+        self.assertEqual([row.items[0].title for row in rows], ["Rebuilt Movie"])
+        mock_build_and_cache_row.assert_called_once()
 
     @patch("app.discover.service._get_all_media_component_rows")
     def test_all_media_default_uses_trending_row_from_each_enabled_media_type(

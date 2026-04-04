@@ -7,7 +7,7 @@
 {% endblock title %}
 
 {% block content %}
-  <div x-data="discoverPage('{{ selected_media_type }}', {{ show_more|yesno:'true,false' }}, {{ discover_debug|yesno:'true,false' }}, {{ discover_loading|yesno:'true,false' }})"
+  <div x-data="discoverPage('{{ selected_media_type }}', {{ show_more|yesno:'true,false' }}, {{ discover_debug|yesno:'true,false' }}, {{ discover_loading|yesno:'true,false' }}, '{{ discover_activity_version|default:''|escapejs }}')"
        x-init="init()"
        class="space-y-6">
     <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -103,7 +103,7 @@
 {% block js %}
   <script src="{% static 'js/cache-updater.js' %}"></script>
   <script>
-    function discoverPage(initialMedia, initialShowMore, initialDebug, initialCacheRefreshing) {
+    function discoverPage(initialMedia, initialShowMore, initialDebug, initialCacheRefreshing, initialActivityVersion) {
       return {
         selectedMedia: initialMedia || "all",
         showMore: Boolean(initialShowMore),
@@ -111,9 +111,11 @@
         refreshing: false,
         cacheRefreshing: Boolean(initialCacheRefreshing),
         cacheUpdater: null,
+        activityVersions: {},
         rowsSwapHandler: null,
         rowsRefreshListener: null,
         discoverActionListener: null,
+        swapGuardListener: null,
         refreshStatusMessage: "",
         refreshStatusVisible: false,
         refreshStatusTimer: null,
@@ -123,6 +125,9 @@
         toastVisible: false,
         toastTimer: null,
         init() {
+          if (initialActivityVersion) {
+            this.rememberActivityVersion(this.selectedMedia, initialActivityVersion);
+          }
           this.updateUrl();
           this.bindEvents();
           if (this.discoverDebug) {
@@ -136,6 +141,58 @@
           });
         },
         bindEvents() {
+          this.swapGuardListener = (event) => {
+            if (this.discoverDebug) {
+              return;
+            }
+            const target = event.detail?.target;
+            const targetId = target?.id || "";
+            if (
+              targetId !== "discover-rows"
+              && !targetId.startsWith("discover-row-")
+            ) {
+              return;
+            }
+
+            const xhr = event.detail?.xhr;
+            if (!xhr) {
+              return;
+            }
+
+            const responseMediaType = xhr.getResponseHeader("X-Discover-Media-Type");
+            const responseShowMore = xhr.getResponseHeader("X-Discover-Show-More");
+            const responseVersion = xhr.getResponseHeader("X-Discover-Activity-Version");
+
+            if (responseMediaType && responseMediaType !== this.selectedMedia) {
+              event.detail.shouldSwap = false;
+              return;
+            }
+            if (
+              responseShowMore
+              && (responseShowMore === "1") !== this.showMore
+            ) {
+              event.detail.shouldSwap = false;
+              return;
+            }
+
+            const currentVersion = this.activityVersions[
+              responseMediaType || this.selectedMedia
+            ];
+            if (
+              responseVersion
+              && currentVersion
+              && this.compareActivityVersions(responseVersion, currentVersion) < 0
+            ) {
+              event.detail.shouldSwap = false;
+              return;
+            }
+
+            if (responseMediaType && responseVersion) {
+              this.rememberActivityVersion(responseMediaType, responseVersion);
+            }
+          };
+          document.body.addEventListener("htmx:beforeSwap", this.swapGuardListener);
+
           this.rowsRefreshListener = (event) => {
             if (!event.target || event.target.id !== "discover-rows") {
               return;
@@ -184,6 +241,25 @@
           if (this.toastTimer) {
             clearTimeout(this.toastTimer);
             this.toastTimer = null;
+          }
+        },
+        activityVersionRank(version) {
+          const rank = Date.parse(version || "");
+          return Number.isFinite(rank) ? rank : 0;
+        },
+        compareActivityVersions(left, right) {
+          return this.activityVersionRank(left) - this.activityVersionRank(right);
+        },
+        rememberActivityVersion(mediaType, version) {
+          if (!mediaType || !version) {
+            return;
+          }
+          const currentVersion = this.activityVersions[mediaType];
+          if (
+            !currentVersion
+            || this.compareActivityVersions(version, currentVersion) >= 0
+          ) {
+            this.activityVersions[mediaType] = version;
           }
         },
         showToast(detail) {
@@ -353,6 +429,32 @@
           });
           if (!response.ok) {
             return;
+          }
+
+          const responseMediaType = response.headers.get("X-Discover-Media-Type");
+          const responseShowMore = response.headers.get("X-Discover-Show-More");
+          const responseVersion = response.headers.get("X-Discover-Activity-Version");
+          if (responseMediaType && responseMediaType !== this.selectedMedia) {
+            return;
+          }
+          if (
+            responseShowMore
+            && (responseShowMore === "1") !== this.showMore
+          ) {
+            return;
+          }
+          const currentVersion = this.activityVersions[
+            responseMediaType || this.selectedMedia
+          ];
+          if (
+            responseVersion
+            && currentVersion
+            && this.compareActivityVersions(responseVersion, currentVersion) < 0
+          ) {
+            return;
+          }
+          if (responseMediaType && responseVersion) {
+            this.rememberActivityVersion(responseMediaType, responseVersion);
           }
 
           const html = await response.text();

@@ -1,7 +1,7 @@
 # ruff: noqa: D102
 
 import json
-from unittest.mock import call, patch
+from unittest.mock import ANY, call, patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -112,12 +112,12 @@ class DiscoverViewTests(TestCase):
         self.assertContains(response, "Refreshing recommendations in background")
         self.assertContains(response, "js/cache-updater.js")
         mock_get_tab_rows.assert_called_once_with(
-            self.user,
+            ANY,
             "all",
             show_more=False,
             include_debug=False,
-            defer_artwork=True,
-            allow_inline_bootstrap=False,
+            defer_artwork=False,
+            allow_inline_bootstrap=True,
         )
         mock_get_tab_status.assert_called_once_with(
             self.user.id,
@@ -148,11 +148,11 @@ class DiscoverViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         mock_get_discover_rows.assert_called_once_with(
-            self.user,
+            ANY,
             "movie",
             show_more=True,
             include_debug=True,
-            defer_artwork=True,
+            defer_artwork=False,
         )
         mock_get_tab_status.assert_not_called()
         mock_warm_sibling_tabs.assert_not_called()
@@ -176,12 +176,12 @@ class DiscoverViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "app/components/discover_rows.html")
         mock_get_tab_rows.assert_called_once_with(
-            self.user,
+            ANY,
             "movie",
             show_more=True,
             include_debug=False,
-            defer_artwork=True,
-            allow_inline_bootstrap=False,
+            defer_artwork=False,
+            allow_inline_bootstrap=True,
         )
         mock_get_tab_status.assert_called_once_with(
             self.user.id,
@@ -375,6 +375,9 @@ class DiscoverViewTests(TestCase):
                 status=Status.PLANNING.value,
             ).exists(),
         )
+        self.assertEqual(response["X-Discover-Media-Type"], MediaTypes.MOVIE.value)
+        self.assertEqual(response["X-Discover-Show-More"], "0")
+        self.assertIn("X-Discover-Activity-Version", response)
         trigger = json.loads(response["HX-Trigger"])
         self.assertEqual(trigger["discoverActionComplete"]["action"], "planning")
         self.assertEqual(trigger["discoverActionComplete"]["undo_token"], "undo-123")
@@ -502,6 +505,9 @@ class DiscoverViewTests(TestCase):
                 feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
             ).exists(),
         )
+        self.assertEqual(response["X-Discover-Media-Type"], MediaTypes.MOVIE.value)
+        self.assertEqual(response["X-Discover-Show-More"], "0")
+        self.assertIn("X-Discover-Activity-Version", response)
         trigger = json.loads(response["HX-Trigger"])
         self.assertEqual(trigger["discoverActionComplete"]["action"], "dismiss")
         self.assertEqual(trigger["discoverActionComplete"]["undo_token"], "undo-dismiss")
@@ -611,11 +617,11 @@ class DiscoverViewTests(TestCase):
             any_order=False,
         )
         mock_get_discover_rows.assert_called_once_with(
-            self.user,
+            ANY,
             MediaTypes.MOVIE.value,
             show_more=False,
             include_debug=True,
-            defer_artwork=True,
+            defer_artwork=False,
         )
 
     @patch("app.models.Item.fetch_releases")
@@ -680,10 +686,10 @@ class DiscoverViewTests(TestCase):
             any_order=False,
         )
         mock_get_discover_rows.assert_called_once_with(
-            self.user,
+            ANY,
             MediaTypes.MOVIE.value,
             show_more=False,
             include_debug=True,
-            defer_artwork=True,
+            defer_artwork=False,
         )
         mock_update_undo_snapshot.assert_called_once()
