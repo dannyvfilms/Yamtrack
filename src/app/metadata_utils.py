@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from app import helpers
 from app.discover.feature_metadata import normalize_certification
+from app.models import MediaTypes, Sources
+
+ANIME_SUPPLEMENT_GENRE = "Anime"
 
 CORE_METADATA_FIELDS = [
     "country",
@@ -38,6 +41,76 @@ def _coerce_list(value, *, allow_scalar: bool = True) -> list:
         return value
     if allow_scalar and value:
         return [value]
+    return []
+
+
+def normalize_genres(value) -> list[str]:
+    """Normalize a provider or model genre payload into unique strings."""
+    from app.statistics import _coerce_genre_list
+
+    genres = _coerce_genre_list(value)
+    return list(dict.fromkeys([str(genre) for genre in genres if genre]))
+
+
+def genre_list_has_name(genres, name: str) -> bool:
+    """Return whether a genre list contains the named genre, case-insensitively."""
+    target = str(name or "").strip().lower()
+    if not target:
+        return False
+    return any(str(genre).strip().lower() == target for genre in normalize_genres(genres))
+
+
+def extract_metadata_genres(metadata: dict | None) -> list[str]:
+    """Return normalized genres from provider metadata."""
+    if not isinstance(metadata, dict):
+        return []
+    details = metadata.get("details")
+    genres_raw = []
+    if isinstance(details, dict):
+        genres_raw = details.get("genres") or details.get("genre") or []
+    if not genres_raw:
+        genres_raw = metadata.get("genres") or metadata.get("genre") or []
+    return normalize_genres(genres_raw)
+
+
+def merge_persisted_genres(
+    *,
+    source: str,
+    media_type: str,
+    incoming_genres,
+    existing_genres=None,
+    add_anime: bool = False,
+) -> list[str]:
+    """Return the stored genre list for an item after source-driven updates."""
+    merged = normalize_genres(incoming_genres)
+    existing = normalize_genres(existing_genres)
+
+    if source == Sources.TMDB.value and media_type == MediaTypes.TV.value:
+        if add_anime or genre_list_has_name(existing, ANIME_SUPPLEMENT_GENRE):
+            if not genre_list_has_name(merged, ANIME_SUPPLEMENT_GENRE):
+                merged.append(ANIME_SUPPLEMENT_GENRE)
+
+    return merged
+
+
+def apply_item_genres(
+    item,
+    incoming_genres,
+    *,
+    add_anime: bool = False,
+) -> list[str]:
+    """Apply merged genres to an item and return changed fields."""
+    merged = merge_persisted_genres(
+        source=item.source,
+        media_type=item.media_type,
+        incoming_genres=incoming_genres,
+        existing_genres=item.genres,
+        add_anime=add_anime,
+    )
+    current = normalize_genres(item.genres)
+    if current != merged:
+        item.genres = merged
+        return ["genres"]
     return []
 
 

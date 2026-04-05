@@ -55,6 +55,7 @@ class AppConfig(AppConfig):
             self._schedule_discover_startup_warmup()
 
         if not settings.TESTING and not is_celery_worker:
+            self._schedule_genre_backfill_reconcile()
             self._schedule_trakt_popularity_reconcile()
 
     def _add_startup_cache_key(self, cache_key: str) -> bool:
@@ -87,6 +88,34 @@ class AppConfig(AppConfig):
             logger.info("Scheduled Discover startup warmup")
         except Exception as error:  # noqa: BLE001
             logger.warning("Failed to schedule Discover startup warmup: %s", error)
+
+    def _schedule_genre_backfill_reconcile(self):
+        """Schedule a one-time genre backfill reconcile for the current strategy version."""
+        try:
+            tasks = import_module("app.tasks")
+            version_key = f"genre_backfill_reconciled_v{tasks.GENRE_BACKFILL_VERSION}"
+
+            if cache.get(version_key) == "done":
+                return
+
+            if not cache.add(version_key, "pending", timeout=300):
+                return
+
+            try:
+                tasks.reconcile_genre_backfill.apply_async(
+                    kwargs={"strategy_version": tasks.GENRE_BACKFILL_VERSION},
+                    countdown=0,
+                )
+            except Exception:
+                cache.delete(version_key)
+                raise
+
+            logger.info(
+                "Scheduled genre backfill reconcile (version=%s)",
+                tasks.GENRE_BACKFILL_VERSION,
+            )
+        except Exception as error:  # noqa: BLE001
+            logger.warning("Failed to schedule genre backfill reconcile: %s", error)
 
     def _schedule_trakt_popularity_reconcile(self):
         """Schedule Trakt popularity reconciliation on startup.

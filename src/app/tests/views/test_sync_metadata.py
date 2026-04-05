@@ -4,7 +4,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 
-from app.models import MediaTypes, Sources
+from app.models import Item, MediaTypes, Sources
 
 User = get_user_model()
 
@@ -104,5 +104,64 @@ class SyncMetadataViewTests(TestCase):
         _, kwargs = mock_refresh_trakt_popularity.call_args
         self.assertEqual(kwargs["route_media_type"], MediaTypes.MOVIE.value)
         self.assertTrue(kwargs["force"])
+        mock_fetch_releases.assert_called_once()
+        mock_sync_plex_rating.assert_called_once()
+
+    @patch("app.views._sync_plex_rating")
+    @patch("app.views.Item.fetch_releases")
+    @patch("app.views.credits.sync_item_credits_from_metadata")
+    @patch("app.views.trakt_popularity_service.refresh_trakt_popularity")
+    @patch("app.views.metadata_resolution.upsert_provider_links")
+    @patch("app.views.services.get_media_metadata")
+    def test_sync_metadata_preserves_tmdb_tv_anime_genre_supplement(
+        self,
+        mock_get_media_metadata,
+        mock_upsert_provider_links,
+        mock_refresh_trakt_popularity,
+        mock_sync_item_credits,
+        mock_fetch_releases,
+        mock_sync_plex_rating,
+    ):
+        item = Item.objects.create(
+            media_id="2002",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Manual Refresh Anime",
+            image="https://example.com/manual-refresh-anime.jpg",
+            genres=["Comedy", "Anime"],
+        )
+        mock_get_media_metadata.return_value = {
+            "media_id": item.media_id,
+            "title": item.title,
+            "media_type": MediaTypes.TV.value,
+            "source": Sources.TMDB.value,
+            "image": item.image,
+            "genres": ["Comedy"],
+            "details": {
+                "format": "TV",
+                "release_date": "2024-01-01",
+            },
+            "related": {},
+        }
+
+        response = self.client.post(
+            reverse(
+                "sync_metadata",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "media_id": item.media_id,
+                },
+            ),
+            {"next": "/"},
+        )
+
+        item.refresh_from_db()
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(item.genres, ["Comedy", "Anime"])
+        mock_upsert_provider_links.assert_called_once()
+        mock_refresh_trakt_popularity.assert_called_once()
+        mock_sync_item_credits.assert_called_once()
         mock_fetch_releases.assert_called_once()
         mock_sync_plex_rating.assert_called_once()

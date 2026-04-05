@@ -89,6 +89,7 @@ METADATA_BACKFILL_BASE_DELAY_SECONDS = 60 * 60  # 1 hour
 METADATA_BACKFILL_MAX_DELAY_SECONDS = 60 * 60 * 24  # 1 day
 METADATA_BACKFILL_MAX_ATTEMPTS = 6
 GAME_LENGTHS_BACKFILL_VERSION = 2
+GENRE_BACKFILL_VERSION = 2
 NIGHTLY_METADATA_QUALITY_GENRE_BATCH_SIZE = 1500
 NIGHTLY_METADATA_QUALITY_RUNTIME_BATCH_SIZE = 500
 NIGHTLY_METADATA_QUALITY_EPISODE_SEASONS_BATCH_SIZE = 300
@@ -206,6 +207,17 @@ def _filter_backfill_item_ids(item_ids, field: str):
                 fail_count=0,
                 last_success_at__isnull=False,
                 strategy_version__gte=CREDITS_BACKFILL_VERSION,
+            ).values_list("item_id", flat=True),
+        )
+    if field == MetadataBackfillField.GENRES:
+        blocked_ids.update(
+            MetadataBackfillState.objects.filter(
+                field=field,
+                item_id__in=item_ids,
+                give_up=False,
+                fail_count=0,
+                last_success_at__isnull=False,
+                strategy_version__gte=GENRE_BACKFILL_VERSION,
             ).values_list("item_id", flat=True),
         )
     return [item_id for item_id in item_ids if item_id not in blocked_ids]
@@ -372,7 +384,6 @@ def _episode_runtime_items_queryset():
 
 def _genre_items_queryset():
     queryset = Item.objects.filter(
-        Q(genres__isnull=True) | Q(genres=[]),
         media_type__in=[
             MediaTypes.MOVIE.value,
             MediaTypes.TV.value,
@@ -384,8 +395,23 @@ def _genre_items_queryset():
             MediaTypes.MANGA.value,
         ],
         source__in=GENRE_BACKFILL_SOURCES,
+    ).filter(
+        Q(genres__isnull=True)
+        | Q(genres=[])
+        | Q(
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+        ),
     )
-    return _apply_backfill_state_filters(queryset, MetadataBackfillField.GENRES)
+    queryset = _apply_backfill_state_filters(queryset, MetadataBackfillField.GENRES)
+    completed_ids = MetadataBackfillState.objects.filter(
+        field=MetadataBackfillField.GENRES,
+        give_up=False,
+        fail_count=0,
+        last_success_at__isnull=False,
+        strategy_version__gte=GENRE_BACKFILL_VERSION,
+    ).values("item_id")
+    return queryset.exclude(id__in=completed_ids)
 
 
 def _release_items_queryset():
@@ -888,19 +914,64 @@ def enqueue_trakt_popularity_backfill_items(item_ids, countdown=10, *, force=Fal
     return len(normalized)
 
 
-def _extract_genres_from_metadata(metadata):
-    from app.statistics import _coerce_genre_list
+def _resolve_tmdb_tv_item_tvdb_id(item: Item, tmdb_metadata: dict | None) -> str | None:
+    """Return a TVDB series ID for a TMDB TV item, persisting discovered mapping."""
+    from app.services import metadata_resolution
 
-    if not isinstance(metadata, dict):
-        return []
-    details = metadata.get("details")
-    genres_raw = []
-    if isinstance(details, dict):
-        genres_raw = details.get("genres") or details.get("genre") or []
-    if not genres_raw:
-        genres_raw = metadata.get("genres") or metadata.get("genre") or []
-    genres = _coerce_genre_list(genres_raw)
-    return list(dict.fromkeys([genre for genre in genres if genre]))
+    if not (
+        item.source == Sources.TMDB.value
+        and item.media_type == MediaTypes.TV.value
+    ):
+        return None
+
+    if isinstance(tmdb_metadata, dict):
+        metadata_resolution.upsert_provider_links(
+            item,
+            tmdb_metadata,
+            provider=item.source,
+            provider_media_type=item.media_type,
+        )
+
+    tvdb_id = metadata_resolution.resolve_provider_media_id(
+        item,
+        Sources.TVDB.value,
+        route_media_type=MediaTypes.TV.value,
+    )
+    return str(tvdb_id) if tvdb_id else None
+
+
+def _tmdb_tv_item_is_tvdb_anime(item: Item, tmdb_metadata: dict | None) -> bool:
+    """Return whether TVDB classifies a TMDB TV item as Anime."""
+    from app.providers import tvdb
+    from app.services import metadata_resolution
+
+    if not tvdb.enabled():
+        return False
+
+    tvdb_id = _resolve_tmdb_tv_item_tvdb_id(item, tmdb_metadata)
+    if not tvdb_id:
+        return False
+
+    tvdb_metadata = services.get_media_metadata(
+        MediaTypes.TV.value,
+        tvdb_id,
+        Sources.TVDB.value,
+    )
+    if not isinstance(tvdb_metadata, dict):
+        msg = "no tvdb metadata"
+        raise ValueError(msg)
+
+    metadata_resolution.upsert_provider_links(
+        item,
+        tvdb_metadata,
+        provider=Sources.TVDB.value,
+        provider_media_type=MediaTypes.TV.value,
+    )
+    tvdb_genres = metadata_utils.extract_metadata_genres(tvdb_metadata)
+    return metadata_utils.genre_list_has_name(
+        tvdb_genres,
+        metadata_utils.ANIME_SUPPLEMENT_GENRE,
+    )
 
 
 def _populate_genres_for_items(items, delay_seconds):
@@ -915,27 +986,46 @@ def _populate_genres_for_items(items, delay_seconds):
                 item.source,
             )
 
-            if not metadata:
-                logger.warning("No metadata returned for %s (%s, %s)", item.title, item.media_type, item.source)
+            if not isinstance(metadata, dict):
+                logger.warning(
+                    "No metadata returned for %s (%s, %s)",
+                    item.title,
+                    item.media_type,
+                    item.source,
+                )
                 error_count += 1
                 _record_backfill_failure(item, MetadataBackfillField.GENRES, "no metadata")
                 continue
 
-            genres = _extract_genres_from_metadata(metadata)
-            if not genres:
+            source_genres = metadata_utils.extract_metadata_genres(metadata)
+            incoming_genres = source_genres or metadata_utils.normalize_genres(item.genres)
+            if not incoming_genres:
                 logger.warning("No genre data available for %s", item.title)
                 error_count += 1
                 _record_backfill_failure(item, MetadataBackfillField.GENRES, "no genres")
                 continue
 
-            with transaction.atomic():
-                item.genres = genres
-                item.save(update_fields=["genres"])
+            add_anime = False
+            if item.source == Sources.TMDB.value and item.media_type == MediaTypes.TV.value:
+                add_anime = _tmdb_tv_item_is_tvdb_anime(item, metadata)
 
-            _record_backfill_success(item, MetadataBackfillField.GENRES)
+            genre_update_fields = metadata_utils.apply_item_genres(
+                item,
+                incoming_genres,
+                add_anime=add_anime,
+            )
+            if genre_update_fields:
+                with transaction.atomic():
+                    item.save(update_fields=genre_update_fields)
+                updated_items.append(item)
+
+            _record_backfill_success(
+                item,
+                MetadataBackfillField.GENRES,
+                strategy_version=GENRE_BACKFILL_VERSION,
+            )
             updated_count += 1
-            updated_items.append(item)
-            logger.info("Updated genres for %s: %s", item.title, genres)
+            logger.info("Updated genres for %s: %s", item.title, item.genres)
 
             if delay_seconds > 0:
                 import time
@@ -1463,6 +1553,47 @@ def reconcile_trakt_popularity(score_version: int | None = None):
         score_version,
     )
     return {"recomputed": recomputed, "enqueued_for_fetch": enqueued}
+
+
+@shared_task
+def reconcile_genre_backfill(
+    strategy_version: int | None = None,
+    batch_size: int = NIGHTLY_METADATA_QUALITY_GENRE_BATCH_SIZE,
+):
+    """Queue all current genre-backfill candidates without waiting for the nightly sweep."""
+    batch_size = max(int(batch_size), 1)
+    last_item_id = 0
+    selected = 0
+    enqueued = 0
+
+    while True:
+        batch_ids = list(
+            _genre_items_queryset()
+            .filter(id__gt=last_item_id)
+            .order_by("id")
+            .values_list("id", flat=True)[:batch_size],
+        )
+        if not batch_ids:
+            break
+
+        last_item_id = batch_ids[-1]
+        selected += len(batch_ids)
+        enqueued += enqueue_genre_backfill_items(batch_ids, countdown=10)
+
+    if strategy_version is not None:
+        cache.set(
+            f"genre_backfill_reconciled_v{strategy_version}",
+            "done",
+            timeout=None,
+        )
+
+    logger.info(
+        "reconcile_genre_backfill selected=%d enqueued=%d version=%s",
+        selected,
+        enqueued,
+        strategy_version,
+    )
+    return {"selected": selected, "enqueued": enqueued}
 
 
 @shared_task

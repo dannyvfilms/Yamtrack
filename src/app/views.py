@@ -7136,8 +7136,13 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
             item.number_of_pages = number_of_pages
             item.save(update_fields=["number_of_pages"])
 
-        metadata_update_fields = metadata_utils.apply_item_metadata(item, metadata)
+        metadata_update_fields = metadata_utils.apply_item_genres(
+            item,
+            metadata_utils.extract_metadata_genres(metadata),
+        )
+        metadata_update_fields.extend(metadata_utils.apply_item_metadata(item, metadata))
         if metadata_update_fields:
+            metadata_update_fields = list(dict.fromkeys(metadata_update_fields))
             item.metadata_fetched_at = timezone.now()
             metadata_update_fields.append("metadata_fetched_at")
             item.save(update_fields=metadata_update_fields)

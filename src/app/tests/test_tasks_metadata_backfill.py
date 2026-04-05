@@ -1,9 +1,9 @@
 from datetime import date, timedelta
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from app import tasks
@@ -12,6 +12,7 @@ from app.models import (
     CREDITS_BACKFILL_VERSION,
     Episode,
     Item,
+    ItemProviderLink,
     ItemPersonCredit,
     ItemStudioCredit,
     MediaTypes,
@@ -869,6 +870,313 @@ class MetadataBackfillTaskTests(TestCase):
         self.assertIn(book.id, queued_ids)
         self.assertIn(comic.id, queued_ids)
         self.assertIn(manga.id, queued_ids)
+
+    def test_genre_backfill_queryset_includes_tmdb_tv_until_current_version_marked(self):
+        item = Item.objects.create(
+            media_id="tmdb-tv-genre",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="TMDB Show",
+            image="https://example.com/tmdb-tv.jpg",
+            genres=["Drama"],
+        )
+
+        queued_ids = set(tasks._genre_items_queryset().values_list("id", flat=True))
+        self.assertIn(item.id, queued_ids)
+
+        MetadataBackfillState.objects.create(
+            item=item,
+            field=MetadataBackfillField.GENRES,
+            strategy_version=tasks.GENRE_BACKFILL_VERSION,
+            last_success_at=timezone.now(),
+        )
+
+        queued_ids = set(tasks._genre_items_queryset().values_list("id", flat=True))
+        self.assertNotIn(item.id, queued_ids)
+
+    @patch("app.tasks.enqueue_genre_backfill_items")
+    def test_reconcile_genre_backfill_queues_current_candidates_on_startup(
+        self,
+        mock_enqueue_genre_backfill_items,
+    ):
+        first_item = Item.objects.create(
+            media_id="startup-tmdb-tv-1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Startup Anime Check 1",
+            image="https://example.com/startup-1.jpg",
+            genres=["Drama"],
+        )
+        second_item = Item.objects.create(
+            media_id="startup-tmdb-tv-2",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Startup Anime Check 2",
+            image="https://example.com/startup-2.jpg",
+            genres=["Comedy"],
+        )
+        completed_item = Item.objects.create(
+            media_id="startup-tmdb-tv-3",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Already Reconciled",
+            image="https://example.com/startup-3.jpg",
+            genres=["Mystery"],
+        )
+        MetadataBackfillState.objects.create(
+            item=completed_item,
+            field=MetadataBackfillField.GENRES,
+            strategy_version=tasks.GENRE_BACKFILL_VERSION,
+            last_success_at=timezone.now(),
+        )
+        cache.delete(f"genre_backfill_reconciled_v{tasks.GENRE_BACKFILL_VERSION}")
+        mock_enqueue_genre_backfill_items.side_effect = lambda item_ids, countdown=10: len(item_ids)
+
+        result = tasks.reconcile_genre_backfill(
+            strategy_version=tasks.GENRE_BACKFILL_VERSION,
+            batch_size=1,
+        )
+
+        self.assertEqual(
+            mock_enqueue_genre_backfill_items.call_args_list,
+            [
+                call([first_item.id], countdown=10),
+                call([second_item.id], countdown=10),
+            ],
+        )
+        self.assertEqual(result, {"selected": 2, "enqueued": 2})
+        self.assertEqual(
+            cache.get(f"genre_backfill_reconciled_v{tasks.GENRE_BACKFILL_VERSION}"),
+            "done",
+        )
+
+    @patch("app.tasks.services.get_media_metadata")
+    def test_populate_genre_data_for_tmdb_tv_adds_anime_from_tvdb_mapping(
+        self,
+        mock_get_media_metadata,
+    ):
+        item = Item.objects.create(
+            media_id="1001",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Mapped Anime",
+            image="https://example.com/mapped-anime.jpg",
+            genres=["Comedy"],
+        )
+        ItemProviderLink.objects.create(
+            item=item,
+            provider=Sources.TVDB.value,
+            provider_media_id="9001",
+            provider_media_type=MediaTypes.TV.value,
+        )
+        mock_get_media_metadata.side_effect = [
+            {
+                "media_id": item.media_id,
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.TV.value,
+                "genres": ["Comedy"],
+                "details": {},
+            },
+            {
+                "media_id": "9001",
+                "source": Sources.TVDB.value,
+                "media_type": MediaTypes.TV.value,
+                "genres": ["Anime"],
+                "details": {},
+            },
+        ]
+
+        result = tasks.populate_genre_data_for_items([item.id])
+
+        item.refresh_from_db()
+        state = MetadataBackfillState.objects.get(
+            item=item,
+            field=MetadataBackfillField.GENRES,
+        )
+
+        self.assertEqual(item.genres, ["Comedy", "Anime"])
+        self.assertEqual(result["updated"], 1)
+        self.assertEqual(result["errors"], 0)
+        self.assertEqual(state.strategy_version, tasks.GENRE_BACKFILL_VERSION)
+
+    @patch("app.tasks.services.get_media_metadata")
+    def test_populate_genre_data_for_tmdb_tv_non_anime_marks_strategy_current(
+        self,
+        mock_get_media_metadata,
+    ):
+        item = Item.objects.create(
+            media_id="1002",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Mapped Non-Anime",
+            image="https://example.com/mapped-non-anime.jpg",
+            genres=["Comedy"],
+        )
+        ItemProviderLink.objects.create(
+            item=item,
+            provider=Sources.TVDB.value,
+            provider_media_id="9002",
+            provider_media_type=MediaTypes.TV.value,
+        )
+        mock_get_media_metadata.side_effect = [
+            {
+                "media_id": item.media_id,
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.TV.value,
+                "genres": ["Comedy"],
+                "details": {},
+            },
+            {
+                "media_id": "9002",
+                "source": Sources.TVDB.value,
+                "media_type": MediaTypes.TV.value,
+                "genres": ["Drama"],
+                "details": {},
+            },
+        ]
+
+        result = tasks.populate_genre_data_for_items([item.id])
+
+        item.refresh_from_db()
+        state = MetadataBackfillState.objects.get(
+            item=item,
+            field=MetadataBackfillField.GENRES,
+        )
+
+        self.assertEqual(item.genres, ["Comedy"])
+        self.assertEqual(result["updated"], 1)
+        self.assertEqual(result["errors"], 0)
+        self.assertEqual(state.strategy_version, tasks.GENRE_BACKFILL_VERSION)
+        self.assertNotIn(
+            item.id,
+            set(tasks._genre_items_queryset().values_list("id", flat=True)),
+        )
+
+    @patch("app.tasks.services.get_media_metadata")
+    def test_populate_genre_data_for_tmdb_tv_discovers_tvdb_mapping_from_tmdb_metadata(
+        self,
+        mock_get_media_metadata,
+    ):
+        item = Item.objects.create(
+            media_id="1003",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Legacy Anime",
+            image="https://example.com/legacy-anime.jpg",
+            genres=["Action"],
+        )
+        mock_get_media_metadata.side_effect = [
+            {
+                "media_id": item.media_id,
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.TV.value,
+                "genres": ["Action"],
+                "tvdb_id": "9003",
+                "provider_external_ids": {"tvdb_id": "9003"},
+                "details": {},
+            },
+            {
+                "media_id": "9003",
+                "source": Sources.TVDB.value,
+                "media_type": MediaTypes.TV.value,
+                "genres": ["Anime"],
+                "details": {},
+            },
+        ]
+
+        result = tasks.populate_genre_data_for_items([item.id])
+
+        item.refresh_from_db()
+        self.assertEqual(item.genres, ["Action", "Anime"])
+        self.assertEqual(item.provider_external_ids["tvdb_id"], "9003")
+        self.assertTrue(
+            ItemProviderLink.objects.filter(
+                item=item,
+                provider=Sources.TVDB.value,
+                provider_media_id="9003",
+                provider_media_type=MediaTypes.TV.value,
+            ).exists(),
+        )
+        self.assertEqual(result["updated"], 1)
+        self.assertEqual(result["errors"], 0)
+
+    @override_settings(TVDB_API_KEY="")
+    @patch("app.tasks.services.get_media_metadata")
+    def test_populate_genre_data_for_tmdb_tv_treats_tvdb_disabled_as_success(
+        self,
+        mock_get_media_metadata,
+    ):
+        item = Item.objects.create(
+            media_id="1004",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="TVDB Disabled Show",
+            image="https://example.com/tvdb-disabled.jpg",
+            genres=["Drama"],
+        )
+        mock_get_media_metadata.return_value = {
+            "media_id": item.media_id,
+            "source": Sources.TMDB.value,
+            "media_type": MediaTypes.TV.value,
+            "genres": ["Drama"],
+            "details": {},
+        }
+
+        result = tasks.populate_genre_data_for_items([item.id])
+
+        state = MetadataBackfillState.objects.get(
+            item=item,
+            field=MetadataBackfillField.GENRES,
+        )
+        self.assertEqual(result["updated"], 1)
+        self.assertEqual(result["errors"], 0)
+        self.assertEqual(state.strategy_version, tasks.GENRE_BACKFILL_VERSION)
+        mock_get_media_metadata.assert_called_once_with(
+            MediaTypes.TV.value,
+            item.media_id,
+            item.source,
+        )
+
+    @patch("app.tasks.services.get_media_metadata")
+    def test_populate_genre_data_for_tmdb_tv_records_failure_on_tvdb_error(
+        self,
+        mock_get_media_metadata,
+    ):
+        item = Item.objects.create(
+            media_id="1005",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="TVDB Error Show",
+            image="https://example.com/tvdb-error.jpg",
+            genres=["Drama"],
+        )
+        ItemProviderLink.objects.create(
+            item=item,
+            provider=Sources.TVDB.value,
+            provider_media_id="9005",
+            provider_media_type=MediaTypes.TV.value,
+        )
+        mock_get_media_metadata.side_effect = [
+            {
+                "media_id": item.media_id,
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.TV.value,
+                "genres": ["Drama"],
+                "details": {},
+            },
+            RuntimeError("tvdb boom"),
+        ]
+
+        result = tasks.populate_genre_data_for_items([item.id])
+
+        state = MetadataBackfillState.objects.get(
+            item=item,
+            field=MetadataBackfillField.GENRES,
+        )
+        self.assertEqual(result["updated"], 0)
+        self.assertEqual(result["errors"], 1)
+        self.assertEqual(state.fail_count, 1)
+        self.assertTrue(state.last_error.startswith("exception: RuntimeError"))
 
     def test_next_credits_backfill_item_ids_filters_complete_items(self):
         missing_movie = Item.objects.create(

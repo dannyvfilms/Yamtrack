@@ -9,7 +9,7 @@ from django.conf import settings
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 
-from app import credits, helpers
+from app import credits, helpers, metadata_utils
 from app import statistics as stats
 from app.models import Album, Artist, Item, MediaTypes, PodcastShow, Sources, Track
 from app.providers import pocketcasts, services
@@ -283,12 +283,7 @@ def ensure_item_metadata(
     if media_type == MediaTypes.BOOK.value:
         number_of_pages = metadata.get("max_progress") or details.get("number_of_pages")
 
-    metadata_genres = stats._coerce_genre_list(
-        metadata.get("genres")
-        or details.get("genres")
-        or metadata.get("genre")
-        or details.get("genre"),
-    )
+    metadata_genres = metadata_utils.extract_metadata_genres(metadata)
     country = _coerce_text(details.get("country"))
     languages = [value for value in _coerce_list(details.get("languages")) if value]
     platforms = [value for value in _coerce_list(details.get("platforms")) if value]
@@ -349,7 +344,11 @@ def ensure_item_metadata(
             "runtime_minutes": runtime_minutes,
             "number_of_pages": number_of_pages,
             "release_datetime": release_datetime,
-            "genres": metadata_genres,
+            "genres": metadata_utils.merge_persisted_genres(
+                source=source,
+                media_type=tracking_media_type,
+                incoming_genres=metadata_genres,
+            ),
             "country": country,
             "languages": languages,
             "platforms": platforms,
@@ -390,9 +389,7 @@ def ensure_item_metadata(
     if not item.release_datetime and release_datetime:
         item.release_datetime = release_datetime
         update_fields.append("release_datetime")
-    if metadata_genres and metadata_genres != item.genres:
-        item.genres = metadata_genres
-        update_fields.append("genres")
+    update_fields.extend(metadata_utils.apply_item_genres(item, metadata_genres))
     if not item.country and country:
         item.country = country
         update_fields.append("country")

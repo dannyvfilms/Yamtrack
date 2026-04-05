@@ -692,7 +692,11 @@ def schedule_runtime_backfill_on_item_save(
             item=instance,
             field=MetadataBackfillField.RUNTIME,
         ).delete()
-    if instance.genres:
+    genre_identity_fields = {"media_id", "source", "media_type"}
+    genre_identity_changed = created or bool(
+        genre_identity_fields.intersection(update_fields or set()),
+    )
+    if genre_identity_changed:
         MetadataBackfillState.objects.filter(
             item=instance,
             field=MetadataBackfillField.GENRES,
@@ -711,7 +715,7 @@ def schedule_runtime_backfill_on_item_save(
                 field=MetadataBackfillField.CREDITS,
             ).delete()
 
-    relevant_fields = {"runtime_minutes", "genres", "media_id", "source", "media_type"}
+    relevant_fields = {"runtime_minutes", "genres", *genre_identity_fields}
     if not created and update_fields is not None and not relevant_fields.intersection(update_fields):
         return
 
@@ -738,9 +742,8 @@ def schedule_runtime_backfill_on_item_save(
                 [(instance.media_id, instance.source, instance.season_number)],
             )
 
-    if (
-        genres_missing
-        and instance.source in GENRE_BACKFILL_SOURCES
+    genre_backfill_applicable = (
+        instance.source in GENRE_BACKFILL_SOURCES
         and instance.media_type
         in (
             MediaTypes.MOVIE.value,
@@ -749,6 +752,19 @@ def schedule_runtime_backfill_on_item_save(
             MediaTypes.GAME.value,
             MediaTypes.BOARDGAME.value,
         )
+    )
+    requires_tmdb_tv_genre_verification = (
+        instance.source == Sources.TMDB.value
+        and instance.media_type == MediaTypes.TV.value
+    )
+    tmdb_tv_genre_verification_triggered = requires_tmdb_tv_genre_verification and (
+        created or genre_identity_changed or update_fields is None
+    )
+
+    if genre_backfill_applicable and (
+        genres_missing
+        or genre_identity_changed
+        or tmdb_tv_genre_verification_triggered
     ):
         from app.tasks import enqueue_genre_backfill_items
 
