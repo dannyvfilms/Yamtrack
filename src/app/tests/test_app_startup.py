@@ -1,10 +1,12 @@
 from importlib import import_module
 from unittest.mock import patch
 
+from django.conf import settings
 from django.core.cache import cache
 from django.test import TestCase, override_settings
 
 from app.apps import AppConfig as YamtrackAppConfig
+from app.models import Item, MediaTypes, Sources
 from app.tasks import GENRE_BACKFILL_VERSION
 
 
@@ -51,3 +53,35 @@ class AppStartupTests(TestCase):
         config._schedule_genre_backfill_reconcile()
 
         mock_apply_async.assert_called_once()
+
+    @patch("app.tasks.reconcile_genre_backfill.apply_async")
+    def test_schedule_genre_backfill_reconcile_overrides_stale_done_when_candidates_exist(
+        self,
+        mock_apply_async,
+    ):
+        version_key = f"genre_backfill_reconciled_v{GENRE_BACKFILL_VERSION}"
+        cache.set(version_key, "done", timeout=None)
+        Item.objects.create(
+            media_id="startup-stale-done",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Startup Stale Done",
+            image="https://example.com/startup-stale-done.jpg",
+            genres=["Drama"],
+        )
+        config = YamtrackAppConfig("app", import_module("app"))
+
+        config._schedule_genre_backfill_reconcile()
+
+        mock_apply_async.assert_called_once_with(
+            kwargs={"strategy_version": GENRE_BACKFILL_VERSION},
+            countdown=0,
+        )
+        self.assertEqual(cache.get(version_key), "pending")
+
+    def test_settings_include_genre_backfill_reconcile_fallback_schedule(self):
+        schedule = settings.CELERY_BEAT_SCHEDULE["ensure_genre_backfill_reconcile"]
+
+        self.assertEqual(schedule["task"], "Ensure genre backfill reconcile")
+        self.assertEqual(schedule["schedule"], 60 * 5)
+        self.assertEqual(schedule["kwargs"]["batch_size"], 1500)

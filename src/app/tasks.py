@@ -97,6 +97,7 @@ NIGHTLY_METADATA_QUALITY_CREDITS_BATCH_SIZE = 2500
 NIGHTLY_METADATA_QUALITY_CREDITS_SCAN_MULTIPLIER = 20
 NIGHTLY_METADATA_QUALITY_TRAKT_POPULARITY_BATCH_SIZE = 300
 NIGHTLY_METADATA_QUALITY_GENRE_COUNTDOWN = 5
+GENRE_BACKFILL_RECONCILE_FALLBACK_INTERVAL_SECONDS = 60 * 5
 NIGHTLY_METADATA_QUALITY_RUNTIME_COUNTDOWN = 15
 NIGHTLY_METADATA_QUALITY_EPISODE_COUNTDOWN = 30
 NIGHTLY_METADATA_QUALITY_CREDITS_COUNTDOWN = 45
@@ -412,6 +413,11 @@ def _genre_items_queryset():
         strategy_version__gte=GENRE_BACKFILL_VERSION,
     ).values("item_id")
     return queryset.exclude(id__in=completed_ids)
+
+
+def is_genre_backfill_reconcile_complete() -> bool:
+    """Return whether the current genre strategy has no remaining candidates."""
+    return not _genre_items_queryset().exists()
 
 
 def _release_items_queryset():
@@ -1594,6 +1600,44 @@ def reconcile_genre_backfill(
         strategy_version,
     )
     return {"selected": selected, "enqueued": enqueued}
+
+
+@shared_task(name="Ensure genre backfill reconcile")
+def ensure_genre_backfill_reconcile(
+    strategy_version: int | None = None,
+    batch_size: int = NIGHTLY_METADATA_QUALITY_GENRE_BATCH_SIZE,
+):
+    """Retry the current genre strategy reconcile until it has completed."""
+    resolved_strategy_version = int(strategy_version or GENRE_BACKFILL_VERSION)
+    version_key = f"genre_backfill_reconciled_v{resolved_strategy_version}"
+    status = cache.get(version_key)
+    reconcile_complete = is_genre_backfill_reconcile_complete()
+
+    if reconcile_complete:
+        cache.set(version_key, "done", timeout=None)
+        logger.debug(
+            "ensure_genre_backfill_reconcile skipped version=%s status=done",
+            resolved_strategy_version,
+        )
+        return {"skipped": True, "reason": "done"}
+
+    if status == "pending":
+        logger.debug(
+            "ensure_genre_backfill_reconcile skipped version=%s status=pending",
+            resolved_strategy_version,
+        )
+        return {"skipped": True, "reason": "pending"}
+
+    if status == "done":
+        logger.info(
+            "ensure_genre_backfill_reconcile rerunning version=%s stale_cache_done=1",
+            resolved_strategy_version,
+        )
+
+    return reconcile_genre_backfill(
+        strategy_version=resolved_strategy_version,
+        batch_size=batch_size,
+    )
 
 
 @shared_task

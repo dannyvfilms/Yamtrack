@@ -995,6 +995,13 @@ CELERY_BEAT_SCHEDULE = {
             "trakt_popularity_batch_size": 300,
         },
     },
+    "ensure_genre_backfill_reconcile": {
+        "task": "Ensure genre backfill reconcile",
+        "schedule": 60 * 5,  # every 5 minutes until current strategy version is reconciled
+        "kwargs": {
+            "batch_size": 1500,
+        },
+    },
     "warm_discover_api_cache": {
         "task": "Warm Discover API Cache",
         "schedule": 60 * 60,  # every 1 hour

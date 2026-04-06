@@ -94,12 +94,15 @@ class AppConfig(AppConfig):
         try:
             tasks = import_module("app.tasks")
             version_key = f"genre_backfill_reconciled_v{tasks.GENRE_BACKFILL_VERSION}"
+            reconcile_complete = tasks.is_genre_backfill_reconcile_complete()
 
-            if cache.get(version_key) == "done":
+            if cache.get(version_key) == "done" and reconcile_complete:
                 return
 
-            if not cache.add(version_key, "pending", timeout=300):
+            if cache.get(version_key) == "pending":
                 return
+
+            cache.set(version_key, "pending", timeout=300)
 
             try:
                 tasks.reconcile_genre_backfill.apply_async(

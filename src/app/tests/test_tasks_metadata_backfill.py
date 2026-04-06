@@ -950,6 +950,82 @@ class MetadataBackfillTaskTests(TestCase):
             "done",
         )
 
+    @patch("app.tasks.reconcile_genre_backfill")
+    def test_ensure_genre_backfill_reconcile_runs_when_version_not_done(
+        self,
+        mock_reconcile_genre_backfill,
+    ):
+        Item.objects.create(
+            media_id="ensure-reconcile-run",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Ensure Reconcile Run",
+            image="https://example.com/ensure-reconcile-run.jpg",
+            genres=["Drama"],
+        )
+        cache.delete(f"genre_backfill_reconciled_v{tasks.GENRE_BACKFILL_VERSION}")
+        mock_reconcile_genre_backfill.return_value = {"selected": 3, "enqueued": 3}
+
+        result = tasks.ensure_genre_backfill_reconcile(batch_size=25)
+
+        mock_reconcile_genre_backfill.assert_called_once_with(
+            strategy_version=tasks.GENRE_BACKFILL_VERSION,
+            batch_size=25,
+        )
+        self.assertEqual(result, {"selected": 3, "enqueued": 3})
+
+    @patch("app.tasks.reconcile_genre_backfill")
+    def test_ensure_genre_backfill_reconcile_skips_pending_startup_run(
+        self,
+        mock_reconcile_genre_backfill,
+    ):
+        Item.objects.create(
+            media_id="ensure-reconcile-pending",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Ensure Reconcile Pending",
+            image="https://example.com/ensure-reconcile-pending.jpg",
+            genres=["Drama"],
+        )
+        cache.set(
+            f"genre_backfill_reconciled_v{tasks.GENRE_BACKFILL_VERSION}",
+            "pending",
+            timeout=300,
+        )
+
+        result = tasks.ensure_genre_backfill_reconcile()
+
+        mock_reconcile_genre_backfill.assert_not_called()
+        self.assertEqual(result, {"skipped": True, "reason": "pending"})
+
+    @patch("app.tasks.reconcile_genre_backfill")
+    def test_ensure_genre_backfill_reconcile_reruns_when_done_cache_is_stale(
+        self,
+        mock_reconcile_genre_backfill,
+    ):
+        Item.objects.create(
+            media_id="stale-done-tmdb-tv",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Stale Done Candidate",
+            image="https://example.com/stale-done.jpg",
+            genres=["Drama"],
+        )
+        cache.set(
+            f"genre_backfill_reconciled_v{tasks.GENRE_BACKFILL_VERSION}",
+            "done",
+            timeout=None,
+        )
+        mock_reconcile_genre_backfill.return_value = {"selected": 1, "enqueued": 1}
+
+        result = tasks.ensure_genre_backfill_reconcile()
+
+        mock_reconcile_genre_backfill.assert_called_once_with(
+            strategy_version=tasks.GENRE_BACKFILL_VERSION,
+            batch_size=tasks.NIGHTLY_METADATA_QUALITY_GENRE_BATCH_SIZE,
+        )
+        self.assertEqual(result, {"selected": 1, "enqueued": 1})
+
     @patch("app.tasks.services.get_media_metadata")
     def test_populate_genre_data_for_tmdb_tv_adds_anime_from_tvdb_mapping(
         self,
