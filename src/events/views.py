@@ -148,7 +148,7 @@ def calendar(request):
 @require_POST
 def reload_calendar(request):
     """Refresh the calendar with the latest dates."""
-    tasks.reload_calendar.delay(request.user)
+    tasks.reload_calendar.delay(user_id=request.user.id)
     messages.info(request, "The task to refresh upcoming releases has been queued.")
     return redirect("calendar")
 

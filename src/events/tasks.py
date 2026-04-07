@@ -1,6 +1,9 @@
 import logging
 
 from celery import shared_task
+from django.contrib.auth import get_user_model
+
+from app.models import Item
 
 from app.services import auto_pause
 from events import calendar, notifications
@@ -8,20 +11,77 @@ from events import calendar, notifications
 logger = logging.getLogger(__name__)
 
 
-@shared_task(name="Reload calendar")
-def reload_calendar(user=None, items_to_process=None):
+def _normalize_user_id(user_or_id):
+    """Coerce a User instance or scalar value into a user ID."""
+    if user_or_id is None:
+        return None
+    candidate = getattr(user_or_id, "pk", user_or_id)
+    try:
+        return int(candidate)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_item_ids(item_ids):
+    """Coerce a list of Item instances or scalar values into item IDs."""
+    if item_ids is None:
+        return None
+
+    normalized = []
+    for item in item_ids:
+        candidate = getattr(item, "pk", item)
+        try:
+            normalized.append(int(candidate))
+        except (TypeError, ValueError):
+            continue
+    return normalized
+
+
+@shared_task(name="Reload calendar", ignore_result=True)
+def reload_calendar(user_id=None, item_ids=None, user=None, items_to_process=None):
     """Refresh the calendar with latest dates for all users."""
-    if user:
-        logger.info("Reloading calendar for user: %s", user.username)
+    normalized_user_id = _normalize_user_id(user_id)
+    if normalized_user_id is None:
+        normalized_user_id = _normalize_user_id(user)
+
+    normalized_item_ids = _normalize_item_ids(item_ids)
+    if normalized_item_ids is None:
+        normalized_item_ids = _normalize_item_ids(items_to_process)
+
+    resolved_user = None
+    if normalized_user_id is not None:
+        User = get_user_model()
+        resolved_user = User.objects.filter(id=normalized_user_id).first()
+        if resolved_user is None:
+            logger.warning("Skipping calendar reload for missing user_id=%s", normalized_user_id)
+            return "User not found"
+        logger.info("Reloading calendar for user: %s", resolved_user.username)
     else:
         logger.info("Reloading calendar for all users")
 
+    resolved_items = None
+    if normalized_item_ids is not None:
+        item_lookup = Item.objects.in_bulk(normalized_item_ids)
+        resolved_items = [
+            item_lookup[item_id]
+            for item_id in normalized_item_ids
+            if item_id in item_lookup
+        ]
+        missing_item_ids = [
+            item_id for item_id in normalized_item_ids if item_id not in item_lookup
+        ]
+        if missing_item_ids:
+            logger.info(
+                "Calendar reload skipped %d missing item IDs",
+                len(missing_item_ids),
+            )
+
     result = calendar.fetch_releases(
-        user=user,
-        items_to_process=items_to_process,
+        user=resolved_user,
+        items_to_process=resolved_items,
     )
 
-    if user is None and items_to_process is None:
+    if resolved_user is None and normalized_item_ids is None:
         auto_pause.auto_pause_stale_items()
         # Only refresh podcast feeds during full calendar runs.
         try:
@@ -33,7 +93,6 @@ def reload_calendar(user=None, items_to_process=None):
         # Use aggressive batch size to complete initial backfill quickly
         try:
             from app.tasks import backfill_item_metadata_task, count_release_backfill_items
-            from app.models import Item
 
             remaining_metadata_count = Item.objects.filter(metadata_fetched_at__isnull=True).count()
             remaining_release_count = count_release_backfill_items()

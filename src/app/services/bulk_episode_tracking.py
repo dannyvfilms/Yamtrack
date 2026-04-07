@@ -931,7 +931,7 @@ def _apply_bulk_podcast_plays(
     cache_utils.clear_time_left_cache_for_user(user.id)
     if created_items:
         events.tasks.reload_calendar.apply_async(
-            kwargs={"items_to_process": created_items},
+            kwargs={"item_ids": [item.id for item in created_items]},
             countdown=3,
         )
 
@@ -1051,7 +1051,7 @@ def apply_bulk_episode_plays(
     cache_utils.clear_time_left_cache_for_user(user.id)
     if created_items:
         events.tasks.reload_calendar.apply_async(
-            kwargs={"items_to_process": [grouped_tv.item]},
+            kwargs={"item_ids": [grouped_tv.item.id]},
             countdown=3,
         )
 

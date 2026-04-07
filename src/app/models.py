@@ -698,14 +698,15 @@ class Item(CalendarTriggerMixin, models.Model):
             items_to_process = [tv_item]
         else:
             items_to_process = [self]
+        item_ids_to_process = [item.id for item in items_to_process]
 
         if delay:
             events.tasks.reload_calendar.apply_async(
-                kwargs={"items_to_process": items_to_process},
+                kwargs={"item_ids": item_ids_to_process},
                 countdown=3,
             )
         else:
-            events.tasks.reload_calendar(items_to_process=items_to_process)
+            events.tasks.reload_calendar(item_ids=item_ids_to_process)
 
 
 class ItemProviderLink(models.Model):

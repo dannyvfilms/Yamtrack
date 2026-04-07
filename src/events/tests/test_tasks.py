@@ -33,10 +33,28 @@ class ReloadCalendarTaskTests(TestCase):
     def test_auto_pause_skipped_for_single_user(self, mock_fetch, mock_auto_pause):
         mock_fetch.return_value = "ok"
 
-        result = reload_calendar(user=self.user)
+        result = reload_calendar(user_id=self.user.id)
 
         self.assertEqual(result, "ok")
         mock_fetch.assert_called_once_with(user=self.user, items_to_process=None)
+        mock_auto_pause.assert_not_called()
+
+    @patch("events.tasks.auto_pause.auto_pause_stale_items")
+    @patch("events.tasks.calendar.fetch_releases")
+    def test_item_ids_are_resolved_before_fetch(self, mock_fetch, mock_auto_pause):
+        movie = Item.objects.create(
+            media_id="603",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="The Matrix",
+            image="https://example.com/matrix.jpg",
+        )
+        mock_fetch.return_value = "ok"
+
+        result = reload_calendar(item_ids=[movie.id])
+
+        self.assertEqual(result, "ok")
+        mock_fetch.assert_called_once_with(user=None, items_to_process=[movie])
         mock_auto_pause.assert_not_called()
 
     @patch("app.tasks.backfill_item_metadata_task")

@@ -324,7 +324,7 @@ class CalendarViewTests(TestCase):
         self.assertRedirects(response, reverse("calendar"))
 
         # Check that the task was called
-        mock_reload_task.assert_called_once_with(self.user)
+        mock_reload_task.assert_called_once_with(user_id=self.user.id)
 
         # Check for message
         messages = list(get_messages(response.wsgi_request))

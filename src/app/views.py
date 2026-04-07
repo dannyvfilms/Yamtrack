@@ -11712,7 +11712,10 @@ def podcast_mark_all_played(request, show_id):
 
     # Trigger a single calendar reload for all created items (if any)
     if items_created:
-        events.tasks.reload_calendar.apply_async(kwargs={"items_to_process": items_created}, countdown=3)
+        events.tasks.reload_calendar.apply_async(
+            kwargs={"item_ids": [item.id for item in items_created]},
+            countdown=3,
+        )
 
     episode_word = "episodes" if created_count != 1 else "episode"
     messages.success(
