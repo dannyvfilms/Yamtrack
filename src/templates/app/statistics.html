@@ -226,6 +226,35 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    .stats-media-card-range-desktop {
+      display: inline;
+    }
+    .stats-media-card-range-mobile {
+      display: none;
+    }
+    .stats-media-card-mobile-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.15rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .stats-media-card-mobile-badge-up,
+    .stats-media-card-mobile-badge-new {
+      color: #34d399;
+    }
+    .stats-media-card-mobile-badge-down {
+      color: #fb7185;
+    }
+    .stats-media-card-mobile-badge-neutral {
+      color: #cbd5e1;
+    }
+    .stats-media-card-mobile-badge-icon {
+      width: 0.75rem;
+      height: 0.75rem;
+      flex: 0 0 0.75rem;
+      stroke-width: 2.25;
+    }
     .stats-media-card-tooltip-trigger {
       color: #6b7280;
       transition: color 150ms ease;
@@ -266,6 +295,19 @@
       font-weight: 600;
       white-space: nowrap;
     }
+    .stats-media-card-tooltip-panel {
+      left: auto;
+      right: 0;
+    }
+    .stats-media-card-tooltip-arrow {
+      left: auto;
+      right: 0.75rem;
+    }
+    .stats-media-card-grid {
+      overflow: visible;
+      overflow-x: visible;
+      overflow-y: visible;
+    }
     @media (min-width: 640px) {
       .stats-media-card-icon {
         width: 4rem;
@@ -275,6 +317,77 @@
       .stats-media-card-copy {
         --stats-media-card-label-height: 0.875rem;
         min-height: 4rem;
+      }
+    }
+    @media (max-width: 639px) {
+      .stats-media-card-icon {
+        width: 2.375rem;
+        height: 2.375rem;
+        flex-basis: 2.375rem;
+        margin-right: 0.75rem;
+      }
+      .stats-media-card-copy {
+        align-self: center;
+        justify-content: center;
+        gap: 0.25rem;
+        min-height: auto;
+        padding-right: 0;
+      }
+      .stats-media-card-title {
+        display: none;
+      }
+      .stats-media-card-value {
+        display: block;
+        line-height: 0.96;
+        white-space: nowrap;
+        overflow: visible;
+        text-overflow: clip;
+      }
+      .stats-media-card-meta {
+        align-items: center;
+        gap: 0.3rem;
+        min-height: auto;
+      }
+      .stats-media-card-range {
+        display: flex;
+        align-items: center;
+        font-size: 0.7rem;
+        overflow: visible;
+        text-overflow: clip;
+      }
+      .stats-media-card-range-desktop {
+        display: none;
+      }
+      .stats-media-card-range-mobile {
+        display: inline-flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0;
+      }
+      .stats-media-card-tooltip-trigger {
+        align-self: center;
+        display: inline-flex;
+        align-items: center;
+      }
+      .stats-media-card-tooltip-trigger svg {
+        width: 0.8rem;
+        height: 0.8rem;
+        transform: translateY(0);
+      }
+    }
+    @media (max-width: 768px) {
+      .stats-media-card-grid {
+        overflow: visible;
+        overflow-x: visible;
+        overflow-y: visible;
+      }
+      .stats-media-card-grid > [data-media-card]:nth-child(odd) .stats-media-card-tooltip-panel {
+        left: 0;
+        right: auto;
+      }
+      .stats-media-card-grid > [data-media-card]:nth-child(odd) .stats-media-card-tooltip-arrow {
+        left: 0.1rem;
+        right: auto;
       }
     }
     @media (min-width: 769px) {
@@ -1155,7 +1268,7 @@
     {% endif %}
 
       <!-- Media Type Hours Cards Section -->
-      <div class="grid gap-3 sm:gap-4 mb-4 sm:mb-8 stat-scroll-safe -mt-4 sm:-mt-5" 
+      <div class="stats-media-card-grid grid gap-3 sm:gap-4 mb-4 sm:mb-8 stat-scroll-safe -mt-4 sm:-mt-5" 
            x-data="{ 
              cardCount: 0,
              init() {
@@ -1202,7 +1315,26 @@
             {% with compare=hours_per_media_type_comparison.tv %}
               <div class="stats-media-card-meta">
                 <p class="stats-media-card-range">
-                  {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+                  <span class="stats-media-card-range-desktop">
+                    {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+                  </span>
+                  <span class="stats-media-card-range-mobile">
+                    {% if compare and compare.badge_short %}
+                      {% if compare.badge_state == "up" %}
+                        <span class="stats-media-card-mobile-badge stats-media-card-mobile-badge-up">
+                          {% include "app/icons/chevron-up.svg" with classes="stats-media-card-mobile-badge-icon" %}
+                          <span>{{ compare.badge_short }}</span>
+                        </span>
+                      {% elif compare.badge_state == "down" %}
+                        <span class="stats-media-card-mobile-badge stats-media-card-mobile-badge-down">
+                          {% include "app/icons/chevron-down.svg" with classes="stats-media-card-mobile-badge-icon" %}
+                          <span>{{ compare.badge_short }}</span>
+                        </span>
+                      {% else %}
+                        <span class="stats-media-card-mobile-badge stats-media-card-mobile-badge-{{ compare.badge_state }}">{{ compare.badge_short }}</span>
+                      {% endif %}
+                    {% endif %}
+                  </span>
                 </p>
                 {% if compare and compare.tooltip %}
                   <div class="relative" x-data="{ tooltipOpen: false }">
@@ -1216,7 +1348,7 @@
                          x-transition:leave="transition ease-in duration-150"
                          x-transition:leave-start="opacity-100 scale-100"
                          x-transition:leave-end="opacity-0 scale-95"
-                         class="absolute right-0 bottom-full mb-2 w-56 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10 stats-tooltip"
+                         class="stats-media-card-tooltip-panel absolute right-0 bottom-full mb-2 w-56 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10 stats-tooltip"
                          style="display: none;">
                       <div class="stats-tooltip-lines">
                         <div class="stats-tooltip-line">
@@ -1228,7 +1360,7 @@
                           <span class="stats-tooltip-value">{{ compare.tooltip.comparison_total }}</span>
                         </div>
                       </div>
-                      <div class="absolute right-3 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent stats-tooltip-arrow"></div>
+                      <div class="stats-media-card-tooltip-arrow absolute right-3 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent stats-tooltip-arrow"></div>
                     </div>
                   </div>
                 {% endif %}
@@ -1267,7 +1399,26 @@
             {% with compare=hours_per_media_type_comparison.movie %}
               <div class="stats-media-card-meta">
                 <p class="stats-media-card-range">
-                  {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+                  <span class="stats-media-card-range-desktop">
+                    {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+                  </span>
+                  <span class="stats-media-card-range-mobile">
+                    {% if compare and compare.badge_short %}
+                      {% if compare.badge_state == "up" %}
+                        <span class="stats-media-card-mobile-badge stats-media-card-mobile-badge-up">
+                          {% include "app/icons/chevron-up.svg" with classes="stats-media-card-mobile-badge-icon" %}
+                          <span>{{ compare.badge_short }}</span>
+                        </span>
+                      {% elif compare.badge_state == "down" %}
+                        <span class="stats-media-card-mobile-badge stats-media-card-mobile-badge-down">
+                          {% include "app/icons/chevron-down.svg" with classes="stats-media-card-mobile-badge-icon" %}
+                          <span>{{ compare.badge_short }}</span>
+                        </span>
+                      {% else %}
+                        <span class="stats-media-card-mobile-badge stats-media-card-mobile-badge-{{ compare.badge_state }}">{{ compare.badge_short }}</span>
+                      {% endif %}
+                    {% endif %}
+                  </span>
                 </p>
                 {% if compare and compare.tooltip %}
                   <div class="relative" x-data="{ tooltipOpen: false }">
@@ -1281,7 +1432,7 @@
                          x-transition:leave="transition ease-in duration-150"
                          x-transition:leave-start="opacity-100 scale-100"
                          x-transition:leave-end="opacity-0 scale-95"
-                         class="absolute right-0 bottom-full mb-2 w-56 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10 stats-tooltip"
+                         class="stats-media-card-tooltip-panel absolute right-0 bottom-full mb-2 w-56 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10 stats-tooltip"
                          style="display: none;">
                       <div class="stats-tooltip-lines">
                         <div class="stats-tooltip-line">
@@ -1293,7 +1444,7 @@
                           <span class="stats-tooltip-value">{{ compare.tooltip.comparison_total }}</span>
                         </div>
                       </div>
-                      <div class="absolute right-3 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent stats-tooltip-arrow"></div>
+                      <div class="stats-media-card-tooltip-arrow absolute right-3 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent stats-tooltip-arrow"></div>
                     </div>
                   </div>
                 {% endif %}
@@ -1329,7 +1480,26 @@
             {% with compare=hours_per_media_type_comparison.game %}
               <div class="stats-media-card-meta">
                 <p class="stats-media-card-range">
-                  {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+                  <span class="stats-media-card-range-desktop">
+                    {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+                  </span>
+                  <span class="stats-media-card-range-mobile">
+                    {% if compare and compare.badge_short %}
+                      {% if compare.badge_state == "up" %}
+                        <span class="stats-media-card-mobile-badge stats-media-card-mobile-badge-up">
+                          {% include "app/icons/chevron-up.svg" with classes="stats-media-card-mobile-badge-icon" %}
+                          <span>{{ compare.badge_short }}</span>
+                        </span>
+                      {% elif compare.badge_state == "down" %}
+                        <span class="stats-media-card-mobile-badge stats-media-card-mobile-badge-down">
+                          {% include "app/icons/chevron-down.svg" with classes="stats-media-card-mobile-badge-icon" %}
+                          <span>{{ compare.badge_short }}</span>
+                        </span>
+                      {% else %}
+                        <span class="stats-media-card-mobile-badge stats-media-card-mobile-badge-{{ compare.badge_state }}">{{ compare.badge_short }}</span>
+                      {% endif %}
+                    {% endif %}
+                  </span>
                 </p>
                 {% if compare and compare.tooltip %}
                   <div class="relative" x-data="{ tooltipOpen: false }">
@@ -1343,7 +1513,7 @@
                          x-transition:leave="transition ease-in duration-150"
                          x-transition:leave-start="opacity-100 scale-100"
                          x-transition:leave-end="opacity-0 scale-95"
-                         class="absolute right-0 bottom-full mb-2 w-56 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10 stats-tooltip"
+                         class="stats-media-card-tooltip-panel absolute right-0 bottom-full mb-2 w-56 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10 stats-tooltip"
                          style="display: none;">
                       <div class="stats-tooltip-lines">
                         <div class="stats-tooltip-line">
@@ -1355,7 +1525,7 @@
                           <span class="stats-tooltip-value">{{ compare.tooltip.comparison_total }}</span>
                         </div>
                       </div>
-                      <div class="absolute right-3 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent stats-tooltip-arrow"></div>
+                      <div class="stats-media-card-tooltip-arrow absolute right-3 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent stats-tooltip-arrow"></div>
                     </div>
                   </div>
                 {% endif %}
@@ -1390,7 +1560,26 @@
             {% with compare=hours_per_media_type_comparison.podcast %}
               <div class="stats-media-card-meta">
                 <p class="stats-media-card-range">
-                  {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+                  <span class="stats-media-card-range-desktop">
+                    {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+                  </span>
+                  <span class="stats-media-card-range-mobile">
+                    {% if compare and compare.badge_short %}
+                      {% if compare.badge_state == "up" %}
+                        <span class="stats-media-card-mobile-badge stats-media-card-mobile-badge-up">
+                          {% include "app/icons/chevron-up.svg" with classes="stats-media-card-mobile-badge-icon" %}
+                          <span>{{ compare.badge_short }}</span>
+                        </span>
+                      {% elif compare.badge_state == "down" %}
+                        <span class="stats-media-card-mobile-badge stats-media-card-mobile-badge-down">
+                          {% include "app/icons/chevron-down.svg" with classes="stats-media-card-mobile-badge-icon" %}
+                          <span>{{ compare.badge_short }}</span>
+                        </span>
+                      {% else %}
+                        <span class="stats-media-card-mobile-badge stats-media-card-mobile-badge-{{ compare.badge_state }}">{{ compare.badge_short }}</span>
+                      {% endif %}
+                    {% endif %}
+                  </span>
                 </p>
                 {% if compare and compare.tooltip %}
                   <div class="relative" x-data="{ tooltipOpen: false }">
@@ -1404,7 +1593,7 @@
                          x-transition:leave="transition ease-in duration-150"
                          x-transition:leave-start="opacity-100 scale-100"
                          x-transition:leave-end="opacity-0 scale-95"
-                         class="absolute right-0 bottom-full mb-2 w-56 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10 stats-tooltip"
+                         class="stats-media-card-tooltip-panel absolute right-0 bottom-full mb-2 w-56 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10 stats-tooltip"
                          style="display: none;">
                       <div class="stats-tooltip-lines">
                         <div class="stats-tooltip-line">
@@ -1416,7 +1605,7 @@
                           <span class="stats-tooltip-value">{{ compare.tooltip.comparison_total }}</span>
                         </div>
                       </div>
-                      <div class="absolute right-3 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent stats-tooltip-arrow"></div>
+                      <div class="stats-media-card-tooltip-arrow absolute right-3 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent stats-tooltip-arrow"></div>
                     </div>
                   </div>
                 {% endif %}
@@ -1452,7 +1641,26 @@
             {% with compare=hours_per_media_type_comparison.boardgame %}
               <div class="stats-media-card-meta">
                 <p class="stats-media-card-range">
-                  {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+                  <span class="stats-media-card-range-desktop">
+                    {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+                  </span>
+                  <span class="stats-media-card-range-mobile">
+                    {% if compare and compare.badge_short %}
+                      {% if compare.badge_state == "up" %}
+                        <span class="stats-media-card-mobile-badge stats-media-card-mobile-badge-up">
+                          {% include "app/icons/chevron-up.svg" with classes="stats-media-card-mobile-badge-icon" %}
+                          <span>{{ compare.badge_short }}</span>
+                        </span>
+                      {% elif compare.badge_state == "down" %}
+                        <span class="stats-media-card-mobile-badge stats-media-card-mobile-badge-down">
+                          {% include "app/icons/chevron-down.svg" with classes="stats-media-card-mobile-badge-icon" %}
+                          <span>{{ compare.badge_short }}</span>
+                        </span>
+                      {% else %}
+                        <span class="stats-media-card-mobile-badge stats-media-card-mobile-badge-{{ compare.badge_state }}">{{ compare.badge_short }}</span>
+                      {% endif %}
+                    {% endif %}
+                  </span>
                 </p>
                 {% if compare and compare.tooltip %}
                   <div class="relative" x-data="{ tooltipOpen: false }">
@@ -1466,7 +1674,7 @@
                          x-transition:leave="transition ease-in duration-150"
                          x-transition:leave-start="opacity-100 scale-100"
                          x-transition:leave-end="opacity-0 scale-95"
-                         class="absolute right-0 bottom-full mb-2 w-56 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10 stats-tooltip"
+                         class="stats-media-card-tooltip-panel absolute right-0 bottom-full mb-2 w-56 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10 stats-tooltip"
                          style="display: none;">
                       <div class="stats-tooltip-lines">
                         <div class="stats-tooltip-line">
@@ -1478,7 +1686,7 @@
                           <span class="stats-tooltip-value">{{ compare.tooltip.comparison_total }}</span>
                         </div>
                       </div>
-                      <div class="absolute right-3 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent stats-tooltip-arrow"></div>
+                      <div class="stats-media-card-tooltip-arrow absolute right-3 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent stats-tooltip-arrow"></div>
                     </div>
                   </div>
                 {% endif %}
@@ -1511,7 +1719,26 @@
             {% with compare=hours_per_media_type_comparison.anime %}
               <div class="stats-media-card-meta">
                 <p class="stats-media-card-range">
-                  {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+                  <span class="stats-media-card-range-desktop">
+                    {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+                  </span>
+                  <span class="stats-media-card-range-mobile">
+                    {% if compare and compare.badge_short %}
+                      {% if compare.badge_state == "up" %}
+                        <span class="stats-media-card-mobile-badge stats-media-card-mobile-badge-up">
+                          {% include "app/icons/chevron-up.svg" with classes="stats-media-card-mobile-badge-icon" %}
+                          <span>{{ compare.badge_short }}</span>
+                        </span>
+                      {% elif compare.badge_state == "down" %}
+                        <span class="stats-media-card-mobile-badge stats-media-card-mobile-badge-down">
+                          {% include "app/icons/chevron-down.svg" with classes="stats-media-card-mobile-badge-icon" %}
+                          <span>{{ compare.badge_short }}</span>
+                        </span>
+                      {% else %}
+                        <span class="stats-media-card-mobile-badge stats-media-card-mobile-badge-{{ compare.badge_state }}">{{ compare.badge_short }}</span>
+                      {% endif %}
+                    {% endif %}
+                  </span>
                 </p>
                 {% if compare and compare.tooltip %}
                   <div class="relative" x-data="{ tooltipOpen: false }">
@@ -1525,7 +1752,7 @@
                          x-transition:leave="transition ease-in duration-150"
                          x-transition:leave-start="opacity-100 scale-100"
                          x-transition:leave-end="opacity-0 scale-95"
-                         class="absolute right-0 bottom-full mb-2 w-56 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10 stats-tooltip"
+                         class="stats-media-card-tooltip-panel absolute right-0 bottom-full mb-2 w-56 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10 stats-tooltip"
                          style="display: none;">
                       <div class="stats-tooltip-lines">
                         <div class="stats-tooltip-line">
@@ -1537,7 +1764,7 @@
                           <span class="stats-tooltip-value">{{ compare.tooltip.comparison_total }}</span>
                         </div>
                       </div>
-                      <div class="absolute right-3 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent stats-tooltip-arrow"></div>
+                      <div class="stats-media-card-tooltip-arrow absolute right-3 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent stats-tooltip-arrow"></div>
                     </div>
                   </div>
                 {% endif %}
@@ -1571,7 +1798,26 @@
             {% with compare=hours_per_media_type_comparison.music %}
               <div class="stats-media-card-meta">
                 <p class="stats-media-card-range">
-                  {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+                  <span class="stats-media-card-range-desktop">
+                    {{ selected_range_dates_label }}{% if compare and compare.badge %} ({{ compare.badge|lower }}){% endif %}
+                  </span>
+                  <span class="stats-media-card-range-mobile">
+                    {% if compare and compare.badge_short %}
+                      {% if compare.badge_state == "up" %}
+                        <span class="stats-media-card-mobile-badge stats-media-card-mobile-badge-up">
+                          {% include "app/icons/chevron-up.svg" with classes="stats-media-card-mobile-badge-icon" %}
+                          <span>{{ compare.badge_short }}</span>
+                        </span>
+                      {% elif compare.badge_state == "down" %}
+                        <span class="stats-media-card-mobile-badge stats-media-card-mobile-badge-down">
+                          {% include "app/icons/chevron-down.svg" with classes="stats-media-card-mobile-badge-icon" %}
+                          <span>{{ compare.badge_short }}</span>
+                        </span>
+                      {% else %}
+                        <span class="stats-media-card-mobile-badge stats-media-card-mobile-badge-{{ compare.badge_state }}">{{ compare.badge_short }}</span>
+                      {% endif %}
+                    {% endif %}
+                  </span>
                 </p>
                 {% if compare and compare.tooltip %}
                   <div class="relative" x-data="{ tooltipOpen: false }">
@@ -1585,7 +1831,7 @@
                          x-transition:leave="transition ease-in duration-150"
                          x-transition:leave-start="opacity-100 scale-100"
                          x-transition:leave-end="opacity-0 scale-95"
-                         class="absolute right-0 bottom-full mb-2 w-56 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10 stats-tooltip"
+                         class="stats-media-card-tooltip-panel absolute right-0 bottom-full mb-2 w-56 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10 stats-tooltip"
                          style="display: none;">
                       <div class="stats-tooltip-lines">
                         <div class="stats-tooltip-line">
@@ -1597,7 +1843,7 @@
                           <span class="stats-tooltip-value">{{ compare.tooltip.comparison_total }}</span>
                         </div>
                       </div>
-                      <div class="absolute right-3 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent stats-tooltip-arrow"></div>
+                      <div class="stats-media-card-tooltip-arrow absolute right-3 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent stats-tooltip-arrow"></div>
                     </div>
                   </div>
                 {% endif %}
@@ -3661,6 +3907,59 @@
           this.activeIndex = index;
         },
       };
+    }
+
+    let statsMediaCardFitFrame = null;
+
+    function fitStatisticsMediaCardValues() {
+      const isMobile = window.matchMedia("(max-width: 639px)").matches;
+
+      document.querySelectorAll("[data-media-card]").forEach((card) => {
+        const value = card.querySelector(".stats-media-card-value");
+        const copy = card.querySelector(".stats-media-card-copy");
+        if (!value || !copy) {
+          return;
+        }
+
+        value.style.removeProperty("font-size");
+
+        if (!isMobile) {
+          return;
+        }
+
+        const availableWidth = copy.clientWidth;
+        if (!availableWidth) {
+          return;
+        }
+
+        let fontSize = parseFloat(window.getComputedStyle(value).fontSize) || 20;
+        const minFontSize = 14;
+        value.style.fontSize = `${fontSize}px`;
+
+        while (value.scrollWidth > availableWidth && fontSize > minFontSize) {
+          fontSize -= 0.5;
+          value.style.fontSize = `${fontSize}px`;
+        }
+      });
+    }
+
+    function scheduleStatisticsMediaCardFit() {
+      if (statsMediaCardFitFrame !== null) {
+        cancelAnimationFrame(statsMediaCardFitFrame);
+      }
+
+      statsMediaCardFitFrame = requestAnimationFrame(() => {
+        statsMediaCardFitFrame = null;
+        fitStatisticsMediaCardValues();
+      });
+    }
+
+    window.addEventListener("resize", scheduleStatisticsMediaCardFit, { passive: true });
+    window.addEventListener("load", scheduleStatisticsMediaCardFit);
+    scheduleStatisticsMediaCardFit();
+
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(scheduleStatisticsMediaCardFit);
     }
   </script>
 

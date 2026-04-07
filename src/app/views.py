@@ -12457,6 +12457,8 @@ def _build_hours_per_media_type_comparison(
         return {
             media_type: {
                 "badge": "",
+                "badge_state": "none",
+                "badge_short": "",
                 "badge_classes": "",
                 "details": "No comparison selected",
                 "details_classes": "text-gray-500",
@@ -12486,6 +12488,8 @@ def _build_hours_per_media_type_comparison(
         if previous_total <= 0:
             comparisons[media_type] = {
                 "badge": "New",
+                "badge_state": "new",
+                "badge_short": "New",
                 "badge_classes": "stats-metric-delta-badge stats-metric-delta-badge-positive",
                 "details": f"No activity {comparison_suffix}".strip(),
                 "details_classes": "text-gray-400",
@@ -12498,6 +12502,8 @@ def _build_hours_per_media_type_comparison(
         if abs(delta_percent) < 0.05:
             comparisons[media_type] = {
                 "badge": "No change",
+                "badge_state": "neutral",
+                "badge_short": "No change",
                 "badge_classes": "stats-metric-delta-badge stats-metric-delta-badge-neutral",
                 "details": f"vs {previous_display} {comparison_suffix}".strip(),
                 "details_classes": "text-gray-400",
@@ -12514,6 +12520,8 @@ def _build_hours_per_media_type_comparison(
         )
         comparisons[media_type] = {
             "badge": f"{direction} {_format_statistics_percent_change(delta_percent)}%",
+            "badge_state": direction.lower(),
+            "badge_short": f"{_format_statistics_percent_change(delta_percent)}%",
             "badge_classes": tone_class,
             "details": f"vs {previous_display} {comparison_suffix}".strip(),
             "details_classes": "text-gray-400",

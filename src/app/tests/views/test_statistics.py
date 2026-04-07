@@ -207,6 +207,8 @@ class StatisticsViewTests(TestCase):
 
         comparison = response.context["hours_per_media_type_comparison"]["movie"]
         self.assertEqual(comparison["badge"], "Up 100%")
+        self.assertEqual(comparison["badge_state"], "up")
+        self.assertEqual(comparison["badge_short"], "100%")
         self.assertTrue(
             comparison["details"].endswith(response.context["comparison_range_dates_label"]),
         )
@@ -241,6 +243,8 @@ class StatisticsViewTests(TestCase):
 
         comparison = response.context["hours_per_media_type_comparison"]["movie"]
         self.assertEqual(comparison["badge"], "Up 50%")
+        self.assertEqual(comparison["badge_state"], "up")
+        self.assertEqual(comparison["badge_short"], "50%")
         self.assertTrue(
             comparison["details"].endswith(response.context["comparison_range_dates_label"]),
         )
@@ -357,8 +361,34 @@ class StatisticsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["selected_compare_mode"], "none")
         comparison = response.context["hours_per_media_type_comparison"]["movie"]
+        self.assertEqual(comparison["badge_state"], "none")
+        self.assertEqual(comparison["badge_short"], "")
         self.assertEqual(comparison["details"], "No comparison selected")
         self.assertIsNone(comparison["tooltip"])
+
+    def test_statistics_view_marks_first_activity_as_new(self):
+        """Statistics comparison exposes a compact new-state marker for first activity."""
+        cache.clear()
+        self.client.login(**self.credentials)
+        current_date = date(2026, 3, 1)
+
+        self._create_movie_play("movie-new-compare", "Current Movie", current_date, 120)
+
+        response = self.client.get(
+            reverse("statistics")
+            + (
+                f"?start-date={current_date.isoformat()}"
+                f"&end-date={current_date.isoformat()}"
+                "&compare=previous_period"
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        comparison = response.context["hours_per_media_type_comparison"]["movie"]
+        self.assertEqual(comparison["badge"], "New")
+        self.assertEqual(comparison["badge_state"], "new")
+        self.assertEqual(comparison["badge_short"], "New")
 
     def test_refresh_statistics_cache_game_daily_average_tooltip_uses_game_title(self):
         """Cached game daily-average tooltip payload should include resolved game titles."""
