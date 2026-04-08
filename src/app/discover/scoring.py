@@ -57,6 +57,117 @@ def normalize_values(values: list[float | None]) -> list[float]:
     return normalized
 
 
+def weighted_pearson_correlation(
+    values_a: list[float],
+    values_b: list[float],
+    weights: list[float],
+) -> float:
+    """Return weighted Pearson correlation in [-1, 1]."""
+    if not values_a or not values_b or not weights:
+        return 0.0
+    if not (len(values_a) == len(values_b) == len(weights)):
+        return 0.0
+
+    weighted_rows = [
+        (float(value_a), float(value_b), max(float(weight), 0.0))
+        for value_a, value_b, weight in zip(values_a, values_b, weights, strict=False)
+        if weight is not None
+    ]
+    total_weight = sum(weight for _value_a, _value_b, weight in weighted_rows)
+    if total_weight <= 0.0:
+        return 0.0
+
+    mean_a = sum(value_a * weight for value_a, _value_b, weight in weighted_rows) / total_weight
+    mean_b = sum(value_b * weight for _value_a, value_b, weight in weighted_rows) / total_weight
+    covariance = sum(
+        weight * (value_a - mean_a) * (value_b - mean_b)
+        for value_a, value_b, weight in weighted_rows
+    ) / total_weight
+    variance_a = sum(
+        weight * ((value_a - mean_a) ** 2)
+        for value_a, _value_b, weight in weighted_rows
+    ) / total_weight
+    variance_b = sum(
+        weight * ((value_b - mean_b) ** 2)
+        for _value_a, value_b, weight in weighted_rows
+    ) / total_weight
+    if variance_a <= 0.0 or variance_b <= 0.0:
+        return 0.0
+
+    return max(-1.0, min(1.0, covariance / math.sqrt(variance_a * variance_b)))
+
+
+def bayesian_world_quality(
+    rating: float | None,
+    votes: int | None,
+    *,
+    prior_mean: float = 6.5,
+    prior_votes: int = 1500,
+) -> float | None:
+    """Return a vote-aware world quality score normalized into [0, 1]."""
+    if rating is None:
+        return None
+
+    rating_value = float(rating)
+    votes_value = max(int(votes or 0), 0)
+    numerator = (rating_value * votes_value) + (float(prior_mean) * float(prior_votes))
+    denominator = votes_value + max(int(prior_votes), 0)
+    if denominator <= 0:
+        return None
+    return max(0.0, min(1.0, (numerator / denominator) / 10.0))
+
+
+def blended_world_quality(
+    *,
+    provider_rating: float | None,
+    provider_votes: int | None,
+    trakt_rating: float | None = None,
+    trakt_votes: int | None = None,
+) -> dict[str, float | str]:
+    """Blend TMDb/provider and Trakt quality into a single world score."""
+    tmdb_world_quality = bayesian_world_quality(provider_rating, provider_votes)
+    trakt_world_quality = bayesian_world_quality(trakt_rating, trakt_votes)
+    tmdb_weight = math.log1p(max(int(provider_votes or 0), 0)) if tmdb_world_quality is not None else 0.0
+    trakt_weight = math.log1p(max(int(trakt_votes or 0), 0)) if trakt_world_quality is not None else 0.0
+
+    if tmdb_world_quality is None and trakt_world_quality is None:
+        return {
+            "world_quality": 0.5,
+            "tmdb_world_quality": 0.0,
+            "trakt_world_quality": 0.0,
+            "world_source_blend": "neutral",
+        }
+    if trakt_world_quality is None:
+        return {
+            "world_quality": float(tmdb_world_quality),
+            "tmdb_world_quality": float(tmdb_world_quality),
+            "trakt_world_quality": 0.0,
+            "world_source_blend": "tmdb_only",
+        }
+    if tmdb_world_quality is None:
+        return {
+            "world_quality": float(trakt_world_quality),
+            "tmdb_world_quality": 0.0,
+            "trakt_world_quality": float(trakt_world_quality),
+            "world_source_blend": "trakt_only",
+        }
+
+    total_weight = tmdb_weight + trakt_weight
+    if total_weight <= 0.0:
+        world_quality = (float(tmdb_world_quality) + float(trakt_world_quality)) / 2.0
+    else:
+        world_quality = (
+            (float(tmdb_world_quality) * tmdb_weight)
+            + (float(trakt_world_quality) * trakt_weight)
+        ) / total_weight
+    return {
+        "world_quality": max(0.0, min(1.0, float(world_quality))),
+        "tmdb_world_quality": float(tmdb_world_quality),
+        "trakt_world_quality": float(trakt_world_quality),
+        "world_source_blend": "tmdb_trakt_blend",
+    }
+
+
 def _profile_vector(items: list[str]) -> dict[str, float]:
     vector: dict[str, float] = {}
     if not items:

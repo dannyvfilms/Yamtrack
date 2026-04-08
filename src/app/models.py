@@ -4877,6 +4877,7 @@ class DiscoverTasteProfile(models.Model):
     negative_genre_affinity = models.JSONField(default=dict, blank=True)
     negative_tag_affinity = models.JSONField(default=dict, blank=True)
     negative_person_affinity = models.JSONField(default=dict, blank=True)
+    world_rating_profile = models.JSONField(default=dict, blank=True)
     activity_snapshot_at = models.DateTimeField(null=True, blank=True)
     computed_at = models.DateTimeField(auto_now=True)
     expires_at = models.DateTimeField()

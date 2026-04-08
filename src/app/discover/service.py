@@ -40,7 +40,12 @@ from app.discover.providers.trakt_adapter import TraktDiscoverAdapter
 from app.discover.providers.tmdb_adapter import TMDbDiscoverAdapter
 from app.discover.registry import ALL_MEDIA_KEY, DISCOVER_MEDIA_TYPES, get_rows
 from app.discover.schemas import CandidateItem, DiscoverPayload, RowDefinition, RowResult
-from app.discover.scoring import cosine_similarity, normalize_values, score_candidates
+from app.discover.scoring import (
+    blended_world_quality,
+    cosine_similarity,
+    normalize_values,
+    score_candidates,
+)
 from app.models import (
     BasicMedia,
     CreditRoleType,
@@ -71,9 +76,9 @@ ROW_CACHE_SCHEMA_META_KEY = "schema_version"
 ROW_CACHE_ACTIVITY_VERSION_META_KEY = "activity_version"
 MOVIE_CANON_ROW_SCHEMA_VERSION = 2
 MOVIE_COMING_SOON_ROW_SCHEMA_VERSION = 1
-MOVIE_PERSONALIZED_ROW_SCHEMA_VERSION = 3
+MOVIE_PERSONALIZED_ROW_SCHEMA_VERSION = 4
 TV_ANIME_TRAKT_ROW_SCHEMA_VERSION = 1
-TV_ANIME_PERSONALIZED_ROW_SCHEMA_VERSION = 3
+TV_ANIME_PERSONALIZED_ROW_SCHEMA_VERSION = 4
 ROW_CANDIDATE_BUFFER_MULTIPLIER = 5
 ARTWORK_HYDRATION_ITEMS_PER_ROW = MAX_ITEMS_PER_ROW * 2
 MOVIE_PERSONALIZED_ROW_KEYS = {
@@ -97,6 +102,10 @@ BEHAVIOR_FIRST_MEDIA_TYPES = {
     MediaTypes.MOVIE.value,
     MediaTypes.TV.value,
     MediaTypes.ANIME.value,
+}
+WORLD_QUALITY_MEDIA_TYPES = {
+    MediaTypes.MOVIE.value,
+    MediaTypes.TV.value,
 }
 FIVE_ROW_DISCOVER_KEYS = {
     "trending_right_now",
@@ -237,6 +246,11 @@ MOVIE_COMFORT_BURST_GAP_DAYS = 30.0
 MOVIE_COMFORT_BURST_HISTORY_MIN_WATCHES = 3
 MOVIE_COMFORT_RECENT_TITLE_MULTIPLIER_FLOOR = 0.72
 MOVIE_COMFORT_READY_NOW_WEIGHT = 0.12
+WORLD_RATING_PROFILE_MIN_SAMPLE_SIZE = 5
+WORLD_QUALITY_ALIGNMENT_BASELINE = 0.25
+WORLD_QUALITY_ALIGNMENT_WEIGHT = 0.20
+WORLD_QUALITY_ALIGNMENT_FLOOR = 0.10
+WORLD_QUALITY_ALIGNMENT_CAP = 0.45
 COMFORT_DEBUG_TOP_N = 12
 COMFORT_SPREAD_COMPRESSION_THRESHOLD = 0.08
 ROW_MATCH_SIGNAL_CANDIDATE_LIMIT = 12
@@ -509,6 +523,10 @@ def _entries_to_candidates(
             row_key=row_key,
             source_reason=source_reason,
         )
+        candidate.score_breakdown["provider_rating"] = item.provider_rating
+        candidate.score_breakdown["provider_rating_count"] = item.provider_rating_count
+        candidate.score_breakdown["trakt_rating"] = item.trakt_rating
+        candidate.score_breakdown["trakt_rating_count"] = item.trakt_rating_count
         if getattr(entry, "score", None) is not None:
             entry_score = float(entry.score)
             candidate.score_breakdown["user_score"] = entry_score
@@ -3126,6 +3144,101 @@ def _movie_comfort_bucket_sort_key(candidate: CandidateItem) -> tuple[float, flo
     )
 
 
+def _movie_comfort_legacy_sort_key(candidate: CandidateItem) -> tuple[float, float, float, float]:
+    return (
+        float(candidate.score_breakdown.get("legacy_final_score", 0.0)),
+        float(candidate.score_breakdown.get("library_fit", 0.0)),
+        float(candidate.score_breakdown.get("recency_phase_fit", 0.0)),
+        float(candidate.score_breakdown.get("behavior_score", 0.0)),
+    )
+
+
+def _world_rating_profile(profile_payload: dict | None) -> dict[str, float]:
+    raw_profile = (profile_payload or {}).get("world_rating_profile") or {}
+    try:
+        sample_size = max(int(raw_profile.get("sample_size", 0) or 0), 0)
+    except (TypeError, ValueError):
+        sample_size = 0
+    try:
+        alignment = max(-1.0, min(1.0, float(raw_profile.get("alignment", 0.0) or 0.0)))
+    except (TypeError, ValueError):
+        alignment = 0.0
+    try:
+        confidence = _clamp_unit(float(raw_profile.get("confidence", 0.0) or 0.0))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    return {
+        "sample_size": float(sample_size),
+        "alignment": alignment,
+        "confidence": confidence,
+    }
+
+
+def _candidate_world_quality_signal(candidate: CandidateItem) -> dict[str, float | str]:
+    score = candidate.score_breakdown
+    provider_rating = score.get("provider_rating")
+    provider_rating_count = score.get("provider_rating_count")
+    trakt_rating = score.get("trakt_rating")
+    trakt_rating_count = score.get("trakt_rating_count")
+    return blended_world_quality(
+        provider_rating=(
+            float(provider_rating)
+            if provider_rating is not None
+            else None
+        ),
+        provider_votes=(
+            int(provider_rating_count)
+            if provider_rating_count is not None
+            else None
+        ),
+        trakt_rating=(
+            float(trakt_rating)
+            if trakt_rating is not None
+            else None
+        ),
+        trakt_votes=(
+            int(trakt_rating_count)
+            if trakt_rating_count is not None
+            else None
+        ),
+    )
+
+
+def _aligned_world_quality(
+    candidate: CandidateItem,
+    profile_payload: dict | None,
+) -> dict[str, float | str]:
+    world_signal = _candidate_world_quality_signal(candidate)
+    world_profile = _world_rating_profile(profile_payload)
+    raw_world_quality = float(world_signal.get("world_quality", 0.5))
+    sample_size = int(world_profile["sample_size"])
+    alignment = float(world_profile["alignment"])
+    confidence = float(world_profile["confidence"])
+
+    if sample_size < WORLD_RATING_PROFILE_MIN_SAMPLE_SIZE:
+        aligned_world_quality = 0.5
+    else:
+        alignment_scale = _clamp_unit(
+            WORLD_QUALITY_ALIGNMENT_BASELINE
+            + (alignment * WORLD_QUALITY_ALIGNMENT_WEIGHT * confidence),
+        )
+        alignment_scale = max(
+            WORLD_QUALITY_ALIGNMENT_FLOOR,
+            min(WORLD_QUALITY_ALIGNMENT_CAP, alignment_scale),
+        )
+        aligned_world_quality = _clamp_unit(
+            0.5 + ((raw_world_quality - 0.5) * alignment_scale),
+        )
+
+    return {
+        **world_signal,
+        "aligned_world_quality": aligned_world_quality,
+        "world_alignment": alignment,
+        "world_alignment_confidence": confidence,
+        "world_alignment_sample_size": float(sample_size),
+    }
+
+
 def _movie_comfort_reason_bucket_parts(candidate: CandidateItem) -> tuple[str, str]:
     bucket = str(candidate.score_breakdown.get("primary_reason_bucket", "broad:general"))
     if ":" in bucket:
@@ -3338,6 +3451,10 @@ def _apply_movie_comfort_confidence(
     user=None,
     phase_genre_affinity: dict[str, float],
 ) -> list[CandidateItem]:
+    initial_candidate_positions = {
+        id(candidate): position
+        for position, candidate in enumerate(candidates, start=1)
+    }
     family_profile_maps = {
         family: {
             "phase": _profile_exact_affinity_map(
@@ -3486,9 +3603,23 @@ def _apply_movie_comfort_confidence(
         provider_support = _clamp_unit(
             (popularity_norm[index] + rating_count_norm[index]) / 2.0,
         )
-        quality_score = _clamp_unit(
+        world_quality_signal = _aligned_world_quality(candidate, profile_payload)
+        legacy_quality_score = _clamp_unit(
             (rating_confidence * 0.55) + (provider_support * 0.45),
         )
+        world_quality_active = (
+            candidate.media_type in WORLD_QUALITY_MEDIA_TYPES
+            and int(world_quality_signal["world_alignment_sample_size"])
+            >= WORLD_RATING_PROFILE_MIN_SAMPLE_SIZE
+        )
+        if world_quality_active:
+            quality_score = _clamp_unit(
+                (rating_confidence * 0.45)
+                + (provider_support * 0.30)
+                + (float(world_quality_signal["aligned_world_quality"]) * 0.25),
+            )
+        else:
+            quality_score = legacy_quality_score
         certification_fit = family_layer_fits["certifications"]["blended"]
         runtime_fit = family_layer_fits["runtime_buckets"]["blended"]
         decade_fit = family_layer_fits["decades"]["blended"]
@@ -3496,6 +3627,11 @@ def _apply_movie_comfort_confidence(
             (certification_fit * 0.50)
             + (runtime_fit * 0.25)
             + (quality_score * 0.25),
+        )
+        legacy_comfort_safety = _clamp_unit(
+            (certification_fit * 0.50)
+            + (runtime_fit * 0.25)
+            + (legacy_quality_score * 0.25),
         )
 
         rich_family_fits = {
@@ -3525,12 +3661,21 @@ def _apply_movie_comfort_confidence(
             + (quality_score * 0.10)
             + (shape_coverage * 0.05),
         )
+        legacy_core_affinity_score = _clamp_unit(
+            (library_fit * 0.30)
+            + (recency_phase_fit * 0.25)
+            + (behavior_score * 0.20)
+            + (legacy_comfort_safety * 0.10)
+            + (legacy_quality_score * 0.10)
+            + (shape_coverage * 0.05),
+        )
         if (
             generic_only_match >= 1.0
             and library_fit < 0.40
             and rewatch_strength < 0.35
         ):
             core_affinity_score = _clamp_unit(core_affinity_score * 0.86)
+            legacy_core_affinity_score = _clamp_unit(legacy_core_affinity_score * 0.86)
             for family in MOVIE_COMFORT_GENERIC_SOURCES:
                 if family_layer_fits[family]["blended"] > 0.0:
                     suppressed_map[family] = "downweighted_generic"
@@ -3550,6 +3695,10 @@ def _apply_movie_comfort_confidence(
             (core_affinity_score * (1.0 - MOVIE_COMFORT_READY_NOW_WEIGHT))
             + (ready_now_score * MOVIE_COMFORT_READY_NOW_WEIGHT),
         )
+        legacy_raw_final_score = _clamp_unit(
+            (legacy_core_affinity_score * (1.0 - MOVIE_COMFORT_READY_NOW_WEIGHT))
+            + (ready_now_score * MOVIE_COMFORT_READY_NOW_WEIGHT),
+        )
         if float(cooldown_signal["cooldown_penalty"]) > 0.0:
             floor_multiplier = MOVIE_COMFORT_RECENT_TITLE_MULTIPLIER_FLOOR + (
                 (1.0 - MOVIE_COMFORT_RECENT_TITLE_MULTIPLIER_FLOOR)
@@ -3559,12 +3708,17 @@ def _apply_movie_comfort_confidence(
                 raw_final_score,
                 _clamp_unit(core_affinity_score * floor_multiplier),
             )
+            legacy_raw_final_score = min(
+                legacy_raw_final_score,
+                _clamp_unit(legacy_core_affinity_score * floor_multiplier),
+            )
 
         holiday_strength, seasonal_adjustment = _holiday_seasonal_adjustment(
             candidate,
             holiday_window_active=holiday_window_active,
         )
         final_score = _clamp_unit(raw_final_score + seasonal_adjustment)
+        legacy_final_score = _clamp_unit(legacy_raw_final_score + seasonal_adjustment)
 
         primary_reason_bucket, primary_reason_source, primary_reason_label = _movie_reason_bucket_label(
             family_profile_maps,
@@ -3592,9 +3746,14 @@ def _apply_movie_comfort_confidence(
         candidate.score_breakdown["recency_phase_fit"] = round(recency_phase_fit, 6)
         candidate.score_breakdown["behavior_score"] = round(behavior_score, 6)
         candidate.score_breakdown["quality_score"] = round(quality_score, 6)
+        candidate.score_breakdown["legacy_quality_score"] = round(legacy_quality_score, 6)
         candidate.score_breakdown["shape_coverage"] = round(shape_coverage, 6)
         candidate.score_breakdown["generic_only_match"] = float(generic_only_match)
         candidate.score_breakdown["core_affinity_score"] = round(core_affinity_score, 6)
+        candidate.score_breakdown["legacy_core_affinity_score"] = round(
+            legacy_core_affinity_score,
+            6,
+        )
         candidate.score_breakdown["ready_now_score"] = round(ready_now_score, 6)
         candidate.score_breakdown["cooldown_penalty"] = round(
             float(cooldown_signal["cooldown_penalty"]),
@@ -3643,7 +3802,37 @@ def _apply_movie_comfort_confidence(
         candidate.score_breakdown["decade_fit"] = round(decade_fit, 6)
         candidate.score_breakdown["recent_shape_fit"] = round(recency_phase_fit, 6)
         candidate.score_breakdown["comfort_safety"] = round(comfort_safety, 6)
+        candidate.score_breakdown["legacy_comfort_safety"] = round(
+            legacy_comfort_safety,
+            6,
+        )
         candidate.score_breakdown["provider_support"] = round(provider_support, 6)
+        candidate.score_breakdown["world_quality"] = round(
+            float(world_quality_signal["aligned_world_quality"]),
+            6,
+        )
+        candidate.score_breakdown["tmdb_world_quality"] = round(
+            float(world_quality_signal["tmdb_world_quality"]),
+            6,
+        )
+        candidate.score_breakdown["trakt_world_quality"] = round(
+            float(world_quality_signal["trakt_world_quality"]),
+            6,
+        )
+        candidate.score_breakdown["world_source_blend"] = str(
+            world_quality_signal["world_source_blend"],
+        )
+        candidate.score_breakdown["world_alignment"] = round(
+            float(world_quality_signal["world_alignment"]),
+            6,
+        )
+        candidate.score_breakdown["world_alignment_confidence"] = round(
+            float(world_quality_signal["world_alignment_confidence"]),
+            6,
+        )
+        candidate.score_breakdown["world_alignment_sample_size"] = int(
+            world_quality_signal["world_alignment_sample_size"],
+        )
         candidate.score_breakdown["rating_confidence"] = round(rating_confidence, 6)
         candidate.score_breakdown["rewatch_strength"] = round(rewatch_strength, 6)
         candidate.score_breakdown["rewatch_bonus"] = round(rewatch_strength, 6)
@@ -3707,6 +3896,11 @@ def _apply_movie_comfort_confidence(
         candidate.score_breakdown["diversity_multiplier"] = 1.0
         candidate.score_breakdown["era_multiplier"] = 1.0
         candidate.score_breakdown["comfort_score"] = round(final_score, 6)
+        candidate.score_breakdown["legacy_raw_final_score"] = round(
+            legacy_raw_final_score,
+            6,
+        )
+        candidate.score_breakdown["legacy_final_score"] = round(legacy_final_score, 6)
         candidate.final_score = round(final_score, 6)
 
         if phase_genre_affinity:
@@ -3754,8 +3948,26 @@ def _apply_movie_comfort_confidence(
     if not candidates:
         return candidates
 
+    legacy_order = sorted(
+        candidates,
+        key=lambda candidate: (
+            *_movie_comfort_legacy_sort_key(candidate),
+            -initial_candidate_positions.get(id(candidate), 0),
+        ),
+        reverse=True,
+    )
+    legacy_positions = {
+        id(candidate): position
+        for position, candidate in enumerate(legacy_order, start=1)
+    }
+    for candidate in candidates:
+        candidate.score_breakdown["legacy_rank"] = legacy_positions.get(id(candidate), 0)
+
     candidates.sort(key=_movie_comfort_bucket_sort_key, reverse=True)
     _apply_movie_reason_bucket_quotas(candidates)
+    for current_rank, candidate in enumerate(candidates, start=1):
+        legacy_rank = int(candidate.score_breakdown.get("legacy_rank", 0) or 0)
+        candidate.score_breakdown["rank_delta"] = legacy_rank - current_rank
     return candidates
 
 
@@ -3773,7 +3985,7 @@ def _apply_comfort_confidence(
     if (
         use_movie_rewatch_model
         and candidates
-        and all(candidate.media_type in BEHAVIOR_FIRST_MEDIA_TYPES for candidate in candidates)
+        and all(candidate.media_type in WORLD_QUALITY_MEDIA_TYPES for candidate in candidates)
     ):
         behavior_first_candidates = _apply_movie_comfort_confidence(
             candidates,
@@ -4201,6 +4413,13 @@ def _build_movie_comfort_debug_payload(
             },
             "profile_layer_weights": dict(MOVIE_COMFORT_PROFILE_LAYER_WEIGHTS),
             "family_weights": dict(MOVIE_COMFORT_FAMILY_WEIGHTS),
+            "comparison_summary": {
+                "legacy_top_titles": [],
+                "current_top_titles": [],
+                "promoted_titles": [],
+                "dropped_titles": [],
+                "changed_rank_count": 0,
+            },
         }
         if match_signal_details:
             payload["match_signal"] = dict(match_signal_details)
@@ -4223,6 +4442,13 @@ def _build_movie_comfort_debug_payload(
     display_max = max(display_scores)
     effective_top_n = min(len(candidates), max(1, top_n))
     top_slice = candidates[:effective_top_n]
+    legacy_ranked = sorted(
+        candidates,
+        key=lambda candidate: int(candidate.score_breakdown.get("legacy_rank", 0) or 0),
+    )
+    legacy_top_slice = legacy_ranked[:effective_top_n]
+    legacy_top_ids = {id(candidate) for candidate in legacy_top_slice}
+    current_top_ids = {id(candidate) for candidate in top_slice}
 
     contribution_totals = {
         "library": 0.0,
@@ -4309,6 +4535,24 @@ def _build_movie_comfort_debug_payload(
                 "rating_confidence": round(float(score.get("rating_confidence", 0.0)), 6),
                 "rewatch_strength": round(float(score.get("rewatch_strength", 0.0)), 6),
                 "provider_support": round(float(score.get("provider_support", 0.0)), 6),
+                "world_quality": round(float(score.get("world_quality", 0.5)), 6),
+                "tmdb_world_quality": round(float(score.get("tmdb_world_quality", 0.0)), 6),
+                "trakt_world_quality": round(float(score.get("trakt_world_quality", 0.0)), 6),
+                "world_source_blend": str(score.get("world_source_blend", "neutral")),
+                "world_alignment": round(float(score.get("world_alignment", 0.0)), 6),
+                "world_alignment_confidence": round(
+                    float(score.get("world_alignment_confidence", 0.0)),
+                    6,
+                ),
+                "world_alignment_sample_size": int(
+                    score.get("world_alignment_sample_size", 0) or 0,
+                ),
+                "legacy_rank": int(score.get("legacy_rank", 0) or 0),
+                "rank_delta": int(score.get("rank_delta", 0) or 0),
+                "legacy_raw_final_score": round(
+                    float(score.get("legacy_raw_final_score", 0.0)),
+                    6,
+                ),
                 "generic_only_match": float(score.get("generic_only_match", 0.0)) >= 1.0,
                 "candidate_is_unrated": float(score.get("candidate_is_unrated", 0.0)) >= 1.0,
                 "primary_reason_bucket": str(score.get("primary_reason_bucket", "")),
@@ -4376,6 +4620,23 @@ def _build_movie_comfort_debug_payload(
         },
         "profile_layer_weights": dict(MOVIE_COMFORT_PROFILE_LAYER_WEIGHTS),
         "family_weights": dict(MOVIE_COMFORT_FAMILY_WEIGHTS),
+        "comparison_summary": {
+            "legacy_top_titles": [candidate.title for candidate in legacy_top_slice],
+            "current_top_titles": [candidate.title for candidate in top_slice],
+            "promoted_titles": [
+                candidate.title for candidate in top_slice if id(candidate) not in legacy_top_ids
+            ],
+            "dropped_titles": [
+                candidate.title
+                for candidate in legacy_top_slice
+                if id(candidate) not in current_top_ids
+            ],
+            "changed_rank_count": sum(
+                1
+                for current_rank, candidate in enumerate(top_slice, start=1)
+                if int(candidate.score_breakdown.get("legacy_rank", 0) or 0) != current_rank
+            ),
+        },
     }
     if match_signal_details:
         payload["match_signal"] = dict(match_signal_details)

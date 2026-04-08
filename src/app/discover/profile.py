@@ -8,7 +8,7 @@ from datetime import timedelta
 
 from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist
-from django.db.models import Max
+from django.db.models import Max, Q
 from django.utils import timezone
 
 from app.discover import cache_repo
@@ -24,7 +24,11 @@ from app.discover.feature_metadata import (
     runtime_bucket_label,
 )
 from app.discover.registry import ALL_MEDIA_KEY, DISCOVER_MEDIA_TYPES
-from app.discover.scoring import normalize_numeric_map
+from app.discover.scoring import (
+    blended_world_quality,
+    normalize_numeric_map,
+    weighted_pearson_correlation,
+)
 from app.models import (
     CreditRoleType,
     DiscoverFeedback,
@@ -53,6 +57,12 @@ VIDEO_COMFORT_PROFILE_MEDIA_TYPES = {
     MediaTypes.TV.value,
     MediaTypes.ANIME.value,
 }
+WORLD_RATING_PROFILE_MEDIA_TYPES = {
+    MediaTypes.MOVIE.value,
+    MediaTypes.TV.value,
+}
+WORLD_RATING_PROFILE_ACTIVATION_MIN_SAMPLE = 5
+WORLD_RATING_PROFILE_MAX_CONFIDENCE_SAMPLE = 12.0
 
 MODEL_BY_MEDIA_TYPE = {
     MediaTypes.MOVIE.value: "movie",
@@ -108,6 +118,7 @@ class ProfilePayload:
     negative_genre_affinity: dict[str, float]
     negative_tag_affinity: dict[str, float]
     negative_person_affinity: dict[str, float]
+    world_rating_profile: dict[str, float | int]
     activity_snapshot_at: timezone.datetime | None
 
     def to_dict(self) -> dict:
@@ -148,6 +159,7 @@ class ProfilePayload:
             "negative_genre_affinity": self.negative_genre_affinity,
             "negative_tag_affinity": self.negative_tag_affinity,
             "negative_person_affinity": self.negative_person_affinity,
+            "world_rating_profile": self.world_rating_profile,
             "activity_snapshot_at": self.activity_snapshot_at,
         }
 
@@ -194,6 +206,39 @@ def _model_has_field(model, field_name: str) -> bool:
     except FieldDoesNotExist:
         return False
     return True
+
+
+def _world_rating_sample_size(raw_profile: dict | None) -> int:
+    try:
+        return max(int((raw_profile or {}).get("sample_size", 0) or 0), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _world_rating_candidate_count(user, media_type: str) -> int:
+    if media_type not in WORLD_RATING_PROFILE_MEDIA_TYPES:
+        return 0
+
+    model_name = MODEL_BY_MEDIA_TYPE.get(media_type)
+    if not model_name:
+        return 0
+
+    model = apps.get_model("app", model_name)
+    return model.objects.filter(
+        user=user,
+        status=Status.COMPLETED.value,
+    ).exclude(
+        score__isnull=True,
+    ).filter(
+        Q(
+            item__provider_rating__isnull=False,
+            item__provider_rating_count__isnull=False,
+        )
+        | Q(
+            item__trakt_rating__isnull=False,
+            item__trakt_rating_count__isnull=False,
+        ),
+    ).count()
 
 
 def _entry_weight(entry, now, *, activity_dt=None):
@@ -520,6 +565,9 @@ def compute_taste_profile(user, media_type: str) -> ProfilePayload:
     negative_genre_weights: dict[str, float] = defaultdict(float)
     negative_tag_weights: dict[str, float] = defaultdict(float)
     negative_person_weights: dict[str, float] = defaultdict(float)
+    world_rating_user_scores: list[float] = []
+    world_rating_scores: list[float] = []
+    world_rating_weights: list[float] = []
 
     activity_snapshot = None
 
@@ -547,6 +595,15 @@ def compute_taste_profile(user, media_type: str) -> ProfilePayload:
             "item__release_datetime",
             "item__studios",
         ]
+        if media_type_key in WORLD_RATING_PROFILE_MEDIA_TYPES:
+            only_fields.extend(
+                [
+                    "item__provider_rating",
+                    "item__provider_rating_count",
+                    "item__trakt_rating",
+                    "item__trakt_rating_count",
+                ],
+            )
         if has_progressed_at:
             only_fields.append("progressed_at")
         if has_end_date:
@@ -728,6 +785,25 @@ def compute_taste_profile(user, media_type: str) -> ProfilePayload:
             for person in people:
                 person_weights[person] += weight
 
+            if (
+                media_type_key in WORLD_RATING_PROFILE_MEDIA_TYPES
+                and getattr(entry, "status", None) == Status.COMPLETED.value
+                and getattr(entry, "score", None) is not None
+            ):
+                world_payload = blended_world_quality(
+                    provider_rating=getattr(entry.item, "provider_rating", None),
+                    provider_votes=getattr(entry.item, "provider_rating_count", None),
+                    trakt_rating=getattr(entry.item, "trakt_rating", None),
+                    trakt_votes=getattr(entry.item, "trakt_rating_count", None),
+                )
+                world_quality = float(world_payload.get("world_quality", 0.5))
+                if world_payload.get("world_source_blend") != "neutral":
+                    world_rating_user_scores.append(
+                        max(0.0, min(1.0, float(entry.score) / 10.0)),
+                    )
+                    world_rating_scores.append(world_quality)
+                    world_rating_weights.append(max(weight, 0.1))
+
         feedback_rows = list(
             DiscoverFeedback.objects.filter(
                 user=user,
@@ -782,6 +858,17 @@ def compute_taste_profile(user, media_type: str) -> ProfilePayload:
             for person in feedback_person_map.get(feedback.item_id, []):
                 negative_person_weights[person] += weight
 
+    world_alignment = weighted_pearson_correlation(
+        world_rating_user_scores,
+        world_rating_scores,
+        world_rating_weights,
+    )
+    world_sample_size = len(world_rating_scores)
+    world_confidence = min(
+        world_sample_size / WORLD_RATING_PROFILE_MAX_CONFIDENCE_SAMPLE,
+        1.0,
+    )
+
     return ProfilePayload(
         genre_affinity=normalize_numeric_map(dict(genre_weights)),
         recent_genre_affinity=normalize_numeric_map(dict(recent_genre_weights)),
@@ -819,6 +906,11 @@ def compute_taste_profile(user, media_type: str) -> ProfilePayload:
         negative_genre_affinity=normalize_numeric_map(dict(negative_genre_weights)),
         negative_tag_affinity=normalize_numeric_map(dict(negative_tag_weights)),
         negative_person_affinity=normalize_numeric_map(dict(negative_person_weights)),
+        world_rating_profile={
+            "alignment": round(float(world_alignment), 6),
+            "confidence": round(float(world_confidence), 6),
+            "sample_size": world_sample_size,
+        },
         activity_snapshot_at=activity_snapshot,
     )
 
@@ -844,11 +936,26 @@ def get_or_compute_taste_profile(user, media_type: str, *, force: bool = False) 
                     status=Status.COMPLETED.value,
                 ).exists()
 
+    missing_world_rating_profile_backfill = False
+    if cached_entry and media_type in WORLD_RATING_PROFILE_MEDIA_TYPES:
+        cached_world_rating_profile = getattr(cached_entry, "world_rating_profile", None) or {}
+        cached_world_rating_sample_size = _world_rating_sample_size(cached_world_rating_profile)
+        available_world_rating_candidates = _world_rating_candidate_count(user, media_type)
+        if cached_world_rating_sample_size <= 0:
+            missing_world_rating_profile_backfill = available_world_rating_candidates > 0
+        elif (
+            cached_world_rating_sample_size < WORLD_RATING_PROFILE_ACTIVATION_MIN_SAMPLE
+            and available_world_rating_candidates >= WORLD_RATING_PROFILE_ACTIVATION_MIN_SAMPLE
+            and available_world_rating_candidates > cached_world_rating_sample_size
+        ):
+            missing_world_rating_profile_backfill = True
+
     if (
         cached_entry
         and not force
         and not is_stale
         and not missing_video_comfort_backfill
+        and not missing_world_rating_profile_backfill
         and not has_new_activity(user, media_type, cached_entry.activity_snapshot_at)
     ):
         return {
@@ -888,6 +995,7 @@ def get_or_compute_taste_profile(user, media_type: str, *, force: bool = False) 
             "negative_genre_affinity": getattr(cached_entry, "negative_genre_affinity", None) or {},
             "negative_tag_affinity": getattr(cached_entry, "negative_tag_affinity", None) or {},
             "negative_person_affinity": getattr(cached_entry, "negative_person_affinity", None) or {},
+            "world_rating_profile": getattr(cached_entry, "world_rating_profile", None) or {},
             "activity_snapshot_at": cached_entry.activity_snapshot_at,
         }
 
@@ -931,6 +1039,7 @@ def get_or_compute_taste_profile(user, media_type: str, *, force: bool = False) 
         negative_genre_affinity=profile.negative_genre_affinity,
         negative_tag_affinity=profile.negative_tag_affinity,
         negative_person_affinity=profile.negative_person_affinity,
+        world_rating_profile=profile.world_rating_profile,
         activity_snapshot_at=profile.activity_snapshot_at,
         ttl_seconds=PROFILE_TTL_SECONDS,
     )

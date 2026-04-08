@@ -70,6 +70,14 @@
             library {{ row.debug_payload.profile_layer_weights.library|floatformat:3 }},
             rewatch {{ row.debug_payload.profile_layer_weights.rewatch|floatformat:3 }}
           </p>
+          <p>
+            Comparison:
+            changed {{ row.debug_payload.comparison_summary.changed_rank_count }},
+            legacy top [{% for title in row.debug_payload.comparison_summary.legacy_top_titles %}{{ title }}{% if not forloop.last %}; {% endif %}{% endfor %}],
+            current top [{% for title in row.debug_payload.comparison_summary.current_top_titles %}{{ title }}{% if not forloop.last %}; {% endif %}{% endfor %}],
+            promoted [{% for title in row.debug_payload.comparison_summary.promoted_titles %}{{ title }}{% if not forloop.last %}; {% endif %}{% empty %}none{% endfor %}],
+            dropped [{% for title in row.debug_payload.comparison_summary.dropped_titles %}{{ title }}{% if not forloop.last %}; {% endif %}{% empty %}none{% endfor %}]
+          </p>
           {% if row.debug_payload.match_signal %}
             <p>
               Match signal: {{ row.debug_payload.match_signal.signal }}
@@ -102,6 +110,16 @@
                 rating {{ debug_item.rating_confidence|floatformat:3 }},
                 rewatch {{ debug_item.rewatch_strength|floatformat:3 }},
                 provider {{ debug_item.provider_support|floatformat:3 }},
+                world {{ debug_item.world_quality|floatformat:3 }},
+                tmdb-world {{ debug_item.tmdb_world_quality|floatformat:3 }},
+                trakt-world {{ debug_item.trakt_world_quality|floatformat:3 }},
+                world-src {{ debug_item.world_source_blend }},
+                align {{ debug_item.world_alignment|floatformat:3 }},
+                align-conf {{ debug_item.world_alignment_confidence|floatformat:3 }},
+                align-sample {{ debug_item.world_alignment_sample_size }},
+                legacy-rank {{ debug_item.legacy_rank }},
+                rank-delta {{ debug_item.rank_delta }},
+                legacy-raw {{ debug_item.legacy_raw_final_score|floatformat:3 }},
                 generic-only {{ debug_item.generic_only_match|yesno:'yes,no' }},
                 bucket {{ debug_item.primary_reason_bucket }},
                 quota {{ debug_item.reason_bucket_quota_action }},

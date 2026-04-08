@@ -5,6 +5,7 @@ from django.test import TestCase
 from django.utils import timezone
 from unittest.mock import patch
 
+from app.discover import cache_repo
 from app.discover.profile import compute_taste_profile, get_or_compute_taste_profile
 from app.models import (
     Anime,
@@ -557,6 +558,135 @@ class DiscoverProfileTests(TestCase):
 
         mock_compute.assert_not_called()
         self.assertIn("comedy", cached["genre_affinity"])
+
+    def test_get_or_compute_taste_profile_returns_cached_world_rating_profile(self):
+        now = timezone.now()
+        with patch("app.models.providers.services.get_media_metadata", return_value={"max_progress": 1}):
+            for index, (user_score, provider_rating) in enumerate(
+                [(9, 8.9), (8, 8.2), (7, 7.5), (6, 6.8), (5, 6.1)],
+                start=1,
+            ):
+                item = Item.objects.create(
+                    media_id=f"world-cache-{index}",
+                    source=Sources.TMDB.value,
+                    media_type=MediaTypes.MOVIE.value,
+                    title=f"World Cache {index}",
+                    image=f"http://example.com/world-cache-{index}.jpg",
+                    genres=["Drama"],
+                    provider_rating=provider_rating,
+                    provider_rating_count=5000 + (index * 250),
+                )
+                Movie.objects.create(
+                    item=item,
+                    user=self.user,
+                    score=user_score,
+                    status=Status.COMPLETED.value,
+                    end_date=now - timedelta(days=index * 7),
+                )
+
+        forced_profile = get_or_compute_taste_profile(
+            self.user,
+            MediaTypes.MOVIE.value,
+            force=True,
+        )
+        with patch("app.discover.profile.compute_taste_profile") as mock_compute:
+            cached_profile = get_or_compute_taste_profile(
+                self.user,
+                MediaTypes.MOVIE.value,
+                force=False,
+            )
+
+        mock_compute.assert_not_called()
+        self.assertEqual(
+            forced_profile["world_rating_profile"]["sample_size"],
+            5,
+        )
+        self.assertEqual(
+            cached_profile["world_rating_profile"]["sample_size"],
+            5,
+        )
+        self.assertGreater(
+            cached_profile["world_rating_profile"]["confidence"],
+            0.4,
+        )
+
+    def test_get_or_compute_taste_profile_recomputes_missing_world_rating_profile_backfill(self):
+        now = timezone.now()
+        with patch("app.models.providers.services.get_media_metadata", return_value={"max_progress": 1}):
+            for index, (user_score, provider_rating) in enumerate(
+                [(9, 8.9), (8, 8.2), (7, 7.5), (6, 6.8), (5, 6.1)],
+                start=1,
+            ):
+                item = Item.objects.create(
+                    media_id=f"world-backfill-{index}",
+                    source=Sources.TMDB.value,
+                    media_type=MediaTypes.MOVIE.value,
+                    title=f"World Backfill {index}",
+                    image=f"http://example.com/world-backfill-{index}.jpg",
+                    genres=["Drama"],
+                    provider_rating=provider_rating,
+                    provider_rating_count=6000 + (index * 300),
+                )
+                Movie.objects.create(
+                    item=item,
+                    user=self.user,
+                    score=user_score,
+                    status=Status.COMPLETED.value,
+                    end_date=now - timedelta(days=index * 5),
+                )
+
+        cache_repo.set_taste_profile(
+            self.user.id,
+            MediaTypes.MOVIE.value,
+            genre_affinity={},
+            recent_genre_affinity={},
+            phase_genre_affinity={},
+            tag_affinity={},
+            recent_tag_affinity={},
+            phase_tag_affinity={},
+            keyword_affinity={},
+            recent_keyword_affinity={},
+            phase_keyword_affinity={},
+            studio_affinity={},
+            recent_studio_affinity={},
+            phase_studio_affinity={},
+            collection_affinity={},
+            recent_collection_affinity={},
+            phase_collection_affinity={},
+            director_affinity={},
+            recent_director_affinity={},
+            phase_director_affinity={},
+            lead_cast_affinity={},
+            recent_lead_cast_affinity={},
+            phase_lead_cast_affinity={},
+            certification_affinity={},
+            recent_certification_affinity={},
+            phase_certification_affinity={},
+            runtime_bucket_affinity={},
+            recent_runtime_bucket_affinity={},
+            phase_runtime_bucket_affinity={},
+            decade_affinity={},
+            recent_decade_affinity={},
+            phase_decade_affinity={},
+            comfort_library_affinity={},
+            comfort_rewatch_affinity={},
+            person_affinity={},
+            negative_genre_affinity={},
+            negative_tag_affinity={},
+            negative_person_affinity={},
+            world_rating_profile={},
+            activity_snapshot_at=now,
+            ttl_seconds=3600,
+        )
+
+        profile = get_or_compute_taste_profile(
+            self.user,
+            MediaTypes.MOVIE.value,
+            force=False,
+        )
+
+        self.assertEqual(profile["world_rating_profile"]["sample_size"], 5)
+        self.assertGreater(profile["world_rating_profile"]["confidence"], 0.4)
 
     def test_compute_taste_profile_snapshot_includes_feedback_updates(self):
         item = Item.objects.create(

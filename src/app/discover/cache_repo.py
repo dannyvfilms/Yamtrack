@@ -147,6 +147,7 @@ def set_taste_profile(
     negative_genre_affinity: dict[str, float],
     negative_tag_affinity: dict[str, float],
     negative_person_affinity: dict[str, float],
+    world_rating_profile: dict[str, float | int],
     activity_snapshot_at,
     ttl_seconds: int,
 ) -> DiscoverTasteProfile:
@@ -189,6 +190,7 @@ def set_taste_profile(
         "negative_genre_affinity": negative_genre_affinity,
         "negative_tag_affinity": negative_tag_affinity,
         "negative_person_affinity": negative_person_affinity,
+        "world_rating_profile": world_rating_profile,
         "activity_snapshot_at": activity_snapshot_at,
         "computed_at": now,
         "expires_at": now + timedelta(seconds=ttl_seconds),

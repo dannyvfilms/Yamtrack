@@ -1,7 +1,13 @@
 from django.test import SimpleTestCase
 
 from app.discover.schemas import CandidateItem
-from app.discover.scoring import cosine_similarity, normalize_values, score_candidates
+from app.discover.scoring import (
+    blended_world_quality,
+    cosine_similarity,
+    normalize_values,
+    score_candidates,
+    weighted_pearson_correlation,
+)
 
 
 class DiscoverScoringTests(SimpleTestCase):
@@ -88,3 +94,40 @@ class DiscoverScoringTests(SimpleTestCase):
 
         self.assertLess(scored[0].final_score, 0.4)
         self.assertGreater(scored[0].score_breakdown["negative_total_penalty"], 0.0)
+
+    def test_weighted_pearson_correlation_tracks_positive_alignment(self):
+        correlation = weighted_pearson_correlation(
+            [0.9, 0.8, 0.4, 0.2],
+            [0.88, 0.75, 0.45, 0.25],
+            [1.0, 1.0, 0.8, 0.8],
+        )
+
+        self.assertGreater(correlation, 0.8)
+
+    def test_blended_world_quality_handles_tmdb_only_trakt_only_and_blend(self):
+        tmdb_only = blended_world_quality(
+            provider_rating=8.4,
+            provider_votes=12000,
+            trakt_rating=None,
+            trakt_votes=None,
+        )
+        trakt_only = blended_world_quality(
+            provider_rating=None,
+            provider_votes=None,
+            trakt_rating=8.1,
+            trakt_votes=4000,
+        )
+        blended = blended_world_quality(
+            provider_rating=7.9,
+            provider_votes=9000,
+            trakt_rating=8.4,
+            trakt_votes=3000,
+        )
+
+        self.assertEqual(tmdb_only["world_source_blend"], "tmdb_only")
+        self.assertGreater(tmdb_only["world_quality"], 0.7)
+        self.assertEqual(trakt_only["world_source_blend"], "trakt_only")
+        self.assertGreater(trakt_only["world_quality"], 0.7)
+        self.assertEqual(blended["world_source_blend"], "tmdb_trakt_blend")
+        self.assertGreater(blended["world_quality"], blended["tmdb_world_quality"] - 0.01)
+        self.assertLess(blended["world_quality"], blended["trakt_world_quality"] + 0.01)

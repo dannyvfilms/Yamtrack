@@ -67,6 +67,16 @@ class DiscoverServiceTests(TestCase):
             for row in rows
         }
 
+    @staticmethod
+    def _comparison_titles(candidates, *, top_n=3):
+        payload = _build_comfort_debug_payload(candidates, top_n=top_n)
+        summary = payload["comparison_summary"]
+        return (
+            summary["legacy_top_titles"],
+            summary["current_top_titles"],
+            payload,
+        )
+
     @patch("app.discover.service._build_and_cache_row")
     @patch("app.discover.service.get_rows")
     @patch("app.discover.service.get_or_compute_taste_profile", return_value={})
@@ -2767,6 +2777,541 @@ class DiscoverServiceTests(TestCase):
         mock_related.assert_not_called()
         mock_genre_discovery.assert_not_called()
 
+    def test_movie_top_picks_world_quality_debug_shows_before_and_after_titles(self):
+        profile_payload = {
+            "phase_keyword_affinity": {"cozy": 1.0, "mystery": 0.9},
+            "recent_keyword_affinity": {"cozy": 1.0, "mystery": 0.9},
+            "phase_studio_affinity": {"studio home": 1.0},
+            "recent_studio_affinity": {"studio home": 1.0},
+            "phase_collection_affinity": {"weekend picks": 1.0},
+            "recent_collection_affinity": {"weekend picks": 1.0},
+            "phase_certification_affinity": {"PG": 1.0},
+            "recent_certification_affinity": {"PG": 1.0},
+            "phase_runtime_bucket_affinity": {"90_109": 1.0},
+            "recent_runtime_bucket_affinity": {"90_109": 1.0},
+            "phase_decade_affinity": {"2020s": 1.0},
+            "recent_decade_affinity": {"2020s": 1.0},
+            "phase_genre_affinity": {"adventure": 1.0, "family": 0.9},
+            "recent_genre_affinity": {"adventure": 1.0, "family": 0.9},
+            "comfort_library_affinity": {
+                "keywords": {"cozy": 1.0, "mystery": 0.9},
+                "collections": {"weekend picks": 1.0},
+                "studios": {"studio home": 1.0},
+                "genres": {"adventure": 1.0, "family": 0.9},
+                "directors": {},
+                "lead_cast": {},
+                "certifications": {"PG": 1.0},
+                "runtime_buckets": {"90_109": 1.0},
+                "decades": {"2020s": 1.0},
+            },
+            "comfort_rewatch_affinity": {
+                "keywords": {"cozy": 1.0},
+                "collections": {"weekend picks": 1.0},
+                "studios": {"studio home": 1.0},
+                "genres": {"adventure": 1.0},
+                "directors": {},
+                "lead_cast": {},
+                "certifications": {"PG": 1.0},
+                "runtime_buckets": {"90_109": 1.0},
+                "decades": {"2020s": 1.0},
+            },
+            "world_rating_profile": {
+                "alignment": 0.95,
+                "confidence": 0.75,
+                "sample_size": 8,
+            },
+        }
+        candidates = [
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source=Sources.TMDB.value,
+                media_id="top-picks-low",
+                title="Weekend Crowdpleaser",
+                genres=["Adventure", "Family"],
+                keywords=["cozy", "mystery"],
+                studios=["studio home"],
+                collection_name="Weekend Picks",
+                certification="PG",
+                runtime_bucket="90_109",
+                release_decade="2020s",
+                popularity=80.0,
+                rating=6.4,
+                rating_count=9000,
+                score_breakdown={
+                    "provider_rating": 6.4,
+                    "provider_rating_count": 9000,
+                    "days_since_activity": 0.0,
+                    "rewatch_count": 1.0,
+                },
+            ),
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source=Sources.TMDB.value,
+                media_id="top-picks-high",
+                title="Critics' Weekend Pick",
+                genres=["Adventure", "Family"],
+                keywords=["cozy", "mystery"],
+                studios=["studio home"],
+                collection_name="Weekend Picks",
+                certification="PG",
+                runtime_bucket="90_109",
+                release_decade="2020s",
+                popularity=80.0,
+                rating=8.9,
+                rating_count=9000,
+                score_breakdown={
+                    "provider_rating": 8.9,
+                    "provider_rating_count": 9000,
+                    "days_since_activity": 0.0,
+                    "rewatch_count": 1.0,
+                },
+            ),
+        ]
+
+        reranked = _apply_comfort_confidence(
+            candidates,
+            profile_payload,
+            use_movie_rewatch_model=True,
+        )
+        legacy_titles, current_titles, payload = self._comparison_titles(reranked, top_n=2)
+
+        self.assertEqual(
+            legacy_titles,
+            ["Weekend Crowdpleaser", "Critics' Weekend Pick"],
+        )
+        self.assertEqual(
+            current_titles,
+            ["Critics' Weekend Pick", "Weekend Crowdpleaser"],
+        )
+        self.assertEqual(payload["comparison_summary"]["promoted_titles"], [])
+        self.assertEqual(payload["comparison_summary"]["dropped_titles"], [])
+        self.assertEqual(payload["comparison_summary"]["changed_rank_count"], 2)
+
+    def test_movie_comfort_rewatches_world_quality_debug_shows_before_and_after_titles(self):
+        profile_payload = {
+            "phase_keyword_affinity": {"comfort": 1.0, "rewatch": 0.9},
+            "recent_keyword_affinity": {"comfort": 1.0, "rewatch": 0.9},
+            "phase_studio_affinity": {"studio home": 1.0},
+            "recent_studio_affinity": {"studio home": 1.0},
+            "phase_collection_affinity": {"comfort shelf": 1.0},
+            "recent_collection_affinity": {"comfort shelf": 1.0},
+            "phase_certification_affinity": {"PG": 1.0},
+            "recent_certification_affinity": {"PG": 1.0},
+            "phase_runtime_bucket_affinity": {"90_109": 1.0},
+            "recent_runtime_bucket_affinity": {"90_109": 1.0},
+            "phase_decade_affinity": {"2010s": 1.0},
+            "recent_decade_affinity": {"2010s": 1.0},
+            "phase_genre_affinity": {"animation": 1.0, "comedy": 0.8},
+            "recent_genre_affinity": {"animation": 1.0, "comedy": 0.8},
+            "comfort_library_affinity": {
+                "keywords": {"comfort": 1.0, "rewatch": 0.9},
+                "collections": {"comfort shelf": 1.0},
+                "studios": {"studio home": 1.0},
+                "genres": {"animation": 1.0, "comedy": 0.8},
+                "directors": {},
+                "lead_cast": {},
+                "certifications": {"PG": 1.0},
+                "runtime_buckets": {"90_109": 1.0},
+                "decades": {"2010s": 1.0},
+            },
+            "comfort_rewatch_affinity": {
+                "keywords": {"comfort": 1.0, "rewatch": 0.9},
+                "collections": {"comfort shelf": 1.0},
+                "studios": {"studio home": 1.0},
+                "genres": {"animation": 1.0, "comedy": 0.8},
+                "directors": {},
+                "lead_cast": {},
+                "certifications": {"PG": 1.0},
+                "runtime_buckets": {"90_109": 1.0},
+                "decades": {"2010s": 1.0},
+            },
+            "world_rating_profile": {
+                "alignment": 0.9,
+                "confidence": 0.8,
+                "sample_size": 10,
+            },
+        }
+        candidates = [
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source=Sources.TMDB.value,
+                media_id="comfort-low",
+                title="Reliable Rewatch",
+                genres=["Animation", "Comedy"],
+                keywords=["comfort", "rewatch"],
+                studios=["studio home"],
+                collection_name="Comfort Shelf",
+                certification="PG",
+                runtime_bucket="90_109",
+                release_decade="2010s",
+                popularity=75.0,
+                rating=6.6,
+                rating_count=8500,
+                score_breakdown={
+                    "provider_rating": 6.6,
+                    "provider_rating_count": 8500,
+                    "user_score": 8.0,
+                    "days_since_activity": 220.0,
+                    "rewatch_count": 2.0,
+                },
+            ),
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source=Sources.TMDB.value,
+                media_id="comfort-high",
+                title="Beloved Rewatch",
+                genres=["Animation", "Comedy"],
+                keywords=["comfort", "rewatch"],
+                studios=["studio home"],
+                collection_name="Comfort Shelf",
+                certification="PG",
+                runtime_bucket="90_109",
+                release_decade="2010s",
+                popularity=75.0,
+                rating=8.7,
+                rating_count=8500,
+                score_breakdown={
+                    "provider_rating": 8.7,
+                    "provider_rating_count": 8500,
+                    "user_score": 8.0,
+                    "days_since_activity": 220.0,
+                    "rewatch_count": 2.0,
+                },
+            ),
+        ]
+
+        reranked = _apply_comfort_confidence(
+            candidates,
+            profile_payload,
+            use_movie_rewatch_model=True,
+        )
+        legacy_titles, current_titles, _payload = self._comparison_titles(reranked, top_n=2)
+
+        self.assertEqual(
+            legacy_titles,
+            ["Reliable Rewatch", "Beloved Rewatch"],
+        )
+        self.assertEqual(
+            current_titles,
+            ["Beloved Rewatch", "Reliable Rewatch"],
+        )
+
+    def test_tv_clear_out_next_world_quality_debug_shows_before_and_after_titles(self):
+        profile_payload = {
+            "phase_keyword_affinity": {"serial mystery": 1.0, "cozy": 0.9},
+            "recent_keyword_affinity": {"serial mystery": 1.0, "cozy": 0.9},
+            "phase_studio_affinity": {"tv house": 1.0},
+            "recent_studio_affinity": {"tv house": 1.0},
+            "phase_collection_affinity": {"queue next": 1.0},
+            "recent_collection_affinity": {"queue next": 1.0},
+            "phase_certification_affinity": {"PG": 1.0},
+            "recent_certification_affinity": {"PG": 1.0},
+            "phase_runtime_bucket_affinity": {"45_59": 1.0},
+            "recent_runtime_bucket_affinity": {"45_59": 1.0},
+            "phase_decade_affinity": {"2020s": 1.0},
+            "recent_decade_affinity": {"2020s": 1.0},
+            "phase_genre_affinity": {"mystery": 1.0, "drama": 0.8},
+            "recent_genre_affinity": {"mystery": 1.0, "drama": 0.8},
+            "comfort_library_affinity": {
+                "keywords": {"serial mystery": 1.0, "cozy": 0.9},
+                "collections": {"queue next": 1.0},
+                "studios": {"tv house": 1.0},
+                "genres": {"mystery": 1.0, "drama": 0.8},
+                "directors": {},
+                "lead_cast": {},
+                "certifications": {"PG": 1.0},
+                "runtime_buckets": {"45_59": 1.0},
+                "decades": {"2020s": 1.0},
+            },
+            "comfort_rewatch_affinity": {
+                "keywords": {"serial mystery": 1.0},
+                "collections": {"queue next": 1.0},
+                "studios": {"tv house": 1.0},
+                "genres": {"mystery": 1.0},
+                "directors": {},
+                "lead_cast": {},
+                "certifications": {"PG": 1.0},
+                "runtime_buckets": {"45_59": 1.0},
+                "decades": {"2020s": 1.0},
+            },
+            "world_rating_profile": {
+                "alignment": 0.92,
+                "confidence": 0.7,
+                "sample_size": 9,
+            },
+        }
+        candidates = [
+            CandidateItem(
+                media_type=MediaTypes.TV.value,
+                source=Sources.TMDB.value,
+                media_id="queue-low",
+                title="Queue Up First",
+                genres=["Mystery", "Drama"],
+                keywords=["serial mystery", "cozy"],
+                studios=["tv house"],
+                collection_name="Queue Next",
+                certification="PG",
+                runtime_bucket="45_59",
+                release_decade="2020s",
+                popularity=88.0,
+                rating=6.7,
+                rating_count=7000,
+                score_breakdown={
+                    "provider_rating": 6.7,
+                    "provider_rating_count": 7000,
+                    "days_since_activity": 40.0,
+                    "rewatch_count": 1.0,
+                },
+            ),
+            CandidateItem(
+                media_type=MediaTypes.TV.value,
+                source=Sources.TMDB.value,
+                media_id="queue-high",
+                title="Prestige Next Episode",
+                genres=["Mystery", "Drama"],
+                keywords=["serial mystery", "cozy"],
+                studios=["tv house"],
+                collection_name="Queue Next",
+                certification="PG",
+                runtime_bucket="45_59",
+                release_decade="2020s",
+                popularity=88.0,
+                rating=8.8,
+                rating_count=7000,
+                score_breakdown={
+                    "provider_rating": 8.8,
+                    "provider_rating_count": 7000,
+                    "days_since_activity": 40.0,
+                    "rewatch_count": 1.0,
+                },
+            ),
+        ]
+
+        reranked = _apply_comfort_confidence(
+            candidates,
+            profile_payload,
+            use_movie_rewatch_model=True,
+        )
+        legacy_titles, current_titles, _payload = self._comparison_titles(reranked, top_n=2)
+
+        self.assertEqual(
+            legacy_titles,
+            ["Queue Up First", "Prestige Next Episode"],
+        )
+        self.assertEqual(
+            current_titles,
+            ["Prestige Next Episode", "Queue Up First"],
+        )
+
+    def test_behavior_first_world_quality_stays_legacy_when_evidence_is_low(self):
+        profile_payload = {
+            "phase_keyword_affinity": {"cozy": 1.0},
+            "recent_keyword_affinity": {"cozy": 1.0},
+            "phase_studio_affinity": {"studio home": 1.0},
+            "recent_studio_affinity": {"studio home": 1.0},
+            "phase_certification_affinity": {"PG": 1.0},
+            "recent_certification_affinity": {"PG": 1.0},
+            "phase_runtime_bucket_affinity": {"90_109": 1.0},
+            "recent_runtime_bucket_affinity": {"90_109": 1.0},
+            "phase_decade_affinity": {"2020s": 1.0},
+            "recent_decade_affinity": {"2020s": 1.0},
+            "phase_genre_affinity": {"adventure": 1.0},
+            "recent_genre_affinity": {"adventure": 1.0},
+            "comfort_library_affinity": {
+                "keywords": {"cozy": 1.0},
+                "collections": {},
+                "studios": {"studio home": 1.0},
+                "genres": {"adventure": 1.0},
+                "directors": {},
+                "lead_cast": {},
+                "certifications": {"PG": 1.0},
+                "runtime_buckets": {"90_109": 1.0},
+                "decades": {"2020s": 1.0},
+            },
+            "comfort_rewatch_affinity": {
+                "keywords": {"cozy": 1.0},
+                "collections": {},
+                "studios": {"studio home": 1.0},
+                "genres": {"adventure": 1.0},
+                "directors": {},
+                "lead_cast": {},
+                "certifications": {"PG": 1.0},
+                "runtime_buckets": {"90_109": 1.0},
+                "decades": {"2020s": 1.0},
+            },
+            "world_rating_profile": {
+                "alignment": 0.95,
+                "confidence": 0.33,
+                "sample_size": 4,
+            },
+        }
+        candidates = [
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source=Sources.TMDB.value,
+                media_id="low-evidence-low",
+                title="Low Evidence Crowdpleaser",
+                genres=["Adventure"],
+                keywords=["cozy"],
+                studios=["studio home"],
+                certification="PG",
+                runtime_bucket="90_109",
+                release_decade="2020s",
+                popularity=82.0,
+                rating=6.1,
+                rating_count=8000,
+                score_breakdown={
+                    "provider_rating": 6.1,
+                    "provider_rating_count": 8000,
+                    "days_since_activity": 0.0,
+                    "rewatch_count": 1.0,
+                },
+            ),
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source=Sources.TMDB.value,
+                media_id="low-evidence-high",
+                title="Low Evidence Critical Darling",
+                genres=["Adventure"],
+                keywords=["cozy"],
+                studios=["studio home"],
+                certification="PG",
+                runtime_bucket="90_109",
+                release_decade="2020s",
+                popularity=82.0,
+                rating=8.9,
+                rating_count=8000,
+                score_breakdown={
+                    "provider_rating": 8.9,
+                    "provider_rating_count": 8000,
+                    "days_since_activity": 0.0,
+                    "rewatch_count": 1.0,
+                },
+            ),
+        ]
+
+        reranked = _apply_comfort_confidence(
+            candidates,
+            profile_payload,
+            use_movie_rewatch_model=True,
+        )
+        legacy_titles, current_titles, payload = self._comparison_titles(reranked, top_n=2)
+
+        self.assertEqual(
+            legacy_titles,
+            ["Low Evidence Crowdpleaser", "Low Evidence Critical Darling"],
+        )
+        self.assertEqual(current_titles, legacy_titles)
+        self.assertEqual(payload["comparison_summary"]["promoted_titles"], [])
+        self.assertEqual(payload["comparison_summary"]["dropped_titles"], [])
+
+    def test_behavior_first_negative_alignment_does_not_invert_toward_bad_titles(self):
+        profile_payload = {
+            "phase_keyword_affinity": {"comfort": 1.0, "family": 0.9},
+            "recent_keyword_affinity": {"comfort": 1.0, "family": 0.9},
+            "phase_studio_affinity": {"studio home": 1.0},
+            "recent_studio_affinity": {"studio home": 1.0},
+            "phase_collection_affinity": {"comfort shelf": 1.0},
+            "recent_collection_affinity": {"comfort shelf": 1.0},
+            "phase_certification_affinity": {"PG": 1.0},
+            "recent_certification_affinity": {"PG": 1.0},
+            "phase_runtime_bucket_affinity": {"90_109": 1.0},
+            "recent_runtime_bucket_affinity": {"90_109": 1.0},
+            "phase_decade_affinity": {"2020s": 1.0},
+            "recent_decade_affinity": {"2020s": 1.0},
+            "phase_genre_affinity": {"animation": 1.0, "family": 0.9},
+            "recent_genre_affinity": {"animation": 1.0, "family": 0.9},
+            "comfort_library_affinity": {
+                "keywords": {"comfort": 1.0, "family": 0.9},
+                "collections": {"comfort shelf": 1.0},
+                "studios": {"studio home": 1.0},
+                "genres": {"animation": 1.0, "family": 0.9},
+                "directors": {},
+                "lead_cast": {},
+                "certifications": {"PG": 1.0},
+                "runtime_buckets": {"90_109": 1.0},
+                "decades": {"2020s": 1.0},
+            },
+            "comfort_rewatch_affinity": {
+                "keywords": {"comfort": 1.0, "family": 0.9},
+                "collections": {"comfort shelf": 1.0},
+                "studios": {"studio home": 1.0},
+                "genres": {"animation": 1.0, "family": 0.9},
+                "directors": {},
+                "lead_cast": {},
+                "certifications": {"PG": 1.0},
+                "runtime_buckets": {"90_109": 1.0},
+                "decades": {"2020s": 1.0},
+            },
+            "world_rating_profile": {
+                "alignment": -0.9,
+                "confidence": 0.9,
+                "sample_size": 10,
+            },
+        }
+        candidates = [
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source=Sources.TMDB.value,
+                media_id="negative-alignment-strong",
+                title="Strong Comfort Fit",
+                genres=["Animation", "Family"],
+                keywords=["comfort", "family"],
+                studios=["studio home"],
+                collection_name="Comfort Shelf",
+                certification="PG",
+                runtime_bucket="90_109",
+                release_decade="2020s",
+                popularity=70.0,
+                rating=5.8,
+                rating_count=6000,
+                score_breakdown={
+                    "provider_rating": 5.8,
+                    "provider_rating_count": 6000,
+                    "user_score": 8.0,
+                    "days_since_activity": 240.0,
+                    "rewatch_count": 2.0,
+                },
+            ),
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source=Sources.TMDB.value,
+                media_id="negative-alignment-weak",
+                title="High Consensus Weak Fit",
+                genres=["Drama"],
+                keywords=["biography"],
+                studios=["other studio"],
+                certification="PG",
+                runtime_bucket="90_109",
+                release_decade="2020s",
+                popularity=70.0,
+                rating=9.1,
+                rating_count=6000,
+                score_breakdown={
+                    "provider_rating": 9.1,
+                    "provider_rating_count": 6000,
+                    "user_score": 8.0,
+                    "days_since_activity": 240.0,
+                    "rewatch_count": 2.0,
+                },
+            ),
+        ]
+
+        reranked = _apply_comfort_confidence(
+            candidates,
+            profile_payload,
+            use_movie_rewatch_model=True,
+        )
+        legacy_titles, current_titles, payload = self._comparison_titles(reranked, top_n=2)
+
+        self.assertEqual(legacy_titles[0], "Strong Comfort Fit")
+        self.assertEqual(current_titles[0], "Strong Comfort Fit")
+        self.assertEqual(payload["comparison_summary"]["promoted_titles"], [])
+        self.assertLess(
+            reranked[0].score_breakdown["world_quality"],
+            reranked[1].score_breakdown["world_quality"],
+        )
+
     def test_clear_out_next_candidates_exclude_caught_up_anime_entries(self):
         open_item = Item.objects.create(
             media_id="clear-open-1",
@@ -3457,7 +4002,7 @@ class DiscoverServiceTests(TestCase):
         self.assertEqual(candidate.runtime_bucket, "<90")
         self.assertEqual(candidate.release_decade, "2020s")
 
-    def test_behavior_first_confidence_applies_to_tv_and_anime(self):
+    def test_behavior_first_confidence_applies_to_tv(self):
         base_profile = {
             "phase_keyword_affinity": {"holiday": 1.0, "whodunit": 0.9},
             "recent_keyword_affinity": {"holiday": 0.9, "whodunit": 0.8},
@@ -3501,65 +4046,161 @@ class DiscoverServiceTests(TestCase):
             },
         }
 
-        for media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
-            with self.subTest(media_type=media_type):
-                candidates = [
-                    CandidateItem(
-                        media_type=media_type,
-                        source=Sources.TMDB.value,
-                        media_id=f"{media_type}-fit",
-                        title="Family Comfort",
-                        genres=["Animation", "Family"],
-                        keywords=["holiday", "whodunit"],
-                        studios=["pixar"],
-                        directors=["greta gerwig"],
-                        lead_cast=["amy poehler"],
-                        collection_name="Mystery Collection",
-                        certification="PG",
-                        runtime_bucket="<90",
-                        release_decade="2020s",
-                        popularity=90.0,
-                        rating_count=9000,
-                        score_breakdown={
-                            "user_score": 8.0,
-                            "days_since_activity": 220.0,
-                            "rewatch_count": 2.0,
-                            "recent_history_tag_coverage": 0.0,
-                        },
-                    ),
-                    CandidateItem(
-                        media_type=media_type,
-                        source=Sources.TMDB.value,
-                        media_id=f"{media_type}-weak",
-                        title="Broad Fit",
-                        genres=["Drama"],
-                        certification="PG",
-                        runtime_bucket="<90",
-                        release_decade="2010s",
-                        popularity=70.0,
-                        rating_count=5000,
-                        score_breakdown={
-                            "user_score": 8.0,
-                            "days_since_activity": 260.0,
-                            "rewatch_count": 1.0,
-                            "recent_history_tag_coverage": 0.0,
-                        },
-                    ),
-                ]
+        candidates = [
+            CandidateItem(
+                media_type=MediaTypes.TV.value,
+                source=Sources.TMDB.value,
+                media_id="tv-fit",
+                title="Family Comfort",
+                genres=["Animation", "Family"],
+                keywords=["holiday", "whodunit"],
+                studios=["pixar"],
+                directors=["greta gerwig"],
+                lead_cast=["amy poehler"],
+                collection_name="Mystery Collection",
+                certification="PG",
+                runtime_bucket="<90",
+                release_decade="2020s",
+                popularity=90.0,
+                rating_count=9000,
+                score_breakdown={
+                    "user_score": 8.0,
+                    "days_since_activity": 220.0,
+                    "rewatch_count": 2.0,
+                    "recent_history_tag_coverage": 0.0,
+                },
+            ),
+            CandidateItem(
+                media_type=MediaTypes.TV.value,
+                source=Sources.TMDB.value,
+                media_id="tv-weak",
+                title="Broad Fit",
+                genres=["Drama"],
+                certification="PG",
+                runtime_bucket="<90",
+                release_decade="2010s",
+                popularity=70.0,
+                rating_count=5000,
+                score_breakdown={
+                    "user_score": 8.0,
+                    "days_since_activity": 260.0,
+                    "rewatch_count": 1.0,
+                    "recent_history_tag_coverage": 0.0,
+                },
+            ),
+        ]
 
-                reranked = _apply_comfort_confidence(
-                    candidates,
-                    base_profile,
-                    use_movie_rewatch_model=True,
-                )
+        reranked = _apply_comfort_confidence(
+            candidates,
+            base_profile,
+            use_movie_rewatch_model=True,
+        )
 
-                self.assertEqual(reranked[0].media_id, f"{media_type}-fit")
-                self.assertGreater(reranked[0].score_breakdown["library_fit"], 0.0)
-                self.assertGreater(reranked[0].score_breakdown["recency_phase_fit"], 0.0)
-                self.assertIn("ready_now_score", reranked[0].score_breakdown)
-                self.assertTrue(
-                    reranked[0].score_breakdown["primary_reason_bucket"].startswith("keywords:"),
-                )
+        self.assertEqual(reranked[0].media_id, "tv-fit")
+        self.assertGreater(reranked[0].score_breakdown["library_fit"], 0.0)
+        self.assertGreater(reranked[0].score_breakdown["recency_phase_fit"], 0.0)
+        self.assertIn("ready_now_score", reranked[0].score_breakdown)
+        self.assertTrue(
+            reranked[0].score_breakdown["primary_reason_bucket"].startswith("keywords:"),
+        )
+
+    def test_behavior_first_confidence_keeps_anime_on_generic_path(self):
+        base_profile = {
+            "phase_keyword_affinity": {"holiday": 1.0, "whodunit": 0.9},
+            "recent_keyword_affinity": {"holiday": 0.9, "whodunit": 0.8},
+            "phase_studio_affinity": {"pixar": 1.0},
+            "recent_studio_affinity": {"pixar": 0.9},
+            "phase_collection_affinity": {"mystery collection": 0.9},
+            "recent_collection_affinity": {"mystery collection": 0.8},
+            "phase_director_affinity": {"greta gerwig": 0.6},
+            "recent_director_affinity": {"greta gerwig": 0.4},
+            "phase_lead_cast_affinity": {"amy poehler": 0.6},
+            "recent_lead_cast_affinity": {"amy poehler": 0.4},
+            "phase_certification_affinity": {"pg": 1.0},
+            "recent_certification_affinity": {"pg": 0.9},
+            "phase_runtime_bucket_affinity": {"<90": 1.0},
+            "recent_runtime_bucket_affinity": {"<90": 0.9},
+            "phase_decade_affinity": {"2020s": 0.7},
+            "recent_decade_affinity": {"2020s": 0.8},
+            "phase_genre_affinity": {"animation": 0.8, "family": 0.7},
+            "recent_genre_affinity": {"animation": 0.9, "family": 0.8},
+            "comfort_library_affinity": {
+                "keywords": {"holiday": 1.0, "whodunit": 0.95},
+                "collections": {"mystery collection": 0.9},
+                "studios": {"pixar": 1.0},
+                "genres": {"animation": 0.9, "family": 0.8},
+                "directors": {"greta gerwig": 0.4},
+                "lead_cast": {"amy poehler": 0.3},
+                "certifications": {"PG": 1.0},
+                "runtime_buckets": {"<90": 1.0},
+                "decades": {"2020s": 0.9},
+            },
+            "comfort_rewatch_affinity": {
+                "keywords": {"holiday": 1.0},
+                "collections": {"mystery collection": 0.9},
+                "studios": {"pixar": 1.0},
+                "genres": {"animation": 0.9},
+                "directors": {},
+                "lead_cast": {},
+                "certifications": {"PG": 1.0},
+                "runtime_buckets": {"<90": 1.0},
+                "decades": {"2020s": 0.9},
+            },
+        }
+        candidates = [
+            CandidateItem(
+                media_type=MediaTypes.ANIME.value,
+                source=Sources.TMDB.value,
+                media_id="anime-fit",
+                title="Family Comfort",
+                genres=["Animation", "Family"],
+                keywords=["holiday", "whodunit"],
+                studios=["pixar"],
+                directors=["greta gerwig"],
+                lead_cast=["amy poehler"],
+                collection_name="Mystery Collection",
+                certification="PG",
+                runtime_bucket="<90",
+                release_decade="2020s",
+                popularity=90.0,
+                rating_count=9000,
+                score_breakdown={
+                    "user_score": 8.0,
+                    "days_since_activity": 220.0,
+                    "rewatch_count": 2.0,
+                    "recent_history_tag_coverage": 0.0,
+                },
+            ),
+            CandidateItem(
+                media_type=MediaTypes.ANIME.value,
+                source=Sources.TMDB.value,
+                media_id="anime-weak",
+                title="Broad Fit",
+                genres=["Drama"],
+                certification="PG",
+                runtime_bucket="<90",
+                release_decade="2010s",
+                popularity=70.0,
+                rating_count=5000,
+                score_breakdown={
+                    "user_score": 8.0,
+                    "days_since_activity": 260.0,
+                    "rewatch_count": 1.0,
+                    "recent_history_tag_coverage": 0.0,
+                },
+            ),
+        ]
+
+        reranked = _apply_comfort_confidence(
+            candidates,
+            base_profile,
+            use_movie_rewatch_model=True,
+        )
+
+        self.assertEqual(reranked[0].media_id, "anime-weak")
+        self.assertEqual(reranked[0].score_breakdown["tag_signal_mode"], "tag_sparse")
+        self.assertNotIn("library_fit", reranked[0].score_breakdown)
+        self.assertNotIn("primary_reason_bucket", reranked[0].score_breakdown)
 
     def test_movie_comfort_confidence_prefers_behavior_first_fits_and_filters_weak_unrated(self):
         candidates = [
@@ -3841,6 +4482,15 @@ class DiscoverServiceTests(TestCase):
         self.assertIn("burst_replay_allowance", payload["top_candidates"][0])
         self.assertIn("active_signal_families", payload["top_candidates"][0])
         self.assertIn("suppressed_signal_families", payload["top_candidates"][0])
+        self.assertIn("world_quality", payload["top_candidates"][0])
+        self.assertIn("tmdb_world_quality", payload["top_candidates"][0])
+        self.assertIn("trakt_world_quality", payload["top_candidates"][0])
+        self.assertIn("world_source_blend", payload["top_candidates"][0])
+        self.assertIn("legacy_rank", payload["top_candidates"][0])
+        self.assertIn("rank_delta", payload["top_candidates"][0])
+        self.assertIn("legacy_raw_final_score", payload["top_candidates"][0])
+        self.assertIn("world_alignment_sample_size", payload["top_candidates"][0])
+        self.assertIn("comparison_summary", payload)
 
     @patch("app.discover.service._is_holiday_window", return_value=False)
     def test_movie_behavior_first_applies_keyword_holiday_penalty_out_of_season(self, _mock_window):
