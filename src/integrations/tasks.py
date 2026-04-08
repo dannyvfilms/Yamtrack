@@ -41,6 +41,19 @@ logger = logging.getLogger(__name__)
 ERROR_TITLE = "\n\n\n Couldn't import the following media: \n\n"
 
 
+def _is_expected_plex_lookup_error(exc):
+    """Return True for expected Plex library lookup failures that don't need tracebacks."""
+    if isinstance(exc, plex_api.PlexClientError):
+        return True
+
+    summary = exception_summary(exc).lower()
+    if "timeout" in summary or "timed out" in summary:
+        return True
+
+    exc_type = type(exc).__name__.lower()
+    return "timeout" in exc_type
+
+
 def _coerce_uploaded_file(file):
     """Normalize uploaded file task args to a binary file-like object."""
     if hasattr(file, "read"):
@@ -1479,7 +1492,21 @@ def fetch_collection_metadata_for_item(user_id, item_id):
                     logger.info("Could not find matching Plex item for %s - %s in section '%s' (searched %d/%d items)", 
                                user.username, item.title, section.get("title"), searched_count, total)
             except Exception as exc:
-                logger.warning("Error searching section '%s' for item %s: %s", section.get("title"), item.title, exc, exc_info=True)
+                if _is_expected_plex_lookup_error(exc):
+                    logger.warning(
+                        "Error searching section '%s' for item %s: %s",
+                        section.get("title"),
+                        item.title,
+                        exception_summary(exc),
+                    )
+                else:
+                    logger.warning(
+                        "Error searching section '%s' for item %s: %s",
+                        section.get("title"),
+                        item.title,
+                        exc,
+                        exc_info=True,
+                    )
                 logger.info("Continuing to search other sections...")
                 continue
     except Exception as exc:

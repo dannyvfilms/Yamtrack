@@ -1428,6 +1428,35 @@ class LivePlaybackScrobbleClearingTests(TestCase):
         self.assertEqual(response.status_code, 200)
         mock_process_media.assert_not_called()
 
+    def test_library_filter_rejection_logs_reason(self):
+        """Rejected library-filtered events should log the reason at info level."""
+        self.user.plex_webhook_libraries = ["machine-a::1"]
+        self.user.save(update_fields=["plex_webhook_libraries"])
+
+        payload = {
+            "event": "media.scrobble",
+            "Account": {"title": "testuser"},
+            "Server": {"uuid": "machine-a"},
+            "Metadata": {
+                "type": "movie",
+                "title": "Big Hero 6",
+                "librarySectionID": "2",
+                "Guid": [{"id": "tmdb://177572"}],
+            },
+        }
+
+        with self.assertLogs("integrations.webhooks.plex", level="INFO") as captured:
+            response = self.client.post(
+                self.url,
+                data={"payload": json.dumps(payload)},
+                format="multipart",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        joined_logs = "\n".join(captured.output)
+        self.assertIn("Ignored Plex webhook event=media.scrobble", joined_logs)
+        self.assertIn("payload library machine-a::2 is not selected", joined_logs)
+
     def test_library_filter_accepts_selected_library(self):
         """Webhook events should be accepted when library is selected."""
         self.user.plex_webhook_libraries = ["machine-a::2"]

@@ -51,8 +51,17 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
             return None
 
         payload_user = payload["Account"]["title"].strip().lower()
-        if not self._is_valid_user(payload_user, payload, user):
-            logger.debug("Ignoring Plex webhook event for unmatched Plex user")
+        rejection_reason = self._get_user_rejection_reason(payload_user, payload, user)
+        if rejection_reason is not None:
+            metadata = payload.get("Metadata", {}) or {}
+            media_label = self._get_media_title(payload) or metadata.get("title") or "<unknown>"
+            logger.info(
+                "Ignored Plex webhook event=%s title=%s for yamtrack_user=%s: %s",
+                event_type,
+                media_label,
+                user.username,
+                rejection_reason,
+            )
             return None
 
         media_type = self._get_media_type(payload)
@@ -786,6 +795,9 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
         return rating
 
     def _is_valid_user(self, payload_user, payload, user):
+        return self._get_user_rejection_reason(payload_user, payload, user) is None
+
+    def _get_user_rejection_reason(self, payload_user, payload, user):
         stored_usernames = {
             u.strip().lower()
             for u in (user.plex_usernames or "").split(",")
@@ -809,20 +821,28 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
         )
 
         if stored_usernames and payload_usernames.intersection(stored_usernames):
-            return self._is_valid_library(payload, user)
+            return self._get_library_rejection_reason(payload, user)
 
         payload_account_id = self._extract_payload_account_id(payload)
         connected_account_id = str(
             getattr(plex_account, "plex_account_id", "") or "",
         ).strip()
-        if not (
+        if (
             payload_account_id
             and connected_account_id
             and payload_account_id == connected_account_id
         ):
-            return False
+            return self._get_library_rejection_reason(payload, user)
 
-        return self._is_valid_library(payload, user)
+        configured_usernames = sorted(stored_usernames) if stored_usernames else ["<none>"]
+        payload_username_values = sorted(payload_usernames) if payload_usernames else ["<none>"]
+        return (
+            "payload user/account did not match configured Plex identity "
+            f"(payload_usernames={payload_username_values}, "
+            f"payload_account_id={payload_account_id or '<none>'}, "
+            f"configured_usernames={configured_usernames}, "
+            f"connected_account_id={connected_account_id or '<none>'})"
+        )
 
     def _extract_payload_username(self, payload):
         """Extract any alternate Plex username field from a webhook payload."""
@@ -847,9 +867,12 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
         return None
 
     def _is_valid_library(self, payload, user):
+        return self._get_library_rejection_reason(payload, user) is None
+
+    def _get_library_rejection_reason(self, payload, user):
         selected_libraries = user.plex_webhook_libraries
         if not selected_libraries:
-            return True
+            return None
 
         machine_identifier = payload.get("Server", {}).get("uuid")
         section_id = payload.get("Metadata", {}).get("librarySectionID")
@@ -857,14 +880,22 @@ class PlexWebhookProcessor(BaseWebhookProcessor):
             logger.debug(
                 "Rejecting Plex webhook event because library info is missing while library filtering is enabled.",
             )
-            return False
+            return (
+                "library filtering is enabled but the webhook payload is missing "
+                "Server.uuid or Metadata.librarySectionID"
+            )
 
         payload_library = f"{machine_identifier}::{section_id}"
-        is_allowed = payload_library in selected_libraries
         logger.debug(
             "Checking Plex webhook payload library against configured libraries",
         )
-        return is_allowed
+        if payload_library in selected_libraries:
+            return None
+
+        return (
+            f"payload library {payload_library} is not selected "
+            f"(selected_libraries={sorted(selected_libraries)})"
+        )
 
     def _is_played(self, payload):
         return payload["event"] == "media.scrobble"

@@ -6,7 +6,11 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 
 from app.models import CollectionEntry, Item, MediaTypes, Movie, Sources, Status
-from integrations.tasks import update_collection_metadata_from_plex_webhook
+from integrations import plex as plex_api
+from integrations.tasks import (
+    fetch_collection_metadata_for_item,
+    update_collection_metadata_from_plex_webhook,
+)
 from integrations.webhooks.plex import PlexWebhookProcessor
 
 
@@ -109,3 +113,48 @@ class CollectionWebhookTest(TestCase):
                 "http://plex.example.com",
                 "test_token",
             )
+
+    @patch("integrations.tasks.logger.warning")
+    @patch("integrations.tasks.plex_api.fetch_section_all_items")
+    @patch("integrations.tasks.plex_api.list_resources")
+    def test_fetch_collection_metadata_timeout_logs_without_traceback(
+        self,
+        mock_list_resources,
+        mock_fetch_section_all_items,
+        mock_logger_warning,
+    ):
+        """Expected Plex lookup failures should not emit stack traces."""
+        from integrations.models import PlexAccount
+
+        PlexAccount.objects.create(
+            user=self.user,
+            plex_token="test_token",
+            plex_username="test",
+            sections=[
+                {
+                    "id": "1",
+                    "title": "Movies",
+                    "type": "movie",
+                    "uri": "http://plex.example.com",
+                    "machine_identifier": "test_machine",
+                }
+            ],
+        )
+        mock_list_resources.return_value = []
+        mock_fetch_section_all_items.side_effect = [
+            ([], 9502),
+            plex_api.PlexClientError(
+                "HTTPSConnectionPool(host='plex.example.com', port=443): Read timed out.",
+            ),
+        ]
+
+        result = fetch_collection_metadata_for_item(self.user.id, self.item.id)
+
+        self.assertIsNone(result)
+        matching_calls = [
+            call
+            for call in mock_logger_warning.call_args_list
+            if call.args and "Error searching section" in call.args[0]
+        ]
+        self.assertTrue(matching_calls)
+        self.assertNotIn("exc_info", matching_calls[0].kwargs)
