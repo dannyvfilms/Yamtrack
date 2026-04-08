@@ -557,6 +557,40 @@ class UserGetImportTasksTests(TestCase):
         )
         mock_process_task_result.assert_called_once()
 
+    @patch("users.models.AsyncResult")
+    @patch("users.helpers.process_task_result")
+    def test_get_import_tasks_reconciles_stale_pending_result(
+        self,
+        mock_process_task_result,
+        mock_async_result,
+    ):
+        """Pending DB rows should reflect terminal Celery backend states."""
+        processed_task = MagicMock()
+        processed_task.summary = "Imported 3 movies."
+        processed_task.errors = None
+        mock_process_task_result.return_value = processed_task
+
+        backend_result = MagicMock()
+        backend_result.status = "SUCCESS"
+        backend_result.result = "Imported 3 movies."
+        mock_async_result.return_value = backend_result
+
+        task_result = TaskResult.objects.create(
+            task_id="task-pending",
+            task_name="Import from Trakt",
+            task_kwargs=(f'{{"user_id": {self.user.id}}}'),
+            status="PENDING",
+            result=None,
+        )
+
+        import_tasks = self.user.get_import_tasks()
+        self.assertEqual(len(import_tasks["results"]), 1)
+        self.assertEqual(import_tasks["results"][0]["status"], "SUCCESS")
+
+        task_result.refresh_from_db()
+        self.assertEqual(task_result.status, "SUCCESS")
+        self.assertEqual(task_result.result, "Imported 3 movies.")
+
 
 class UserResolveWatchDateTests(TestCase):
     """Tests for the User.resolve_watch_date method."""

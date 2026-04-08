@@ -1,7 +1,10 @@
 import hashlib
 import secrets
+from datetime import timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
+from celery import states
+from celery.result import AsyncResult
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.db.models import Q
@@ -1306,6 +1309,14 @@ class User(AbstractUser):
         # Build results list
         results = []
         for task in task_results:
+            if task.status in {states.PENDING, states.STARTED}:
+                async_result = AsyncResult(task.task_id)
+                if async_result.status != task.status:
+                    task.status = async_result.status
+                    task.result = async_result.result
+                    task.date_done = timezone.now()
+                    task.save(update_fields=["status", "result", "date_done"])
+
             source = result_task_to_source[task.task_name]
             processed_task = helpers.process_task_result(task)
             results.append(
@@ -1369,10 +1380,6 @@ class User(AbstractUser):
                 )
 
         # Check for global Last.fm task (uses IntervalSchedule, not user-specific)
-        from datetime import timedelta
-
-        from django.utils import timezone
-
         if hasattr(self, "lastfm_account") and self.lastfm_account and self.lastfm_account.is_connected:
             lastfm_task = PeriodicTask.objects.filter(
                 task="Poll Last.fm for all users",
