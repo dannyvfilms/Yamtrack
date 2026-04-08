@@ -431,16 +431,9 @@ class TraktImporter:
         if not tmdb_id:
             return
 
-        # Check if we should process this episode based on mode
-        if not helpers.should_process_media(
-            self.existing_media,
-            self.to_delete,
-            MediaTypes.TV.value,
-            Sources.TMDB.value,
-            tmdb_id,
-            self.mode,
-        ):
-            return
+        tv_exists = tmdb_id in self.existing_media[MediaTypes.TV.value][Sources.TMDB.value]
+        if self.mode == "overwrite" and tv_exists:
+            self.to_delete[MediaTypes.TV.value][Sources.TMDB.value].add(tmdb_id)
 
         # Extract episode data
         season_number = entry["episode"]["season"]
@@ -482,13 +475,15 @@ class TraktImporter:
         tv_key = f"{tmdb_id}"
 
         if tv_key not in self.media_instances[MediaTypes.TV.value]:
-            tv_obj = app.models.TV(
-                item=tv_item,
-                user=self.user,
-                status=Status.IN_PROGRESS.value,
-            )
-            tv_obj._history_date = parse_datetime(watched_at)
-            self.bulk_media[MediaTypes.TV.value].append(tv_obj)
+            tv_obj = self.existing_media[MediaTypes.TV.value][Sources.TMDB.value].get(tmdb_id)
+            if tv_obj is None:
+                tv_obj = app.models.TV(
+                    item=tv_item,
+                    user=self.user,
+                    status=Status.IN_PROGRESS.value,
+                )
+                tv_obj._history_date = parse_datetime(watched_at)
+                self.bulk_media[MediaTypes.TV.value].append(tv_obj)
             self.media_instances[MediaTypes.TV.value][tv_key] = [tv_obj]
         else:
             tv_obj = self.media_instances[MediaTypes.TV.value][tv_key][0]
@@ -503,14 +498,19 @@ class TraktImporter:
 
         season_key = f"{tmdb_id}:{season_number}"
         if season_key not in self.media_instances[MediaTypes.SEASON.value]:
-            season_obj = app.models.Season(
-                item=season_item,
+            season_obj = app.models.Season.objects.filter(
                 user=self.user,
-                related_tv=tv_obj,
-                status=Status.IN_PROGRESS.value,
-            )
-            season_obj._history_date = parse_datetime(watched_at)
-            self.bulk_media[MediaTypes.SEASON.value].append(season_obj)
+                item=season_item,
+            ).first()
+            if season_obj is None:
+                season_obj = app.models.Season(
+                    item=season_item,
+                    user=self.user,
+                    related_tv=tv_obj,
+                    status=Status.IN_PROGRESS.value,
+                )
+                season_obj._history_date = parse_datetime(watched_at)
+                self.bulk_media[MediaTypes.SEASON.value].append(season_obj)
             self.media_instances[MediaTypes.SEASON.value][season_key] = [season_obj]
         else:
             season_obj = self.media_instances[MediaTypes.SEASON.value][season_key][0]
