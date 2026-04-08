@@ -1719,8 +1719,8 @@ class StatisticsViewTests(TestCase):
         self.assertEqual(by_name["Show Fallback Actor"]["plays"], 1)
 
     @patch("app.tasks.enqueue_credits_backfill_items")
-    def test_statistics_top_talent_does_not_use_show_fallback_when_episode_has_people(self, _mock_enqueue):
-        """Episode plays should not use show-level fallback when episode credits exist."""
+    def test_statistics_top_talent_combines_episode_and_show_cast_when_both_exist(self, _mock_enqueue):
+        """Episode plays should count both episode-level credits and show main cast credits."""
         watched_at = timezone.now()
         show_item = Item.objects.create(
             media_id="4100",
@@ -1806,7 +1806,7 @@ class StatisticsViewTests(TestCase):
         top_talent = response.context["top_talent"]
         actress_names = {entry["name"] for entry in top_talent["top_actresses"]}
         actor_names = {entry["name"] for entry in top_talent["top_actors"]}
-        self.assertNotIn("Show-Level Actress", actress_names)
+        self.assertIn("Show-Level Actress", actress_names)
         self.assertIn("Episode-Level Actor", actor_names)
 
     @patch("app.providers.services.get_media_metadata")

@@ -389,7 +389,7 @@ class HistoryViewPersonFilterTests(TestCase):
         self.assertNotIn("Other Movie", titles)
         self.assertNotIn("Other Episode", titles)
 
-    def test_history_person_filter_prefers_episode_credits_with_show_fallback(self):
+    def test_history_person_filter_matches_episode_or_show_person_credits(self):
         tv_item = Item.objects.create(
             media_id="tv-credits-fallback",
             source=Sources.MANUAL.value,
@@ -502,7 +502,7 @@ class HistoryViewPersonFilterTests(TestCase):
         ]
         self.assertIn("Episode Specific Match", titles)
         self.assertIn("Fallback To Show Credit", titles)
-        self.assertNotIn("Episode Specific Exclusion", titles)
+        self.assertIn("Episode Specific Exclusion", titles)
 
 
 class HistoryViewAuthorFilterTests(TestCase):

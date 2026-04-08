@@ -2451,10 +2451,6 @@ def get_person_talent_totals(user, person_source, person_id, start_date=None, en
             if _is_writer_credit(credit):
                 writer_credit_item_ids.add(credit.item_id)
 
-    items_with_episode_people = set(
-        ItemPersonCredit.objects.filter(item_id__in=episode_item_ids).values_list("item_id", flat=True),
-    )
-
     bucket_plays = Counter()
     bucket_minutes = Counter()
     bucket_movie_items = defaultdict(set)
@@ -2485,14 +2481,9 @@ def get_person_talent_totals(user, person_source, person_id, start_date=None, en
     for episode_item_id, tv_item_id, watched_minutes in episode_play_rows:
         if not tv_item_id:
             continue
-        has_episode_people = episode_item_id in items_with_episode_people
         media_key = item_media_key_by_id.get(tv_item_id)
         for bucket, item_ids in role_sources:
-            is_match = (
-                episode_item_id in item_ids
-                if has_episode_people
-                else tv_item_id in item_ids
-            )
+            is_match = episode_item_id in item_ids or tv_item_id in item_ids
             if not is_match:
                 continue
             bucket_plays[bucket] += 1
@@ -2776,45 +2767,36 @@ def _aggregate_top_talent(user, start_date, end_date, limit=20, schedule_missing
         if not tv_item_id:
             continue
 
-        # Only fall back to show-level credits when an episode has no credits at all.
-        # If episode-level people exist, treat episode credits as authoritative even
-        # when a specific role bucket is empty (e.g. no female cast on that episode).
-        has_episode_people = episode_item_id in items_with_people
-
-        actor_ids = (
-            cast_actor_ids_by_item.get(episode_item_id, ())
-            if has_episode_people
-            else cast_actor_ids_by_item.get(tv_item_id, ())
+        actor_ids = cast_actor_ids_by_item.get(episode_item_id, set()) | cast_actor_ids_by_item.get(
+            tv_item_id,
+            set(),
         )
         for person_id in actor_ids:
             actor_counts[person_id] += 1
             actor_minutes[person_id] += watched_minutes
             actor_show_items[person_id].add(tv_item_id)
 
-        actress_ids = (
-            cast_actress_ids_by_item.get(episode_item_id, ())
-            if has_episode_people
-            else cast_actress_ids_by_item.get(tv_item_id, ())
+        actress_ids = cast_actress_ids_by_item.get(episode_item_id, set()) | cast_actress_ids_by_item.get(
+            tv_item_id,
+            set(),
         )
         for person_id in actress_ids:
             actress_counts[person_id] += 1
             actress_minutes[person_id] += watched_minutes
             actress_show_items[person_id].add(tv_item_id)
 
-        director_ids = (
-            director_ids_by_item.get(episode_item_id, ())
-            if has_episode_people
-            else director_ids_by_item.get(tv_item_id, ())
+        director_ids = director_ids_by_item.get(episode_item_id, set()) | director_ids_by_item.get(
+            tv_item_id,
+            set(),
         )
         for person_id in director_ids:
             director_counts[person_id] += 1
             director_minutes[person_id] += watched_minutes
             director_show_items[person_id].add(tv_item_id)
 
-        writer_ids = (
-            writer_ids_by_item.get(episode_item_id, ())
-            if has_episode_people
-            else writer_ids_by_item.get(tv_item_id, ())
+        writer_ids = writer_ids_by_item.get(episode_item_id, set()) | writer_ids_by_item.get(
+            tv_item_id,
+            set(),
         )
         for person_id in writer_ids:
             writer_counts[person_id] += 1

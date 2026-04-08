@@ -15,11 +15,14 @@ from app.models import (
     Manga,
     MediaTypes,
     Movie,
+    Episode,
     Person,
     PersonGender,
+    Season,
     Sources,
     Status,
     Studio,
+    TV,
 )
 from users.models import DateFormatChoices
 
@@ -176,6 +179,113 @@ class PersonDetailViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "01.01.1990")
         self.assertNotContains(response, "1990-01-01")
+
+    @patch("app.providers.tmdb.person")
+    def test_person_detail_counts_tv_runtime_from_show_cast_when_episode_has_other_people(
+        self,
+        mock_person,
+    ):
+        show_item = Item.objects.create(
+            media_id="777",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Main Cast Show",
+            image="http://example.com/show.jpg",
+        )
+        tv = TV.objects.create(
+            item=show_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+        )
+        season_item = Item.objects.create(
+            media_id="777",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Main Cast Show",
+            image="http://example.com/season.jpg",
+            season_number=1,
+        )
+        season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=tv,
+            status=Status.COMPLETED.value,
+        )
+        episode_item = Item.objects.create(
+            media_id="777",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Episode One",
+            image="http://example.com/e1.jpg",
+            season_number=1,
+            episode_number=1,
+            runtime_minutes=45,
+        )
+        Episode.objects.create(
+            item=episode_item,
+            related_season=season,
+            end_date=timezone.now(),
+        )
+
+        ItemPersonCredit.objects.create(
+            item=show_item,
+            person=self.person,
+            role_type=CreditRoleType.CAST.value,
+            role="Main Cast",
+        )
+        guest_person = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="999",
+            name="Guest Star",
+            gender=PersonGender.MALE.value,
+        )
+        ItemPersonCredit.objects.create(
+            item=episode_item,
+            person=guest_person,
+            role_type=CreditRoleType.CAST.value,
+            role="Guest",
+        )
+
+        mock_person.return_value = {
+            "person_id": "123",
+            "source": Sources.TMDB.value,
+            "name": "Jane Star",
+            "image": "http://example.com/jane.jpg",
+            "biography": "",
+            "known_for_department": "Acting",
+            "gender": "female",
+            "birth_date": None,
+            "death_date": None,
+            "place_of_birth": "",
+            "filmography": [
+                {
+                    "media_id": "777",
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "title": "Main Cast Show",
+                    "image": "http://example.com/show.jpg",
+                    "year": 2022,
+                    "credit_type": "cast",
+                    "role": "Main Cast",
+                    "department": "Acting",
+                },
+            ],
+        }
+
+        response = self.client.get(
+            reverse(
+                "person_detail",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "person_id": "123",
+                    "name": "jane-star",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["tracked_plays_count"], 2)
+        self.assertEqual(response.context["tracked_hours_count"], "0h 45min")
 
     @patch("app.providers.openlibrary.author_profile")
     def test_person_detail_openlibrary_author_uses_bibliography(self, mock_author_profile):

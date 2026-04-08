@@ -650,18 +650,11 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
             person__source_person_id=person_id_filter,
         )
         episodes = episodes.annotate(
-            has_episode_people=models.Exists(episode_person_credits),
             has_episode_person=models.Exists(episode_person_matches),
             has_show_person=models.Exists(show_person_matches),
         ).filter(
-            (
-                models.Q(has_episode_people=True)
-                & models.Q(has_episode_person=True)
-            )
-            | (
-                models.Q(has_episode_people=False)
-                & models.Q(has_show_person=True)
-            ),
+            models.Q(has_episode_person=True)
+            | models.Q(has_show_person=True),
         )
     if target_media_id and target_source and (
         media_type_filter == MediaTypes.TV.value
