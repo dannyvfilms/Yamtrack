@@ -65,14 +65,17 @@
     </div>
 
     <div class="flex flex-col md:flex-row gap-4 mb-6"
-         x-data="{ sort: '{{ current_sort }}', mediaType: '{{ current_media_type }}', query: '{{ request.GET.q|default:''|escapejs }}', mediaTypeLabels: {
+         x-data="{ sort: '{{ current_sort }}', direction: '{{ current_direction|default:'desc' }}', mediaType: '{{ current_media_type }}', query: '{{ request.GET.q|default:''|escapejs }}', mediaTypeLabels: {
            {% for media_type in media_types %}'{{ media_type }}': '{{ media_type|media_type_readable_plural }}',{% endfor %}
            'all': 'All Types'
-         } }">
+         }, sortLabels: {
+           {% for value, label in sort_choices %}'{{ value }}': '{{ label }}'{% if not forloop.last %},{% endif %}{% endfor %}
+         }, defaultDirection(value) { return ['name'].includes(value) ? 'asc' : 'desc' }, toggleSort(value) { this.direction = (this.sort === value) ? (this.direction === 'asc' ? 'desc' : 'asc') : this.defaultDirection(value); this.sort = value; } }">
 
       <!-- Form to manage state -->
       <form id="filter-form" class="hidden">
         <input type="hidden" name="sort" x-model="sort">
+        <input type="hidden" name="direction" x-model="direction">
         <input type="hidden" name="media_type" x-model="mediaType">
         <input type="hidden" name="q" x-model="query">
       </form>
@@ -137,13 +140,24 @@
         </div>
 
         <div class="relative filter-control" x-data="{ open: false }">
-          <button class="h-10 flex items-center gap-2 px-4 pr-0 md:pr-4 bg-[#39404b] rounded-md hover:bg-[#454d5a] transition-colors cursor-pointer"
+          <button class="h-10 flex items-center gap-2 px-4 bg-[#39404b] rounded-md hover:bg-[#454d5a] transition-colors cursor-pointer"
                   @click="open = !open"
                   type="button">
-            {% include "app/icons/arrows-up-down.svg" with classes="w-4 h-4" %}
-            <span class="text-sm"
-                  x-text="sort === 'last_item_added' ? 'Last Item Added' : (sort === 'name' ? 'Name' : (sort === 'newest_first' ? 'Newest First' : 'Items Count'))"></span>
-            {% include "app/icons/chevron-down.svg" with classes="w-4 h-4" %}
+            <span class="text-sm" x-text="sortLabels[sort] || sort"></span>
+            <svg xmlns="http://www.w3.org/2000/svg"
+                 viewBox="0 0 20 20"
+                 class="w-4 h-4"
+                 x-show="direction === 'asc'"
+                 aria-hidden="true">
+              <path d="M10 5 L16 15 H4 Z" fill="currentColor"></path>
+            </svg>
+            <svg xmlns="http://www.w3.org/2000/svg"
+                 viewBox="0 0 20 20"
+                 class="w-4 h-4"
+                 x-show="direction !== 'asc'"
+                 aria-hidden="true">
+              <path d="M10 15 L4 5 H16 Z" fill="currentColor"></path>
+            </svg>
           </button>
 
           <div class="absolute right-0 mt-2 py-1 w-48 bg-[#39404b] rounded-md shadow-lg overflow-hidden z-50 border border-gray-700"
@@ -163,7 +177,7 @@
                       hx-indicator="#loading-indicator"
                       class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
                       :class="sort === '{{ value }}' ? 'bg-indigo-600 text-white font-medium' : 'text-gray-300 hover:bg-[#454d5a] hover:text-white'"
-                      @click="sort = '{{ value }}'; open = false"
+                      @click="toggleSort('{{ value }}'); open = false"
                       type="button">{{ label }}</button>
             {% endfor %}
           </div>

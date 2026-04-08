@@ -52,7 +52,7 @@ class MediaSortChoices(models.TextChoices):
     RELEASE_DATE = "release_date", "Release Date"
     DATE_ADDED = "date_added", "Date Added"
     START_DATE = "start_date", "Start Date"
-    END_DATE = "end_date", "End Date"
+    END_DATE = "end_date", "Last Watched"
     TIME_LEFT = "time_left", "Time Left"
 
 
@@ -92,6 +92,7 @@ class ListSortChoices(models.TextChoices):
     """Choices for list sort options."""
 
     LAST_ITEM_ADDED = "last_item_added", "Last Item Added"
+    LAST_WATCHED = "last_watched", "Last Watched"
     NAME = "name", "Name"
     ITEMS_COUNT = "items_count", "Items Count"
     NEWEST_FIRST = "newest_first", "Newest First"
@@ -607,6 +608,11 @@ class User(AbstractUser):
         default=ListSortChoices.LAST_ITEM_ADDED,
         choices=ListSortChoices,
     )
+    lists_direction = models.CharField(
+        max_length=4,
+        default=DirectionChoices.DESC,
+        choices=DirectionChoices.choices,
+    )
     list_detail_sort = models.CharField(
         max_length=20,
         default=ListDetailSortChoices.DATE_ADDED,
@@ -941,6 +947,10 @@ class User(AbstractUser):
             models.CheckConstraint(
                 name="lists_sort_valid",
                 condition=models.Q(lists_sort__in=ListSortChoices.values),
+            ),
+            models.CheckConstraint(
+                name="lists_direction_valid",
+                condition=models.Q(lists_direction__in=DirectionChoices.values),
             ),
             models.CheckConstraint(
                 name="activity_history_view_valid",

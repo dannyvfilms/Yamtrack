@@ -5,6 +5,7 @@ import secrets
 from urllib.parse import urlencode
 
 from django.apps import apps
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_not_required, login_required
@@ -72,7 +73,121 @@ def _get_completed_item_ids(user, item_ids):
     return completed
 
 
+def _get_item_last_watched_dates(user, item_ids):
+    """Return the latest watched timestamp for each item ID for the current user."""
+    if not item_ids:
+        return {}
+
+    item_ids_by_media_type = {}
+    for item_id, media_type in Item.objects.filter(id__in=item_ids).values_list(
+        "id",
+        "media_type",
+    ):
+        item_ids_by_media_type.setdefault(media_type, set()).add(item_id)
+
+    item_last_watched = {}
+    try:
+        episode_model = apps.get_model("app", MediaTypes.EPISODE.value)
+    except LookupError:
+        episode_model = None
+
+    if episode_model is not None:
+        episode_item_ids = item_ids_by_media_type.get(MediaTypes.EPISODE.value, set())
+        if episode_item_ids:
+            watch_rows = episode_model.objects.filter(
+                item_id__in=episode_item_ids,
+                related_season__user=user,
+                end_date__isnull=False,
+            ).values_list("item_id", "end_date")
+            for item_id, end_date in watch_rows:
+                current_latest = item_last_watched.get(item_id)
+                if current_latest is None or end_date > current_latest:
+                    item_last_watched[item_id] = end_date
+
+        season_item_ids = item_ids_by_media_type.get(MediaTypes.SEASON.value, set())
+        if season_item_ids:
+            watch_rows = episode_model.objects.filter(
+                related_season__item_id__in=season_item_ids,
+                related_season__user=user,
+                end_date__isnull=False,
+            ).values_list("related_season__item_id", "end_date")
+            for item_id, end_date in watch_rows:
+                current_latest = item_last_watched.get(item_id)
+                if current_latest is None or end_date > current_latest:
+                    item_last_watched[item_id] = end_date
+
+        tv_item_ids = item_ids_by_media_type.get(MediaTypes.TV.value, set())
+        if tv_item_ids:
+            watch_rows = episode_model.objects.filter(
+                related_season__related_tv__item_id__in=tv_item_ids,
+                related_season__user=user,
+                end_date__isnull=False,
+            ).values_list("related_season__related_tv__item_id", "end_date")
+            for item_id, end_date in watch_rows:
+                current_latest = item_last_watched.get(item_id)
+                if current_latest is None or end_date > current_latest:
+                    item_last_watched[item_id] = end_date
+
+    for media_type, media_item_ids in item_ids_by_media_type.items():
+        if media_type in {
+            MediaTypes.TV.value,
+            MediaTypes.SEASON.value,
+            MediaTypes.EPISODE.value,
+        }:
+            continue
+
+        try:
+            model = apps.get_model("app", media_type)
+        except LookupError:
+            continue
+
+        field_names = {field.name for field in model._meta.fields}
+        if not {"item", "user", "end_date"}.issubset(field_names):
+            continue
+
+        watch_rows = model.objects.filter(
+            item_id__in=media_item_ids,
+            user=user,
+            end_date__isnull=False,
+        ).values_list("item_id", "end_date")
+
+        for item_id, end_date in watch_rows:
+            current_latest = item_last_watched.get(item_id)
+            if current_latest is None or end_date > current_latest:
+                item_last_watched[item_id] = end_date
+
+    return item_last_watched
+
+
+def _get_list_last_watched_dates(user, list_ids):
+    """Return the latest watched timestamp for each list ID."""
+    if not list_ids:
+        return {}
+
+    item_ids_by_list = {}
+    all_item_ids = set()
+    for list_id, item_id in CustomListItem.objects.filter(
+        custom_list_id__in=list_ids,
+    ).values_list("custom_list_id", "item_id"):
+        item_ids_by_list.setdefault(list_id, set()).add(item_id)
+        all_item_ids.add(item_id)
+
+    item_last_watched = _get_item_last_watched_dates(user, all_item_ids)
+
+    list_last_watched = {}
+    for list_id, item_ids in item_ids_by_list.items():
+        latest_watch = None
+        for item_id in item_ids:
+            watched_at = item_last_watched.get(item_id)
+            if watched_at is not None and (latest_watch is None or watched_at > latest_watch):
+                latest_watch = watched_at
+        list_last_watched[list_id] = latest_watch
+
+    return list_last_watched
+
+
 ASCENDING_LIST_SORTS = {
+    ListSortChoices.NAME,
     ListDetailSortChoices.TITLE,
     ListDetailSortChoices.MEDIA_TYPE,
     ListDetailSortChoices.RELEASE_DATE,
@@ -88,6 +203,188 @@ def _resolve_list_sort_direction(sort_by, direction):
     if direction in {"asc", "desc"}:
         return direction
     return _default_list_sort_direction(sort_by)
+
+
+def _resolve_list_card_image_override(item, *, season_item=None):
+    """Return a season-first poster override for episode cards when available."""
+    if getattr(item, "media_type", None) != MediaTypes.EPISODE.value:
+        return None
+
+    media = getattr(item, "media", None)
+    related_season = getattr(media, "related_season", None) if media else None
+    related_tv = getattr(related_season, "related_tv", None) if related_season else None
+
+    for candidate in (
+        getattr(getattr(related_season, "item", None), "image", None),
+        getattr(season_item, "image", None),
+        getattr(getattr(related_tv, "item", None), "image", None),
+        getattr(item, "image", None),
+    ):
+        if candidate and candidate != settings.IMG_NONE:
+            return candidate
+
+    return None
+
+
+def _list_item_title_fields_from_metadata(media_type, metadata):
+    """Return item title fields, preferring episode titles for episode items."""
+    metadata = metadata or {}
+    if media_type == MediaTypes.EPISODE.value:
+        return Item.title_fields_from_episode_metadata(
+            metadata,
+            fallback_title=metadata.get("title") or "",
+        )
+    return Item.title_fields_from_metadata(metadata)
+
+
+def _episode_title_needs_backfill(item, *, season_item=None):
+    """Return whether an episode item is still using a parent show title."""
+    if getattr(item, "media_type", None) != MediaTypes.EPISODE.value:
+        return False
+    if getattr(item, "season_number", None) is None or getattr(item, "episode_number", None) is None:
+        return False
+
+    media = getattr(item, "media", None)
+    related_season = getattr(media, "related_season", None) if media else None
+    related_tv = getattr(related_season, "related_tv", None) if related_season else None
+
+    current_title = Item._normalize_title_value(getattr(item, "title", None))
+    parent_titles = {
+        Item._normalize_title_value(getattr(season_item, "title", None)),
+        Item._normalize_title_value(getattr(getattr(related_season, "item", None), "title", None)),
+        Item._normalize_title_value(getattr(getattr(related_tv, "item", None), "title", None)),
+    }
+    parent_titles.discard(None)
+
+    return not current_title or current_title in parent_titles
+
+
+def _episode_title_fields_from_season_metadata(item, season_metadata):
+    """Return episode title fields from a season payload when available."""
+    episodes = (season_metadata or {}).get("episodes") or []
+    target_episode = str(getattr(item, "episode_number", ""))
+    for episode in episodes:
+        if str(episode.get("episode_number")) != target_episode:
+            continue
+        return Item.title_fields_from_episode_metadata(
+            episode,
+            fallback_title=getattr(item, "title", ""),
+        )
+    return None
+
+
+def _maybe_backfill_episode_title(item, *, season_item=None, season_metadata=None, force=False):
+    """Resolve malformed episode item titles that still store the show title."""
+    if not force and not _episode_title_needs_backfill(item, season_item=season_item):
+        return
+
+    title_fields = _episode_title_fields_from_season_metadata(item, season_metadata)
+
+    if title_fields is None:
+        try:
+            season_metadata = services.get_media_metadata(
+                MediaTypes.SEASON.value,
+                item.media_id,
+                item.source,
+                [item.season_number],
+            )
+        except Exception as exc:
+            logger.debug(
+                "Could not fetch season metadata for episode title backfill on item %s: %s",
+                item.id,
+                exc,
+            )
+        else:
+            title_fields = _episode_title_fields_from_season_metadata(item, season_metadata)
+
+    if title_fields is None:
+        try:
+            metadata = services.get_media_metadata(
+                item.media_type,
+                item.media_id,
+                item.source,
+                [item.season_number],
+                item.episode_number,
+            )
+        except Exception as exc:
+            logger.debug(
+                "Could not backfill episode title for item %s: %s",
+                item.id,
+                exc,
+            )
+            return
+        title_fields = _list_item_title_fields_from_metadata(item.media_type, metadata)
+
+    if not title_fields:
+        return
+
+    update_fields = []
+    for field_name, value in title_fields.items():
+        if getattr(item, field_name) != value:
+            setattr(item, field_name, value)
+            update_fields.append(field_name)
+
+    if update_fields:
+        item.save(update_fields=update_fields)
+
+
+def _attach_list_card_overrides(item_list):
+    """Attach shared card overrides used by list grid cards."""
+    episode_keys = {
+        (str(item.media_id), item.source, item.season_number)
+        for item in item_list
+        if (
+            getattr(item, "media_type", None) == MediaTypes.EPISODE.value
+            and getattr(item, "season_number", None) is not None
+        )
+    }
+
+    season_item_by_key = {}
+    if episode_keys:
+        season_filters = Q()
+        for media_id, source, season_number in episode_keys:
+            season_filters |= Q(
+                media_id=media_id,
+                source=source,
+                media_type=MediaTypes.SEASON.value,
+                season_number=season_number,
+            )
+        season_item_by_key = {
+            (str(season_item.media_id), season_item.source, season_item.season_number): season_item
+            for season_item in Item.objects.filter(season_filters)
+        }
+
+    season_metadata_by_key = {}
+    for item in item_list:
+        item_key = (str(item.media_id), item.source, item.season_number)
+        season_item = season_item_by_key.get(item_key)
+        item.card_image_override = _resolve_list_card_image_override(
+            item,
+            season_item=season_item,
+        )
+        if (
+            item_key not in season_metadata_by_key
+            and _episode_title_needs_backfill(item, season_item=season_item)
+        ):
+            try:
+                season_metadata_by_key[item_key] = services.get_media_metadata(
+                    MediaTypes.SEASON.value,
+                    item.media_id,
+                    item.source,
+                    [item.season_number],
+                )
+            except Exception as exc:
+                logger.debug(
+                    "Could not prefetch season metadata for episode title backfill on item %s: %s",
+                    item.id,
+                    exc,
+                )
+                season_metadata_by_key[item_key] = None
+        _maybe_backfill_episode_title(
+            item,
+            season_item=season_item,
+            season_metadata=season_metadata_by_key.get(item_key),
+        )
 
 
 class _ListTableRowAdapter:
@@ -224,7 +521,19 @@ def lists(request):
     # Get parameters from request
     search_query = request.GET.get("q", "")
     page = request.GET.get("page", 1)
+    previous_sort = getattr(request.user, "lists_sort", ListSortChoices.LAST_ITEM_ADDED)
     sort_by = request.user.update_preference("lists_sort", request.GET.get("sort"))
+    if sort_by not in ListSortChoices.values:
+        sort_by = ListSortChoices.LAST_ITEM_ADDED
+    direction_param = request.GET.get("direction")
+    direction_pref = getattr(request.user, "lists_direction", None)
+    if direction_param is not None:
+        direction = _resolve_list_sort_direction(sort_by, direction_param)
+    elif sort_by != previous_sort or direction_pref is None:
+        direction = _resolve_list_sort_direction(sort_by, None)
+    else:
+        direction = _resolve_list_sort_direction(sort_by, direction_pref)
+    request.user.update_preference("lists_direction", direction)
     enabled_media_types = request.user.get_enabled_media_types()
     selected_media_type = request.GET.get("media_type", "all")
 
@@ -267,12 +576,36 @@ def lists(request):
         ),
     )
     
-    if sort_by == "name":
-        custom_lists = custom_lists.order_by("name")
-    elif sort_by == "items_count":
-        custom_lists = custom_lists.order_by("-items_count")
-    elif sort_by == "newest_first":
-        custom_lists = custom_lists.order_by("-id")
+    if sort_by == ListSortChoices.NAME:
+        custom_lists = custom_lists.order_by(_order_expression("name", direction))
+    elif sort_by == ListSortChoices.ITEMS_COUNT:
+        custom_lists = custom_lists.order_by(
+            _order_expression("items_count", direction),
+            F("name").asc(),
+        )
+    elif sort_by == ListSortChoices.NEWEST_FIRST:
+        custom_lists = custom_lists.order_by(_order_expression("id", direction))
+    elif sort_by == ListSortChoices.LAST_WATCHED:
+        list_last_watched = _get_list_last_watched_dates(
+            request.user,
+            list(custom_lists.values_list("id", flat=True)),
+        )
+        custom_lists = list(custom_lists)
+        for custom_list in custom_lists:
+            custom_list.last_watched_at = list_last_watched.get(custom_list.id)
+        custom_lists.sort(
+            key=lambda custom_list: (
+                custom_list.last_watched_at is None,
+                (
+                    custom_list.last_watched_at.timestamp()
+                    if direction == "asc"
+                    else -custom_list.last_watched_at.timestamp()
+                )
+                if custom_list.last_watched_at is not None
+                else 0,
+                custom_list.name.casefold(),
+            ),
+        )
     else:  # last_item_added is the default
         # Get the latest update date for each list
         custom_lists = custom_lists.annotate(
@@ -283,7 +616,7 @@ def lists(request):
                 .order_by("-date_added")
                 .values("date_added")[:1],
             ),
-        ).order_by("-latest_update", "name")
+        ).order_by(_order_expression("latest_update", direction), F("name").asc())
     
     items_per_page = 20
     paginator = Paginator(custom_lists, items_per_page)
@@ -350,6 +683,8 @@ def lists(request):
             "lists/components/list_grid.html",
             {
                 "custom_lists": lists_page,
+                "current_sort": sort_by,
+                "current_direction": direction,
                 "cache_buster": cache_buster,
             },
         )
@@ -375,6 +710,7 @@ def lists(request):
             "custom_lists": lists_page,
             "form": create_list_form,
             "current_sort": sort_by,
+            "current_direction": direction,
             "sort_choices": ListSortChoices.choices,
             "media_types": enabled_media_types,
             "current_media_type": selected_media_type,
@@ -611,7 +947,14 @@ def _smart_list_detail_response(
 
             select_related_fields = ["item"]
             if media_type == MediaTypes.EPISODE.value:
-                select_related_fields.extend(["related_season", "related_season__related_tv"])
+                select_related_fields.extend(
+                    [
+                        "related_season",
+                        "related_season__item",
+                        "related_season__related_tv",
+                        "related_season__related_tv__item",
+                    ],
+                )
             queryset = model.objects.filter(**filter_kwargs).select_related(*select_related_fields)
             queryset = media_manager._apply_prefetch_related(queryset, media_type)
             media_manager.annotate_max_progress(queryset, media_type)
@@ -639,6 +982,7 @@ def _smart_list_detail_response(
 
         for item in item_list:
             item.media = media_by_item_id.get(item.id)
+        _attach_list_card_overrides(item_list)
 
     def _rating_value(media):
         if not media:
@@ -1082,7 +1426,20 @@ def list_detail(request, list_id):
                     "user": media_user,
                 }
 
-            queryset = model.objects.filter(**filter_kwargs).select_related("item")
+            select_related_fields = ["item"]
+            if media_type == MediaTypes.EPISODE.value:
+                select_related_fields.extend(
+                    [
+                        "related_season",
+                        "related_season__item",
+                        "related_season__related_tv",
+                        "related_season__related_tv__item",
+                    ],
+                )
+
+            queryset = model.objects.filter(**filter_kwargs).select_related(
+                *select_related_fields,
+            )
             queryset = media_manager._apply_prefetch_related(queryset, media_type)
             media_manager.annotate_max_progress(queryset, media_type)
 
@@ -1099,6 +1456,7 @@ def list_detail(request, list_id):
 
         for item in item_list:
             item.media = media_by_item_id.get(item.id)
+        _attach_list_card_overrides(item_list)
 
     def _rating_value(media):
         if not media:
@@ -1538,6 +1896,7 @@ def lists_modal(
 
     try:
         item = Item.objects.get(**lookup)
+        _maybe_backfill_episode_title(item, force=True)
     except Item.DoesNotExist:
         metadata = services.get_media_metadata(
             media_type,
@@ -1553,8 +1912,8 @@ def lists_modal(
             season_number=season_number,
             episode_number=episode_number,
             library_media_type=metadata.get("library_media_type") or media_type,
-            title=metadata["title"],
             image=metadata["image"],
+            **_list_item_title_fields_from_metadata(tracking_media_type, metadata),
         )
 
     custom_lists = CustomList.objects.get_user_lists_with_item(request.user, item)
@@ -1566,11 +1925,40 @@ def lists_modal(
             for custom_list in custom_lists
             if not getattr(custom_list, "is_smart", False)
         ]
+    custom_lists = list(custom_lists)
+
+    selected_tag = (request.GET.get("tag") or "").strip()
+
+    unique_tags = sorted(
+        {
+            tag.strip()
+            for custom_list in custom_lists
+            for tag in (custom_list.tags or [])
+            if isinstance(tag, str) and tag.strip()
+        },
+        key=str.lower,
+    )
+
+    if selected_tag:
+        selected_tag_folded = selected_tag.casefold()
+        custom_lists = [
+            custom_list
+            for custom_list in custom_lists
+            if any(
+                isinstance(tag, str) and tag.strip().casefold() == selected_tag_folded
+                for tag in (custom_list.tags or [])
+            )
+        ]
 
     return render(
         request,
         "lists/components/fill_lists.html",
-        {"item": item, "custom_lists": custom_lists},
+        {
+            "item": item,
+            "custom_lists": custom_lists,
+            "list_tags": unique_tags,
+            "selected_list_tag": selected_tag,
+        },
     )
 
 
@@ -1700,6 +2088,8 @@ def add_list_item_search(request, list_id):
         media_id = request.GET.get("media_id")
         media_type = request.GET.get("media_type")
         source = request.GET.get("source")
+        season_number = request.GET.get("season_number")
+        episode_number = request.GET.get("episode_number")
 
         try:
             media_metadata = services.get_media_metadata(media_type, media_id, source)
@@ -1748,6 +2138,8 @@ def add_list_item_search(request, list_id):
             "media_id": media_id,
             "media_type": media_type,
             "source": source,
+            "season_number": season_number,
+            "episode_number": episode_number,
             "already_in_list": already_in_list,
             "next_url": next_url,
         }
@@ -1866,6 +2258,7 @@ def add_list_item_submit(request, list_id):
             season_number=season_number,
             episode_number=episode_number,
         )
+        _maybe_backfill_episode_title(item, force=True)
     except Item.DoesNotExist:
         metadata = services.get_media_metadata(
             media_type,
@@ -1881,9 +2274,9 @@ def add_list_item_submit(request, list_id):
             media_type=media_type,
             season_number=season_number,
             episode_number=episode_number,
-            title=metadata["title"],
             image=metadata["image"],
             release_datetime=release_datetime,
+            **_list_item_title_fields_from_metadata(media_type, metadata),
         )
 
     discover_tab_cache.mark_active_from_request(
@@ -2072,6 +2465,8 @@ def recommend_search(request, list_id):
         media_id = request.GET.get("media_id")
         media_type = request.GET.get("media_type")
         source = request.GET.get("source")
+        season_number = request.GET.get("season_number")
+        episode_number = request.GET.get("episode_number")
 
         try:
             media_metadata = services.get_media_metadata(media_type, media_id, source)
@@ -2126,6 +2521,8 @@ def recommend_search(request, list_id):
             "media_id": media_id,
             "media_type": media_type,
             "source": source,
+            "season_number": season_number,
+            "episode_number": episode_number,
             "is_authenticated": request.user.is_authenticated,
             "already_in_list": already_in_list,
             "already_recommended": already_recommended,
@@ -2251,6 +2648,7 @@ def submit_recommendation(request, list_id):
             season_number=season_number,
             episode_number=episode_number,
         )
+        _maybe_backfill_episode_title(item, force=True)
     except Item.DoesNotExist:
         metadata = services.get_media_metadata(
             media_type,
@@ -2266,9 +2664,9 @@ def submit_recommendation(request, list_id):
             media_type=media_type,
             season_number=season_number,
             episode_number=episode_number,
-            title=metadata["title"],
             image=metadata["image"],
             release_datetime=release_datetime,
+            **_list_item_title_fields_from_metadata(media_type, metadata),
         )
 
     discover_tab_cache.mark_active_from_request(
@@ -2491,7 +2889,11 @@ def fetch_release_year(request):
         episode_number = None
         if item.media_type == MediaTypes.SEASON.value and item.season_number:
             season_numbers = [item.season_number]
-        elif item.media_type == MediaTypes.EPISODE.value and item.season_number and item.episode_number:
+        elif (
+            item.media_type == MediaTypes.EPISODE.value
+            and item.season_number is not None
+            and item.episode_number is not None
+        ):
             season_numbers = [item.season_number]
             episode_number = item.episode_number
 

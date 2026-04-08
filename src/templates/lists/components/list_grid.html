@@ -39,5 +39,12 @@
         {% include "lists/components/list_form.html" with form=custom_list.form %}
       {% endif %}
     </div>
+    {% if current_sort == 'last_watched' %}
+      {% if custom_list.last_watched_at %}
+        <p class="mt-2 text-sm font-semibold text-white">{{ custom_list.last_watched_at|user_date_format:user }}</p>
+      {% else %}
+        <p class="mt-2 text-sm font-semibold text-gray-400">No watched items</p>
+      {% endif %}
+    {% endif %}
   </div>
 {% endfor %}

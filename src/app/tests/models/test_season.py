@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.utils import timezone
@@ -588,3 +589,58 @@ class SeasonGetRemainingEpsQuickWatchDateTests(TestCase):
         self.assertEqual(episodes.count(), 2)
         self.assertEqual(episodes[0].end_date, datetime(1994, 9, 22, tzinfo=UTC))
         self.assertEqual(episodes[1].end_date, datetime(1994, 9, 29, tzinfo=UTC))
+
+
+class SeasonEpisodeItemModelTests(TestCase):
+    """Focused tests for season episode item creation/updating."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="episode-item-user",
+            password="12345",
+        )
+        season_item = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Friends",
+            image="http://example.com/season.jpg",
+            season_number=1,
+        )
+        self.season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+
+    def test_get_episode_item_updates_existing_item_with_episode_title(self):
+        """Episode items should store the episode title instead of the show title."""
+        existing_item = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Friends",
+            localized_title="Friends",
+            image=settings.IMG_NONE,
+            season_number=1,
+            episode_number=3,
+        )
+
+        item = self.season.get_episode_item(
+            3,
+            {
+                "episodes": [
+                    {
+                        "episode_number": 3,
+                        "name": "The One with the Thumb",
+                        "image": "https://example.com/s1e3.jpg",
+                        "air_date": "1994-10-06",
+                    },
+                ],
+            },
+        )
+
+        existing_item.refresh_from_db()
+        self.assertEqual(item.id, existing_item.id)
+        self.assertEqual(existing_item.title, "The One with the Thumb")
+        self.assertEqual(existing_item.localized_title, "The One with the Thumb")

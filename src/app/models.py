@@ -375,6 +375,20 @@ class Item(CalendarTriggerMixin, models.Model):
             "localized_title": localized_title,
         }
 
+    @classmethod
+    def title_fields_from_episode_metadata(cls, metadata, fallback_title=""):
+        """Build item title fields for an episode payload."""
+        metadata = metadata or {}
+        episode_title = cls._normalize_title_value(
+            metadata.get("episode_title") or metadata.get("name") or metadata.get("title"),
+        )
+        if episode_title:
+            return cls.title_fields_from_metadata(
+                {"title": episode_title},
+                fallback_title=episode_title,
+            )
+        return cls.title_fields_from_metadata({}, fallback_title=fallback_title)
+
     def get_display_and_alternative_title(self, user=None):
         """Return display and alternate titles based on user preference."""
         preference = getattr(user, "title_display_preference", "localized")
@@ -3702,9 +3716,11 @@ class Season(Media):
         image = settings.IMG_NONE
         runtime_minutes = None
         release_datetime = None
+        matched_episode = {}
         
         for episode in season_metadata["episodes"]:
             if episode["episode_number"] == int(episode_number):
+                matched_episode = episode
                 if episode.get("still_path"):
                     image = (
                         f"https://image.tmdb.org/t/p/original{episode['still_path']}"
@@ -3748,7 +3764,10 @@ class Season(Media):
             season_number=self.item.season_number,
             episode_number=episode_number,
             defaults={
-                **Item.title_fields_from_metadata({"title": self.item.title}),
+                **Item.title_fields_from_episode_metadata(
+                    matched_episode,
+                    fallback_title=self.item.title,
+                ),
                 "library_media_type": self.item.library_media_type,
                 "image": image,
                 "runtime_minutes": runtime_minutes,
@@ -3760,6 +3779,15 @@ class Season(Media):
         updated = False
         if not created:
             update_fields = []
+            title_fields = Item.title_fields_from_episode_metadata(
+                matched_episode,
+                fallback_title=self.item.title,
+            )
+            for field_name, value in title_fields.items():
+                if getattr(item, field_name) != value:
+                    setattr(item, field_name, value)
+                    update_fields.append(field_name)
+                    updated = True
             if item.library_media_type != self.item.library_media_type:
                 item.library_media_type = self.item.library_media_type
                 update_fields.append("library_media_type")

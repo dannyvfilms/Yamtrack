@@ -10,7 +10,7 @@
         {% with item|alternative_title:user as resolved_alt_title %}
           {% season_card_title item as resolved_season_card_title %}
           {% with hover_action_mode|default:'standard' as resolved_hover_action_mode %}
-      <div class="media-card {% if secondary_color %}bg-[#39404b]{% else %}bg-[#2a2f35]{% endif %} rounded-lg overflow-hidden shadow-lg relative {% if active %}ring-2 ring-indigo-700{% endif %} {% if from_grid %}hover:ring-2 hover:ring-indigo-500 transition-all {% if resolved_media_type == 'podcast' or resolved_media_type == 'music' %}search-result-card-square{% else %}search-result-card{% endif %}{% endif %} {% if user.media_card_subtitle_display == 'always' %}media-card-subtitle-always{% endif %} {% if recommend_mode %}cursor-pointer{% endif %} group"
+      <div class="media-card {% if secondary_color %}bg-[#39404b]{% else %}bg-[#2a2f35]{% endif %} rounded-lg overflow-hidden shadow-lg relative {% if active %}ring-2 ring-indigo-700{% endif %} {% if from_grid %}hover:ring-2 hover:ring-indigo-500 transition-all {% if resolved_media_type == 'podcast' or resolved_media_type == 'music' %}search-result-card-square{% else %}search-result-card{% endif %}{% endif %} {% if user.media_card_subtitle_display == 'always' %}media-card-subtitle-always{% elif show_episode_identity|default:False and resolved_media_type == MediaTypes.EPISODE.value %}media-card-subtitle-always{% endif %} {% if recommend_mode %}cursor-pointer{% endif %} group"
            data-media-type="{{ item.media_type }}"
            {% if recommend_mode %}hx-get="{% if resolved_search_preview_url %}{{ resolved_search_preview_url }}{% else %}{% url 'recommend_search' recommend_list_id %}{% endif %}?show_preview=true&media_id={{ item.media_id }}&media_type={{ item.media_type }}&source={{ item.source }}&title={{ resolved_item_title|default:title|urlencode }}&image={{ item.image|urlencode }}&q={{ query|urlencode }}&search_media_type={{ media_type|urlencode }}&page={{ page }}" hx-target="{{ resolved_search_modal_target }}" hx-swap="innerHTML"{% endif %}
            x-data="{ trackOpen: false, listsOpen: false }">
@@ -19,7 +19,7 @@
             <div class="cursor-pointer">
               <img alt="{% if resolved_media_type == MediaTypes.SEASON.value %}{{ season_card_title_override|default:resolved_season_card_title }}{% else %}{{ resolved_item_title|default:title }}{% endif %}"
                    class="media-card-poster lazyload w-full {% if from_grid %}{% if resolved_media_type == 'podcast' or resolved_media_type == 'music' %}aspect-[1/1]{% else %}aspect-[2/3] aspect-2/3{% endif %}{% else %}h-48{% endif %} bg-[#3e454d] {% if item.image != IMG_NONE %}object-cover{% endif %}"
-                   src="{{ item.image|default:IMG_NONE }}"
+                   src="{{ image_override|default:item.image|default:IMG_NONE }}"
                    loading="lazy">
             </div>
           {% else %}
@@ -27,9 +27,9 @@
               <img alt="{% if use_podcast_show|default:False and podcast_show %}{{ podcast_show.title }}{% elif resolved_media_type == MediaTypes.SEASON.value %}{{ season_card_title_override|default:resolved_season_card_title }}{% else %}{{ resolved_item_title|default:title }}{% endif %}"
                    class="media-card-poster {% if hover_action_mode != 'discover' %}lazyload{% endif %} w-full {% if from_grid %}{% if resolved_media_type == 'podcast' or resolved_media_type == 'music' %}aspect-[1/1]{% else %}aspect-[2/3] aspect-2/3{% endif %}{% else %}h-48{% endif %} bg-[#3e454d] {% if item.image != IMG_NONE %}object-cover{% endif %}"
                    {% if hover_action_mode == 'discover' %}
-                   src="{% if use_podcast_show|default:False and podcast_show and podcast_show.image %}{{ podcast_show.image }}{% else %}{{ item.image|default:IMG_NONE }}{% endif %}"
+                   src="{% if use_podcast_show|default:False and podcast_show and podcast_show.image %}{{ podcast_show.image }}{% else %}{{ image_override|default:item.image|default:IMG_NONE }}{% endif %}"
                    {% else %}
-                   data-src="{% if use_podcast_show|default:False and podcast_show and podcast_show.image %}{{ podcast_show.image }}{% else %}{{ item.image|default:IMG_NONE }}{% endif %}"
+                   data-src="{% if use_podcast_show|default:False and podcast_show and podcast_show.image %}{{ podcast_show.image }}{% else %}{{ image_override|default:item.image|default:IMG_NONE }}{% endif %}"
                    src="{{ IMG_NONE }}"
                    {% endif %}>
             </a>
@@ -367,7 +367,9 @@
               </p>
             {% endif %}
             {% if from_grid %}
-              {% if subtitle_override or subtitle_match_percent == 0 or subtitle_match_percent %}
+              {% if show_episode_identity|default:False and item.season_number != None and item.episode_number != None %}
+                <p class="media-card-year text-xs text-gray-400 mt-1">S{{ item.season_number|stringformat:"02d" }} E{{ item.episode_number|stringformat:"02d" }}</p>
+              {% elif subtitle_override or subtitle_match_percent == 0 or subtitle_match_percent %}
                 <p class="media-card-year text-xs text-gray-400 mt-1">
                   {% if subtitle_override %}
                     {{ subtitle_override|iso_date_format:user }}
