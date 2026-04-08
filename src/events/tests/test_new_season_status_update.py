@@ -140,9 +140,9 @@ class NewSeasonStatusUpdateTests(TestCase):
         mock_get_metadata,
         mock_clear_time_left_cache,
     ):
-        """Test that a newly detected season updates Completed TV status to In Progress."""
+        """New-season detection should reopen the TV show without auto-starting the season."""
         mock_tvdb.return_value = {}
-        mock_get_metadata.return_value = {
+        tv_metadata = {
             "related": {
                 "seasons": [
                     {"season_number": 1, "image": "http://example.com/season1.jpg"},
@@ -153,8 +153,7 @@ class NewSeasonStatusUpdateTests(TestCase):
             "max_progress": 10,
         }
 
-        # Mock the provider to return Season 2 metadata (simulating new season detection)
-        mock_calendar_get_metadata.return_value = {
+        season_metadata = {
             "season/2": {
                 "image": "http://example.com/season2.jpg",
                 "season_number": 2,
@@ -174,6 +173,14 @@ class NewSeasonStatusUpdateTests(TestCase):
             },
         }
 
+        def metadata_side_effect(media_type, *_args, **_kwargs):
+            if media_type == "tv_with_seasons":
+                return season_metadata
+            return tv_metadata
+
+        mock_get_metadata.side_effect = metadata_side_effect
+        mock_calendar_get_metadata.side_effect = metadata_side_effect
+
         # Create events_bulk list to collect events
         events_bulk = []
 
@@ -191,11 +198,13 @@ class NewSeasonStatusUpdateTests(TestCase):
         self.assertIsNotNone(season2_item)
         self.assertEqual(season2_item.title, "Test Show")
 
-        season2 = Season.objects.get(
-            item=season2_item,
-            user=self.user,
+        self.assertFalse(
+            Season.objects.filter(
+                item=season2_item,
+                user=self.user,
+                status=Status.IN_PROGRESS.value,
+            ).exists(),
         )
-        self.assertEqual(season2.status, Status.IN_PROGRESS.value)
 
         # Verify events were created for Season 2 episodes
         self.assertEqual(len(events_bulk), 2)  # 2 episodes
@@ -206,6 +215,67 @@ class NewSeasonStatusUpdateTests(TestCase):
             self.tv_instance.status,
             Status.IN_PROGRESS.value,
             "TV show status should have changed from Completed to In Progress",
+        )
+        mock_clear_time_left_cache.assert_any_call(self.user.id)
+
+    @patch("events.calendar.cache_utils.clear_time_left_cache_for_user")
+    @patch("app.models.providers.services.get_media_metadata")
+    @patch("events.calendar.get_tvdb_episode_map")
+    @patch("events.calendar.services.get_media_metadata")
+    def test_announced_future_season_reopens_show_without_starting_season(
+        self,
+        mock_calendar_get_metadata,
+        mock_tvdb,
+        mock_get_metadata,
+        mock_clear_time_left_cache,
+    ):
+        """A newly announced season should reopen the show, but not auto-start the season."""
+        mock_tvdb.return_value = {}
+        tv_metadata = {
+            "related": {
+                "seasons": [
+                    {"season_number": 1, "image": "http://example.com/season1.jpg"},
+                    {"season_number": 2, "image": "http://example.com/season2.jpg"},
+                ],
+            },
+            "details": {"seasons": 2},
+            "max_progress": 10,
+        }
+
+        future_date = (timezone.now() + timezone.timedelta(days=30)).strftime("%Y-%m-%d")
+        season_metadata = {
+            "season/2": {
+                "image": "http://example.com/season2.jpg",
+                "season_number": 2,
+                "episodes": [
+                    {
+                        "episode_number": 1,
+                        "air_date": future_date,
+                        "still_path": "/ep1.jpg",
+                    },
+                ],
+                "tvdb_id": None,
+            },
+        }
+
+        def metadata_side_effect(media_type, *_args, **_kwargs):
+            if media_type == "tv_with_seasons":
+                return season_metadata
+            return tv_metadata
+
+        mock_get_metadata.side_effect = metadata_side_effect
+        mock_calendar_get_metadata.side_effect = metadata_side_effect
+
+        events_bulk = []
+        process_tv_seasons(self.tv_item, [2], events_bulk)
+
+        self.tv_instance.refresh_from_db()
+        self.assertEqual(self.tv_instance.status, Status.IN_PROGRESS.value)
+        self.assertFalse(
+            self.tv_instance.seasons.filter(
+                item__season_number=2,
+                status=Status.IN_PROGRESS.value,
+            ).exists(),
         )
         mock_clear_time_left_cache.assert_any_call(self.user.id)
 

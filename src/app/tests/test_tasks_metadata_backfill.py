@@ -169,12 +169,8 @@ class MetadataBackfillTaskTests(TestCase):
 
         tv.refresh_from_db()
         self.assertEqual(tv.status, Status.IN_PROGRESS.value)
-        self.assertTrue(
-            tv.seasons.filter(
-                item__season_number=2,
-                status=Status.IN_PROGRESS.value,
-            ).exists(),
-        )
+        season2 = tv.seasons.get(item__season_number=2)
+        self.assertEqual(season2.status, Status.PLANNING.value)
         self.assertEqual(
             Item.objects.filter(
                 media_id="201834",
@@ -345,12 +341,8 @@ class MetadataBackfillTaskTests(TestCase):
 
         tv.refresh_from_db()
         self.assertEqual(tv.status, Status.IN_PROGRESS.value)
-        self.assertTrue(
-            tv.seasons.filter(
-                item__season_number=2,
-                status=Status.IN_PROGRESS.value,
-            ).exists(),
-        )
+        season2 = tv.seasons.get(item__season_number=2)
+        self.assertEqual(season2.status, Status.PLANNING.value)
         self.assertEqual(
             Item.objects.filter(
                 media_id="201835",

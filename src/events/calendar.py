@@ -604,7 +604,7 @@ def process_tv_seasons(tv_item, seasons_to_process, events_bulk):
                 season_number,
             )
             item_changes = True
-        update_tv_status_for_new_season(tv_item, season_number)
+        update_tv_status_for_new_season(tv_item, season_number, season_metadata)
 
         # Process episodes for this season
         if process_season_episodes(season_item, season_metadata, events_bulk):
@@ -744,14 +744,15 @@ def process_season_episodes(item, metadata, events_bulk):
     return bool(new_items or items_to_update)
 
 
-def update_tv_status_for_new_season(tv_item, season_number):
+def update_tv_status_for_new_season(tv_item, season_number, _season_metadata):
     """Update TV show status for users when a new season is detected.
 
     Rules:
     - Dropped: Do nothing (user chose not to continue)
     - Planning: Leave as Planning (user hasn't started)
-    - Completed: Change to In Progress (new season available)
+    - Completed: Change to In Progress (new season announced)
     - Paused: Leave as is (user decision to pause)
+    - Season tracking: Leave season rows untouched until episode activity starts them
     """
     # Find all users who have this TV show
     tv_instances = TV.objects.filter(
@@ -787,10 +788,6 @@ def update_tv_status_for_new_season(tv_item, season_number):
         tv.status = Status.IN_PROGRESS.value
 
     bulk_update_with_history(tv_to_update, TV, fields=["status"])
-
-    for tv in tv_to_update:
-        if not tv.seasons.filter(status=Status.IN_PROGRESS.value).exists():
-            tv._start_next_available_season()
 
     _clear_tv_time_left_cache(
         tv_item.media_id,
