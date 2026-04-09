@@ -392,7 +392,7 @@ class HistoryViewPersonFilterTests(TestCase):
     def test_history_person_filter_matches_episode_or_show_person_credits(self):
         tv_item = Item.objects.create(
             media_id="tv-credits-fallback",
-            source=Sources.MANUAL.value,
+            source=Sources.TMDB.value,
             media_type=MediaTypes.TV.value,
             title="Credit Fallback Show",
             image="http://example.com/tvfallback.jpg",
@@ -404,7 +404,7 @@ class HistoryViewPersonFilterTests(TestCase):
         )
         season_item = Item.objects.create(
             media_id="tv-credits-fallback",
-            source=Sources.MANUAL.value,
+            source=Sources.TMDB.value,
             media_type=MediaTypes.SEASON.value,
             title="Credit Fallback Show",
             image="http://example.com/tvfallbacks1.jpg",
@@ -430,11 +430,12 @@ class HistoryViewPersonFilterTests(TestCase):
             person=target_person,
             role_type=CreditRoleType.CAST.value,
             role="Show-level credit",
+            sort_order=0,
         )
 
         episode_item_match = Item.objects.create(
             media_id="tv-credits-fallback",
-            source=Sources.MANUAL.value,
+            source=Sources.TMDB.value,
             media_type=MediaTypes.EPISODE.value,
             title="Episode Specific Match",
             image="http://example.com/tvfallback-e1.jpg",
@@ -443,7 +444,7 @@ class HistoryViewPersonFilterTests(TestCase):
         )
         episode_item_exclude = Item.objects.create(
             media_id="tv-credits-fallback",
-            source=Sources.MANUAL.value,
+            source=Sources.TMDB.value,
             media_type=MediaTypes.EPISODE.value,
             title="Episode Specific Exclusion",
             image="http://example.com/tvfallback-e2.jpg",
@@ -452,7 +453,7 @@ class HistoryViewPersonFilterTests(TestCase):
         )
         episode_item_fallback = Item.objects.create(
             media_id="tv-credits-fallback",
-            source=Sources.MANUAL.value,
+            source=Sources.TMDB.value,
             media_type=MediaTypes.EPISODE.value,
             title="Fallback To Show Credit",
             image="http://example.com/tvfallback-e3.jpg",
@@ -503,6 +504,126 @@ class HistoryViewPersonFilterTests(TestCase):
         self.assertIn("Episode Specific Match", titles)
         self.assertIn("Fallback To Show Credit", titles)
         self.assertIn("Episode Specific Exclusion", titles)
+
+    def test_history_tmdb_person_filter_excludes_high_order_show_guest_from_other_episodes(self):
+        target_person = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="990",
+            name="TMDB Guest",
+            gender=PersonGender.MALE.value,
+        )
+        other_person = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="991",
+            name="Other TMDB Guest",
+            gender=PersonGender.MALE.value,
+        )
+
+        tv_item = Item.objects.create(
+            media_id="tv-guest-only",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="TMDB Guest Show",
+            image="http://example.com/tmdbgshow.jpg",
+        )
+        tv = TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+        )
+        season_item = Item.objects.create(
+            media_id="tv-guest-only",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="TMDB Guest Show",
+            image="http://example.com/tmdbgshows1.jpg",
+            season_number=1,
+        )
+        season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=tv,
+            status=Status.COMPLETED.value,
+        )
+
+        episode_item_match = Item.objects.create(
+            media_id="tv-guest-only",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="TMDB Guest Match",
+            image="http://example.com/tmdbgmatch.jpg",
+            season_number=1,
+            episode_number=1,
+        )
+        episode_item_exclude = Item.objects.create(
+            media_id="tv-guest-only",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="TMDB Guest Exclusion",
+            image="http://example.com/tmdbgexclude.jpg",
+            season_number=1,
+            episode_number=2,
+        )
+        episode_item_fallback = Item.objects.create(
+            media_id="tv-guest-only",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="TMDB Guest Fallback",
+            image="http://example.com/tmdbgfallback.jpg",
+            season_number=1,
+            episode_number=3,
+        )
+
+        now = timezone.now()
+        Episode.objects.create(
+            item=episode_item_match,
+            related_season=season,
+            end_date=now,
+        )
+        Episode.objects.create(
+            item=episode_item_exclude,
+            related_season=season,
+            end_date=now + timedelta(minutes=1),
+        )
+        Episode.objects.create(
+            item=episode_item_fallback,
+            related_season=season,
+            end_date=now + timedelta(minutes=2),
+        )
+
+        ItemPersonCredit.objects.create(
+            item=tv_item,
+            person=target_person,
+            role_type=CreditRoleType.CAST.value,
+            role="Guest Star",
+            sort_order=500,
+        )
+        ItemPersonCredit.objects.create(
+            item=episode_item_match,
+            person=target_person,
+            role_type=CreditRoleType.CAST.value,
+            role="Guest Star",
+        )
+        ItemPersonCredit.objects.create(
+            item=episode_item_exclude,
+            person=other_person,
+            role_type=CreditRoleType.CAST.value,
+            role="Guest Star",
+        )
+
+        response = self.client.get(
+            reverse("history") + "?person_source=tmdb&person_id=990",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        titles = [
+            entry["title"]
+            for day in response.context["history_days"]
+            for entry in day.get("entries", [])
+        ]
+        self.assertIn("TMDB Guest Match", titles)
+        self.assertNotIn("TMDB Guest Exclusion", titles)
+        self.assertNotIn("TMDB Guest Fallback", titles)
 
 
 class HistoryViewAuthorFilterTests(TestCase):

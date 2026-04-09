@@ -1600,7 +1600,7 @@ class StatisticsViewTests(TestCase):
 
     @patch("app.tasks.enqueue_credits_backfill_items")
     def test_statistics_top_talent_uses_episode_credits_with_show_fallback(self, mock_enqueue):
-        """Episode plays should use episode credits when present, otherwise fallback to show credits."""
+        """Regular TMDB show cast should still count alongside episode-specific guests."""
         watched_at = timezone.now()
         show_item = Item.objects.create(
             media_id="3001",
@@ -1687,6 +1687,7 @@ class StatisticsViewTests(TestCase):
             person=show_actor,
             role_type=CreditRoleType.CAST.value,
             role="Lead",
+            sort_order=0,
         )
         ItemPersonCredit.objects.create(
             item=episode_item_one,
@@ -1716,10 +1717,15 @@ class StatisticsViewTests(TestCase):
         self.assertIn("Episode Specific Actor", by_name)
         self.assertIn("Show Fallback Actor", by_name)
         self.assertEqual(by_name["Episode Specific Actor"]["plays"], 1)
-        self.assertEqual(by_name["Show Fallback Actor"]["plays"], 1)
+        self.assertEqual(by_name["Show Fallback Actor"]["plays"], 2)
 
+    @patch("app.models.providers.services.get_media_metadata", return_value={})
     @patch("app.tasks.enqueue_credits_backfill_items")
-    def test_statistics_top_talent_combines_episode_and_show_cast_when_both_exist(self, _mock_enqueue):
+    def test_statistics_top_talent_combines_episode_and_show_cast_when_both_exist(
+        self,
+        _mock_enqueue,
+        _mock_get_media_metadata,
+    ):
         """Episode plays should count both episode-level credits and show main cast credits."""
         watched_at = timezone.now()
         show_item = Item.objects.create(
@@ -1785,6 +1791,7 @@ class StatisticsViewTests(TestCase):
             person=show_actress,
             role_type=CreditRoleType.CAST.value,
             role="Lead",
+            sort_order=0,
         )
         ItemPersonCredit.objects.create(
             item=episode_item,
@@ -1808,6 +1815,134 @@ class StatisticsViewTests(TestCase):
         actor_names = {entry["name"] for entry in top_talent["top_actors"]}
         self.assertIn("Show-Level Actress", actress_names)
         self.assertIn("Episode-Level Actor", actor_names)
+
+    @patch("app.tasks.enqueue_credits_backfill_items")
+    def test_statistics_top_talent_excludes_high_order_tmdb_show_guest_from_other_episodes(
+        self,
+        _mock_enqueue,
+    ):
+        watched_at = timezone.now()
+        show_item = Item.objects.create(
+            media_id="4200",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Guest Count Show",
+            image="http://example.com/guest-count-show.jpg",
+        )
+        tv = TV.objects.create(
+            item=show_item,
+            user=self.user,
+            status=Status.PLANNING.value,
+        )
+        season_item, _ = Item.objects.get_or_create(
+            media_id="4200",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            defaults={
+                "title": "Guest Count Show",
+                "image": "http://example.com/guest-count-season.jpg",
+            },
+        )
+        season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=tv,
+            status=Status.PLANNING.value,
+        )
+        first_episode_item, _ = Item.objects.get_or_create(
+            media_id="4200",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=1,
+            defaults={
+                "title": "Guest Count Episode One",
+                "image": "http://example.com/guest-count-e1.jpg",
+                "runtime_minutes": 42,
+            },
+        )
+        second_episode_item, _ = Item.objects.get_or_create(
+            media_id="4200",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=2,
+            defaults={
+                "title": "Guest Count Episode Two",
+                "image": "http://example.com/guest-count-e2.jpg",
+                "runtime_minutes": 44,
+            },
+        )
+        Episode.objects.bulk_create(
+            [
+                Episode(
+                    item=first_episode_item,
+                    related_season=season,
+                    end_date=watched_at,
+                ),
+                Episode(
+                    item=second_episode_item,
+                    related_season=season,
+                    end_date=watched_at + timedelta(minutes=1),
+                ),
+            ],
+        )
+
+        guest_actor = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="4210",
+            name="High-Order Guest",
+            gender=PersonGender.MALE.value,
+        )
+        other_actor = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="4211",
+            name="Other Episode Actor",
+            gender=PersonGender.MALE.value,
+        )
+        ItemPersonCredit.objects.create(
+            item=show_item,
+            person=guest_actor,
+            role_type=CreditRoleType.CAST.value,
+            role="Guest Star",
+            sort_order=500,
+        )
+        ItemPersonCredit.objects.create(
+            item=first_episode_item,
+            person=guest_actor,
+            role_type=CreditRoleType.CAST.value,
+            role="Guest Star",
+        )
+        ItemPersonCredit.objects.create(
+            item=second_episode_item,
+            person=other_actor,
+            role_type=CreditRoleType.CAST.value,
+            role="Guest Star",
+        )
+        MetadataBackfillState.objects.create(
+            item=first_episode_item,
+            field=MetadataBackfillField.CREDITS,
+            last_success_at=timezone.now(),
+            strategy_version=CREDITS_BACKFILL_VERSION,
+        )
+        MetadataBackfillState.objects.create(
+            item=second_episode_item,
+            field=MetadataBackfillField.CREDITS,
+            last_success_at=timezone.now(),
+            strategy_version=CREDITS_BACKFILL_VERSION,
+        )
+
+        statistics_cache.invalidate_statistics_cache(self.user.id)
+        response = self.client.get(reverse("statistics") + "?start-date=all&end-date=all")
+
+        self.assertEqual(response.status_code, 200)
+        by_name = {
+            entry["name"]: entry
+            for entry in response.context["top_talent"]["top_actors"]
+        }
+        self.assertEqual(by_name["High-Order Guest"]["plays"], 1)
+        self.assertEqual(by_name["Other Episode Actor"]["plays"], 1)
 
     @patch("app.providers.services.get_media_metadata")
     @patch("app.tasks.enqueue_credits_backfill_items")

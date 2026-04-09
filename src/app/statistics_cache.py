@@ -21,7 +21,7 @@ from django.db.models.functions import ExtractDay, ExtractMonth
 from django.db.models.functions import TruncDate
 from django.utils import timezone
 
-from app import config, helpers
+from app import config, credits as credit_helpers, helpers
 from app import statistics as stats
 from app import history_cache
 from app.models import (
@@ -44,7 +44,7 @@ from app.templatetags import app_tags
 
 logger = logging.getLogger(__name__)
 
-STATISTICS_CACHE_VERSION = 5
+STATISTICS_CACHE_VERSION = 6
 STATISTICS_CACHE_PREFIX = f"statistics_page_v{STATISTICS_CACHE_VERSION}"
 STATISTICS_CACHE_TIMEOUT = 60 * 60 * 6  # 6 hours
 STATISTICS_STALE_AFTER = timedelta(minutes=15)
@@ -2421,11 +2421,18 @@ def get_person_talent_totals(user, person_source, person_id, start_date=None, en
     if not played_item_ids:
         return None
     movie_and_show_item_ids = movie_item_ids | show_item_ids
+    item_rows = list(
+        Item.objects.filter(
+            id__in=movie_and_show_item_ids,
+        ).values_list("id", "media_type", "media_id", "source"),
+    )
     item_media_key_by_id = {
         item_id: (media_type, str(media_id))
-        for item_id, media_type, media_id in Item.objects.filter(
-            id__in=movie_and_show_item_ids,
-        ).values_list("id", "media_type", "media_id")
+        for item_id, media_type, media_id, _source in item_rows
+    }
+    item_source_by_id = {
+        item_id: source
+        for item_id, _media_type, _media_id, source in item_rows
     }
 
     actor_credit_item_ids = set()
@@ -2439,6 +2446,11 @@ def get_person_talent_totals(user, person_source, person_id, start_date=None, en
     )
     for credit in person_credits:
         if credit.role_type == CreditRoleType.CAST.value:
+            if credit.item_id in show_item_ids and not credit_helpers.is_regular_show_cast_credit(
+                item_source_by_id.get(credit.item_id),
+                credit.sort_order,
+            ):
+                continue
             if person.gender == PersonGender.MALE.value:
                 actor_credit_item_ids.add(credit.item_id)
             elif person.gender == PersonGender.FEMALE.value:
@@ -2626,6 +2638,10 @@ def _aggregate_top_talent(user, start_date, end_date, limit=20, schedule_missing
     show_item_ids = {tv_item_id for _, tv_item_id, _ in episode_play_rows if tv_item_id}
     episode_item_ids = {episode_item_id for episode_item_id, _, _ in episode_play_rows if episode_item_id}
     played_item_ids = movie_item_ids | show_item_ids | episode_item_ids
+    item_source_by_id = {
+        item_id: source
+        for item_id, source in Item.objects.filter(id__in=show_item_ids).values_list("id", "source")
+    }
 
     cast_actor_ids_by_item = defaultdict(set)
     cast_actress_ids_by_item = defaultdict(set)
@@ -2646,6 +2662,11 @@ def _aggregate_top_talent(user, start_date, end_date, limit=20, schedule_missing
         people_by_id[person.id] = person
 
         if credit.role_type == CreditRoleType.CAST.value:
+            if credit.item_id in show_item_ids and not credit_helpers.is_regular_show_cast_credit(
+                item_source_by_id.get(credit.item_id),
+                credit.sort_order,
+            ):
+                continue
             if person.gender == PersonGender.MALE.value:
                 cast_actor_ids_by_item[credit.item_id].add(person.id)
             elif person.gender == PersonGender.FEMALE.value:

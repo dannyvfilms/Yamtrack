@@ -16,6 +16,8 @@ from app.models import (
     Studio,
 )
 
+TMDB_SHOW_REGULAR_CAST_SORT_ORDER_CUTOFF = 100
+
 
 def _coerce_iso_date(value):
     if not value:
@@ -50,6 +52,16 @@ def _as_int(value):
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def is_regular_show_cast_credit(source, sort_order):
+    """Return whether a show-level cast credit should count as series-regular fallback."""
+    if source != Sources.TMDB.value:
+        return True
+    return (
+        sort_order is not None
+        and sort_order < TMDB_SHOW_REGULAR_CAST_SORT_ORDER_CUTOFF
+    )
 
 
 def _normalize_credit_rows(rows):

@@ -13,7 +13,7 @@ from django.db import models
 from django.db.models.functions import TruncDate
 from django.utils import formats, timezone
 
-from app import helpers
+from app import credits as credit_helpers, helpers
 from app.log_safety import stable_hmac
 from app.models import (
     Album,
@@ -30,6 +30,7 @@ from app.models import (
     Movie,
     Music,
     Podcast,
+    Sources,
     Track,
 )
 
@@ -47,7 +48,7 @@ def _coerce_timedelta(value, default):
         return default
 
 
-HISTORY_CACHE_VERSION = 14
+HISTORY_CACHE_VERSION = 15
 HISTORY_INDEX_PREFIX = f"history_index_v{HISTORY_CACHE_VERSION}"
 HISTORY_DAY_PREFIX = f"history_day_v{HISTORY_CACHE_VERSION}"
 HISTORY_CACHE_PREFIX = HISTORY_INDEX_PREFIX
@@ -637,6 +638,15 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
     if filters.get('season'):
         episodes = episodes.filter(related_season_id=filters['season'])
     if person_source_filter and person_id_filter:
+        regular_show_cast_filter = (
+            models.Q(role_type=CreditRoleType.CAST.value)
+            & (
+                ~models.Q(item__source=Sources.TMDB.value)
+                | models.Q(
+                    sort_order__lt=credit_helpers.TMDB_SHOW_REGULAR_CAST_SORT_ORDER_CUTOFF,
+                )
+            )
+        )
         episode_person_credits = ItemPersonCredit.objects.filter(
             item_id=models.OuterRef("item_id"),
         )
@@ -648,6 +658,8 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
             item_id=models.OuterRef("related_season__related_tv__item_id"),
             person__source=person_source_filter,
             person__source_person_id=person_id_filter,
+        ).filter(
+            regular_show_cast_filter | ~models.Q(role_type=CreditRoleType.CAST.value),
         )
         episodes = episodes.annotate(
             has_episode_person=models.Exists(episode_person_matches),

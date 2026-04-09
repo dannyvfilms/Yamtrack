@@ -180,10 +180,12 @@ class PersonDetailViewTests(TestCase):
         self.assertContains(response, "01.01.1990")
         self.assertNotContains(response, "1990-01-01")
 
+    @patch("app.models.providers.services.get_media_metadata", return_value={})
     @patch("app.providers.tmdb.person")
     def test_person_detail_counts_tv_runtime_from_show_cast_when_episode_has_other_people(
         self,
         mock_person,
+        _mock_get_media_metadata,
     ):
         show_item = Item.objects.create(
             media_id="777",
@@ -232,6 +234,7 @@ class PersonDetailViewTests(TestCase):
             person=self.person,
             role_type=CreditRoleType.CAST.value,
             role="Main Cast",
+            sort_order=0,
         )
         guest_person = Person.objects.create(
             source=Sources.TMDB.value,
@@ -267,6 +270,137 @@ class PersonDetailViewTests(TestCase):
                     "year": 2022,
                     "credit_type": "cast",
                     "role": "Main Cast",
+                    "department": "Acting",
+                },
+            ],
+        }
+
+        response = self.client.get(
+            reverse(
+                "person_detail",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "person_id": "123",
+                    "name": "jane-star",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["tracked_plays_count"], 2)
+        self.assertEqual(response.context["tracked_hours_count"], "0h 45min")
+
+    @patch("app.models.providers.services.get_media_metadata", return_value={})
+    @patch("app.providers.tmdb.person")
+    def test_person_detail_does_not_count_high_order_tmdb_show_cast_on_every_episode(
+        self,
+        mock_person,
+        _mock_get_media_metadata,
+    ):
+        show_item = Item.objects.create(
+            media_id="778",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Guest Star Show",
+            image="http://example.com/show-guest.jpg",
+        )
+        tv = TV.objects.create(
+            item=show_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+        )
+        season_item = Item.objects.create(
+            media_id="778",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Guest Star Show",
+            image="http://example.com/season-guest.jpg",
+            season_number=1,
+        )
+        season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=tv,
+            status=Status.COMPLETED.value,
+        )
+        first_episode_item = Item.objects.create(
+            media_id="778",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Guest Episode One",
+            image="http://example.com/ge1.jpg",
+            season_number=1,
+            episode_number=1,
+            runtime_minutes=45,
+        )
+        second_episode_item = Item.objects.create(
+            media_id="778",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Guest Episode Two",
+            image="http://example.com/ge2.jpg",
+            season_number=1,
+            episode_number=2,
+            runtime_minutes=50,
+        )
+        Episode.objects.create(
+            item=first_episode_item,
+            related_season=season,
+            end_date=timezone.now(),
+        )
+        Episode.objects.create(
+            item=second_episode_item,
+            related_season=season,
+            end_date=timezone.now(),
+        )
+
+        ItemPersonCredit.objects.create(
+            item=show_item,
+            person=self.person,
+            role_type=CreditRoleType.CAST.value,
+            role="Guest Star",
+            sort_order=500,
+        )
+        ItemPersonCredit.objects.create(
+            item=first_episode_item,
+            person=self.person,
+            role_type=CreditRoleType.CAST.value,
+            role="Guest Star",
+        )
+        other_person = Person.objects.create(
+            source=Sources.TMDB.value,
+            source_person_id="998",
+            name="Other Guest",
+            gender=PersonGender.MALE.value,
+        )
+        ItemPersonCredit.objects.create(
+            item=second_episode_item,
+            person=other_person,
+            role_type=CreditRoleType.CAST.value,
+            role="Guest",
+        )
+
+        mock_person.return_value = {
+            "person_id": "123",
+            "source": Sources.TMDB.value,
+            "name": "Jane Star",
+            "image": "http://example.com/jane.jpg",
+            "biography": "",
+            "known_for_department": "Acting",
+            "gender": "female",
+            "birth_date": None,
+            "death_date": None,
+            "place_of_birth": "",
+            "filmography": [
+                {
+                    "media_id": "778",
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "title": "Guest Star Show",
+                    "image": "http://example.com/show-guest.jpg",
+                    "year": 2022,
+                    "credit_type": "cast",
+                    "role": "Guest Star",
                     "department": "Acting",
                 },
             ],

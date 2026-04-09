@@ -10132,28 +10132,9 @@ def person_detail(request, source, person_id, name):
         if is_author:
             tracked_plays_count = len(credited_tracked_items_by_key)
         else:
-            episode_plays = (
-                Episode.objects.filter(
-                    related_season__user=request.user,
-                    end_date__isnull=False,
-                    related_season__related_tv__item__person_credits__person__source=source,
-                    related_season__related_tv__item__person_credits__person__source_person_id=person_id_str,
-                )
-                .distinct()
-                .count()
-            )
-            movie_plays = (
-                Movie.objects.filter(
-                    user=request.user,
-                    item__person_credits__person__source=source,
-                    item__person_credits__person__source_person_id=person_id_str,
-                )
-                .exclude(start_date__isnull=True, end_date__isnull=True)
-                .distinct()
-                .count()
-            )
-            tracked_plays_count = episode_plays + movie_plays
+            tracked_plays_count = 0
             if person_talent_totals:
+                tracked_plays_count = person_talent_totals.get("plays", 0)
                 tracked_hours_count = person_talent_totals.get("watched_time")
 
     context = {
