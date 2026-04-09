@@ -4,9 +4,9 @@ from celery import shared_task
 from django.contrib.auth import get_user_model
 
 from app.models import Item
-
 from app.services import auto_pause
-from events import calendar, notifications
+from events import notifications
+from events.calendar.main import fetch_releases
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ def reload_calendar(user_id=None, item_ids=None, user=None, items_to_process=Non
                 len(missing_item_ids),
             )
 
-    result = calendar.fetch_releases(
+    result = fetch_releases(
         user=resolved_user,
         items_to_process=resolved_items,
     )

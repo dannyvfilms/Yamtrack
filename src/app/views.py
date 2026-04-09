@@ -707,7 +707,8 @@ def _build_detail_link_sections(media_metadata, media_type, identity_provider, d
     if not isinstance(media_metadata, dict):
         return []
 
-    source_entries = []
+    tracking_source_entries = []
+    metadata_source_entries = []
     external_entries = []
     seen_urls = set()
 
@@ -723,7 +724,7 @@ def _build_detail_link_sections(media_metadata, media_type, identity_provider, d
     primary_source_url = media_metadata.get("tracking_source_url") or media_metadata.get("source_url")
     if primary_source_url:
         append_entry(
-            source_entries,
+            tracking_source_entries,
             app_tags.source_readable(identity_provider),
             primary_source_url,
             identity_provider,
@@ -732,8 +733,8 @@ def _build_detail_link_sections(media_metadata, media_type, identity_provider, d
     display_source_url = media_metadata.get("display_source_url")
     if display_provider != identity_provider and display_source_url:
         append_entry(
-            source_entries,
-            f"Metadata: {app_tags.source_readable(display_provider)}",
+            metadata_source_entries,
+            app_tags.source_readable(display_provider),
             display_source_url,
             display_provider,
         )
@@ -754,11 +755,25 @@ def _build_detail_link_sections(media_metadata, media_type, identity_provider, d
             append_entry(external_entries, name, url, name)
 
     sections = []
-    if source_entries:
+    if metadata_source_entries:
+        if tracking_source_entries:
+            sections.append(
+                {
+                    "title": "Tracking Source",
+                    "entries": tracking_source_entries,
+                }
+            )
         sections.append(
             {
-                "title": "Sources" if len(source_entries) > 1 else "Source",
-                "entries": source_entries,
+                "title": "Metadata Source",
+                "entries": metadata_source_entries,
+            }
+        )
+    elif tracking_source_entries:
+        sections.append(
+            {
+                "title": "Source",
+                "entries": tracking_source_entries,
             }
         )
     if external_entries:
@@ -2948,10 +2963,28 @@ def media_list(request, media_type):
         media_list.extend(grouped_anime_media)
 
     media_list = apply_latest_status_filter(media_list, status_filter)
+    filter_data_source_items = media_list
+    if media_type == MediaTypes.GAME.value and platform_filter:
+        filter_sql_filters = {**list_sql_filters, "platform": ""}
+        filter_data_source_items = list(
+            BasicMedia.objects.get_media_list(
+                user=request.user,
+                media_type=media_type,
+                status_filter=status_filter,
+                sort_filter=query_sort_filter,
+                search=search_query,
+                direction=direction,
+                list_sql_filters=filter_sql_filters,
+            ),
+        )
+        filter_data_source_items = apply_latest_status_filter(
+            filter_data_source_items,
+            status_filter,
+        )
     if media_type == MediaTypes.GAME.value:
         item_ids = {
             media.item_id
-            for media in media_list
+            for media in filter_data_source_items
             if getattr(media, "item_id", None)
         }
         if item_ids:
@@ -2978,7 +3011,7 @@ def media_list(request, media_type):
                 normalized_collection_format = _normalize_filter_value(collection_format)
                 if normalized_collection_format:
                     collection_formats_by_item_id[item_id].add(normalized_collection_format)
-    filter_data = build_filter_data_from_items(media_list)
+    filter_data = build_filter_data_from_items(filter_data_source_items)
     filter_data["show_languages"] = media_type in (
         MediaTypes.TV.value,
         MediaTypes.MOVIE.value,
@@ -3665,6 +3698,9 @@ def media_list(request, media_type):
         is_artist_list = context.get("is_artist_list", False)
         # Changing from empty list to a status with items
         if request.headers.get("HX-Target") == "empty_list":
+            media_page = context.get("media_list")
+            if media_page is not None and not media_page.object_list:
+                return HttpResponse(status=204)
             response = HttpResponse()
             response["HX-Redirect"] = reverse("medialist", args=[media_type])
             return response

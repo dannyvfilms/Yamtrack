@@ -43,8 +43,21 @@ class EpisodeModel(TestCase):
             notes="",
         )
 
-    def test_episode_save(self):
+    @patch("app.models.providers.services.get_media_metadata")
+    def test_episode_save(self, mock_get_metadata):
         """Test the custom save method of the Episode model."""
+        mock_get_metadata.return_value = {
+            "season/1": {
+                "episodes": [
+                    {"episode_number": episode_number}
+                    for episode_number in range(1, 25)
+                ],
+            },
+            "related": {
+                "seasons": [{"season_number": 1}],
+            },
+        }
+
         for i in range(1, 25):
             item_episode = Item.objects.create(
                 media_id="1668",
@@ -227,14 +240,29 @@ class EpisodeStatusTests(TestCase):
         self.assertEqual(self.tv.status, Status.COMPLETED.value)
 
     @patch("app.models.providers.services.get_media_metadata")
-    def test_non_last_season_does_not_complete_tv_show(self, mock_get_metadata):
-        """Test non-last season completion doesn't complete TV show."""
+    def test_non_last_season_starts_next_season(self, mock_get_metadata):
+        """Test non-last season completion starts the next season."""
+        next_season_item = Item.objects.create(
+            media_id="123",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Test Show",
+            image="http://example.com/image2.jpg",
+            season_number=2,
+        )
+        next_season = Season.objects.create(
+            item=next_season_item,
+            user=self.user,
+            related_tv=self.tv,
+            status=Status.PLANNING.value,
+        )
+
         mock_metadata = {
             "season/1": {
                 "episodes": [{"episode_number": 1}],
             },
             "related": {
-                "seasons": [{"season_number": 1}, {"season_number": 2}],  # Two seasons
+                "seasons": [{"season_number": 1}, {"season_number": 2}],
             },
         }
         mock_get_metadata.return_value = mock_metadata
@@ -245,5 +273,8 @@ class EpisodeStatusTests(TestCase):
             end_date=timezone.now(),
         )
 
+        next_season.refresh_from_db()
+        self.assertEqual(next_season.status, Status.IN_PROGRESS.value)
+
         self.tv.refresh_from_db()
-        self.assertEqual(self.tv.status, Status.PLANNING.value)
+        self.assertEqual(self.tv.status, Status.IN_PROGRESS.value)

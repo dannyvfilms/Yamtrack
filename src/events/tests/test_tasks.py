@@ -18,7 +18,7 @@ class ReloadCalendarTaskTests(TestCase):
         )
 
     @patch("events.tasks.auto_pause.auto_pause_stale_items")
-    @patch("events.tasks.calendar.fetch_releases")
+    @patch("events.tasks.fetch_releases")
     def test_auto_pause_runs_for_global_refresh(self, mock_fetch, mock_auto_pause):
         mock_fetch.return_value = "ok"
 
@@ -29,7 +29,7 @@ class ReloadCalendarTaskTests(TestCase):
         mock_auto_pause.assert_called_once_with()
 
     @patch("events.tasks.auto_pause.auto_pause_stale_items")
-    @patch("events.tasks.calendar.fetch_releases")
+    @patch("events.tasks.fetch_releases")
     def test_auto_pause_skipped_for_single_user(self, mock_fetch, mock_auto_pause):
         mock_fetch.return_value = "ok"
 
@@ -40,7 +40,7 @@ class ReloadCalendarTaskTests(TestCase):
         mock_auto_pause.assert_not_called()
 
     @patch("events.tasks.auto_pause.auto_pause_stale_items")
-    @patch("events.tasks.calendar.fetch_releases")
+    @patch("events.tasks.fetch_releases")
     def test_item_ids_are_resolved_before_fetch(self, mock_fetch, mock_auto_pause):
         movie = Item.objects.create(
             media_id="603",
@@ -59,7 +59,7 @@ class ReloadCalendarTaskTests(TestCase):
 
     @patch("app.tasks.backfill_item_metadata_task")
     @patch("events.tasks.auto_pause.auto_pause_stale_items")
-    @patch("events.tasks.calendar.fetch_releases")
+    @patch("events.tasks.fetch_releases")
     def test_release_backfill_runs_on_global_refresh_when_release_dates_missing(
         self,
         mock_fetch,

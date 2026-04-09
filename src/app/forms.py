@@ -1,6 +1,7 @@
 import re
 from datetime import datetime, time as datetime_time
 from decimal import Decimal, InvalidOperation
+import math
 
 from django import forms
 from django.conf import settings
@@ -48,6 +49,7 @@ class CustomDurationField(forms.CharField):
 
         Supported formats:
         - Plain number (hours only): "5"
+        - Plain float number (hours and minutes): "1.5"
         - HH:MM: "5:30"
         - Nh Nmin: "5h 30min"
         - NhNmin: "5h30min"
@@ -57,6 +59,11 @@ class CustomDurationField(forms.CharField):
         - Decimal hours: "4.3 hours"
         """
         normalized_value = value.strip().lower()
+
+        if re.fullmatch(r"\d+(?:\.\d+)?", normalized_value):
+            converted_to_float = float(normalized_value)
+            if math.isfinite(converted_to_float) and converted_to_float >= 0:
+                return int(converted_to_float * 60)
 
         if normalized_value.isdigit():  # hours only
             return int(normalized_value) * 60
@@ -250,7 +257,7 @@ class ManualItemForm(forms.ModelForm):
             instance.media_id = parent_season.item.media_id
             instance.season_number = parent_season.item.season_number
         else:
-            instance.media_id = Item.generate_manual_id(instance.media_type)
+            instance.media_id = Item.generate_manual_id()
 
         if commit:
             instance.save()

@@ -9,7 +9,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from app import models as app_models
-from app.models import Item, MediaTypes, Sources
+from app.models import Item, MediaTypes, Movie, Season, Sources, Status, TV
 from events.models import Event
 
 
@@ -363,6 +363,30 @@ class DownloadCalendarViewTests(TestCase):
             image="https://example.com/season.jpg",
             season_number=1,
         )
+        self.tv_item = Item.objects.create(
+            media_id="tv-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.TV.value,
+            title="Export Show",
+            image="https://example.com/show.jpg",
+        )
+
+        self.movie = Movie.objects.create(
+            item=self.movie_item,
+            user=self.user,
+            status=Status.PLANNING.value,
+        )
+        self.tv = TV.objects.create(
+            item=self.tv_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        self.season = Season.objects.create(
+            item=self.season_item,
+            related_tv=self.tv,
+            user=self.user,
+            status=Status.PLANNING.value,
+        )
 
         now = timezone.now()
         self.movie_event = Event.objects.create(item=self.movie_item, datetime=now)
@@ -405,3 +429,67 @@ class DownloadCalendarViewTests(TestCase):
         body = response.content.decode()
         self.assertIn("Export Season", body)
         self.assertNotIn("Export Movie", body)
+
+    def test_download_calendar_invalid_token_returns_401(self):
+        """Unknown export tokens should be rejected."""
+        response = self.client.get(
+            reverse("download_calendar", kwargs={"token": "missing-token"}),
+        )
+
+        self.assertEqual(response.status_code, 401)
+
+    @patch(
+        "events.views.Event.objects.get_user_events",
+        return_value=Event.objects.none(),
+    )
+    def test_download_calendar_returns_empty_calendar(self, _mock_get_user_events):
+        """An empty export should still return a valid iCalendar payload."""
+        response = self.client.get(
+            reverse("download_calendar", kwargs={"token": self.user.token}),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "text/calendar")
+        body = response.content.decode()
+        self.assertIn("BEGIN:VCALENDAR", body)
+        self.assertIn("END:VCALENDAR", body)
+        self.assertNotIn("Export Movie", body)
+
+    def test_download_calendar_returns_events(self):
+        """Exports should include tracked release summaries."""
+        response = self.client.get(
+            reverse("download_calendar", kwargs={"token": self.user.token}),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.content.decode()
+        self.assertIn("BEGIN:VCALENDAR", body)
+        self.assertIn("Export Movie", body)
+        self.assertIn("Export Season", body)
+
+    def test_download_calendar_allows_head_requests(self):
+        """HEAD requests should be accepted for calendar clients."""
+        response = self.client.head(
+            reverse("download_calendar", kwargs={"token": self.user.token}),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "text/calendar")
+
+    def test_download_calendar_does_not_require_authentication(self):
+        """The tokenized export should remain available without a session."""
+        self.client.logout()
+
+        response = self.client.get(
+            reverse("download_calendar", kwargs={"token": self.user.token}),
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_download_calendar_post_not_allowed(self):
+        """Only GET-like methods should be allowed on the export endpoint."""
+        response = self.client.post(
+            reverse("download_calendar", kwargs={"token": self.user.token}),
+        )
+
+        self.assertEqual(response.status_code, 405)

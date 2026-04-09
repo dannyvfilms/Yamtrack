@@ -105,8 +105,19 @@ class JellyfinWebhookTests(TestCase):
         self.assertEqual(movie.status, Status.COMPLETED.value)
         self.assertEqual(movie.progress, 1)
 
-    def test_anime_movie_mark_played(self):
+    @patch("app.providers.mal.anime")
+    @patch("app.providers.tmdb.find")
+    def test_anime_movie_mark_played(self, mock_tmdb_find, mock_mal_anime):
         """Test webhook handles movie mark played event."""
+        mock_tmdb_find.return_value = {
+            "movie_results": [{"id": 10494}],
+        }
+        mock_mal_anime.return_value = {
+            "media_id": "437",
+            "title": "Perfect Blue",
+            "image": "https://example.com/perfect-blue.jpg",
+            "max_progress": 1,
+        }
         payload = {
             "Event": "Stop",
             "Item": {

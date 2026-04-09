@@ -37,6 +37,7 @@ class WebManifestTests(SimpleTestCase):
             "Games": ("/medialist/game", "/static/img/shortcuts/games.svg"),
             "Books": ("/medialist/book", "/static/img/shortcuts/books.svg"),
             "Comics": ("/medialist/comic", "/static/img/shortcuts/comics.svg"),
+            "Board Games": ("/medialist/boardgame", "/static/img/shortcuts/boardgames.svg"),
             "Statistics": ("/statistics", "/static/img/shortcuts/stats.svg"),
             "Your Lists": ("/lists", "/static/img/shortcuts/lists.svg"),
         }

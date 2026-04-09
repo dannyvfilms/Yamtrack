@@ -164,9 +164,9 @@ class ImportTrakt(TestCase):
         self.assertEqual(len(trakt_importer.bulk_media[MediaTypes.TV.value]), 0)
         self.assertEqual(len(trakt_importer.bulk_media[MediaTypes.SEASON.value]), 0)
         self.assertEqual(len(trakt_importer.bulk_media[MediaTypes.EPISODE.value]), 1)
-        self.assertIs(
-            trakt_importer.bulk_media[MediaTypes.EPISODE.value][0].related_season,
-            season_obj,
+        self.assertEqual(
+            trakt_importer.bulk_media[MediaTypes.EPISODE.value][0].related_season_id,
+            season_obj.id,
         )
 
     @patch("integrations.imports.trakt.TraktImporter._make_api_request")

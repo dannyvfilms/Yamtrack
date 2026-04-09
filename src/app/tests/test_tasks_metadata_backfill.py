@@ -33,15 +33,13 @@ User = get_user_model()
 
 
 class MetadataBackfillTaskTests(TestCase):
-    @patch("events.calendar.cache_utils.clear_time_left_cache_for_user")
-    @patch("events.calendar.get_tvdb_episode_map")
-    @patch("events.calendar.services.get_media_metadata")
+    @patch("events.calendar.tv.cache_utils.clear_time_left_cache_for_user")
+    @patch("events.calendar.tv.tmdb.tv_with_seasons")
     @patch("app.tasks._fetch_item_metadata")
     def test_backfill_tmdb_tv_syncs_new_season_and_clears_time_left(
         self,
         mock_fetch_item_metadata,
-        mock_calendar_get_metadata,
-        mock_tvdb,
+        mock_tv_with_seasons,
         mock_clear_time_left_cache,
     ):
         user = User.objects.create_user(username="tv-user", password="pw")
@@ -128,7 +126,6 @@ class MetadataBackfillTaskTests(TestCase):
             ],
         )
 
-        mock_tvdb.return_value = {}
         mock_fetch_item_metadata.return_value = {
             "media_id": "201834",
             "source": Sources.TMDB.value,
@@ -149,7 +146,7 @@ class MetadataBackfillTaskTests(TestCase):
                 "episodes": 15,
             },
         }
-        mock_calendar_get_metadata.return_value = {
+        mock_tv_with_seasons.return_value = {
             "season/2": {
                 "image": "https://example.com/season2.jpg",
                 "season_number": 2,
@@ -203,15 +200,13 @@ class MetadataBackfillTaskTests(TestCase):
         mock_clear_time_left_cache.assert_any_call(user.id)
         self.assertEqual(result["success_count"], 1)
 
-    @patch("events.calendar.cache_utils.clear_time_left_cache_for_user")
-    @patch("events.calendar.get_tvdb_episode_map")
-    @patch("events.calendar.services.get_media_metadata")
+    @patch("events.calendar.tv.cache_utils.clear_time_left_cache_for_user")
+    @patch("events.calendar.tv.tmdb.tv_with_seasons")
     @patch("app.tasks._fetch_item_metadata")
     def test_backfill_tmdb_tv_with_release_date_refreshes_stale_metadata_for_new_season(
         self,
         mock_fetch_item_metadata,
-        mock_calendar_get_metadata,
-        mock_tvdb,
+        mock_tv_with_seasons,
         mock_clear_time_left_cache,
     ):
         user = User.objects.create_user(username="tv-user-release-date", password="pw")
@@ -299,7 +294,6 @@ class MetadataBackfillTaskTests(TestCase):
             ],
         )
 
-        mock_tvdb.return_value = {}
         mock_fetch_item_metadata.return_value = {
             "media_id": "201835",
             "source": Sources.TMDB.value,
@@ -320,7 +314,7 @@ class MetadataBackfillTaskTests(TestCase):
                 "episodes": 15,
             },
         }
-        mock_calendar_get_metadata.return_value = {
+        mock_tv_with_seasons.return_value = {
             "season/2": {
                 "image": "https://example.com/season2.jpg",
                 "season_number": 2,

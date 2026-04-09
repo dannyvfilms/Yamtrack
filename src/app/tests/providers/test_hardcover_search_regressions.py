@@ -28,12 +28,22 @@ class HardcoverSearchRegressionTests(TestCase):
 
     @patch("app.providers.hardcover.search")
     @patch("app.providers.hardcover.book")
+    @patch("app.providers.services.openlibrary.book")
+    @patch("app.providers.services.openlibrary.search")
     def test_services_search_skips_hardcover_id_lookup_for_large_numeric_queries(
         self,
+        mock_openlibrary_search,
+        mock_openlibrary_book,
         mock_book,
         mock_search,
     ):
         """Large ISBN values should be treated as text search, not Hardcover IDs."""
+        mock_openlibrary_search.return_value = {
+            "page": 1,
+            "total_results": 0,
+            "total_pages": 1,
+            "results": [],
+        }
         mock_search.return_value = {
             "page": 1,
             "total_results": 0,
@@ -50,6 +60,7 @@ class HardcoverSearchRegressionTests(TestCase):
 
         self.assertEqual(result["results"], [])
         mock_book.assert_not_called()
+        mock_openlibrary_book.assert_not_called()
         mock_search.assert_called_once_with("9780063038936", 1)
 
     @patch("app.providers.services.hardcover.book")

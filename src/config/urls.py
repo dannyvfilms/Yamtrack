@@ -8,12 +8,12 @@ The `urlpatterns` list routes URLs to views. For more information please see:
 from allauth.account import views as allauth_account_views
 from allauth.socialaccount import views as allauth_social_account_views
 from allauth.urls import build_provider_urlpatterns
-from decorator_include import decorator_include
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
 from django.contrib.auth.decorators import login_not_required
 from django.urls import include, path
+from health_check.views import MainView
 
 handler400 = "app.error_views.bad_request"
 handler403 = "app.error_views.permission_denied"
@@ -27,7 +27,10 @@ urlpatterns = [
     path("", include("lists.urls")),
     path("", include("events.urls")),
     path("select2/", include("django_select2.urls")),
-    path("health/", decorator_include(login_not_required, "health_check.urls")),
+    path(
+        "health/",
+        login_not_required(MainView.as_view()),
+    ),
 ]
 
 # Build the accounts URLs

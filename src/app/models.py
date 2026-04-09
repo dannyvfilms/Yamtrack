@@ -1,6 +1,7 @@
 import ast
 import logging
 import unicodedata
+import uuid
 from collections import defaultdict
 from datetime import timedelta
 
@@ -17,7 +18,6 @@ from django.db.models import (
     Count,
     Exists,
     F,
-    IntegerField,
     Max,
     OuterRef,
     Prefetch,
@@ -25,10 +25,11 @@ from django.db.models import (
     UniqueConstraint,
     Window,
 )
-from django.db.models.functions import Cast, RowNumber
+from django.db.models.functions import RowNumber
 from django.utils import timezone, translation
 from model_utils import FieldTracker
 from model_utils.fields import MonitorField
+from requests import RequestException
 from simple_history.models import HistoricalRecords
 from simple_history.utils import bulk_create_with_history, bulk_update_with_history
 from unidecode import unidecode
@@ -619,21 +620,9 @@ class Item(CalendarTriggerMixin, models.Model):
         return alternative_title
 
     @classmethod
-    def generate_manual_id(cls, media_type):
-        """Generate a new ID for manual items."""
-        latest_item = (
-            cls.objects.filter(source=Sources.MANUAL.value, media_type=media_type)
-            .annotate(
-                media_id_int=Cast("media_id", IntegerField()),
-            )
-            .order_by("-media_id_int")
-            .first()
-        )
-
-        if latest_item is None:
-            return "1"
-
-        return str(int(latest_item.media_id) + 1)
+    def generate_manual_id(cls):
+        """Generate a unique ID for manual items."""
+        return str(uuid.uuid4())
 
     def save(self, *args, **kwargs):
         """Save the item, ensuring JSONField arrays are never None."""
@@ -1154,22 +1143,26 @@ class MediaManager(models.Manager):
             if platform:
                 normalized_platform = _normalize_media_list_filter_value(platform)
                 CollectionEntry = apps.get_model("app", "CollectionEntry")
+                explicit_collection_platforms = CollectionEntry.objects.filter(
+                    user=user,
+                    item_id=OuterRef("item_id"),
+                ).exclude(resolution="")
+                matching_collection_platforms = explicit_collection_platforms.filter(
+                    resolution__iexact=platform,
+                )
                 platform_json_qs = _filter_queryset_by_item_json_array_ci(
                     queryset,
                     "platforms",
                     normalized_platform,
                 )
-                queryset = queryset.filter(
-                    Q(pk__in=platform_json_qs.values("pk"))
+                queryset = queryset.annotate(
+                    has_collection_platform=Exists(explicit_collection_platforms),
+                    matches_collection_platform=Exists(matching_collection_platforms),
+                ).filter(
+                    Q(matches_collection_platform=True)
                     | Q(
-                        Exists(
-                            CollectionEntry.objects.filter(
-                                user=user,
-                                item_id=OuterRef("item_id"),
-                            )
-                            .exclude(resolution="")
-                            .filter(resolution__iexact=platform),
-                        ),
+                        has_collection_platform=False,
+                        pk__in=platform_json_qs.values("pk"),
                     ),
                 )
 
@@ -2561,7 +2554,7 @@ class Media(models.Model):
                         self.item.media_id,
                         self.item.source,
                     )["max_progress"]
-                except providers.services.ProviderAPIError:
+                except (providers.services.ProviderAPIError, RequestException, ValueError):
                     logger.warning(
                         "Unable to fetch max progress for %s (%s/%s)",
                         self.item.media_type,
@@ -2598,7 +2591,7 @@ class Media(models.Model):
                         self.item.media_id,
                         self.item.source,
                     )["max_progress"]
-                except providers.services.ProviderAPIError:
+                except (providers.services.ProviderAPIError, RequestException, ValueError):
                     logger.warning(
                         "Unable to fetch max progress for %s (%s/%s)",
                         self.item.media_type,
@@ -3204,15 +3197,22 @@ class TV(Media):
                 fields=["status"],
             )
 
-    def _start_next_available_season(self):
+    def _start_next_available_season(
+        self,
+        min_season_number=0,
+    ):
         """Find the next available season to watch and set it to in-progress."""
+        min_season_number = int(min_season_number or 0)
+
         all_seasons = self.seasons.filter(
-            item__season_number__gt=0,
+            item__season_number__gt=min_season_number,
         ).order_by("item__season_number")
 
         next_unwatched_season = all_seasons.exclude(
             status__in=[Status.COMPLETED.value],
         ).first()
+
+        season_started = False
 
         if not next_unwatched_season:
             # If all existing seasons are watched, get the next available season
@@ -3221,14 +3221,18 @@ class TV(Media):
                 self.item.media_id,
                 self.item.source,
             )
+            related_seasons = tv_metadata.get("related", {}).get("seasons", [])
 
             existing_season_numbers = set(
                 all_seasons.values_list("item__season_number", flat=True),
             )
 
-            for season_data in tv_metadata["related"]["seasons"]:
+            for season_data in related_seasons:
                 season_number = season_data["season_number"]
-                if season_number > 0 and season_number not in existing_season_numbers:
+                if (
+                    season_number > min_season_number
+                    and season_number not in existing_season_numbers
+                ):
                     # Use season poster if available, otherwise fallback to TV show poster
                     season_image = season_data.get("image") or self.item.image
 
@@ -3242,6 +3246,7 @@ class TV(Media):
                                 season_data,
                                 fallback_title=self.item.title,
                             ),
+                            "library_media_type": self.item.library_media_type,
                             "image": season_image,
                         },
                     )
@@ -3253,6 +3258,7 @@ class TV(Media):
                         status=Status.IN_PROGRESS.value,
                     )
                     bulk_create_with_history([next_unwatched_season], Season)
+                    season_started = True
                     break
 
         elif next_unwatched_season.status != Status.IN_PROGRESS.value:
@@ -3260,6 +3266,47 @@ class TV(Media):
             bulk_update_with_history(
                 [next_unwatched_season],
                 Season,
+                fields=["status"],
+            )
+            season_started = True
+        else:
+            season_started = True
+
+        if season_started and self.status != Status.IN_PROGRESS.value:
+            self.status = Status.IN_PROGRESS.value
+            bulk_update_with_history(
+                [self],
+                TV,
+                fields=["status"],
+            )
+
+        return season_started
+
+    def _handle_completed_season(
+        self,
+        completed_season_number,
+    ):
+        """Start the next season, or complete the TV show if no seasons remain."""
+        if self._start_next_available_season(
+            completed_season_number,
+        ):
+            return
+
+        incomplete_seasons_exist = (
+            self.seasons.filter(
+                item__season_number__gt=0,
+            )
+            .exclude(
+                status=Status.COMPLETED.value,
+            )
+            .exists()
+        )
+
+        if not incomplete_seasons_exist and self.status != Status.COMPLETED.value:
+            self.status = Status.COMPLETED.value
+            bulk_update_with_history(
+                [self],
+                TV,
                 fields=["status"],
             )
 
@@ -3316,6 +3363,10 @@ class Season(Media):
                         episodes_to_create,
                         Episode,
                     )
+
+                self.related_tv._handle_completed_season(
+                    self.item.season_number,
+                )
 
             elif (
                 self.status == Status.DROPPED.value
@@ -3919,6 +3970,7 @@ class Episode(models.Model):
             max_progress = len(season_metadata["episodes"])
         except (
             providers.services.ProviderAPIError,
+            RequestException,
             KeyError,
             TypeError,
             ValueError,
@@ -3954,17 +4006,7 @@ class Episode(models.Model):
             )
 
         if season_just_completed:
-            last_season = tv_with_seasons_metadata["related"]["seasons"][-1][
-                "season_number"
-            ]
-            # mark the TV show as completed if it's the last season
-            if season_number == last_season:
-                self.related_season.related_tv.status = Status.COMPLETED.value
-                bulk_update_with_history(
-                    [self.related_season.related_tv],
-                    TV,
-                    fields=["status"],
-                )
+            self.related_season.related_tv._handle_completed_season(season_number)
         elif self.related_season.related_tv.status != Status.IN_PROGRESS.value:
             self.related_season.related_tv.status = Status.IN_PROGRESS.value
             bulk_update_with_history(

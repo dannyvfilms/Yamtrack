@@ -438,12 +438,14 @@ class BaseWebhookProcessor:
     def _process_movie(self, payload, user, ids):
         tmdb_id = ids["tmdb_id"]
         imdb_id = ids["imdb_id"]
+        find_response = None
 
         # Try to detect anime first if user has anime enabled
         if user.anime_enabled:
             mapping_data = self._fetch_mapping_data()
             mal_id = None
             source = None
+            resolved_tmdb_id = tmdb_id
 
             if tmdb_id:
                 mal_id = self._get_mal_id_from_tmdb_movie(mapping_data, tmdb_id)
@@ -452,6 +454,27 @@ class BaseWebhookProcessor:
             if not mal_id and imdb_id:
                 mal_id = self._get_mal_id_from_imdb(mapping_data, imdb_id)
                 source = "IMDB"
+
+            if not mal_id and imdb_id and not resolved_tmdb_id:
+                try:
+                    find_response = app.providers.tmdb.find(imdb_id, "imdb_id")
+                except Exception as exc:  # pragma: no cover - defensive network guard
+                    logger.warning(
+                        "Failed TMDB lookup for movie IMDB ID %s: %s",
+                        imdb_id,
+                        exception_summary(exc),
+                    )
+                else:
+                    movie_results = find_response.get("movie_results") or []
+                    if movie_results:
+                        resolved_tmdb_id = str(movie_results[0].get("id") or "")
+                        if resolved_tmdb_id:
+                            mal_id = self._get_mal_id_from_tmdb_movie(
+                                mapping_data,
+                                resolved_tmdb_id,
+                            )
+                            source = "IMDB->TMDB"
+                            tmdb_id = resolved_tmdb_id
 
             if mal_id:
                 logger.info(
@@ -468,7 +491,15 @@ class BaseWebhookProcessor:
             self._handle_movie(tmdb_id, payload, user)
         elif imdb_id:
             logger.debug("No TMDB ID found, looking up via IMDB ID: %s", imdb_id)
-            response = app.providers.tmdb.find(imdb_id, "imdb_id")
+            try:
+                response = find_response or app.providers.tmdb.find(imdb_id, "imdb_id")
+            except Exception as exc:  # pragma: no cover - defensive network guard
+                logger.warning(
+                    "Failed IMDB->TMDB lookup for movie %s: %s",
+                    imdb_id,
+                    exception_summary(exc),
+                )
+                return
 
             if response.get("movie_results"):
                 media_id = response["movie_results"][0]["id"]

@@ -129,84 +129,88 @@
         </div>
 
         <div class="mb-3 flex flex-col items-center justify-between gap-y-4 md:mb-1 md:flex-row md:gap-y-0">
-          <div class="text-center md:text-start">
-            <h2 class="text-sm font-medium text-gray-400 md:hidden">{{ media.season_header_title|default:media.season_title }}</h2>
-            {% if not public_view|default:False and current_instance %}
-              <div class="mt-3 flex flex-wrap items-center justify-center gap-y-1 text-center text-sm font-medium text-gray-400 md:hidden">
-                <span class="text-sm font-medium text-gray-400">
-                  Progress: {{ current_instance.completed_episode_count }}{% if media.max_progress %}/{{ media.max_progress }}{% endif %}
-                </span>
-                {% if current_instance.start_date or current_instance.end_date %}
-                  <span class="mx-2 text-gray-600">•</span>
-                  <span class="text-sm font-medium text-gray-400">
-                    {% if current_instance.start_date and current_instance.end_date %}
-                      {{ current_instance.start_date|user_date_format:user }} - {{ current_instance.end_date|user_date_format:user }}
-                    {% elif current_instance.start_date %}
-                      {{ current_instance.start_date|user_date_format:user }}
-                    {% else %}
-                      {{ current_instance.end_date|user_date_format:user }}
+          <div class="w-full">
+            <div class="flex flex-col gap-y-4 md:flex-row md:gap-y-0 items-center justify-between mb-1">
+              <div class="text-center md:text-start">
+                <h2 class="text-sm font-medium text-gray-400 md:hidden">{{ media.season_header_title|default:media.title }}</h2>
+                {% if not public_view|default:False and current_instance %}
+                  <div class="mt-3 flex flex-wrap items-center justify-center gap-y-1 text-center text-sm font-medium text-gray-400 md:hidden">
+                    <span class="text-sm font-medium text-gray-400">
+                      Progress: {{ current_instance.completed_episode_count }}{% if media.max_progress %}/{{ media.max_progress }}{% endif %}
+                    </span>
+                    {% if current_instance.start_date or current_instance.end_date %}
+                      <span class="mx-2 text-gray-600">•</span>
+                      <span class="text-sm font-medium text-gray-400">
+                        {% if current_instance.start_date and current_instance.end_date %}
+                          {{ current_instance.start_date|user_date_format:user }} - {{ current_instance.end_date|user_date_format:user }}
+                        {% elif current_instance.start_date %}
+                          {{ current_instance.start_date|user_date_format:user }}
+                        {% else %}
+                          {{ current_instance.end_date|user_date_format:user }}
+                        {% endif %}
+                      </span>
                     {% endif %}
-                  </span>
+                  </div>
                 {% endif %}
+                <div class="hidden flex-wrap items-center justify-start gap-y-1 text-center text-sm font-medium text-gray-400 md:flex md:text-start">
+                  <h2 class="text-sm font-medium text-gray-400">{{ media.season_header_title|default:media.title }}</h2>
+                  {% if not public_view|default:False and current_instance %}
+                    <span class="mx-2 text-gray-600">•</span>
+                    <span class="text-sm font-medium text-gray-400">
+                      Progress: {{ current_instance.completed_episode_count }}{% if media.max_progress %}/{{ media.max_progress }}{% endif %}
+                    </span>
+                    {% if current_instance.start_date or current_instance.end_date %}
+                      <span class="mx-2 text-gray-600">•</span>
+                      <span class="text-sm font-medium text-gray-400">
+                        {% if current_instance.start_date and current_instance.end_date %}
+                          {{ current_instance.start_date|user_date_format:user }} - {{ current_instance.end_date|user_date_format:user }}
+                        {% elif current_instance.start_date %}
+                          {{ current_instance.start_date|user_date_format:user }}
+                        {% else %}
+                          {{ current_instance.end_date|user_date_format:user }}
+                        {% endif %}
+                      </span>
+                    {% endif %}
+                  {% endif %}
+                </div>
               </div>
-            {% endif %}
-            <div class="hidden flex-wrap items-center justify-start gap-y-1 text-center text-sm font-medium text-gray-400 md:flex md:text-start">
-              <h2 class="text-sm font-medium text-gray-400">{{ media.season_header_title|default:media.season_title }}</h2>
-              {% if not public_view|default:False and current_instance %}
-                <span class="mx-2 text-gray-600">•</span>
-                <span class="text-sm font-medium text-gray-400">
-                  Progress: {{ current_instance.completed_episode_count }}{% if media.max_progress %}/{{ media.max_progress }}{% endif %}
-                </span>
-                {% if current_instance.start_date or current_instance.end_date %}
-                  <span class="mx-2 text-gray-600">•</span>
-                  <span class="text-sm font-medium text-gray-400">
-                    {% if current_instance.start_date and current_instance.end_date %}
-                      {{ current_instance.start_date|user_date_format:user }} - {{ current_instance.end_date|user_date_format:user }}
-                    {% elif current_instance.start_date %}
-                      {{ current_instance.start_date|user_date_format:user }}
-                    {% else %}
-                      {{ current_instance.end_date|user_date_format:user }}
-                    {% endif %}
-                  </span>
-                {% endif %}
-              {% endif %}
-            </div>
-          </div>
 
-          {# Season dropdown #}
-          <div class="relative hidden md:block"
-               x-data="{ open: false }"
-               @click.away="open = false"
-               @keydown.escape.window="open = false">
-            <button @click="open = !open"
-                    class="flex items-center space-x-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-md transition-colors duration-200 cursor-pointer">
-              <span class="text-sm font-medium">{{ media.season_title }}</span>
-              <div class="w-4 h-4" :class="{ 'rotate-180': open }">{% include "app/icons/chevron-down.svg" %}</div>
-            </button>
-            <div x-show="open"
-                 x-transition:enter="transition ease-out duration-200"
-                 x-transition:enter-start="opacity-0 transform scale-95"
-                 x-transition:enter-end="opacity-100 transform scale-100"
-                 x-transition:leave="transition ease-in duration-150"
-                 x-transition:leave-start="opacity-100 transform scale-100"
-                 x-transition:leave-end="opacity-0 transform scale-95"
-                 class="absolute right-1/2 md:right-0 translate-x-1/2 md:translate-x-0 mt-2 w-64 bg-[#2a2f35] rounded-md shadow-lg overflow-hidden z-10">
-              <div class="max-h-[300px] overflow-y-auto">
-                {% for tv_season in tv.related.seasons %}
-                  <a href="{% url 'season_details' source=media.source media_id=media.media_id title=media.title|slug season_number=tv_season.season_number %}"
-                     class="w-full px-4 py-3 flex items-center space-x-3 hover:bg-gray-700 transition-colors duration-200 cursor-pointer {% if tv_season.season_number == media.season_number %}bg-[#343a40]{% endif %}">
-                    <div class="w-8 h-8 rounded-full flex items-center justify-center bg-indigo-600 text-white">
-                      {{ tv_season.season_number }}
-                    </div>
-                    <div class="flex-1 text-left">
-                      <div class="text-sm font-medium">{{ tv_season.season_title }}</div>
-                      <div class="text-xs text-gray-400">
-                        {{ tv_season.max_progress }} Episode{{ tv_season.max_progress|pluralize }}
-                        {% if tv_season.first_air_date %}• {{ tv_season.first_air_date|user_date_format:user }}{% endif %}
-                      </div>
-                    </div>
-                  </a>
-                {% endfor %}
+              {# Season dropdown #}
+              <div class="relative hidden md:block"
+                   x-data="{ open: false }"
+                   @click.away="open = false"
+                   @keydown.escape.window="open = false">
+                <button @click="open = !open"
+                        class="flex items-center space-x-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-md transition-colors duration-200 cursor-pointer">
+                  <span class="text-sm font-medium">{{ media.season_header_title|default:media.title }}</span>
+                  <div class="w-4 h-4" :class="{ 'rotate-180': open }">{% include "app/icons/chevron-down.svg" %}</div>
+                </button>
+                <div x-show="open"
+                     x-transition:enter="transition ease-out duration-200"
+                     x-transition:enter-start="opacity-0 transform scale-95"
+                     x-transition:enter-end="opacity-100 transform scale-100"
+                     x-transition:leave="transition ease-in duration-150"
+                     x-transition:leave-start="opacity-100 transform scale-100"
+                     x-transition:leave-end="opacity-0 transform scale-95"
+                     class="absolute right-1/2 md:right-0 translate-x-1/2 md:translate-x-0 mt-2 w-64 bg-[#2a2f35] rounded-md shadow-lg overflow-hidden z-10">
+                  <div class="max-h-[300px] overflow-y-auto">
+                    {% for tv_season in tv.related.seasons %}
+                      <a href="{% url 'season_details' source=media.source media_id=media.media_id title=media.title|slug season_number=tv_season.season_number %}"
+                         class="w-full px-4 py-3 flex items-center space-x-3 hover:bg-gray-700 transition-colors duration-200 cursor-pointer {% if tv_season.season_number == media.season_number %}bg-[#343a40]{% endif %}">
+                        <div class="w-8 h-8 rounded-full flex items-center justify-center bg-indigo-600 text-white">
+                          {{ tv_season.season_number }}
+                        </div>
+                        <div class="flex-1 text-left">
+                          <div class="text-sm font-medium">{{ tv_season.season_header_title|default:tv_season.title }}</div>
+                          <div class="text-xs text-gray-400">
+                            {{ tv_season.max_progress }} Episode{{ tv_season.max_progress|pluralize }}
+                            {% if tv_season.first_air_date %}• {{ tv_season.first_air_date|user_date_format:user }}{% endif %}
+                          </div>
+                        </div>
+                      </a>
+                    {% endfor %}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -220,7 +224,7 @@
         {% endif %}
 
         {% with media|alternative_title:user as detail_alt_title %}
-          <div class="{% if activity_subtitle %}mb-3 sm:mb-1{% else %}mb-1{% endif %} text-center md:text-start">
+          <div class="mb-3 sm:mb-1 text-center md:text-start">
             <div class="inline-flex items-center gap-2 md:flex md:gap-2">
               <h1 class="text-3xl font-bold">{{ media|display_title:user }}</h1>
               {% if detail_alt_title %}
@@ -453,6 +457,7 @@
           <div class="order-1 mt-5 mb-6 flex flex-col gap-3 sm:order-2 sm:flex-row sm:flex-wrap sm:items-center">
         {% else %}
           <div class="order-1 mb-6 flex flex-col gap-3 sm:order-2 sm:flex-row sm:flex-wrap sm:items-center">
+            <div class="mt-4 mb-5 flex flex-wrap gap-2">
         {% endif %}
           <div x-data="{ trackOpen: false }" class="sm:shrink-0">
             {% if media_type == MediaTypes.PODCAST.value and podcast_show %}
@@ -715,6 +720,9 @@
               </div>
             </button>
           </div>
+        {% if activity_subtitle or media.score_count is not None or trakt_score or user_medias and current_instance %}
+            </div>
+        {% endif %}
         </div>
       {% endif %}
       </div>
@@ -1208,7 +1216,7 @@
                 <div x-ref="detailGrid" class="detail-media-grid">
                   {% for result in related_items %}
                     <div x-show="shouldShowDetailCard({{ forloop.counter0 }})">
-                      {% include "app/components/detail_related_card.html" with item=result.item title=result.item.season_title|default:result.item.title user=user active=media.media_id|str_equals:result.item.media_id show_release_year_placeholder=True %}
+                      {% include "app/components/detail_related_card.html" with item=result.item title=result.item.season_header_title|default:result.item.title user=user active=media.media_id|str_equals:result.item.media_id show_release_year_placeholder=True %}
                     </div>
                   {% endfor %}
                 </div>
@@ -1231,7 +1239,7 @@
             <div class="detail-media-grid">
               {% for result in media.related.seasons %}
                 <div x-show="shouldShowDetailCard({{ forloop.counter0 }})">
-                  {% include "app/components/media_card.html" with item=result.item title=result.item.season_title|default:result.item.title season_card_title_override=result.card_title media=result.media user=user from_grid=True show_progress_chip=False show_release_year_placeholder=True %}
+                  {% include "app/components/media_card.html" with item=result.item title=result.item.season_header_title|default:result.item.title season_card_title_override=result.card_title media=result.media user=user from_grid=True show_progress_chip=False show_release_year_placeholder=True %}
                 </div>
               {% endfor %}
             </div>
@@ -1250,15 +1258,25 @@
                    @resize.window="syncDetailGrid()">
             <div class="flex items-center justify-between mb-4">
               <h2 class="text-xl font-bold">Cast</h2>
-              <button type="button"
-                      class="flex items-center justify-center p-2 rounded-md text-gray-300 hover:text-white hover:bg-gray-700 transition-colors duration-200 cursor-pointer"
-                      @click="castOpen = !castOpen"
-                      :aria-expanded="castOpen.toString()"
-                      aria-label="Toggle cast section">
-                <div class="w-4 h-4 transition-transform duration-200" :class="{ 'rotate-180': castOpen }">
-                  {% include "app/icons/chevron-down.svg" %}
-                </div>
-              </button>
+              <div class="flex items-center gap-2">
+                {% if media.total_cast_count and media.total_cast_count > media.cast|length and media.source_url %}
+                  <a href="{{ media.source_url }}"
+                     target="_blank"
+                     rel="noreferrer"
+                     class="text-sm font-medium text-indigo-400 hover:text-indigo-300 transition-colors">
+                    Full cast ({{ media.total_cast_count }})
+                  </a>
+                {% endif %}
+                <button type="button"
+                        class="flex items-center justify-center p-2 rounded-md text-gray-300 hover:text-white hover:bg-gray-700 transition-colors duration-200 cursor-pointer"
+                        @click="castOpen = !castOpen"
+                        :aria-expanded="castOpen.toString()"
+                        aria-label="Toggle cast section">
+                  <div class="w-4 h-4 transition-transform duration-200" :class="{ 'rotate-180': castOpen }">
+                    {% include "app/icons/chevron-down.svg" %}
+                  </div>
+                </button>
+              </div>
             </div>
             <div x-show="castOpen"
                  x-transition:enter="transition ease-out duration-200"
@@ -1402,7 +1420,7 @@
             <div x-ref="detailGrid" class="detail-media-grid">
               {% for result in media.related.recommendations %}
                 <div x-show="shouldShowDetailCard({{ forloop.counter0 }})">
-                  {% include "app/components/detail_related_card.html" with item=result.item title=result.item.season_title|default:result.item.title user=user active=media.media_id|str_equals:result.item.media_id show_release_year_placeholder=True %}
+                  {% include "app/components/detail_related_card.html" with item=result.item title=result.item.season_header_title|default:result.item.title user=user active=media.media_id|str_equals:result.item.media_id show_release_year_placeholder=True %}
                 </div>
               {% endfor %}
             </div>
@@ -1460,26 +1478,27 @@
                                 {% include "app/components/fill_track_episode.html" with request=request media=episode episode=episode episode_title=episode.title csrf_token=csrf_token TRACK_TIME=TRACK_TIME user=user only %}
                               </div>
 
-                              <div x-data="{ listsOpen: false }">
-                                <button class="p-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full transition duration-300 cursor-pointer"
-                                        title="Add to custom lists"
-                                          hx-get="{% media_view_url 'lists_modal' episode %}"
-                                        hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
-                                          hx-target="#{% component_id 'lists' episode %}"
-                                        hx-trigger="click once"
-                                        @click="listsOpen = true">
-                                  {% include "app/icons/list-add.svg" with classes="w-4 h-4" %}
-                                </button>
+                              {% if episode.item or media_type == MediaTypes.SEASON.value %}
+                                <div x-data="{ listsOpen: false }">
+                                  <button class="p-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full transition duration-300 cursor-pointer"
+                                          title="Add to custom lists"
+                                          hx-get="{% if episode.item %}{% media_view_url 'lists_modal' episode.item %}{% else %}{% media_view_url 'lists_modal' episode %}{% endif %}"
+                                          hx-vals='{"return_url": "{{ request.get_full_path|urlencode }}"}'
+                                          hx-target="#{% if episode.item %}{% component_id 'lists' episode.item %}{% else %}{% component_id 'lists' episode %}{% endif %}"
+                                          hx-trigger="click once"
+                                          @click="listsOpen = true">
+                                    {% include "app/icons/list-add.svg" with classes="w-4 h-4" %}
+                                  </button>
 
-                                <div x-show="listsOpen"
-                                     @keydown.escape.window="listsOpen = false"
-                                     class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                                  <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
-                                       @click.outside="listsOpen = false">
-                                      <div id="{% component_id 'lists' episode %}"></div>
+                                  <div x-show="listsOpen"
+                                       @keydown.escape.window="listsOpen = false"
+                                       class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                                    <div class="w-96 max-h-[90vh] px-4 md:px-0 relative z-60"
+                                         @click.outside="listsOpen = false">
+                                      <div id="{% if episode.item %}{% component_id 'lists' episode.item %}{% else %}{% component_id 'lists' episode %}{% endif %}"></div>
+                                    </div>
                                   </div>
                                 </div>
-                              </div>
 
                               {% if episode.item %}
                                 <div x-data="{ historyOpen: false }">
@@ -1499,8 +1518,9 @@
                                          @click.outside="historyOpen = false">
                                         <div id="{% component_id 'history' episode.item %}"></div>
                                       </div>
-                                    </div>
                                   </div>
+                                </div>
+                              {% endif %}
                               {% endif %}
 
                               {% if episode.history and media_type == MediaTypes.SEASON.value %}
@@ -1614,7 +1634,12 @@
                         </div>
                         {% if episode.history %}
                           <p class="text-xs text-gray-400 mt-2 px-4">
-                            Last watched: {{ episode.history.0.end_date|user_date_format:user|default_if_none:"No date provided" }}
+                            Ended:
+                            {% if episode.history.0.end_date %}
+                              {{ episode.history.0.end_date|user_date_format:user }}
+                            {% else %}
+                              No date provided
+                            {% endif %}
                             {% if episode.history|length > 1 %}• Watched {{ episode.history|length }} times{% endif %}
                             {% if episode.collection_entry and episode.collection_entry.resolution %}• Collected: {{ episode.collection_entry.resolution }}{% endif %}
                           </p>
@@ -1691,6 +1716,17 @@
           </div>
         </div>
       {% endif %}
+    {% endif %}
+
+    {% if media_type == MediaTypes.PODCAST.value %}
+      <div class="w-full md:w-3/4">
+        <div class="w-full">
+          <h2 class="text-xl font-bold mb-4">Episodes</h2>
+          <div id="episodes-list">
+            {% include "app/components/podcast_episode_list.html" with episodes=paginated_episodes|default:episodes user=user show=podcast_show IMG_NONE=IMG_NONE TRACK_TIME=TRACK_TIME has_more=has_more|default:has_more_episodes|default:False next_page=next_page|default:2 show_id=show_id request=request csrf_token=csrf_token only %}
+          </div>
+        </div>
+      </div>
     {% endif %}
 
     {% if media_type == MediaTypes.PODCAST.value and not public_view|default:False and notes_entry %}

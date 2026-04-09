@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import warnings
 import zoneinfo
 from pathlib import Path
@@ -1011,6 +1012,11 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(hour=4, minute=0),  # every day at 4 AM
     },
 }
+
+IS_PROD = not any(cmd in sys.argv for cmd in ("runserver", "test"))
+if IS_PROD:
+    ALLAUTH_TRUSTED_CLIENT_IP_HEADER = "X-Real-IP"
+
 # Allauth settings
 if CSRF_TRUSTED_ORIGINS:
     # Check if all origins start with http:// or https://

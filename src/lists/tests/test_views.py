@@ -981,6 +981,7 @@ class ListDetailViewTests(TestCase):
                     "status",
                     "score",
                     "runtime",
+                    "time_watched",
                     "popularity",
                     "release_date",
                     "date_added",
@@ -1017,7 +1018,7 @@ class ListDetailViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, reverse("list_add_item", args=[self.custom_list.id]))
-        self.assertContains(response, "Search and Add Item")
+        self.assertContains(response, "Add New Item")
         self.assertContains(response, "More list actions")
         self.assertNotContains(response, 'aria-label="Edit list"')
 
