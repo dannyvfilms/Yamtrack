@@ -6,9 +6,9 @@ from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
-from app.models import Episode, Item, MediaTypes, Movie, Sources, Status, TV
+from app.models import Episode, Item, MediaTypes, Movie, Season, Sources, Status, TV
 from app.providers import services
-from integrations.imports import plex
+from integrations.imports import helpers, plex
 from integrations.imports.plex import PlexHistoryImporter
 from integrations.models import PlexAccount
 
@@ -297,6 +297,86 @@ class TestPlexHybridImport(TestCase):
         self.assertEqual(season.item.title, "Yellowstone")
         self.assertEqual(episode.item.media_id, "1515183")
         self.assertEqual(episode.item.title, "Yellowstone")
+
+    def test_existing_season_is_reused_when_resolved_tv_id_differs(self):
+        """Resolved imports should reuse an existing season instead of inserting a duplicate."""
+        tv_item = Item.objects.create(
+            title="Yellowstone",
+            media_id="73586",
+            media_type=MediaTypes.TV.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/show.jpg",
+        )
+        existing_tv = TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        season_item = Item.objects.create(
+            title="Yellowstone",
+            media_id="73586",
+            media_type=MediaTypes.SEASON.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/season1.jpg",
+            season_number=1,
+        )
+        existing_season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=existing_tv,
+            status=Status.IN_PROGRESS.value,
+        )
+
+        importer = PlexHistoryImporter(
+            user=self.user,
+            account=self.account,
+            mode="new",
+            library="machine::1",
+        )
+        importer._episode_records = [
+            {
+                "tmdb_id": "1515183",
+                "season_number": 1,
+                "episode_number": 4,
+                "watched_at": timezone.now().replace(second=0, microsecond=0),
+                "viewed_at_ts": 1700000000,
+                "plex_rating_key": "rk-yellowstone",
+                "rating": None,
+                "title": "Going Back to Cali",
+                "series_title": "Yellowstone",
+            }
+        ]
+        importer._tv_metadata_cache = {
+            "1515183": {
+                "media_id": "73586",
+                "title": "Yellowstone",
+                "original_title": "Yellowstone",
+                "localized_title": "Yellowstone",
+                "image": "https://example.com/show.jpg",
+                "tvdb_id": "361315",
+                "season/1": {
+                    "image": "https://example.com/season1.jpg",
+                    "episodes": [{"episode_number": 4}],
+                },
+            }
+        }
+
+        importer._build_bulk_media()
+
+        self.assertEqual(len(importer.bulk_media[MediaTypes.SEASON.value]), 0)
+        self.assertEqual(len(importer.bulk_media[MediaTypes.EPISODE.value]), 1)
+        self.assertEqual(
+            importer.bulk_media[MediaTypes.EPISODE.value][0].related_season,
+            existing_season,
+        )
+
+        helpers.bulk_create_media(importer.bulk_media, self.user)
+
+        self.assertEqual(
+            Season.objects.filter(related_tv=existing_tv, item__season_number=1).count(),
+            1,
+        )
+        self.assertEqual(Episode.objects.filter(related_season=existing_season).count(), 1)
 
 
 class TestPlexImportScenarios(TestCase):

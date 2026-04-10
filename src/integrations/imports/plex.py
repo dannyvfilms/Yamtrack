@@ -73,6 +73,7 @@ class PlexHistoryImporter:
         self._movie_metadata_cache: dict[str, dict] = {}
         self._tv_metadata_cache: dict[str, dict] = {}
         self._tv_seasons_loaded: dict[str, set[int]] = defaultdict(set)
+        self._existing_season_cache: dict[tuple[str, int], object | None] = {}
         self._account_id: str | None = (
             str(account.plex_account_id)
             if getattr(account, "plex_account_id", None)
@@ -1248,26 +1249,35 @@ class PlexHistoryImporter:
 
             season_key = f"{actual_tmdb_id}:{record['season_number']}"
             if season_key not in self.media_instances[MediaTypes.SEASON.value]:
-                season_image = season_metadata.get("image") or tv_metadata.get("image")
-                season_item = self._get_or_create_item(
-                    MediaTypes.SEASON.value,
-                    actual_tmdb_id,
-                    {
-                        "title": tv_metadata["title"],
-                        "original_title": tv_metadata.get("original_title"),
-                        "localized_title": tv_metadata.get("localized_title"),
-                        "image": season_image,
-                    },
-                    season_number=record["season_number"],
-                )
-                season_obj = app.models.Season(
-                    item=season_item,
-                    user=self.user,
-                    related_tv=tv_obj,
-                    status=Status.IN_PROGRESS.value,
-                )
-                season_obj._history_date = record["watched_at"]
-                self.bulk_media[MediaTypes.SEASON.value].append(season_obj)
+                season_obj = None
+                if self.mode == "new":
+                    season_obj = self._get_existing_season(
+                        actual_tmdb_id,
+                        record["season_number"],
+                        tv_obj,
+                    )
+
+                if season_obj is None:
+                    season_image = season_metadata.get("image") or tv_metadata.get("image")
+                    season_item = self._get_or_create_item(
+                        MediaTypes.SEASON.value,
+                        actual_tmdb_id,
+                        {
+                            "title": tv_metadata["title"],
+                            "original_title": tv_metadata.get("original_title"),
+                            "localized_title": tv_metadata.get("localized_title"),
+                            "image": season_image,
+                        },
+                        season_number=record["season_number"],
+                    )
+                    season_obj = app.models.Season(
+                        item=season_item,
+                        user=self.user,
+                        related_tv=tv_obj,
+                        status=Status.IN_PROGRESS.value,
+                    )
+                    season_obj._history_date = record["watched_at"]
+                    self.bulk_media[MediaTypes.SEASON.value].append(season_obj)
                 self.media_instances[MediaTypes.SEASON.value][season_key] = [
                     season_obj,
                 ]
@@ -1344,6 +1354,27 @@ class PlexHistoryImporter:
                 return True
 
         return False
+
+    def _get_existing_season(self, tmdb_id: str, season_number: int, tv_obj):
+        """Reuse an already-imported season when a fallback TV ID resolves to it."""
+        if not getattr(tv_obj, "pk", None):
+            return None
+
+        cache_key = (tmdb_id, season_number)
+        if cache_key not in self._existing_season_cache:
+            self._existing_season_cache[cache_key] = (
+                app.models.Season.objects.filter(
+                    user=self.user,
+                    related_tv_id=tv_obj.pk,
+                    item__season_number=season_number,
+                    item__media_id=tmdb_id,
+                    item__source=Sources.TMDB.value,
+                )
+                .select_related("item", "related_tv")
+                .first()
+            )
+
+        return self._existing_season_cache[cache_key]
 
     def _build_episode_import_key(self, record: dict) -> tuple:
         """Build a dedupe key for episode imports."""
