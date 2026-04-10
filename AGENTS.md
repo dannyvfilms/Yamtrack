@@ -154,8 +154,8 @@ cd src && tailwindcss -i ./static/css/input.css -o ./static/css/main.css --watch
 ```
 
 - Note: `README.md` may reference output to `tailwind.css`; for local dev and committed CSS, the supported output path is `src/static/css/main.css`.
-- `src/static/css/tailwind.css` exists but is not referenced by templates in this repo; treat it as legacy/unreferenced output unless usage is restored.
-- Tailwind output headers currently show `tailwindcss v4.1.11` in `src/static/css/main.css` and `src/static/css/tailwind.css`.
+- If a local watcher, shell alias, or editor task still writes `src/static/css/tailwind.css`, repoint it to `src/static/css/main.css`. `tailwind.css` is not a supported output path in this repo.
+- Tailwind output headers currently show `tailwindcss v4.1.11` in `src/static/css/main.css`.
 - Stylelint config: `.stylelintrc`.
 - Djlint config: `pyproject.toml`.
 

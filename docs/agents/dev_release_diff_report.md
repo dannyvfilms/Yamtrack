@@ -217,7 +217,7 @@ Integration preferences:
 ---
 
 ## 16) Static Assets & Styling
-- **Tailwind input & compiled CSS** updated; `tailwind.css` added (legacy output).
+- **Tailwind input & compiled CSS** updated; `main.css` is the supported committed output and the duplicate legacy `tailwind.css` artifact has been retired.
 - New JS modules: barcode scanner, cache updater, statistics charts, date-range picker.
 - New assets/logos: Last.fm, Plex, Pocket Casts.
 
@@ -266,7 +266,6 @@ Integration preferences:
 
 ## Open Questions / Follow-ups for Wiki
 - Confirm which pages should use `base_public.html` and public view behavior.
-- Decide if `tailwind.css` is still legacy or should be documented.
 - Clarify the intended user-facing flow for Collection (simple list vs richer UI).
 
 ---
