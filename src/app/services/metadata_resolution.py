@@ -44,6 +44,14 @@ class MetadataResolutionResult:
     grouped_preview_target: dict | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class MetadataProviderOption:
+    """Template-ready metadata-provider option."""
+
+    value: str
+    label: str
+
+
 def provider_is_enabled(provider: str) -> bool:
     """Return whether a provider is configured for live use."""
     if provider == Sources.TVDB.value:
@@ -61,6 +69,58 @@ def available_metadata_sources(media_type: str) -> list[Sources]:
                 source if isinstance(source, Sources) else Sources(provider),
             )
     return candidates
+
+
+def metadata_provider_label(provider: str) -> str:
+    """Return the display label for a metadata-provider choice."""
+    if provider == Sources.MANUAL.value:
+        return "Custom"
+    try:
+        return Sources(provider).label
+    except ValueError:
+        return provider
+
+
+def available_metadata_provider_values(
+    media_type: str,
+    *,
+    identity_provider: str | None = None,
+) -> list[str]:
+    """Return the supported metadata-provider values for an item route."""
+    from app import custom_metadata  # noqa: PLC0415
+
+    values: list[str] = []
+    if media_type in {MediaTypes.TV.value, MediaTypes.ANIME.value}:
+        values.extend(choice.value for choice in available_metadata_sources(media_type))
+    elif identity_provider and provider_is_enabled(identity_provider):
+        values.append(identity_provider)
+    else:
+        default_choices = available_metadata_sources(media_type)
+        if default_choices:
+            values.append(default_choices[0].value)
+
+    if custom_metadata.supports_custom_provider(media_type):
+        values.append(Sources.MANUAL.value)
+
+    return list(dict.fromkeys(values))
+
+
+def available_metadata_provider_options(
+    media_type: str,
+    *,
+    identity_provider: str | None = None,
+) -> list[MetadataProviderOption]:
+    """Return template-ready provider choices for the metadata tab."""
+    return [
+        MetadataProviderOption(
+            value=provider,
+            label=metadata_provider_label(provider),
+        )
+        for provider in available_metadata_provider_values(
+            media_type,
+            identity_provider=identity_provider,
+        )
+    ]
 
 
 def metadata_default_source(user, media_type: str) -> str:
@@ -170,14 +230,23 @@ def get_preferred_provider(
         if item
         else requested_source or metadata_default_source(user, route_media_type)
     )
-    allowed = {source.value for source in available_metadata_sources(route_media_type)}
+    allowed = available_metadata_provider_values(
+        route_media_type,
+        identity_provider=identity_provider,
+    )
+    allowed_set = set(allowed)
+    if (
+        identity_provider == Sources.MANUAL.value
+        and identity_provider not in allowed_set
+    ):
+        allowed.append(identity_provider)
+        allowed_set.add(identity_provider)
 
     preference = None
     if (
         user
         and getattr(user, "is_authenticated", False)
         and item is not None
-        and route_media_type in {MediaTypes.TV.value, MediaTypes.ANIME.value}
     ):
         preference = MetadataProviderPreference.objects.filter(
             user=user,
@@ -186,21 +255,30 @@ def get_preferred_provider(
 
     if (
         preference
-        and preference.provider in allowed
+        and preference.provider in allowed_set
         and provider_is_enabled(preference.provider)
     ):
         provider = preference.provider
-    elif identity_provider in allowed and provider_is_enabled(identity_provider):
+    elif identity_provider in allowed_set and provider_is_enabled(identity_provider):
         provider = identity_provider
     else:
         provider = metadata_default_source(user, route_media_type)
 
-    if provider not in allowed:
-        provider = identity_provider
+    if provider not in allowed_set:
+        if identity_provider in allowed_set:
+            provider = identity_provider
+        elif allowed:
+            provider = allowed[0]
+        else:
+            provider = identity_provider
     return provider
 
 
-def _normalize_external_ids(metadata: dict | None, *, provider: str | None = None) -> dict[str, str]:
+def _normalize_external_ids(
+    metadata: dict | None,
+    *,
+    provider: str | None = None,
+) -> dict[str, str]:
     """Return a normalized external-ID payload from provider metadata."""
     metadata = metadata or {}
     external_ids = dict(metadata.get("provider_external_ids") or {})
@@ -246,10 +324,7 @@ def upsert_provider_links(
     )
 
     external_ids = _normalize_external_ids(metadata, provider=normalized_provider)
-    if extra_metadata:
-        metadata_payload = dict(extra_metadata)
-    else:
-        metadata_payload = {}
+    metadata_payload = dict(extra_metadata) if extra_metadata else {}
 
     if normalized_provider and metadata.get("media_id"):
         link_defaults = {
@@ -353,7 +428,12 @@ def resolve_provider_media_id(
     return None
 
 
-def _overlay_header_metadata(base_metadata: dict, overlay_metadata: dict, *, provider: str) -> dict:
+def _overlay_header_metadata(
+    base_metadata: dict,
+    overlay_metadata: dict,
+    *,
+    provider: str,
+) -> dict:
     """Overlay display metadata onto the tracked metadata shell."""
     if not isinstance(base_metadata, dict):
         return overlay_metadata
@@ -599,7 +679,10 @@ def _annotate_grouped_preview_target(
     grouped_preview_target: dict | None,
 ) -> dict | None:
     """Mark the grouped-preview season card that the flat anime maps into."""
-    if not isinstance(grouped_preview, dict) or not isinstance(grouped_preview_target, dict):
+    if not isinstance(grouped_preview, dict) or not isinstance(
+        grouped_preview_target,
+        dict,
+    ):
         return grouped_preview
 
     target_season = grouped_preview_target.get("season_number")
@@ -658,7 +741,20 @@ def resolve_detail_metadata(
     grouped_preview = None
     grouped_preview_target = None
 
-    if provider != identity_provider:
+    if provider == Sources.MANUAL.value and item is not None:
+        from app import custom_metadata  # noqa: PLC0415
+
+        provider_media_id = f"item:{item.id}"
+        header_metadata = custom_metadata.build_custom_overlay_metadata(
+            base_metadata,
+            item,
+        )
+        mapping_status = (
+            "identity"
+            if identity_provider == Sources.MANUAL.value
+            else "custom"
+        )
+    elif provider != identity_provider:
         provider_media_id = resolve_provider_media_id(
             item,
             provider,
@@ -676,12 +772,22 @@ def resolve_detail_metadata(
                 provider=provider,
             )
             mapping_status = "mapped"
-            if route_media_type == MediaTypes.ANIME.value and provider in GROUPED_ANIME_PROVIDERS:
+            if (
+                route_media_type == MediaTypes.ANIME.value
+                and provider in GROUPED_ANIME_PROVIDERS
+            ):
+                related_seasons = (
+                    overlay_metadata.get("related", {}) or {}
+                ).get("seasons", [])
                 grouped_preview = services.get_media_metadata(
                     "tv_with_seasons",
                     provider_media_id,
                     provider,
-                    [season.get("season_number") for season in (overlay_metadata.get("related", {}) or {}).get("seasons", []) if season.get("season_number") is not None],
+                    [
+                        season.get("season_number")
+                        for season in related_seasons
+                        if season.get("season_number") is not None
+                    ],
                 )
                 grouped_preview = _enrich_grouped_preview(grouped_preview)
                 grouped_preview_target = _grouped_preview_target(

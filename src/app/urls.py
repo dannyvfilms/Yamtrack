@@ -70,6 +70,11 @@ urlpatterns = [
         name="update_item_image",
     ),
     path(
+        "details/metadata/<int:item_id>",
+        views.update_manual_item_metadata,
+        name="update_manual_item_metadata",
+    ),
+    path(
         "details/migrate/<source:source>/<media_type:media_type>/<path:media_id>",
         views.migrate_grouped_anime,
         name="migrate_grouped_anime",

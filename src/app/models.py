@@ -162,6 +162,11 @@ class Item(CalendarTriggerMixin, models.Model):
         blank=True,
         help_text="When Trakt popularity metadata was last fetched",
     )
+    manual_metadata = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Structured metadata overrides for manual/custom entries",
+    )
     provider_keywords = models.JSONField(default=list, blank=True, help_text="Provider keywords")
     provider_certification = models.CharField(
         max_length=20,
@@ -646,6 +651,7 @@ class Item(CalendarTriggerMixin, models.Model):
                 setattr(self, field_name, [])
 
         json_object_fields = [
+            "manual_metadata",
             "provider_external_ids",
             "provider_game_lengths",
         ]
@@ -2071,6 +2077,32 @@ class MediaManager(models.Manager):
                 media.max_progress = media.item.number_of_pages or None
             return
 
+        if media_type in {
+            MediaTypes.ANIME.value,
+            MediaTypes.MANGA.value,
+            MediaTypes.COMIC.value,
+        }:
+            from app import custom_metadata  # noqa: PLC0415
+
+            manual_item_ids = set()
+            for media in media_list:
+                if media.item.source != Sources.MANUAL.value:
+                    continue
+                manual_item_ids.add(media.item.id)
+                details = custom_metadata.build_manual_detail_payload(media.item)
+                media.max_progress = custom_metadata.manual_max_progress(
+                    media.item,
+                    details,
+                    fallback_max_progress=getattr(media, "max_progress", None),
+                )
+            if all(
+                media.item.source == Sources.MANUAL.value
+                for media in media_list
+            ):
+                return
+        else:
+            manual_item_ids = set()
+
         # For other media types, calculate max_progress from events
         # Create a dictionary mapping item_id to max content_number
         max_progress_dict = {}
@@ -2092,6 +2124,8 @@ class MediaManager(models.Manager):
                 max_progress_dict[item_id] = max(current_max, content_number)
 
         for media in media_list:
+            if media.item.id in manual_item_ids:
+                continue
             media.max_progress = max_progress_dict.get(media.item.id)
 
     def _annotate_tv_released_episodes(self, tv_list, current_datetime):
@@ -2162,6 +2196,15 @@ class MediaManager(models.Manager):
                 tv.max_progress = sum(breakdown.values())
             else:
                 tv.max_progress = None
+                if tv.item.source == Sources.MANUAL.value:
+                    from app import custom_metadata  # noqa: PLC0415
+
+                    details = custom_metadata.build_manual_detail_payload(tv.item)
+                    tv.max_progress = custom_metadata.manual_max_progress(
+                        tv.item,
+                        details,
+                        fallback_max_progress=None,
+                    )
 
     def _annotate_season_released_episodes(self, season_list, current_datetime):
         """Annotate seasons with the number of released episodes."""
@@ -2222,6 +2265,18 @@ class MediaManager(models.Manager):
         for season in season_list:
             key = (season.item.media_id, season.item.source, season.item.season_number)
             season.max_progress = released_by_season.get(key)
+            if (
+                season.max_progress is None
+                and season.item.source == Sources.MANUAL.value
+            ):
+                from app import custom_metadata  # noqa: PLC0415
+
+                details = custom_metadata.build_manual_detail_payload(season.item)
+                season.max_progress = custom_metadata.manual_max_progress(
+                    season.item,
+                    details,
+                    fallback_max_progress=None,
+                )
 
     def fetch_media_for_items(self, media_types, item_ids, user, status_filter=None):
         """Fetch media objects for given items, optionally filtering by status.

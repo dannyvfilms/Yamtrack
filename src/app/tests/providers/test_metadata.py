@@ -1153,6 +1153,48 @@ class Metadata(TestCase):
         self.assertEqual(response["synopsis"], "No synopsis available.")
         self.assertEqual(response["max_progress"], 1)
 
+    def test_manual_movie_uses_saved_custom_metadata(self):
+        """Manual metadata should project saved custom overrides back into details."""
+        Item.objects.create(
+            media_id="manual-rich-movie",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Manual Rich Movie",
+            original_title="Film Original",
+            localized_title="Film Localized",
+            image="http://example.com/manual-rich-movie.jpg",
+            genres=["Drama", "Mystery"],
+            studios=["Studio One", "Studio Two"],
+            country="Japan",
+            languages=["Japanese", "English"],
+            runtime="2h 5min",
+            status="Released",
+            manual_metadata={
+                "synopsis": "Stored custom synopsis.",
+                "details": {
+                    "release_date": "2024-03-01",
+                    "status": "Released",
+                    "runtime": "2h 5min",
+                    "studios": ["Studio One", "Studio Two"],
+                    "country": "Japan",
+                    "languages": ["Japanese", "English"],
+                },
+            },
+        )
+
+        response = manual.metadata("manual-rich-movie", MediaTypes.MOVIE.value)
+
+        self.assertEqual(response["original_title"], "Film Original")
+        self.assertEqual(response["localized_title"], "Film Localized")
+        self.assertEqual(response["synopsis"], "Stored custom synopsis.")
+        self.assertEqual(response["genres"], ["Drama", "Mystery"])
+        self.assertEqual(response["details"]["release_date"], "2024-03-01")
+        self.assertEqual(response["details"]["runtime"], "2h 5min")
+        self.assertEqual(response["details"]["studios"], ["Studio One", "Studio Two"])
+        self.assertEqual(response["details"]["country"], "Japan")
+        self.assertEqual(response["details"]["languages"], ["Japanese", "English"])
+        self.assertEqual(response["max_progress"], 1)
+
     def test_manual_season(self):
         """Test the season method for manually created seasons."""
         Item.objects.create(
@@ -1229,6 +1271,50 @@ class Metadata(TestCase):
 
         result = manual.episode("4", 1, 2)
         self.assertIsNone(result)
+
+    def test_manual_episode_uses_custom_episode_title_and_air_date(self):
+        """Episode metadata should respect stored episode-level overrides."""
+        Item.objects.create(
+            media_id="custom-episode-show",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.TV.value,
+            title="Custom Episode Show",
+            image="http://example.com/custom-show.jpg",
+        )
+        Item.objects.create(
+            media_id="custom-episode-show",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Custom Episode Show",
+            image="http://example.com/custom-season.jpg",
+            season_number=1,
+            manual_metadata={"season_title": "Bonus Season"},
+        )
+        Item.objects.create(
+            media_id="custom-episode-show",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Custom Episode Show",
+            image="http://example.com/custom-episode.jpg",
+            season_number=1,
+            episode_number=1,
+            manual_metadata={
+                "episode_title": "Pilot Override",
+                "synopsis": "Episode synopsis override.",
+                "details": {
+                    "air_date": "2025-05-01",
+                    "runtime": "47m",
+                },
+            },
+        )
+
+        result = manual.episode("custom-episode-show", 1, 1)
+
+        self.assertEqual(result["season_title"], "Bonus Season")
+        self.assertEqual(result["episode_title"], "Pilot Override")
+        self.assertEqual(result["synopsis"], "Episode synopsis override.")
+        self.assertEqual(result["details"]["air_date"], "2025-05-01")
+        self.assertEqual(result["details"]["runtime"], "47m")
 
     def test_manual_process_episodes(self):
         """Test the process_episodes function for manual episodes."""

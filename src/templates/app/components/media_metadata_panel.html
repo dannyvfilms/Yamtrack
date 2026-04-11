@@ -1,4 +1,4 @@
-{% load app_tags user_tags %}
+{% load app_tags user_tags widget_tweaks %}
 
 <div class="space-y-6">
   {% if can_update_metadata_provider and metadata_provider_options and metadata_item %}
@@ -6,17 +6,17 @@
       <div>
         <h3 class="text-xl font-semibold text-white">Metadata Provider</h3>
         <p class="text-sm text-gray-400 mt-1">
-          Display metadata can differ from tracking. Watch history stays on {{ identity_provider|upper }} until you explicitly migrate a title.
+          Display metadata can differ from tracking. Watch history stays on {{ identity_provider_label }} until you explicitly migrate a title.
         </p>
       </div>
 
       <div class="flex items-start justify-between gap-4">
         <div>
           <p class="text-sm text-gray-200">
-            Display metadata is currently coming from <span class="font-semibold">{{ display_provider|upper }}</span>.
+            Display metadata is currently coming from <span class="font-semibold">{{ display_provider_label }}</span>.
           </p>
           <p class="text-xs text-gray-400 mt-1">
-            Tracking source stays on {{ identity_provider|upper }}.
+            Tracking source stays on {{ identity_provider_label }}.
           </p>
         </div>
         {% if metadata_provider_mapping_status == "missing" %}
@@ -80,7 +80,65 @@
     </section>
   {% endif %}
 
-  {% if image_field %}
+  {% if manual_metadata_form %}
+    <section class="space-y-4">
+      <div>
+        <h3 class="text-xl font-semibold text-white">Custom Metadata</h3>
+        <p class="text-sm text-gray-400 mt-1">
+          These overrides only affect this item while Custom is selected as the display provider.
+        </p>
+      </div>
+
+      <form method="post"
+            action="{{ manual_metadata_formaction }}"
+            class="space-y-4">
+        {% csrf_token %}
+        <input type="hidden" name="return_url" value="{{ return_url }}">
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {% for field in manual_metadata_form %}
+            <div class="{% if field.name == 'synopsis' or field.name == 'genres' or field.name == 'studios' or field.name == 'languages' or field.name == 'authors' or field.name == 'isbn' or field.name == 'platforms' or field.name == 'themes' or field.name == 'creators' %}md:col-span-2{% endif %}">
+              <label class="block text-sm font-medium mb-1 text-gray-300"
+                     for="{{ field.id_for_label }}">{{ field.label }}</label>
+              <div class="relative">
+                {% if field.field.widget.input_type == "number" %}
+                  {{ field|add_class:"w-full p-2 pr-12 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" }}
+                  <div class="absolute inset-y-0 right-0 flex flex-col border-l border-gray-600">
+                    <button type="button"
+                            class="flex-1 px-2 hover:bg-gray-700 transition-colors rounded-tr-md border-t border-r border-gray-600"
+                            onclick="this.parentElement.previousElementSibling.stepUp()">
+                      {% include "app/icons/chevron-up.svg" with classes="w-3.5 h-3.5" %}
+                    </button>
+                    <button type="button"
+                            class="flex-1 px-2 hover:bg-gray-700 transition-colors rounded-br-md border-b border-r border-gray-600"
+                            onclick="this.parentElement.previousElementSibling.stepDown()">
+                      {% include "app/icons/chevron-down.svg" with classes="w-3.5 h-3.5" %}
+                    </button>
+                  </div>
+                {% elif field.name == 'synopsis' or field.name == 'genres' or field.name == 'studios' or field.name == 'languages' or field.name == 'authors' or field.name == 'isbn' or field.name == 'platforms' or field.name == 'themes' or field.name == 'creators' %}
+                  {{ field|add_class:"w-full min-h-28 p-2 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff]" }}
+                {% else %}
+                  {{ field|add_class:"w-full p-2 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff]" }}
+                {% endif %}
+              </div>
+              {% if field.help_text %}
+                <p class="text-xs text-gray-400 mt-1">{{ field.help_text }}</p>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+
+        <div class="flex justify-end">
+          <button type="submit"
+                  class="inline-flex h-10 w-48 items-center justify-center px-4 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors text-sm cursor-pointer">
+            Save Metadata
+          </button>
+        </div>
+      </form>
+    </section>
+  {% endif %}
+
+  {% if image_field and not manual_metadata_form %}
     <section class="space-y-3"
              x-data="{ imageUrl: '{{ image_field.value|default_if_none:''|escapejs }}' }">
       <label class="block text-sm font-medium text-gray-300"

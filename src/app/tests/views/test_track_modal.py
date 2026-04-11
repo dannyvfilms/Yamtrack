@@ -14,6 +14,7 @@ from app.models import (
     Anime,
     Item,
     MediaTypes,
+    MetadataProviderPreference,
     Movie,
     Podcast,
     PodcastEpisode,
@@ -126,7 +127,9 @@ class TrackModalViewTests(TestCase):
         self.assertContains(response, "Metadata")
         self.assertContains(response, "Image URL")
         self.assertContains(response, "Save Image")
-        self.assertNotContains(response, "Metadata Provider")
+        self.assertContains(response, "Metadata Provider")
+        self.assertContains(response, "Custom")
+        self.assertNotContains(response, "Custom Metadata")
 
     def test_artist_track_modal_uses_shared_fill_track_shell(self):
         """Music artist trackers should render through the shared modal shell."""
@@ -353,6 +356,161 @@ class TrackModalViewTests(TestCase):
         self.assertEqual(
             self.item.image,
             "https://images.example.com/updated-poster.jpg",
+        )
+
+    def test_track_modal_renders_custom_metadata_form_for_manual_movie(self):
+        """Manual/custom items should expose the full metadata editor."""
+        manual_item = Item.objects.create(
+            media_id="manual-movie-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Manual Movie",
+            image="https://example.com/manual-movie.jpg",
+        )
+        Movie.objects.create(
+            item=manual_item,
+            user=self.user,
+            status=Status.PLANNING.value,
+        )
+
+        response = self.client.get(
+            reverse(
+                "track_modal",
+                kwargs={
+                    "source": Sources.MANUAL.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "manual-movie-1",
+                },
+            )
+            + "?return_url=/home",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["metadata_tab_available"])
+        self.assertTrue(response.context["can_update_metadata_provider"])
+        self.assertTrue(response.context["can_edit_custom_metadata"])
+        self.assertIsNotNone(response.context["manual_metadata_form"])
+        self.assertEqual(
+            list(response.context["manual_metadata_form"].fields.keys())[:6],
+            [
+                "title",
+                "original_title",
+                "localized_title",
+                "image_url",
+                "synopsis",
+                "genres",
+            ],
+        )
+        self.assertContains(response, "Custom Metadata")
+        self.assertContains(response, "Metadata Provider")
+        self.assertContains(response, "Display metadata is currently coming from")
+        self.assertContains(response, "Custom")
+        self.assertContains(response, "Release Date")
+        self.assertContains(response, "Runtime")
+        self.assertContains(response, "Save Metadata")
+        self.assertNotContains(response, "Save Image")
+
+    def test_track_modal_renders_custom_metadata_form_for_movie_using_custom_provider(self):
+        """Tracked items should show the custom editor when Custom is selected."""
+        self.item.manual_metadata = {
+            "title": "Custom Display Movie",
+            "original_title": "Custom Original",
+            "localized_title": "Custom Localized",
+            "image": "https://example.com/custom-display-movie.jpg",
+            "synopsis": "A custom display synopsis.",
+            "genres": ["Drama"],
+            "details": {
+                "release_date": "2024-02-01",
+                "runtime": "2h 1min",
+            },
+        }
+        self.item.save(update_fields=["manual_metadata"])
+        MetadataProviderPreference.objects.create(
+            user=self.user,
+            item=self.item,
+            provider=Sources.MANUAL.value,
+        )
+
+        response = self.client.get(
+            reverse(
+                "track_modal",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "238",
+                },
+            )
+            + "?return_url=/home",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["can_update_metadata_provider"])
+        self.assertTrue(response.context["can_edit_custom_metadata"])
+        self.assertEqual(response.context["display_provider"], Sources.MANUAL.value)
+        self.assertContains(response, "Metadata Provider")
+        self.assertContains(response, "Custom Metadata")
+        self.assertContains(response, "Save Metadata")
+        self.assertNotContains(response, "Save Image")
+
+    def test_update_manual_item_metadata(self):
+        """Manual/custom metadata edits should persist on the underlying item."""
+        manual_item = Item.objects.create(
+            media_id="manual-movie-2",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Original Manual Movie",
+            image="https://example.com/original-manual-movie.jpg",
+        )
+        Movie.objects.create(
+            item=manual_item,
+            user=self.user,
+            status=Status.PLANNING.value,
+        )
+
+        response = self.client.post(
+            reverse("update_manual_item_metadata", args=[manual_item.id]),
+            {
+                "return_url": "/home",
+                "metadata-title": "Updated Manual Movie",
+                "metadata-original_title": "Original Language Title",
+                "metadata-localized_title": "Localized Manual Movie",
+                "metadata-image_url": "https://images.example.com/manual-custom-poster.jpg",
+                "metadata-synopsis": "A custom movie synopsis.",
+                "metadata-genres": "Drama\nThriller",
+                "metadata-release_date": "2024-01-15",
+                "metadata-status": "Released",
+                "metadata-runtime": "2h 10min",
+                "metadata-studios": "Studio One, Studio Two",
+                "metadata-country": "Japan",
+                "metadata-languages": "Japanese\nEnglish",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, "/home")
+
+        manual_item.refresh_from_db()
+        self.assertEqual(manual_item.title, "Updated Manual Movie")
+        self.assertEqual(manual_item.original_title, "Original Language Title")
+        self.assertEqual(manual_item.localized_title, "Localized Manual Movie")
+        self.assertEqual(
+            manual_item.image,
+            "https://images.example.com/manual-custom-poster.jpg",
+        )
+        self.assertEqual(manual_item.genres, ["Drama", "Thriller"])
+        self.assertEqual(manual_item.studios, ["Studio One", "Studio Two"])
+        self.assertEqual(manual_item.country, "Japan")
+        self.assertEqual(manual_item.languages, ["Japanese", "English"])
+        self.assertEqual(manual_item.runtime, "2h 10min")
+        self.assertEqual(manual_item.runtime_minutes, 130)
+        self.assertEqual(
+            manual_item.release_datetime.date().isoformat(),
+            "2024-01-15",
+        )
+        self.assertEqual(manual_item.manual_metadata["synopsis"], "A custom movie synopsis.")
+        self.assertEqual(
+            manual_item.manual_metadata["details"]["release_date"],
+            "2024-01-15",
         )
 
     @override_settings(TVDB_API_KEY="test-tvdb-key")

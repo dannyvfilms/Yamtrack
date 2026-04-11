@@ -38,6 +38,7 @@ from app import (
     cache_utils,
     credits,
     config,
+    custom_metadata,
     discover,
     helpers,
     history_cache,
@@ -4878,10 +4879,15 @@ def media_details(
         media_metadata.setdefault("studios_full", [])
 
     metadata_resolution_result = None
-    if media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value) and isinstance(
-        media_metadata,
-        dict,
-    ):
+    should_resolve_metadata = bool(
+        detail_item
+        and isinstance(media_metadata, dict)
+        and (
+            media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value)
+            or custom_metadata.supports_custom_provider(media_type)
+        )
+    )
+    if should_resolve_metadata:
         metadata_resolution_result = metadata_resolution.resolve_detail_metadata(
             request.user if request.user.is_authenticated else None,
             item=detail_item,
@@ -5670,10 +5676,14 @@ def media_details(
         if metadata_resolution_result
         else None
     )
+    metadata_provider_options = metadata_resolution.available_metadata_provider_options(
+        media_type,
+        identity_provider=identity_provider,
+    )
     can_update_metadata_provider = bool(
         not public_view
         and detail_item is not None
-        and media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value)
+        and metadata_provider_options
     )
     can_migrate_grouped_anime = False
     migrated_grouped_item = None
@@ -5759,9 +5769,7 @@ def media_details(
         ),
         "display_provider": display_provider,
         "identity_provider": identity_provider,
-        "metadata_provider_options": metadata_resolution.available_metadata_sources(
-            media_type,
-        ),
+        "metadata_provider_options": metadata_provider_options,
         "metadata_provider_mapping_status": (
             metadata_resolution_result.mapping_status
             if metadata_resolution_result
@@ -5800,11 +5808,27 @@ def update_metadata_provider_preference(request, source, media_type, media_id):
     item = get_object_or_404(Item, **lookup)
     allowed_providers = {
         choice.value
-        for choice in metadata_resolution.available_metadata_sources(media_type)
+        for choice in metadata_resolution.available_metadata_provider_options(
+            media_type,
+            identity_provider=item.source,
+        )
     }
     if provider not in allowed_providers:
         messages.error(request, "That metadata provider is not available for this title.")
     else:
+        if (
+            provider == Sources.MANUAL.value
+            and custom_metadata.supports_custom_provider(media_type)
+        ):
+            current_display_metadata = _resolve_current_display_metadata_payload(
+                user=request.user,
+                item=item,
+                media_type=media_type,
+                media_id=media_id,
+                source=source,
+            )
+            custom_metadata.snapshot_custom_metadata(item, current_display_metadata)
+
         MetadataProviderPreference.objects.update_or_create(
             user=request.user,
             item=item,
@@ -5866,6 +5890,92 @@ def update_item_image(request, item_id):
         return redirect(return_url)
 
     return helpers.redirect_back(request)
+
+
+@login_required
+@require_POST
+def update_manual_item_metadata(request, item_id):
+    """Persist custom metadata overrides for a tracked manual item."""
+    return_url = (request.POST.get("return_url") or "").strip()
+    item = get_object_or_404(Item, id=item_id)
+    media_model = apps.get_model("app", item.media_type)
+    if not media_model.objects.filter(user=request.user, item=item).exists():
+        messages.error(request, "You can only update metadata for items in your library.")
+        return helpers.redirect_back(request)
+
+    if not custom_metadata.supports_custom_metadata(item):
+        messages.error(request, "Metadata overrides are not available for this item.")
+        return helpers.redirect_back(request)
+
+    form = custom_metadata.ManualMetadataForm(
+        request.POST,
+        item=item,
+        prefix="metadata",
+    )
+    if form.is_valid():
+        update_fields = form.save()
+        if update_fields:
+            messages.success(request, "Custom metadata updated.")
+        else:
+            messages.success(request, "Custom metadata already matches this item.")
+    else:
+        logger.error(form.errors.as_json())
+        helpers.form_error_messages(form, request)
+
+    if return_url and (
+        return_url.startswith("/")
+        or url_has_allowed_host_and_scheme(
+            return_url,
+            allowed_hosts={request.get_host()},
+            require_https=request.is_secure(),
+        )
+    ):
+        return redirect(return_url)
+
+    return helpers.redirect_back(request)
+
+
+def _resolve_current_display_metadata_payload(
+    *,
+    user,
+    item,
+    media_type: str,
+    media_id: str,
+    source: str,
+):
+    """Return the metadata payload currently shown for a tracked item."""
+    base_metadata = services.get_media_metadata(
+        media_type,
+        media_id,
+        source,
+    )
+    current_provider = metadata_resolution.get_preferred_provider(
+        user,
+        item,
+        media_type,
+        requested_source=source,
+    )
+    if current_provider == Sources.MANUAL.value:
+        return custom_metadata.build_custom_overlay_metadata(base_metadata, item)
+    if current_provider == source:
+        return base_metadata
+
+    provider_media_id = metadata_resolution.resolve_provider_media_id(
+        item,
+        current_provider,
+        route_media_type=media_type,
+    )
+    if not provider_media_id:
+        return base_metadata
+
+    return services.get_media_metadata(
+        metadata_resolution.provider_route_media_type(
+            media_type,
+            current_provider,
+        ),
+        provider_media_id,
+        current_provider,
+    )
 
 
 @login_required
@@ -7923,12 +8033,9 @@ def _render_standard_track_modal(
         grouped_preview = metadata_resolution_result.grouped_preview
         grouped_preview_target = metadata_resolution_result.grouped_preview_target
         metadata_provider_mapping_status = metadata_resolution_result.mapping_status
-        metadata_provider_options = metadata_resolution.available_metadata_sources(
+        metadata_provider_options = metadata_resolution.available_metadata_provider_options(
             media_type,
-        )
-        can_update_metadata_provider = bool(
-            metadata_item is not None
-            and media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value)
+            identity_provider=identity_provider,
         )
         can_migrate_grouped_anime = bool(
             metadata_item is not None
@@ -7938,9 +8045,45 @@ def _render_standard_track_modal(
             and grouped_preview
             and Anime.objects.filter(user=request.user, item=metadata_item).exists()
         )
+    elif metadata_item is not None and custom_metadata.supports_custom_provider(media_type):
+        metadata_provider_options = metadata_resolution.available_metadata_provider_options(
+            media_type,
+            identity_provider=identity_provider,
+        )
+        preference = MetadataProviderPreference.objects.filter(
+            user=request.user,
+            item=metadata_item,
+        ).first()
+        allowed_providers = {choice.value for choice in metadata_provider_options}
+        if preference and preference.provider in allowed_providers:
+            display_provider = preference.provider
+            if (
+                display_provider == Sources.MANUAL.value
+                and identity_provider != Sources.MANUAL.value
+            ):
+                metadata_provider_mapping_status = "custom"
+
+    can_update_metadata_provider = bool(
+        metadata_item is not None and metadata_provider_options
+    )
+
+    manual_metadata_form = None
+    can_edit_custom_metadata = bool(
+        metadata_item is not None
+        and display_provider == Sources.MANUAL.value
+        and custom_metadata.supports_custom_metadata(metadata_item)
+    )
+    if can_edit_custom_metadata:
+        manual_metadata_form = custom_metadata.ManualMetadataForm(
+            item=metadata_item,
+            prefix="metadata",
+        )
 
     metadata_tab_available = bool(
-        metadata_fields or can_update_metadata_provider or can_migrate_grouped_anime
+        metadata_fields
+        or can_update_metadata_provider
+        or can_migrate_grouped_anime
+        or manual_metadata_form
     )
 
     episode_plays_domain = bulk_episode_tracking.build_episode_play_domain(
@@ -7977,7 +8120,13 @@ def _render_standard_track_modal(
         "return_url": return_url,
         "max_progress": max_progress,
         "display_provider": display_provider,
+        "display_provider_label": metadata_resolution.metadata_provider_label(
+            display_provider,
+        ),
         "identity_provider": identity_provider,
+        "identity_provider_label": metadata_resolution.metadata_provider_label(
+            identity_provider,
+        ),
         "grouped_preview": grouped_preview,
         "grouped_preview_target": grouped_preview_target,
         "metadata_provider_mapping_status": metadata_provider_mapping_status,
@@ -7993,7 +8142,18 @@ def _render_standard_track_modal(
         "general_existing_instance": media,
         "metadata_fields": metadata_fields,
         "image_field": image_field,
-        "image_save_item_id": metadata_item.id if media and metadata_item else None,
+        "image_save_item_id": (
+            metadata_item.id
+            if media and metadata_item and not can_edit_custom_metadata
+            else None
+        ),
+        "manual_metadata_form": manual_metadata_form,
+        "manual_metadata_formaction": (
+            reverse("update_manual_item_metadata", args=[metadata_item.id])
+            if can_edit_custom_metadata
+            else ""
+        ),
+        "can_edit_custom_metadata": can_edit_custom_metadata,
         "track_form_id": track_form_id,
         "initial_active_tab": initial_active_tab,
         "episode_plays_tab_available": episode_plays_tab_available,

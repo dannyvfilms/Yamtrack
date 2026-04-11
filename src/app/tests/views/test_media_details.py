@@ -2858,6 +2858,78 @@ class MediaDetailsViewTests(TestCase):
         item.refresh_from_db()
         self.assertEqual(item.source, Sources.TMDB.value)
 
+    @patch("app.views.services.get_media_metadata")
+    def test_update_metadata_provider_preference_snapshots_movie_for_custom(
+        self,
+        mock_get_metadata,
+    ):
+        """Switching a tracked item to Custom should snapshot the displayed metadata."""
+        item = Item.objects.create(
+            media_id="603",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="The Matrix",
+            image="https://example.com/provider-matrix.jpg",
+        )
+        mock_get_metadata.return_value = {
+            "media_id": "603",
+            "source": Sources.TMDB.value,
+            "media_type": MediaTypes.MOVIE.value,
+            "title": "The Matrix",
+            "original_title": "The Matrix",
+            "localized_title": "The Matrix",
+            "image": "https://example.com/provider-matrix.jpg",
+            "synopsis": "A computer hacker learns the truth.",
+            "genres": ["Action", "Sci-Fi"],
+            "max_progress": 1,
+            "details": {
+                "release_date": "1999-03-31",
+                "runtime": "2h 16min",
+                "status": "Released",
+                "studios": ["Village Roadshow Pictures"],
+                "country": "United States of America",
+                "languages": ["English"],
+            },
+            "related": {},
+        }
+
+        response = self.client.post(
+            reverse(
+                "update_metadata_provider_preference",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "603",
+                },
+            ),
+            {"provider": Sources.MANUAL.value},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        preference = MetadataProviderPreference.objects.get(user=self.user, item=item)
+        self.assertEqual(preference.provider, Sources.MANUAL.value)
+
+        item.refresh_from_db()
+        self.assertEqual(item.source, Sources.TMDB.value)
+        self.assertEqual(item.title, "The Matrix")
+        self.assertEqual(item.genres, ["Action", "Sci-Fi"])
+        self.assertEqual(item.runtime, "2h 16min")
+        self.assertEqual(item.runtime_minutes, 136)
+        self.assertEqual(
+            item.release_datetime.date().isoformat(),
+            "1999-03-31",
+        )
+        self.assertEqual(item.manual_metadata["title"], "The Matrix")
+        self.assertEqual(
+            item.manual_metadata["image"],
+            "https://example.com/provider-matrix.jpg",
+        )
+        self.assertEqual(item.manual_metadata["genres"], ["Action", "Sci-Fi"])
+        self.assertEqual(
+            item.manual_metadata["details"]["release_date"],
+            "1999-03-31",
+        )
+
     @patch("app.views.metadata_resolution.resolve_detail_metadata")
     @patch("app.providers.services.get_media_metadata")
     def test_migrated_flat_anime_shows_grouped_banner(

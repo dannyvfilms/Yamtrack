@@ -216,6 +216,84 @@ class MetadataResolutionTests(TestCase):
         self.assertIsNone(result.provider_media_id)
         self.assertEqual(result.header_metadata["title"], "Breaking Bad")
 
+    def test_resolve_detail_metadata_uses_custom_overlay_for_movie(self):
+        """Custom provider preferences should overlay stored metadata on normal items."""
+        item = Item.objects.create(
+            media_id="603",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="The Matrix",
+            original_title="The Matrix",
+            localized_title="The Matrix",
+            image="https://example.com/custom-matrix.jpg",
+            genres=["Action", "Sci-Fi"],
+            runtime="2h 16min",
+            manual_metadata={
+                "title": "The Matrix (Custom)",
+                "original_title": "Matrix Original",
+                "localized_title": "Matrix Localized",
+                "image": "https://example.com/custom-matrix.jpg",
+                "synopsis": "Custom synopsis.",
+                "genres": ["Action", "Sci-Fi"],
+                "details": {
+                    "release_date": "1999-03-31",
+                    "runtime": "2h 16min",
+                    "status": "Released",
+                },
+            },
+        )
+        MetadataProviderPreference.objects.create(
+            user=self.user,
+            item=item,
+            provider=Sources.MANUAL.value,
+        )
+        base_metadata = {
+            "media_id": "603",
+            "source": Sources.TMDB.value,
+            "media_type": MediaTypes.MOVIE.value,
+            "title": "The Matrix",
+            "image": "https://example.com/provider-matrix.jpg",
+            "synopsis": "Provider synopsis.",
+            "genres": ["Action"],
+            "details": {
+                "release_date": "1999-01-01",
+                "runtime": "2h 10min",
+                "status": "Provider",
+            },
+            "related": {"recommendations": [{"media_id": "604"}]},
+        }
+
+        result = metadata_resolution.resolve_detail_metadata(
+            self.user,
+            item=item,
+            route_media_type=MediaTypes.MOVIE.value,
+            media_id=item.media_id,
+            source=item.source,
+            base_metadata=base_metadata,
+        )
+
+        self.assertEqual(result.display_provider, Sources.MANUAL.value)
+        self.assertEqual(result.identity_provider, Sources.TMDB.value)
+        self.assertEqual(result.mapping_status, "custom")
+        self.assertEqual(result.provider_media_id, f"item:{item.id}")
+        self.assertEqual(result.header_metadata["title"], "The Matrix (Custom)")
+        self.assertEqual(
+            result.header_metadata["synopsis"],
+            "Custom synopsis.",
+        )
+        self.assertEqual(
+            result.header_metadata["details"]["release_date"],
+            "1999-03-31",
+        )
+        self.assertEqual(
+            result.header_metadata["details"]["status"],
+            "Released",
+        )
+        self.assertEqual(
+            result.header_metadata["related"],
+            {"recommendations": [{"media_id": "604"}]},
+        )
+
     @override_settings(TVDB_API_KEY="test-tvdb-key")
     @patch("app.services.metadata_resolution.anime_mapping.resolve_provider_series_id")
     def test_resolve_provider_media_id_maps_flat_anime_via_mapping_fallback(
