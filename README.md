@@ -4,6 +4,10 @@ A self-hosted Trakt replacement built on Yamtrack, with unified History, Time Le
 
 [Demo](https://yamtrack.dannyvfilms.com) | [Docker Image](https://github.com/dannyvfilms/Yamtrack/pkgs/container/yamtrack) | [Releases](https://github.com/dannyvfilms/Yamtrack/releases)
 
+Credentials for Demo:
+- Username: `demo`
+- Password: `demodemo`
+
 ## Why choose this fork?
 
 Upstream Yamtrack is the foundation. This fork is the stronger pick if you want a more opinionated, Trakt-like day-to-day experience instead of a mostly stock Yamtrack install.
