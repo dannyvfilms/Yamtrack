@@ -4,6 +4,7 @@
      style="aspect-ratio: 3/2 !important;"
      data-active-playback-card
      data-playback-status="{{ active_playback_card.status }}"
+     data-playback-image-source="{{ active_playback_card.image_source|default:'primary' }}"
      data-playback-offset="{{ active_playback_card.offset_seconds }}"
      data-playback-duration="{{ active_playback_card.duration_seconds }}"
      data-playback-updated-at="{{ active_playback_card.updated_at_ts }}">

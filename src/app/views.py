@@ -10,6 +10,7 @@ from datetime import UTC, date, timedelta
 from pathlib import Path
 from uuid import uuid4
 
+import requests
 from dateutil.relativedelta import relativedelta
 from django.apps import apps
 from django.conf import settings
@@ -1148,6 +1149,17 @@ def _queue_game_lengths_refresh(detail_item, *, force=False, fetch_hltb=True):
     return True
 
 
+def _annotate_home_card_images(media_items):
+    """Annotate home-card image overrides for media that need display fallbacks."""
+    season_items = [
+        media
+        for media in media_items
+        if getattr(getattr(media, "item", None), "media_type", None) == MediaTypes.SEASON.value
+    ]
+    if season_items:
+        BasicMedia.objects._fix_missing_season_images(season_items)
+
+
 @require_GET
 def home(request):
     """Home page with media items in progress."""
@@ -1249,6 +1261,7 @@ def home(request):
             all_items = album_adapters + other_items
             
             items_to_load = all_items[items_limit:]
+            _annotate_home_card_images(items_to_load)
             
             # Split items into 2:3 (standard) and 1:1 (square) types
             square_types = {"music", "podcast"}
@@ -1442,6 +1455,8 @@ def home(request):
                 limited_items = standard_items[:items_limit]
             elif square_items:
                 limited_items = square_items[:items_limit]
+
+            _annotate_home_card_images(limited_items)
             
             list_by_type[RECENTLY_NOT_RATED_KEY] = {
                 "items": limited_items,
@@ -6054,6 +6069,19 @@ def _build_missing_season_metadata(
     fallback_episodes = []
     tv_image = tv_metadata.get("image") or settings.IMG_NONE
     show_title = tv_metadata.get("title", "")
+    episode_backdrop = None
+    tvdb_episode_images = {}
+
+    if source == Sources.TMDB.value:
+        episode_backdrop = helpers.get_tmdb_backdrop_image(
+            MediaTypes.TV.value,
+            media_id,
+        )
+        tvdb_episode_images = tmdb.get_tvdb_episode_image_map(
+            tv_metadata.get("tvdb_id"),
+            season_number,
+            tmdb_media_id=media_id,
+        )
 
     for episode_number in episode_numbers:
         history_entries = episodes_by_number[episode_number]
@@ -6061,14 +6089,19 @@ def _build_missing_season_metadata(
             (entry.item for entry in history_entries if entry.item),
             None,
         )
-        episode_image = tv_image
         air_date = None
         runtime = None
         title = f"Episode {episode_number}"
+        primary_image = getattr(episode_item, "image", None)
+
+        if (
+            helpers.has_real_image(primary_image)
+            and helpers.has_real_image(tv_image)
+            and primary_image == tv_image
+        ):
+            primary_image = None
 
         if episode_item:
-            if episode_item.image and episode_item.image != settings.IMG_NONE:
-                episode_image = episode_item.image
             if episode_item.release_datetime:
                 air_date = episode_item.release_datetime
             if (
@@ -6079,6 +6112,18 @@ def _build_missing_season_metadata(
             if episode_item.title and episode_item.title != show_title:
                 title = episode_item.title
 
+        if source == Sources.TMDB.value:
+            episode_image, image_source = helpers.resolve_image_with_fallback(
+                primary_image,
+                tvdb_episode_images.get(str(episode_number)),
+                episode_backdrop,
+            )
+        else:
+            episode_image, image_source = helpers.resolve_image_with_fallback(
+                primary_image,
+                tv_image,
+            )
+
         fallback_episodes.append(
             {
                 "media_id": media_id,
@@ -6088,6 +6133,7 @@ def _build_missing_season_metadata(
                 "episode_number": episode_number,
                 "air_date": air_date,
                 "image": episode_image,
+                "image_source": image_source,
                 "title": title,
                 "overview": "",
                 "history": history_entries,
@@ -6516,17 +6562,50 @@ def _build_flat_anime_episode_preview(
                     collection_entry_by_episode_key[episode_key] = entry
 
     episodes = []
+    episode_backdrop = None
+    tvdb_episode_images_by_season = {}
+    if provider == Sources.TMDB.value:
+        episode_backdrop = helpers.get_tmdb_backdrop_image(
+            MediaTypes.TV.value,
+            provider_media_id,
+        )
+
     for row in preview_rows:
         raw_episode = row["raw_episode"]
         season_number = row["season_number"]
         provider_episode_number = row["provider_episode_number"]
         episode_key = (season_number, provider_episode_number)
         episode_number = row["mapped_episode_number"]
+        tvdb_episode_image = None
 
-        if raw_episode.get("still_path"):
-            image = tmdb.get_image_url(raw_episode["still_path"])
-        else:
-            image = raw_episode.get("image") or settings.IMG_NONE
+        if provider == Sources.TMDB.value:
+            if season_number not in tvdb_episode_images_by_season:
+                season_payload = grouped_preview.get(f"season/{season_number}", {})
+                season_tvdb_id = None
+                if isinstance(season_payload, dict):
+                    season_tvdb_id = season_payload.get("tvdb_id")
+                if not season_tvdb_id and isinstance(grouped_preview, dict):
+                    season_tvdb_id = grouped_preview.get("tvdb_id")
+                tvdb_episode_images_by_season[season_number] = (
+                    tmdb.get_tvdb_episode_image_map(
+                        season_tvdb_id,
+                        season_number,
+                        tmdb_media_id=provider_media_id,
+                    )
+                )
+            tvdb_episode_image = tvdb_episode_images_by_season.get(
+                season_number,
+                {},
+            ).get(str(provider_episode_number))
+
+        image, image_source = helpers.resolve_image_with_fallback(
+            tmdb.get_image_url(raw_episode["still_path"])
+            if raw_episode.get("still_path")
+            else None,
+            tvdb_episode_image,
+            helpers.first_real_image(raw_episode.get("image"), default=None),
+            episode_backdrop,
+        )
 
         runtime_value = raw_episode.get("runtime")
         runtime = (
@@ -6549,6 +6628,7 @@ def _build_flat_anime_episode_preview(
                     raw_episode.get("air_date"),
                 ),
                 "image": image,
+                "image_source": image_source,
                 "title": raw_episode.get("name")
                 or raw_episode.get("title")
                 or f"Episode {episode_number}",
@@ -7221,6 +7301,27 @@ def update_album_score(request, album_id):
 @require_POST
 def sync_metadata(request, source, media_type, media_id, season_number=None):
     """Refresh the metadata for a media item."""
+    def _sync_redirect_response():
+        if request.headers.get("HX-Request"):
+            return HttpResponse(
+                status=204,
+                headers={
+                    "HX-Redirect": request.POST["next"],
+                },
+            )
+        return helpers.redirect_back(request)
+
+    def _restore_cached_metadata(cache_key, cached_metadata, cached_ttl):
+        if cached_metadata is None:
+            return
+
+        timeout = (
+            cached_ttl
+            if isinstance(cached_ttl, int | float) and cached_ttl > 0
+            else settings.CACHE_TIMEOUT
+        )
+        cache.set(cache_key, cached_metadata, timeout=timeout)
+
     if source == Sources.MANUAL.value:
         msg = "Manual items cannot be synced."
         messages.error(request, msg)
@@ -7238,6 +7339,7 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
     if media_type == MediaTypes.SEASON.value:
         cache_key += f"_{season_number}"
 
+    cached_metadata = cache.get(cache_key)
     ttl = cache.ttl(cache_key)
     logger.debug("%s - Cache TTL for: %s", cache_key, ttl)
 
@@ -7249,12 +7351,34 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
         deleted = cache.delete(cache_key)
         logger.debug("%s - Old cache deleted: %s", cache_key, deleted)
 
-        metadata = services.get_media_metadata(
-            media_type,
-            media_id,
-            source,
-            [season_number],
-        )
+        try:
+            metadata = services.get_media_metadata(
+                media_type,
+                media_id,
+                source,
+                [season_number],
+            )
+        except (requests.exceptions.RequestException, services.ProviderAPIError) as exc:
+            _restore_cached_metadata(cache_key, cached_metadata, ttl)
+            provider_label = Sources(source).label
+            logger.warning(
+                "metadata_manual_refresh_failed cache_key=%s media_id=%s source=%s error=%s",
+                cache_key,
+                media_id,
+                source,
+                exception_summary(exc),
+            )
+            if isinstance(exc, services.ProviderAPIError):
+                msg = str(exc)
+            else:
+                msg = (
+                    f"Could not sync with {provider_label} right now because the provider "
+                    "could not be reached."
+                )
+            if cached_metadata is not None:
+                msg += " Cached data has been kept."
+            messages.error(request, msg)
+            return _sync_redirect_response()
         
         # Extract number_of_pages for books
         number_of_pages = None
@@ -7445,14 +7569,7 @@ def sync_metadata(request, source, media_type, media_id, season_number=None):
         msg = f"{title} was synced to {Sources(source).label} successfully."
         messages.success(request, msg)
 
-    if request.headers.get("HX-Request"):
-        return HttpResponse(
-            status=204,
-            headers={
-                "HX-Redirect": request.POST["next"],
-            },
-        )
-    return helpers.redirect_back(request)
+    return _sync_redirect_response()
 
 
 def _sync_plex_rating(request, item, media_type):

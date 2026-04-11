@@ -255,6 +255,131 @@ class Metadata(TestCase):
         self.assertNotIn("season/0", result)
         mock_build_specials_season.assert_not_called()
 
+    @patch("app.helpers.get_tmdb_backdrop_image")
+    @patch("app.providers.tmdb.get_tvdb_episode_image_map")
+    def test_process_episodes_prefers_tvdb_art_before_backdrop(
+        self,
+        mock_get_tvdb_episode_image_map,
+        mock_get_tmdb_backdrop_image,
+    ):
+        mock_get_tvdb_episode_image_map.return_value = {
+            "1": "https://example.com/tvdb-episode.jpg",
+        }
+        mock_get_tmdb_backdrop_image.return_value = "https://example.com/backdrop.jpg"
+
+        result = tmdb.process_episodes(
+            {
+                "media_id": "1668",
+                "tvdb_id": "998877",
+                "season_number": 1,
+                "episodes": [
+                    {
+                        "episode_number": 1,
+                        "name": "Episode 1",
+                        "overview": "",
+                        "runtime": None,
+                        "still_path": None,
+                    },
+                ],
+            },
+            [],
+        )
+
+        self.assertEqual(result[0]["image"], "https://example.com/tvdb-episode.jpg")
+        self.assertEqual(result[0]["image_source"], "fallback")
+
+    @patch("app.helpers.get_tmdb_backdrop_image")
+    @patch("app.providers.tmdb.get_tvdb_episode_image_map")
+    def test_process_episodes_uses_tvdb_art_when_tmdb_season_payload_lacks_tvdb_id(
+        self,
+        mock_get_tvdb_episode_image_map,
+        mock_get_tmdb_backdrop_image,
+    ):
+        """Episode fallback should still ask TVDB when a TMDB season payload is missing tvdb_id."""
+        mock_get_tvdb_episode_image_map.return_value = {
+            "1": "https://example.com/tvdb-episode.jpg",
+        }
+        mock_get_tmdb_backdrop_image.return_value = "https://example.com/backdrop.jpg"
+
+        result = tmdb.process_episodes(
+            {
+                "media_id": "294737",
+                "season_number": 1,
+                "episodes": [
+                    {
+                        "episode_number": 1,
+                        "name": "Episode 1",
+                        "overview": "",
+                        "runtime": None,
+                        "still_path": None,
+                    },
+                ],
+            },
+            [],
+        )
+
+        self.assertEqual(result[0]["image"], "https://example.com/tvdb-episode.jpg")
+        self.assertEqual(result[0]["image_source"], "fallback")
+        mock_get_tvdb_episode_image_map.assert_called_once_with(
+            None,
+            1,
+            tmdb_media_id="294737",
+        )
+
+    @patch("app.helpers.get_tmdb_backdrop_image")
+    def test_process_episodes_uses_show_backdrop_when_still_missing(
+        self,
+        mock_get_tmdb_backdrop_image,
+    ):
+        mock_get_tmdb_backdrop_image.return_value = "https://example.com/backdrop.jpg"
+
+        result = tmdb.process_episodes(
+            {
+                "media_id": "1668",
+                "season_number": 1,
+                "episodes": [
+                    {
+                        "episode_number": 1,
+                        "name": "Episode 1",
+                        "overview": "",
+                        "runtime": None,
+                        "still_path": None,
+                    },
+                ],
+            },
+            [],
+        )
+
+        self.assertEqual(result[0]["image"], "https://example.com/backdrop.jpg")
+        self.assertEqual(result[0]["image_source"], "fallback")
+
+    @patch("app.helpers.get_tmdb_backdrop_image")
+    def test_process_episodes_marks_missing_art_when_no_backdrop_exists(
+        self,
+        mock_get_tmdb_backdrop_image,
+    ):
+        mock_get_tmdb_backdrop_image.return_value = None
+
+        result = tmdb.process_episodes(
+            {
+                "media_id": "1668",
+                "season_number": 1,
+                "episodes": [
+                    {
+                        "episode_number": 1,
+                        "name": "Episode 1",
+                        "overview": "",
+                        "runtime": None,
+                        "still_path": None,
+                    },
+                ],
+            },
+            [],
+        )
+
+        self.assertEqual(result[0]["image"], settings.IMG_NONE)
+        self.assertEqual(result[0]["image_source"], "none")
+
     @patch("app.providers.tvdb.build_specials_season")
     @patch("app.providers.tmdb.services.api_request")
     @override_settings(TVDB_API_KEY="test-tvdb-key")
@@ -424,6 +549,178 @@ class Metadata(TestCase):
 
         self.assertEqual(result["1_1"], "2022-10-04T22:00:00+00:00")
         mock_request.assert_called_once()
+
+    @patch("app.providers.tmdb.services.api_request")
+    def test_tv_with_seasons_refreshes_cached_tvdb_id_when_fetching_uncached_season(
+        self,
+        mock_api_request,
+    ):
+        """Season fetches should refresh stale TMDB show external ids from the same response."""
+        tmdb.cache.clear()
+        tmdb.cache.set(
+            f"{Sources.TMDB.value}_{MediaTypes.TV.value}_294737",
+            {
+                "media_id": "294737",
+                "title": "Guz Khan's Custom Cars",
+                "original_title": "Guz Khan's Custom Cars",
+                "localized_title": "Guz Khan's Custom Cars",
+                "image": "https://example.com/show.jpg",
+                "synopsis": "A test show.",
+                "genres": [],
+                "tvdb_id": None,
+                "external_links": {},
+            },
+        )
+        mock_api_request.return_value = {
+            "id": 294737,
+            "name": "Guz Khan's Custom Cars",
+            "original_name": "Guz Khan's Custom Cars",
+            "poster_path": "/show.jpg",
+            "overview": "A test show.",
+            "genres": [],
+            "vote_average": 0,
+            "vote_count": 0,
+            "production_companies": [],
+            "production_countries": [],
+            "spoken_languages": [],
+            "recommendations": {"results": []},
+            "external_ids": {"tvdb_id": "468632"},
+            "watch/providers": {"results": {}},
+            "aggregate_credits": {"cast": [], "crew": []},
+            "alternative_titles": {"results": []},
+            "episode_run_time": [44],
+            "first_air_date": "2026-01-19",
+            "last_air_date": "2026-03-09",
+            "status": "Returning Series",
+            "number_of_seasons": 1,
+            "number_of_episodes": 8,
+            "seasons": [
+                {
+                    "season_number": 1,
+                    "name": "Season 1",
+                    "air_date": "2026-01-19",
+                    "episode_count": 8,
+                    "poster_path": "/season1.jpg",
+                },
+            ],
+            "season/1": {
+                "name": "Season 1",
+                "overview": "Season overview",
+                "season_number": 1,
+                "poster_path": "/season1.jpg",
+                "air_date": "2026-01-19",
+                "vote_average": 0,
+                "episodes": [
+                    {
+                        "episode_number": 1,
+                        "name": "Episode 1",
+                        "overview": "Episode overview",
+                        "still_path": None,
+                        "runtime": 44,
+                        "vote_count": 0,
+                        "air_date": "2026-01-19",
+                    },
+                ],
+            },
+            "season/1/watch/providers": {"results": {}},
+        }
+
+        result = tmdb.tv_with_seasons("294737", [1])
+
+        self.assertEqual(result["tvdb_id"], "468632")
+        self.assertEqual(result["season/1"]["tvdb_id"], "468632")
+        self.assertEqual(
+            tmdb.cache.get(f"{Sources.TMDB.value}_{MediaTypes.TV.value}_294737")["tvdb_id"],
+            "468632",
+        )
+
+    @patch("app.providers.tvdb.search")
+    @patch("app.providers.tmdb.services.api_request")
+    @override_settings(TVDB_API_KEY="test-tvdb-key")
+    def test_tv_with_seasons_resolves_missing_tvdb_id_from_exact_tvdb_title_match(
+        self,
+        mock_api_request,
+        mock_tvdb_search,
+    ):
+        """Season fetches should recover a missing TMDB TVDB id from an exact TVDB title match."""
+        tmdb.cache.clear()
+        mock_tvdb_search.return_value = {
+            "results": [
+                {
+                    "media_id": "468632",
+                    "title": "Guz Khan's Custom Cars",
+                    "year": "2026",
+                },
+            ],
+        }
+        mock_api_request.return_value = {
+            "id": 294737,
+            "name": "Guz Khan's Custom Cars",
+            "original_name": "Guz Khan's Custom Cars",
+            "poster_path": "/show.jpg",
+            "overview": "A test show.",
+            "genres": [],
+            "vote_average": 0,
+            "vote_count": 0,
+            "production_companies": [],
+            "production_countries": [],
+            "spoken_languages": [],
+            "recommendations": {"results": []},
+            "external_ids": {},
+            "watch/providers": {"results": {}},
+            "aggregate_credits": {"cast": [], "crew": []},
+            "alternative_titles": {"results": []},
+            "episode_run_time": [44],
+            "first_air_date": "2026-01-19",
+            "last_air_date": "2026-03-09",
+            "status": "Returning Series",
+            "number_of_seasons": 1,
+            "number_of_episodes": 8,
+            "seasons": [
+                {
+                    "season_number": 1,
+                    "name": "Season 1",
+                    "air_date": "2026-01-19",
+                    "episode_count": 8,
+                    "poster_path": "/season1.jpg",
+                },
+            ],
+            "season/1": {
+                "name": "Season 1",
+                "overview": "Season overview",
+                "season_number": 1,
+                "poster_path": "/season1.jpg",
+                "air_date": "2026-01-19",
+                "vote_average": 0,
+                "episodes": [
+                    {
+                        "episode_number": 1,
+                        "name": "Episode 1",
+                        "overview": "Episode overview",
+                        "still_path": None,
+                        "runtime": 44,
+                        "vote_count": 0,
+                        "air_date": "2026-01-19",
+                    },
+                ],
+            },
+            "season/1/watch/providers": {"results": {}},
+        }
+
+        result = tmdb.tv_with_seasons("294737", [1])
+
+        self.assertEqual(result["tvdb_id"], "468632")
+        self.assertEqual(result["season/1"]["tvdb_id"], "468632")
+        self.assertEqual(tmdb.get_tvdb_id_override("294737"), "468632")
+        self.assertEqual(
+            tmdb.cache.get(f"{Sources.TMDB.value}_{MediaTypes.TV.value}_294737")["tvdb_id"],
+            "468632",
+        )
+        mock_tvdb_search.assert_called_once_with(
+            MediaTypes.TV.value,
+            "Guz Khan's Custom Cars",
+            1,
+        )
 
     @patch("app.providers.tmdb.timezone.localdate")
     @patch("app.providers.tmdb.services.api_request")
@@ -666,6 +963,51 @@ class Metadata(TestCase):
         self.assertIn("The Movie Database API (HTTP 404)", str(cm.exception))
 
         mock_tv_with_seasons.assert_called_with("1396", ["1"])
+
+    @patch("app.providers.tmdb.tv_with_seasons")
+    @patch("app.providers.tmdb.get_tvdb_episode_image_map")
+    @patch("app.helpers.get_tmdb_backdrop_image")
+    @patch("app.providers.tmdb.services.api_request")
+    def test_tmdb_episode_prefers_tvdb_art_before_backdrop(
+        self,
+        mock_api_request,
+        mock_get_tmdb_backdrop_image,
+        mock_get_tvdb_episode_image_map,
+        mock_tv_with_seasons,
+    ):
+        """TMDB episode metadata should use TVDB episode art before a TMDB backdrop."""
+        media_id = "1396"
+        season_number = "1"
+        episode_number = "1"
+        cache_key = (
+            f"{Sources.TMDB.value}_{MediaTypes.EPISODE.value}_{media_id}_{season_number}_{episode_number}"
+        )
+        tmdb.cache.delete(cache_key)
+
+        mock_tv_with_seasons.return_value = {
+            "title": "Breaking Bad",
+            "tvdb_id": "998877",
+            "season/1": {
+                "title": "Breaking Bad",
+                "season_title": "Season 1",
+            },
+        }
+        mock_api_request.return_value = {
+            "name": "Pilot",
+            "still_path": None,
+            "credits": {"cast": [], "crew": []},
+            "guest_stars": [],
+            "crew": [],
+        }
+        mock_get_tvdb_episode_image_map.return_value = {
+            "1": "https://example.com/tvdb-episode.jpg",
+        }
+        mock_get_tmdb_backdrop_image.return_value = "https://example.com/backdrop.jpg"
+
+        result = tmdb.episode(media_id, season_number, episode_number)
+
+        self.assertEqual(result["image"], "https://example.com/tvdb-episode.jpg")
+        self.assertEqual(result["image_source"], "fallback")
 
     @patch("app.providers.tmdb.tv_with_seasons")
     @patch("app.providers.tmdb.services.api_request")

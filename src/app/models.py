@@ -1441,7 +1441,7 @@ class MediaManager(models.Manager):
         )
 
         if media_type == MediaTypes.SEASON.value:
-            return base_queryset.prefetch_related(
+            return base_queryset.select_related("related_tv__item").prefetch_related(
                 Prefetch(
                     "episodes",
                     queryset=Episode.objects.select_related("item"),
@@ -1943,41 +1943,44 @@ class MediaManager(models.Manager):
             media.next_event = future_events[0] if future_events else None
 
     def _fix_missing_season_images(self, season_list):
-        """Backfill missing season poster images from metadata."""
-        from django.conf import settings
+        """Annotate season cards with a display fallback without persisting it."""
+        from app import helpers
 
-        items_to_update = []
         for season in season_list:
-            if season.item.image == settings.IMG_NONE:
-                try:
-                    season_metadata = providers.services.get_media_metadata(
-                        MediaTypes.SEASON.value,
-                        season.item.media_id,
-                        season.item.source,
-                        [season.item.season_number],
-                    )
-                    # Use season poster if available, otherwise fallback to TV show poster
-                    season_image = season_metadata.get("image")
-                    if not season_image:
-                        # Get TV show metadata for fallback
-                        tv_metadata = providers.services.get_media_metadata(
-                            MediaTypes.TV.value,
-                            season.item.media_id,
-                            season.item.source,
-                        )
-                        season_image = tv_metadata.get("image")
+            item = getattr(season, "item", None)
+            if item is None:
+                continue
 
-                    if season_image:
-                        season.item.image = season_image
-                        items_to_update.append(season.item)
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to fetch image for {season}: {e}",
+            show_item = getattr(getattr(season, "related_tv", None), "item", None)
+            if show_item is None:
+                show_item = (
+                    Item.objects.filter(
+                        media_id=item.media_id,
+                        source=item.source,
+                        media_type=MediaTypes.TV.value,
                     )
+                    .only("image")
+                    .first()
+                )
+            show_image = getattr(show_item, "image", None)
+            primary_image = item.image
 
-        if items_to_update:
-            Item.objects.bulk_update(items_to_update, ["image"])
-            logger.info(f"Updated {len(items_to_update)} season poster(s)")
+            # Older rows may have the TV show's poster copied onto the season item.
+            # Keep using it visually, but mark it as a fallback rather than real
+            # season art when it matches the tracked show poster exactly.
+            if (
+                helpers.has_real_image(primary_image)
+                and helpers.has_real_image(show_image)
+                and primary_image == show_image
+            ):
+                primary_image = None
+
+            image, image_source = helpers.resolve_image_with_fallback(
+                primary_image,
+                show_image,
+            )
+            season.card_image_override = image
+            season.card_image_source = image_source
 
     def _sort_in_progress_media(self, media_list, sort_by):
         """Sort in-progress media based on the sort criteria."""
@@ -3819,23 +3822,33 @@ class Season(Media):
                 [self.item.season_number],
             )
 
+        from app import helpers
+
         image = settings.IMG_NONE
         runtime_minutes = None
         release_datetime = None
         matched_episode = {}
+        tvdb_episode_images = {}
+
+        if self.item.source == Sources.TMDB.value:
+            tvdb_episode_images = providers.tmdb.get_tvdb_episode_image_map(
+                season_metadata.get("tvdb_id"),
+                season_metadata.get("season_number") or self.item.season_number,
+                tmdb_media_id=self.item.media_id,
+            )
         
         for episode in season_metadata["episodes"]:
             if episode["episode_number"] == int(episode_number):
                 matched_episode = episode
-                if episode.get("still_path"):
-                    image = (
+                image = helpers.first_real_image(
+                    (
                         f"https://image.tmdb.org/t/p/original{episode['still_path']}"
-                    )
-                elif "image" in episode:
-                    # for manual seasons
-                    image = episode["image"]
-                else:
-                    image = settings.IMG_NONE
+                        if episode.get("still_path")
+                        else None
+                    ),
+                    tvdb_episode_images.get(str(episode_number)),
+                    episode.get("image"),
+                )
 
                 # Extract runtime from episode metadata (raw TMDB data has integer runtime in minutes)
                 if episode.get("runtime") is not None:

@@ -21,6 +21,7 @@
         <div class="flex items-start gap-4">
           <img alt="{{ episode.title }}"
                class="w-20 h-20 rounded object-cover shrink-0"
+               data-image-source="{{ episode.image_source|default:'primary' }}"
                src="{{ episode.image }}">
           <div>
             <h3 class="text-lg font-semibold mb-1 line-clamp-1">{{ episode_title }}</h3>

@@ -154,6 +154,118 @@ def set_tvdb_id_override(media_id, tvdb_id):
         cache.set(tv_cache_key, cached_tv_data)
 
 
+def _normalize_provider_title_for_match(value):
+    """Return a conservative normalized title key for provider cross-matching."""
+    text = strip_tags(str(value or "")).strip().lower()
+    return "".join(character for character in text if character.isalnum())
+
+
+def _coerce_provider_year(value):
+    """Return a numeric year from a provider payload value when possible."""
+    if value in (None, ""):
+        return None
+    if hasattr(value, "year"):
+        try:
+            return int(value.year)
+        except (TypeError, ValueError):
+            return None
+
+    text = str(value).strip()
+    if len(text) >= 4 and text[:4].isdigit():
+        try:
+            return int(text[:4])
+        except ValueError:
+            return None
+    return None
+
+
+def _discover_tmdb_tvdb_id_from_search(media_id, tv_data=None):
+    """Return a TVDB series id for a TMDB show using a conservative title search."""
+    if not media_id:
+        return None
+
+    override_tvdb_id = get_tvdb_id_override(media_id)
+    if override_tvdb_id:
+        return override_tvdb_id
+
+    from app.providers import tvdb  # noqa: PLC0415
+
+    if not tvdb.enabled():
+        return None
+
+    if not isinstance(tv_data, dict):
+        tv_cache_key = f"{Sources.TMDB.value}_{MediaTypes.TV.value}_{media_id}"
+        tv_data = cache.get(tv_cache_key)
+
+    if not isinstance(tv_data, dict):
+        return None
+
+    existing_tvdb_id = str(tv_data.get("tvdb_id") or "").strip()
+    if existing_tvdb_id:
+        return existing_tvdb_id
+
+    candidate_titles = []
+    for key in ("title", "original_title", "localized_title"):
+        title = str(tv_data.get(key) or "").strip()
+        if title and title not in candidate_titles:
+            candidate_titles.append(title)
+
+    if not candidate_titles:
+        return None
+
+    target_year = _coerce_provider_year(
+        (tv_data.get("details") or {}).get("first_air_date"),
+    )
+
+    for candidate_title in candidate_titles:
+        normalized_candidate = _normalize_provider_title_for_match(candidate_title)
+        if not normalized_candidate:
+            continue
+
+        try:
+            search_payload = tvdb.search(MediaTypes.TV.value, candidate_title, 1)
+        except services.ProviderAPIError as error:
+            logger.warning(
+                "Skipping TMDB->TVDB title match due to TVDB API error: %s",
+                error,
+                extra={"media_id": media_id, "title": candidate_title},
+            )
+            return None
+
+        results = search_payload.get("results") or []
+        matching_ids = []
+
+        for result in results:
+            if not isinstance(result, dict):
+                continue
+
+            result_id = str(result.get("media_id") or "").strip()
+            if not result_id:
+                continue
+
+            if _normalize_provider_title_for_match(result.get("title")) != normalized_candidate:
+                continue
+
+            result_year = _coerce_provider_year(result.get("year"))
+            if target_year and result_year and result_year != target_year:
+                continue
+
+            matching_ids.append(result_id)
+
+        unique_ids = list(dict.fromkeys(matching_ids))
+        if len(unique_ids) == 1:
+            matched_tvdb_id = unique_ids[0]
+            set_tvdb_id_override(media_id, matched_tvdb_id)
+            logger.info(
+                "Resolved TMDB show %s to TVDB %s via exact title match",
+                media_id,
+                matched_tvdb_id,
+            )
+            return matched_tvdb_id
+
+    return None
+
+
 def _normalize_season_numbers(season_numbers):
     """Normalize season numbers from route and form inputs before TMDB lookups."""
     normalized_seasons = []
@@ -399,11 +511,10 @@ def enrich_season_with_tv_data(season_data, tv_data, media_id, season_number):
     season_data["genres"] = tv_data["genres"]
     if season_data["synopsis"] == "No synopsis available.":
         season_data["synopsis"] = tv_data["synopsis"]
-    # Use TV show poster as fallback if season doesn't have its own poster
-    # Check if image is None, empty, or the default placeholder
-    season_image = season_data.get("image")
-    if not season_image or season_image == settings.IMG_NONE:
-        season_data["image"] = tv_data.get("image")
+    season_data["image"] = helpers.first_real_image(
+        season_data.get("image"),
+        tv_data.get("image"),
+    )
     return season_data
 
 
@@ -412,7 +523,10 @@ def _build_specials_related_entry(tv_data, season_data):
     return {
         "source": Sources.TMDB.value,
         "media_type": MediaTypes.SEASON.value,
-        "image": season_data.get("image") or tv_data.get("image"),
+        "image": helpers.first_real_image(
+            season_data.get("image"),
+            tv_data.get("image"),
+        ),
         "media_id": tv_data["media_id"],
         "title": tv_data["title"],
         "original_title": tv_data.get("original_title"),
@@ -495,7 +609,10 @@ def cache_fallback_season_metadata(media_id, season_number, tv_data, season_data
             or ("Specials" if season_number == 0 else f"Season {season_number}")
         ),
         "max_progress": max_progress,
-        "image": season_data.get("image") or tv_data.get("image") or settings.IMG_NONE,
+        "image": helpers.first_real_image(
+            season_data.get("image"),
+            tv_data.get("image"),
+        ),
         "season_number": season_number,
         "synopsis": season_data.get("synopsis") or get_synopsis(""),
         "score": season_data.get("score"),
@@ -538,7 +655,18 @@ def cache_fallback_season_metadata(media_id, season_number, tv_data, season_data
 
 def _build_specials_season_from_tvdb(media_id, tv_data):
     """Build TMDB-shaped season metadata from TVDB specials data."""
-    if not tv_data or not tv_data.get("tvdb_id"):
+    if not tv_data:
+        return None
+
+    if not tv_data.get("tvdb_id"):
+        discovered_tvdb_id = _discover_tmdb_tvdb_id_from_search(
+            media_id,
+            tv_data=tv_data,
+        )
+        if discovered_tvdb_id:
+            tv_data, _ = _apply_tvdb_id_override_to_tv_data(media_id, dict(tv_data))
+
+    if not tv_data.get("tvdb_id"):
         return None
 
     from app.providers import tvdb  # noqa: PLC0415
@@ -580,6 +708,74 @@ def _build_specials_season_from_tvdb(media_id, tv_data):
     return enrich_season_with_tv_data(season_data, tv_data, media_id, 0)
 
 
+def get_tvdb_episode_image_map(tvdb_id, season_number, *, tmdb_media_id=None):
+    """Return TVDB episode artwork keyed by episode number for a TMDB show."""
+    if not tvdb_id:
+        if not tmdb_media_id:
+            return {}
+        tvdb_id = _discover_tmdb_tvdb_id_from_search(tmdb_media_id)
+        if not tvdb_id:
+            return {}
+
+    from app.providers import tvdb  # noqa: PLC0415
+
+    if not tvdb.enabled():
+        return {}
+
+    try:
+        normalized_season_number = int(season_number)
+    except (TypeError, ValueError):
+        normalized_season_number = season_number
+
+    try:
+        season_payloads = tvdb.tv_with_seasons(
+            str(tvdb_id),
+            [normalized_season_number],
+            routed_media_type=MediaTypes.TV.value,
+        )
+    except ValueError as error:
+        if str(error) != "TVDB is not configured":
+            raise
+        logger.info(
+            "Skipping TMDB episode art fallback because TVDB is not configured",
+            extra={
+                "media_id": tmdb_media_id,
+                "tvdb_id": tvdb_id,
+                "season_number": season_number,
+            },
+        )
+        return {}
+    except services.ProviderAPIError as error:
+        logger.warning(
+            "Skipping TMDB episode art fallback due to TVDB API error: %s",
+            error,
+            extra={
+                "media_id": tmdb_media_id,
+                "tvdb_id": tvdb_id,
+                "season_number": season_number,
+            },
+        )
+        return {}
+
+    season_payload = season_payloads.get(f"season/{normalized_season_number}")
+    if not isinstance(season_payload, dict):
+        season_payload = season_payloads.get(f"season/{season_number}", {})
+    if not isinstance(season_payload, dict):
+        return {}
+
+    episode_images = {}
+    for episode in season_payload.get("episodes") or []:
+        if not isinstance(episode, dict):
+            continue
+        episode_number = episode.get("episode_number")
+        image = helpers.first_real_image(episode.get("image"), default=None)
+        if episode_number is None or not image:
+            continue
+        episode_images[str(episode_number)] = image
+
+    return episode_images
+
+
 def fetch_and_cache_seasons(media_id, season_numbers, tv_data):
     """Fetch uncached seasons from API and cache them."""
     url = f"{base_url}/tv/{media_id}"
@@ -612,10 +808,23 @@ def fetch_and_cache_seasons(media_id, season_numbers, tv_data):
         except requests.exceptions.HTTPError as error:
             handle_error(error)
 
-        # Cache TV metadata if we haven't fetched it yet
-        if fetched_tv_data is None:
-            fetched_tv_data = process_tv(response, media_id=media_id)
-            tv_cache_key = f"{Sources.TMDB.value}_{MediaTypes.TV.value}_{media_id}"
+        # Always refresh the root TV payload from the same TMDB response so
+        # season fetches can pick up updated external_ids (including tvdb_id)
+        # even when the show cache already existed before this request.
+        refreshed_tv_data = process_tv(response, media_id=media_id)
+        if not refreshed_tv_data.get("tvdb_id"):
+            discovered_tvdb_id = _discover_tmdb_tvdb_id_from_search(
+                media_id,
+                tv_data=refreshed_tv_data,
+            )
+            if discovered_tvdb_id:
+                refreshed_tv_data, _ = _apply_tvdb_id_override_to_tv_data(
+                    media_id,
+                    refreshed_tv_data,
+                )
+        tv_cache_key = f"{Sources.TMDB.value}_{MediaTypes.TV.value}_{media_id}"
+        if fetched_tv_data is None or fetched_tv_data != refreshed_tv_data:
+            fetched_tv_data = refreshed_tv_data
             cache.set(tv_cache_key, fetched_tv_data)
 
         # Process and cache each season
@@ -689,7 +898,7 @@ def tv_with_seasons(media_id, season_numbers):
             tv_data,
         )
 
-        if tv_data is None:
+        if fetched_tv_data is not None:
             tv_data = fetched_tv_data
 
         cached_seasons.update(fetched_seasons)
@@ -1516,6 +1725,8 @@ def filter_providers(all_providers, region):
 def process_episodes(season_metadata, episodes_in_db):
     """Process the episodes for the selected season."""
     episodes_metadata = []
+    episode_backdrop = None
+    tvdb_episode_images = {}
 
     # Convert the queryset to a dictionary for efficient lookups
     tracked_episodes = {}
@@ -1524,6 +1735,23 @@ def process_episodes(season_metadata, episodes_in_db):
         if episode_number not in tracked_episodes:
             tracked_episodes[episode_number] = []
         tracked_episodes[episode_number].append(ep)
+
+    if season_metadata.get("media_id"):
+        episode_backdrop = helpers.get_tmdb_backdrop_image(
+            MediaTypes.TV.value,
+            season_metadata["media_id"],
+        )
+        tvdb_episode_images = get_tvdb_episode_image_map(
+            season_metadata.get("tvdb_id"),
+            season_metadata.get("season_number"),
+            tmdb_media_id=season_metadata.get("media_id"),
+        )
+    elif season_metadata.get("tvdb_id"):
+        tvdb_episode_images = get_tvdb_episode_image_map(
+            season_metadata.get("tvdb_id"),
+            season_metadata.get("season_number"),
+            tmdb_media_id=season_metadata.get("media_id"),
+        )
 
     for episode in season_metadata["episodes"]:
         episode_number = episode["episode_number"]
@@ -1554,10 +1782,12 @@ def process_episodes(season_metadata, episodes_in_db):
                 # If parsing fails, keep the original value
                 pass
 
-        if episode.get("still_path"):
-            image = get_image_url(episode["still_path"])
-        else:
-            image = episode.get("image") or settings.IMG_NONE
+        image, image_source = helpers.resolve_image_with_fallback(
+            get_image_url(episode["still_path"]) if episode.get("still_path") else None,
+            tvdb_episode_images.get(str(episode_number)),
+            helpers.first_real_image(episode.get("image"), default=None),
+            episode_backdrop,
+        )
 
         episodes_metadata.append(
             {
@@ -1568,6 +1798,7 @@ def process_episodes(season_metadata, episodes_in_db):
                 "episode_number": episode_number,
                 "air_date": air_date,  # when unknown, response returns null
                 "image": image,
+                "image_source": image_source,
                 "title": episode.get("name") or episode.get("title") or "",
                 "overview": episode.get("overview") or "",
                 "history": tracked_episodes.get(episode_number, []),
@@ -1646,10 +1877,19 @@ def episode(media_id, season_number, episode_number):
             ),
             "season_title": season_metadata.get("season_title") or f"Season {season_number}",
             "episode_title": response.get("name") or f"Episode {episode_number}",
-            "image": get_image_url(response.get("still_path")),
             "cast": get_cast_credits({"cast": cast_rows}),
             "crew": get_crew_credits({"crew": crew_rows}),
         }
+        tvdb_episode_images = get_tvdb_episode_image_map(
+            tv_metadata.get("tvdb_id"),
+            season_number,
+            tmdb_media_id=media_id,
+        )
+        data["image"], data["image_source"] = helpers.resolve_image_with_fallback(
+            get_image_url(response.get("still_path")),
+            tvdb_episode_images.get(str(episode_number)),
+            helpers.get_tmdb_backdrop_image(MediaTypes.TV.value, media_id),
+        )
 
         cache.set(cache_key, data)
 

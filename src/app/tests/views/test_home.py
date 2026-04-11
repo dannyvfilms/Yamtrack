@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.conf import settings
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -14,6 +15,7 @@ from app.models import (
     Season,
     Sources,
     Status,
+    TV,
 )
 from users.models import HomeSortChoices
 
@@ -156,6 +158,142 @@ class HomeViewTests(TestCase):
         self.assertEqual(card["episode_code"], "S01E03")
         self.assertIn(" / ", card["progress_display"])
         self.assertContains(response, "data-active-playback-card")
+
+    def test_home_view_marks_season_show_poster_as_fallback(self):
+        show_image = "https://images.example.com/show-poster.jpg"
+        tv_item = Item.objects.create(
+            media_id="fallback-show",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Fallback Show",
+            image=show_image,
+        )
+        tv = TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        season_item = Item.objects.create(
+            media_id="fallback-show",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Fallback Show",
+            image=settings.IMG_NONE,
+            season_number=1,
+        )
+        season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=tv,
+            status=Status.IN_PROGRESS.value,
+        )
+        episode_item = Item.objects.create(
+            media_id="fallback-show",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Fallback Episode",
+            image=settings.IMG_NONE,
+            season_number=1,
+            episode_number=1,
+        )
+        Episode.objects.create(
+            item=episode_item,
+            related_season=season,
+            end_date=timezone.now(),
+        )
+
+        response = self.client.get(reverse("home"))
+
+        season_items = response.context["list_by_type"][MediaTypes.SEASON.value]["items"]
+        fallback_season = next(
+            media for media in season_items if media.item.media_id == "fallback-show"
+        )
+        self.assertEqual(fallback_season.card_image_override, show_image)
+        self.assertEqual(fallback_season.card_image_source, "fallback")
+        self.assertContains(response, 'data-image-source="fallback"')
+
+    @patch("app.live_playback._fetch_episode_still")
+    @patch("app.helpers.get_tmdb_backdrop_image")
+    def test_home_playback_card_uses_backdrop_when_episode_image_is_inherited_poster(
+        self,
+        mock_get_tmdb_backdrop_image,
+        mock_fetch_episode_still,
+    ):
+        show_image = "https://images.example.com/show-poster.jpg"
+        backdrop_image = "https://images.example.com/show-backdrop.jpg"
+        mock_fetch_episode_still.return_value = (None, "none")
+        mock_get_tmdb_backdrop_image.return_value = backdrop_image
+
+        tv_item = Item.objects.create(
+            media_id="playback-show",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Playback Show",
+            image=show_image,
+        )
+        tv = TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        season_item = Item.objects.create(
+            media_id="playback-show",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Playback Show",
+            image=show_image,
+            season_number=1,
+        )
+        season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=tv,
+            status=Status.IN_PROGRESS.value,
+        )
+        episode_item = Item.objects.create(
+            media_id="playback-show",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Playback Episode",
+            image=show_image,
+            season_number=1,
+            episode_number=2,
+        )
+        Episode.objects.create(
+            item=episode_item,
+            related_season=season,
+            end_date=timezone.now(),
+        )
+
+        now_ts = int(timezone.now().timestamp())
+        live_playback.set_user_playback_state(
+            self.user.id,
+            {
+                "event_type": "media.play",
+                "media_type": MediaTypes.EPISODE.value,
+                "media_id": "playback-show",
+                "source": Sources.TMDB.value,
+                "rating_key": "rk-backdrop-fallback",
+                "title": "Playback Episode",
+                "series_title": "Playback Show",
+                "episode_title": "Playback Episode",
+                "season_number": 1,
+                "episode_number": 2,
+                "view_offset_seconds": 180,
+                "duration_seconds": 1800,
+                "status": live_playback.PLAYBACK_STATUS_PLAYING,
+                "updated_at_ts": now_ts,
+                "expires_at_ts": now_ts + 600,
+                "pause_expires_at_ts": None,
+                "scrobble_expires_at_ts": None,
+            },
+        )
+
+        response = self.client.get(reverse("home"))
+
+        card = response.context["active_playback_card"]
+        self.assertEqual(card["image"], backdrop_image)
+        self.assertEqual(card["image_source"], "fallback")
 
     @patch("app.providers.services.get_media_metadata")
     def test_home_view_htmx_load_more(self, mock_get_media_metadata):

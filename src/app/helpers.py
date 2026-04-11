@@ -1,6 +1,7 @@
 from urllib.parse import parse_qsl, urlencode, urlparse
 
 from django.apps import apps
+from django.conf import settings
 from django.contrib import messages
 from django.db.models import Q
 from django.http import HttpResponseRedirect
@@ -10,6 +11,8 @@ from django.utils.http import url_has_allowed_host_and_scheme
 
 from app.models import BasicMedia, CollectionEntry, MediaTypes, Status
 
+_DEFAULT_IMAGE_SENTINEL = object()
+
 
 def minutes_to_hhmm(total_minutes):
     """Convert total minutes to HH:MM format."""
@@ -18,6 +21,53 @@ def minutes_to_hhmm(total_minutes):
     if hours == 0:
         return f"{minutes}min"
     return f"{hours}h {minutes:02d}min"
+
+
+def has_real_image(image):
+    """Return whether the value is a usable artwork URL."""
+    return bool(image and image != settings.IMG_NONE)
+
+
+def first_real_image(*images, default=_DEFAULT_IMAGE_SENTINEL):
+    """Return the first usable artwork URL from the provided candidates."""
+    for image in images:
+        if has_real_image(image):
+            return image
+    if default is not _DEFAULT_IMAGE_SENTINEL:
+        return default
+    return settings.IMG_NONE
+
+
+def resolve_image_with_fallback(primary_image, *fallback_images):
+    """Return a display image plus whether it is primary, fallback, or none."""
+    primary = first_real_image(primary_image, default=None)
+    if primary:
+        return primary, "primary"
+
+    fallback = first_real_image(*fallback_images, default=None)
+    if fallback:
+        return fallback, "fallback"
+
+    return settings.IMG_NONE, "none"
+
+
+def get_tmdb_backdrop_image(media_type, media_id):
+    """Return a TMDB backdrop URL when available."""
+    media_id = str(media_id or "").strip()
+    if not media_id:
+        return None
+
+    try:
+        from lists.models import CustomList
+    except Exception:
+        return None
+
+    try:
+        backdrop = CustomList()._get_tmdb_backdrop(media_type, media_id)
+    except Exception:
+        return None
+
+    return backdrop if has_real_image(backdrop) else None
 
 
 def redirect_back(request):

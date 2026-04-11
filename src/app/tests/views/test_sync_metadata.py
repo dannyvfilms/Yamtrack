@@ -1,6 +1,9 @@
 from unittest.mock import patch
 
+import requests
+from django.contrib.messages import get_messages
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.test import TestCase
 from django.urls import reverse
 
@@ -165,3 +168,40 @@ class SyncMetadataViewTests(TestCase):
         mock_sync_item_credits.assert_called_once()
         mock_fetch_releases.assert_called_once()
         mock_sync_plex_rating.assert_called_once()
+
+    @patch("app.views.services.get_media_metadata")
+    def test_sync_metadata_restores_cached_entry_and_returns_error_for_htmx_failures(
+        self,
+        mock_get_media_metadata,
+    ):
+        cache_key = f"{Sources.TMDB.value}_{MediaTypes.SEASON.value}_294737_1"
+        cached_payload = {"title": "Cached Season"}
+        cache.set(cache_key, cached_payload, timeout=600)
+        mock_get_media_metadata.side_effect = requests.exceptions.ConnectionError(
+            "dns failure",
+        )
+
+        response = self.client.post(
+            reverse(
+                "sync_metadata",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.SEASON.value,
+                    "media_id": "294737",
+                    "season_number": 1,
+                },
+            ),
+            {"next": "/details/tmdb/season/294737/1"},
+            HTTP_HX_REQUEST="true",
+        )
+
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(
+            response["HX-Redirect"],
+            "/details/tmdb/season/294737/1",
+        )
+        self.assertEqual(cache.get(cache_key), cached_payload)
+        messages = [message.message for message in get_messages(response.wsgi_request)]
+        self.assertEqual(len(messages), 1)
+        self.assertIn("could not be reached", messages[0].lower())
+        self.assertIn("cached data has been kept", messages[0].lower())

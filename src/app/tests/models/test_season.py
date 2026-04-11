@@ -713,3 +713,32 @@ class SeasonEpisodeItemModelTests(TestCase):
         self.assertEqual(item.id, existing_item.id)
         self.assertEqual(existing_item.title, "The One with the Thumb")
         self.assertEqual(existing_item.localized_title, "The One with the Thumb")
+
+    @patch("app.providers.tmdb.get_tvdb_episode_image_map")
+    def test_get_episode_item_uses_tvdb_episode_art_when_tmdb_still_missing(
+        self,
+        mock_get_tvdb_episode_image_map,
+    ):
+        """TMDB episode items should persist TVDB episode art before IMG_NONE."""
+        mock_get_tvdb_episode_image_map.return_value = {
+            "4": "https://example.com/tvdb-s1e4.jpg",
+        }
+
+        item = self.season.get_episode_item(
+            4,
+            {
+                "tvdb_id": "998877",
+                "season_number": 1,
+                "episodes": [
+                    {
+                        "episode_number": 4,
+                        "name": "The One with George Stephanopoulos",
+                        "still_path": None,
+                        "air_date": "1994-10-13",
+                    },
+                ],
+            },
+        )
+
+        self.assertEqual(item.title, "The One with George Stephanopoulos")
+        self.assertEqual(item.image, "https://example.com/tvdb-s1e4.jpg")

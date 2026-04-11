@@ -10,6 +10,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.text import slugify
 
+from app import helpers
 from app.models import Item, MediaTypes, Sources
 
 logger = logging.getLogger(__name__)
@@ -520,17 +521,50 @@ def _resolve_show_media_id(state, state_item, source):
 
 
 def _fetch_episode_still(show_id, season_number, episode_number):
-    """Fetch episode still image from TMDB episode API."""
+    """Fetch episode artwork from TMDB episode API."""
     try:
         from app.providers import tmdb  # noqa: PLC0415
 
         ep_data = tmdb.episode(show_id, season_number, episode_number)
         image = ep_data.get("image")
-        if image and image != settings.IMG_NONE:
-            return image
+        if helpers.has_real_image(image):
+            return image, ep_data.get("image_source") or "primary"
     except Exception:  # noqa: BLE001, S110
         pass
-    return None
+    return None, "none"
+
+
+def _stored_episode_image_is_inherited(state_item):
+    """Return whether stored episode art matches season/show fallback art."""
+    if not state_item or not helpers.has_real_image(getattr(state_item, "image", None)):
+        return False
+
+    shared_filters = {
+        "media_id": state_item.media_id,
+        "source": state_item.source,
+    }
+    show_image = (
+        Item.objects.filter(
+            **shared_filters,
+            media_type=MediaTypes.TV.value,
+        )
+        .values_list("image", flat=True)
+        .first()
+    )
+    season_image = (
+        Item.objects.filter(
+            **shared_filters,
+            media_type=MediaTypes.SEASON.value,
+            season_number=state_item.season_number,
+        )
+        .values_list("image", flat=True)
+        .first()
+    )
+
+    return any(
+        helpers.has_real_image(parent_image) and state_item.image == parent_image
+        for parent_image in (season_image, show_image)
+    )
 
 
 def _resolve_landscape_image(state, state_item):  # noqa: C901
@@ -548,63 +582,50 @@ def _resolve_landscape_image(state, state_item):  # noqa: C901
         media_type == MediaTypes.EPISODE.value
         and source == Sources.TMDB.value
     ):
-        # 1. Episode Item already in DB → use its stored still
+        show_id = _resolve_show_media_id(state, state_item, source)
+
+        # 1. Episode Item already in DB → use its stored still unless it is
+        # inherited show/season poster art.
         if (
             state_item
-            and state_item.image
-            and state_item.image != settings.IMG_NONE
+            and helpers.has_real_image(state_item.image)
+            and not _stored_episode_image_is_inherited(state_item)
         ):
-            return state_item.image
+            return state_item.image, "primary"
 
         # 2. Fetch the episode still from TMDB episode API
-        show_id = _resolve_show_media_id(state, state_item, source)
         season = _coerce_int(state.get("season_number"))
         episode = _coerce_int(state.get("episode_number"))
         if show_id and season is not None and episode is not None:
-            still = _fetch_episode_still(show_id, season, episode)
+            still, image_source = _fetch_episode_still(show_id, season, episode)
             if still:
-                return still
+                return still, image_source
 
         # 3. Fall back to TV show backdrop
-        if show_id:
-            try:
-                from lists.models import CustomList  # noqa: PLC0415
+        backdrop = helpers.get_tmdb_backdrop_image(MediaTypes.TV.value, show_id)
+        if backdrop:
+            return backdrop, "fallback"
 
-                backdrop = CustomList()._get_tmdb_backdrop(
-                    MediaTypes.TV.value, show_id,
-                )
-                if backdrop and backdrop != settings.IMG_NONE:
-                    return backdrop
-            except Exception:  # noqa: BLE001, S110
-                pass
-
-        return settings.IMG_NONE
+        return settings.IMG_NONE, "none"
 
     # ── Movie / other: use backdrop ────────────────────────────
     media_id = str(state.get("media_id") or "").strip()
     if media_id and source == Sources.TMDB.value:
-        try:
-            from lists.models import CustomList  # noqa: PLC0415
+        lookup_type = media_type
+        if media_type in (
+            MediaTypes.EPISODE.value,
+            MediaTypes.SEASON.value,
+        ):
+            lookup_type = MediaTypes.TV.value
 
-            lookup_type = media_type
-            if media_type in (
-                MediaTypes.EPISODE.value,
-                MediaTypes.SEASON.value,
-            ):
-                lookup_type = MediaTypes.TV.value
+        backdrop = helpers.get_tmdb_backdrop_image(lookup_type, media_id)
+        if backdrop:
+            return backdrop, "primary"
 
-            backdrop = CustomList()._get_tmdb_backdrop(
-                lookup_type, media_id,
-            )
-            if backdrop and backdrop != settings.IMG_NONE:
-                return backdrop
-        except Exception:  # noqa: BLE001, S110
-            pass
+    if state_item and helpers.has_real_image(getattr(state_item, "image", None)):
+        return state_item.image, "primary"
 
-    if state_item and state_item.image:
-        return state_item.image
-
-    return settings.IMG_NONE
+    return settings.IMG_NONE, "none"
 
 
 def build_home_playback_card(user) -> dict | None:
@@ -620,7 +641,7 @@ def build_home_playback_card(user) -> dict | None:
         _resolve_progress(state, state_item)
     )
 
-    image = _resolve_landscape_image(state, state_item)
+    image, image_source = _resolve_landscape_image(state, state_item)
 
     status = state.get("status") or PLAYBACK_STATUS_PLAYING
 
@@ -632,6 +653,7 @@ def build_home_playback_card(user) -> dict | None:
         "episode_code": episode_code,
         "episode_title": episode_title,
         "image": image,
+        "image_source": image_source,
         "status": status,
         "status_label": (
             "Paused"
