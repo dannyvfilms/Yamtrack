@@ -69,7 +69,16 @@ Lists are more than personal bookmarks here: you can share them publicly, recomm
 
 Collection support adds owned-media context, richer detail views, format metadata, and season-level rollups so the app tracks what you have as well as what you watched.
 
-<img src="https://cdn.fuzzygrim.com/file/fuzzygrim/yamtrack/media_details.png" alt="Media details" />
+<table>
+  <tr>
+    <td valign="top">
+      <img width="1296" height="643" alt="Screenshot 2026-04-10 at 7 47 58 PM" src="https://github.com/user-attachments/assets/28bdac5a-1678-4144-a227-0d361912882c" />
+    </td>
+    <td valign="top">
+      <img width="508" height="631" alt="Screenshot 2026-04-10 at 7 48 52 PM" src="https://github.com/user-attachments/assets/a2c8deb9-2d92-4aaa-b605-758871f36634" />
+    </td>
+  </tr>
+</table>
 
 ### Music and Podcasts
 
