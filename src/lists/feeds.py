@@ -1,19 +1,125 @@
+import logging
+
+from django.apps import apps
 from django.contrib.auth.decorators import login_not_required
 from django.contrib.syndication.views import Feed
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.feedgenerator import Rss201rev2Feed
 from django.views.decorators.http import require_GET
 
-from app.models import MediaTypes, Sources
-from app.providers import tmdb
+from app.models import MediaManager, MediaTypes, Sources
+from app.providers import services, tmdb
 from app.templatetags.app_tags import media_url
 from lists.models import CustomList, CustomListItem
+
+logger = logging.getLogger(__name__)
+
+
+class YamtrackRssFeed(Rss201rev2Feed):
+    """RSS feed generator with Yamtrack-specific item metadata."""
+
+    yamtrack_namespace = "https://yamtrack.dannyvfilms.com/ns/rss"
+
+    def rss_attributes(self):
+        """Expose the Yamtrack namespace on the RSS root element."""
+        attrs = super().rss_attributes()
+        attrs["xmlns:yamtrack"] = self.yamtrack_namespace
+        return attrs
+
+    def add_item_elements(self, handler, item):
+        """Add standard RSS elements plus Yamtrack extensions."""
+        super().add_item_elements(handler, item)
+        handler.addQuickElement("yamtrack:status", item.get("status", ""))
+        handler.addQuickElement("yamtrack:image_url", item.get("image_url", ""))
+        handler.addQuickElement("yamtrack:description", item.get("feed_description", ""))
 
 
 class PublicListFeed(Feed):
     """RSS feed for public custom lists."""
+
+    feed_type = YamtrackRssFeed
+
+    def _attach_owner_media_statuses(self, list_items, owner):
+        """Attach owner tracking status and metadata to feed items."""
+        media_manager = MediaManager()
+        item_ids_by_media_type = {}
+
+        for list_item in list_items:
+            item_ids_by_media_type.setdefault(list_item.item.media_type, []).append(list_item.item_id)
+
+        status_by_item_id = {}
+        for media_type, item_ids in item_ids_by_media_type.items():
+            try:
+                model = apps.get_model("app", media_type)
+            except LookupError:
+                continue
+
+            if media_type == MediaTypes.EPISODE.value:
+                queryset = model.objects.filter(
+                    item_id__in=item_ids,
+                    related_season__user=owner,
+                ).select_related("item", "related_season")
+            else:
+                queryset = model.objects.filter(
+                    item_id__in=item_ids,
+                    user=owner,
+                ).select_related("item")
+
+            entries_by_item = {}
+            for entry in queryset:
+                entries_by_item.setdefault(entry.item_id, []).append(entry)
+
+            for item_id, entries in entries_by_item.items():
+                entries.sort(key=lambda entry: entry.created_at, reverse=True)
+                display_media = entries[0]
+                if len(entries) > 1:
+                    media_manager._aggregate_item_data(display_media, entries)
+
+                status_by_item_id[item_id] = (
+                    getattr(display_media, "aggregated_status", None)
+                    or getattr(display_media, "status", None)
+                    or ""
+                )
+
+        for list_item in list_items:
+            list_item.feed_status = status_by_item_id.get(list_item.item_id, "")
+            list_item.feed_description = self._build_item_description(list_item.item)
+
+    def _build_item_description(self, item):
+        """Return the best available feed description for an item."""
+        media_type = item.media_type
+        metadata_args = [media_type, item.media_id, item.source]
+
+        if media_type in {MediaTypes.SEASON.value, MediaTypes.EPISODE.value}:
+            if item.season_number is None:
+                return self._fallback_item_description(item)
+            metadata_args.append([item.season_number])
+            if media_type == MediaTypes.EPISODE.value:
+                metadata_args.append(item.episode_number)
+
+        try:
+            metadata = services.get_media_metadata(*metadata_args)
+        except Exception as exc:
+            logger.debug("Could not fetch RSS description for item %s: %s", item.id, exc)
+            return self._fallback_item_description(item)
+
+        description = (
+            (metadata or {}).get("synopsis")
+            or (metadata or {}).get("overview")
+            or ""
+        ).strip()
+        if not description or description == "No synopsis available.":
+            return self._fallback_item_description(item)
+        return description
+
+    def _fallback_item_description(self, item):
+        """Return the fallback item description."""
+        media_type = item.get_media_type_display()
+        source = item.source.upper()
+        return f"{media_type} from {source}"
 
     def get_object(self, request, list_id):
         """Return the public list or raise 404."""
@@ -41,11 +147,13 @@ class PublicListFeed(Feed):
 
     def items(self, obj):
         """Return list items."""
-        return (
+        list_items = list(
             CustomListItem.objects.filter(custom_list=obj)
             .select_related("item")
             .order_by("-date_added")
         )
+        self._attach_owner_media_statuses(list_items, obj.owner)
+        return list_items
 
     def item_title(self, item):
         """Return the item title."""
@@ -53,9 +161,7 @@ class PublicListFeed(Feed):
 
     def item_description(self, item):
         """Return the item description."""
-        media_type = item.item.get_media_type_display()
-        source = item.item.source.upper()
-        return f"{media_type} from {source}"
+        return getattr(item, "feed_description", self._build_item_description(item.item))
 
     def item_link(self, item):
         """Return the item URL."""
@@ -64,6 +170,14 @@ class PublicListFeed(Feed):
     def item_pubdate(self, item):
         """Return the item publication date."""
         return timezone.localtime(item.date_added)
+
+    def item_extra_kwargs(self, item):
+        """Expose extra item metadata for RSS consumers."""
+        return {
+            "status": getattr(item, "feed_status", ""),
+            "image_url": item.item.image or "",
+            "feed_description": getattr(item, "feed_description", ""),
+        }
 
 
 @login_not_required

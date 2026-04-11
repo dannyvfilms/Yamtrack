@@ -1,14 +1,27 @@
 import json
+import xml.etree.ElementTree as ET
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
-from django.contrib.auth import get_user_model
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.test import Client, RequestFactory, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from app.models import TV, Anime, Episode, Item, MediaTypes, Movie, Season, Sources, Status
+from app.models import (
+    TV,
+    Anime,
+    Episode,
+    Game,
+    Item,
+    MediaTypes,
+    Movie,
+    Season,
+    Sources,
+    Status,
+)
+from lists.feeds import YamtrackRssFeed
 from lists.models import CustomList, CustomListItem, ListActivity
 from users.models import DateFormatChoices
 
@@ -2155,10 +2168,21 @@ class ListRssFeedTests(TestCase):
         )
         self.movie_item = Item.objects.create(
             media_id="rss-1",
-            source=Sources.TMDB.value,
-            media_type=MediaTypes.MOVIE.value,
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
             title="RSS Movie",
+            status="Released",
+            image="https://example.com/rss-movie.jpg",
         )
+        with (
+            patch("app.models.providers.services.get_media_metadata", return_value={"max_progress": None}),
+            patch("app.models.Item.fetch_releases"),
+        ):
+            Game.objects.create(
+                item=self.movie_item,
+                user=self.user,
+                status=Status.COMPLETED.value,
+            )
         CustomListItem.objects.create(
             custom_list=self.custom_list,
             item=self.movie_item,
@@ -2166,11 +2190,29 @@ class ListRssFeedTests(TestCase):
 
     def test_public_list_rss_feed(self):
         """Return RSS feed for a public list."""
-        response = self.client.get(reverse("list_rss", args=[self.custom_list.id]))
+        with patch(
+            "lists.feeds.services.get_media_metadata",
+            return_value={"synopsis": "Brick-built galactic co-op."},
+        ):
+            response = self.client.get(reverse("list_rss", args=[self.custom_list.id]))
+        root = ET.fromstring(response.content)
+        namespaces = {"yamtrack": YamtrackRssFeed.yamtrack_namespace}
+        item = root.find("./channel/item")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"rss", response.content)
         self.assertIn(b"RSS Movie", response.content)
+        self.assertIsNotNone(item)
+        self.assertEqual(item.findtext("description"), "Brick-built galactic co-op.")
+        self.assertEqual(item.findtext("yamtrack:status", namespaces=namespaces), Status.COMPLETED.value)
+        self.assertEqual(
+            item.findtext("yamtrack:description", namespaces=namespaces),
+            "Brick-built galactic co-op.",
+        )
+        self.assertEqual(
+            item.findtext("yamtrack:image_url", namespaces=namespaces),
+            "https://example.com/rss-movie.jpg",
+        )
 
     def test_private_list_rss_feed_returns_404(self):
         """Return 404 for private lists."""
