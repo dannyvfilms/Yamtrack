@@ -24,3 +24,6 @@ db-dev/
 
 # Local dev DB
 db/
+
+# Retired Tailwind output path; main.css is the canonical compiled asset.
+src/static/css/tailwind.css
