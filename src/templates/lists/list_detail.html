@@ -91,17 +91,17 @@
                        x-transition:leave="transition ease-in duration-75"
                        x-transition:leave-start="transform opacity-100 scale-100"
                        x-transition:leave-end="transform opacity-0 scale-95">
-                    <a href="{% url 'list_rss' custom_list.id %}"
+                    <a href="{% url 'list_rss' custom_list.public_reference %}"
                        class="block px-3 py-2 text-sm text-gray-200 hover:bg-[#454d5a] hover:text-white transition-colors"
                        aria-label="RSS feed">
                       RSS
                     </a>
-                    <a href="{% url 'list_json' custom_list.id %}?arr=radarr"
+                    <a href="{% url 'list_json' custom_list.public_reference %}?arr=radarr"
                        class="block px-3 py-2 text-sm text-gray-200 hover:bg-[#454d5a] hover:text-white transition-colors"
                        aria-label="Radarr export">
                       Radarr
                     </a>
-                    <a href="{% url 'list_json' custom_list.id %}?arr=sonarr"
+                    <a href="{% url 'list_json' custom_list.public_reference %}?arr=sonarr"
                        class="block px-3 py-2 text-sm text-gray-200 hover:bg-[#454d5a] hover:text-white transition-colors"
                        aria-label="Sonarr export">
                       Sonarr
@@ -407,7 +407,7 @@
                type="text"
                x-model="query"
                autocomplete="off"
-               hx-get="{% url 'list_detail' custom_list.id %}"
+               hx-get="{% url 'list_detail' custom_list.public_reference %}"
                hx-trigger="keyup changed delay:300ms, search"
                hx-target="#items-view"
                hx-include="#filter-form"
@@ -441,7 +441,7 @@
                    x-model="query"
                    @keydown.escape.prevent="searchMode = false; $refs.listSearchInput?.blur()"
                    autocomplete="off"
-                   hx-get="{% url 'list_detail' custom_list.id %}"
+                   hx-get="{% url 'list_detail' custom_list.public_reference %}"
                    hx-trigger="keyup changed delay:300ms, search"
                    hx-target="#items-view"
                    hx-include="#filter-form"
@@ -480,7 +480,7 @@
                  x-transition:leave="transition ease-in duration-75"
                  x-transition:leave-start="transform opacity-100 scale-100"
                  x-transition:leave-end="transform opacity-0 scale-95">
-              <button hx-get="{% url 'list_detail' custom_list.id %}"
+              <button hx-get="{% url 'list_detail' custom_list.public_reference %}"
                       hx-target="#items-view"
                       hx-include="#filter-form"
                       hx-indicator="#loading-indicator"
@@ -489,7 +489,7 @@
                       @click="type = 'all'; open = false"
                       type="button">All</button>
               {% for media_type in media_types %}
-                <button hx-get="{% url 'list_detail' custom_list.id %}"
+                <button hx-get="{% url 'list_detail' custom_list.public_reference %}"
                         hx-target="#items-view"
                         hx-include="#filter-form"
                         hx-indicator="#loading-indicator"
@@ -559,7 +559,7 @@
                  x-transition:leave-start="transform opacity-100 scale-100"
                  x-transition:leave-end="transform opacity-0 scale-95">
               {% for value, label in sort_choices %}
-                <button hx-get="{% url 'list_detail' custom_list.id %}"
+                <button hx-get="{% url 'list_detail' custom_list.public_reference %}"
                         hx-target="#items-view"
                         hx-include="#filter-form"
                         hx-indicator="#loading-indicator"
@@ -593,7 +593,7 @@
             {% endif %}
 
             <div class="flex rounded-md overflow-hidden border border-gray-700 layout-toggle">
-              <button hx-get="{% url 'list_detail' custom_list.id %}"
+              <button hx-get="{% url 'list_detail' custom_list.public_reference %}"
                       hx-target="#items-view"
                       hx-include="#filter-form"
                       hx-indicator="#loading-indicator"
@@ -604,7 +604,7 @@
                       type="button">
                 {% include "app/icons/four-square.svg" with classes="w-5 h-5" %}
               </button>
-              <button hx-get="{% url 'list_detail' custom_list.id %}"
+              <button hx-get="{% url 'list_detail' custom_list.public_reference %}"
                       hx-target="#items-view"
                       hx-include="#filter-form"
                       hx-indicator="#loading-indicator"
@@ -741,7 +741,7 @@
       }
       const filterForm = document.getElementById('filter-form');
       const values = filterForm ? htmx.values(filterForm) : {};
-      htmx.ajax('GET', '{% url "list_detail" custom_list.id %}', {
+      htmx.ajax('GET', '{% url "list_detail" custom_list.public_reference %}', {
         source: filterForm || document.body,
         target: '#items-view',
         swap: 'innerHTML',

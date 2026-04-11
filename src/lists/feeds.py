@@ -2,7 +2,6 @@ from django.apps import apps
 from django.contrib.auth.decorators import login_not_required
 from django.contrib.syndication.views import Feed
 from django.http import Http404, JsonResponse
-from django.shortcuts import get_object_or_404
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.feedgenerator import Rss201rev2Feed
@@ -98,13 +97,10 @@ class PublicListFeed(Feed):
         source = item.source.upper()
         return f"{media_type} from {source}"
 
-    def get_object(self, request, list_id):
+    def get_object(self, request, list_reference):
         """Return the public list or raise 404."""
-        custom_list = get_object_or_404(
-            CustomList.objects.select_related("owner"),
-            id=list_id,
-        )
-        if custom_list.visibility != "public":
+        custom_list = CustomList.objects.get_public_list(list_reference)
+        if custom_list is None:
             msg = "List not found"
             raise Http404(msg)
         self.request = request
@@ -116,7 +112,7 @@ class PublicListFeed(Feed):
 
     def link(self, obj):
         """Return the list detail URL."""
-        return self.request.build_absolute_uri(reverse("list_detail", args=[obj.id]))
+        return self.request.build_absolute_uri(reverse("list_detail", args=[obj.public_reference]))
 
     def description(self, obj):
         """Return the feed description."""
@@ -159,21 +155,18 @@ class PublicListFeed(Feed):
 
 @login_not_required
 @require_GET
-def list_rss_feed(request, list_id):
+def list_rss_feed(request, list_reference):
     """Wrapper view for RSS feed to ensure login_not_required is applied."""
     feed = PublicListFeed()
-    return feed(request, list_id)
+    return feed(request, list_reference)
 
 
 @login_not_required
 @require_GET
-def list_json(request, list_id):
+def list_json(request, list_reference):
     """Return JSON export for public lists in Radarr or Sonarr format."""
-    custom_list = get_object_or_404(
-        CustomList.objects.select_related("owner"),
-        id=list_id,
-    )
-    if custom_list.visibility != "public":
+    custom_list = CustomList.objects.get_public_list(list_reference)
+    if custom_list is None:
         msg = "List not found"
         raise Http404(msg)
 

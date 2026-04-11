@@ -597,6 +597,18 @@ class ListDetailViewTests(TestCase):
         response = self.client.get(reverse("list_detail", args=[self.custom_list.id]))
         self.assertEqual(response.status_code, 200)
 
+    def test_public_list_detail_resolves_custom_slug(self):
+        """Public lists should resolve their custom slug in the detail route."""
+        self.custom_list.visibility = "public"
+        self.custom_list.public_slug = "favorite-movies"
+        self.custom_list.save(update_fields=["visibility", "public_slug"])
+
+        self.client.logout()
+        response = self.client.get(reverse("list_detail", args=[self.custom_list.public_slug]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["custom_list"], self.custom_list)
+
     @patch.object(get_user_model(), "update_preference")
     @patch.object(CustomList, "user_can_view")
     def test_list_detail_view_search(
@@ -1622,6 +1634,24 @@ class EditListViewTest(TestCase):
         self.assertEqual(self.list.name, "Updated List")
         self.assertEqual(self.list.description, "Updated Description")
 
+    def test_edit_list_updates_public_slug(self):
+        """Test editing a list to publish it with a custom URL."""
+        self.client.login(**self.credentials)
+        self.client.post(
+            reverse("list_edit"),
+            {
+                "list_id": self.list.id,
+                "name": "Updated List",
+                "description": "Updated Description",
+                "is_public": "on",
+                "public_slug": "Favorite Movies",
+            },
+        )
+
+        self.list.refresh_from_db()
+        self.assertEqual(self.list.visibility, "public")
+        self.assertEqual(self.list.public_slug, "favorite-movies")
+
 
 class DeleteListViewTest(TestCase):
     """Test the delete view."""
@@ -2211,6 +2241,16 @@ class ListRssFeedTests(TestCase):
             "https://example.com/rss-movie.jpg",
         )
 
+    def test_public_list_rss_feed_accepts_slug(self):
+        """RSS feeds should resolve custom public slugs."""
+        self.custom_list.public_slug = "public-rss-list"
+        self.custom_list.save(update_fields=["public_slug"])
+
+        response = self.client.get(reverse("list_rss", args=[self.custom_list.public_slug]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"RSS Movie", response.content)
+
     def test_private_list_rss_feed_returns_404(self):
         """Return 404 for private lists."""
         self.custom_list.visibility = "private"
@@ -2283,6 +2323,18 @@ class ListJsonExportTests(TestCase):
         # Should only include TMDB movies
         self.assertEqual(len(data), 1)
         self.assertIn({"id": 12345}, data)
+
+    def test_radarr_json_accepts_slug(self):
+        """JSON exports should resolve custom public slugs."""
+        self.custom_list.public_slug = "public-json-list"
+        self.custom_list.save(update_fields=["public_slug"])
+
+        response = self.client.get(
+            reverse("list_json", args=[self.custom_list.public_slug]) + "?arr=radarr",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), [{"id": 12345}])
 
     def test_sonarr_json_format(self):
         """Return JSON in Sonarr format for public list."""

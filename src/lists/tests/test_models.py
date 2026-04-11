@@ -54,6 +54,13 @@ class CustomListModelTest(TestCase):
         """Test the string representation of a CustomList."""
         self.assertEqual(str(self.custom_list), "Test List")
 
+    def test_public_reference_uses_slug_for_public_lists(self):
+        """Public lists should prefer their custom slug in shared URLs."""
+        self.custom_list.visibility = "public"
+        self.custom_list.public_slug = "test-list"
+
+        self.assertEqual(self.custom_list.public_reference, "test-list")
+
     def test_owner_permissions(self):
         """Test owner permissions on custom list."""
         self.assertTrue(self.custom_list.user_can_view(self.user))
@@ -105,6 +112,16 @@ class CustomListManagerTest(TestCase):
         self.assertEqual(user_lists.count(), 2)
         self.assertIn(self.list1, user_lists)
         self.assertIn(self.list2, user_lists)
+
+    def test_get_by_reference_resolves_public_slug(self):
+        """Slug references should resolve public lists."""
+        self.list1.visibility = "public"
+        self.list1.public_slug = "list-one"
+        self.list1.save(update_fields=["visibility", "public_slug"])
+
+        resolved = CustomList.objects.get_by_reference("list-one")
+
+        self.assertEqual(resolved, self.list1)
 
 
     def test_smart_list_sync_items(self):

@@ -20,7 +20,6 @@ urlpatterns = [
         views.lists_modal,
         name="lists_modal",
     ),
-    path("list/<int:list_id>", views.list_detail, name="list_detail"),
     path(
         "list/<int:list_id>/columns",
         views.update_list_table_columns,
@@ -31,11 +30,12 @@ urlpatterns = [
         views.smart_rules_update,
         name="list_smart_rules_update",
     ),
-    path("list/<int:list_id>/rss", feeds.list_rss_feed, name="list_rss"),
-    path("list/<int:list_id>/json", feeds.list_json, name="list_json"),
     path("list/create", views.create, name="list_create"),
     path("list/edit", views.edit, name="list_edit"),
     path("list/delete", views.delete, name="list_delete"),
+    path("list/<slug:list_reference>", views.list_detail, name="list_detail"),
+    path("list/<slug:list_reference>/rss", feeds.list_rss_feed, name="list_rss"),
+    path("list/<slug:list_reference>/json", feeds.list_json, name="list_json"),
     path(
         "list/<int:list_id>/reorder",
         views.reorder_list_item,

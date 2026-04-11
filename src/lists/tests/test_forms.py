@@ -54,6 +54,54 @@ class CustomListFormTest(TestCase):
         self.assertTrue(form.is_valid())
         self.assertEqual(form.cleaned_data["tags"], ["Sci Fi", "Drama"])
 
+    def test_custom_list_form_public_slug_normalized(self):
+        """Public slug input should normalize into a URL-safe slug."""
+        form = CustomListForm(
+            data={
+                "name": "Test List",
+                "is_public": "on",
+                "public_slug": "  Favorite Movies 2026!  ",
+            },
+            user=self.user,
+        )
+
+        self.assertTrue(form.is_valid())
+        self.assertEqual(form.cleaned_data["public_slug"], "favorite-movies-2026")
+
+    def test_custom_list_form_rejects_duplicate_public_slug(self):
+        """Public slugs must be unique once claimed."""
+        CustomList.objects.create(
+            name="Existing",
+            owner=self.user,
+            visibility="public",
+            public_slug="favorite-movies",
+        )
+        form = CustomListForm(
+            data={
+                "name": "Test List",
+                "is_public": "on",
+                "public_slug": "Favorite Movies",
+            },
+            user=self.user,
+        )
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("public_slug", form.errors)
+
+    def test_custom_list_form_rejects_numeric_public_slug(self):
+        """Numeric-only slugs would collide with ID-based list URLs."""
+        form = CustomListForm(
+            data={
+                "name": "Test List",
+                "is_public": "on",
+                "public_slug": "12345",
+            },
+            user=self.user,
+        )
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("public_slug", form.errors)
+
     def test_custom_list_form_smart_toggle(self):
         """Smart toggle should persist list type."""
         form_data = {

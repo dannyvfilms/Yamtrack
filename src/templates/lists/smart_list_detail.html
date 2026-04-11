@@ -322,17 +322,17 @@
                        x-transition:leave="transition ease-in duration-75"
                        x-transition:leave-start="transform opacity-100 scale-100"
                        x-transition:leave-end="transform opacity-0 scale-95">
-                    <a href="{% url 'list_rss' custom_list.id %}"
+                    <a href="{% url 'list_rss' custom_list.public_reference %}"
                        class="block px-3 py-2 text-sm text-gray-200 hover:bg-[#454d5a] hover:text-white transition-colors"
                        aria-label="RSS feed">
                       RSS
                     </a>
-                    <a href="{% url 'list_json' custom_list.id %}?arr=radarr"
+                    <a href="{% url 'list_json' custom_list.public_reference %}?arr=radarr"
                        class="block px-3 py-2 text-sm text-gray-200 hover:bg-[#454d5a] hover:text-white transition-colors"
                        aria-label="Radarr export">
                       Radarr
                     </a>
-                    <a href="{% url 'list_json' custom_list.id %}?arr=sonarr"
+                    <a href="{% url 'list_json' custom_list.public_reference %}?arr=sonarr"
                        class="block px-3 py-2 text-sm text-gray-200 hover:bg-[#454d5a] hover:text-white transition-colors"
                        aria-label="Sonarr export">
                       Sonarr
@@ -357,13 +357,13 @@
         <div class="hidden sm:flex shrink-0 items-center gap-2">
           <div class="relative inline-flex" x-data="{ open: false }" @click.outside="open = false">
             {% if smart_edit_mode %}
-              <a href="{% url 'list_detail' custom_list.id %}"
+              <a href="{% url 'list_detail' custom_list.public_reference %}"
                  class="h-10 inline-flex items-center gap-2 px-4 bg-indigo-600 text-white rounded-l-md hover:bg-indigo-700 transition-colors cursor-pointer border-r border-indigo-500 whitespace-nowrap">
                 {% include "app/icons/checkmark.svg" with classes="w-4 h-4" %}
                 <span class="text-sm">Done Editing</span>
               </a>
             {% else %}
-              <a href="{% url 'list_detail' custom_list.id %}?edit_smart_rules=1"
+              <a href="{% url 'list_detail' custom_list.public_reference %}?edit_smart_rules=1"
                  class="h-10 inline-flex items-center gap-2 px-4 bg-indigo-600 text-white rounded-l-md hover:bg-indigo-700 transition-colors cursor-pointer border-r border-indigo-500 whitespace-nowrap">
                 {% include "app/icons/edit.svg" with classes="w-4 h-4" %}
                 <span class="text-sm">Edit Smart Rules</span>
@@ -469,13 +469,13 @@
       <div class="sm:hidden mb-6">
         <div class="relative inline-flex w-full" x-data="{ open: false }" @click.outside="open = false">
           {% if smart_edit_mode %}
-            <a href="{% url 'list_detail' custom_list.id %}"
+            <a href="{% url 'list_detail' custom_list.public_reference %}"
                class="h-10 inline-flex flex-1 min-w-0 items-center justify-center gap-2 px-4 bg-indigo-600 text-white rounded-l-md hover:bg-indigo-700 transition-colors cursor-pointer border-r border-indigo-500 whitespace-nowrap">
               {% include "app/icons/checkmark.svg" with classes="w-4 h-4" %}
               <span class="text-sm">Done Editing</span>
             </a>
           {% else %}
-            <a href="{% url 'list_detail' custom_list.id %}?edit_smart_rules=1"
+            <a href="{% url 'list_detail' custom_list.public_reference %}?edit_smart_rules=1"
                class="h-10 inline-flex flex-1 min-w-0 items-center justify-center gap-2 px-4 bg-indigo-600 text-white rounded-l-md hover:bg-indigo-700 transition-colors cursor-pointer border-r border-indigo-500 whitespace-nowrap">
               {% include "app/icons/edit.svg" with classes="w-4 h-4" %}
               <span class="text-sm">Edit Smart Rules</span>
@@ -776,7 +776,7 @@
       if (!window.htmx) return;
       const filterForm = document.getElementById('smart-filter-form');
       const values = filterForm ? htmx.values(filterForm) : {};
-      htmx.ajax('GET', '{% url "list_detail" custom_list.id %}', {
+      htmx.ajax('GET', '{% url "list_detail" custom_list.public_reference %}', {
         source: filterForm || document.body,
         target: '#items-view',
         swap: 'innerHTML',

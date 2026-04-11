@@ -47,7 +47,7 @@
 
 {% if has_next %}
   <tr id="list-table-next-row"
-      hx-get="{% url 'list_detail' custom_list.id %}?page={{ next_page_number }}"
+      hx-get="{% url 'list_detail' custom_list.public_reference %}?page={{ next_page_number }}"
       hx-trigger="revealed threshold:200px"
       hx-swap="outerHTML"
       hx-target="this"

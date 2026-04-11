@@ -3,6 +3,7 @@ from django.conf import settings
 from django.core.cache import cache
 from django.db import models
 from django.db.models import Prefetch, Q
+from django.urls import reverse
 
 from app.models import Item, MediaTypes, Sources
 from app.providers import services
@@ -48,14 +49,31 @@ class CustomListManager(models.Manager):
             .order_by("name")
         )
 
-    def get_public_list(self, list_id):
-        """Return a public list by ID."""
-        return (
-            self.filter(id=list_id, visibility="public")
+    def get_by_reference(self, list_reference):
+        """Return a list by numeric ID or a public custom slug."""
+        reference = str(list_reference or "").strip()
+        if not reference:
+            return None
+
+        queryset = self.select_related("owner").prefetch_related("collaborators")
+        if reference.isdigit():
+            return queryset.filter(id=int(reference)).first()
+        return queryset.filter(public_slug=reference, visibility="public").first()
+
+    def get_public_list(self, list_reference):
+        """Return a public list by numeric ID or custom slug."""
+        reference = str(list_reference or "").strip()
+        if not reference:
+            return None
+
+        queryset = (
+            self.filter(visibility="public")
             .select_related("owner")
             .prefetch_related("collaborators")
-            .first()
         )
+        if reference.isdigit():
+            return queryset.filter(id=int(reference)).first()
+        return queryset.filter(public_slug=reference).first()
 
 
 class CustomList(models.Model):
@@ -95,6 +113,7 @@ class CustomList(models.Model):
         choices=VISIBILITY_CHOICES,
         default="private",
     )
+    public_slug = models.SlugField(max_length=255, blank=True, default="")
     allow_recommendations = models.BooleanField(
         default=False,
         help_text="Allow anyone to recommend items to add to this list (only for public lists)",
@@ -128,6 +147,13 @@ class CustomList(models.Model):
         """Meta options for the model."""
 
         ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["public_slug"],
+                condition=~Q(public_slug=""),
+                name="lists_customlist_public_slug_unique",
+            ),
+        ]
 
     def __str__(self):
         """Return the name of the custom list."""
@@ -159,6 +185,17 @@ class CustomList(models.Model):
     def is_public(self):
         """Return whether the list is public."""
         return self.visibility == "public"
+
+    @property
+    def public_reference(self):
+        """Return the shareable list reference."""
+        if self.is_public and self.public_slug:
+            return self.public_slug
+        return str(self.id)
+
+    def get_absolute_url(self):
+        """Return the preferred detail URL for this list."""
+        return reverse("list_detail", args=[self.public_reference])
 
     def can_recommend(self):
         """Check if recommendations are allowed for this list."""

@@ -3,7 +3,7 @@
 
 {% if items %}
   {% for item in items %}
-    <div {% if list_ordering_enabled %}data-item-id="{{ item.id }}"{% endif %}{% if forloop.last and has_next %} hx-get="{% url 'list_detail' custom_list.id %}?page={{ next_page_number }}" hx-trigger="revealed threshold:200px" hx-swap="afterend" hx-include="{% if is_smart_list %}#smart-filter-form{% else %}#filter-form{% endif %}" hx-indicator="#loading-indicator"{% endif %}>
+    <div {% if list_ordering_enabled %}data-item-id="{{ item.id }}"{% endif %}{% if forloop.last and has_next %} hx-get="{% url 'list_detail' custom_list.public_reference %}?page={{ next_page_number }}" hx-trigger="revealed threshold:200px" hx-swap="afterend" hx-include="{% if is_smart_list %}#smart-filter-form{% else %}#filter-form{% endif %}" hx-indicator="#loading-indicator"{% endif %}>
       {% include "app/components/media_card.html" with media=item.media item=item title=item from_grid=True user=user public_view=public_view|default:False current_sort=chip_sort|default:current_sort card_media_type=item.media_type score_chip_mode='conditional' progress_chip_mode='conditional' time_left_chip_mode='conditional' show_release_year_placeholder=True show_progress_chip=False list_ordering_enabled=list_ordering_enabled show_episode_identity=True image_override=item.card_image_override|default:item.image %}
       {% with media=item.media %}
         {% if current_sort == 'end_date' %}

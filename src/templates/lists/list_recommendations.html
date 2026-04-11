@@ -10,7 +10,7 @@
 {% block content %}
     <div class="max-w-8xl mx-auto">
         <div class="mb-6">
-            <a href="{% url 'list_detail' custom_list.id %}"
+            <a href="{% url 'list_detail' custom_list.public_reference %}"
                class="inline-flex items-center text-gray-400 hover:text-white transition-colors mb-4">
                 {% include "app/icons/chevron-left.svg" with classes="w-4 h-4 mr-1" %}
                 Back to {{ custom_list.name }}

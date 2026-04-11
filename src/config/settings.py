@@ -1089,6 +1089,6 @@ LOGIN_REQUIRED_EXEMPT = [
     r"^/static/.*$",
     r"^/favicon\.ico$",
     r"^/health/.*$",
-    r"^/list/\d+/rss/?$",  # Public list RSS feeds
-    r"^/list/\d+/json/?$",  # Public list JSON exports
+    r"^/list/[^/]+/rss/?$",  # Public list RSS feeds
+    r"^/list/[^/]+/json/?$",  # Public list JSON exports
 ]

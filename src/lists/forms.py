@@ -1,8 +1,12 @@
 from django import forms
 from django.db.models import Q
+from django.utils.text import slugify
 from django_select2 import forms as s2forms
 
 from lists.models import CustomList
+
+
+RESERVED_PUBLIC_SLUGS = {"create", "edit", "delete"}
 
 
 class CollaboratorsWidget(s2forms.ModelSelect2MultipleWidget):
@@ -31,6 +35,12 @@ class CustomListForm(forms.ModelForm):
         label="Smart List",
         help_text="Automatically updates based on media types and filters",
     )
+    public_slug = forms.CharField(
+        required=False,
+        max_length=255,
+        label="Custom URL",
+        help_text="Optional custom slug used for public list links.",
+    )
     tags = TagsField(
         required=False,
         label="List Tags",
@@ -54,6 +64,7 @@ class CustomListForm(forms.ModelForm):
             "tags",
             "collaborators",
             "is_public",
+            "public_slug",
             "allow_recommendations",
             "is_smart",
         ]
@@ -129,6 +140,27 @@ class CustomListForm(forms.ModelForm):
         """Normalize tags input."""
         tags = self.cleaned_data.get("tags") or []
         return self._normalize_tags(tags)
+
+    def clean_public_slug(self):
+        """Normalize and validate the optional public slug."""
+        public_slug = slugify(self.cleaned_data.get("public_slug", "") or "").strip("-")
+        if not public_slug:
+            return ""
+
+        if public_slug.isdigit():
+            msg = "Custom list URLs cannot be only numbers."
+            raise forms.ValidationError(msg)
+        if public_slug in RESERVED_PUBLIC_SLUGS:
+            msg = "That URL is reserved."
+            raise forms.ValidationError(msg)
+        if (
+            CustomList.objects.filter(public_slug=public_slug)
+            .exclude(pk=getattr(self.instance, "pk", None))
+            .exists()
+        ):
+            msg = "That URL is already in use."
+            raise forms.ValidationError(msg)
+        return public_slug
 
     @staticmethod
     def _normalize_tags(tags):

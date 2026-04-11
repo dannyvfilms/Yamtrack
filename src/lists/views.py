@@ -49,6 +49,14 @@ logger = logging.getLogger(__name__)
 
 
 User = get_user_model()
+LIST_REFERENCE_PLACEHOLDER = "__LIST_REFERENCE__"
+
+
+def _build_list_url_template(request):
+    """Return an absolute list URL template with a replaceable reference placeholder."""
+    return request.build_absolute_uri(
+        reverse("list_detail", args=[LIST_REFERENCE_PLACEHOLDER]),
+    )
 
 
 def _get_completed_item_ids(user, item_ids):
@@ -686,6 +694,7 @@ def lists(request):
                 "current_sort": sort_by,
                 "current_direction": direction,
                 "cache_buster": cache_buster,
+                "list_url_template": _build_list_url_template(request),
             },
         )
         # Explicitly set cache control headers for HTMX responses
@@ -718,6 +727,7 @@ def lists(request):
             "trakt_account": trakt_account,
             "trakt_has_credentials": bool(trakt_account and trakt_account.is_configured),
             "cache_buster": cache_buster,
+            "list_url_template": _build_list_url_template(request),
         },
     )
     # Explicitly set cache control headers for Safari compatibility
@@ -1201,9 +1211,11 @@ def _smart_list_detail_response(
             args=[custom_list.id],
         ),
         "table_column_media_type": current_media_type,
-        "table_refresh_url": reverse("list_detail", args=[custom_list.id]),
+        "table_refresh_url": reverse("list_detail", args=[custom_list.public_reference]),
         "table_refresh_target": "#items-view",
         "table_refresh_include_selector": "#smart-filter-form",
+        "list_reference": custom_list.public_reference,
+        "list_url_template": _build_list_url_template(request),
     }
 
     if layout == "table":
@@ -1217,7 +1229,7 @@ def _smart_list_detail_response(
                     "list",
                 ),
                 "table_body_id": "list-table-body",
-                "table_pagination_url": reverse("list_detail", args=[custom_list.id]),
+                "table_pagination_url": reverse("list_detail", args=[custom_list.public_reference]),
                 "table_target_selector": "#list-table-body",
                 "table_include_selector": "#smart-filter-form",
             },
@@ -1240,50 +1252,49 @@ def _smart_list_detail_response(
 @login_not_required
 @never_cache
 @require_GET
-def list_detail(request, list_id):
+def list_detail(request, list_reference):
     """Return the detail page of a custom list."""
-    try:
-        custom_list = CustomList.objects.select_related("owner").prefetch_related(
-            "collaborators"
-        ).get(id=list_id)
-    except CustomList.DoesNotExist:
+    reference = str(list_reference or "").strip()
+    custom_list = CustomList.objects.get_by_reference(reference)
+    if custom_list is None:
         # List doesn't exist - investigate why it might have been shown on lists page
-        logger.warning(
-            "List ID %s not found. User: %s, Authenticated: %s",
-            list_id,
-            request.user.username if request.user.is_authenticated else "anonymous",
-            request.user.is_authenticated,
-        )
-        
-        # Check if user has any lists that might match (for debugging)
-        if request.user.is_authenticated:
-            user_lists = CustomList.objects.get_user_lists(request.user)
-            logger.info(
-                "User %s has %s accessible lists. Checking if list %s should be in that set...",
-                request.user.username,
-                user_lists.count(),
-                list_id,
+        if reference.isdigit():
+            logger.warning(
+                "List ID %s not found. User: %s, Authenticated: %s",
+                reference,
+                request.user.username if request.user.is_authenticated else "anonymous",
+                request.user.is_authenticated,
             )
-            
-            # Check if there's a list with similar characteristics that was re-imported
-            # This helps identify if it's a re-import issue
-            trakt_lists = CustomList.objects.filter(
-                owner=request.user,
-                source="trakt",
-            )
-            logger.info(
-                "User has %s Trakt lists. Recent list IDs: %s",
-                trakt_lists.count(),
-                list(trakt_lists.order_by("-id")[:5].values_list("id", flat=True)),
-            )
-            
-            messages.error(
-                request,
-                f"List ID {list_id} not found. This may indicate a data inconsistency. "
-                "The list may have been deleted or re-imported with a new ID. "
-                "Please refresh the lists page to see current lists.",
-            )
-            return redirect("lists")
+
+            # Check if user has any lists that might match (for debugging)
+            if request.user.is_authenticated:
+                user_lists = CustomList.objects.get_user_lists(request.user)
+                logger.info(
+                    "User %s has %s accessible lists. Checking if list %s should be in that set...",
+                    request.user.username,
+                    user_lists.count(),
+                    reference,
+                )
+
+                # Check if there's a list with similar characteristics that was re-imported
+                # This helps identify if it's a re-import issue
+                trakt_lists = CustomList.objects.filter(
+                    owner=request.user,
+                    source="trakt",
+                )
+                logger.info(
+                    "User has %s Trakt lists. Recent list IDs: %s",
+                    trakt_lists.count(),
+                    list(trakt_lists.order_by("-id")[:5].values_list("id", flat=True)),
+                )
+
+                messages.error(
+                    request,
+                    f"List ID {reference} not found. This may indicate a data inconsistency. "
+                    "The list may have been deleted or re-imported with a new ID. "
+                    "Please refresh the lists page to see current lists.",
+                )
+                return redirect("lists")
         # For anonymous users, just show 404
         raise Http404("List not found")
 
@@ -1660,9 +1671,11 @@ def list_detail(request, list_id):
             args=[custom_list.id],
         ),
         "table_column_media_type": current_media_type,
-        "table_refresh_url": reverse("list_detail", args=[custom_list.id]),
+        "table_refresh_url": reverse("list_detail", args=[custom_list.public_reference]),
         "table_refresh_target": "#items-view",
         "table_refresh_include_selector": "#filter-form",
+        "list_reference": custom_list.public_reference,
+        "list_url_template": _build_list_url_template(request),
     }
 
     if layout == "table":
@@ -1676,7 +1689,7 @@ def list_detail(request, list_id):
                     "list",
                 ),
                 "table_body_id": "list-table-body",
-                "table_pagination_url": reverse("list_detail", args=[custom_list.id]),
+                "table_pagination_url": reverse("list_detail", args=[custom_list.public_reference]),
                 "table_target_selector": "#list-table-body",
                 "table_include_selector": "#filter-form",
             },
@@ -1787,7 +1800,9 @@ def create(request):
             activity_type=ListActivityType.LIST_CREATED,
         )
         if custom_list.is_smart and request.POST.get("smart_create_flow"):
-            return redirect(f"{reverse('list_detail', args=[custom_list.id])}?edit_smart_rules=1")
+            return redirect(
+                f"{reverse('list_detail', args=[custom_list.public_reference])}?edit_smart_rules=1",
+            )
     else:
         logger.error(form.errors.as_json())
         helpers.form_error_messages(form, request)
@@ -2032,7 +2047,7 @@ def add_list_item_page(request, list_id):
             request,
             "Smart lists update from their rules. Edit the rules to change items.",
         )
-        return redirect("list_detail", list_id=list_id)
+        return redirect("list_detail", custom_list.public_reference)
 
     enabled_media_types = request.user.get_enabled_media_types()
 
@@ -2232,7 +2247,7 @@ def add_list_item_submit(request, list_id):
             request,
             "Smart lists update from their rules and do not support manual additions.",
         )
-        return redirect("list_detail", list_id=list_id)
+        return redirect("list_detail", custom_list.public_reference)
 
     next_url = request.POST.get("next")
 
@@ -2302,7 +2317,7 @@ def add_list_item_submit(request, list_id):
     )
     messages.success(request, f'"{item.title}" has been added to the list.')
 
-    return _redirect_after_submit(redirect("list_detail", list_id=list_id))
+    return _redirect_after_submit(redirect("list_detail", custom_list.public_reference))
 
 
 @login_required
@@ -2619,7 +2634,7 @@ def submit_recommendation(request, list_id):
 
     if not custom_list.can_recommend():
         messages.error(request, "Recommendations are not enabled for this list.")
-        return redirect("list_detail", list_id=list_id)
+        return redirect("list_detail", custom_list.public_reference)
 
     next_url = request.POST.get("next")
 
@@ -2706,7 +2721,7 @@ def submit_recommendation(request, list_id):
         f'Your recommendation for "{item.title}" has been submitted!',
     )
 
-    return _redirect_after_submit(redirect("list_detail", list_id=list_id))
+    return _redirect_after_submit(redirect("list_detail", custom_list.public_reference))
 
 
 @require_GET
