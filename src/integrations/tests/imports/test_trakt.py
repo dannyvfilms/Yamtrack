@@ -5,6 +5,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 
 from app.models import (
+    TV,
     Episode,
     Item,
     MediaTypes,
@@ -12,11 +13,8 @@ from app.models import (
     Season,
     Sources,
     Status,
-    TV,
 )
-from integrations.imports import (
-    helpers,
-)
+from integrations.imports import helpers
 from integrations.imports.trakt import TraktImporter, importer
 
 mock_path = Path(__file__).resolve().parent.parent / "mock_data"
@@ -97,12 +95,20 @@ class ImportTrakt(TestCase):
         self.assertEqual(len(trakt_importer.bulk_media[MediaTypes.SEASON.value]), 1)
         self.assertEqual(len(trakt_importer.bulk_media[MediaTypes.EPISODE.value]), 1)
 
-        # Process the same episode again to test repeat handling
-        trakt_importer.process_watched_episode(episode_entry)
+        # Process a replay of the same episode at a different time.
+        trakt_importer.process_watched_episode(
+            {
+                **episode_entry,
+                "watched_at": "2023-01-02T00:00:00.000Z",
+            },
+        )
         self.assertEqual(len(trakt_importer.bulk_media[MediaTypes.EPISODE.value]), 2)
 
     @patch("integrations.imports.trakt.TraktImporter._get_metadata")
-    def test_process_watched_episode_existing_show_imports_new_episode(self, mock_get_metadata):
+    def test_process_watched_episode_existing_show_imports_new_episode(
+        self,
+        mock_get_metadata,
+    ):
         """New-mode import should add episodes even when the show already exists."""
         tv_item = Item.objects.get_or_create(
             media_id="12345",
@@ -347,6 +353,59 @@ class ImportTrakt(TestCase):
         self.assertIsNone(importer.refresh_token)
         self.assertEqual(importer.mode, "new")
 
+    @patch("integrations.imports.trakt.TraktImporter._get_paginated_data")
+    @patch("integrations.imports.trakt.TraktImporter._make_api_request")
+    @patch("integrations.imports.trakt.TraktImporter._get_metadata")
+    def test_reimport_does_not_duplicate_episode_history(
+        self,
+        mock_get_metadata,
+        mock_make_request,
+        mock_get_paginated,
+    ):
+        """Running the same Trakt sync twice should not create duplicate episodes."""
+        episode_entry = {
+            "type": "episode",
+            "episode": {"season": 1, "number": 1, "title": "Pilot"},
+            "show": {"title": "Repeat Show", "ids": {"tmdb": 12345}},
+            "watched_at": "2023-01-01T00:00:00.000Z",
+        }
+
+        def mock_metadata_side_effect(media_type, _, __, ___=None):
+            if media_type == MediaTypes.TV.value:
+                return {
+                    "title": "Repeat Show",
+                    "image": "tv_image.jpg",
+                    "last_episode_season": 1,
+                    "max_progress": 1,
+                }
+            if media_type == MediaTypes.SEASON.value:
+                return {
+                    "title": "Season 1",
+                    "image": "season_image.jpg",
+                    "episodes": [{"episode_number": 1, "still_path": "/still.jpg"}],
+                    "max_progress": 1,
+                }
+            return None
+
+        mock_get_metadata.side_effect = mock_metadata_side_effect
+        mock_get_paginated.side_effect = [
+            [episode_entry],
+            [],
+            [episode_entry],
+            [],
+        ]
+        mock_make_request.return_value = []
+
+        first_counts, _ = importer(None, self.user, "new", "public_user")
+        second_counts, _ = importer(None, self.user, "new", "public_user")
+
+        self.assertEqual(first_counts[MediaTypes.EPISODE.value], 1)
+        self.assertEqual(second_counts.get(MediaTypes.EPISODE.value, 0), 0)
+        self.assertEqual(
+            Episode.objects.filter(related_season__user=self.user).count(),
+            1,
+        )
+
     @patch("integrations.imports.trakt.TraktImporter._make_api_request")
     def test_process_episode_rating(self, mock_make_request):
         """Episode ratings from Trakt are applied to existing Episode records."""
@@ -420,4 +479,7 @@ class ImportTrakt(TestCase):
         trakt_importer = TraktImporter("testuser", self.user, "new")
         # Should not raise; simply skips because no matching Season exists
         trakt_importer.process_ratings()
-        self.assertEqual(Episode.objects.filter(related_season__user=self.user).count(), 0)
+        self.assertEqual(
+            Episode.objects.filter(related_season__user=self.user).count(),
+            0,
+        )

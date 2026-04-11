@@ -20,7 +20,12 @@ TRAKT_API_BASE_URL = "https://api.trakt.tv"
 BULK_PAGE_SIZE = 1000
 
 
-def handle_oauth_callback(request, redirect_uri=None, client_id=None, client_secret=None):
+def handle_oauth_callback(
+    request,
+    redirect_uri=None,
+    client_id=None,
+    client_secret=None,
+):
     """View for getting the Trakt OAuth2 token."""
     code = request.GET["code"]
 
@@ -57,7 +62,10 @@ def handle_oauth_callback(request, redirect_uri=None, client_id=None, client_sec
     return {
         "access_token": token_response["access_token"],
         "refresh_token": token_response["refresh_token"],
-        "username": get_username_from_oauth(token_response["access_token"], client_id=client_id),
+        "username": get_username_from_oauth(
+            token_response["access_token"],
+            client_id=client_id,
+        ),
     }
 
 
@@ -177,6 +185,10 @@ class TraktImporter:
         # Track existing media to handle "new" mode correctly
         self.existing_media = helpers.get_existing_media(user)
 
+        # Track previously imported episode plays so rerunning the same sync
+        # does not create duplicate episode history rows.
+        self.existing_episode_watch_keys = self._get_existing_episode_watch_keys()
+
         # Track media IDs to delete in overwrite mode
         self.to_delete = defaultdict(lambda: defaultdict(set))
 
@@ -190,6 +202,23 @@ class TraktImporter:
             "Initialized Trakt importer for user %s with mode %s",
             username,
             mode,
+        )
+
+    def _get_existing_episode_watch_keys(self):
+        """Return exact episode play keys already stored for this user."""
+        if self.mode != "new":
+            return set()
+
+        return set(
+            app.models.Episode.objects.filter(
+                related_season__user=self.user,
+                end_date__isnull=False,
+            ).values_list(
+                "item__media_id",
+                "item__season_number",
+                "item__episode_number",
+                "end_date",
+            ),
         )
 
     def import_data(self):
@@ -431,13 +460,28 @@ class TraktImporter:
         if not tmdb_id:
             return
 
-        tv_exists = tmdb_id in self.existing_media[MediaTypes.TV.value][Sources.TMDB.value]
-        if self.mode == "overwrite" and tv_exists:
-            self.to_delete[MediaTypes.TV.value][Sources.TMDB.value].add(tmdb_id)
-
         # Extract episode data
         season_number = entry["episode"]["season"]
         episode_number = entry["episode"]["number"]
+        watched_at = entry["watched_at"]
+        watched_at_dt = parse_datetime(watched_at)
+        episode_watch_key = (tmdb_id, season_number, episode_number, watched_at_dt)
+
+        if episode_watch_key in self.existing_episode_watch_keys:
+            logger.debug(
+                "Skipping existing episode watch for %s S%sE%s at %s",
+                show["title"],
+                season_number,
+                episode_number,
+                watched_at,
+            )
+            return
+
+        tv_exists = tmdb_id in self.existing_media[MediaTypes.TV.value][
+            Sources.TMDB.value
+        ]
+        if self.mode == "overwrite" and tv_exists:
+            self.to_delete[MediaTypes.TV.value][Sources.TMDB.value].add(tmdb_id)
 
         # Get TV metadata
         tv_metadata = self._get_metadata(MediaTypes.TV.value, tmdb_id, show["title"])
@@ -468,21 +512,22 @@ class TraktImporter:
             return
 
         episode_image = self._get_episode_image(episode_number, season_metadata)
-        watched_at = entry["watched_at"]
 
         # Create or get TV show
         tv_item = self._get_or_create_item(MediaTypes.TV.value, tmdb_id, tv_metadata)
         tv_key = f"{tmdb_id}"
 
         if tv_key not in self.media_instances[MediaTypes.TV.value]:
-            tv_obj = self.existing_media[MediaTypes.TV.value][Sources.TMDB.value].get(tmdb_id)
+            tv_obj = self.existing_media[MediaTypes.TV.value][Sources.TMDB.value].get(
+                tmdb_id,
+            )
             if tv_obj is None:
                 tv_obj = app.models.TV(
                     item=tv_item,
                     user=self.user,
                     status=Status.IN_PROGRESS.value,
                 )
-                tv_obj._history_date = parse_datetime(watched_at)
+                tv_obj._history_date = watched_at_dt
                 self.bulk_media[MediaTypes.TV.value].append(tv_obj)
             self.media_instances[MediaTypes.TV.value][tv_key] = [tv_obj]
         else:
@@ -509,7 +554,7 @@ class TraktImporter:
                     related_tv=tv_obj,
                     status=Status.IN_PROGRESS.value,
                 )
-                season_obj._history_date = parse_datetime(watched_at)
+                season_obj._history_date = watched_at_dt
                 self.bulk_media[MediaTypes.SEASON.value].append(season_obj)
             self.media_instances[MediaTypes.SEASON.value][season_key] = [season_obj]
         else:
@@ -537,9 +582,10 @@ class TraktImporter:
             related_season=season_obj,
             end_date=watched_at,
         )
-        episode_obj._history_date = parse_datetime(watched_at)
+        episode_obj._history_date = watched_at_dt
         self.media_instances[MediaTypes.EPISODE.value][ep_key].append(episode_obj)
         self.bulk_media[MediaTypes.EPISODE.value].append(episode_obj)
+        self.existing_episode_watch_keys.add(episode_watch_key)
 
         # Update status if this is the last episode
         self._update_completion_status(
