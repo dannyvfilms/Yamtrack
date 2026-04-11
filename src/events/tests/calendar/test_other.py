@@ -142,6 +142,26 @@ class CalendarOtherTests(CalendarFixturesMixin, TestCase):
         self.assertEqual(events_bulk[0].datetime, date_parser("2025-10-15"))
 
     @patch("events.calendar.other.services.get_media_metadata")
+    def test_process_other_accepts_datetime_release_values(
+        self,
+        mock_get_media_metadata,
+    ):
+        """Datetime release values should be normalized without crashing."""
+        release_datetime = datetime.datetime(1999, 10, 15, 0, 0, tzinfo=ZoneInfo("UTC"))
+        mock_get_media_metadata.return_value = {
+            "max_progress": 1,
+            "details": {
+                "release_date": release_datetime,
+            },
+        }
+
+        events_bulk = []
+        process_other(self.movie_item, events_bulk)
+
+        self.assertEqual(len(events_bulk), 1)
+        self.assertEqual(events_bulk[0].datetime, date_parser(release_datetime))
+
+    @patch("events.calendar.other.services.get_media_metadata")
     def test_process_other_invalid_date(self, mock_get_media_metadata):
         """Test process_other with invalid date."""
         mock_get_media_metadata.return_value = {
