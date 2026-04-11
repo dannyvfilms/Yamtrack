@@ -1,5 +1,3 @@
-import logging
-
 from django.apps import apps
 from django.contrib.auth.decorators import login_not_required
 from django.contrib.syndication.views import Feed
@@ -11,11 +9,9 @@ from django.utils.feedgenerator import Rss201rev2Feed
 from django.views.decorators.http import require_GET
 
 from app.models import MediaManager, MediaTypes, Sources
-from app.providers import services, tmdb
+from app.providers import tmdb
 from app.templatetags.app_tags import media_url
 from lists.models import CustomList, CustomListItem
-
-logger = logging.getLogger(__name__)
 
 
 class YamtrackRssFeed(Rss201rev2Feed):
@@ -89,31 +85,12 @@ class PublicListFeed(Feed):
             list_item.feed_description = self._build_item_description(list_item.item)
 
     def _build_item_description(self, item):
-        """Return the best available feed description for an item."""
-        media_type = item.media_type
-        metadata_args = [media_type, item.media_id, item.source]
-
-        if media_type in {MediaTypes.SEASON.value, MediaTypes.EPISODE.value}:
-            if item.season_number is None:
-                return self._fallback_item_description(item)
-            metadata_args.append([item.season_number])
-            if media_type == MediaTypes.EPISODE.value:
-                metadata_args.append(item.episode_number)
-
-        try:
-            metadata = services.get_media_metadata(*metadata_args)
-        except Exception as exc:
-            logger.debug("Could not fetch RSS description for item %s: %s", item.id, exc)
-            return self._fallback_item_description(item)
-
-        description = (
-            (metadata or {}).get("synopsis")
-            or (metadata or {}).get("overview")
-            or ""
-        ).strip()
-        if not description or description == "No synopsis available.":
-            return self._fallback_item_description(item)
-        return description
+        """Return a local feed description without provider lookups."""
+        manual_metadata = getattr(item, "manual_metadata", None) or {}
+        manual_synopsis = str(manual_metadata.get("synopsis") or "").strip()
+        if manual_synopsis:
+            return manual_synopsis
+        return self._fallback_item_description(item)
 
     def _fallback_item_description(self, item):
         """Return the fallback item description."""

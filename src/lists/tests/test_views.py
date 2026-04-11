@@ -2173,6 +2173,7 @@ class ListRssFeedTests(TestCase):
             title="RSS Movie",
             status="Released",
             image="https://example.com/rss-movie.jpg",
+            manual_metadata={"synopsis": "Brick-built galactic co-op."},
         )
         with (
             patch("app.models.providers.services.get_media_metadata", return_value={"max_progress": None}),
@@ -2190,11 +2191,7 @@ class ListRssFeedTests(TestCase):
 
     def test_public_list_rss_feed(self):
         """Return RSS feed for a public list."""
-        with patch(
-            "lists.feeds.services.get_media_metadata",
-            return_value={"synopsis": "Brick-built galactic co-op."},
-        ):
-            response = self.client.get(reverse("list_rss", args=[self.custom_list.id]))
+        response = self.client.get(reverse("list_rss", args=[self.custom_list.id]))
         root = ET.fromstring(response.content)
         namespaces = {"yamtrack": YamtrackRssFeed.yamtrack_namespace}
         item = root.find("./channel/item")
