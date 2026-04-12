@@ -70,6 +70,23 @@ class ServicesTests(TestCase):
         self.assertEqual(kwargs["data"], {"form_data": "value"})
         self.assertIn("timeout", kwargs)
 
+    @patch("app.providers.services.session.get")
+    def test_api_request_wraps_connection_failures(self, mock_get):
+        """Network failures should raise a provider error without crashing views."""
+        mock_get.side_effect = requests.exceptions.ConnectionError("dns failure")
+
+        with self.assertRaises(services.ProviderAPIError) as cm:
+            services.api_request(
+                Sources.TMDB.value,
+                "GET",
+                "https://example.com/api",
+            )
+
+        self.assertEqual(cm.exception.provider, Sources.TMDB.value)
+        self.assertEqual(cm.exception.provider_label, Sources.TMDB.label)
+        self.assertIsNone(cm.exception.status_code)
+        self.assertIn("Could not reach", str(cm.exception))
+
     @patch("app.providers.services.api_request")
     def test_request_error_handling_rate_limit(self, mock_api_request):
         """Test the request_error_handling function with rate limiting."""

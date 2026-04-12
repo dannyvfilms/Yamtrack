@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
+import requests
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
@@ -119,6 +120,43 @@ class MediaDetailsViewTests(TestCase):
             MediaTypes.MOVIE.value,
             "238",
             Sources.TMDB.value,
+        )
+
+    @patch("app.providers.services.session.get")
+    def test_media_details_renders_service_unavailable_page_when_tmdb_is_unreachable(
+        self,
+        mock_get,
+    ):
+        mock_get.side_effect = requests.exceptions.ConnectionError("dns failure")
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "media_id": "94998",
+                    "title": "63-up",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertContains(response, "Service Unavailable", status_code=503)
+        self.assertContains(
+            response,
+            "Could not reach The Movie Database",
+            status_code=503,
+        )
+        self.assertContains(
+            response,
+            "Provider: The Movie Database",
+            status_code=503,
+        )
+        self.assertContains(
+            response,
+            "Provider status: unavailable",
+            status_code=503,
         )
 
     @patch("app.providers.services.get_media_metadata")

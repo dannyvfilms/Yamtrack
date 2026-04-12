@@ -142,13 +142,15 @@ class ProviderAPIError(Exception):
     def __init__(self, provider, error, details=None):
         """Initialize the exception with the provider name."""
         self.provider = provider
-        self.status_code = error.response.status_code
+        self.response = getattr(error, "response", None)
+        self.status_code = getattr(self.response, "status_code", None)
         try:
-            provider = Sources(provider).label
+            provider_label = Sources(provider).label
         except ValueError:
-            provider = provider.title()
+            provider_label = provider.title()
+        self.provider_label = provider_label
 
-        response = error.response
+        response = self.response
         response_keys = []
         content_type = None
         if response is not None:
@@ -167,28 +169,36 @@ class ProviderAPIError(Exception):
                         response_keys = []
 
         log_method = logger.warning if self.status_code == 404 else logger.error
-        if response_keys:
+        if response is None:
             log_method(
-                "%s api error status=%s response_keys=%s",
-                provider,
-                self.status_code,
-                response_keys,
+                "%s api request failed error=%s",
+                provider_label,
+                exception_summary(error),
             )
+            message = f"Could not reach {provider_label}"
         else:
-            response_text = getattr(response, "text", "") if response is not None else ""
-            body_length = len(response_text) if isinstance(response_text, str) else 0
-            log_method(
-                "%s api error status=%s content_type=%s body_length=%s",
-                provider,
-                self.status_code,
-                content_type or None,
-                body_length,
-            )
+            if response_keys:
+                log_method(
+                    "%s api error status=%s response_keys=%s",
+                    provider_label,
+                    self.status_code,
+                    response_keys,
+                )
+            else:
+                response_text = getattr(response, "text", "")
+                body_length = len(response_text) if isinstance(response_text, str) else 0
+                log_method(
+                    "%s api error status=%s content_type=%s body_length=%s",
+                    provider_label,
+                    self.status_code,
+                    content_type or None,
+                    body_length,
+                )
 
-        message = (
-            f"There was an error contacting the {provider} API "
-            f"(HTTP {self.status_code})"
-        )
+            message = (
+                f"There was an error contacting {provider_label} "
+                f"(HTTP {self.status_code})"
+            )
         if details:
             message += f": {details}"
         message += ". Check the logs for more details."
@@ -289,6 +299,8 @@ def api_request(
             )
 
         raise error from None
+    except requests.exceptions.RequestException as error:
+        raise ProviderAPIError(provider, error) from None
 
 
 def _ensure_title_fields(metadata):

@@ -94,17 +94,22 @@ class ProviderAPIErrorMiddleware:
     def process_exception(self, request, exception):
         """Handle exceptions raised during request processing."""
         if isinstance(exception, services.ProviderAPIError):
+            is_provider_unreachable = exception.status_code is None
             return render_error_page(
                 request,
                 "500.html",
-                status_code=500,
-                page_title="Server Error",
-                heading="Something Went Wrong",
+                status_code=503 if is_provider_unreachable else 500,
+                page_title="Service Unavailable" if is_provider_unreachable else "Server Error",
+                heading="Service Unavailable" if is_provider_unreachable else "Something Went Wrong",
                 error_message=str(exception),
                 exception=exception,
                 extra_lines=[
-                    f"Provider: {exception.provider}",
-                    f"Provider status: {exception.status_code}",
+                    f"Provider: {exception.provider_label}",
+                    (
+                        f"Provider status: {exception.status_code}"
+                        if exception.status_code is not None
+                        else "Provider status: unavailable"
+                    ),
                 ],
             )
         return None
