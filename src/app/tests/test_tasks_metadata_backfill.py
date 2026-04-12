@@ -1164,7 +1164,7 @@ class MetadataBackfillTaskTests(TestCase):
 
     @override_settings(TVDB_API_KEY="")
     @patch("app.tasks.services.get_media_metadata")
-    def test_populate_genre_data_for_tmdb_tv_treats_tvdb_disabled_as_success(
+    def test_populate_genre_data_for_tmdb_tv_keeps_item_eligible_after_tvdb_is_enabled(
         self,
         mock_get_media_metadata,
     ):
@@ -1174,7 +1174,7 @@ class MetadataBackfillTaskTests(TestCase):
             media_type=MediaTypes.TV.value,
             title="TVDB Disabled Show",
             image="https://example.com/tvdb-disabled.jpg",
-            genres=["Drama"],
+            genres=[],
         )
         mock_get_media_metadata.return_value = {
             "media_id": item.media_id,
@@ -1192,7 +1192,16 @@ class MetadataBackfillTaskTests(TestCase):
         )
         self.assertEqual(result["updated"], 1)
         self.assertEqual(result["errors"], 0)
-        self.assertEqual(state.strategy_version, tasks.GENRE_BACKFILL_VERSION)
+        self.assertLess(state.strategy_version, tasks.GENRE_BACKFILL_VERSION)
+        self.assertNotIn(
+            item.id,
+            set(tasks._genre_items_queryset().values_list("id", flat=True)),
+        )
+        with override_settings(TVDB_API_KEY="test-tvdb-key"):
+            self.assertIn(
+                item.id,
+                set(tasks._genre_items_queryset().values_list("id", flat=True)),
+            )
         mock_get_media_metadata.assert_called_once_with(
             MediaTypes.TV.value,
             item.media_id,

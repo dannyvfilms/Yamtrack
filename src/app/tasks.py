@@ -89,7 +89,7 @@ METADATA_BACKFILL_BASE_DELAY_SECONDS = 60 * 60  # 1 hour
 METADATA_BACKFILL_MAX_DELAY_SECONDS = 60 * 60 * 24  # 1 day
 METADATA_BACKFILL_MAX_ATTEMPTS = 6
 GAME_LENGTHS_BACKFILL_VERSION = 2
-GENRE_BACKFILL_VERSION = 2
+GENRE_BACKFILL_VERSION = 3
 NIGHTLY_METADATA_QUALITY_GENRE_BATCH_SIZE = 1500
 NIGHTLY_METADATA_QUALITY_RUNTIME_BATCH_SIZE = 500
 NIGHTLY_METADATA_QUALITY_EPISODE_SEASONS_BATCH_SIZE = 300
@@ -384,6 +384,16 @@ def _episode_runtime_items_queryset():
 
 
 def _genre_items_queryset():
+    from app.providers import tvdb
+
+    tvdb_enabled = tvdb.enabled()
+    genre_filters = Q(genres__isnull=True) | Q(genres=[])
+    if tvdb_enabled:
+        genre_filters |= Q(
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+        )
+
     queryset = Item.objects.filter(
         media_type__in=[
             MediaTypes.MOVIE.value,
@@ -396,14 +406,7 @@ def _genre_items_queryset():
             MediaTypes.MANGA.value,
         ],
         source__in=GENRE_BACKFILL_SOURCES,
-    ).filter(
-        Q(genres__isnull=True)
-        | Q(genres=[])
-        | Q(
-            source=Sources.TMDB.value,
-            media_type=MediaTypes.TV.value,
-        ),
-    )
+    ).filter(genre_filters)
     queryset = _apply_backfill_state_filters(queryset, MetadataBackfillField.GENRES)
     completed_ids = MetadataBackfillState.objects.filter(
         field=MetadataBackfillField.GENRES,
@@ -981,6 +984,8 @@ def _tmdb_tv_item_is_tvdb_anime(item: Item, tmdb_metadata: dict | None) -> bool:
 
 
 def _populate_genres_for_items(items, delay_seconds):
+    from app.providers import tvdb
+
     updated_count = 0
     error_count = 0
     updated_items = []
@@ -1012,8 +1017,14 @@ def _populate_genres_for_items(items, delay_seconds):
                 continue
 
             add_anime = False
+            strategy_version = GENRE_BACKFILL_VERSION
             if item.source == Sources.TMDB.value and item.media_type == MediaTypes.TV.value:
-                add_anime = _tmdb_tv_item_is_tvdb_anime(item, metadata)
+                if tvdb.enabled():
+                    add_anime = _tmdb_tv_item_is_tvdb_anime(item, metadata)
+                else:
+                    # Keep TMDB TV rows eligible for a future re-run after TVDB
+                    # gets configured, while still persisting the TMDB genres now.
+                    strategy_version = None
 
             genre_update_fields = metadata_utils.apply_item_genres(
                 item,
@@ -1028,7 +1039,7 @@ def _populate_genres_for_items(items, delay_seconds):
             _record_backfill_success(
                 item,
                 MetadataBackfillField.GENRES,
-                strategy_version=GENRE_BACKFILL_VERSION,
+                strategy_version=strategy_version,
             )
             updated_count += 1
             logger.info("Updated genres for %s: %s", item.title, item.genres)

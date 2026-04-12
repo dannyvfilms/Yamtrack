@@ -54,30 +54,21 @@ class AppStartupTests(TestCase):
 
         mock_apply_async.assert_called_once()
 
+    @patch("app.tasks.is_genre_backfill_reconcile_complete")
     @patch("app.tasks.reconcile_genre_backfill.apply_async")
-    def test_schedule_genre_backfill_reconcile_overrides_stale_done_when_candidates_exist(
+    def test_schedule_genre_backfill_reconcile_skips_done_cache_without_db_check(
         self,
         mock_apply_async,
+        mock_is_complete,
     ):
         version_key = f"genre_backfill_reconciled_v{GENRE_BACKFILL_VERSION}"
         cache.set(version_key, "done", timeout=None)
-        Item.objects.create(
-            media_id="startup-stale-done",
-            source=Sources.TMDB.value,
-            media_type=MediaTypes.TV.value,
-            title="Startup Stale Done",
-            image="https://example.com/startup-stale-done.jpg",
-            genres=["Drama"],
-        )
         config = YamtrackAppConfig("app", import_module("app"))
 
         config._schedule_genre_backfill_reconcile()
 
-        mock_apply_async.assert_called_once_with(
-            kwargs={"strategy_version": GENRE_BACKFILL_VERSION},
-            countdown=0,
-        )
-        self.assertEqual(cache.get(version_key), "pending")
+        mock_apply_async.assert_not_called()
+        mock_is_complete.assert_not_called()
 
     def test_settings_include_genre_backfill_reconcile_fallback_schedule(self):
         schedule = settings.CELERY_BEAT_SCHEDULE["ensure_genre_backfill_reconcile"]
