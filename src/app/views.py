@@ -100,7 +100,12 @@ from app.models import (
 )
 from app.providers import comicvine, hardcover, mangaupdates, manual, openlibrary, services, tmdb
 from app.services import game_lengths as game_length_services
-from app.services import anime_migration, bulk_episode_tracking, metadata_resolution
+from app.services import (
+    anime_migration,
+    bulk_episode_tracking,
+    bulk_music_tracking,
+    metadata_resolution,
+)
 from app.services import music as sync_services
 from app.services import trakt_popularity as trakt_popularity_service
 from app.services.tracking_hydration import (
@@ -7870,6 +7875,8 @@ def _bulk_episode_form_initial_data(return_url, domain):
         "library_media_type": domain.get("library_media_type") or "",
         "instance_id": "",
         "return_url": return_url,
+        "context_kind": domain.get("context_kind") or "",
+        "context_id": domain.get("context_id") or "",
         "first_season_number": domain["default_first"]["season_number"],
         "first_episode_number": domain["default_first"]["episode_number"],
         "last_season_number": domain["default_last"]["season_number"],
@@ -7910,7 +7917,16 @@ def _episode_domain_template_payload(domain):
         "hideSeasonSelectors": domain.get("hide_season_selectors", False),
         "firstSelectionTitle": domain.get("first_selection_title", ""),
         "lastSelectionTitle": domain.get("last_selection_title", ""),
+        "seasonFieldLabel": domain.get("season_field_label", ""),
         "episodeFieldLabel": domain.get("episode_field_label", ""),
+        "selectionNoun": domain.get("selection_noun", ""),
+        "selectionNounPlural": domain.get("selection_noun_plural", ""),
+        "distributionTargetLabel": domain.get("distribution_target_label", ""),
+        "missingTargetDateFallbackDistribution": domain.get(
+            "missing_target_date_fallback_distribution",
+            "",
+        ),
+        "dateShortcutLabel": domain.get("date_shortcut_label", ""),
         "modeNotice": domain.get("mode_notice", ""),
     }
 
@@ -8296,6 +8312,9 @@ def _render_standard_track_modal(
         "initial_active_tab": initial_active_tab,
         "episode_plays_tab_available": episode_plays_tab_available,
         "episode_plays_form": episode_plays_form,
+        "episode_plays_formaction": reverse("episode_bulk_save"),
+        "episode_plays_tab_label": "Episode Plays",
+        "episode_plays_submit_label": "Save plays",
         "episode_plays_domain": _episode_domain_template_payload(episode_plays_domain),
         "episode_plays_mode_notice": (
             episode_plays_domain.get("mode_notice", "")
@@ -8396,6 +8415,9 @@ def _render_podcast_show_track_modal(
             "initial_active_tab": initial_active_tab,
             "episode_plays_tab_available": episode_plays_tab_available,
             "episode_plays_form": episode_plays_form,
+            "episode_plays_formaction": reverse("episode_bulk_save"),
+            "episode_plays_tab_label": "Episode Plays",
+            "episode_plays_submit_label": "Save plays",
             "episode_plays_domain": _episode_domain_template_payload(
                 episode_plays_domain,
             ),
@@ -9015,6 +9037,116 @@ def episode_bulk_save(request):
     )
 
     redirect_url = _episode_bulk_redirect_url(request, result)
+    if request.headers.get("HX-Request"):
+        return HttpResponse(status=204, headers={"HX-Redirect": redirect_url})
+    return redirect(redirect_url)
+
+
+@require_POST
+def music_bulk_save(request):
+    """Persist a bulk range of music plays from artist and album track modals."""
+    from app.forms import AlbumTrackerForm, ArtistTrackerForm
+    from app.models import AlbumTracker, ArtistTracker
+
+    context_kind = (request.POST.get("context_kind") or "").strip()
+    context_id = request.POST.get("context_id")
+    discover_tab_cache.mark_active_from_request(
+        request,
+        fallback_media_type=MediaTypes.MUSIC.value,
+    )
+
+    artist = None
+    album = None
+    tracker = None
+    tracker_form = None
+    title = ""
+    save_url = ""
+    delete_url = ""
+    bulk_domain = None
+
+    if context_kind == "artist":
+        artist = get_object_or_404(Artist, id=context_id)
+        tracker = ArtistTracker.objects.filter(user=request.user, artist=artist).first()
+        tracker_form = ArtistTrackerForm(
+            instance=tracker,
+            initial={"artist_id": artist.id},
+            user=request.user,
+        )
+        title = artist.name
+        save_url = reverse("artist_save")
+        delete_url = reverse("artist_delete")
+        bulk_domain = bulk_music_tracking.build_artist_play_domain(request.user, artist)
+    elif context_kind == "album":
+        album = get_object_or_404(Album.objects.select_related("artist"), id=context_id)
+        tracker = AlbumTracker.objects.filter(user=request.user, album=album).first()
+        tracker_form = AlbumTrackerForm(
+            instance=tracker,
+            initial={"album_id": album.id},
+            user=request.user,
+        )
+        title = album.title
+        save_url = reverse("album_save")
+        delete_url = reverse("album_delete")
+        bulk_domain = bulk_music_tracking.build_album_play_domain(request.user, album)
+    else:
+        return HttpResponseBadRequest("Invalid music bulk tracking context.")
+
+    if not bulk_domain:
+        messages.error(
+            request,
+            "Bulk track plays are not available for this music entry yet.",
+        )
+        redirect_url = _music_bulk_redirect_url(
+            request,
+            artist=artist,
+            album=album,
+        )
+        if request.headers.get("HX-Request"):
+            return HttpResponse(status=400, headers={"HX-Redirect": redirect_url})
+        return redirect(redirect_url)
+
+    bulk_form = BulkEpisodeTrackForm(
+        request.POST,
+        domain=bulk_domain,
+    )
+    if not bulk_form.is_valid():
+        return _render_music_tracker_modal(
+            request,
+            title=title,
+            tracker=tracker,
+            form=tracker_form,
+            save_url=save_url,
+            delete_url=delete_url,
+            bulk_domain=bulk_domain,
+            bulk_form_override=bulk_form,
+            initial_active_tab="episode-plays",
+        )
+
+    result = bulk_music_tracking.apply_bulk_music_plays(
+        request.user,
+        bulk_domain,
+        selected_episodes=bulk_form.cleaned_data["selected_domain_episodes"],
+        write_mode=bulk_form.cleaned_data["write_mode"],
+        distribution_mode=bulk_form.cleaned_data["distribution_mode"],
+        start_date=bulk_form.cleaned_data.get("start_date"),
+        end_date=bulk_form.cleaned_data.get("end_date"),
+    )
+
+    action_verb = (
+        "Replaced"
+        if bulk_form.cleaned_data["write_mode"] == BulkEpisodeTrackForm.WRITE_MODE_REPLACE
+        else "Added"
+    )
+    messages.success(
+        request,
+        f"{action_verb} {result.created_count} track play{'s' if result.created_count != 1 else ''}.",
+    )
+
+    redirect_url = _music_bulk_redirect_url(
+        request,
+        artist=artist,
+        album=album,
+    )
     if request.headers.get("HX-Request"):
         return HttpResponse(status=204, headers={"HX-Redirect": redirect_url})
     return redirect(redirect_url)
@@ -10601,6 +10733,9 @@ def _render_music_tracker_modal(
     form,
     save_url,
     delete_url,
+    bulk_domain=None,
+    bulk_form_override=None,
+    initial_active_tab="general",
 ):
     """Render a non-item music tracker modal through the shared shell."""
     return_url = request.GET.get("return_url") or request.POST.get("return_url", "")
@@ -10610,6 +10745,24 @@ def _render_music_tracker_modal(
         hidden_field_names=set(field_name for field_name in form.fields if field_name.endswith("_id")),
         metadata_field_names=set(),
     )
+    episode_plays_tab_available = bool(bulk_domain)
+    if episode_plays_tab_available:
+        if bulk_form_override is not None:
+            episode_plays_form = bulk_form_override
+        else:
+            bulk_initial = _bulk_episode_form_initial_data(return_url, bulk_domain)
+            bulk_initial["instance_id"] = tracker.id if tracker else ""
+            episode_plays_form = BulkEpisodeTrackForm(
+                initial=bulk_initial,
+                domain=bulk_domain,
+            )
+        episode_plays_tab_label = bulk_domain.get("tab_label") or "Track Plays"
+        episode_plays_submit_label = bulk_domain.get("submit_label") or "Save plays"
+    else:
+        episode_plays_form = None
+        episode_plays_tab_label = "Track Plays"
+        episode_plays_submit_label = "Save plays"
+
     response = render(
         request,
         "app/components/fill_track.html",
@@ -10630,11 +10783,18 @@ def _render_music_tracker_modal(
             "image_field": None,
             "image_save_item_id": None,
             "track_form_id": track_form_id,
-            "initial_active_tab": "general",
-            "episode_plays_tab_available": False,
-            "episode_plays_form": None,
-            "episode_plays_domain": None,
-            "episode_plays_mode_notice": "",
+            "initial_active_tab": initial_active_tab,
+            "episode_plays_tab_available": episode_plays_tab_available,
+            "episode_plays_form": episode_plays_form,
+            "episode_plays_formaction": reverse("music_bulk_save"),
+            "episode_plays_tab_label": episode_plays_tab_label,
+            "episode_plays_submit_label": episode_plays_submit_label,
+            "episode_plays_domain": _episode_domain_template_payload(bulk_domain),
+            "episode_plays_mode_notice": (
+                bulk_domain.get("mode_notice", "")
+                if bulk_domain
+                else ""
+            ),
             "episode_plays_domain_script_id": f"{track_form_id}-episode-domain",
         },
     )
@@ -10642,6 +10802,18 @@ def _render_music_tracker_modal(
     response["Pragma"] = "no-cache"
     response["Expires"] = "0"
     return response
+
+
+def _music_bulk_redirect_url(request, *, artist=None, album=None):
+    """Return the destination after a successful music bulk-play save."""
+    next_url = request.GET.get("next") or request.POST.get("return_url", "")
+    if next_url:
+        return next_url
+    if album is not None:
+        return _music_album_detail_url(album)
+    if artist is not None:
+        return _music_artist_detail_url(artist)
+    return reverse("medialist", args=[MediaTypes.MUSIC.value])
 
 
 def _render_music_artist_details(request, artist):
@@ -11402,6 +11574,7 @@ def artist_track_modal(request, artist_id):
         form=form,
         save_url=reverse("artist_save"),
         delete_url=reverse("artist_delete"),
+        bulk_domain=bulk_music_tracking.build_artist_play_domain(request.user, artist),
     )
 
 
@@ -12062,6 +12235,7 @@ def album_track_modal(request, album_id):
         form=form,
         save_url=reverse("album_save"),
         delete_url=reverse("album_delete"),
+        bulk_domain=bulk_music_tracking.build_album_play_domain(request.user, album),
     )
 
 

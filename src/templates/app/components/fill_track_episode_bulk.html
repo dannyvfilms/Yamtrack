@@ -1,7 +1,7 @@
 {% load widget_tweaks %}
 
 <form method="post"
-      hx-post="{% url 'episode_bulk_save' %}?next={{ return_url }}"
+      hx-post="{{ episode_plays_formaction|default:'' }}?next={{ return_url }}"
       hx-target="closest [data-track-modal-root]"
       hx-swap="outerHTML"
       x-data="episodeBulkTrackForm('{{ episode_plays_domain_script_id }}')"
@@ -14,6 +14,8 @@
   {{ episode_plays_form.library_media_type }}
   {{ episode_plays_form.instance_id }}
   {{ episode_plays_form.return_url }}
+  {{ episode_plays_form.context_kind }}
+  {{ episode_plays_form.context_id }}
 
   {% if episode_plays_mode_notice %}
     <div class="mb-5 rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-4 py-3 text-sm text-indigo-100">
@@ -43,7 +45,7 @@
       {% else %}
         <div class="mb-4">
           <label class="mb-1 block text-sm font-medium text-gray-300"
-                 for="{{ episode_plays_form.first_season_number.id_for_label }}">Season</label>
+                 for="{{ episode_plays_form.first_season_number.id_for_label }}">{{ episode_plays_domain.seasonFieldLabel|default:"Season" }}</label>
           <select id="{{ episode_plays_form.first_season_number.id_for_label }}"
                   name="{{ episode_plays_form.first_season_number.html_name }}"
                   x-ref="firstSeason"
@@ -91,7 +93,7 @@
       {% else %}
         <div class="mb-4">
           <label class="mb-1 block text-sm font-medium text-gray-300"
-                 for="{{ episode_plays_form.last_season_number.id_for_label }}">Season</label>
+                 for="{{ episode_plays_form.last_season_number.id_for_label }}">{{ episode_plays_domain.seasonFieldLabel|default:"Season" }}</label>
           <select id="{{ episode_plays_form.last_season_number.id_for_label }}"
                   name="{{ episode_plays_form.last_season_number.html_name }}"
                   x-ref="lastSeason"
@@ -144,7 +146,7 @@
                   @click="applyEpisodeAirDate('first', 'startDate')"
                   class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center text-sm text-indigo-400 hover:text-indigo-300 transition-colors bg-[#2a2f35] px-2 py-1 rounded cursor-pointer">
             {% include "app/icons/calendar.svg" with classes="w-4 h-4 mr-1" %}
-            Air date
+            {{ episode_plays_domain.dateShortcutLabel|default:"Air date" }}
           </button>
         </div>
         {% for error in episode_plays_form.start_date.errors %}
@@ -163,7 +165,7 @@
                   @click="applyEpisodeAirDate('last', 'endDate')"
                   class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center text-sm text-indigo-400 hover:text-indigo-300 transition-colors bg-[#2a2f35] px-2 py-1 rounded cursor-pointer">
             {% include "app/icons/calendar.svg" with classes="w-4 h-4 mr-1" %}
-            Air date
+            {{ episode_plays_domain.dateShortcutLabel|default:"Air date" }}
           </button>
         </div>
         {% for error in episode_plays_form.end_date.errors %}
@@ -223,7 +225,7 @@
   <div class="mt-6 flex justify-end">
     <button type="submit"
             class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 cursor-pointer">
-      Save plays
+      {{ episode_plays_submit_label|default:"Save plays" }}
     </button>
   </div>
 </form>

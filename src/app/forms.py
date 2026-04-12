@@ -607,6 +607,8 @@ class BulkEpisodeTrackForm(forms.Form):
     library_media_type = forms.CharField(widget=forms.HiddenInput(), required=False)
     instance_id = forms.CharField(widget=forms.HiddenInput(), required=False)
     return_url = forms.CharField(widget=forms.HiddenInput(), required=False)
+    context_kind = forms.CharField(widget=forms.HiddenInput(), required=False)
+    context_id = forms.CharField(widget=forms.HiddenInput(), required=False)
 
     first_season_number = forms.TypedChoiceField(
         label="First season",
@@ -661,6 +663,18 @@ class BulkEpisodeTrackForm(forms.Form):
         """Initialize dynamic selector choices from the episode domain."""
         self.domain = kwargs.pop("domain", None) or {}
         super().__init__(*args, **kwargs)
+
+        distribution_target_label = self.domain.get("distribution_target_label") or "air date"
+        self.fields["distribution_mode"].choices = (
+            (
+                self.DISTRIBUTION_MODE_AIR_DATE,
+                f"Target {distribution_target_label}",
+            ),
+            (
+                self.DISTRIBUTION_MODE_EVEN,
+                "Even distribution",
+            ),
+        )
 
         seasons = self.domain.get("seasons", [])
         season_choices = [
@@ -767,6 +781,16 @@ class BulkEpisodeTrackForm(forms.Form):
         """Validate the selected episode range against the resolved domain."""
         cleaned_data = super().clean()
         episode_lookup = self.domain.get("episode_lookup", {})
+        selection_noun = self.domain.get("selection_noun") or "episode"
+        selection_noun_plural = (
+            self.domain.get("selection_noun_plural") or f"{selection_noun}s"
+        )
+        distribution_target_label = (
+            self.domain.get("distribution_target_label") or "air date"
+        )
+        missing_target_date_fallback_distribution = self.domain.get(
+            "missing_target_date_fallback_distribution",
+        )
 
         first_key = (
             cleaned_data.get("first_season_number"),
@@ -782,12 +806,12 @@ class BulkEpisodeTrackForm(forms.Form):
         if first_episode is None:
             self.add_error(
                 "first_episode_number",
-                "Select an episode that exists in the available range.",
+                f"Select a {selection_noun} that exists in the available range.",
             )
         if last_episode is None:
             self.add_error(
                 "last_episode_number",
-                "Select an episode that exists in the available range.",
+                f"Select a {selection_noun} that exists in the available range.",
             )
         if self.errors:
             return cleaned_data
@@ -795,7 +819,7 @@ class BulkEpisodeTrackForm(forms.Form):
         if first_episode["order"] > last_episode["order"]:
             self.add_error(
                 "last_episode_number",
-                "The last play must come after or match the first play.",
+                f"The last {selection_noun} must come after or match the first {selection_noun}.",
             )
             return cleaned_data
 
@@ -824,10 +848,19 @@ class BulkEpisodeTrackForm(forms.Form):
                 if not episode.get("air_date")
             ]
             if missing_air_dates:
-                self.add_error(
-                    "distribution_mode",
-                    "One or more selected episodes are missing air dates. Use even distribution instead.",
-                )
+                if (
+                    missing_target_date_fallback_distribution
+                    == self.DISTRIBUTION_MODE_EVEN
+                ):
+                    cleaned_data["distribution_mode"] = self.DISTRIBUTION_MODE_EVEN
+                    cleaned_data["missing_target_date_fallback_applied"] = True
+                else:
+                    self.add_error(
+                        "distribution_mode",
+                        "One or more selected "
+                        f"{selection_noun_plural} are missing {distribution_target_label}s. "
+                        "Use even distribution instead.",
+                    )
 
         return cleaned_data
 

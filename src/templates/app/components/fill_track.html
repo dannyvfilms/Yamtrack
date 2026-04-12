@@ -36,7 +36,7 @@
                   class="flex items-center gap-3 w-full px-4 py-3 rounded-lg text-left transition-colors cursor-pointer"
                   :class="activeTab === 'episode-plays' ? 'bg-[#2c3136] text-white' : 'text-gray-400 hover:text-white hover:bg-[#23272b]'">
             {% include "app/icons/history.svg" with classes="w-5 h-5 shrink-0" %}
-            <span class="font-medium">Episode Plays</span>
+            <span class="font-medium">{{ episode_plays_tab_label|default:"Episode Plays" }}</span>
           </button>
         {% endif %}
       </nav>

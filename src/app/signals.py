@@ -53,6 +53,10 @@ _SUPPRESS_MEDIA_CACHE_CHANGE_SIGNALS: ContextVar[bool] = ContextVar(
     "suppress_media_cache_change_signals",
     default=False,
 )
+_SUPPRESS_MEDIA_CHANGE_SIDE_EFFECTS: ContextVar[bool] = ContextVar(
+    "suppress_media_change_side_effects",
+    default=False,
+)
 
 
 @contextmanager
@@ -68,6 +72,21 @@ def suppress_media_cache_change_signals():
 def media_cache_change_signals_suppressed() -> bool:
     """Return whether tracked-media cache invalidation signals are suppressed."""
     return bool(_SUPPRESS_MEDIA_CACHE_CHANGE_SIGNALS.get())
+
+
+@contextmanager
+def suppress_media_change_side_effects():
+    """Temporarily skip media-row side effects during bulk mutations."""
+    token = _SUPPRESS_MEDIA_CHANGE_SIDE_EFFECTS.set(True)
+    try:
+        yield
+    finally:
+        _SUPPRESS_MEDIA_CHANGE_SIDE_EFFECTS.reset(token)
+
+
+def media_change_side_effects_suppressed() -> bool:
+    """Return whether media-row side effects are suppressed for the current context."""
+    return bool(_SUPPRESS_MEDIA_CHANGE_SIDE_EFFECTS.get())
 
 
 @receiver(connection_created)
@@ -146,6 +165,8 @@ def _sync_owner_smart_lists_for_items(owner, items):
 @receiver([post_save, post_delete], sender=Podcast)
 def sync_smart_lists_on_media_change(sender, instance, **kwargs):  # noqa: ARG001
     """Incrementally update smart-list memberships when owner media rows change."""
+    if media_change_side_effects_suppressed():
+        return
     _sync_owner_smart_lists_for_items(
         getattr(instance, "user", None),
         [getattr(instance, "item", None)],
@@ -243,7 +264,7 @@ def _handle_media_cache_change(
 ) -> None:
     if not user_id:
         return
-    if media_cache_change_signals_suppressed():
+    if media_cache_change_signals_suppressed() or media_change_side_effects_suppressed():
         return
 
     active_context = discover_tab_cache.get_active_context(user_id)
@@ -296,6 +317,8 @@ def _invalidate_discover_from_item_tag(instance) -> None:
 @receiver(post_save, sender=Podcast)
 def clear_discover_feedback_on_media_save(sender, instance, **kwargs):  # noqa: ARG001
     """Clear hidden Discover feedback when a user explicitly tracks an item."""
+    if media_change_side_effects_suppressed():
+        return
     user_id = getattr(instance, "user_id", None)
     item_id = getattr(instance, "item_id", None)
     if not user_id or not item_id:
@@ -305,6 +328,51 @@ def clear_discover_feedback_on_media_save(sender, instance, **kwargs):  # noqa: 
         item_id=item_id,
         feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
     ).delete()
+
+
+def flush_media_change_side_effects(
+    *,
+    owner,
+    items,
+    changed_media_type: str,
+    reason: str,
+    history_day_keys=None,
+    statistics_day_values=None,
+) -> None:
+    """Run one consolidated side-effect pass after bulk media mutations."""
+    if not owner:
+        return
+
+    normalized_items = []
+    seen_item_ids = set()
+    for item in items or []:
+        if not item or not getattr(item, "id", None):
+            continue
+        if item.id in seen_item_ids:
+            continue
+        seen_item_ids.add(item.id)
+        normalized_items.append(item)
+
+    if normalized_items:
+        _sync_owner_smart_lists_for_items(owner, normalized_items)
+        DiscoverFeedback.objects.filter(
+            user_id=owner.id,
+            item_id__in=seen_item_ids,
+            feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
+        ).delete()
+
+    normalized_history_day_keys = [day_key for day_key in (history_day_keys or []) if day_key]
+    history_specs = []
+    if normalized_history_day_keys:
+        history_specs.append((normalized_history_day_keys, ("sessions", "repeats")))
+
+    _handle_media_cache_change(
+        owner.id,
+        changed_media_type,
+        reason=reason,
+        history_specs=history_specs,
+        statistics_day_values=statistics_day_values or normalized_history_day_keys,
+    )
 
 
 def _discover_user_ids_for_credit_item(item) -> tuple[set[int], str | None]:

@@ -7,7 +7,7 @@ document.addEventListener("alpine:init", () => {
     lastEpisode: "",
     writeMode: "add",
     distributionMode: "air_date",
-    summaryText: "Choose the first and last episode to log a bulk play range.",
+    summaryText: "Choose the first and last item to log a bulk play range.",
     rangeWarning: "",
 
     init() {
@@ -38,6 +38,22 @@ document.addEventListener("alpine:init", () => {
         this.$el.querySelector('[name="distribution_mode"]')?.value ||
         "air_date";
       this.refreshSummary();
+    },
+
+    selectionNoun() {
+      return this.domain?.selectionNoun || "episode";
+    },
+
+    selectionNounPlural() {
+      return this.domain?.selectionNounPlural || `${this.selectionNoun()}s`;
+    },
+
+    distributionTargetLabel() {
+      return this.domain?.distributionTargetLabel || "air date";
+    },
+
+    missingTargetDateFallbackDistribution() {
+      return this.domain?.missingTargetDateFallbackDistribution || "";
     },
 
     seasonEpisodes(seasonNumber) {
@@ -155,7 +171,8 @@ document.addEventListener("alpine:init", () => {
     refreshSummary() {
       const selectedEpisodes = this.selectedRangeEpisodes();
       if (selectedEpisodes.length === 0) {
-        this.summaryText = "Choose a valid ordered episode range to log plays.";
+        this.summaryText =
+          `Choose a valid ordered ${this.selectionNoun()} range to log plays.`;
         this.rangeWarning = "";
         return;
       }
@@ -168,21 +185,26 @@ document.addEventListener("alpine:init", () => {
         this.writeMode === "replace" ? "replace" : "add";
       const distributionLabel =
         this.distributionMode === "air_date"
-          ? "target air dates within the selected date range"
+          ? `target ${this.distributionTargetLabel()}s within the selected date range`
           : "an even date range";
 
       this.summaryText =
-        `This will ${verb} ${selectedEpisodes.length} ordered episode play` +
-        `${selectedEpisodes.length === 1 ? "" : "s"} using ${distributionLabel}.`;
+        `This will ${verb} plays for ${selectedEpisodes.length} ordered ` +
+        `${selectedEpisodes.length === 1 ? this.selectionNoun() : this.selectionNounPlural()} using ${distributionLabel}.`;
 
       if (this.distributionMode === "air_date") {
         const missingAirDates = selectedEpisodes.filter(
           (episode) => !episode.air_date,
         ).length;
         if (missingAirDates > 0) {
+          const fallbackDistribution =
+            this.missingTargetDateFallbackDistribution();
           this.rangeWarning =
-            `${missingAirDates} selected episode` +
-            `${missingAirDates === 1 ? " is" : "s are"} missing air dates.`;
+            `${missingAirDates} selected ${missingAirDates === 1 ? this.selectionNoun() : this.selectionNounPlural()}` +
+            `${missingAirDates === 1 ? " is" : " are"} missing ${this.distributionTargetLabel()}s.` +
+            (fallbackDistribution === "even"
+              ? " Saving will fall back to even distribution."
+              : "");
           return;
         }
       }

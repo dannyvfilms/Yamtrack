@@ -204,6 +204,11 @@ urlpatterns = [
         name="song_save",
     ),
     path(
+        "music/bulk_save/",
+        views.music_bulk_save,
+        name="music_bulk_save",
+    ),
+    path(
         "podcast/episode/save/",
         views.podcast_save,
         name="podcast_save",
