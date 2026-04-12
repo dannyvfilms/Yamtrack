@@ -19,6 +19,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 import users
+from app import helpers as app_helpers
 from app.log_safety import exception_summary
 from integrations import exports, lastfm_api, pocketcasts_api, tasks
 from integrations import plex as plex_api
@@ -297,12 +298,16 @@ def _save_lastfm_history_reset(account, cutoff_uts: int):
 @require_POST
 def trakt_oauth(request):
     """View for initiating Trakt OAuth2 authorization flow."""
-    redirect_uri = request.build_absolute_uri(reverse("import_trakt_private"))
+    redirect_uri = app_helpers.build_absolute_app_url(
+        request,
+        reverse("import_trakt_private"),
+    )
     url = "https://trakt.tv/oauth/authorize"
     state = {
         "mode": request.POST["mode"],
         "frequency": request.POST["frequency"],
         "time": request.POST["time"],
+        "redirect_uri": redirect_uri,
     }
     state_token = secrets.token_urlsafe(32)
     request.session[state_token] = state
@@ -314,9 +319,10 @@ def trakt_oauth(request):
 @require_GET
 def import_trakt_private(request):
     """View for handling Trakt OAuth2 callback and scheduling private import."""
-    oauth_callback = trakt.handle_oauth_callback(request)
-    enc_token = helpers.encrypt(oauth_callback["refresh_token"])
     state_token = request.GET["state"]
+    redirect_uri = request.session[state_token].get("redirect_uri")
+    oauth_callback = trakt.handle_oauth_callback(request, redirect_uri=redirect_uri)
+    enc_token = helpers.encrypt(oauth_callback["refresh_token"])
 
     frequency = request.session[state_token]["frequency"]
     mode = request.session[state_token]["mode"]
@@ -377,7 +383,7 @@ def import_trakt_public(request):
 @require_POST
 def plex_connect(request):
     """Initiate Plex authentication via the pin-based flow."""
-    redirect_uri = request.build_absolute_uri(reverse("plex_callback"))
+    redirect_uri = app_helpers.build_absolute_app_url(request, reverse("plex_callback"))
     state_token = secrets.token_urlsafe(16)
 
     try:
@@ -573,13 +579,17 @@ def plex_disable_watchlist(request):
 @require_POST
 def simkl_oauth(request):
     """View for initiating the SIMKL OAuth2 authorization flow."""
-    redirect_uri = request.build_absolute_uri(reverse("import_simkl_private"))
+    redirect_uri = app_helpers.build_absolute_app_url(
+        request,
+        reverse("import_simkl_private"),
+    )
     url = "https://simkl.com/oauth/authorize"
 
     state = {
         "mode": request.POST["mode"],
         "frequency": request.POST["frequency"],
         "time": request.POST["time"],
+        "redirect_uri": redirect_uri,
     }
     state_token = secrets.token_urlsafe(32)
     request.session[state_token] = state
@@ -592,9 +602,10 @@ def simkl_oauth(request):
 @require_GET
 def import_simkl_private(request):
     """View for getting the SIMKL OAuth2 token."""
-    oauth_callback = simkl.get_token(request)
-    enc_token = helpers.encrypt(oauth_callback["access_token"])
     state_token = request.GET["state"]
+    redirect_uri = request.session[state_token].get("redirect_uri")
+    oauth_callback = simkl.get_token(request, redirect_uri=redirect_uri)
+    enc_token = helpers.encrypt(oauth_callback["access_token"])
 
     frequency = request.session[state_token]["frequency"]
     mode = request.session[state_token]["mode"]
@@ -650,12 +661,16 @@ def import_mal(request):
 @require_POST
 def anilist_oauth(request):
     """Initiate AniList OAuth flow."""
-    redirect_uri = request.build_absolute_uri(reverse("import_anilist_private"))
+    redirect_uri = app_helpers.build_absolute_app_url(
+        request,
+        reverse("import_anilist_private"),
+    )
     url = "https://anilist.co/api/v2/oauth/authorize"
     state = {
         "mode": request.POST["mode"],
         "frequency": request.POST["frequency"],
         "time": request.POST["time"],
+        "redirect_uri": redirect_uri,
     }
 
     state_token = secrets.token_urlsafe(32)
@@ -669,9 +684,10 @@ def anilist_oauth(request):
 @require_GET
 def import_anilist_private(request):
     """View for getting the AniList OAuth2 token."""
-    oauth_callback = anilist.get_token(request)
-    enc_token = helpers.encrypt(oauth_callback["access_token"])
     state_token = request.GET["state"]
+    redirect_uri = request.session[state_token].get("redirect_uri")
+    oauth_callback = anilist.get_token(request, redirect_uri=redirect_uri)
+    enc_token = helpers.encrypt(oauth_callback["access_token"])
     username = oauth_callback["username"]
 
     if not username:

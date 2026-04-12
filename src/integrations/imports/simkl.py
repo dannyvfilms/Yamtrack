@@ -8,6 +8,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 import app
+from app import helpers as app_helpers
 from app.models import MediaTypes, Sources, Status
 from app.providers import services
 from integrations.imports import helpers
@@ -16,7 +17,7 @@ from integrations.imports.helpers import MediaImportError, MediaImportUnexpected
 logger = logging.getLogger(__name__)
 
 
-def get_token(request):
+def get_token(request, redirect_uri=None):
     """View for getting the SIMKL OAuth2 token."""
     code = request.GET["code"]
     url = "https://api.simkl.com/oauth/token"
@@ -30,7 +31,10 @@ def get_token(request):
         "client_secret": settings.SIMKL_SECRET,
         "code": code,
         "grant_type": "authorization_code",
-        "redirect_uri": request.build_absolute_uri(reverse("import_simkl_private")),
+        "redirect_uri": redirect_uri or app_helpers.build_absolute_app_url(
+            request,
+            reverse("import_simkl_private"),
+        ),
     }
 
     try:

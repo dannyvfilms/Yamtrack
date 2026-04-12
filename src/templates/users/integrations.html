@@ -68,10 +68,12 @@
             <ul class="list-disc list-inside ml-6 mt-2 space-y-1 text-gray-400">
               <li>Click on the "Add Generic Destination" button to create a new webhook.</li>
               <li>Name: Yamtrack</li>
+              {% url 'jellyfin_webhook' request.user.token as jellyfin_webhook_path %}
+              {% absolute_app_url jellyfin_webhook_path as jellyfin_webhook_url %}
               {# djlint:off #}
               <li>
-                <div class="inline-flex items-center gap-2 w-[calc(100%-30px)]">URL: 
-                  <input readonly id="jellyfin-webhook-url-official" class="w-full bg-[#262a2f] rounded-md text-gray-400 text-sm border-0 focus:ring-0 outline-none font-mono" type="text" value="{{ request.scheme }}://{{ request.get_host }}/webhook/jellyfin/{{ request.user.token|default_if_none:"&lttoken&gt" }}">
+                <div class="inline-flex items-center gap-2 w-[calc(100%-30px)]">URL:
+                  <input readonly id="jellyfin-webhook-url-official" class="w-full bg-[#262a2f] rounded-md text-gray-400 text-sm border-0 focus:ring-0 outline-none font-mono" type="text" value="{{ jellyfin_webhook_url }}">
                   <span class="flex items-center cursor-pointer group" title="Copy" data-copy-target="#jellyfin-webhook-url-official">
                     {% include "app/icons/copy.svg" with classes="w-5 h-5 text-gray-400 group-hover:text-indigo-400 transition-colors" %}
                   </span>
@@ -142,8 +144,8 @@
             <ul class="list-disc list-inside ml-6 mt-2 space-y-1 text-gray-400">
               {# djlint:off #}
               <li>
-                <div class="inline-flex items-center gap-2 w-[calc(100%-30px)]">URL: 
-                  <input readonly id="jellyfin-webhook-url-unofficial" class="w-full bg-[#262a2f] rounded-md text-gray-400 text-sm border-0 focus:ring-0 outline-none font-mono" type="text" value="{{ request.scheme }}://{{ request.get_host }}/webhook/jellyfin/{{ request.user.token|default_if_none:"&lttoken&gt" }}">
+                <div class="inline-flex items-center gap-2 w-[calc(100%-30px)]">URL:
+                  <input readonly id="jellyfin-webhook-url-unofficial" class="w-full bg-[#262a2f] rounded-md text-gray-400 text-sm border-0 focus:ring-0 outline-none font-mono" type="text" value="{{ jellyfin_webhook_url }}">
                   <span class="flex items-center cursor-pointer group" title="Copy" data-copy-target="#jellyfin-webhook-url-unofficial">
                     {% include "app/icons/copy.svg" with classes="w-5 h-5 text-gray-400 group-hover:text-indigo-400 transition-colors" %}
                   </span>
@@ -364,7 +366,7 @@
                            id="plex-webhook-url"
                            class="w-full bg-[#262a2f] rounded-md text-gray-400 text-sm border-0 focus:ring-0 outline-none font-mono"
                            type="text"
-                           value="{{ request.scheme }}://{{ request.get_host }}/webhook/plex/{{ request.user.token|default_if_none:"&lttoken&gt" }}">
+                           value="{% url 'plex_webhook' request.user.token as plex_webhook_path %}{% absolute_app_url plex_webhook_path %}">
                     <span class="flex items-center cursor-pointer group"
                           title="Copy"
                           data-copy-target="#plex-webhook-url">
@@ -399,7 +401,7 @@
                          id="emby-webhook-url"
                          class="w-full bg-[#262a2f] rounded-md text-gray-400 text-sm border-0 focus:ring-0 outline-none font-mono"
                          type="text"
-                         value="{{ request.scheme }}://{{ request.get_host }}/webhook/emby/{{ request.user.token|default_if_none:"&lttoken&gt" }}">
+                         value="{% url 'emby_webhook' request.user.token as emby_webhook_path %}{% absolute_app_url emby_webhook_path %}">
                   <span class="flex items-center cursor-pointer group"
                         title="Copy"
                         data-copy-target="#emby-webhook-url">
@@ -593,7 +595,7 @@
                      id="jellyseerr-webhook-url"
                      class="w-full bg-[#262a2f] rounded-md text-gray-400 text-sm border-0 focus:ring-0 outline-none font-mono"
                      type="text"
-                     value="{{ request.scheme }}://{{ request.get_host }}/webhook/jellyseerr/{{ request.user.token|default_if_none:"&lttoken&gt" }}">
+                     value="{% url 'jellyseerr_webhook' request.user.token as jellyseerr_webhook_path %}{% absolute_app_url jellyseerr_webhook_path %}">
               <span class="flex items-center cursor-pointer group"
                     title="Copy"
                     data-copy-target="#jellyseerr-webhook-url">

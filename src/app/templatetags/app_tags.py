@@ -9,13 +9,19 @@ from django.utils.dateparse import parse_date
 from django.utils.html import format_html
 from unidecode import unidecode
 
-from app import config
+from app import config, helpers
 from app.models import Item, MediaTypes, Sources, Status
 from app.services import metadata_resolution
 from users.models import TimeFormatChoices
 from users.templatetags.user_tags import user_date_format, user_time_format
 
 register = template.Library()
+
+
+@register.simple_tag(takes_context=True)
+def absolute_app_url(context, path):
+    """Return an absolute app URL for links copied into external services."""
+    return helpers.build_absolute_app_url(context.get("request"), path)
 
 
 @register.simple_tag

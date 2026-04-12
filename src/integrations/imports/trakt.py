@@ -9,6 +9,7 @@ from django.utils.dateparse import parse_datetime
 from django_celery_beat.models import PeriodicTask
 
 import app
+from app import helpers as app_helpers
 from app.models import MediaTypes, Sources, Status
 from simple_history.utils import bulk_update_with_history
 from app.providers import services
@@ -33,7 +34,10 @@ def handle_oauth_callback(
     url = "https://api.trakt.tv/oauth/token"
 
     if not redirect_uri:
-        redirect_uri = request.build_absolute_uri(reverse("import_trakt_private"))
+        redirect_uri = app_helpers.build_absolute_app_url(
+            request,
+            reverse("import_trakt_private"),
+        )
     if not client_id:
         client_id = settings.TRAKT_API
     if not client_secret:
@@ -111,7 +115,10 @@ def get_access_token(encrypted_refresh_token):
         "client_secret": settings.TRAKT_API_SECRET,
         "refresh_token": decrypted_token,
         "grant_type": "refresh_token",
-        "redirect_uri": f"{settings.BASE_URL}/import/trakt/private",
+        "redirect_uri": app_helpers.build_absolute_app_url(
+            None,
+            reverse("import_trakt_private"),
+        ),
     }
 
     try:
