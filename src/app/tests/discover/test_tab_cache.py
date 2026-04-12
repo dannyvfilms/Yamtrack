@@ -513,6 +513,54 @@ class DiscoverTabCacheTests(TestCase):
         self.assertEqual(mock_schedule.call_count, 2)
 
     @patch("app.discover.tab_cache.schedule_tab_refresh", return_value=True)
+    def test_invalidate_for_media_change_skips_disabled_media_types(
+        self,
+        mock_schedule,
+    ):
+        self.user.comic_enabled = False
+        self.user.save(update_fields=["comic_enabled"])
+        expires_at = timezone.now() + timedelta(hours=1)
+        for media_type in ("comic", "all"):
+            DiscoverRowCache.objects.create(
+                user=self.user,
+                media_type=media_type,
+                row_key="top_picks_for_you",
+                payload={},
+                expires_at=expires_at,
+            )
+            DiscoverTasteProfile.objects.create(
+                user=self.user,
+                media_type=media_type,
+                expires_at=expires_at,
+            )
+
+        comic_version = tab_cache._get_activity_version(self.user.id, "comic")
+        all_version = tab_cache._get_activity_version(self.user.id, "all")
+
+        targets = tab_cache.invalidate_for_media_change(self.user.id, "comic")
+
+        self.assertEqual(targets, [])
+        self.assertTrue(
+            DiscoverRowCache.objects.filter(
+                user=self.user, media_type__in=["comic", "all"]
+            ).exists(),
+        )
+        self.assertTrue(
+            DiscoverTasteProfile.objects.filter(
+                user=self.user, media_type__in=["comic", "all"]
+            ).exists(),
+        )
+        self.assertEqual(
+            comic_version,
+            tab_cache._get_activity_version(self.user.id, "comic"),
+        )
+        self.assertEqual(
+            all_version,
+            tab_cache._get_activity_version(self.user.id, "all"),
+        )
+        mock_schedule.assert_not_called()
+
+    @patch("app.discover.tab_cache.schedule_tab_refresh", return_value=True)
     def test_schedule_user_tab_warmup_prioritizes_all_then_enabled_tabs(
         self, mock_schedule
     ):

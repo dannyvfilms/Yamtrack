@@ -12,6 +12,7 @@ from urllib.parse import parse_qsl, urlparse
 from uuid import uuid4
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.urls import reverse
 from django.utils import timezone
@@ -236,12 +237,44 @@ def has_fresh_tab_cache(
 
 def get_user_tab_targets(user) -> list[str]:
     """Return the default Discover tabs to keep warm for a user."""
-    enabled_media_types = [
-        media_type
-        for media_type in user.get_enabled_media_types()
-        if media_type in DISCOVER_MEDIA_TYPES
-    ]
+    enabled_media_types = get_enabled_discover_media_types(user)
     return list(dict.fromkeys([ALL_MEDIA_KEY, *enabled_media_types]))
+
+
+def get_enabled_discover_media_types(
+    user,
+    *,
+    fallback_to_all: bool = False,
+) -> list[str]:
+    """Return the user's enabled Discover media types."""
+    enabled_media_types = []
+    if user is not None:
+        enabled_media_types = [
+            media_type
+            for media_type in user.get_enabled_media_types()
+            if media_type in DISCOVER_MEDIA_TYPES
+        ]
+    if enabled_media_types or not fallback_to_all:
+        return enabled_media_types
+    return list(DISCOVER_MEDIA_TYPES)
+
+
+def media_type_is_enabled_for_user(user, media_type: str | None) -> bool:
+    """Return whether the user can access a Discover media type."""
+    normalized_media_type = _normalize_media_type(media_type)
+    if normalized_media_type == ALL_MEDIA_KEY:
+        return True
+    return normalized_media_type in set(
+        get_enabled_discover_media_types(user, fallback_to_all=True),
+    )
+
+
+def resolve_media_type_for_user(user, media_type: str | None) -> str:
+    """Clamp a Discover media type to what the user has enabled."""
+    normalized_media_type = _normalize_media_type(media_type)
+    if media_type_is_enabled_for_user(user, normalized_media_type):
+        return normalized_media_type
+    return ALL_MEDIA_KEY
 
 
 def set_tab_cache(
@@ -435,12 +468,51 @@ def target_media_types_for_change(media_type: str | None) -> list[str]:
 def should_prioritize(
     active_context: ActiveDiscoverContext | None,
     changed_media_type: str | None,
+    *,
+    target_media_types: list[str] | None = None,
 ) -> bool:
     """Return whether a media change should preemptively refresh Discover."""
     if active_context is None:
         return False
-    target_media_types = set(target_media_types_for_change(changed_media_type))
-    return active_context.media_type in target_media_types
+    resolved_targets = target_media_types
+    if not isinstance(resolved_targets, (list, tuple, set)):
+        resolved_targets = target_media_types_for_change(changed_media_type)
+    resolved_targets = set(resolved_targets)
+    return active_context.media_type in resolved_targets
+
+
+def target_media_types_for_user_change(user, media_type: str | None) -> list[str]:
+    """Return affected Discover tab media types filtered by sidebar settings."""
+    normalized_media_type = (media_type or "").strip().lower()
+    targets = target_media_types_for_change(normalized_media_type)
+    if not targets or normalized_media_type == ALL_MEDIA_KEY:
+        return targets
+
+    enabled_media_types = set(
+        get_enabled_discover_media_types(user, fallback_to_all=True),
+    )
+    enabled_targets = [
+        target_media_type
+        for target_media_type in targets
+        if target_media_type != ALL_MEDIA_KEY and target_media_type in enabled_media_types
+    ]
+    if not enabled_targets:
+        return []
+    if ALL_MEDIA_KEY in targets:
+        enabled_targets.append(ALL_MEDIA_KEY)
+    return enabled_targets
+
+
+def get_user_target_media_types_for_change(
+    user_id: int,
+    media_type: str | None,
+) -> list[str]:
+    """Return affected Discover tab media types for a specific user."""
+    user_model = get_user_model()
+    user = user_model.objects.filter(id=user_id).first()
+    if not user:
+        return []
+    return target_media_types_for_user_change(user, media_type)
 
 
 def _action_target_media_types(
@@ -1062,7 +1134,7 @@ def _invalidate_targets(
     countdown: int,
 ) -> list[str]:
     active_context = get_active_context(user_id)
-    targets = target_media_types_for_change(media_type)
+    targets = get_user_target_media_types_for_change(user_id, media_type)
     for target_media_type in targets:
         bump_activity_version(user_id, target_media_type)
         clear_lower_level_cache(user_id, target_media_type)

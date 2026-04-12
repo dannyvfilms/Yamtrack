@@ -158,6 +158,38 @@ class DiscoverViewTests(TestCase):
         mock_warm_sibling_tabs.assert_not_called()
 
     @patch("app.views.discover_tab_cache.get_tab_status")
+    @patch("app.views.discover_tab_cache.warm_sibling_tabs")
+    @patch("app.views.discover_tab_cache.get_tab_rows")
+    def test_discover_page_falls_back_to_all_for_disabled_media_type(
+        self,
+        mock_get_tab_rows,
+        mock_warm_sibling_tabs,
+        mock_get_tab_status,
+    ):
+        self.user.comic_enabled = False
+        self.user.save(update_fields=["comic_enabled"])
+        mock_get_tab_rows.return_value = []
+        mock_get_tab_status.return_value = {"is_refreshing": False}
+
+        response = self.client.get(reverse("discover"), {"media_type": "comic"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["selected_media_type"], "all")
+        mock_get_tab_rows.assert_called_once_with(
+            ANY,
+            "all",
+            show_more=False,
+            include_debug=False,
+            defer_artwork=False,
+            allow_inline_bootstrap=True,
+        )
+        mock_warm_sibling_tabs.assert_called_once_with(
+            self.user,
+            "all",
+            show_more=False,
+        )
+
+    @patch("app.views.discover_tab_cache.get_tab_status")
     @patch("app.views.discover_tab_cache.get_tab_rows")
     def test_discover_rows_uses_tab_cache(
         self,
@@ -233,6 +265,52 @@ class DiscoverViewTests(TestCase):
             self.user.id,
             "movie",
             show_more=True,
+            debounce_seconds=0,
+            countdown=0,
+            force=True,
+            clear_provider_cache=True,
+        )
+
+    @patch("app.views.discover_tab_cache.schedule_tab_refresh")
+    @patch("app.views.discover_tab_cache.clear_row_cache")
+    @patch("app.views.discover_tab_cache.bump_activity_version")
+    @patch("app.views.discover_tab_cache.mark_active")
+    def test_refresh_discover_falls_back_to_all_for_disabled_media_type(
+        self,
+        mock_mark_active,
+        mock_bump_activity_version,
+        mock_clear_row_cache,
+        mock_schedule_tab_refresh,
+    ):
+        self.user.comic_enabled = False
+        self.user.save(update_fields=["comic_enabled"])
+
+        response = self.client.post(
+            reverse("refresh_discover"),
+            {"media_type": "comic", "show_more": "0"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "ok": True,
+                "media_type": "all",
+                "show_more": False,
+                "targets": ["all"],
+            },
+        )
+        mock_mark_active.assert_called_once_with(
+            self.user.id,
+            "all",
+            show_more=False,
+        )
+        mock_bump_activity_version.assert_called_once_with(self.user.id, "all")
+        mock_clear_row_cache.assert_called_once_with(self.user.id, "all")
+        mock_schedule_tab_refresh.assert_called_once_with(
+            self.user.id,
+            "all",
+            show_more=False,
             debounce_seconds=0,
             countdown=0,
             force=True,

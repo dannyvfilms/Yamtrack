@@ -247,8 +247,12 @@ def _handle_media_cache_change(
         return
 
     active_context = discover_tab_cache.get_active_context(user_id)
-    prioritized = discover_tab_cache.should_prioritize(active_context, changed_media_type)
-    discover_tab_cache.invalidate_for_media_change(user_id, changed_media_type)
+    targets = discover_tab_cache.invalidate_for_media_change(user_id, changed_media_type)
+    prioritized = discover_tab_cache.should_prioritize(
+        active_context,
+        changed_media_type,
+        target_media_types=targets,
+    )
 
     for day_keys, logging_styles in history_specs or []:
         _invalidate_history_for_media_change(

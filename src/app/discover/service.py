@@ -6199,6 +6199,7 @@ def get_discover_rows(
 ) -> list[RowResult]:
     """Return discover rows for selected media type."""
     media_type = _coerce_media_type(media_type)
+    media_type = tab_cache.resolve_media_type_for_user(user, media_type)
     if media_type == ALL_MEDIA_KEY:
         return _compose_all_media_rows(
             user,
@@ -6463,6 +6464,16 @@ def get_discover_payload(
 def refresh_rows_for_user(user, media_type: str, row_keys: list[str], *, show_more: bool = False) -> int:
     """Rebuild selected rows and refresh row cache entries."""
     media_type = _coerce_media_type(media_type)
+    if (
+        media_type != ALL_MEDIA_KEY
+        and not tab_cache.media_type_is_enabled_for_user(user, media_type)
+    ):
+        logger.debug(
+            "discover_row_refresh_skipped user_id=%s media_type=%s reason=disabled_media_type",
+            user.id,
+            media_type,
+        )
+        return 0
     row_definitions = [
         row
         for row in get_rows(media_type, include_show_more=True)

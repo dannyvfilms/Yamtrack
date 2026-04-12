@@ -1502,6 +1502,11 @@ def _coerce_discover_debug(raw_debug: str | None) -> bool:
     return (raw_debug or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _resolve_discover_media_type_for_user(user, raw_media_type: str | None) -> str:
+    media_type = _coerce_discover_media_type(raw_media_type)
+    return discover_tab_cache.resolve_media_type_for_user(user, media_type)
+
+
 def _discover_media_options(user):
     enabled_media_types = [
         media_type
@@ -1710,7 +1715,10 @@ def _discover_planning_instance(
 
 def _mark_discover_stale_without_refresh(user_id: int, media_type: str) -> list[str]:
     """Mark Discover payloads stale without enqueueing background rebuilds."""
-    targets = discover_tab_cache.target_media_types_for_change(media_type)
+    targets = discover_tab_cache.get_user_target_media_types_for_change(
+        user_id,
+        media_type,
+    )
     for target_media_type in targets:
         discover_tab_cache.bump_activity_version(user_id, target_media_type)
         discover_tab_cache.clear_lower_level_cache(user_id, target_media_type)
@@ -1738,11 +1746,15 @@ def discover_page(request):
     """Render Discover page with selected media rows."""
     raw_param = request.GET.get("media_type")
     if raw_param is not None:
-        selected_media_type = _coerce_discover_media_type(raw_param)
+        selected_media_type = _resolve_discover_media_type_for_user(
+            request.user,
+            raw_param,
+        )
         request.user.update_preference("last_discover_type", selected_media_type)
     else:
-        selected_media_type = _coerce_discover_media_type(
-            request.user.last_discover_type
+        selected_media_type = _resolve_discover_media_type_for_user(
+            request.user,
+            request.user.last_discover_type,
         )
     show_more = request.GET.get("show_more") in {"1", "true", "True"}
     discover_debug = _coerce_discover_debug(request.GET.get("discover_debug"))
@@ -1773,7 +1785,10 @@ def discover_page(request):
 @require_GET
 def discover_rows(request):
     """Render Discover rows partial for HTMX row switching."""
-    selected_media_type = _coerce_discover_media_type(request.GET.get("media_type"))
+    selected_media_type = _resolve_discover_media_type_for_user(
+        request.user,
+        request.GET.get("media_type"),
+    )
     request.user.update_preference("last_discover_type", selected_media_type)
     show_more = request.GET.get("show_more") in {"1", "true", "True"}
     discover_debug = _coerce_discover_debug(request.GET.get("discover_debug"))
@@ -1796,7 +1811,10 @@ def discover_rows(request):
 @require_POST
 def refresh_discover(request):
     """Invalidate the active Discover tab cache and queue a background refresh."""
-    media_type = _coerce_discover_media_type(request.POST.get("media_type"))
+    media_type = _resolve_discover_media_type_for_user(
+        request.user,
+        request.POST.get("media_type"),
+    )
     show_more = request.POST.get("show_more") in {"1", "true", "True"}
     discover_tab_cache.mark_active(
         request.user.id,
@@ -1833,7 +1851,10 @@ def discover_action(request):
     request_id = uuid4().hex[:8]
     request_started = time.monotonic()
     action = (request.POST.get("action") or "").strip().lower()
-    active_media_type = _coerce_discover_media_type(request.POST.get("active_media_type"))
+    active_media_type = _resolve_discover_media_type_for_user(
+        request.user,
+        request.POST.get("active_media_type"),
+    )
     show_more = request.POST.get("show_more") in {"1", "true", "True"}
     discover_debug = _coerce_discover_debug(request.POST.get("discover_debug"))
     logger.info(
@@ -13362,7 +13383,10 @@ def cache_status(request):
             "metadata_recently_built": metadata_recently_built,
         })
 
-    media_type = _coerce_discover_media_type(request.GET.get("media_type"))
+    media_type = _resolve_discover_media_type_for_user(
+        request.user,
+        request.GET.get("media_type"),
+    )
     show_more = request.GET.get("show_more") in {"1", "true", "True"}
     return JsonResponse(
         discover_tab_cache.get_tab_status(

@@ -3394,6 +3394,7 @@ def refresh_discover_rows(user_id: int, media_type: str, row_keys: list[str], sh
     """Refresh selected Discover rows for a user."""
     from app.discover.service import refresh_rows_for_user
     from app.discover.tab_cache import refresh_tab_cache
+    from app.discover import tab_cache as discover_tab_cache
 
     user_model = get_user_model()
     user = user_model.objects.filter(id=user_id).first()
@@ -3401,16 +3402,28 @@ def refresh_discover_rows(user_id: int, media_type: str, row_keys: list[str], sh
         logger.warning("discover_refresh_rows_user_missing user_id=%s", user_id)
         return {"refreshed": 0, "reason": "missing_user"}
 
+    requested_media_type = (media_type or discover_tab_cache.ALL_MEDIA_KEY).strip().lower()
+    if (
+        requested_media_type != discover_tab_cache.ALL_MEDIA_KEY
+        and not discover_tab_cache.media_type_is_enabled_for_user(user, requested_media_type)
+    ):
+        logger.info(
+            "discover_refresh_rows_skipped user_id=%s media_type=%s reason=disabled_media_type",
+            user_id,
+            requested_media_type,
+        )
+        return {"refreshed": 0, "reason": "disabled_media_type", "user_id": user_id}
+
     refreshed = refresh_rows_for_user(
         user,
-        media_type,
+        requested_media_type,
         row_keys or [],
         show_more=show_more,
     )
     # Keep the higher-level tab cache aligned with refreshed row caches.
     refresh_tab_cache(
         user,
-        media_type,
+        requested_media_type,
         show_more=show_more,
         force=False,
         clear_provider_cache=False,
@@ -3418,7 +3431,7 @@ def refresh_discover_rows(user_id: int, media_type: str, row_keys: list[str], sh
     return {
         "refreshed": refreshed,
         "user_id": user_id,
-        "media_type": media_type,
+        "media_type": requested_media_type,
     }
 
 
@@ -3432,6 +3445,7 @@ def refresh_discover_tab_cache(
 ):
     """Refresh the Redis-backed Discover tab cache for a user/media type."""
     from app.discover.tab_cache import refresh_tab_cache
+    from app.discover import tab_cache as discover_tab_cache
 
     user_model = get_user_model()
     user = user_model.objects.filter(id=user_id).first()
@@ -3439,9 +3453,21 @@ def refresh_discover_tab_cache(
         logger.warning("discover_tab_refresh_user_missing user_id=%s", user_id)
         return {"refreshed": False, "reason": "missing_user"}
 
+    requested_media_type = (media_type or discover_tab_cache.ALL_MEDIA_KEY).strip().lower()
+    if (
+        requested_media_type != discover_tab_cache.ALL_MEDIA_KEY
+        and not discover_tab_cache.media_type_is_enabled_for_user(user, requested_media_type)
+    ):
+        logger.info(
+            "discover_tab_refresh_skipped user_id=%s media_type=%s reason=disabled_media_type",
+            user_id,
+            requested_media_type,
+        )
+        return {"refreshed": False, "reason": "disabled_media_type", "user_id": user_id}
+
     rows = refresh_tab_cache(
         user,
-        media_type,
+        requested_media_type,
         show_more=show_more,
         force=force,
         clear_provider_cache=clear_provider_cache,
@@ -3450,7 +3476,7 @@ def refresh_discover_tab_cache(
         "refreshed": True,
         "row_count": len(rows),
         "user_id": user_id,
-        "media_type": media_type,
+        "media_type": requested_media_type,
         "show_more": bool(show_more),
         "force": bool(force),
         "clear_provider_cache": bool(clear_provider_cache),
