@@ -150,6 +150,89 @@ class AudiobookshelfImporterTests(TestCase):
 
     @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_library_item")
     @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_me")
+    def test_marks_completed_when_finished_at_exists_but_progress_is_zero(
+        self,
+        mock_me,
+        mock_item,
+    ):
+        """A finished timestamp should map to completed even with reset progress."""
+        mock_me.return_value = {
+            "mediaProgress": [
+                {
+                    "libraryItemId": "item-finished-ts",
+                    "currentTime": 0,
+                    "duration": 7200,
+                    "progress": 0,
+                    "isFinished": False,
+                    "finishedAt": 1_700_003_600_000,
+                    "lastUpdate": 1_700_003_600_000,
+                },
+            ],
+        }
+        mock_item.return_value = {
+            "media": {
+                "duration": 7200,
+                "metadata": {
+                    "title": "Finished via Timestamp",
+                    "authors": [{"name": "Example Author"}],
+                },
+            },
+            "coverPath": "https://img.example/finished-ts.jpg",
+        }
+
+        importer = AudiobookshelfImporter(self.user)
+        counts, warnings = importer.import_data()
+
+        self.assertEqual(counts.get(MediaTypes.BOOK.value), 1)
+        self.assertEqual(warnings, "")
+        media = Book.objects.get(user=self.user)
+        self.assertEqual(media.status, Status.COMPLETED.value)
+        self.assertEqual(media.progress, media.item.runtime_minutes)
+        self.assertIsNotNone(media.end_date)
+
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_library_item")
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_me")
+    def test_keeps_planning_when_not_started_and_not_finished(
+        self,
+        mock_me,
+        mock_item,
+    ):
+        """A zero-progress row without completion markers should remain planning."""
+        mock_me.return_value = {
+            "mediaProgress": [
+                {
+                    "libraryItemId": "item-not-started",
+                    "currentTime": 0,
+                    "duration": 5400,
+                    "progress": 0,
+                    "isFinished": False,
+                    "lastUpdate": 1_700_100_000_000,
+                },
+            ],
+        }
+        mock_item.return_value = {
+            "media": {
+                "duration": 5400,
+                "metadata": {
+                    "title": "Not Started",
+                    "authors": [{"name": "Example Author"}],
+                },
+            },
+            "coverPath": "https://img.example/not-started.jpg",
+        }
+
+        importer = AudiobookshelfImporter(self.user)
+        counts, warnings = importer.import_data()
+
+        self.assertEqual(counts.get(MediaTypes.BOOK.value), 1)
+        self.assertEqual(warnings, "")
+        media = Book.objects.get(user=self.user)
+        self.assertEqual(media.status, Status.PLANNING.value)
+        self.assertEqual(media.progress, 0)
+        self.assertIsNone(media.end_date)
+
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_library_item")
+    @patch("integrations.imports.audiobookshelf.AudiobookshelfClient.get_me")
     def test_respects_last_sync_cursor_and_updates_last_sync_ms(
         self,
         mock_me,

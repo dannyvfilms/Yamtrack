@@ -289,10 +289,7 @@ class AudiobookshelfImporter:
 
         progress_seconds = int(progress_entry.get("currentTime") or 0)
         progress_minutes = max(0, progress_seconds // 60)
-        is_finished = bool(
-            progress_entry.get("isFinished")
-            or progress_entry.get("progress") == 1
-        )
+        is_finished = self._is_finished_progress_entry(progress_entry)
 
         if is_finished:
             status = Status.COMPLETED.value
@@ -316,6 +313,34 @@ class AudiobookshelfImporter:
             },
         )
         return media
+
+    def _is_finished_progress_entry(self, progress_entry: dict[str, Any]) -> bool:
+        """Return whether ABS marks a title as completed."""
+        if self._parse_bool(progress_entry.get("isFinished")):
+            return True
+
+        progress_value = progress_entry.get("progress")
+        if progress_value is not None:
+            try:
+                if float(progress_value) >= 1:
+                    return True
+            except (TypeError, ValueError):
+                logger.debug(
+                    "Audiobookshelf progress value could not be parsed for completion: %s",
+                    progress_value,
+                )
+
+        return self._parse_datetime(progress_entry.get("finishedAt")) is not None
+
+    def _parse_bool(self, value: Any) -> bool:
+        """Parse boolean-like values commonly returned by integrations."""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        if isinstance(value, (int, float)):
+            return value != 0
+        return False
 
     def _stable_media_id(self, base_url: str, library_item_id: str):
         value = f"{base_url.strip().lower()}::{library_item_id}"
