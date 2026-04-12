@@ -1472,6 +1472,16 @@ class MediaDetailsViewTests(TestCase):
             'class="order-2 mt-0 mb-5 flex w-full items-center justify-between gap-0.5 sm:order-1 sm:mt-4 sm:flex-wrap sm:justify-start sm:gap-2"',
             html=False,
         )
+        self.assertContains(
+            response,
+            'class="w-full sm:w-auto sm:shrink-0"',
+            html=False,
+        )
+        self.assertContains(
+            response,
+            'class="relative inline-flex w-full sm:w-auto"',
+            html=False,
+        )
         self.assertContains(response, 'aria-label="More tracking actions"', html=False)
         self.assertContains(response, "Add new entry")
         self.assertContains(response, '"is_create": true', html=False)

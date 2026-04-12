@@ -459,7 +459,8 @@
           <div class="order-1 mb-6 flex flex-col gap-3 sm:order-2 sm:flex-row sm:flex-wrap sm:items-center">
             <div class="mt-4 mb-5 flex flex-wrap gap-2">
         {% endif %}
-          <div x-data="{ trackOpen: false }" class="sm:shrink-0">
+          {# Keep the hero tracker action full-width on mobile so the split button cannot collapse to content width after flex/layout merges. #}
+          <div x-data="{ trackOpen: false }" class="w-full sm:w-auto sm:shrink-0">
             {% if media_type == MediaTypes.PODCAST.value and podcast_show %}
               <button type="button"
                       class="inline-flex w-full items-center justify-center gap-3 rounded-xl px-5 py-3 text-white shadow-sm transition duration-300 cursor-pointer sm:w-auto {% if podcast_tracker %}bg-indigo-600 hover:bg-indigo-700{% else %}bg-gray-600 hover:bg-gray-700{% endif %}"
