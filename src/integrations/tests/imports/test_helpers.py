@@ -102,6 +102,58 @@ class HelpersTest(TestCase):
 
         self.assertEqual(new_episode.related_season.id, season.id)
 
+    def test_bulk_create_media_orders_tv_season_and_episode_dependencies(self):
+        """Out-of-order batches should still save TV, seasons, then episodes safely."""
+        tv_item = Item.objects.create(
+            media_id="1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Test Show",
+            image="tv.jpg",
+        )
+        season_item = Item.objects.create(
+            media_id="1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Test Show",
+            image="season.jpg",
+            season_number=1,
+        )
+        episode_item = Item.objects.create(
+            media_id="1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Test Show",
+            image="episode.jpg",
+            season_number=1,
+            episode_number=1,
+        )
+
+        tv = TV(item=tv_item, user=self.user, status=Status.IN_PROGRESS.value)
+        season = Season(
+            item=season_item,
+            user=self.user,
+            related_tv=tv,
+            status=Status.IN_PROGRESS.value,
+        )
+        episode = Episode(item=episode_item, related_season=season)
+
+        bulk_media = {
+            MediaTypes.EPISODE.value: [episode],
+            MediaTypes.SEASON.value: [season],
+            MediaTypes.TV.value: [tv],
+        }
+
+        helpers.bulk_create_media(bulk_media, self.user)
+
+        self.assertEqual(TV.objects.filter(user=self.user).count(), 1)
+        self.assertEqual(Season.objects.filter(user=self.user).count(), 1)
+        self.assertEqual(
+            Episode.objects.filter(related_season__user=self.user).count(),
+            1,
+        )
+        self.assertEqual(Episode.objects.get().related_season_id, season.id)
+
     @patch("django.contrib.messages.error")
     def test_create_import_schedule(self, mock_messages):
         """Test creating import schedule."""

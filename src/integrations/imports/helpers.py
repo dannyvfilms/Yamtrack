@@ -75,7 +75,10 @@ def retry_on_lock(func, max_retries=5, base_delay=0.1, backoff=2.0):
             error_type = "disk I/O" if is_disk_io_error(error) else "lock"
             sleep_for = base_delay * (backoff**attempt)
             logger.warning(
-                "Retrying database operation due to %s error (attempt %s/%s, sleeping %.2fs)",
+                (
+                    "Retrying database operation due to %s error "
+                    "(attempt %s/%s, sleeping %.2fs)"
+                ),
                 error_type,
                 attempt + 1,
                 max_retries,
@@ -143,13 +146,14 @@ def cleanup_existing_media(to_delete, user):
             if not media_ids:
                 continue
 
-            deleted_count, _ = retry_on_lock(
-                lambda: model.objects.filter(
+            def delete_media(model=model, media_ids=media_ids, source=source):
+                return model.objects.filter(
                     item__media_id__in=media_ids,
                     item__source=source,
                     user=user,
-                ).delete(),
-            )
+                ).delete()
+
+            deleted_count, _ = retry_on_lock(delete_media)
             total_deleted += deleted_count
 
         if total_deleted > 0:
@@ -222,9 +226,31 @@ def update_episode_references(episodes, user):
             )
 
 
+def _ordered_media_types(bulk_media_list):
+    """Return media types in creation order with dependency types first."""
+    ordered_types = []
+    seen = set()
+
+    for media_type in (
+        MediaTypes.TV.value,
+        MediaTypes.SEASON.value,
+        MediaTypes.EPISODE.value,
+    ):
+        if media_type in bulk_media_list:
+            ordered_types.append(media_type)
+            seen.add(media_type)
+
+    ordered_types.extend(
+        media_type for media_type in bulk_media_list if media_type not in seen
+    )
+
+    return ordered_types
+
+
 def bulk_create_media(bulk_media_list, user):
     """Bulk create all media objects."""
-    for media_type, bulk_media in bulk_media_list.items():
+    for media_type in _ordered_media_types(bulk_media_list):
+        bulk_media = bulk_media_list[media_type]
         if not bulk_media:
             continue
 
@@ -242,14 +268,15 @@ def bulk_create_media(bulk_media_list, user):
             )
             update_episode_references(bulk_media, user)
 
-        retry_on_lock(
-            lambda: bulk_create_with_history(
+        def create_media(bulk_media=bulk_media, model=model):
+            return bulk_create_with_history(
                 bulk_media,
                 model,
                 batch_size=500,
                 default_user=user,
-            ),
-        )
+            )
+
+        retry_on_lock(create_media)
 
 
 def create_import_schedule(
