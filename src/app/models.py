@@ -3829,59 +3829,83 @@ class Season(Media):
         release_datetime = None
         matched_episode = {}
         tvdb_episode_images = {}
+        normalized_episode_number = int(episode_number)
 
         if self.item.source == Sources.TMDB.value:
-            tvdb_episode_images = providers.tmdb.get_tvdb_episode_image_map(
-                season_metadata.get("tvdb_id"),
-                season_metadata.get("season_number") or self.item.season_number,
-                tmdb_media_id=self.item.media_id,
-            )
-        
-        for episode in season_metadata["episodes"]:
-            if episode["episode_number"] == int(episode_number):
-                matched_episode = episode
-                image = helpers.first_real_image(
-                    (
-                        f"https://image.tmdb.org/t/p/original{episode['still_path']}"
-                        if episode.get("still_path")
-                        else None
-                    ),
-                    tvdb_episode_images.get(str(episode_number)),
-                    episode.get("image"),
+            if isinstance(season_metadata, dict):
+                tvdb_episode_images = season_metadata.get("_tvdb_episode_image_map")
+                if tvdb_episode_images is None:
+                    tvdb_episode_images = providers.tmdb.get_tvdb_episode_image_map(
+                        season_metadata.get("tvdb_id"),
+                        season_metadata.get("season_number") or self.item.season_number,
+                        tmdb_media_id=self.item.media_id,
+                    )
+                    season_metadata["_tvdb_episode_image_map"] = tvdb_episode_images
+            else:
+                tvdb_episode_images = providers.tmdb.get_tvdb_episode_image_map(
+                    season_metadata.get("tvdb_id"),
+                    season_metadata.get("season_number") or self.item.season_number,
+                    tmdb_media_id=self.item.media_id,
                 )
 
-                # Extract runtime from episode metadata (raw TMDB data has integer runtime in minutes)
-                if episode.get("runtime") is not None:
-                    # Runtime is an integer (minutes) from TMDB
-                    runtime_minutes = int(episode["runtime"]) if episode["runtime"] > 0 else None
-                
-                # Extract release_datetime from episode air_date
-                air_date = episode.get("air_date")
-                if air_date:
-                    from datetime import datetime
+        if isinstance(season_metadata, dict):
+            episodes_by_number = season_metadata.get("_episodes_by_number")
+            if episodes_by_number is None:
+                episodes_by_number = {
+                    episode.get("episode_number"): episode
+                    for episode in season_metadata.get("episodes") or []
+                    if isinstance(episode, dict)
+                    and episode.get("episode_number") is not None
+                }
+                season_metadata["_episodes_by_number"] = episodes_by_number
+            matched_episode = episodes_by_number.get(normalized_episode_number, {})
+        else:
+            for episode in season_metadata["episodes"]:
+                if episode["episode_number"] == normalized_episode_number:
+                    matched_episode = episode
+                    break
 
-                    from django.utils import timezone
-                    
-                    try:
-                        # TMDB returns dates in YYYY-MM-DD format (string)
-                        if isinstance(air_date, str):
-                            date_obj = datetime.strptime(air_date, "%Y-%m-%d")
-                            release_datetime = timezone.make_aware(date_obj, timezone.get_current_timezone())
-                        elif hasattr(air_date, "year"):
-                            # Already a datetime object
-                            release_datetime = air_date if timezone.is_aware(air_date) else timezone.make_aware(air_date)
-                    except (ValueError, TypeError):
-                        # If parsing fails, keep release_datetime as None
-                        pass
-                
-                break
+        if matched_episode:
+            image = helpers.first_real_image(
+                (
+                    f"https://image.tmdb.org/t/p/original{matched_episode['still_path']}"
+                    if matched_episode.get("still_path")
+                    else None
+                ),
+                tvdb_episode_images.get(str(episode_number)),
+                matched_episode.get("image"),
+            )
+
+            # Extract runtime from episode metadata (raw TMDB data has integer runtime in minutes)
+            if matched_episode.get("runtime") is not None:
+                # Runtime is an integer (minutes) from TMDB
+                runtime_minutes = int(matched_episode["runtime"]) if matched_episode["runtime"] > 0 else None
+
+            # Extract release_datetime from episode air_date
+            air_date = matched_episode.get("air_date")
+            if air_date:
+                from datetime import datetime
+
+                from django.utils import timezone
+
+                try:
+                    # TMDB returns dates in YYYY-MM-DD format (string)
+                    if isinstance(air_date, str):
+                        date_obj = datetime.strptime(air_date, "%Y-%m-%d")
+                        release_datetime = timezone.make_aware(date_obj, timezone.get_current_timezone())
+                    elif hasattr(air_date, "year"):
+                        # Already a datetime object
+                        release_datetime = air_date if timezone.is_aware(air_date) else timezone.make_aware(air_date)
+                except (ValueError, TypeError):
+                    # If parsing fails, keep release_datetime as None
+                    pass
 
         item, created = Item.objects.get_or_create(
             media_id=self.item.media_id,
             source=self.item.source,
             media_type=MediaTypes.EPISODE.value,
             season_number=self.item.season_number,
-            episode_number=episode_number,
+            episode_number=normalized_episode_number,
             defaults={
                 **Item.title_fields_from_episode_metadata(
                     matched_episode,

@@ -479,6 +479,8 @@ def _schedule_credits_backfill_if_needed(item_id):
 @receiver(post_save, sender=Episode)
 def schedule_credits_backfill_on_episode_play(sender, instance, **kwargs):  # noqa: ARG001
     """Queue credits backfill for episode and related show when an episode play is saved."""
+    if media_change_side_effects_suppressed():
+        return
     if not getattr(instance, "end_date", None):
         return
     episode_item_id = getattr(instance, "item_id", None)
@@ -492,6 +494,8 @@ def schedule_credits_backfill_on_episode_play(sender, instance, **kwargs):  # no
 @receiver(post_save, sender=Movie)
 def schedule_credits_backfill_on_movie_play(sender, instance, **kwargs):  # noqa: ARG001
     """Queue credits backfill for TMDB movies when a play is saved."""
+    if media_change_side_effects_suppressed():
+        return
     if not (getattr(instance, "end_date", None) or getattr(instance, "start_date", None)):
         return
     _schedule_credits_backfill_if_needed(getattr(instance, "item_id", None))

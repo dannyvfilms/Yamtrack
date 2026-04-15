@@ -7,13 +7,14 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from django.conf import settings
+from django.db import transaction
 from django.db.models import Count, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 from simple_history.utils import bulk_create_with_history
 
 import events
-from app import cache_utils
+from app import cache_utils, history_cache
 from app.mixins import disable_fetch_releases
 from app.models import (
     TV,
@@ -31,6 +32,10 @@ from app.models import (
     Status,
 )
 from app.providers import services
+from app.signals import (
+    flush_media_change_side_effects,
+    suppress_media_change_side_effects,
+)
 from app.services.tracking_hydration import ensure_item_metadata
 
 
@@ -892,17 +897,27 @@ def _apply_bulk_podcast_plays(
     created_count = 0
     replaced_episode_count = 0
     created_items = []
+    affected_day_keys = set()
+    affected_items = []
 
-    with disable_fetch_releases():
+    with transaction.atomic(), disable_fetch_releases(), suppress_media_change_side_effects():
         if write_mode == "replace" and selected_episode_ids:
-            existing_entries = Podcast.objects.filter(
-                user=user,
-                show=show,
-                episode_id__in=selected_episode_ids,
+            existing_entries = list(
+                Podcast.objects.filter(
+                    user=user,
+                    show=show,
+                    episode_id__in=selected_episode_ids,
+                ).select_related("item")
             )
-            replaced_episode_count = existing_entries.count()
+            replaced_episode_count = len(existing_entries)
             if replaced_episode_count:
-                existing_entries.delete()
+                for entry in existing_entries:
+                    day_key = history_cache.history_day_key(getattr(entry, "end_date", None))
+                    if day_key:
+                        affected_day_keys.add(day_key)
+                    if entry.item_id:
+                        affected_items.append(entry.item)
+                Podcast.objects.filter(id__in=[entry.id for entry in existing_entries]).delete()
 
         episodes_to_create = []
         for episode_payload, watched_at in zip(selected_episodes, timestamps, strict=False):
@@ -912,6 +927,10 @@ def _apply_bulk_podcast_plays(
             item, item_created = _get_or_create_podcast_episode_item(show, episode)
             if item_created:
                 created_items.append(item)
+            affected_items.append(item)
+            played_day_key = history_cache.history_day_key(watched_at)
+            if played_day_key:
+                affected_day_keys.add(played_day_key)
             episodes_to_create.append(
                 Podcast(
                     item=item,
@@ -928,6 +947,16 @@ def _apply_bulk_podcast_plays(
             bulk_create_with_history(episodes_to_create, Podcast)
             created_count = len(episodes_to_create)
 
+    if created_count or replaced_episode_count:
+        flush_media_change_side_effects(
+            owner=user,
+            items=affected_items,
+            changed_media_type=MediaTypes.PODCAST.value,
+            reason="podcast_change",
+            history_day_keys=sorted(affected_day_keys),
+            statistics_day_values=sorted(affected_day_keys),
+        )
+
     cache_utils.clear_time_left_cache_for_user(user.id)
     if created_items:
         events.tasks.reload_calendar.apply_async(
@@ -939,6 +968,23 @@ def _apply_bulk_podcast_plays(
         created_count=created_count,
         replaced_episode_count=replaced_episode_count,
     )
+
+
+def _enqueue_bulk_episode_credits_backfill(grouped_tv, episode_item_ids):
+    """Queue one deduped credits backfill pass for bulk episode saves."""
+    item_ids = {
+        item_id
+        for item_id in episode_item_ids or []
+        if item_id
+    }
+    if getattr(grouped_tv, "item_id", None):
+        item_ids.add(grouped_tv.item_id)
+    if not item_ids:
+        return 0
+
+    from app.tasks import enqueue_credits_backfill_items
+
+    return enqueue_credits_backfill_items(sorted(item_ids), countdown=3)
 
 
 def apply_bulk_episode_plays(
@@ -971,6 +1017,8 @@ def apply_bulk_episode_plays(
     created_count = 0
     replaced_episode_count = 0
     created_items = created_grouped_tracking
+    affected_day_keys = set()
+    credit_item_ids = set()
 
     if distribution_mode == "air_date":
         timestamps = distribute_target_timestamps(
@@ -987,7 +1035,7 @@ def apply_bulk_episode_plays(
             fallback_dt=timezone.now().replace(second=0, microsecond=0),
         )
 
-    with disable_fetch_releases():
+    with transaction.atomic(), disable_fetch_releases(), suppress_media_change_side_effects():
         for episode in selected_episodes:
             season_number = episode["season_number"]
             season_payload = domain["season_payloads"][season_number]
@@ -1000,19 +1048,24 @@ def apply_bulk_episode_plays(
                 )
                 touched_seasons[season_number] = season_tracker
                 created_items = created_items or season_created
-            season_tracker = touched_seasons[season_number]
 
         if write_mode == "replace":
             delete_filters = _episode_delete_filter(selected_episodes)
             if delete_filters:
-                existing_count = Episode.objects.filter(
-                    related_season__in=touched_seasons.values(),
-                ).filter(delete_filters).count()
-                if existing_count:
+                existing_entries = list(
                     Episode.objects.filter(
                         related_season__in=touched_seasons.values(),
-                    ).filter(delete_filters).delete()
-                    replaced_episode_count = existing_count
+                    ).filter(delete_filters).select_related("item")
+                )
+                replaced_episode_count = len(existing_entries)
+                if existing_entries:
+                    for entry in existing_entries:
+                        day_key = history_cache.history_day_key(getattr(entry, "end_date", None))
+                        if day_key:
+                            affected_day_keys.add(day_key)
+                    Episode.objects.filter(
+                        id__in=[entry.id for entry in existing_entries],
+                    ).delete()
 
         episodes_to_create = []
         for episode, watched_at in zip(selected_episodes, timestamps, strict=False):
@@ -1031,7 +1084,12 @@ def apply_bulk_episode_plays(
             if episode_item.library_media_type != domain["library_media_type"]:
                 episode_item.library_media_type = domain["library_media_type"]
                 episode_item.save(update_fields=["library_media_type"])
+            if episode_item.id:
+                credit_item_ids.add(episode_item.id)
             created_items = created_items or not episode_item_exists
+            played_day_key = history_cache.history_day_key(watched_at)
+            if played_day_key:
+                affected_day_keys.add(played_day_key)
             episodes_to_create.append(
                 Episode(
                     related_season=season_tracker,
@@ -1047,6 +1105,22 @@ def apply_bulk_episode_plays(
     for season_tracker in touched_seasons.values():
         season_tracker.refresh_from_db()
         season_tracker._sync_status_after_episode_change()
+
+    if created_count or replaced_episode_count:
+        flush_media_change_side_effects(
+            owner=user,
+            items=[
+                grouped_tv.item,
+                *[season_tracker.item for season_tracker in touched_seasons.values()],
+            ],
+            changed_media_type=MediaTypes.EPISODE.value,
+            reason="episode_change",
+            history_day_keys=sorted(affected_day_keys),
+            statistics_day_values=sorted(affected_day_keys),
+        )
+
+    if created_count:
+        _enqueue_bulk_episode_credits_backfill(grouped_tv, credit_item_ids)
 
     cache_utils.clear_time_left_cache_for_user(user.id)
     if created_items:

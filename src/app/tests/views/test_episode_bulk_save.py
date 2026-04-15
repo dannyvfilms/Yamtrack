@@ -485,6 +485,238 @@ class EpisodeBulkSaveViewTests(TestCase):
             1,
         )
 
+    @patch("app.tasks.enqueue_credits_backfill_items")
+    @patch("app.services.bulk_episode_tracking.flush_media_change_side_effects")
+    @patch("app.views.metadata_resolution.resolve_detail_metadata")
+    @patch("app.providers.services.get_media_metadata")
+    def test_replace_mode_coalesces_episode_side_effects_and_credit_queue(
+        self,
+        mock_get_metadata,
+        mock_resolve_detail_metadata,
+        mock_flush_side_effects,
+        mock_enqueue_credits,
+    ):
+        seasons = [
+            {
+                "season_number": 1,
+                "season_title": "Season 1",
+                "episodes": [
+                    _season_episode(1, air_date="2024-01-01"),
+                    _season_episode(2, air_date="2024-01-02"),
+                ],
+            },
+        ]
+        base_payload = _tv_base_payload(
+            "1396",
+            Sources.TMDB.value,
+            title="Breaking Bad",
+            seasons=seasons,
+        )
+        tv_with_seasons = _tv_with_seasons_payload(
+            "1396",
+            Sources.TMDB.value,
+            title="Breaking Bad",
+            seasons=seasons,
+        )
+        mock_get_metadata.side_effect = lambda media_type, *_args, **_kwargs: (
+            tv_with_seasons if media_type == "tv_with_seasons" else base_payload
+        )
+        mock_resolve_detail_metadata.return_value = self.default_resolution
+
+        tv_item = Item.objects.create(
+            media_id="1396",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            library_media_type=MediaTypes.TV.value,
+            title="Breaking Bad",
+            image="https://example.com/show.jpg",
+        )
+        tv = TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        season_item = Item.objects.create(
+            media_id="1396",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            library_media_type=MediaTypes.TV.value,
+            title="Breaking Bad",
+            image="https://example.com/season.jpg",
+        )
+        season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=tv,
+            status=Status.IN_PROGRESS.value,
+        )
+        first_episode_item = Item.objects.create(
+            media_id="1396",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=1,
+            library_media_type=MediaTypes.TV.value,
+            title="Episode 1",
+            image="https://example.com/ep1.jpg",
+        )
+        second_episode_item = Item.objects.create(
+            media_id="1396",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=2,
+            library_media_type=MediaTypes.TV.value,
+            title="Episode 2",
+            image="https://example.com/ep2.jpg",
+        )
+        Episode.objects.create(
+            item=first_episode_item,
+            related_season=season,
+            end_date=datetime(2024, 1, 10, 0, 0, tzinfo=UTC),
+        )
+        Episode.objects.create(
+            item=second_episode_item,
+            related_season=season,
+            end_date=datetime(2024, 1, 11, 0, 0, tzinfo=UTC),
+        )
+
+        mock_flush_side_effects.reset_mock()
+        mock_enqueue_credits.reset_mock()
+
+        response = self._post_bulk(
+            {
+                "media_id": "1396",
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.TV.value,
+                "library_media_type": MediaTypes.TV.value,
+                "identity_media_type": "",
+                "instance_id": str(tv.id),
+                "return_url": self.return_url,
+                "first_season_number": 1,
+                "first_episode_number": 1,
+                "last_season_number": 1,
+                "last_episode_number": 2,
+                "write_mode": "replace",
+                "distribution_mode": "even",
+                "start_date": "2024-02-01T00:00",
+                "end_date": "2024-02-02T00:00",
+            },
+        )
+
+        self.assertEqual(response.status_code, 204)
+        mock_flush_side_effects.assert_called_once()
+        kwargs = mock_flush_side_effects.call_args.kwargs
+        self.assertEqual(kwargs["owner"], self.user)
+        self.assertEqual(kwargs["changed_media_type"], MediaTypes.EPISODE.value)
+        self.assertEqual(kwargs["reason"], "episode_change")
+        self.assertEqual(
+            kwargs["history_day_keys"],
+            ["20240110", "20240111", "20240201", "20240202"],
+        )
+        self.assertEqual(
+            kwargs["statistics_day_values"],
+            ["20240110", "20240111", "20240201", "20240202"],
+        )
+        mock_enqueue_credits.assert_called_once_with(
+            [tv_item.id, first_episode_item.id, second_episode_item.id],
+            countdown=3,
+        )
+
+    @patch("app.tasks.enqueue_credits_backfill_items")
+    @patch("app.services.bulk_episode_tracking.flush_media_change_side_effects")
+    @patch("app.models.providers.tmdb.get_tvdb_episode_image_map", return_value={})
+    @patch("app.views.metadata_resolution.resolve_detail_metadata")
+    @patch("app.providers.services.get_media_metadata")
+    def test_bulk_save_reuses_tmdb_episode_image_lookup_per_season(
+        self,
+        mock_get_metadata,
+        mock_resolve_detail_metadata,
+        mock_image_map,
+        _mock_flush_side_effects,
+        _mock_enqueue_credits,
+    ):
+        seasons = [
+            {
+                "season_number": 1,
+                "season_title": "Season 1",
+                "episodes": [
+                    _season_episode(1, air_date="2024-01-01"),
+                    _season_episode(2, air_date="2024-01-02"),
+                    _season_episode(3, air_date="2024-01-03"),
+                ],
+            },
+        ]
+        base_payload = _tv_base_payload(
+            "1396",
+            Sources.TMDB.value,
+            title="Breaking Bad",
+            seasons=seasons,
+        )
+        tv_with_seasons = _tv_with_seasons_payload(
+            "1396",
+            Sources.TMDB.value,
+            title="Breaking Bad",
+            seasons=seasons,
+        )
+        mock_get_metadata.side_effect = lambda media_type, *_args, **_kwargs: (
+            tv_with_seasons if media_type == "tv_with_seasons" else base_payload
+        )
+        mock_resolve_detail_metadata.return_value = self.default_resolution
+
+        tv_item = Item.objects.create(
+            media_id="1396",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            library_media_type=MediaTypes.TV.value,
+            title="Breaking Bad",
+            image="https://example.com/show.jpg",
+        )
+        tv = TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        season_item = Item.objects.create(
+            media_id="1396",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            library_media_type=MediaTypes.TV.value,
+            title="Breaking Bad",
+            image="https://example.com/season.jpg",
+        )
+        Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=tv,
+            status=Status.IN_PROGRESS.value,
+        )
+
+        response = self._post_bulk(
+            {
+                "media_id": "1396",
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.TV.value,
+                "library_media_type": MediaTypes.TV.value,
+                "identity_media_type": "",
+                "instance_id": str(tv.id),
+                "return_url": self.return_url,
+                "first_season_number": 1,
+                "first_episode_number": 1,
+                "last_season_number": 1,
+                "last_episode_number": 3,
+                "write_mode": "add",
+                "distribution_mode": "even",
+                "start_date": "2024-02-01T00:00",
+                "end_date": "2024-02-03T00:00",
+            },
+        )
+
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(mock_image_map.call_count, 1)
+
     @patch("app.views.metadata_resolution.resolve_detail_metadata")
     @patch("app.providers.services.get_media_metadata")
     def test_cross_season_range_uses_provider_order(
