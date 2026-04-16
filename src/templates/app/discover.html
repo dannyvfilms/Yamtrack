@@ -15,7 +15,7 @@
         <h1 class="text-3xl font-bold text-white">Discover</h1>
         <p class="mt-1 text-sm text-gray-400">[UNDER CONSTRUCTION] Recommendations powered by global trends and your local activity.</p>
       </div>
-      <div class="flex items-center gap-2">
+      <div x-cloak x-show="!isHiddenView()" class="flex items-center gap-2">
         <button type="button"
                 @click="toggleShowMore()"
                 class="inline-flex items-center justify-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700 cursor-pointer"
@@ -122,6 +122,7 @@
         manualRefreshPending: false,
         toastMessage: "",
         undoToken: "",
+        undoActiveMediaType: "",
         toastVisible: false,
         toastTimer: null,
         init() {
@@ -197,7 +198,7 @@
             if (!event.target || event.target.id !== "discover-rows") {
               return;
             }
-            if (this.discoverDebug) {
+            if (this.discoverDebug || this.isHiddenView()) {
               this.resetRefreshState();
               return;
             }
@@ -207,6 +208,10 @@
 
           this.discoverActionListener = (event) => {
             this.showToast(event.detail || {});
+            if (this.isHiddenView()) {
+              this.fetchRows();
+              return;
+            }
             if (!this.discoverDebug) {
               this.checkCacheStatus();
             }
@@ -266,6 +271,7 @@
           this.clearToastTimer();
           this.toastMessage = detail.message || "";
           this.undoToken = detail.undo_token || "";
+          this.undoActiveMediaType = detail.active_media_type || "";
           this.toastVisible = Boolean(this.toastMessage || this.undoToken);
           this.toastTimer = setTimeout(() => this.dismissToast(), 8000);
         },
@@ -274,6 +280,10 @@
           this.toastVisible = false;
           this.toastMessage = "";
           this.undoToken = "";
+          this.undoActiveMediaType = "";
+        },
+        isHiddenView() {
+          return this.selectedMedia === "hidden";
         },
         stopCacheUpdater() {
           if (this.cacheUpdater) {
@@ -282,7 +292,7 @@
         },
         syncCacheUpdater() {
           this.stopCacheUpdater();
-          if (this.discoverDebug || !window.CacheUpdater) {
+          if (this.discoverDebug || this.isHiddenView() || !window.CacheUpdater) {
             this.cacheUpdater = null;
             return;
           }
@@ -334,7 +344,7 @@
           window.history.replaceState({}, "", `${window.location.pathname}?${query}`);
         },
         async checkCacheStatus() {
-          if (this.discoverDebug) {
+          if (this.discoverDebug || this.isHiddenView()) {
             return;
           }
           if (!this.cacheUpdater) {
@@ -390,7 +400,7 @@
             params.set("discover_debug", "1");
           }
           this.attachAfterSwap(() => {
-            if (this.discoverDebug) {
+            if (this.discoverDebug || this.isHiddenView()) {
               this.manualRefreshPending = false;
               this.resetRefreshState();
               return;
@@ -416,7 +426,10 @@
           const body = new FormData();
           body.append("action", "undo");
           body.append("undo_token", this.undoToken);
-          body.append("active_media_type", this.selectedMedia);
+          body.append(
+            "active_media_type",
+            this.isHiddenView() ? (this.undoActiveMediaType || "all") : this.selectedMedia,
+          );
           body.append("show_more", this.showMore ? "1" : "0");
           if (this.discoverDebug) {
             body.append("discover_debug", "1");
@@ -428,6 +441,12 @@
             body,
           });
           if (!response.ok) {
+            return;
+          }
+
+          if (this.isHiddenView()) {
+            this.dismissToast();
+            this.fetchRows();
             return;
           }
 
@@ -487,6 +506,9 @@
           this.fetchRows();
         },
         toggleShowMore() {
+          if (this.isHiddenView()) {
+            return;
+          }
           this.showMore = !this.showMore;
           this.manualRefreshPending = false;
           this.dismissRefreshStatus();
@@ -495,6 +517,10 @@
           this.fetchRows();
         },
         async refreshRows() {
+          if (this.isHiddenView()) {
+            this.fetchRows();
+            return;
+          }
           this.manualRefreshPending = true;
           this.dismissRefreshStatus();
           this.refreshing = true;

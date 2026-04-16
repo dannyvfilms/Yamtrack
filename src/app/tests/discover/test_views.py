@@ -1,6 +1,7 @@
 # ruff: noqa: D102
 
 import json
+from datetime import UTC, datetime
 from unittest.mock import ANY, call, patch
 
 from django.contrib.auth import get_user_model
@@ -90,6 +91,144 @@ class DiscoverViewTests(TestCase):
             title=title,
             image="https://example.com/movie.jpg",
         )
+
+    @patch("app.views._invalidate_discover_after_action")
+    def test_discover_toggle_hidden_hides_item_and_renders_save_control(
+        self,
+        mock_invalidate_discover_after_action,
+    ):
+        item = self._movie_item()
+
+        response = self.client.post(
+            reverse("discover_toggle_hidden"),
+            {
+                "item_id": item.id,
+                "action": "hide",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            DiscoverFeedback.objects.filter(
+                user=self.user,
+                item=item,
+                feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
+            ).exists(),
+        )
+        self.assertContains(response, "Currently hidden in Discover.")
+        self.assertContains(response, 'hx-post="/discover/toggle-hidden"', html=False)
+        self.assertContains(response, 'name="action"', html=False)
+        trigger = json.loads(response["HX-Trigger"])
+        self.assertEqual(trigger["discoverActionComplete"]["action"], "hide")
+        mock_invalidate_discover_after_action.assert_called_once_with(
+            self.user.id,
+            MediaTypes.MOVIE.value,
+            discover_debug=False,
+            feedback_change=True,
+        )
+
+    def test_discover_toggle_hidden_rejects_invalid_action(self):
+        item = self._movie_item()
+
+        response = self.client.post(
+            reverse("discover_toggle_hidden"),
+            {
+                "item_id": item.id,
+                "action": "maybe",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(
+            DiscoverFeedback.objects.filter(
+                user=self.user,
+                item=item,
+                feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
+            ).exists(),
+        )
+
+    @patch("app.views.discover_tab_cache.get_tab_status")
+    @patch("app.views.discover_tab_cache.warm_sibling_tabs")
+    @patch("app.views.discover_tab_cache.get_tab_rows")
+    def test_discover_page_hidden_view_lists_items_by_recent_change(
+        self,
+        mock_get_tab_rows,
+        mock_warm_sibling_tabs,
+        mock_get_tab_status,
+    ):
+        older_item = self._movie_item(media_id="9002", title="Older Hidden")
+        newer_item = self._movie_item(media_id="9003", title="Newer Hidden")
+        older_feedback = DiscoverFeedback.objects.create(
+            user=self.user,
+            item=older_item,
+            feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
+        )
+        newer_feedback = DiscoverFeedback.objects.create(
+            user=self.user,
+            item=newer_item,
+            feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
+        )
+        DiscoverFeedback.objects.filter(pk=older_feedback.pk).update(
+            updated_at=datetime(2026, 4, 14, 12, 0, tzinfo=UTC),
+        )
+        DiscoverFeedback.objects.filter(pk=newer_feedback.pk).update(
+            updated_at=datetime(2026, 4, 15, 12, 0, tzinfo=UTC),
+        )
+
+        response = self.client.get(
+            reverse("discover"),
+            {
+                "media_type": "hidden",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["selected_media_type"], "hidden")
+        self.assertEqual(response.context["hidden_discover_count"], 2)
+        self.assertEqual(
+            [entry.item.title for entry in response.context["hidden_discover_entries"]],
+            ["Newer Hidden", "Older Hidden"],
+        )
+        self.assertContains(response, "Hidden From Discover")
+        self.assertTrue(
+            any(
+                option["value"] == "hidden"
+                for option in response.context["discover_media_options"]
+            ),
+        )
+        mock_get_tab_rows.assert_not_called()
+        mock_get_tab_status.assert_not_called()
+        mock_warm_sibling_tabs.assert_not_called()
+
+    @patch("app.views.discover_tab_cache.get_tab_status")
+    @patch("app.views.discover_tab_cache.get_tab_rows")
+    def test_discover_rows_hidden_view_returns_hidden_fragment_without_cache(
+        self,
+        mock_get_tab_rows,
+        mock_get_tab_status,
+    ):
+        hidden_item = self._movie_item(media_id="9005", title="Hidden Fragment Item")
+        DiscoverFeedback.objects.create(
+            user=self.user,
+            item=hidden_item,
+            feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
+        )
+
+        response = self.client.get(
+            reverse("discover_rows"),
+            {
+                "media_type": "hidden",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["X-Discover-Media-Type"], "hidden")
+        self.assertEqual(response["X-Discover-Show-More"], "0")
+        self.assertNotIn("X-Discover-Activity-Version", response)
+        self.assertContains(response, "Hidden From Discover")
+        self.assertContains(response, "Hidden Fragment Item")
+        mock_get_tab_rows.assert_not_called()
+        mock_get_tab_status.assert_not_called()
 
     @patch("app.views.discover_tab_cache.get_tab_status")
     @patch("app.views.discover_tab_cache.warm_sibling_tabs")

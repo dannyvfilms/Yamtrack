@@ -10,8 +10,9 @@ from app.models import (
     AlbumTracker,
     Artist,
     ArtistTracker,
-    TV,
     Anime,
+    DiscoverFeedback,
+    DiscoverFeedbackType,
     Item,
     MediaTypes,
     MetadataProviderPreference,
@@ -22,6 +23,7 @@ from app.models import (
     PodcastShowTracker,
     Sources,
     Status,
+    TV,
 )
 from app.services.metadata_resolution import MetadataResolutionResult
 
@@ -115,6 +117,8 @@ class TrackModalViewTests(TestCase):
         self.assertEqual(response.context["media"], self.movie)
         self.assertEqual(response.context["return_url"], "/home")
         self.assertTrue(response.context["metadata_tab_available"])
+        self.assertTrue(response.context["discover_tab_available"])
+        self.assertFalse(response.context["is_hidden_from_discover"])
         general_field_names = [
             field.name for field in response.context["general_fields"]
         ]
@@ -125,11 +129,40 @@ class TrackModalViewTests(TestCase):
         )
         self.assertContains(response, "General")
         self.assertContains(response, "Metadata")
+        self.assertContains(response, "Discover")
         self.assertContains(response, "Image URL")
         self.assertContains(response, "Save Image")
         self.assertContains(response, "Metadata Provider")
         self.assertContains(response, "Custom")
+        self.assertContains(response, "Currently visible in Discover.")
+        self.assertContains(response, 'hx-post="/discover/toggle-hidden"', html=False)
+        self.assertContains(response, 'name="action"', html=False)
         self.assertNotContains(response, "Custom Metadata")
+
+    def test_track_modal_view_uses_stored_discover_hidden_state(self):
+        """Discover tab should reflect persisted hidden feedback for the item."""
+        DiscoverFeedback.objects.create(
+            user=self.user,
+            item=self.item,
+            feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
+        )
+
+        response = self.client.get(
+            reverse(
+                "track_modal",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "238",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["discover_tab_available"])
+        self.assertTrue(response.context["is_hidden_from_discover"])
+        self.assertContains(response, "Currently hidden in Discover.")
+        self.assertContains(response, "name=\"action\"", html=False)
 
     def test_artist_track_modal_uses_shared_fill_track_shell(self):
         """Music artist trackers should render through the shared modal shell."""

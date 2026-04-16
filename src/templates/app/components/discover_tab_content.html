@@ -1,0 +1,81 @@
+<div id="discover-tab-content"
+     x-data="{
+       open: false,
+       initialValue: '{% if is_hidden_from_discover %}hidden{% else %}visible{% endif %}',
+       selectedValue: '{% if is_hidden_from_discover %}hidden{% else %}visible{% endif %}'
+     }">
+  <div class="mb-6">
+    <h3 class="text-lg font-medium text-gray-200 mb-2">Discover Visibility</h3>
+    <p class="text-gray-400 text-sm mb-4">Control whether this item appears in your Discover recommendations.</p>
+
+    <form hx-post="{% url 'discover_toggle_hidden' %}"
+          hx-target="#discover-tab-content"
+          hx-swap="outerHTML"
+          class="space-y-4">
+      {% csrf_token %}
+      <input type="hidden" name="item_id" value="{{ item.id }}">
+      <input type="hidden" name="action" x-bind:value="selectedValue === 'hidden' ? 'hide' : 'unhide'">
+
+      <div class="p-4 bg-[#39404b] rounded-md space-y-4">
+        <div class="flex items-center justify-between gap-3">
+          <label class="text-gray-200 text-sm font-medium">Status</label>
+          <span class="text-gray-400 text-xs">Currently {% if is_hidden_from_discover %}hidden{% else %}visible{% endif %} in Discover.</span>
+        </div>
+
+        <div class="relative">
+          <button type="button"
+                  @click="open = !open"
+                  @click.outside="open = false"
+                  class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
+            <span x-text="selectedValue === 'hidden' ? 'Hidden' : 'Visible'"></span>
+            <svg xmlns="http://www.w3.org/2000/svg"
+                 width="24"
+                 height="24"
+                 viewBox="0 0 24 24"
+                 fill="none"
+                 stroke="currentColor"
+                 stroke-width="2"
+                 stroke-linecap="round"
+                 stroke-linejoin="round"
+                 class="w-4 h-4 text-gray-400">
+              <path d="m6 9 6 6 6-6"></path>
+            </svg>
+          </button>
+
+          <div x-show="open"
+               x-transition:enter="transition ease-out duration-100"
+               x-transition:enter-start="transform opacity-0 scale-95"
+               x-transition:enter-end="transform opacity-100 scale-100"
+               x-transition:leave="transition ease-in duration-75"
+               x-transition:leave-start="transform opacity-100 scale-100"
+               x-transition:leave-end="transform opacity-0 scale-95"
+               class="absolute left-0 right-0 mt-2 py-1 bg-[#272c31] rounded-md shadow-lg overflow-hidden z-10 border border-gray-600">
+            <button type="button"
+                    @click="selectedValue = 'visible'; open = false"
+                    class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white"
+                    :class="{ 'text-white bg-[#39404b]': selectedValue === 'visible' }">
+              Visible
+            </button>
+            <button type="button"
+                    @click="selectedValue = 'hidden'; open = false"
+                    class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white"
+                    :class="{ 'text-white bg-[#39404b]': selectedValue === 'hidden' }">
+              Hidden
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex flex-row-reverse justify-between mt-6">
+        <button type="submit"
+                class="px-4 py-2 rounded-md transition duration-300"
+                :class="selectedValue === initialValue
+                  ? 'bg-gray-600 text-gray-300 cursor-not-allowed'
+                  : 'bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer'"
+                x-bind:disabled="selectedValue === initialValue">
+          Save
+        </button>
+      </div>
+    </form>
+  </div>
+</div>

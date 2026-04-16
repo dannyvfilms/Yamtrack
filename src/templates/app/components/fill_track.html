@@ -39,6 +39,15 @@
             <span class="font-medium">{{ episode_plays_tab_label|default:"Episode Plays" }}</span>
           </button>
         {% endif %}
+        {% if discover_tab_available %}
+          <button type="button"
+                  @click="activeTab = 'discover'"
+                  class="flex items-center gap-3 w-full px-4 py-3 rounded-lg text-left transition-colors cursor-pointer"
+                  :class="activeTab === 'discover' ? 'bg-[#2c3136] text-white' : 'text-gray-400 hover:text-white hover:bg-[#23272b]'">
+            {% include "app/icons/eye.svg" with classes="w-5 h-5 shrink-0" %}
+            <span class="font-medium">Discover</span>
+          </button>
+        {% endif %}
       </nav>
     </aside>
 
@@ -117,6 +126,11 @@
       {% if episode_plays_tab_available %}
         <section x-show="activeTab === 'episode-plays'" x-cloak>
           {% include "app/components/fill_track_episode_bulk.html" %}
+        </section>
+      {% endif %}
+      {% if discover_tab_available %}
+        <section x-show="activeTab === 'discover'" x-cloak>
+          {% include "app/components/discover_tab_content.html" with item=metadata_item is_hidden_from_discover=is_hidden_from_discover %}
         </section>
       {% endif %}
     </div>

@@ -143,6 +143,7 @@ DISCOVER_ALLOWED_MEDIA_TYPES = {
     MediaTypes.GAME.value,
     MediaTypes.BOARDGAME.value,
 }
+DISCOVER_HIDDEN_SECTION = "hidden"
 DISCOVER_FAST_LOCAL_PLANNING_MEDIA_TYPES = {
     MediaTypes.TV.value,
     MediaTypes.ANIME.value,
@@ -1498,6 +1499,8 @@ def _coerce_discover_media_type(raw_media_type: str | None) -> str:
     media_type = (raw_media_type or "all").strip().lower()
     if media_type == "all":
         return "all"
+    if media_type == DISCOVER_HIDDEN_SECTION:
+        return DISCOVER_HIDDEN_SECTION
     if media_type in DISCOVER_ALLOWED_MEDIA_TYPES:
         return media_type
     return "all"
@@ -1509,6 +1512,8 @@ def _coerce_discover_debug(raw_debug: str | None) -> bool:
 
 def _resolve_discover_media_type_for_user(user, raw_media_type: str | None) -> str:
     media_type = _coerce_discover_media_type(raw_media_type)
+    if media_type == DISCOVER_HIDDEN_SECTION:
+        return DISCOVER_HIDDEN_SECTION
     return discover_tab_cache.resolve_media_type_for_user(user, media_type)
 
 
@@ -1529,7 +1534,19 @@ def _discover_media_options(user):
             }
             for media_type in enabled_media_types
         ],
+        {"value": DISCOVER_HIDDEN_SECTION, "label": "Hidden"},
     ]
+
+
+def _discover_hidden_entries(user):
+    return list(
+        DiscoverFeedback.objects.filter(
+            user=user,
+            feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
+        )
+        .select_related("item")
+        .order_by("-updated_at", "-id")
+    )
 
 
 def _discover_rows_context(
@@ -1540,6 +1557,19 @@ def _discover_rows_context(
     discover_debug: bool,
     rows,
 ):
+    if selected_media_type == DISCOVER_HIDDEN_SECTION:
+        hidden_discover_entries = _discover_hidden_entries(request.user)
+        return {
+            "selected_media_type": selected_media_type,
+            "show_more": show_more,
+            "discover_debug": discover_debug,
+            "discover_loading": False,
+            "discover_activity_version": "",
+            "rows": [],
+            "hidden_discover_entries": hidden_discover_entries,
+            "hidden_discover_count": len(hidden_discover_entries),
+        }
+
     discover_status = (
         discover_tab_cache.get_tab_status(
             request.user.id,
@@ -1576,7 +1606,7 @@ def _apply_discover_response_headers(
 ):
     response["X-Discover-Media-Type"] = selected_media_type
     response["X-Discover-Show-More"] = "1" if show_more else "0"
-    if not discover_debug:
+    if not discover_debug and selected_media_type != DISCOVER_HIDDEN_SECTION:
         response["X-Discover-Activity-Version"] = discover_tab_cache.get_activity_version(
             user_id,
             selected_media_type,
@@ -1646,6 +1676,8 @@ def _discover_response_rows(
     show_more: bool,
     discover_debug: bool,
 ):
+    if selected_media_type == DISCOVER_HIDDEN_SECTION:
+        return []
     if discover_debug:
         return discover.get_discover_rows(
             user,
@@ -1769,7 +1801,7 @@ def discover_page(request):
         show_more=show_more,
         discover_debug=discover_debug,
     )
-    if not discover_debug:
+    if not discover_debug and selected_media_type != DISCOVER_HIDDEN_SECTION:
         discover_tab_cache.warm_sibling_tabs(
             request.user,
             selected_media_type,
@@ -2208,6 +2240,7 @@ def discover_action(request):
     trigger_payload = {
         "action": action,
         "message": message,
+        "active_media_type": active_media_type,
     }
     if undo_token:
         trigger_payload["undo_token"] = undo_token
@@ -2236,6 +2269,73 @@ def discover_action(request):
         row_fetch_ms,
         render_ms,
         int((time.monotonic() - request_started) * 1000),
+    )
+    return response
+
+
+def _build_track_modal_discover_tab_context(user, metadata_item):
+    """Build shared Discover-tab context for the track modal."""
+    return {
+        "discover_tab_available": metadata_item is not None,
+        "is_hidden_from_discover": (
+            DiscoverFeedback.objects.filter(
+                user=user,
+                item=metadata_item,
+                feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
+            ).exists()
+            if metadata_item
+            else False
+        ),
+    }
+
+
+@login_required
+@require_POST
+def discover_toggle_hidden(request):
+    """Toggle the hidden status of an item from Discover."""
+    item_id = request.POST.get("item_id")
+    action = request.POST.get("action")  # 'hide' or 'unhide'
+    if action not in {"hide", "unhide"}:
+        return HttpResponseBadRequest("Invalid Discover visibility action.")
+
+    item = get_object_or_404(Item, id=item_id)
+
+    if action == "hide":
+        DiscoverFeedback.objects.update_or_create(
+            user=request.user,
+            item=item,
+            feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
+            defaults={"source_context": "track_modal"},
+        )
+        message = f'Hidden "{item.title}" from Discover.'
+    else:
+        DiscoverFeedback.objects.filter(
+            user=request.user,
+            item=item,
+            feedback_type=DiscoverFeedbackType.NOT_INTERESTED.value,
+        ).delete()
+        message = f'Showing "{item.title}" in Discover.'
+
+    _invalidate_discover_after_action(
+        request.user.id,
+        item.library_media_type or item.media_type,
+        discover_debug=False,
+        feedback_change=True,
+    )
+
+    context = {
+        "item": item,
+        **_build_track_modal_discover_tab_context(request.user, item),
+    }
+
+    response = render(request, "app/components/discover_tab_content.html", context)
+    response["HX-Trigger"] = json.dumps(
+        {
+            "discoverActionComplete": {
+                "action": action,
+                "message": message,
+            },
+        },
     )
     return response
 
@@ -8323,6 +8423,7 @@ def _render_standard_track_modal(
         ),
         "episode_plays_domain_script_id": f"{track_form_id}-episode-domain",
     }
+    context.update(_build_track_modal_discover_tab_context(request.user, metadata_item))
     response = render(
         request,
         "app/components/fill_track.html",
