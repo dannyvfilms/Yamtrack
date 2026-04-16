@@ -270,8 +270,8 @@ The only universally required variable is `SECRET` for Django's secret key. For 
 **Optional but recommended:**
 
 - `TMDB_API` - movie and TV metadata from [TMDB](https://www.themoviedb.org/settings/api)
-- `TVDB_API_KEY` / `TVDB_PIN` - TVDB-backed metadata and grouped anime support
-- `MAL_API` - anime metadata from [MyAnimeList](https://myanimelist.net/apiconfig)
+- `TVDB_API_KEY` / `TVDB_PIN` - TVDB-backed metadata and grouped anime support (`TVDB_PIN` is your **Subscriber PIN**, only required for user-supported API keys)
+- `MAL_API` - MyAnimeList **Client ID** for anime metadata ([register here](https://myanimelist.net/apiconfig))
 - `IGDB_ID` / `IGDB_SECRET` - game metadata from [IGDB](https://www.igdb.com/api)
 - `STEAM_API_KEY` - Steam game imports
 - `BGG_API_TOKEN` - board game metadata from [BoardGameGeek](https://boardgamegeek.com/using_the_xml_api)
@@ -295,8 +295,8 @@ Example `.env` file:
 ```bash
 TMDB_API=API_KEY
 TVDB_API_KEY=TVDB_API_KEY
-TVDB_PIN=TVDB_PIN
-MAL_API=API_KEY
+TVDB_PIN=SUBSCRIBER_PIN (Optional, only for user-supported keys)
+MAL_API=CLIENT_ID
 IGDB_ID=IGDB_ID
 IGDB_SECRET=IGDB_SECRET
 STEAM_API_KEY=STEAM_API_SECRET
@@ -307,6 +307,7 @@ LASTFM_API_KEY=LASTFM_API_KEY
 SECRET=SECRET
 DEBUG=True
 ```
+
 
 ### Troubleshooting: I Updated and My Login Is Gone
 
@@ -359,8 +360,8 @@ If you want to contribute or customize the app locally:
    ```bash
    TMDB_API=your_key
    TVDB_API_KEY=your_tvdb_key
-   TVDB_PIN=your_tvdb_pin
-   MAL_API=your_key
+   TVDB_PIN=your_subscriber_pin (Optional)
+   MAL_API=your_mal_client_id
    IGDB_ID=your_id
    IGDB_SECRET=your_secret
    STEAM_API_KEY=your_key
