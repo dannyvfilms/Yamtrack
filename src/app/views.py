@@ -2386,11 +2386,26 @@ def progress_edit(request, media_type, instance_id):
 def media_list(request, media_type):
     """Return the media list page."""
     previous_sort = getattr(request.user, f"{media_type}_sort")
+    sorted_media_sort_choices = sorted(
+        MediaSortChoices.choices,
+        key=lambda choice: str(choice[1]).lower(),
+    )
     author_media_types = (
         MediaTypes.BOOK.value,
         MediaTypes.MANGA.value,
         MediaTypes.COMIC.value,
     )
+    critic_rating_media_types = {
+        MediaTypes.TV.value,
+        MediaTypes.SEASON.value,
+        MediaTypes.MOVIE.value,
+        MediaTypes.ANIME.value,
+        MediaTypes.MANGA.value,
+        MediaTypes.GAME.value,
+        MediaTypes.BOARDGAME.value,
+        MediaTypes.BOOK.value,
+        MediaTypes.COMIC.value,
+    }
     popularity_media_types = {
         MediaTypes.MOVIE.value,
         MediaTypes.TV.value,
@@ -2453,6 +2468,10 @@ def media_list(request, media_type):
         # Update the user's preference to the fallback
         request.user.update_preference(f"{media_type}_sort", "title")
         # Reset direction to the default for the fallback sort
+        direction_param = None
+    elif sort_filter == "critic_rating" and media_type not in critic_rating_media_types:
+        sort_filter = "title"
+        request.user.update_preference(f"{media_type}_sort", "title")
         direction_param = None
     elif sort_filter == "popularity" and media_type not in popularity_media_types:
         sort_filter = "title"
@@ -3228,6 +3247,11 @@ def media_list(request, media_type):
                     if rank is None:
                         rank = math.inf if direction == "asc" else -math.inf
                     return (rank, title.lower())
+                if sort_filter == "critic_rating":
+                    rating = getattr(item, "provider_rating", None)
+                    if rating is None:
+                        rating = math.inf if direction == "asc" else -math.inf
+                    return (rating, title.lower())
                 if sort_filter == "date_added":
                     return (_sortable_dt(getattr(media, "created_at", None)), title.lower())
                 if sort_filter == "start_date":
@@ -3342,11 +3366,12 @@ def media_list(request, media_type):
         "current_author": author_filter,
         "current_tag": tag_filter,
         "current_tag_exclude": tag_exclude_filter,
-        "sort_choices": MediaSortChoices.choices,
+        "sort_choices": sorted_media_sort_choices,
         "status_choices": MediaStatusChoices.choices,
         "rating_choices": MEDIA_RATING_CHOICES,
         "filter_data": filter_data,
         "is_artist_list": False,
+        "supports_critic_rating_sort": media_type in critic_rating_media_types,
     }
 
     # For music, show tracked artists instead of individual tracks
@@ -3538,12 +3563,13 @@ def media_list(request, media_type):
             "current_country": country_filter,
             "current_platform": platform_filter,
             "current_origin": origin_filter,
-            "sort_choices": MediaSortChoices.choices,
+            "sort_choices": sorted_media_sort_choices,
             "status_choices": MediaStatusChoices.choices,
             "rating_choices": MEDIA_RATING_CHOICES,
             "search_query": search_query,
             "filter_data": filter_data,
             "is_artist_list": False,
+            "supports_critic_rating_sort": False,
         }
 
     if media_type == MediaTypes.MUSIC.value:
@@ -3935,6 +3961,11 @@ def update_table_columns(request, media_type):
         MediaTypes.MOVIE.value,
         MediaTypes.TV.value,
         MediaTypes.ANIME.value,
+    }:
+        current_sort = "title"
+    elif current_sort == "critic_rating" and media_type in {
+        MediaTypes.MUSIC.value,
+        MediaTypes.PODCAST.value,
     }:
         current_sort = "title"
     elif current_sort == "popularity" and media_type not in {

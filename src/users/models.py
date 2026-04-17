@@ -41,6 +41,7 @@ class MediaSortChoices(models.TextChoices):
     """Choices for media list sort options."""
 
     SCORE = "score", "Rating"
+    CRITIC_RATING = "critic_rating", "Critic Rating"
     TITLE = "title", "Title"
     AUTHOR = "author", "Author"
     POPULARITY = "popularity", "Popularity"

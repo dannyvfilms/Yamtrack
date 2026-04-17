@@ -1263,7 +1263,6 @@ class MediaManager(models.Manager):
             "item__studios",
             "item__runtime",
             "item__provider_popularity",
-            "item__provider_rating",
             "item__provider_rating_count",
             "item__trakt_rating",
             "item__trakt_rating_count",
@@ -1596,6 +1595,14 @@ class MediaManager(models.Manager):
                 models.F("item__trakt_popularity_rank").asc(nulls_last=True)
                 if direction == "asc"
                 else models.F("item__trakt_popularity_rank").desc(nulls_last=True)
+            )
+            return queryset.order_by(order, models.functions.Lower("item__title"))
+
+        if sort_filter == "critic_rating":
+            order = (
+                models.F("item__provider_rating").asc(nulls_last=True)
+                if direction == "asc"
+                else models.F("item__provider_rating").desc(nulls_last=True)
             )
             return queryset.order_by(order, models.functions.Lower("item__title"))
 

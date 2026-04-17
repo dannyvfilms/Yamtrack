@@ -969,6 +969,7 @@
                   {% if value != 'time_to_beat' or media_type == MediaTypes.GAME.value %}
                   {% if value != 'plays' or media_type == MediaTypes.MOVIE.value or media_type == MediaTypes.TV.value or media_type == MediaTypes.ANIME.value %}
                   {% if value != 'time_watched' or media_type == MediaTypes.MOVIE.value or media_type == MediaTypes.TV.value or media_type == MediaTypes.ANIME.value %}
+                  {% if value != 'critic_rating' or supports_critic_rating_sort %}
                     {% if value != 'author' or filter_data.show_authors %}
                       <button hx-get="{% url 'medialist' media_type %}"
                               {% if media_list %} hx-target="{{ layout_class }}" {% else %} hx-target="#empty_list" {% endif %}
@@ -979,6 +980,7 @@
                               @click="toggleSort('{{ value }}'); open = false"
                               type="button">{{ label }}</button>
                     {% endif %}
+                  {% endif %}
                   {% endif %}
                   {% endif %}
                   {% endif %}

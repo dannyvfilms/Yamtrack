@@ -65,6 +65,13 @@ def _show_popularity(media_type: str, _current_sort: str, _user: Any) -> bool:
     )
 
 
+def _show_critic_rating(media_type: str, _current_sort: str, _user: Any) -> bool:
+    return media_type not in (
+        MediaTypes.MUSIC.value,
+        MediaTypes.PODCAST.value,
+    )
+
+
 def _show_last_watched(media_type: str, current_sort: str, _user: Any) -> bool:
     return media_type == MediaTypes.TV.value and current_sort != "time_left"
 
@@ -125,6 +132,16 @@ MEDIA_COLUMNS: list[ColumnDef] = [
         cell_template="app/components/cells/media_score_cell.html",
         table_types=("media",),
         default_order=30,
+    ),
+    ColumnDef(
+        key="critic_rating",
+        label="Critic Rating",
+        th_classes="p-2 text-center w-28",
+        td_classes="p-2 text-center",
+        cell_template="app/components/cells/critic_rating_cell.html",
+        table_types=("media",),
+        is_visible=_show_critic_rating,
+        default_order=35,
     ),
     ColumnDef(
         key="progress",

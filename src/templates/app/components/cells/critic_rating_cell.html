@@ -1,0 +1,5 @@
+{% if media.item.provider_rating is not None %}
+  <div class="font-medium">{{ media.item.provider_rating|floatformat:1 }}</div>
+{% else %}
+  <div class="text-gray-400">--</div>
+{% endif %}
