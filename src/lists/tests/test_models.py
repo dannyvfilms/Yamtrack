@@ -1,8 +1,20 @@
+from datetime import timedelta
+
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError
 from django.test import TestCase
+from django.utils import timezone
 
-from app.models import CollectionEntry, Game, Item, MediaTypes, Movie, Sources, Status, TV
+from app.models import (
+    CollectionEntry,
+    Game,
+    Item,
+    MediaTypes,
+    Movie,
+    Sources,
+    Status,
+    TV,
+)
 from lists.models import CustomList, CustomListItem
 
 
@@ -222,6 +234,94 @@ class CustomListManagerTest(TestCase):
         )
         smart_list.sync_smart_items()
         self.assertTrue(smart_list.items.filter(id=item.id).exists())
+
+    def test_smart_list_not_rated_excludes_rated_replays_on_full_sync(self):
+        """Full smart-list rebuilds should treat any scored replay as rated."""
+        item = Item.objects.create(
+            title="Replay Rated Movie",
+            media_id="1400",
+            media_type=MediaTypes.MOVIE.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/replay-rated-movie.jpg",
+        )
+        first_watch = timezone.now() - timedelta(days=14)
+        replay_watch = timezone.now() - timedelta(days=1)
+        Movie.objects.bulk_create(
+            [
+                Movie(
+                    item=item,
+                    user=self.user,
+                    status=Status.COMPLETED.value,
+                    progress=1,
+                    score=8,
+                    start_date=first_watch,
+                    end_date=first_watch,
+                ),
+                Movie(
+                    item=item,
+                    user=self.user,
+                    status=Status.COMPLETED.value,
+                    progress=1,
+                    score=None,
+                    start_date=replay_watch,
+                    end_date=replay_watch,
+                ),
+            ],
+        )
+
+        smart_list = CustomList.objects.create(
+            name="Unrated Movies",
+            owner=self.user,
+            is_smart=True,
+            smart_media_types=[MediaTypes.MOVIE.value],
+            smart_filters={"rating": "not_rated"},
+        )
+
+        smart_list.sync_smart_items()
+
+        self.assertFalse(smart_list.items.filter(id=item.id).exists())
+
+    def test_smart_list_not_rated_ignores_replay_on_incremental_sync(self):
+        """Replay saves should not add an item once any previous play is rated."""
+        item = Item.objects.create(
+            title="Incremental Replay Rated Movie",
+            media_id="1401",
+            media_type=MediaTypes.MOVIE.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/incremental-replay-rated-movie.jpg",
+        )
+        first_watch = timezone.now() - timedelta(days=10)
+        Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            score=9,
+            start_date=first_watch,
+            end_date=first_watch,
+        )
+
+        smart_list = CustomList.objects.create(
+            name="Incremental Unrated Movies",
+            owner=self.user,
+            is_smart=True,
+            smart_media_types=[MediaTypes.MOVIE.value],
+            smart_filters={"rating": "not_rated"},
+        )
+        self.assertFalse(smart_list.items.filter(id=item.id).exists())
+
+        replay_watch = timezone.now() - timedelta(hours=6)
+        Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            score=None,
+            start_date=replay_watch,
+            end_date=replay_watch,
+        )
+
+        self.assertFalse(smart_list.items.filter(id=item.id).exists())
 
     def test_smart_list_updates_on_media_status_and_delete(self):
         """Media save/delete events should incrementally add/remove smart memberships."""

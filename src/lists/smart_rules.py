@@ -398,6 +398,33 @@ def _collection_filter_context(owner) -> tuple[set[int], set[tuple[str, str]]]:
     return collected_item_ids, collected_episode_pairs
 
 
+def _filter_item_ids_by_rating(
+    owner,
+    media_type: str,
+    item_ids: Iterable[int],
+    rating_filter: str,
+) -> set[int]:
+    """Filter candidate item ids using the same rated/unrated semantics as media lists."""
+    candidate_item_ids = {item_id for item_id in item_ids if item_id}
+    if not candidate_item_ids or rating_filter == "all":
+        return candidate_item_ids
+
+    model = apps.get_model("app", media_type)
+    rated_item_ids = set(
+        model.objects.filter(
+            user=owner,
+            item_id__in=candidate_item_ids,
+            score__isnull=False,
+        ).values_list("item_id", flat=True),
+    )
+
+    if rating_filter == "rated":
+        return candidate_item_ids & rated_item_ids
+    if rating_filter == "not_rated":
+        return candidate_item_ids - rated_item_ids
+    return candidate_item_ids
+
+
 def collect_matching_item_ids(owner, normalized_rules: dict) -> set[int]:
     """Return matching Item IDs for a normalized smart-rule definition."""
     target_media_types = _target_media_types(owner, normalized_rules.get("media_types", []))
@@ -438,10 +465,16 @@ def collect_matching_item_ids(owner, normalized_rules: dict) -> set[int]:
             search_query=normalized_rules.get("search", ""),
         )
 
-        if rating_filter == "rated":
-            queryset = queryset.filter(score__isnull=False)
-        elif rating_filter == "not_rated":
-            queryset = queryset.filter(score__isnull=True)
+        candidate_item_ids = _filter_item_ids_by_rating(
+            owner,
+            media_type,
+            queryset.values_list("item_id", flat=True),
+            rating_filter,
+        )
+        if not candidate_item_ids:
+            continue
+
+        queryset = queryset.filter(item_id__in=candidate_item_ids)
 
         for entry in queryset.iterator():
             item = getattr(entry, "item", None)
@@ -494,10 +527,8 @@ def item_matches_rules(
     ).filter(item_id=item.id)
 
     rating_filter = normalized_rules.get("rating", "all")
-    if rating_filter == "rated":
-        queryset = queryset.filter(score__isnull=False)
-    elif rating_filter == "not_rated":
-        queryset = queryset.filter(score__isnull=True)
+    if not _filter_item_ids_by_rating(owner, item.media_type, [item.id], rating_filter):
+        return False
 
     today = timezone.localdate()
     if not _matches_item_filters(item, normalized_rules, today):
