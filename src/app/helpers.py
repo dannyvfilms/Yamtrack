@@ -1,3 +1,4 @@
+import re
 from urllib.parse import parse_qsl, urlencode, urlparse
 
 from django.apps import apps
@@ -12,6 +13,12 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from app.models import BasicMedia, CollectionEntry, MediaTypes, Status
 
 _DEFAULT_IMAGE_SENTINEL = object()
+_ENCODED_NAVIGATION_SEPARATOR_PATTERNS = (
+    (re.compile(r"%3F", re.IGNORECASE), "?"),
+    (re.compile(r"%26", re.IGNORECASE), "&"),
+    (re.compile(r"%3D", re.IGNORECASE), "="),
+    (re.compile(r"%23", re.IGNORECASE), "#"),
+)
 
 
 def minutes_to_hhmm(total_minutes):
@@ -72,8 +79,8 @@ def get_tmdb_backdrop_image(media_type, media_id):
 
 def redirect_back(request):
     """Redirect to the previous page, removing the 'page' parameter if present."""
-    if url_has_allowed_host_and_scheme(request.GET.get("next"), None):
-        next_url = request.GET["next"]
+    next_url = normalize_navigation_url(request.GET.get("next"))
+    if url_has_allowed_host_and_scheme(next_url, None):
 
         # Parse the URL
         parsed_url = urlparse(next_url)
@@ -94,6 +101,18 @@ def redirect_back(request):
         return HttpResponseRedirect(clean_url)
 
     return redirect("home")
+
+
+def normalize_navigation_url(url):
+    """Decode encoded query separators in return/next URLs from modal form posts."""
+    normalized_url = (url or "").strip()
+    if not normalized_url or "%" not in normalized_url:
+        return normalized_url
+
+    for pattern, replacement in _ENCODED_NAVIGATION_SEPARATOR_PATTERNS:
+        normalized_url = pattern.sub(replacement, normalized_url)
+
+    return normalized_url
 
 
 def form_error_messages(form, request):

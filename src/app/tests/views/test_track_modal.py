@@ -546,6 +546,42 @@ class TrackModalViewTests(TestCase):
             "2024-01-15",
         )
 
+    def test_update_manual_item_metadata_redirects_to_normalized_return_url(self):
+        """Custom metadata saves should restore encoded list query separators."""
+        MetadataProviderPreference.objects.create(
+            user=self.user,
+            item=self.item,
+            provider=Sources.MANUAL.value,
+        )
+
+        response = self.client.post(
+            reverse("update_manual_item_metadata", args=[self.item.id]),
+            {
+                "return_url": (
+                    "/medialist/movie%3Fstatus%3DPlanning&sort%3Drelease_date"
+                    "&direction%3Ddesc&layout%3Dgrid"
+                ),
+                "metadata-title": "Updated Test Movie",
+                "metadata-original_title": "",
+                "metadata-localized_title": "",
+                "metadata-image_url": "https://images.example.com/updated-test-movie.jpg",
+                "metadata-synopsis": "",
+                "metadata-genres": "",
+                "metadata-release_date": "",
+                "metadata-status": "",
+                "metadata-runtime": "",
+                "metadata-studios": "",
+                "metadata-country": "",
+                "metadata-languages": "",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.url,
+            "/medialist/movie?status=Planning&sort=release_date&direction=desc&layout=grid",
+        )
+
     @override_settings(TVDB_API_KEY="test-tvdb-key")
     @patch("app.views.metadata_resolution.resolve_detail_metadata")
     @patch("app.providers.services.get_media_metadata")

@@ -5963,7 +5963,7 @@ def media_details(
 def update_metadata_provider_preference(request, source, media_type, media_id):
     """Persist a per-item metadata display-provider override."""
     provider = (request.POST.get("provider") or "").strip()
-    return_url = (request.POST.get("return_url") or "").strip()
+    return_url = helpers.normalize_navigation_url(request.POST.get("return_url"))
 
     tracking_media_type = metadata_resolution.get_tracking_media_type(
         media_type,
@@ -6031,7 +6031,7 @@ def update_metadata_provider_preference(request, source, media_type, media_id):
 @require_POST
 def update_item_image(request, item_id):
     """Persist an image URL override for an item the user already tracks."""
-    return_url = (request.POST.get("return_url") or "").strip()
+    return_url = helpers.normalize_navigation_url(request.POST.get("return_url"))
     image_url = (request.POST.get("image_url") or "").strip()
 
     item = get_object_or_404(Item, id=item_id)
@@ -6068,7 +6068,7 @@ def update_item_image(request, item_id):
 @require_POST
 def update_manual_item_metadata(request, item_id):
     """Persist custom metadata overrides for a tracked manual item."""
-    return_url = (request.POST.get("return_url") or "").strip()
+    return_url = helpers.normalize_navigation_url(request.POST.get("return_url"))
     item = get_object_or_404(Item, id=item_id)
     media_model = apps.get_model("app", item.media_type)
     if not media_model.objects.filter(user=request.user, item=item).exists():
@@ -6154,7 +6154,7 @@ def _resolve_current_display_metadata_payload(
 @require_POST
 def migrate_grouped_anime(request, source, media_type, media_id):
     """Explicitly migrate a flat MAL anime entry into grouped TV-style tracking."""
-    return_url = (request.POST.get("return_url") or "").strip()
+    return_url = helpers.normalize_navigation_url(request.POST.get("return_url"))
     provider = (request.POST.get("provider") or "").strip()
 
     item = get_object_or_404(

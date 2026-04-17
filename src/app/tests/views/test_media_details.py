@@ -2978,6 +2978,57 @@ class MediaDetailsViewTests(TestCase):
             "1999-03-31",
         )
 
+    @patch("app.views.services.get_media_metadata")
+    def test_update_metadata_provider_preference_redirects_to_normalized_return_url(
+        self,
+        mock_get_metadata,
+    ):
+        """Provider saves should restore encoded list query separators."""
+        item = Item.objects.create(
+            media_id="603",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="The Matrix",
+            image="https://example.com/provider-matrix.jpg",
+        )
+        mock_get_metadata.return_value = {
+            "media_id": "603",
+            "source": Sources.TMDB.value,
+            "media_type": MediaTypes.MOVIE.value,
+            "title": "The Matrix",
+            "image": "https://example.com/provider-matrix.jpg",
+            "max_progress": 1,
+            "details": {},
+            "related": {},
+        }
+
+        response = self.client.post(
+            reverse(
+                "update_metadata_provider_preference",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "603",
+                },
+            ),
+            {
+                "provider": Sources.MANUAL.value,
+                "return_url": (
+                    "/medialist/movie%3Fstatus%3DPlanning&sort%3Drelease_date"
+                    "&direction%3Ddesc&layout%3Dgrid"
+                ),
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.url,
+            "/medialist/movie?status=Planning&sort=release_date&direction=desc&layout=grid",
+        )
+
+        preference = MetadataProviderPreference.objects.get(user=self.user, item=item)
+        self.assertEqual(preference.provider, Sources.MANUAL.value)
+
     @patch("app.views.metadata_resolution.resolve_detail_metadata")
     @patch("app.providers.services.get_media_metadata")
     def test_migrated_flat_anime_shows_grouped_banner(

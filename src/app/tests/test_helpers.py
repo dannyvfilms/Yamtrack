@@ -10,6 +10,7 @@ from app.helpers import (
     enrich_items_with_user_data,
     form_error_messages,
     minutes_to_hhmm,
+    normalize_navigation_url,
     redirect_back,
 )
 
@@ -64,6 +65,15 @@ class HelpersTest(TestCase):
 
         mock_redirect.assert_called_once_with("home")
         self.assertEqual(result, "home_redirect")
+
+    def test_normalize_navigation_url_decodes_encoded_query_separators(self):
+        """Navigation URLs from modal forms should restore their query separators."""
+        self.assertEqual(
+            normalize_navigation_url(
+                "/medialist/movie%3Fstatus%3DPlanning&sort%3Drelease_date&direction%3Ddesc&layout%3Dgrid",
+            ),
+            "/medialist/movie?status=Planning&sort=release_date&direction=desc&layout=grid",
+        )
 
     @patch("app.helpers.messages")
     def test_form_error_messages(self, mock_messages):
