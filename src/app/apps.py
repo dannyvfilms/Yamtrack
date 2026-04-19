@@ -36,6 +36,9 @@ class AppConfig(AppConfig):
         discover_cache_available = self._add_startup_cache_key(
             "discover_tab_startup_scheduled",
         )
+        history_cache_available = self._add_startup_cache_key(
+            "history_day_coverage_startup_scheduled",
+        )
 
         if (
             not settings.TESTING
@@ -53,6 +56,9 @@ class AppConfig(AppConfig):
             and discover_cache_available
         ):
             self._schedule_discover_startup_warmup()
+
+        if not settings.TESTING and not is_celery_worker and history_cache_available:
+            self._schedule_history_day_coverage_warmup()
 
         if not settings.TESTING and not is_celery_worker:
             self._schedule_genre_backfill_reconcile()
@@ -75,7 +81,10 @@ class AppConfig(AppConfig):
             tasks = import_module("app.tasks")
 
             # Delay startup work until Django is fully initialized.
-            tasks.populate_runtime_data_continuous.apply_async(countdown=60)
+            tasks.populate_runtime_data_continuous.apply_async(
+                countdown=60,
+                priority=getattr(settings, "CELERY_TASK_PRIORITY_BACKGROUND", 1),
+            )
             logger.info("Scheduled runtime population task to run on startup")
         except Exception as error:  # noqa: BLE001
             logger.warning("Failed to schedule runtime population task: %s", error)
@@ -84,10 +93,25 @@ class AppConfig(AppConfig):
         """Schedule default Discover tab warmup shortly after startup."""
         try:
             tasks = import_module("app.tasks")
-            tasks.warm_discover_startup_tabs.apply_async(countdown=90)
+            tasks.warm_discover_startup_tabs.apply_async(
+                countdown=90,
+                priority=getattr(settings, "CELERY_TASK_PRIORITY_BACKGROUND", 1),
+            )
             logger.info("Scheduled Discover startup warmup")
         except Exception as error:  # noqa: BLE001
             logger.warning("Failed to schedule Discover startup warmup: %s", error)
+
+    def _schedule_history_day_coverage_warmup(self):
+        """Schedule low-priority history day cache coverage repair after startup."""
+        try:
+            tasks = import_module("app.tasks")
+            tasks.warm_history_day_cache_coverage.apply_async(
+                countdown=120,
+                priority=getattr(settings, "CELERY_TASK_PRIORITY_BACKGROUND", 1),
+            )
+            logger.info("Scheduled history day coverage warmup")
+        except Exception as error:  # noqa: BLE001
+            logger.warning("Failed to schedule history day coverage warmup: %s", error)
 
     def _schedule_genre_backfill_reconcile(self):
         """Schedule a one-time genre backfill reconcile for the current strategy version."""
@@ -105,6 +129,7 @@ class AppConfig(AppConfig):
                 tasks.reconcile_genre_backfill.apply_async(
                     kwargs={"strategy_version": tasks.GENRE_BACKFILL_VERSION},
                     countdown=0,
+                    priority=getattr(settings, "CELERY_TASK_PRIORITY_BACKGROUND", 1),
                 )
             except Exception:
                 cache.delete(version_key)
@@ -148,6 +173,7 @@ class AppConfig(AppConfig):
             tasks.reconcile_trakt_popularity.apply_async(
                 kwargs={"score_version": TRAKT_POPULARITY_SCORE_VERSION},
                 countdown=0 if is_version_recompute else 30,
+                priority=getattr(settings, "CELERY_TASK_PRIORITY_BACKGROUND", 1),
             )
 
             # Set keys only after successful queue so a failed apply_async

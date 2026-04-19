@@ -1,5 +1,7 @@
+from datetime import timedelta
 from unittest.mock import patch
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.test import TestCase
@@ -47,10 +49,12 @@ class HistoryMonthCacheTests(TestCase):
         index_days = history_cache.build_history_index(self.user, self.logging_style)
         return [day_key for day_key in index_days if day_key.startswith(month_prefix)]
 
+    @patch("app.history_cache.schedule_history_day_cache_coverage")
     @patch("app.history_cache.schedule_history_refresh")
     def test_history_view_repairs_cold_month_inline_without_scheduling_refresh(
         self,
         mock_schedule_history_refresh,
+        mock_schedule_history_day_cache_coverage,
     ):
         response = self.client.get(reverse("history"))
 
@@ -71,16 +75,24 @@ class HistoryMonthCacheTests(TestCase):
         cached_payloads = cache.get_many(cache_keys)
         self.assertEqual(len(cached_payloads), len(cache_keys))
         self.assertEqual(len(response.context["history_days"]), len(active_month_day_keys))
+        mock_schedule_history_day_cache_coverage.assert_called_once_with(
+            self.user.id,
+            self.logging_style,
+            countdown=15,
+        )
 
+    @patch("app.history_cache.schedule_history_day_cache_coverage")
     @patch("app.history_cache.schedule_history_refresh")
     def test_history_view_repairs_partial_month_miss_inline_without_refreshing(
         self,
         mock_schedule_history_refresh,
+        mock_schedule_history_day_cache_coverage,
     ):
         first_response = self.client.get(reverse("history"))
 
         self.assertEqual(first_response.status_code, 200)
         self.assertFalse(first_response.context["history_refreshing"])
+        mock_schedule_history_day_cache_coverage.reset_mock()
 
         cache.delete_many(
             [
@@ -114,6 +126,11 @@ class HistoryMonthCacheTests(TestCase):
         self.assertEqual(
             len(response.context["history_days"]),
             len(self._active_month_day_keys()),
+        )
+        mock_schedule_history_day_cache_coverage.assert_called_once_with(
+            self.user.id,
+            self.logging_style,
+            countdown=15,
         )
 
     def test_refresh_history_cache_repairs_missing_index_day_payloads(self):
@@ -208,3 +225,91 @@ class HistoryRefreshSchedulingTests(TestCase):
 
         self.assertIsNone(cache.get(lock_key))
         self.assertIsNone(cache.get(dedupe_key))
+
+    @patch("app.tasks.refresh_history_cache_task.apply_async")
+    def test_schedule_history_refresh_uses_interactive_priority(self, mock_apply_async):
+        scheduled = history_cache.schedule_history_refresh(
+            self.user.id,
+            "repeats",
+            allow_inline=False,
+        )
+
+        self.assertTrue(scheduled)
+        mock_apply_async.assert_called_once()
+        self.assertEqual(
+            mock_apply_async.call_args.kwargs["priority"],
+            settings.CELERY_TASK_PRIORITY_INTERACTIVE,
+        )
+
+    @patch("app.tasks.repair_history_day_cache_coverage_task.apply_async")
+    def test_schedule_history_day_cache_coverage_uses_background_priority(
+        self,
+        mock_apply_async,
+    ):
+        scheduled = history_cache.schedule_history_day_cache_coverage(
+            self.user.id,
+            "repeats",
+            debounce_seconds=0,
+        )
+
+        self.assertTrue(scheduled)
+        mock_apply_async.assert_called_once()
+        self.assertEqual(
+            mock_apply_async.call_args.kwargs["priority"],
+            settings.CELERY_TASK_PRIORITY_BACKGROUND,
+        )
+
+    def test_repair_history_day_cache_coverage_repairs_in_batches(self):
+        current_item = Item.objects.create(
+            media_id="movie-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Current Movie",
+            image="http://example.com/movie-1.jpg",
+        )
+        Movie.objects.create(
+            item=current_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            start_date=timezone.now(),
+            end_date=timezone.now(),
+        )
+
+        item = Item.objects.create(
+            media_id="movie-2",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Second Movie",
+            image="http://example.com/movie-2.jpg",
+        )
+        previous_day = timezone.now() - timedelta(days=1)
+        Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            start_date=previous_day,
+            end_date=previous_day,
+        )
+
+        logging_style = history_cache._normalize_logging_style(None, self.user)
+        history_cache.refresh_history_cache(self.user.id, logging_style=logging_style)
+        index_entry = cache.get(history_cache._cache_key(self.user.id, logging_style))
+        self.assertIsNotNone(index_entry)
+        day_keys = index_entry["days"][:2]
+        cache.delete_many(
+            [
+                history_cache._day_cache_key(self.user.id, logging_style, day_key)
+                for day_key in day_keys
+            ],
+        )
+
+        result = history_cache.repair_history_day_cache_coverage(
+            self.user.id,
+            logging_style=logging_style,
+            batch_size=1,
+        )
+
+        self.assertEqual(result["rebuilt"], 1)
+        self.assertEqual(result["remaining"], 1)

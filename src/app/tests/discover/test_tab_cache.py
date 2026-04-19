@@ -88,6 +88,7 @@ class DiscoverTabCacheTests(TestCase):
             show_more=False,
             debounce_seconds=tab_cache.DISCOVER_PRIORITY_REFRESH_DEBOUNCE_SECONDS,
             countdown=tab_cache.DISCOVER_PRIORITY_REFRESH_COUNTDOWN,
+            priority=tab_cache.DISCOVER_TASK_PRIORITY_INTERACTIVE,
         )
 
     @patch("app.discover.tab_cache.schedule_tab_refresh", return_value=True)
@@ -107,6 +108,7 @@ class DiscoverTabCacheTests(TestCase):
             show_more=False,
             debounce_seconds=tab_cache.DISCOVER_PRIORITY_REFRESH_DEBOUNCE_SECONDS,
             countdown=tab_cache.DISCOVER_PRIORITY_REFRESH_COUNTDOWN,
+            priority=tab_cache.DISCOVER_TASK_PRIORITY_INTERACTIVE,
         )
 
     @patch("app.discover.service.get_discover_rows")
@@ -160,6 +162,7 @@ class DiscoverTabCacheTests(TestCase):
             show_more=False,
             debounce_seconds=tab_cache.DISCOVER_PRIORITY_REFRESH_DEBOUNCE_SECONDS,
             countdown=tab_cache.DISCOVER_PRIORITY_REFRESH_COUNTDOWN,
+            priority=tab_cache.DISCOVER_TASK_PRIORITY_INTERACTIVE,
         )
 
     @patch("app.tasks.refresh_discover_tab_cache.apply_async")
@@ -171,6 +174,10 @@ class DiscoverTabCacheTests(TestCase):
         self.assertTrue(first)
         self.assertFalse(second)
         mock_apply_async.assert_called_once()
+        self.assertEqual(
+            mock_apply_async.call_args.kwargs["priority"],
+            settings.CELERY_TASK_PRIORITY_INTERACTIVE,
+        )
 
     @patch("app.tasks.refresh_discover_tab_cache.apply_async")
     @override_settings(DISCOVER_TASKS_EAGER_REFRESH=True)
@@ -197,6 +204,26 @@ class DiscoverTabCacheTests(TestCase):
 
         self.assertTrue(scheduled)
         mock_apply_async.assert_called_once()
+        self.assertEqual(
+            mock_apply_async.call_args.kwargs["priority"],
+            settings.CELERY_TASK_PRIORITY_INTERACTIVE,
+        )
+
+    @patch("app.tasks.refresh_discover_tab_cache.apply_async")
+    @override_settings(DISCOVER_TASKS_EAGER_REFRESH=True)
+    def test_schedule_user_tab_warmup_uses_nonblocking_priority(self, mock_apply_async):
+        scheduled = tab_cache.schedule_user_tab_warmup(
+            self.user,
+            media_types=["movie"],
+            prioritize_media_type="movie",
+        )
+
+        self.assertEqual(scheduled, 1)
+        mock_apply_async.assert_called_once()
+        self.assertEqual(
+            mock_apply_async.call_args.kwargs["priority"],
+            settings.CELERY_TASK_PRIORITY_FOLLOWUP,
+        )
 
     @patch("app.discover.tab_cache.has_fresh_tab_cache")
     @patch("app.discover.tab_cache.schedule_tab_refresh")
@@ -467,6 +494,7 @@ class DiscoverTabCacheTests(TestCase):
             countdown=tab_cache.DISCOVER_PRIORITY_REFRESH_COUNTDOWN,
             force=False,
             clear_provider_cache=False,
+            priority=tab_cache.DISCOVER_TASK_PRIORITY_INTERACTIVE,
         )
 
     @patch("app.discover.tab_cache.schedule_tab_refresh", return_value=True)
@@ -580,6 +608,7 @@ class DiscoverTabCacheTests(TestCase):
                     show_more=False,
                     debounce_seconds=tab_cache.DISCOVER_PRIORITY_REFRESH_DEBOUNCE_SECONDS,
                     countdown=tab_cache.DISCOVER_PRIORITY_REFRESH_COUNTDOWN,
+                    priority=tab_cache.DISCOVER_TASK_PRIORITY_FOLLOWUP,
                 ),
                 call(
                     self.user.id,
@@ -587,6 +616,7 @@ class DiscoverTabCacheTests(TestCase):
                     show_more=False,
                     debounce_seconds=tab_cache.DISCOVER_WARM_SIBLING_DEBOUNCE_SECONDS,
                     countdown=tab_cache.DISCOVER_WARM_SIBLING_COUNTDOWN + 1,
+                    priority=tab_cache.DISCOVER_TASK_PRIORITY_BACKGROUND,
                 ),
                 call(
                     self.user.id,
@@ -594,6 +624,7 @@ class DiscoverTabCacheTests(TestCase):
                     show_more=False,
                     debounce_seconds=tab_cache.DISCOVER_WARM_SIBLING_DEBOUNCE_SECONDS,
                     countdown=tab_cache.DISCOVER_WARM_SIBLING_COUNTDOWN + 2,
+                    priority=tab_cache.DISCOVER_TASK_PRIORITY_BACKGROUND,
                 ),
             ],
         )

@@ -62,6 +62,10 @@ STATISTICS_SCHEDULE_DEDUPE_TTL = getattr(settings, "STATISTICS_SCHEDULE_DEDUPE_T
 STATISTICS_REFRESH_LOCK_MAX_AGE = getattr(settings, "STATISTICS_REFRESH_LOCK_MAX_AGE", timedelta(minutes=5))
 STATISTICS_METADATA_REFRESH_TTL = getattr(settings, "STATISTICS_METADATA_REFRESH_TTL", 60 * 10)
 STATISTICS_METADATA_REFRESH_RECENT_SECONDS = getattr(settings, "STATISTICS_METADATA_REFRESH_RECENT_SECONDS", 60)
+STATISTICS_TASK_PRIORITY_INTERACTIVE = getattr(settings, "CELERY_TASK_PRIORITY_INTERACTIVE", 9)
+STATISTICS_TASK_PRIORITY_FOLLOWUP = getattr(settings, "CELERY_TASK_PRIORITY_FOLLOWUP", 7)
+STATISTICS_TASK_PRIORITY_BACKGROUND = getattr(settings, "CELERY_TASK_PRIORITY_BACKGROUND", 1)
+STATISTICS_ALL_TIME_REFRESH_DELAY = getattr(settings, "STATISTICS_ALL_TIME_REFRESH_DELAY", 45)
 
 # Predefined ranges that can be cached
 PREDEFINED_RANGES = [
@@ -124,6 +128,18 @@ def _lock_is_stale(value) -> bool:
 def _schedule_dedupe_key(user_id: int, range_name: str, history_version: str) -> str:
     normalized = _normalize_range_name(range_name)
     return f"{STATISTICS_SCHEDULE_DEDUPE_PREFIX}:{user_id}:{history_version}:{normalized}"
+
+
+def _preferred_range_for_user(user_id: int) -> str:
+    user_model = get_user_model()
+    preferred_range = (
+        user_model.objects.filter(id=user_id)
+        .values_list("statistics_default_range", flat=True)
+        .first()
+    )
+    if preferred_range not in PREDEFINED_RANGES:
+        return "Last 12 Months"
+    return preferred_range
 
 
 def _day_cache_key(user_id: int, day_value: date | datetime | str) -> str:
@@ -4512,6 +4528,7 @@ def schedule_statistics_refresh(
     debounce_seconds: int = 30,
     countdown: int = 3,
     allow_inline: bool = True,
+    priority: int | None = None,
 ):
     """Queue a background refresh for a user's statistics cache.
     
@@ -4559,7 +4576,15 @@ def schedule_statistics_refresh(
     try:
         from app.tasks import refresh_statistics_cache_task
 
-        refresh_statistics_cache_task.apply_async(args=[user_id, range_name], countdown=countdown)
+        refresh_statistics_cache_task.apply_async(
+            args=[user_id, range_name],
+            countdown=countdown,
+            priority=(
+                STATISTICS_TASK_PRIORITY_INTERACTIVE
+                if priority is None
+                else priority
+            ),
+        )
         return True
     except Exception as exc:  # pragma: no cover - Celery not available
         if allow_inline:
@@ -4583,50 +4608,60 @@ def schedule_statistics_refresh(
         return False
 
 
-def schedule_all_ranges_refresh(user_id: int, debounce_seconds: int = 30, countdown: int = 3):
-    """Schedule background refresh for all predefined ranges for a user.
-    
-    This is useful when media changes and we want to refresh all ranges.
-    Optimizes by calculating "All Time" first to pre-populate runtime data,
-    then prioritizes the user's preferred range before scheduling the rest in parallel.
-    
-    Args:
-        user_id: User ID
-        debounce_seconds: Seconds to debounce refresh requests
-        countdown: Seconds to delay task execution (default 3)
+def schedule_all_ranges_refresh(
+    user_id: int,
+    debounce_seconds: int = 30,
+    countdown: int = 3,
+    preferred_priority: int | None = None,
+    all_time_priority: int | None = None,
+):
+    """Schedule proactive statistics refresh for the ranges most likely to be reopened.
+
+    Media-change flows no longer enqueue every predefined range. They refresh the
+    user's preferred range first and only keep "All Time" warm if it already exists.
+    Less-frequently used ranges stay lazily repairable on demand via history_version.
     """
-    # Use a single lock for all ranges to prevent thundering herd
     all_ranges_lock_key = f"{STATISTICS_REFRESH_LOCK_PREFIX}_all_{user_id}"
     if debounce_seconds and not cache.add(all_ranges_lock_key, True, debounce_seconds):
-        # Already scheduled recently, skip
         return
 
-    # Schedule "All Time" with same countdown as history refresh (countdown=3)
-    # This ensures history and "All Time" run together, then other ranges follow
     all_time_range = "All Time"
-    user_model = get_user_model()
-    preferred_range = (
-        user_model.objects.filter(id=user_id)
-        .values_list("statistics_default_range", flat=True)
-        .first()
+    preferred_range = _preferred_range_for_user(user_id)
+    preferred_priority = (
+        STATISTICS_TASK_PRIORITY_FOLLOWUP
+        if preferred_priority is None
+        else preferred_priority
     )
-    if preferred_range not in PREDEFINED_RANGES:
-        preferred_range = "Last 12 Months"
-    if preferred_range == all_time_range:
-        preferred_range = None
+    all_time_priority = (
+        STATISTICS_TASK_PRIORITY_BACKGROUND
+        if all_time_priority is None
+        else all_time_priority
+    )
+    should_refresh_all_time = (
+        preferred_range != all_time_range
+        and cache.get(_cache_key(user_id, all_time_range)) is not None
+    )
 
     logger.debug(
-        "Scheduling statistics refreshes for user %s (all_time=%s preferred=%s)",
+        "Scheduling proactive statistics refreshes for user %s (preferred=%s refresh_all_time=%s)",
         user_id,
-        all_time_range,
         preferred_range,
+        should_refresh_all_time,
     )
-    schedule_statistics_refresh(user_id, all_time_range, debounce_seconds=debounce_seconds, countdown=countdown)
-    if preferred_range:
-        schedule_statistics_refresh(user_id, preferred_range, debounce_seconds=debounce_seconds, countdown=countdown + 1)
-
-    # Schedule remaining ranges in parallel with longer countdown
-    for range_name in PREDEFINED_RANGES:
-        if range_name in (all_time_range, preferred_range):
-            continue
-        schedule_statistics_refresh(user_id, range_name, debounce_seconds=debounce_seconds, countdown=countdown + 2)
+    schedule_statistics_refresh(
+        user_id,
+        preferred_range,
+        debounce_seconds=debounce_seconds,
+        countdown=countdown,
+        allow_inline=False,
+        priority=preferred_priority,
+    )
+    if should_refresh_all_time:
+        schedule_statistics_refresh(
+            user_id,
+            all_time_range,
+            debounce_seconds=debounce_seconds,
+            countdown=countdown + STATISTICS_ALL_TIME_REFRESH_DELAY,
+            allow_inline=False,
+            priority=all_time_priority,
+        )

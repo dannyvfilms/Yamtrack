@@ -924,19 +924,32 @@ SELECT2_THEME = "tailwindcss-4"
 CELERY_BROKER_URL = REDIS_URL
 CELERY_TIMEZONE = TIME_ZONE
 
+CELERY_BROKER_TRANSPORT_OPTIONS = {
+    # Let interactive refreshes jump ahead of maintenance batches in Redis.
+    "queue_order_strategy": "priority",
+    "priority_steps": list(range(10)),
+    "sep": ":",
+}
 if REDIS_PREFIX:
-    CELERY_BROKER_TRANSPORT_OPTIONS = {
+    CELERY_BROKER_TRANSPORT_OPTIONS.update(
+        {
         "global_keyprefix": f"{REDIS_PREFIX}",
         "queue_prefix": f"{REDIS_PREFIX}",
-    }
+        },
+    )
 
 CELERY_WORKER_HIJACK_ROOT_LOGGER = False
 CELERY_WORKER_CONCURRENCY = 1
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_WORKER_MAX_TASKS_PER_CHILD = 50
 CELERY_BEAT_SYNC_EVERY = 10
 
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 60 * 60 * 6  # 6 hours
+CELERY_TASK_DEFAULT_PRIORITY = 5
+CELERY_TASK_PRIORITY_INTERACTIVE = 9
+CELERY_TASK_PRIORITY_FOLLOWUP = 7
+CELERY_TASK_PRIORITY_BACKGROUND = 1
 
 CELERY_RESULT_EXTENDED = True
 CELERY_RESULT_BACKEND = REDIS_URL
@@ -948,6 +961,18 @@ CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 CELERY_TASK_SERIALIZER = "pickle"
 # https://docs.celeryq.dev/en/stable/userguide/configuration.html#std-setting-accept_content
 CELERY_ACCEPT_CONTENT = ["application/json", "application/x-python-serialize", "application/x-pickle"]
+CELERY_TASK_ROUTES = {
+    "app.tasks.populate_*": {"priority": CELERY_TASK_PRIORITY_BACKGROUND},
+    "app.tasks.reconcile_*": {"priority": CELERY_TASK_PRIORITY_BACKGROUND},
+    "Backfill item metadata": {"priority": CELERY_TASK_PRIORITY_BACKGROUND},
+    "Ensure genre backfill reconcile": {"priority": CELERY_TASK_PRIORITY_BACKGROUND},
+    "Nightly metadata quality backfill": {"priority": CELERY_TASK_PRIORITY_BACKGROUND},
+    "Warm Discover API Cache": {"priority": CELERY_TASK_PRIORITY_BACKGROUND},
+    "Warm Discover Startup Tabs": {"priority": CELERY_TASK_PRIORITY_BACKGROUND},
+    "Warm History Day Cache Coverage": {"priority": CELERY_TASK_PRIORITY_BACKGROUND},
+    "Repair History Day Cache Coverage": {"priority": CELERY_TASK_PRIORITY_BACKGROUND},
+    "Refresh Discover Profiles": {"priority": CELERY_TASK_PRIORITY_BACKGROUND},
+}
 
 
 DAILY_DIGEST_HOUR = config(
@@ -975,6 +1000,7 @@ CELERY_BEAT_SCHEDULE = {
             "batch_size": 1000,
             "game_length_batch_size": 200,
         },  # Process 1000 items per run plus a bounded HLTB enrichment sweep.
+        "options": {"priority": CELERY_TASK_PRIORITY_BACKGROUND},
     },
     "backfill_item_metadata_incremental": {
         "task": "Backfill item metadata",
@@ -983,6 +1009,7 @@ CELERY_BEAT_SCHEDULE = {
             "batch_size": 150,
             "game_length_batch_size": 25,
         },
+        "options": {"priority": CELERY_TASK_PRIORITY_BACKGROUND},
     },
     "nightly_metadata_quality_backfill": {
         "task": "Nightly metadata quality backfill",
@@ -995,6 +1022,7 @@ CELERY_BEAT_SCHEDULE = {
             "credits_scan_multiplier": 20,
             "trakt_popularity_batch_size": 300,
         },
+        "options": {"priority": CELERY_TASK_PRIORITY_BACKGROUND},
     },
     "ensure_genre_backfill_reconcile": {
         "task": "Ensure genre backfill reconcile",
@@ -1002,14 +1030,22 @@ CELERY_BEAT_SCHEDULE = {
         "kwargs": {
             "batch_size": 1500,
         },
+        "options": {"priority": CELERY_TASK_PRIORITY_BACKGROUND},
     },
     "warm_discover_api_cache": {
         "task": "Warm Discover API Cache",
         "schedule": 60 * 60,  # every 1 hour
+        "options": {"priority": CELERY_TASK_PRIORITY_BACKGROUND},
+    },
+    "warm_history_day_cache_coverage": {
+        "task": "Warm History Day Cache Coverage",
+        "schedule": 60 * 60 * 2,  # every 2 hours
+        "options": {"priority": CELERY_TASK_PRIORITY_BACKGROUND},
     },
     "refresh_discover_profiles": {
         "task": "Refresh Discover Profiles",
         "schedule": crontab(hour=4, minute=0),  # every day at 4 AM
+        "options": {"priority": CELERY_TASK_PRIORITY_BACKGROUND},
     },
 }
 

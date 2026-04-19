@@ -56,7 +56,7 @@ HISTORY_CACHE_TIMEOUT = 60 * 60 * 6  # 6 hours for the history index
 HISTORY_DAY_CACHE_TIMEOUT = getattr(
     settings,
     "HISTORY_DAY_CACHE_TIMEOUT",
-    60 * 60 * 24 * 30,
+    None,
 )
 HISTORY_STALE_AFTER = _coerce_timedelta(
     getattr(settings, "HISTORY_CACHE_STALE_AFTER", None),
@@ -71,6 +71,17 @@ HISTORY_COLD_MISS_WARM_DAYS = getattr(
 )
 HISTORY_REFRESH_LOCK_PREFIX = f"history_refresh_lock_v{HISTORY_CACHE_VERSION}"
 HISTORY_REFRESH_LOCK_MAX_AGE = timedelta(minutes=5)  # safety to clear stuck locks
+HISTORY_COVERAGE_REPAIR_PREFIX = f"history_day_coverage_v{HISTORY_CACHE_VERSION}"
+HISTORY_COVERAGE_REPAIR_BATCH_SIZE = getattr(
+    settings,
+    "HISTORY_COVERAGE_REPAIR_BATCH_SIZE",
+    120,
+)
+HISTORY_COVERAGE_REPAIR_LOCK_TTL = getattr(
+    settings,
+    "HISTORY_COVERAGE_REPAIR_LOCK_TTL",
+    60 * 30,
+)
 
 
 def _cache_key(user_id: int, logging_style: str) -> str:
@@ -79,6 +90,10 @@ def _cache_key(user_id: int, logging_style: str) -> str:
 
 def _refresh_lock_key(user_id: int, logging_style: str) -> str:
     return f"{HISTORY_REFRESH_LOCK_PREFIX}_{user_id}_{logging_style or 'repeats'}"
+
+
+def _coverage_repair_key(user_id: int, logging_style: str) -> str:
+    return f"{HISTORY_COVERAGE_REPAIR_PREFIX}_{user_id}_{logging_style or 'repeats'}"
 
 
 def _day_cache_key(user_id: int, logging_style: str, day_key: str) -> str:
@@ -2648,6 +2663,11 @@ def get_month_history(user, year: int, month: int, logging_style_override=None):
                 history_days.append(_deserialize_history_day(payload))
                 continue
             history_days.append(_build_and_cache_history_day(user, day_key, logging_style))
+        schedule_history_day_cache_coverage(
+            user.id,
+            logging_style,
+            countdown=15,
+        )
 
     logger.info(
         "history_month_result user_id=%s year=%s month=%s days=%s "
@@ -3220,6 +3240,67 @@ def refresh_history_cache(
         raise
 
 
+def repair_history_day_cache_coverage(
+    user_id: int,
+    logging_style: str = "repeats",
+    batch_size: int | None = None,
+):
+    """Repair missing persisted day payloads for a user's history cache in batches."""
+    user_model = get_user_model()
+    try:
+        user = user_model.objects.get(id=user_id)
+    except user_model.DoesNotExist:
+        cache.delete(_coverage_repair_key(user_id, logging_style))
+        return {"rebuilt": 0, "remaining": 0, "days": 0}
+
+    logging_style = _normalize_logging_style(logging_style, user)
+    if batch_size is None:
+        batch_size = HISTORY_COVERAGE_REPAIR_BATCH_SIZE
+
+    cache_entry = cache.get(_cache_key(user_id, logging_style))
+    if cache_entry:
+        index_day_keys = cache_entry.get("days", [])
+    else:
+        index_day_keys = build_history_index(user, logging_style_override=logging_style)
+        cache_history_index(user_id, logging_style, index_day_keys)
+
+    if not index_day_keys:
+        return {"rebuilt": 0, "remaining": 0, "days": 0}
+
+    missing_day_keys = _missing_history_day_keys(user_id, logging_style, index_day_keys)
+    if not missing_day_keys:
+        return {"rebuilt": 0, "remaining": 0, "days": len(index_day_keys)}
+
+    target_day_keys = (
+        missing_day_keys[:batch_size]
+        if batch_size and batch_size > 0
+        else missing_day_keys
+    )
+    rebuilt = 0
+    populated = 0
+    for day_key in target_day_keys:
+        day_payload = _build_and_cache_history_day(user, day_key, logging_style)
+        rebuilt += 1
+        if day_payload and day_payload.get("entries"):
+            populated += 1
+
+    remaining = max(len(missing_day_keys) - len(target_day_keys), 0)
+    logger.info(
+        "history_day_coverage_repair user_id=%s logging_style=%s rebuilt=%s populated=%s remaining=%s days=%s",
+        user_id,
+        logging_style,
+        rebuilt,
+        populated,
+        remaining,
+        len(index_day_keys),
+    )
+    return {
+        "rebuilt": rebuilt,
+        "remaining": remaining,
+        "days": len(index_day_keys),
+    }
+
+
 def schedule_history_refresh(
     user_id: int,
     logging_style: str = "repeats",
@@ -3228,6 +3309,7 @@ def schedule_history_refresh(
     warm_days: int | None = None,
     day_keys: Iterable | None = None,
     allow_inline: bool = True,
+    priority: int | None = None,
 ):
     """Queue a background refresh for a user's history cache.
     
@@ -3286,6 +3368,11 @@ def schedule_history_refresh(
             args=task_args,
             kwargs=task_kwargs,
             countdown=countdown,
+            priority=(
+                getattr(settings, "CELERY_TASK_PRIORITY_INTERACTIVE", 9)
+                if priority is None
+                else priority
+            ),
         )
         return True
     except Exception as exc:  # pragma: no cover - Celery not available
@@ -3305,4 +3392,55 @@ def schedule_history_refresh(
             exc,
         )
         refresh_history_cache(user_id, logging_style=logging_style, warm_days=warm_days)
+        return False
+
+
+def schedule_history_day_cache_coverage(
+    user_id: int,
+    logging_style: str = "repeats",
+    *,
+    debounce_seconds: int = 60 * 10,
+    countdown: int = 30,
+    batch_size: int | None = None,
+    priority: int | None = None,
+):
+    """Queue low-priority repair work for missing persisted day payloads."""
+    logging_style = _normalize_logging_style(logging_style)
+    repair_key = _coverage_repair_key(user_id, logging_style)
+    lock_payload = {
+        "started_at": timezone.now().isoformat(),
+        "batch_size": batch_size,
+    }
+    lock_ttl = max(int(debounce_seconds or 0), HISTORY_COVERAGE_REPAIR_LOCK_TTL)
+    if debounce_seconds and not cache.add(repair_key, lock_payload, debounce_seconds):
+        return False
+
+    cache.set(repair_key, lock_payload, lock_ttl)
+
+    try:
+        from app.tasks import repair_history_day_cache_coverage_task
+
+        task_kwargs = {
+            "user_id": user_id,
+            "logging_style": logging_style,
+        }
+        if batch_size is not None:
+            task_kwargs["batch_size"] = batch_size
+        repair_history_day_cache_coverage_task.apply_async(
+            kwargs=task_kwargs,
+            countdown=countdown,
+            priority=(
+                getattr(settings, "CELERY_TASK_PRIORITY_BACKGROUND", 1)
+                if priority is None
+                else priority
+            ),
+        )
+        return True
+    except Exception as exc:  # pragma: no cover - Celery not available
+        cache.delete(repair_key)
+        logger.warning(
+            "Failed to schedule history day coverage repair for user %s: %s",
+            user_id,
+            exc,
+        )
         return False

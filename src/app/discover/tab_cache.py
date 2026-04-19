@@ -53,6 +53,9 @@ DISCOVER_PRIORITY_REFRESH_COUNTDOWN = 0
 DISCOVER_WARM_SIBLING_DEBOUNCE_SECONDS = 60
 DISCOVER_WARM_SIBLING_COUNTDOWN = 10
 DISCOVER_VISIBLE_ITEMS_PER_ROW = 12
+DISCOVER_TASK_PRIORITY_INTERACTIVE = getattr(settings, "CELERY_TASK_PRIORITY_INTERACTIVE", 9)
+DISCOVER_TASK_PRIORITY_FOLLOWUP = getattr(settings, "CELERY_TASK_PRIORITY_FOLLOWUP", 7)
+DISCOVER_TASK_PRIORITY_BACKGROUND = getattr(settings, "CELERY_TASK_PRIORITY_BACKGROUND", 1)
 
 DISCOVER_PROVIDER_BY_MEDIA_TYPE = {
     ALL_MEDIA_KEY: {Sources.TMDB.value},
@@ -586,6 +589,7 @@ def schedule_tab_refresh(
     countdown: int = DISCOVER_DEFAULT_REFRESH_COUNTDOWN,
     force: bool = False,
     clear_provider_cache: bool = False,
+    priority: int | None = None,
 ) -> bool:
     """Queue a background rebuild of a Discover tab cache entry."""
     media_type = _normalize_media_type(media_type)
@@ -634,6 +638,11 @@ def schedule_tab_refresh(
                 "clear_provider_cache": bool(clear_provider_cache),
             },
             countdown=countdown,
+            priority=(
+                DISCOVER_TASK_PRIORITY_INTERACTIVE
+                if priority is None
+                else priority
+            ),
         )
         return True
     except Exception as error:  # pragma: no cover - Celery unavailable
@@ -711,6 +720,7 @@ def refresh_tab_cache(
                 countdown=DISCOVER_PRIORITY_REFRESH_COUNTDOWN,
                 force=force,
                 clear_provider_cache=clear_provider_cache,
+                priority=DISCOVER_TASK_PRIORITY_INTERACTIVE,
             )
 
 
@@ -969,6 +979,7 @@ def get_tab_rows(
                 show_more=show_more,
                 debounce_seconds=DISCOVER_PRIORITY_REFRESH_DEBOUNCE_SECONDS,
                 countdown=DISCOVER_PRIORITY_REFRESH_COUNTDOWN,
+                priority=DISCOVER_TASK_PRIORITY_INTERACTIVE,
             )
         return rows
 
@@ -978,6 +989,7 @@ def get_tab_rows(
         show_more=show_more,
         debounce_seconds=DISCOVER_PRIORITY_REFRESH_DEBOUNCE_SECONDS,
         countdown=DISCOVER_PRIORITY_REFRESH_COUNTDOWN,
+        priority=DISCOVER_TASK_PRIORITY_INTERACTIVE,
     )
     if not allow_inline_bootstrap:
         return []
@@ -1027,6 +1039,7 @@ def get_tab_status(user_id: int, media_type: str, *, show_more: bool = False) ->
             show_more=show_more,
             debounce_seconds=DISCOVER_PRIORITY_REFRESH_DEBOUNCE_SECONDS,
             countdown=DISCOVER_PRIORITY_REFRESH_COUNTDOWN,
+            priority=DISCOVER_TASK_PRIORITY_INTERACTIVE,
         )
         refresh_lock = cache.get(lock_key) if refresh_scheduled else refresh_lock
 
@@ -1056,6 +1069,7 @@ def warm_sibling_tabs(user, active_media_type: str, *, show_more: bool = False) 
             show_more=show_more,
             debounce_seconds=DISCOVER_WARM_SIBLING_DEBOUNCE_SECONDS,
             countdown=DISCOVER_WARM_SIBLING_COUNTDOWN,
+            priority=DISCOVER_TASK_PRIORITY_BACKGROUND,
         )
 
 
@@ -1095,6 +1109,11 @@ def schedule_user_tab_warmup(
             show_more=show_more,
             debounce_seconds=debounce_seconds,
             countdown=countdown,
+            priority=(
+                DISCOVER_TASK_PRIORITY_FOLLOWUP
+                if is_priority_target
+                else DISCOVER_TASK_PRIORITY_BACKGROUND
+            ),
         ):
             scheduled += 1
 
@@ -1158,6 +1177,11 @@ def _invalidate_targets(
                 if prioritized
                 else countdown
             ),
+            priority=(
+                DISCOVER_TASK_PRIORITY_INTERACTIVE
+                if prioritized
+                else DISCOVER_TASK_PRIORITY_FOLLOWUP
+            ),
         )
         if prioritized_show_more:
             schedule_tab_refresh(
@@ -1166,6 +1190,7 @@ def _invalidate_targets(
                 show_more=False,
                 debounce_seconds=debounce_seconds,
                 countdown=countdown,
+                priority=DISCOVER_TASK_PRIORITY_FOLLOWUP,
             )
     return targets
 
