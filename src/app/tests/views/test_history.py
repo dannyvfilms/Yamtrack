@@ -6,7 +6,10 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
+from app import history_cache
 from app.models import (
+    Album,
+    Artist,
     Book,
     Comic,
     CreditRoleType,
@@ -16,12 +19,14 @@ from app.models import (
     ItemPersonCredit,
     Manga,
     MediaTypes,
+    Music,
     Movie,
     Person,
     PersonGender,
     Season,
     Sources,
     Status,
+    Track,
     TV,
 )
 
@@ -230,6 +235,205 @@ class DeleteHistoryRecordViewTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 404)
+
+
+class HistoryMonthViewTests(TestCase):
+    """Test unfiltered history month page behavior."""
+
+    def setUp(self):
+        _start_model_metadata_patches(self)
+        self.credentials = {"username": "month-view", "password": "12345"}
+        self.user = get_user_model().objects.create_user(**self.credentials)
+        self.client.login(**self.credentials)
+        now = timezone.now()
+
+        item = Item.objects.create(
+            media_id="month-movie",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Month View Movie",
+            image="http://example.com/month-movie.jpg",
+        )
+        Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            start_date=now,
+            end_date=now,
+        )
+
+        tv_item = Item.objects.create(
+            media_id="month-tv",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.TV.value,
+            title="Month View Show",
+            image="http://example.com/month-tv.jpg",
+        )
+        tv = TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+        )
+        season_item = Item.objects.create(
+            media_id="month-tv",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Month View Show",
+            image="http://example.com/month-tv-s1.jpg",
+            season_number=1,
+        )
+        season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=tv,
+            status=Status.COMPLETED.value,
+        )
+        episode_item = Item.objects.create(
+            media_id="month-tv",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Month View Episode",
+            image="http://example.com/month-tv-e1.jpg",
+            season_number=1,
+            episode_number=1,
+        )
+        Episode.objects.create(
+            item=episode_item,
+            related_season=season,
+            end_date=now,
+        )
+
+    def test_default_month_view_does_not_bootstrap_cache_status_poll(self):
+        response = self.client.get(reverse("history"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.context["history_refreshing"])
+        self.assertNotContains(response, "checkCacheStatus", html=False)
+        self.assertNotContains(response, "/api/cache-status/", html=False)
+
+    def test_media_type_month_view_uses_cached_month_days(self):
+        response = self.client.get(
+            reverse("history"),
+            {"media_type": MediaTypes.MOVIE.value},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["use_month_view"])
+        self.assertFalse(response.context["history_refreshing"])
+        self.assertContains(response, "Month View Movie")
+        self.assertNotContains(response, "Month View Episode")
+        self.assertContains(response, "media_type=movie", html=False)
+
+
+class MusicScoreHistoryInvalidationTests(TestCase):
+    """Test that music score edits invalidate only affected history days."""
+
+    def setUp(self):
+        self.credentials = {"username": "music-score", "password": "12345"}
+        self.user = get_user_model().objects.create_user(**self.credentials)
+        self.client.login(**self.credentials)
+
+        self.artist = Artist.objects.create(name="Score Artist")
+        self.album = Album.objects.create(title="Score Album", artist=self.artist)
+        first_track = Track.objects.create(
+            album=self.album,
+            title="Score Track One",
+            track_number=1,
+            duration_ms=180000,
+        )
+        second_track = Track.objects.create(
+            album=self.album,
+            title="Score Track Two",
+            track_number=2,
+            duration_ms=180000,
+        )
+
+        now = timezone.now()
+        self.play_day_keys = sorted(
+            {
+                history_cache.history_day_key(now - timedelta(days=1)),
+                history_cache.history_day_key(now),
+            },
+        )
+        first_item = Item.objects.create(
+            media_id="score-track-1",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MUSIC.value,
+            title="Score Track One",
+            image="http://example.com/score-track-1.jpg",
+            runtime_minutes=3,
+        )
+        second_item = Item.objects.create(
+            media_id="score-track-2",
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MUSIC.value,
+            title="Score Track Two",
+            image="http://example.com/score-track-2.jpg",
+            runtime_minutes=3,
+        )
+        Music.objects.create(
+            item=first_item,
+            user=self.user,
+            album=self.album,
+            artist=self.artist,
+            track=first_track,
+            status=Status.COMPLETED.value,
+            progress=1,
+            end_date=now - timedelta(days=1),
+        )
+        Music.objects.create(
+            item=second_item,
+            user=self.user,
+            album=self.album,
+            artist=self.artist,
+            track=second_track,
+            status=Status.COMPLETED.value,
+            progress=1,
+            end_date=now,
+        )
+
+    @patch("app.views.history_cache.invalidate_history_cache")
+    @patch("app.views.history_cache.invalidate_history_days")
+    def test_update_album_score_invalidates_only_affected_history_days(
+        self,
+        mock_invalidate_history_days,
+        mock_invalidate_history_cache,
+    ):
+        response = self.client.post(
+            reverse("update_album_score", args=[self.album.id]),
+            {"score": "8"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        mock_invalidate_history_days.assert_called_once_with(
+            self.user.id,
+            day_keys=self.play_day_keys,
+            logging_styles=("sessions", "repeats"),
+            reason="album_score_change",
+        )
+        mock_invalidate_history_cache.assert_not_called()
+
+    @patch("app.views.history_cache.invalidate_history_cache")
+    @patch("app.views.history_cache.invalidate_history_days")
+    def test_update_artist_score_invalidates_only_affected_history_days(
+        self,
+        mock_invalidate_history_days,
+        mock_invalidate_history_cache,
+    ):
+        response = self.client.post(
+            reverse("update_artist_score", args=[self.artist.id]),
+            {"score": "9"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        mock_invalidate_history_days.assert_called_once_with(
+            self.user.id,
+            day_keys=self.play_day_keys,
+            logging_styles=("sessions", "repeats"),
+            reason="artist_score_change",
+        )
+        mock_invalidate_history_cache.assert_not_called()
 
 
 class HistoryViewPersonFilterTests(TestCase):

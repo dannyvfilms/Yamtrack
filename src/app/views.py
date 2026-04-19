@@ -8,6 +8,7 @@ from collections import defaultdict
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from datetime import UTC, date, timedelta
 from pathlib import Path
+from urllib.parse import urlencode
 from uuid import uuid4
 
 import requests
@@ -21,7 +22,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.core.paginator import EmptyPage, Paginator
 from django.db import IntegrityError
 from django.db.models import F, Min, Q, prefetch_related_objects
-from django.db.models.functions import ExtractDay, ExtractMonth
+from django.db.models.functions import ExtractDay, ExtractMonth, TruncDate
 from django.db.utils import OperationalError
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -212,6 +213,38 @@ def _collect_reading_activity_day_keys(entries):
         if activity_key:
             day_keys.add(activity_key)
     return sorted(day_keys)
+
+
+def _collect_music_history_day_keys_for_album_ids(user, album_ids):
+    """Return distinct history day keys for plays tied to the given album ids."""
+    normalized_album_ids = sorted({album_id for album_id in album_ids or [] if album_id})
+    if not normalized_album_ids:
+        return []
+
+    HistoricalMusic = apps.get_model("app", "HistoricalMusic")
+    history_days = (
+        HistoricalMusic.objects.filter(
+            Q(history_user=user) | Q(history_user__isnull=True),
+            album_id__in=normalized_album_ids,
+            end_date__isnull=False,
+        )
+        .annotate(day=TruncDate("end_date"))
+        .values_list("day", flat=True)
+        .distinct()
+    )
+    return sorted(
+        {
+            history_cache.history_day_key(day_value)
+            for day_value in history_days
+            if day_value
+        },
+    )
+
+
+def _collect_music_history_day_keys_for_artist(user, artist):
+    """Return distinct history day keys for plays tied to an artist's albums."""
+    album_ids = Album.objects.filter(artist=artist).values_list("id", flat=True)
+    return _collect_music_history_day_keys_for_album_ids(user, album_ids)
 
 
 def _get_tv_runtime_display_fallback(detail_item, media_metadata):
@@ -7389,13 +7422,14 @@ def update_artist_score(request, artist_id):
         score,
     )
 
-    # Invalidate history cache since artist ratings might appear in history entries
-    # We invalidate all history days since ratings are metadata
-    history_cache.invalidate_history_cache(
-        request.user.id,
-        force=True,
-        logging_styles=("sessions", "repeats"),
-    )
+    history_day_keys = _collect_music_history_day_keys_for_artist(request.user, artist)
+    if history_day_keys:
+        history_cache.invalidate_history_days(
+            request.user.id,
+            day_keys=history_day_keys,
+            logging_styles=("sessions", "repeats"),
+            reason="artist_score_change",
+        )
 
     return JsonResponse(
         {
@@ -7438,14 +7472,17 @@ def update_album_score(request, album_id):
         score,
     )
 
-    # Invalidate history cache since album ratings appear in history entries
-    # We invalidate all history days since ratings are metadata displayed on all days
-    # where the album appears in history
-    history_cache.invalidate_history_cache(
-        request.user.id,
-        force=True,
-        logging_styles=("sessions", "repeats"),
+    history_day_keys = _collect_music_history_day_keys_for_album_ids(
+        request.user,
+        [album.id],
     )
+    if history_day_keys:
+        history_cache.invalidate_history_days(
+            request.user.id,
+            day_keys=history_day_keys,
+            logging_styles=("sessions", "repeats"),
+            reason="album_score_change",
+        )
 
     return JsonResponse(
         {
@@ -9657,13 +9694,12 @@ def delete_history_record(request, media_type, history_id):
             history_day_key = history_cache.history_day_key(activity_dt)
             history_day_keys = [history_day_key] if history_day_key else []
 
-        # For deletes, invalidate immediately (force) so the stale entry disappears,
-        # then schedule refresh to rebuild. This shows the banner and reloads.
+        # Keep the previous day payload readable until the targeted refresh
+        # overwrites it so later navigation does not fall into a cold-miss path.
         history_cache.invalidate_history_days(
             request.user.id,
             day_keys=history_day_keys,
             logging_styles=logging_styles,
-            force=True,
             reason="history_delete",
         )
         statistics_cache.invalidate_statistics_days(
@@ -10057,6 +10093,136 @@ def _filter_history_by_enabled_media_types(history_days, user):
     return filtered_days
 
 
+_MONTH_CACHE_UNSUPPORTED_FILTER_KEYS = frozenset(
+    {
+        "artist",
+        "person_id",
+        "person_source",
+        "season",
+        "season_number",
+        "tv",
+    },
+)
+_MONTH_CACHE_DIRECT_ITEM_MEDIA_TYPES = frozenset(
+    {
+        MediaTypes.BOOK.value,
+        MediaTypes.BOARDGAME.value,
+        MediaTypes.COMIC.value,
+        MediaTypes.GAME.value,
+        MediaTypes.MANGA.value,
+        MediaTypes.MOVIE.value,
+        MediaTypes.MUSIC.value,
+        MediaTypes.PODCAST.value,
+    },
+)
+
+
+def _can_use_cached_month_history(
+    history_mode,
+    filters,
+    date_filters,
+    anniversary_month,
+    anniversary_day,
+):
+    if history_mode != "activity":
+        return False
+    if date_filters or anniversary_month or anniversary_day:
+        return False
+    if any(key in filters for key in _MONTH_CACHE_UNSUPPORTED_FILTER_KEYS):
+        return False
+
+    target_media_id = filters.get("media_id")
+    target_source = filters.get("source")
+    media_type_filter = filters.get("media_type")
+    if target_media_id or target_source:
+        if not target_media_id or not target_source:
+            return False
+        if media_type_filter not in _MONTH_CACHE_DIRECT_ITEM_MEDIA_TYPES:
+            return False
+
+    return True
+
+
+def _cached_history_entry_matches_filters(entry, filters):
+    entry = entry or {}
+    item = entry.get("item") or {}
+    album = entry.get("album") or {}
+    show = entry.get("show") or {}
+    entry_media_type = entry.get("media_type")
+    media_type_filter = filters.get("media_type")
+    if media_type_filter:
+        if media_type_filter == MediaTypes.TV.value:
+            if entry_media_type not in {
+                MediaTypes.EPISODE.value,
+                MediaTypes.SEASON.value,
+            }:
+                return False
+        elif entry_media_type != media_type_filter:
+            return False
+
+    genre_filter = filters.get("genre")
+    if genre_filter:
+        genres = entry.get("genres") or item.get("genres") or []
+        lowered_genres = {str(genre).lower() for genre in genres}
+        if genre_filter.lower() not in lowered_genres:
+            return False
+
+    album_filter = filters.get("album")
+    if album_filter is not None:
+        if entry_media_type != MediaTypes.MUSIC.value:
+            return False
+        if album.get("id") != album_filter:
+            return False
+
+    podcast_show_filter = filters.get("podcast_show")
+    if podcast_show_filter is not None:
+        if entry_media_type != MediaTypes.PODCAST.value:
+            return False
+        if show.get("id") != podcast_show_filter:
+            return False
+
+    target_media_id = filters.get("media_id")
+    if target_media_id is not None and str(item.get("media_id")) != str(target_media_id):
+        return False
+
+    target_source = filters.get("source")
+    if target_source is not None and str(item.get("source")) != str(target_source):
+        return False
+
+    return True
+
+
+def _filter_cached_history_days(history_days, filters):
+    if not filters:
+        return history_days
+
+    filtered_days = []
+    for day in history_days:
+        if not isinstance(day, dict):
+            continue
+
+        filtered_entries = [
+            entry
+            for entry in day.get("entries", [])
+            if _cached_history_entry_matches_filters(entry, filters)
+        ]
+        if not filtered_entries:
+            continue
+
+        total_minutes = sum(entry.get("runtime_minutes") or 0 for entry in filtered_entries)
+        filtered_day = day.copy()
+        filtered_day["entries"] = filtered_entries
+        filtered_day["total_minutes"] = total_minutes
+        filtered_day["total_runtime_display"] = (
+            helpers.minutes_to_hhmm(total_minutes)
+            if total_minutes
+            else "0min"
+        )
+        filtered_days.append(filtered_day)
+
+    return filtered_days
+
+
 @require_GET
 def history(request):
     """Show a day-by-day history of episode and movie plays."""
@@ -10134,13 +10300,12 @@ def history(request):
             logging_style,
         )
 
-        # Determine if we can use month-based caching (no filters, date range)
-        use_month_cache = (
-            history_mode == "activity"
-            and not filters
-            and not date_filters
-            and not anniversary_month
-            and not anniversary_day
+        use_month_cache = _can_use_cached_month_history(
+            history_mode,
+            filters,
+            date_filters,
+            anniversary_month,
+            anniversary_day,
         )
         history_refreshing = False
 
@@ -10152,6 +10317,7 @@ def history(request):
                 view_month,
                 logging_style_override=logging_style,
             )
+            history_days = _filter_cached_history_days(history_days, filters)
             history_refreshing = cache_meta.get("refreshing", False)
 
             # Filter by enabled media types
@@ -10259,6 +10425,7 @@ def history(request):
             active_filters["day"] = anniversary_day
         if history_mode == "release":
             active_filters["history_mode"] = "release"
+        month_nav_query = urlencode(active_filters)
 
         # Build month display name for header
         month_name = calendar.month_name[view_month] if use_month_cache else None
@@ -10288,6 +10455,7 @@ def history(request):
             "is_current_month": is_current_month,
             "current_year": now.year,
             "current_month_num": now.month,
+            "month_nav_query": month_nav_query,
         }
         day_entry_counts = []
         total_entries = 0

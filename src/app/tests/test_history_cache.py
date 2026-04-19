@@ -11,7 +11,7 @@ from app.log_safety import stable_hmac
 from app.models import Item, MediaTypes, Movie, Sources, Status
 
 
-class HistoryCacheFallbackTests(TestCase):
+class HistoryMonthCacheTests(TestCase):
     def setUp(self):
         """Create a user with one history entry and a cold cache."""
         cache.clear()
@@ -35,13 +35,20 @@ class HistoryCacheFallbackTests(TestCase):
         )
         cache.clear()
         self.client.login(**self.credentials)
+        self.logging_style = history_cache._normalize_logging_style(None, self.user)
+        self.today_key = history_cache.history_day_key(timezone.localtime())
 
     def tearDown(self):
         """Reset cache state between tests."""
         cache.clear()
 
-    @patch("app.history_cache.schedule_history_refresh", return_value=False)
-    def test_history_view_builds_month_inline_when_refresh_cannot_be_scheduled(
+    def _active_month_day_keys(self):
+        month_prefix = timezone.localdate().strftime("%Y%m")
+        index_days = history_cache.build_history_index(self.user, self.logging_style)
+        return [day_key for day_key in index_days if day_key.startswith(month_prefix)]
+
+    @patch("app.history_cache.schedule_history_refresh")
+    def test_history_view_repairs_cold_month_inline_without_scheduling_refresh(
         self,
         mock_schedule_history_refresh,
     ):
@@ -54,15 +61,114 @@ class HistoryCacheFallbackTests(TestCase):
             response.context["history_days"][0]["entries"][0]["title"],
             "Fallback Movie",
         )
-        self.assertEqual(mock_schedule_history_refresh.call_count, 1)
+        self.assertEqual(mock_schedule_history_refresh.call_count, 0)
 
-        day_key = history_cache.history_day_key(timezone.localtime())
+        active_month_day_keys = self._active_month_day_keys()
+        cache_keys = [
+            history_cache._day_cache_key(self.user.id, self.logging_style, day_key)
+            for day_key in active_month_day_keys
+        ]
+        cached_payloads = cache.get_many(cache_keys)
+        self.assertEqual(len(cached_payloads), len(cache_keys))
+        self.assertEqual(len(response.context["history_days"]), len(active_month_day_keys))
+
+    @patch("app.history_cache.schedule_history_refresh")
+    def test_history_view_repairs_partial_month_miss_inline_without_refreshing(
+        self,
+        mock_schedule_history_refresh,
+    ):
+        first_response = self.client.get(reverse("history"))
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertFalse(first_response.context["history_refreshing"])
+
+        cache.delete_many(
+            [
+                history_cache._day_cache_key(
+                    self.user.id,
+                    self.logging_style,
+                    self.today_key,
+                ),
+            ],
+        )
+
+        response = self.client.get(reverse("history"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.context["history_refreshing"])
+        self.assertTrue(response.context["history_days"])
+        self.assertEqual(
+            response.context["history_days"][0]["entries"][0]["title"],
+            "Fallback Movie",
+        )
+        self.assertEqual(mock_schedule_history_refresh.call_count, 0)
+        self.assertIsNotNone(
+            cache.get(
+                history_cache._day_cache_key(
+                    self.user.id,
+                    self.logging_style,
+                    self.today_key,
+                ),
+            ),
+        )
+        self.assertEqual(
+            len(response.context["history_days"]),
+            len(self._active_month_day_keys()),
+        )
+
+    def test_refresh_history_cache_repairs_missing_index_day_payloads(self):
+        history_cache.refresh_history_cache(self.user.id, logging_style=self.logging_style)
+
+        cache.delete(
+            history_cache._day_cache_key(
+                self.user.id,
+                self.logging_style,
+                self.today_key,
+            ),
+        )
+
+        history_cache.refresh_history_cache(self.user.id, logging_style=self.logging_style)
+
+        index_entry = cache.get(history_cache._cache_key(self.user.id, self.logging_style))
+        self.assertIsNotNone(index_entry)
+        self.assertIn(self.today_key, index_entry["days"])
+        self.assertIsNotNone(
+            cache.get(
+                history_cache._day_cache_key(
+                    self.user.id,
+                    self.logging_style,
+                    self.today_key,
+                ),
+            ),
+        )
+
+    @patch("app.history_cache.schedule_history_refresh", return_value=True)
+    def test_invalidate_history_days_keeps_existing_payload_until_refresh_overwrites_it(
+        self,
+        mock_schedule_history_refresh,
+    ):
+        history_cache.refresh_history_cache(self.user.id, logging_style=self.logging_style)
         cache_key = history_cache._day_cache_key(
             self.user.id,
-            history_cache._normalize_logging_style(None, self.user),
-            day_key,
+            self.logging_style,
+            self.today_key,
         )
-        self.assertIsNotNone(cache.get(cache_key))
+        cached_payload = cache.get(cache_key)
+
+        history_cache.invalidate_history_days(
+            self.user.id,
+            day_keys=[self.today_key],
+            logging_styles=(self.logging_style,),
+            reason="test_change",
+        )
+
+        self.assertEqual(cache.get(cache_key), cached_payload)
+        mock_schedule_history_refresh.assert_called_once_with(
+            self.user.id,
+            self.logging_style,
+            warm_days=0,
+            day_keys=[self.today_key],
+        )
 
 
 class HistoryRefreshSchedulingTests(TestCase):
