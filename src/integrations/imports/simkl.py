@@ -259,7 +259,19 @@ class SimklImporter:
         for season in tv["seasons"]:
             season_number = season["number"]
             episodes = season["episodes"]
-            season_metadata = metadata[f"season/{season_number}"]
+            season_key = f"season/{season_number}"
+            if season_key not in metadata:
+                title = tv["show"]["title"]
+                self.warnings.append(
+                    f"{title}: Season {season_number} not found in TMDB data, skipping",
+                )
+                logger.warning(
+                    "Season %s not found in TMDB metadata for %s; skipping",
+                    season_number,
+                    title,
+                )
+                continue
+            season_metadata = metadata[season_key]
 
             # Use season poster if available, otherwise fallback to TV show poster
             season_image = season_metadata.get("image") or metadata.get("image")
@@ -319,7 +331,10 @@ class SimklImporter:
 
     def _get_episode_image(self, episode, season_number, metadata):
         """Get the image for the episode."""
-        for episode_metadata in metadata[f"season/{season_number}"]["episodes"]:
+        season_key = f"season/{season_number}"
+        if season_key not in metadata or "episodes" not in metadata[season_key]:
+            return settings.IMG_NONE
+        for episode_metadata in metadata[season_key]["episodes"]:
             if episode_metadata["episode_number"] == episode["number"]:
                 return (
                     f"https://image.tmdb.org/t/p/w500{episode_metadata['still_path']}"
