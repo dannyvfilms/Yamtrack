@@ -1,7 +1,6 @@
 import hashlib
 import logging
 import os
-import time
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 
@@ -35,6 +34,7 @@ from integrations.imports.helpers import (
 logger = logging.getLogger(__name__)
 
 POCKETCASTS_API_BASE_URL = "https://api.pocketcasts.com"
+POCKETCASTS_PODCAST_API_BASE_URL = "https://podcast-api.pocketcasts.com"
 
 
 def _cleanup_duplicate_episodes_global():
@@ -274,19 +274,11 @@ class PocketCastsImporter:
             for podcast in podcast_list_data.get("podcasts", [])
         }
 
-        # Fetch history (last 100 episodes only, no pagination)
-        episodes = self._fetch_history()
-        episodes = self._dedupe_history(episodes)
-
         sync_window_end = timezone.now()
         sync_window_start = self.account.last_sync_at or (sync_window_end - timedelta(hours=2))
         self._sync_window_start = sync_window_start
         self._sync_window_end = sync_window_end
         self._existing_history_items = self._get_history_items_in_range(sync_window_start, sync_window_end)
-
-        if not episodes:
-            logger.info("No episodes found for Pocket Casts user %s", self.user.username)
-            return {}, ""
 
         # Check if this is first import
         is_first_import = not Podcast.objects.filter(user=self.user).exists()
@@ -294,41 +286,62 @@ class PocketCastsImporter:
         # Collect new completed podcasts for inference (if not first import)
         new_completed_podcasts = []  # List of (episode_data, duration_seconds, published_date)
 
-        # First pass: process episodes and collect new completed ones
-        for episode_data in episodes:
-            episode_uuid = episode_data.get("uuid")
-            # Check if this episode is new (not in existing_podcasts)
-            is_new = (episode_uuid, Sources.POCKETCASTS.value) not in self.existing_podcasts
+        # First pass: iterate every subscribed podcast and process all episodes
+        # with known play state. For each show we call two APIs:
+        #   - POST /user/podcast/episodes → play state per episode UUID (auth)
+        #   - GET  podcast-api.pocketcasts.com/podcast/full/<uuid> → metadata
+        # Inner-joining on UUID gives the shape _process_episode() expects.
+        for podcast_uuid, podcast_meta in self.podcast_metadata.items():
+            play_states = self._fetch_show_play_states(podcast_uuid)
+            if not play_states:
+                continue
+            full_metadata = self._fetch_show_full_metadata(podcast_uuid)
+            if not full_metadata:
+                continue
 
-            # Process the episode (but don't set completion_date yet for new ones)
-            self._process_episode(episode_data, defer_completion_date=not is_first_import and is_new)
+            for ep_uuid, play_state in play_states.items():
+                metadata_ep = full_metadata.get(ep_uuid)
+                if not metadata_ep:
+                    # Play record exists but episode no longer in public feed (deleted/unlisted).
+                    logger.debug("Episode %s has play state but no metadata; skipping", ep_uuid)
+                    continue
 
-            # If this is a new completed episode (not first import), collect it for inference
-            if not is_first_import and is_new:
-                playing_status = episode_data.get("playingStatus", 0)
-                duration = episode_data.get("duration", 0)
-                played_up_to = episode_data.get("playedUpTo", 0)
-                published = None
-                if episode_data.get("published"):
-                    try:
-                        published = datetime.fromisoformat(episode_data["published"].replace("Z", "+00:00"))
-                        if published and timezone.is_naive(published):
-                            published = timezone.make_aware(published)
-                    except (ValueError, AttributeError):
-                        pass
-
-                # Check if completed using same logic as _calculate_progress_delta
-                # (status 3 with significant progress, or played up to duration with 5 second tolerance)
-                epsilon = 5
-                # Only mark as completed if there's significant progress to avoid false positives
-                significant_progress = duration > 0 and (played_up_to > 60 or played_up_to > duration * 0.1)
-                is_completed = (
-                    (playing_status == 3 and significant_progress) or
-                    (duration > 0 and played_up_to >= duration - epsilon)
+                episode_data = self._build_episode_data(
+                    play_state, metadata_ep, podcast_uuid, podcast_meta
                 )
+                episode_uuid = ep_uuid
+                # Check if this episode is new (not in existing_podcasts)
+                is_new = (episode_uuid, Sources.POCKETCASTS.value) not in self.existing_podcasts
 
-                if is_completed and published:
-                    new_completed_podcasts.append((episode_data, duration, published))
+                # Process the episode (but don't set completion_date yet for new ones)
+                self._process_episode(episode_data, defer_completion_date=not is_first_import and is_new)
+
+                # If this is a new completed episode (not first import), collect it for inference
+                if not is_first_import and is_new:
+                    playing_status = episode_data.get("playingStatus", 0)
+                    duration = episode_data.get("duration", 0)
+                    played_up_to = episode_data.get("playedUpTo", 0)
+                    published = None
+                    if episode_data.get("published"):
+                        try:
+                            published = datetime.fromisoformat(episode_data["published"].replace("Z", "+00:00"))
+                            if published and timezone.is_naive(published):
+                                published = timezone.make_aware(published)
+                        except (ValueError, AttributeError):
+                            pass
+
+                    # Check if completed using same logic as _calculate_progress_delta
+                    # (status 3 with significant progress, or played up to duration with 5 second tolerance)
+                    epsilon = 5
+                    # Only mark as completed if there's significant progress to avoid false positives
+                    significant_progress = duration > 0 and (played_up_to > 60 or played_up_to > duration * 0.1)
+                    is_completed = (
+                        (playing_status == 3 and significant_progress) or
+                        (duration > 0 and played_up_to >= duration - epsilon)
+                    )
+
+                    if is_completed and published:
+                        new_completed_podcasts.append((episode_data, duration, published))
 
         # Second pass: infer completion dates for new completed podcasts
         if new_completed_podcasts and not is_first_import:
@@ -406,26 +419,27 @@ class PocketCastsImporter:
 
         # Record history for newly created podcasts
         if hasattr(self, "_pending_history"):
-            for episode_uuid, delta_seconds, history_timestamp in self._pending_history:
+            # Deduplicate by episode_uuid; keep first entry for each uuid
+            seen_uuids = set()
+            deduped_history = []
+            for entry in self._pending_history:
+                if entry[0] not in seen_uuids:
+                    seen_uuids.add(entry[0])
+                    deduped_history.append(entry)
+            for episode_uuid, delta_seconds, history_timestamp in deduped_history:
                 # Reload podcast from DB after bulk create
-                try:
-                    podcast = Podcast.objects.get(
-                        user=self.user,
-                        item__media_id=episode_uuid,
-                        item__source=Sources.POCKETCASTS.value,
-                    )
-                    self._record_history(podcast, delta_seconds, history_timestamp)
-                except Podcast.DoesNotExist:
+                podcasts = Podcast.objects.filter(
+                    user=self.user,
+                    item__media_id=episode_uuid,
+                    item__source=Sources.POCKETCASTS.value,
+                )
+                if not podcasts.exists():
                     logger.warning("Could not find podcast after bulk create for history recording: %s", episode_uuid)
+                    continue
+                if podcasts.count() > 1:
+                    logger.warning("Multiple Podcast records for episode %s; using first", episode_uuid)
+                self._record_history(podcasts.first(), delta_seconds, history_timestamp)
 
-        # Sync episodes from RSS feeds for processed shows
-        for show in self.processed_shows:
-            if show.rss_feed_url:
-                try:
-                    self._sync_episodes_from_rss(show, show.rss_feed_url)
-                except Exception as e:
-                    logger.warning("Failed to sync episodes from RSS for show %s: %s", show.title, e)
-                    self.warnings.append(f"Failed to sync episodes for {show.title}: {e!s}")
 
         # Update last sync time
         self.account.last_sync_at = timezone.now()
@@ -1192,74 +1206,120 @@ class PocketCastsImporter:
             msg = "Invalid access token"
             raise MediaImportError(msg) from e
 
-    def _fetch_history(self):
-        """Fetch history from API (returns last 100 episodes only)."""
-        url = f"{POCKETCASTS_API_BASE_URL}/user/history"
-        access_token = self._get_access_token()
+    def _fetch_show_play_states(self, podcast_uuid):
+        """Fetch per-episode play states for one podcast.
 
+        Calls POST /user/podcast/episodes with {"uuid": podcast_uuid}.
+        Returns a dict keyed by episode UUID:
+            {uuid: {playingStatus, playedUpTo, isDeleted, starred, duration, bookmarks, ...}}
+        Returns {} on any failure so the caller can skip the show gracefully.
+        """
+        url = f"{POCKETCASTS_API_BASE_URL}/user/podcast/episodes"
+        access_token = self._get_access_token()
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
             "Accept": "*/*",
             "X-App-Language": "en",
             "X-User-Region": "global",
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15",
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15"
+            ),
         }
-
-        payload = {}
-
         try:
-            response = services.api_request("POCKETCASTS", "POST", url, params=payload, headers=headers)
-
-            if "episodes" not in response:
-                logger.warning("No episodes in Pocket Casts response for user %s", self.user.username)
-                return []
-
-            episodes = response["episodes"]
-            logger.info(
-                "Found %d episodes for Pocket Casts user %s",
-                len(episodes),
-                self.user.username,
+            response = services.api_request(
+                "POCKETCASTS", "POST", url,
+                params={"uuid": podcast_uuid},
+                headers=headers,
             )
-            return episodes
+            episodes = response.get("episodes", [])
+            return {ep["uuid"]: ep for ep in episodes if "uuid" in ep}
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "Failed to fetch play states for podcast %s: %s", podcast_uuid, e
+            )
+            return {}
 
-        except requests.HTTPError as e:
-            if e.response.status_code == requests.codes.unauthorized:
-                # Try refreshing token if we have a refresh token
-                if self.account.refresh_token:
-                    logger.info("Unauthorized, attempting token refresh")
-                    try:
-                        self._refresh_token()
-                        access_token = self._get_access_token()
-                        headers["Authorization"] = f"Bearer {access_token}"
+    def _fetch_show_full_metadata(self, podcast_uuid):
+        """Fetch full episode metadata for one podcast from the public API (no auth).
 
-                        try:
-                            response = services.api_request("POCKETCASTS", "POST", url, params=payload, headers=headers)
-                            if "episodes" in response:
-                                return response["episodes"]
-                        except requests.HTTPError:
-                            # If retry still fails, disconnect
-                            self._disconnect_account("Token refresh succeeded but API calls still return 401")
-                            msg = "Authentication failed after token refresh. Please reconnect your Pocket Casts account."
-                            raise MediaImportError(msg) from e
-                    except requests.HTTPError as refresh_error:
-                        # Refresh failed with HTTP error - if it's 401, disconnect
-                        if refresh_error.response and refresh_error.response.status_code == requests.codes.unauthorized:
-                            self._disconnect_account("Refresh token returned 401 during API call")
-                        msg = "Authentication failed. Your token may have expired. Please reconnect your Pocket Casts account."
-                        raise MediaImportError(msg) from refresh_error
-                    except Exception as refresh_error:
-                        # Other refresh errors - log but don't disconnect (might be temporary)
-                        logger.error("Token refresh failed during API call: %s", refresh_error)
-                        msg = "Authentication failed. Your token may have expired. Please reconnect your Pocket Casts account."
-                        raise MediaImportError(msg) from e
-                else:
-                    # No refresh token and got 401 - disconnect
-                    self._disconnect_account("Access token invalid and no refresh token available")
-                    msg = "Authentication failed. Your token may have expired. Please reconnect your Pocket Casts account."
-                    raise MediaImportError(msg) from e
-            msg = f"Pocket Casts API error: {e.response.status_code}"
-            raise MediaImportError(msg) from e
+        GET https://podcast-api.pocketcasts.com/podcast/full/<podcast_uuid>
+        Follows the 302 redirect to the CDN JSON automatically.
+        Returns a dict keyed by episode UUID, each value containing:
+            title, slug, published, url, file_type, duration, type, season, number
+        Handles has_more_episodes pagination up to 10 pages (safety cap).
+        Returns {} on any failure so the caller can skip the show gracefully.
+        """
+        all_episodes = {}
+        page = 1
+        max_pages = 10
+
+        while page <= max_pages:
+            url = f"{POCKETCASTS_PODCAST_API_BASE_URL}/podcast/full/{podcast_uuid}"
+            params = {} if page == 1 else {"page": page}
+            try:
+                response = requests.get(
+                    url, params=params, timeout=30, allow_redirects=True
+                )
+                response.raise_for_status()
+                data = response.json()
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "Failed to fetch full metadata for podcast %s (page %d): %s",
+                    podcast_uuid, page, e,
+                )
+                break
+
+            podcast_data = data.get("podcast", {})
+            for ep in podcast_data.get("episodes", []):
+                if "uuid" in ep:
+                    all_episodes[ep["uuid"]] = ep
+
+            if not data.get("has_more_episodes", False):
+                break
+
+            page += 1
+
+        if page > max_pages:
+            logger.warning(
+                "Podcast %s has more than %d pages of episodes; stopped at page %d.",
+                podcast_uuid, max_pages, max_pages,
+            )
+
+        return all_episodes
+
+    def _build_episode_data(self, play_state, metadata_ep, podcast_uuid, podcast_meta):
+        """Merge play-state and metadata into the dict shape _process_episode() needs.
+
+        Args:
+            play_state:   dict from /user/podcast/episodes
+                          (uuid, playingStatus, playedUpTo, ...)
+            metadata_ep:  dict from podcast-api.pocketcasts.com/podcast/full
+                          (uuid, title, published, ...)
+            podcast_uuid: str — the podcast's Pocket Casts UUID
+            podcast_meta: dict from /user/podcast/list (title, author, slug, ...)
+        """
+        return {
+            "uuid":          play_state["uuid"],
+            "podcastUuid":   podcast_uuid,
+            "podcastTitle":  podcast_meta.get("title", ""),
+            "author":        podcast_meta.get("author", ""),
+            "podcastSlug":   podcast_meta.get("slug", ""),
+            "title":         metadata_ep.get("title", "Unknown Episode"),
+            "slug":          metadata_ep.get("slug", ""),
+            "published":     metadata_ep.get("published", ""),
+            "url":           metadata_ep.get("url", ""),
+            "fileType":      metadata_ep.get("file_type", ""),
+            "duration":      metadata_ep.get("duration") or play_state.get("duration", 0),  # noqa: E501
+            "episodeType":   metadata_ep.get("type", "full"),
+            "episodeSeason": metadata_ep.get("season"),
+            "episodeNumber": metadata_ep.get("number"),
+            "playingStatus": play_state.get("playingStatus", 0),
+            "playedUpTo":    play_state.get("playedUpTo", 0),
+            "starred":       play_state.get("starred", False),
+            "isDeleted":     play_state.get("isDeleted", False),
+            "bookmarks":     play_state.get("bookmarks", []),
+        }
 
     def _process_episode(self, episode_data, defer_completion_date=False):
         """Process single episode: create/update show/episode, calculate delta.
@@ -1490,6 +1550,26 @@ class PocketCastsImporter:
                     )
                     if matching_episodes.count() == 1:
                         episode = matching_episodes.first()
+                        episode_uuid = self._resolve_episode_uuid(episode, episode_uuid)
+                        created = False
+
+                # Fallback: match by episode_number + published_date (handles title
+                # format mismatches, e.g. "#5 - Etiquette" vs "Etiquette")
+                if not episode and published and episode_data.get("episodeNumber"):
+                    ep_num = episode_data["episodeNumber"]
+                    matching_episodes = PodcastEpisode.objects.filter(
+                        show=show,
+                        episode_number=ep_num,
+                        published__date=published.date(),
+                    )
+                    if matching_episodes.count() == 1:
+                        episode = matching_episodes.first()
+                        logger.debug(
+                            "Matched episode by number+date: ep_num=%s published=%s -> %s",
+                            ep_num,
+                            published.date(),
+                            episode.episode_uuid,
+                        )
                         episode_uuid = self._resolve_episode_uuid(episode, episode_uuid)
                         created = False
 
@@ -1968,145 +2048,6 @@ class PocketCastsImporter:
                 podcast.progress = old_progress + delta_minutes
                 podcast.save()
 
-    def _sync_episodes_from_rss(self, show, rss_feed_url):
-        """Sync episodes from RSS feed and merge with existing episodes.
-        
-        Fetches all episodes from RSS feed and creates/updates PodcastEpisode
-        records. This ensures we have the complete episode list, not just
-        what's in Pocket Casts history.
-        
-        Args:
-            show: PodcastShow instance
-            rss_feed_url: RSS feed URL to fetch from
-        """
-        from app.models import PodcastEpisode
-        from integrations import podcast_rss
-
-        # Fetch episodes from RSS
-        rss_episodes = podcast_rss.fetch_episodes_from_rss(rss_feed_url)
-
-        if not rss_episodes:
-            logger.debug("No episodes found in RSS feed for show %s", show.title)
-            return
-
-        # Get existing episodes for this show
-        existing_episodes = {
-            episode.episode_uuid: episode
-            for episode in PodcastEpisode.objects.filter(show=show)
-        }
-
-        # Also create a lookup by title + published date for fuzzy matching
-        existing_by_title_date = {}
-        for episode in existing_episodes.values():
-            if episode.title and episode.published:
-                key = (episode.title.lower().strip(), episode.published.date())
-                existing_by_title_date[key] = episode
-
-        created_count = 0
-        updated_count = 0
-
-        for rss_ep in rss_episodes:
-            # Try to find matching episode
-            matched_episode = None
-
-            # First try by GUID if available
-            if rss_ep.get("guid"):
-                # Check if GUID matches any episode_uuid
-                for ep_uuid, episode in existing_episodes.items():
-                    if ep_uuid == rss_ep["guid"]:
-                        matched_episode = episode
-                        break
-
-            # If no GUID match, try by title + published date
-            if not matched_episode and rss_ep.get("title") and rss_ep.get("published"):
-                title_key = (rss_ep["title"].lower().strip(), rss_ep["published"].date())
-                matched_episode = existing_by_title_date.get(title_key)
-
-            if matched_episode:
-                # Update existing episode
-                updated = False
-                update_fields = []
-
-                # If UUID differs and we have RSS GUID, update to RSS GUID
-                # This ensures consistency when Pocket Casts UUID and RSS GUID differ
-                # But prefer keeping Pocket Casts UUID format if it looks like one (has hyphens in UUID format)
-                if rss_ep.get("guid") and matched_episode.episode_uuid != rss_ep["guid"]:
-                    # Only update if the matched episode doesn't look like a Pocket Casts UUID
-                    # Pocket Casts UUIDs typically have hyphens in specific positions
-                    is_pocketcasts_uuid = len(matched_episode.episode_uuid) == 36 and matched_episode.episode_uuid.count("-") == 4
-                    if not is_pocketcasts_uuid:
-                        logger.info(
-                            "Updating episode UUID from %s to %s for episode %s (RSS GUID)",
-                            matched_episode.episode_uuid,
-                            rss_ep["guid"],
-                            matched_episode.title,
-                        )
-                        matched_episode.episode_uuid = rss_ep["guid"]
-                        updated = True
-                        update_fields.append("episode_uuid")
-
-                if rss_ep.get("title") and matched_episode.title != rss_ep["title"]:
-                    matched_episode.title = rss_ep["title"]
-                    updated = True
-                    update_fields.append("title")
-                if rss_ep.get("published") and matched_episode.published != rss_ep["published"]:
-                    matched_episode.published = rss_ep["published"]
-                    updated = True
-                    update_fields.append("published")
-                if rss_ep.get("duration") and matched_episode.duration != rss_ep["duration"]:
-                    matched_episode.duration = rss_ep["duration"]
-                    updated = True
-                    update_fields.append("duration")
-                if rss_ep.get("audio_url") and matched_episode.audio_url != rss_ep["audio_url"]:
-                    matched_episode.audio_url = rss_ep["audio_url"]
-                    updated = True
-                    update_fields.append("audio_url")
-                if rss_ep.get("episode_number") is not None and matched_episode.episode_number != rss_ep["episode_number"]:
-                    matched_episode.episode_number = rss_ep["episode_number"]
-                    updated = True
-                    update_fields.append("episode_number")
-                if rss_ep.get("season_number") is not None and matched_episode.season_number != rss_ep["season_number"]:
-                    matched_episode.season_number = rss_ep["season_number"]
-                    updated = True
-                    update_fields.append("season_number")
-
-                if updated:
-                    matched_episode.save(update_fields=update_fields)
-                    updated_count += 1
-            else:
-                # Create new episode
-                # Generate a UUID for the episode if RSS doesn't have one
-                episode_uuid = rss_ep.get("guid")
-                if not episode_uuid:
-                    # Use a hash of title + published date as fallback UUID
-                    import hashlib
-                    uuid_str = f"{rss_ep.get('title', '')}{rss_ep.get('published', '')}"
-                    episode_uuid = hashlib.md5(uuid_str.encode()).hexdigest()[:36]
-
-                # Check if this UUID already exists (shouldn't happen, but be safe)
-                if episode_uuid in existing_episodes:
-                    continue
-
-                new_episode = PodcastEpisode.objects.create(
-                    show=show,
-                    episode_uuid=episode_uuid,
-                    title=rss_ep.get("title", "Unknown Episode"),
-                    published=rss_ep.get("published"),
-                    duration=rss_ep.get("duration"),
-                    audio_url=rss_ep.get("audio_url", ""),
-                    episode_number=rss_ep.get("episode_number"),
-                    season_number=rss_ep.get("season_number"),
-                )
-                created_count += 1
-                logger.debug("Created new episode from RSS: %s", new_episode.title)
-
-        logger.info(
-            "Synced episodes from RSS for show %s: %d created, %d updated",
-            show.title,
-            created_count,
-            updated_count,
-        )
-
     def _cleanup_duplicate_episodes(self):
         """Clean up duplicate podcast episodes.
         
@@ -2209,39 +2150,6 @@ class PocketCastsImporter:
         episode.save(update_fields=["episode_uuid"])
         return incoming_uuid
 
-    def _dedupe_history(self, episodes):
-        """Deduplicate history entries by episode UUID."""
-        if not episodes:
-            return episodes
-
-        deduped = {}
-        extras = []
-
-        for episode_data in episodes:
-            episode_uuid = episode_data.get("uuid")
-            if self.debug_uuid and episode_uuid == self.debug_uuid:
-                logger.info(
-                    "Pocket Casts history raw entry for %s: %s",
-                    episode_uuid,
-                    episode_data,
-                )
-            if not episode_uuid:
-                extras.append(episode_data)
-                continue
-
-            existing = deduped.get(episode_uuid)
-            if not existing or self._is_better_history_entry(episode_data, existing):
-                deduped[episode_uuid] = episode_data
-
-        if len(deduped) + len(extras) < len(episodes):
-            logger.debug(
-                "Deduped Pocket Casts history: %d -> %d entries",
-                len(episodes),
-                len(deduped) + len(extras),
-            )
-
-        return list(deduped.values()) + extras
-    
     def _discover_rss_feed_url(self, show_title, author=None):
         """Discover RSS feed URL from iTunes API.
         
