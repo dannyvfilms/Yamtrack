@@ -8,7 +8,7 @@ from collections import defaultdict
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from datetime import UTC, date, timedelta
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from uuid import uuid4
 
 import requests
@@ -8999,6 +8999,16 @@ def episode_save(request):
     episode_number = int(request.POST["episode_number"])
     source = request.POST["source"]
     library_media_type = (request.POST.get("library_media_type") or "").strip()
+
+    next_path = request.GET.get("next") or ""
+    if source == Sources.TMDB.value and next_path:
+        parsed_next_path = urlparse(next_path).path
+        path_parts = [segment for segment in parsed_next_path.split("/") if segment]
+        if len(path_parts) >= 2 and path_parts[0] == "details":
+            route_source = path_parts[1]
+            if route_source in {choice[0] for choice in Sources.choices}:
+                source = route_source
+
     discover_tab_cache.mark_active_from_request(
         request,
         fallback_media_type=MediaTypes.TV.value,
