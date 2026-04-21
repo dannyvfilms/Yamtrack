@@ -1,9 +1,11 @@
-from datetime import UTC, datetime
+from datetime import datetime, timezone as dt_timezone
 from pathlib import Path
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.urls import reverse
+from django.utils import timezone
 
 from app.models import (
     TV,
@@ -19,6 +21,7 @@ from integrations.imports import (
     helpers,
     simkl,
 )
+from integrations import tasks
 
 mock_path = Path(__file__).resolve().parent.parent / "mock_data"
 app_mock_path = (
@@ -136,7 +139,7 @@ class ImportSimkl(TestCase):
         """Test getting date from SIMKL."""
         self.assertEqual(
             self.importer._get_date("2023-01-01T00:00:00Z"),
-            datetime(2023, 1, 1, 0, 0, 0, tzinfo=UTC),
+            datetime(2023, 1, 1, 0, 0, 0, tzinfo=dt_timezone.utc),
         )
         self.assertIsNone(self.importer._get_date(None))
 
@@ -230,3 +233,88 @@ class ImportSimkl(TestCase):
 
         for episode in season1_episodes:
             self.assertIsNotNone(episode.end_date)
+
+    @patch("integrations.imports.simkl.SimklImporter._get_user_list")
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_importer_skips_missing_tmdb_season_metadata_instead_of_crashing(
+        self,
+        mock_tv_with_seasons,
+        mock_user_list,
+    ):
+        """Importer should continue when SIMKL seasons are absent from TMDB metadata."""
+        mock_tv_with_seasons.return_value = {
+            "title": "Breaking Bad",
+            "image": "https://image.tmdb.org/t/p/w500/test.jpg",
+            # season/6 intentionally missing
+        }
+        mock_user_list.return_value = {
+            "shows": [
+                {
+                    "last_watched_at": "2023-01-02T00:00:00Z",
+                    "show": {"title": "Breaking Bad", "ids": {"tmdb": 1396}},
+                    "status": "watching",
+                    "user_rating": 8,
+                    "seasons": [
+                        {
+                            "number": 6,
+                            "episodes": [
+                                {"number": 1, "watched_at": "2023-01-02T00:00:00Z"},
+                            ],
+                        },
+                    ],
+                    "memo": {},
+                },
+            ],
+            "movies": [],
+            "anime": [],
+        }
+
+        imported_counts, warnings = self.importer.import_data()
+
+        self.assertEqual(imported_counts[MediaTypes.TV.value], 1)
+        self.assertNotIn(MediaTypes.SEASON.value, imported_counts)
+        self.assertNotIn(MediaTypes.EPISODE.value, imported_counts)
+        self.assertIn("missing TMDB metadata for season 6", warnings)
+
+    @patch("integrations.imports.simkl.SimklImporter._get_user_list")
+    def test_history_month_view_updates_after_simkl_import_without_manual_refresh(
+        self,
+        mock_user_list,
+    ):
+        """SIMKL imports should appear on the month history page right away."""
+        self.client.force_login(self.user)
+        now = timezone.localtime()
+        watch_dt = now.replace(day=2, hour=12, minute=0, second=0, microsecond=0)
+        watched_at = watch_dt.astimezone(dt_timezone.utc).isoformat().replace(
+            "+00:00",
+            "Z",
+        )
+
+        # Prime an empty month cache.
+        initial_response = self.client.get(reverse("history"), {"y": now.year, "m": now.month})
+        self.assertContains(initial_response, "No watch history yet")
+
+        mock_user_list.return_value = {
+            "shows": [],
+            "movies": [
+                {
+                    "added_to_watchlist_at": watched_at,
+                    "movie": {"title": "Perfect Blue", "ids": {"tmdb": 10494}},
+                    "status": "completed",
+                    "user_rating": 9,
+                    "last_watched_at": watched_at,
+                    "memo": {},
+                },
+            ],
+            "anime": [],
+        }
+
+        tasks.import_media(
+            simkl.importer,
+            helpers.encrypt("token"),
+            self.user.id,
+            "new",
+        )
+
+        response = self.client.get(reverse("history"), {"y": now.year, "m": now.month})
+        self.assertContains(response, "Perfect Blue")
