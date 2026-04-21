@@ -193,6 +193,75 @@ class TVDBProviderTests(TestCase):
             "https://example.com/special1.jpg",
         )
 
+    @patch("app.providers.tvdb.tv")
+    @patch("app.providers.tvdb._request")
+    def test_tv_with_seasons_prefers_english_episode_translations(
+        self,
+        mock_request,
+        mock_tv,
+    ):
+        """Season episode rows should use preferred translation names when provided."""
+        mock_tv.return_value = {
+            "media_id": "120089",
+            "source": Sources.TVDB.value,
+            "media_type": MediaTypes.ANIME.value,
+            "title": "Attack on Titan",
+            "original_title": "進撃の巨人",
+            "localized_title": "Attack on Titan",
+            "image": "https://example.com/show.jpg",
+            "synopsis": "English synopsis",
+            "details": {"episodes": 25},
+            "related": {"seasons": [{"season_number": 1}]},
+            "external_links": {
+                "TVDB": "https://www.thetvdb.com/dereferrer/series/120089",
+            },
+        }
+        mock_request.side_effect = [
+            {
+                "data": {
+                    "id": 120089,
+                    "name": "進撃の巨人",
+                    "seasons": [
+                        {
+                            "id": 201,
+                            "number": 1,
+                            "name": "Season 1",
+                            "type": {"name": "Aired Order"},
+                        },
+                    ],
+                },
+            },
+            {"data": {}},
+            {
+                "data": {
+                    "id": 201,
+                    "number": 1,
+                    "name": "Season 1",
+                    "type": {"name": "Aired Order"},
+                    "episodes": [
+                        {
+                            "number": 1,
+                            "name": "二千年後の君へ -シガンシナ陥落①-",
+                            "translations": {
+                                "name": [
+                                    {"language": "jpn", "name": "二千年後の君へ -シガンシナ陥落①-"},
+                                    {"language": "eng", "name": "To You, in 2000 Years"},
+                                ],
+                            },
+                        },
+                    ],
+                },
+            },
+            {"data": {}},
+        ]
+
+        result = tvdb.tv_with_seasons("120089", [1], routed_media_type=MediaTypes.ANIME.value)
+
+        self.assertEqual(
+            result["season/1"]["episodes"][0]["name"],
+            "To You, in 2000 Years",
+        )
+
     @patch("app.providers.tvdb._request")
     def test_search_prefers_english_translation_rows(self, mock_request):
         """Search results should prefer English names from translation arrays."""

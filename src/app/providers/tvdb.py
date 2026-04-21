@@ -740,7 +740,7 @@ def _normalize_episode_rows(season_data: dict | None):
                 "air_date": air_date,
                 "still_path": None,
                 "image": _get_image(episode),
-                "name": _get_name(episode),
+                "name": _find_translation(episode, "name") or _get_name(episode),
                 "overview": _get_synopsis(episode),
                 "runtime": episode.get("runtime") or episode.get("airsAfterSeason"),
             },
