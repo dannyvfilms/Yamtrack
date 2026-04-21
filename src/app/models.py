@@ -304,6 +304,20 @@ class Item(CalendarTriggerMixin, models.Model):
                 name="%(app_label)s_%(class)s_library_media_type_valid",
             ),
         ]
+        indexes = [
+            models.Index(
+                fields=["metadata_fetched_at"],
+                name="app_item_metadata_fetched_idx",
+            ),
+            models.Index(
+                fields=["release_datetime"],
+                name="app_item_release_dt_idx",
+            ),
+            models.Index(
+                fields=["trakt_popularity_rank"],
+                name="app_item_trakt_pop_rank_idx",
+            ),
+        ]
         ordering = ["media_id"]
 
     def __str__(self):

@@ -250,9 +250,6 @@ class PocketCastsImporter:
             key = (podcast.item.media_id, Sources.POCKETCASTS.value)
             if key not in self.existing_podcasts:
                 self.existing_podcasts[key] = podcast
-        
-        # Track shows we've processed to sync episodes from RSS
-        self.processed_shows = set()
 
         logger.info(
             "Initialized Pocket Casts importer for user %s with mode %s",
@@ -1234,6 +1231,14 @@ class PocketCastsImporter:
             )
             episodes = response.get("episodes", [])
             return {ep["uuid"]: ep for ep in episodes if "uuid" in ep}
+        except requests.HTTPError as e:
+            if e.response is not None and e.response.status_code == 401:
+                msg = "Pocket Casts token expired during import — please retry"
+                raise MediaImportError(msg) from e
+            logger.warning(
+                "HTTP error fetching play states for podcast %s: %s", podcast_uuid, e
+            )
+            return {}
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "Failed to fetch play states for podcast %s: %s", podcast_uuid, e
@@ -1258,11 +1263,18 @@ class PocketCastsImporter:
             url = f"{POCKETCASTS_PODCAST_API_BASE_URL}/podcast/full/{podcast_uuid}"
             params = {} if page == 1 else {"page": page}
             try:
-                response = requests.get(
-                    url, params=params, timeout=30, allow_redirects=True
+                data = services.api_request(
+                    "POCKETCASTS", "GET", url, params=params,
                 )
-                response.raise_for_status()
-                data = response.json()
+            except requests.HTTPError as e:
+                if e.response is not None and e.response.status_code == 401:
+                    msg = "Pocket Casts token expired during import — please retry"
+                    raise MediaImportError(msg) from e
+                logger.warning(
+                    "HTTP error fetching full metadata for podcast %s (page %d): %s",
+                    podcast_uuid, page, e,
+                )
+                break
             except Exception as e:  # noqa: BLE001
                 logger.warning(
                     "Failed to fetch full metadata for podcast %s (page %d): %s",
@@ -1461,9 +1473,6 @@ class PocketCastsImporter:
 
             if updated:
                 show.save(update_fields=["title", "author", "image", "description", "rss_feed_url"])
-
-            # Track this show for RSS episode sync
-            self.processed_shows.add(show)
 
             # Ensure show tracker exists (similar to ArtistTracker for music)
             from app.models import PodcastShowTracker

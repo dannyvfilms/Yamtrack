@@ -1,9 +1,12 @@
 from datetime import UTC, datetime, timedelta
+from unittest.mock import MagicMock, patch
 
+import requests
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
 from app.models import Item, MediaTypes, Podcast, Sources, Status
+from integrations.imports.helpers import MediaImportError
 from integrations.imports.pocketcasts import PocketCastsImporter
 from integrations.models import PocketCastsAccount
 
@@ -326,3 +329,204 @@ class PocketCastsDistributionSimulatorTest(TestCase):
         self.assertLess(
             minute_zero_count, 5, f"Too many at minute :00: {minute_zero_count}/50"
         )
+
+
+class PocketCastsImportFlowTests(TestCase):
+    """Tests for the full-history Pocket Casts import flow (fetch + join)."""
+
+    def setUp(self):
+        """Set up a user, account, and importer. _ensure_valid_token is patched off."""
+        User = get_user_model()
+        self.user = User.objects.create_user(username="flowuser", password="pass")  # noqa: S106
+        PocketCastsAccount.objects.create(
+            user=self.user,
+            access_token="token",
+        )
+        self.importer = PocketCastsImporter(self.user, "new")
+
+    def _http_error(self, status_code):
+        """Build a requests.HTTPError with a response mock at the given status."""
+        response = MagicMock()
+        response.status_code = status_code
+        error = requests.HTTPError(response=response)
+        return error
+
+    def test_fetch_play_states_401_raises_media_import_error(self):
+        """401 from play-states endpoint raises MediaImportError so the run stops loudly."""
+        with (
+            patch.object(self.importer, "_get_access_token", return_value="fake-token"),
+            patch(
+                "integrations.imports.pocketcasts.services.api_request",
+                side_effect=self._http_error(401),
+            ),
+        ):
+            with self.assertRaises(MediaImportError) as cm:
+                self.importer._fetch_show_play_states("podcast-uuid")
+        self.assertIn("token", str(cm.exception).lower())
+
+    def test_fetch_full_metadata_pagination(self):
+        """_fetch_show_full_metadata follows has_more_episodes pagination via services.api_request."""
+        page_1 = {
+            "podcast": {"episodes": [{"uuid": "e1", "title": "Ep 1"}]},
+            "has_more_episodes": True,
+        }
+        page_2 = {
+            "podcast": {"episodes": [{"uuid": "e2", "title": "Ep 2"}]},
+            "has_more_episodes": False,
+        }
+        with patch(
+            "integrations.imports.pocketcasts.services.api_request",
+            side_effect=[page_1, page_2],
+        ) as mock_api:
+            result = self.importer._fetch_show_full_metadata("podcast-uuid")
+
+        self.assertIn("e1", result)
+        self.assertIn("e2", result)
+        self.assertEqual(mock_api.call_count, 2)
+        # Second call must include the pagination param
+        second_call_kwargs = mock_api.call_args_list[1].kwargs
+        self.assertEqual(second_call_kwargs.get("params"), {"page": 2})
+
+    def test_import_happy_path(self):
+        """End-to-end: one podcast, two episodes (played + in-progress) become Podcast rows."""
+        podcast_list = {
+            "podcasts": [
+                {
+                    "uuid": "show-1",
+                    "title": "Test Show",
+                    "author": "Test Author",
+                    "description": "",
+                    "url": "",
+                }
+            ],
+        }
+        play_states = {
+            "uuid-played": {
+                "uuid": "uuid-played",
+                "playingStatus": 3,
+                "playedUpTo": 1800,
+                "duration": 1800,
+            },
+            "uuid-inprogress": {
+                "uuid": "uuid-inprogress",
+                "playingStatus": 2,
+                "playedUpTo": 600,
+                "duration": 1800,
+            },
+        }
+        metadata_page = {
+            "podcast": {
+                "episodes": [
+                    {
+                        "uuid": "uuid-played",
+                        "title": "Played Ep",
+                        "published": "2026-01-01T00:00:00Z",
+                        "duration": 1800,
+                        "url": "https://example.com/played.mp3",
+                    },
+                    {
+                        "uuid": "uuid-inprogress",
+                        "title": "In-Progress Ep",
+                        "published": "2026-01-02T00:00:00Z",
+                        "duration": 1800,
+                        "url": "https://example.com/inprogress.mp3",
+                    },
+                ],
+            },
+            "has_more_episodes": False,
+        }
+
+        with (
+            patch.object(PocketCastsImporter, "_ensure_valid_token"),
+            patch.object(PocketCastsImporter, "_get_access_token", return_value="fake"),
+            patch(
+                "integrations.pocketcasts_api.get_podcast_list",
+                return_value=podcast_list,
+            ),
+            patch.object(
+                PocketCastsImporter,
+                "_fetch_show_play_states",
+                return_value=play_states,
+            ),
+            patch.object(
+                PocketCastsImporter,
+                "_fetch_show_full_metadata",
+                return_value={
+                    ep["uuid"]: ep for ep in metadata_page["podcast"]["episodes"]
+                },
+            ),
+        ):
+            importer = PocketCastsImporter(self.user, "new")
+            importer.import_data()
+
+        podcasts = Podcast.objects.filter(user=self.user).order_by("item__media_id")
+        self.assertEqual(podcasts.count(), 2)
+        statuses = {p.item.media_id: p.status for p in podcasts}
+        self.assertEqual(statuses["uuid-played"], Status.COMPLETED.value)
+        self.assertEqual(statuses["uuid-inprogress"], Status.IN_PROGRESS.value)
+
+    def test_import_skips_episode_with_missing_metadata(self):
+        """When play state exists but metadata is missing, that episode is skipped."""
+        podcast_list = {
+            "podcasts": [
+                {
+                    "uuid": "show-1",
+                    "title": "Test Show",
+                    "author": "Test Author",
+                    "description": "",
+                    "url": "",
+                }
+            ],
+        }
+        play_states = {
+            "uuid-a": {
+                "uuid": "uuid-a",
+                "playingStatus": 3,
+                "playedUpTo": 1800,
+                "duration": 1800,
+            },
+            "uuid-b": {
+                "uuid": "uuid-b",
+                "playingStatus": 3,
+                "playedUpTo": 1800,
+                "duration": 1800,
+            },
+        }
+        # Only uuid-a present in metadata
+        metadata_only_a = {
+            "uuid-a": {
+                "uuid": "uuid-a",
+                "title": "Ep A",
+                "published": "2026-01-01T00:00:00Z",
+                "duration": 1800,
+                "url": "https://example.com/a.mp3",
+            },
+        }
+
+        with (
+            patch.object(PocketCastsImporter, "_ensure_valid_token"),
+            patch.object(PocketCastsImporter, "_get_access_token", return_value="fake"),
+            patch(
+                "integrations.pocketcasts_api.get_podcast_list",
+                return_value=podcast_list,
+            ),
+            patch.object(
+                PocketCastsImporter,
+                "_fetch_show_play_states",
+                return_value=play_states,
+            ),
+            patch.object(
+                PocketCastsImporter,
+                "_fetch_show_full_metadata",
+                return_value=metadata_only_a,
+            ),
+        ):
+            importer = PocketCastsImporter(self.user, "new")
+            importer.import_data()
+
+        media_ids = set(
+            Podcast.objects.filter(user=self.user).values_list(
+                "item__media_id", flat=True
+            )
+        )
+        self.assertEqual(media_ids, {"uuid-a"})

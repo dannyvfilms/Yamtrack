@@ -4,7 +4,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('app', '0111_alter_podcastepisode_episode_uuid'),
+        ('app', '0110_item_manual_metadata'),
     ]
 
     operations = [

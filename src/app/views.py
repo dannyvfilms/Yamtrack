@@ -12273,7 +12273,11 @@ def podcast_show_delete(request):
 
 @require_POST
 def podcast_mark_all_played(request, show_id):
-    """Mark all unplayed episodes for a podcast show as completed on their release date."""
+    """Mark all episodes of this podcast currently in the library as completed on their release date.
+
+    Episodes not yet imported from Pocket Casts are not included — run a Pocket Casts
+    import first to fetch the full episode list.
+    """
     from django.conf import settings
     from django.shortcuts import get_object_or_404
     from django.utils import timezone
