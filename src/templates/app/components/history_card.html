@@ -4,10 +4,10 @@
 {# History card component - used for both 2:3 and 1:1 aspect ratio cards #}
 {# Args: entry, card_class (search-result-card or search-result-card-square), history_mode, user #}
 
-<div class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative {{ card_class }}{% if user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %}"
+<div class="media-card media-card-tooltip-safe bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative {{ card_class }}{% if user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %}"
      data-media-type="{{ entry.media_type }}"
      x-data="{ trackOpen: false, historyOpen: false, listsOpen: false }">
-  <div class="relative">
+  <div class="media-card-visual relative">
     {% with entry.item|display_title:user as preferred_entry_title %}
     <a href="{% if entry.media_type == MediaTypes.MUSIC.value and entry.album %}{{ entry.album|music_album_url }}{% elif entry.media_type == MediaTypes.PODCAST.value and entry.show and entry.show.podcast_uuid %}{% url 'media_details' source='pocketcasts' media_type='podcast' media_id=entry.show.podcast_uuid title=entry.show.slug|default:entry.show.title|slug %}{% else %}{{ entry.item|media_url }}{% endif %}">
       <img alt="{{ preferred_entry_title|default:entry.display_title|default:entry.title }}"

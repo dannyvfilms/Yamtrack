@@ -4637,7 +4637,8 @@
   display: flex;
   flex-direction: column;
   aspect-ratio: 2/3;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: visible;
 }
 .search-result-card>div:first-child {
   position: absolute;
@@ -4698,7 +4699,8 @@
   display: flex;
   flex-direction: column;
   aspect-ratio: 1/1;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: visible;
 }
 .search-result-card-square>div:first-child {
   position: absolute;
@@ -4753,6 +4755,17 @@
 }
 .search-result-card-square.media-card-subtitle-always .media-card-year {
   opacity: 1;
+}
+.media-card-tooltip-safe {
+  overflow: visible;
+}
+.media-card-tooltip-safe > .media-card-visual {
+  border-radius: inherit;
+  overflow: hidden;
+}
+.media-card-tooltip-safe > .media-card-body {
+  border-bottom-left-radius: inherit;
+  border-bottom-right-radius: inherit;
 }
 .stat-scroll-safe.stat-tooltip-safe {
   overflow: visible;

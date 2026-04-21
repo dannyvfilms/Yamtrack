@@ -377,6 +377,44 @@ class AppTagsTests(TestCase):
             content,
         )
 
+    def test_media_card_marks_alt_title_cards_as_tooltip_safe(self):
+        """Grid media cards with alternate-title tooltips should not clip the tooltip panel."""
+        item = Item(
+            media_id="tooltip-card-1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.ANIME.value,
+            title="Attack on Titan",
+            localized_title="Attack on Titan",
+            original_title="Shingeki no Kyojin",
+            image="http://example.com/tooltip-card.jpg",
+        )
+        request = self.request_factory.get("/search")
+        request.user = self.user
+
+        content = render_to_string(
+            "app/components/media_card.html",
+            {
+                "item": item,
+                "media": SimpleNamespace(
+                    album=None,
+                    status=None,
+                    progress=None,
+                    next_event=None,
+                    episodes_left=0,
+                ),
+                "user": self.user,
+                "title": item.title,
+                "from_grid": True,
+                "show_status_chip": False,
+                "show_progress_chip": False,
+            },
+            request=request,
+        )
+
+        self.assertIn("media-card-tooltip-safe", content)
+        self.assertIn("media-card-visual", content)
+        self.assertIn('aria-label="Show alternative title"', content)
+
     def test_history_card_uses_canonical_music_album_url(self):
         """Music history cards should link to the shared nested album route."""
         artist = Artist.objects.create(name="History Artist")
@@ -433,6 +471,54 @@ class AppTagsTests(TestCase):
             ),
             content,
         )
+
+    def test_history_card_marks_alt_title_cards_as_tooltip_safe(self):
+        """History cards with alternate-title tooltips should allow the tooltip outside the shell."""
+        item = Item.objects.create(
+            media_id="tooltip-history-1",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.ANIME.value,
+            title="Attack on Titan",
+            localized_title="Attack on Titan",
+            original_title="Shingeki no Kyojin",
+            image="http://example.com/tooltip-history.jpg",
+        )
+        request = self.request_factory.get("/history")
+        request.user = self.user
+
+        content = render_to_string(
+            "app/components/history_card.html",
+            {
+                "entry": SimpleNamespace(
+                    media_type=MediaTypes.ANIME.value,
+                    album=None,
+                    item=item,
+                    poster=item.image,
+                    status=None,
+                    runtime_display=None,
+                    display_title=item.title,
+                    title=item.title,
+                    played_at_local=timezone.now(),
+                    time_range_display="6:00 PM",
+                    play_count=1,
+                    progress_display=None,
+                    episode_label=None,
+                    episode_code=None,
+                    show=None,
+                    score=None,
+                    entry_key="history-entry-1",
+                    instance_id=1,
+                ),
+                "card_class": "search-result-card",
+                "history_mode": "history",
+                "user": self.user,
+            },
+            request=request,
+        )
+
+        self.assertIn("media-card-tooltip-safe", content)
+        self.assertIn("media-card-visual", content)
+        self.assertIn('aria-label="Show alternative title"', content)
 
     def test_match_percent_clamps_and_rounds(self):
         """match_percent should clamp values to [0,100] and round."""
