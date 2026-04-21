@@ -5823,6 +5823,9 @@ def media_details(
                     fetch_collection_metadata_for_item.delay(user_id=request.user.id, item_id=item.id)
                     # Use module-level logger directly to avoid UnboundLocalError
                     logging.getLogger(__name__).info("Triggered background collection fetch for %s - %s (item_id=%s)", request.user.username, item.title, item.id)
+                    # TODO(issue-166): Re-enable a user-facing collection-fetching banner only after
+                    # the background task reliably self-resolves for empty collections; remove this
+                    # reminder once that task/UX overhaul is complete.
                     fetching_collection_data = True
                     item_id_for_polling = item.id
         except Item.DoesNotExist:
@@ -7166,6 +7169,9 @@ def season_details(
                             result = fetch_collection_metadata_for_item.delay(user_id=request.user.id, item_id=show_item.id)
                             logger.info("Triggered background collection fetch for show %s - %s (item_id=%s) from season page (task_id=%s)", 
                                        request.user.username, show_item.title, show_item.id, result.id if result else "None")
+                            # TODO(issue-166): Re-enable a user-facing collection-fetching banner only
+                            # after the background task reliably self-resolves for empty collections;
+                            # remove this reminder once that task/UX overhaul is complete.
                             fetching_collection_data = True
                             item_id_for_polling = show_item.id
                         except Exception as task_exc:
