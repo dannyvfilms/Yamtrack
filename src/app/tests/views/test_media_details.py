@@ -20,6 +20,7 @@ from app.models import (
     BoardGame,
     Book,
     Comic,
+    CollectionEntry,
     CreditRoleType,
     Episode,
     Game,
@@ -3520,6 +3521,116 @@ class MediaDetailsViewTests(TestCase):
 
     @patch("app.providers.services.get_media_metadata")
     @patch("app.providers.tmdb.process_episodes")
+    def test_season_details_roll_up_season_level_collection_entry_when_no_episode_rows_exist(
+        self,
+        mock_process_episodes,
+        mock_get_metadata,
+    ):
+        """Season details should treat a manual season entry as the full season."""
+        Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Test TV Show",
+            image="http://example.com/image.jpg",
+        )
+        season_item = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Season 1",
+            image="http://example.com/season.jpg",
+            season_number=1,
+        )
+        Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Episode 1",
+            image="http://example.com/ep1.jpg",
+            season_number=1,
+            episode_number=1,
+        )
+        Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Episode 2",
+            image="http://example.com/ep2.jpg",
+            season_number=1,
+            episode_number=2,
+        )
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=season_item,
+            media_type="digital",
+            resolution="1080p",
+        )
+
+        mock_get_metadata.side_effect = lambda *_args, **_kwargs: {
+            "title": "Test TV Show",
+            "media_id": "1668",
+            "source": Sources.TMDB.value,
+            "media_type": MediaTypes.TV.value,
+            "image": "http://example.com/image.jpg",
+            "season/1": {
+                "title": "Season 1",
+                "season_title": "Season 1",
+                "media_id": "1668",
+                "media_type": MediaTypes.SEASON.value,
+                "source": Sources.TMDB.value,
+                "image": "http://example.com/season.jpg",
+                "episodes": [],
+            },
+        }
+        mock_process_episodes.return_value = [
+            {
+                "media_id": "1668",
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.EPISODE.value,
+                "season_number": 1,
+                "episode_number": 1,
+                "name": "Episode 1",
+                "air_date": "2023-01-01",
+                "watched": False,
+            },
+            {
+                "media_id": "1668",
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.EPISODE.value,
+                "season_number": 1,
+                "episode_number": 2,
+                "name": "Episode 2",
+                "air_date": "2023-01-08",
+                "watched": False,
+            },
+        ]
+
+        response = self.client.get(
+            reverse(
+                "season_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_id": "1668",
+                    "title": "test-tv-show",
+                    "season_number": 1,
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context["collection_stats"],
+            {
+                "collected_episodes": 2,
+                "total_episodes": 2,
+            },
+        )
+        self.assertContains(response, "COLLECTED EPISODES")
+        self.assertContains(response, "2/2")
+
+    @patch("app.providers.services.get_media_metadata")
+    @patch("app.providers.tmdb.process_episodes")
     def test_season_details_paginate_long_episode_lists(
         self,
         mock_process_episodes,
@@ -4920,6 +5031,213 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.context["media"]["details"]["runtime"], "53m")
         show_item.refresh_from_db()
         self.assertEqual(show_item.runtime_minutes, 999999)
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_tv_media_details_roll_up_show_level_collection_entry_when_no_granular_rows_exist(
+        self,
+        mock_get_metadata,
+    ):
+        """TV details should treat a show-level collection entry as a full-show fallback."""
+        show_item = Item.objects.create(
+            media_id="tv-collection-rollup",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Collected Show",
+            image="http://example.com/show.jpg",
+        )
+        Item.objects.create(
+            media_id="tv-collection-rollup",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            title="Collected Show",
+            image="http://example.com/season.jpg",
+        )
+        Item.objects.create(
+            media_id="tv-collection-rollup",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=1,
+            title="Episode 1",
+            image="http://example.com/episode1.jpg",
+        )
+        Item.objects.create(
+            media_id="tv-collection-rollup",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=2,
+            title="Episode 2",
+            image="http://example.com/episode2.jpg",
+        )
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=show_item,
+            media_type="digital",
+            resolution="1080p",
+        )
+
+        mock_get_metadata.return_value = {
+            "media_id": "tv-collection-rollup",
+            "title": "Collected Show",
+            "media_type": MediaTypes.TV.value,
+            "source": Sources.TMDB.value,
+            "source_url": "https://www.themoviedb.org/tv/tv-collection-rollup",
+            "image": "http://example.com/show.jpg",
+            "synopsis": "Test synopsis",
+            "details": {
+                "format": "TV",
+                "runtime": "53m",
+                "episodes": 2,
+                "seasons": 1,
+            },
+            "related": {},
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+            "providers": {},
+            "external_links": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "media_id": "tv-collection-rollup",
+                    "title": "collected-show",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context["collection_stats"],
+            {
+                "collected_seasons": 1,
+                "total_seasons": 1,
+                "collected_episodes": 2,
+                "total_episodes": 2,
+            },
+        )
+        self.assertContains(response, "COLLECTED SEASONS")
+        self.assertContains(response, "1/1")
+        self.assertContains(response, "COLLECTED EPISODES")
+        self.assertContains(response, "2/2")
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_tv_media_details_count_collected_season_as_collected_show_episodes(
+        self,
+        mock_get_metadata,
+    ):
+        """TV details should count a collected season as all of that season's episodes."""
+        Item.objects.create(
+            media_id="tv-season-rollup",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Collected Season Show",
+            image="http://example.com/show.jpg",
+        )
+        season_item = Item.objects.create(
+            media_id="tv-season-rollup",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            title="Collected Season Show",
+            image="http://example.com/season1.jpg",
+        )
+        Item.objects.create(
+            media_id="tv-season-rollup",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=2,
+            title="Collected Season Show",
+            image="http://example.com/season2.jpg",
+        )
+        Item.objects.create(
+            media_id="tv-season-rollup",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=1,
+            title="Episode 1",
+            image="http://example.com/episode1.jpg",
+        )
+        Item.objects.create(
+            media_id="tv-season-rollup",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=2,
+            title="Episode 2",
+            image="http://example.com/episode2.jpg",
+        )
+        Item.objects.create(
+            media_id="tv-season-rollup",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=2,
+            episode_number=1,
+            title="Episode 3",
+            image="http://example.com/episode3.jpg",
+        )
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=season_item,
+            media_type="digital",
+            resolution="1080p",
+        )
+
+        mock_get_metadata.return_value = {
+            "media_id": "tv-season-rollup",
+            "title": "Collected Season Show",
+            "media_type": MediaTypes.TV.value,
+            "source": Sources.TMDB.value,
+            "source_url": "https://www.themoviedb.org/tv/tv-season-rollup",
+            "image": "http://example.com/show.jpg",
+            "synopsis": "Test synopsis",
+            "details": {
+                "format": "TV",
+                "runtime": "53m",
+                "episodes": 3,
+                "seasons": 2,
+            },
+            "related": {},
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+            "providers": {},
+            "external_links": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "media_id": "tv-season-rollup",
+                    "title": "collected-season-show",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context["collection_stats"],
+            {
+                "collected_seasons": 1,
+                "total_seasons": 2,
+                "collected_episodes": 2,
+                "total_episodes": 3,
+            },
+        )
+        self.assertContains(response, "COLLECTED SEASONS")
+        self.assertContains(response, "1/2")
+        self.assertContains(response, "COLLECTED EPISODES")
+        self.assertContains(response, "2/3")
 
     @patch("app.providers.services.get_media_metadata")
     def test_tv_media_details_play_stats_skip_placeholder_episode_runtimes(
