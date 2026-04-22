@@ -7,6 +7,7 @@ import app
 from app import live_playback
 from app.log_safety import mapping_keys, presence_map
 from app.models import (
+    TV,
     Item,
     ItemProviderLink,
     MediaTypes,
@@ -14,7 +15,6 @@ from app.models import (
     Season,
     Sources,
     Status,
-    TV,
 )
 
 from .base import BaseWebhookProcessor
@@ -180,6 +180,8 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
             return False
 
         # --- Direct lookups by known fields on Item ----------------------
+        # Only TMDB, TVDB, and MAL are tracking sources for TV/anime.
+        # IMDB is an external identifier, not a tracking source.
         direct_lookups = [
             (Sources.TMDB.value, "tmdb_id"),
             (Sources.TVDB.value, "tvdb_id"),
@@ -197,21 +199,7 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
                     source=source,
                     media_id=str(raw_id),
                 )
-                if item.user == user and has_tracking_instance(item):
-                    return item, False
-            except Item.DoesNotExist:
-                pass
-
-        # --- IMDB via provider_external_ids JSON field -------------------
-        imdb_id = ids.get("imdb_id")
-        if imdb_id:
-            try:
-                item = Item.objects.get(
-                    media_type=media_type,
-                    source=Sources.TMDB.value,
-                    provider_external_ids__contains={"imdb_id": str(imdb_id)},
-                )
-                if item.user == user and has_tracking_instance(item):
+                if has_tracking_instance(item):
                     return item, False
             except Item.DoesNotExist:
                 pass
@@ -219,7 +207,7 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
         # --- Cross-provider lookup via ItemProviderLink ------------------
         if media_type in (MediaTypes.TV.value, MediaTypes.ANIME.value):
             link_qs = ItemProviderLink.objects.filter(
-                provider__in=("tmdb", "tvdb", "mal", "igdb"),
+                provider__in=(Sources.TMDB.value, Sources.TVDB.value, Sources.MAL.value),
                 provider_media_type=media_type,
             )
 
@@ -229,25 +217,16 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
             if tmdb_id or tvdb_id:
                 q = Q()
                 if tmdb_id:
-                    q |= Q(provider="tmdb", provider_media_id=str(tmdb_id))
-                    q |= Q(
-                        item__source=Sources.TMDB.value,
-                        item__provider_external_ids__contains={"tmdb_id": str(tmdb_id)},
-                    )
+                    q |= Q(provider=Sources.TMDB.value, provider_media_id=str(tmdb_id))
                 if tvdb_id:
-                    q |= Q(provider="tvdb", provider_media_id=str(tvdb_id))
-                    q |= Q(
-                        item__source=Sources.TVDB.value,
-                        item__provider_external_ids__contains={"tvdb_id": str(tvdb_id)},
-                    )
+                    q |= Q(provider=Sources.TVDB.value, provider_media_id=str(tvdb_id))
                 link_qs = link_qs.filter(q)
 
             for link in link_qs[:20]:
                 try:
                     item = link.item
                     if (
-                        item.user == user
-                        and item.media_type == media_type
+                        item.media_type == media_type
                         and has_tracking_instance(item)
                     ):
                         return item, False
@@ -540,10 +519,15 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
             return MediaTypes.MOVIE.value
         return None
 
-    def _update_live_playback_state(  # noqa: C901
+    def _update_live_playback_state(
         self, payload, user, ids, playback_media_type,
     ):
-        """Update cache-backed live playback state for home-page UI."""
+        """Update cache-backed live playback state for home-page UI.
+
+        Applies ``jellyfin_match_existing_enabled`` and
+        ``jellyfin_provider_priority_enabled`` so the card reflects the
+        user's tracking identity.
+        """
         event_type = JELLYFIN_EVENT_MAP.get(payload.get("Event"))
         if not event_type:
             return
@@ -556,37 +540,65 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
 
         item = payload.get("Item", {})
         media_id = None
+        source = Sources.TMDB.value
         season_number = None
         episode_number = None
 
         if playback_media_type == MediaTypes.MOVIE.value:
-            media_id = ids.get("tmdb_id")
+            # Match existing tracked movie (jellyfin_match_existing_enabled)
+            existing_item, _ = self._find_existing_item(
+                user, MediaTypes.MOVIE.value, ids,
+            )
+            if existing_item:
+                media_id = existing_item.media_id
+                source = existing_item.source
+            else:
+                media_id = ids.get("tmdb_id")
         else:
             season_number, episode_number = (
                 self._extract_season_episode_from_payload(payload)
             )
-            # Prefer TVDB/IMDB resolution — they reliably return the
-            # show-level TMDB ID via the TMDB find API.
-            if ids.get("tvdb_id") or ids.get("imdb_id"):
-                alt_ids = dict(ids)
-                alt_ids["tmdb_id"] = None
-                resolved_id, _, _ = super()._find_tv_media_id(alt_ids)
-                if resolved_id:
-                    media_id = str(resolved_id)
 
-            # Fallback: title search then raw tmdb_id
-            if media_id is None:
-                series_title = self._extract_series_title(payload)
-                resolved_id, _, _ = self._find_tv_media_id(
-                    ids,
-                    series_title=series_title,
-                    allow_title_fallback=True,
+            # Match existing tracked TV show (jellyfin_match_existing_enabled)
+            existing_item, _ = self._find_existing_item(
+                user, MediaTypes.TV.value, ids,
+                season_number, episode_number,
+            )
+            if existing_item:
+                media_id = existing_item.media_id
+                source = existing_item.source
+                logger.debug(
+                    "Live playback: matched existing item %s (source=%s)",
+                    media_id, source,
                 )
-                if resolved_id:
-                    media_id = str(resolved_id)
 
+            # Use user's preferred provider (jellyfin_provider_priority_enabled)
             if media_id is None:
-                media_id = ids.get("tmdb_id")
+                resolved_media_id, resolved_source, _, _ = (
+                    self._resolve_media_id_to_preferred_source(
+                        user, MediaTypes.TV.value, ids,
+                        season_number, episode_number,
+                    )
+                )
+                if resolved_media_id is not None:
+                    media_id = resolved_media_id
+                    source = resolved_source
+                    logger.debug(
+                        "Live playback: using preferred source=%s (id=%s)",
+                        source, media_id,
+                    )
+
+            # Fallback: resolve via TMDB find
+            if media_id is None:
+                if ids.get("tvdb_id") or ids.get("imdb_id"):
+                    alt_ids = dict(ids)
+                    alt_ids["tmdb_id"] = None
+                    resolved_id, _, _ = super()._find_tv_media_id(alt_ids)
+                    if resolved_id:
+                        media_id = str(resolved_id)
+
+                if media_id is None:
+                    media_id = ids.get("tmdb_id")
 
         # Duration / offset from Jellyfin ticks (100 ns units)
         duration_seconds = _ticks_to_seconds(item.get("RunTimeTicks"))
@@ -600,7 +612,7 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
             event_type=event_type,
             playback_media_type=playback_media_type,
             media_id=media_id,
-            source=Sources.TMDB.value,
+            source=source,
             rating_key=str(item.get("Id") or "").strip() or None,
             title=item.get("Name"),
             series_title=item.get("SeriesName"),

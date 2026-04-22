@@ -68,4 +68,9 @@ urlpatterns = [
         views.update_jellyseerr_settings,
         name="update_jellyseerr_settings",
     ),
+    path(
+        "settings/integrations/jellyfin/",
+        views.update_jellyfin_settings,
+        name="update_jellyfin_settings",
+    ),
 ]

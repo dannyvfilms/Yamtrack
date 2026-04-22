@@ -156,6 +156,27 @@ JellyfinWebhookProcessor._get_tv_metadata(media_id, season_numbers, source)
 
 ---
 
+## Live Playback State / Display
+
+Both features also apply to the live playback state (the "Now Watching" home-page card).
+
+When a Play/Pause/Stop event arrives from Jellyfin, `_update_live_playback_state`
+resolves the `media_id` and `source` for the card using the same priority:
+
+1. **`jellyfin_match_existing_enabled`**: If the user already tracks the show under
+   a different provider, the card uses *that* provider's ID and source so the UI
+   matches the tracking identity.
+2. **`jellyfin_provider_priority_enabled`**: If no existing item is found but the
+   user has a preferred metadata provider, the card uses the preferred provider's
+   ID from the payload.
+3. **Fallback**: TMDB ID from the payload (normal behavior).
+
+This ensures the home-page card always reflects the same identity as the tracking
+records, avoiding mismatches where the card shows "TMDB" but progress is tracked
+under "MAL" or "TVDB".
+
+---
+
 ## Files Modified
 
 1. **`src/integrations/webhooks/base.py`**: Added `source` parameter to `_handle_tv_episode()`, added `_get_tv_metadata()` hook

@@ -173,7 +173,7 @@
             <div class="flex-1">
               <span class="text-sm font-medium text-white block">Prioritize Metadata Provider Preference</span>
               <p class="text-xs text-gray-400 mt-1">
-                Use your Preferences → Metadata Providers setting (TV/A Anime source) when resolving Jellyfin webhooks. Falls back to TMDB if unavailable.
+                Use your Preferences → Metadata Providers setting (TV/Anime metadata source) when resolving Jellyfin webhooks. Falls back to TMDB if unavailable.
               </p>
             </div>
             <input type="checkbox" name="jellyfin_provider_priority_enabled"
@@ -188,7 +188,7 @@
             <div class="flex-1">
               <span class="text-sm font-medium text-white block">Match Existing Tracked Items</span>
               <p class="text-xs text-gray-400 mt-1">
-                Attempt to find already-tracked shows/movies by any provider ID (TMDB, TVDB, MAL, etc.) instead of always creating new entries.
+                Attempt to find already-tracked shows/movies by any metadata provider (TMDB, TVDB, MAL, etc.) instead of always using TMDB, or your preferred metadata provider.
               </p>
             </div>
             <input type="checkbox" name="jellyfin_match_existing_enabled"

@@ -321,7 +321,7 @@ Add toggle switches after the Jellyfin integration sections:
       <div>
         <span class="text-sm font-medium text-white">Prioritize Metadata Provider Preference</span>
         <p class="text-xs text-gray-400 mt-1">
-          Use your Preferences -> Metadata Providers setting (TV/A Anime source) when resolving Jellyfin webhooks. Falls back to TMDB if unavailable.
+          Use your Preferences -> Metadata Providers setting (TV/Anime metadata source) when resolving Jellyfin webhooks. Falls back to TMDB if unavailable.
         </p>
       </div>
       <input type="checkbox" name="jellyfin_provider_priority_enabled" 

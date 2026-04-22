@@ -1162,20 +1162,21 @@ def update_plex_usernames(request):
     return redirect(redirect_target)
 
 
+@login_required
 @require_POST
 def update_jellyfin_settings(request):
     """Update Jellyfin integration settings for the current user."""
-    jellyfin_provider_priority = request.POST.get('jellyfin_provider_priority_enabled') == 'on'
-    jellyfin_match_existing = request.POST.get('jellyfin_match_existing_enabled') == 'on'
-    
-    request.user.jellyfin_provider_priority_enabled = jellyfin_provider_priority
-    request.user.jellyfin_match_existing_enabled = jellyfin_match_existing
+    provider_priority = request.POST.get("jellyfin_provider_priority_enabled") == "on"
+    match_existing = request.POST.get("jellyfin_match_existing_enabled") == "on"
+
+    request.user.jellyfin_provider_priority_enabled = provider_priority
+    request.user.jellyfin_match_existing_enabled = match_existing
     request.user.save(update_fields=[
-        'jellyfin_provider_priority_enabled',
-        'jellyfin_match_existing_enabled',
+        "jellyfin_provider_priority_enabled",
+        "jellyfin_match_existing_enabled",
     ])
     messages.success(request, "Jellyfin settings saved successfully.")
-    return redirect('integrations')
+    return redirect("integrations")
 
 
 @require_POST

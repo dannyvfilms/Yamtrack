@@ -6,23 +6,48 @@ from django.test import Client, TestCase
 from django.urls import reverse
 
 from app import live_playback
-from app.models import TV, Anime, Episode, Item, MediaTypes, Movie, Season, Status
+from app.models import (
+    TV,
+    Anime,
+    Episode,
+    Item,
+    ItemProviderLink,
+    MediaTypes,
+    Movie,
+    Season,
+    Sources,
+    Status,
+)
 from integrations.webhooks.jellyfin import JellyfinWebhookProcessor
 
 
 class JellyfinWebhookTests(TestCase):
     """Tests for Jellyfin webhook."""
 
+    TEST_USERNAME = "testuser"
+    TEST_PASSWORD = "test-password"
+    TEST_TOKEN = "test-token"
+
     def setUp(self):
         """Set up test data."""
         self.client = Client()
-        self.credentials = {"username": "testuser", "token": "test-token"}
-        self.user = get_user_model().objects.create_superuser(**self.credentials)
-        self.url = reverse("jellyfin_webhook", kwargs={"token": "test-token"})
+        self.user = get_user_model().objects.create_superuser(
+            username=self.TEST_USERNAME,
+            password=self.TEST_PASSWORD,
+        )
+        self.user.token = self.TEST_TOKEN
+        self.user.save(update_fields=["token"])
+        self.url = reverse("jellyfin_webhook", kwargs={"token": self.TEST_TOKEN})
 
     def tearDown(self):
-        """Clear cached playback state created by webhook tests."""
+        """Clear cached playback state and reset Jellyfin settings."""
         live_playback.clear_user_playback_state(self.user.id)
+        self.user.jellyfin_provider_priority_enabled = False
+        self.user.jellyfin_match_existing_enabled = False
+        self.user.save(update_fields=[
+            "jellyfin_provider_priority_enabled",
+            "jellyfin_match_existing_enabled",
+        ])
 
     def test_invalid_token(self):
         """Test webhook with invalid token returns 401."""
@@ -204,6 +229,7 @@ class JellyfinWebhookTests(TestCase):
         mock_tv_with_seasons.return_value = {
             "media_id": "12345",
             "title": "Hell's Paradise",
+            "image": "https://example.com/hells-paradise.jpg",
             "tvdb_id": "402474",
             "season/2": {"episodes": [{"episode_number": 11}]},
         }
@@ -299,6 +325,7 @@ class JellyfinWebhookTests(TestCase):
         mock_tv_with_seasons.return_value = {
             "media_id": "12345",
             "title": "Hell's Paradise",
+            "image": "https://example.com/hells-paradise.jpg",
             "tvdb_id": "402474",
             "season/2": {"episodes": [{"episode_number": 11}]},
         }
@@ -673,3 +700,589 @@ class JellyfinWebhookTests(TestCase):
             stopped_state["status"],
             live_playback.PLAYBACK_STATUS_STOPPED,
         )
+
+
+
+    @patch("app.providers.tmdb.find")
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_jellyfin_provider_priority_disabled_uses_tmdb_default(self, mock_tv_with_seasons, mock_find):
+        """When provider priority setting is disabled, webhooks should use default TMDB tracking."""
+        self.assertFalse(self.user.jellyfin_provider_priority_enabled)
+
+        mock_find.return_value = {
+            "tv_episode_results": [{"show_id": 1668, "season_number": 1, "episode_number": 1}],
+            "tv_results": [],
+        }
+        mock_tv_with_seasons.return_value = {
+            "media_id": "1668",
+            "title": "Friends",
+            "image": "https://example.com/friends.jpg",
+            "tvdb_id": "303821",
+            "season/1": {"episodes": [{"episode_number": 1}]},
+        }
+
+        payload = {
+            "Event": "Stop",
+            "Item": {
+                "Type": "Episode",
+                "Name": "The One Where Monica Gets a Roommate",
+                "ProviderIds": {"Tvdb": "303821", "Imdb": "tt0583459"},
+                "UserData": {"Played": True},
+                "SeriesName": "Friends",
+                "ParentIndexNumber": 1,
+                "IndexNumber": 1,
+            },
+        }
+
+        response = self.client.post(self.url, data=json.dumps(payload), content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+
+        tv_item = Item.objects.get(media_type=MediaTypes.TV.value, media_id="1668")
+        self.assertEqual(tv_item.source, Sources.TMDB.value)
+
+    @patch("app.providers.tmdb.find")
+    @patch("app.providers.tvdb.tv_with_seasons")
+    def test_jellyfin_tracks_tv_under_tvdb_when_preferred_provider_enabled(self, mock_tvdb_tv, mock_find):
+        """When TVDB is user's preferred provider, webhooks should track under TVDB."""
+        self.user.jellyfin_provider_priority_enabled = True
+        self.user.tv_metadata_source_default = Sources.TVDB.value
+        self.user.save()
+
+        mock_find.return_value = {
+            "tv_episode_results": [{"show_id": 1668, "season_number": 1, "episode_number": 1}],
+            "tv_results": [],
+        }
+
+        mock_tvdb_tv.return_value = {
+            "media_id": "303821",
+            "title": "Friends",
+            "image": "https://example.com/friends.jpg",
+            "tmdb_id": "1668",
+            "season/1": {"episodes": [{"episode_number": 1}]},
+        }
+
+        payload = {
+            "Event": "Stop",
+            "Item": {
+                "Type": "Episode",
+                "Name": "The One Where Monica Gets a Roommate",
+                "ProviderIds": {"Tvdb": "303821", "Imdb": "tt0583459"},
+                "UserData": {"Played": True},
+                "SeriesName": "Friends",
+                "ParentIndexNumber": 1,
+                "IndexNumber": 1,
+            },
+        }
+
+        response = self.client.post(self.url, data=json.dumps(payload), content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+
+        tv_item = Item.objects.get(media_type=MediaTypes.TV.value, media_id="303821")
+        self.assertEqual(tv_item.source, Sources.TVDB.value)
+
+    @patch("app.providers.tmdb.find")
+    @patch("app.providers.mal.anime")
+    def test_jellyfin_tracks_anime_under_mal_when_preferred_provider_enabled(self, mock_mal_anime, mock_find):
+        """When MAL is user's preferred provider, anime webhooks should track under MAL."""
+        self.user.jellyfin_provider_priority_enabled = True
+        self.user.anime_metadata_source_default = Sources.MAL.value
+        self.user.save()
+
+        mock_find.return_value = {
+            "tv_episode_results": [{"show_id": 52991, "season_number": 1, "episode_number": 1}],
+            "tv_results": [],
+        }
+        mock_mal_anime.return_value = {
+            "media_id": "52991",
+            "title": "Frieren: Beyond Journey's End",
+            "image": "https://example.com/frieren.jpg",
+            "max_progress": 28,
+        }
+
+        payload = {
+            "Event": "Stop",
+            "Item": {
+                "Type": "Episode",
+                "Name": "The Journey's End",
+                "ProviderIds": {"Tvdb": "9350138", "Imdb": "tt23861604"},
+                "UserData": {"Played": True},
+                "SeriesName": "Frieren: Beyond Journey's End",
+                "ParentIndexNumber": 1,
+                "IndexNumber": 1,
+            },
+        }
+
+        response = self.client.post(self.url, data=json.dumps(payload), content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+
+        anime = Anime.objects.get(item__media_id="52991", user=self.user)
+        self.assertEqual(anime.item.source, Sources.MAL.value)
+
+    @patch("app.providers.tmdb.find")
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_jellyfin_fallback_to_tmdb_when_preferred_provider_id_not_in_payload(self, mock_tv_with_seasons, mock_find):
+        """When preferred provider ID is not in payload, should fall back to TMDB."""
+        self.user.jellyfin_provider_priority_enabled = True
+        self.user.tv_metadata_source_default = Sources.TVDB.value
+        self.user.save()
+
+        mock_find.return_value = {
+            "tv_episode_results": [{"show_id": 1668, "season_number": 1, "episode_number": 1}],
+            "tv_results": [],
+        }
+        mock_tv_with_seasons.return_value = {
+            "media_id": "1668",
+            "title": "Friends",
+            "image": "https://example.com/friends.jpg",
+            "tvdb_id": "303821",
+            "season/1": {"episodes": [{"episode_number": 1}]},
+        }
+
+        payload = {
+            "Event": "Stop",
+            "Item": {
+                "Type": "Episode",
+                "Name": "The One Where Monica Gets a Roommate",
+                "ProviderIds": {"Tmdb": "1668", "Imdb": "tt0583459"},
+                "UserData": {"Played": True},
+                "SeriesName": "Friends",
+                "ParentIndexNumber": 1,
+                "IndexNumber": 1,
+            },
+        }
+
+        response = self.client.post(self.url, data=json.dumps(payload), content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+
+        tv_item = Item.objects.get(media_type=MediaTypes.TV.value, media_id="1668")
+        self.assertEqual(tv_item.source, Sources.TMDB.value)
+
+    @patch("app.providers.tmdb.find")
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_jellyfin_movie_uses_tmdb_default_regardless_of_setting(self, mock_tv_with_seasons, mock_find):
+        """Movies should always use TMDB regardless of provider priority setting."""
+        self.user.jellyfin_provider_priority_enabled = True
+        self.user.tv_metadata_source_default = Sources.TVDB.value
+        self.user.save()
+
+        mock_find.return_value = {"movie_results": [{"id": 603}]}
+        mock_tv_with_seasons.return_value = {
+            "media_id": "603",
+            "title": "The Matrix",
+            "image": "https://example.com/matrix.jpg",
+            "release_date": "1999-03-30",
+        }
+
+        payload = {
+            "Event": "Stop",
+            "Item": {
+                "Type": "Movie",
+                "Name": "The Matrix",
+                "ProductionYear": 1999,
+                "ProviderIds": {"Tmdb": "603", "Tvdb": "169"},
+                "UserData": {"Played": True},
+            },
+        }
+
+        response = self.client.post(self.url, data=json.dumps(payload), content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+
+        movie = Movie.objects.get(item__media_id="603", user=self.user)
+        self.assertEqual(movie.item.source, Sources.TMDB.value)
+
+    def test_jellyfin_get_preferred_source_returns_none_when_disabled(self):
+        """_get_jellyfin_preferred_source returns None when feature is disabled."""
+        processor = JellyfinWebhookProcessor()
+        result = processor._get_jellyfin_preferred_source(self.user, MediaTypes.TV.value)
+        self.assertIsNone(result)
+
+    def test_jellyfin_get_preferred_source_returns_user_default_for_tv(self):
+        """_get_jellyfin_preferred_source returns user's tv_metadata_source_default."""
+        self.user.jellyfin_provider_priority_enabled = True
+        self.user.tv_metadata_source_default = Sources.TVDB.value
+        self.user.save()
+
+        processor = JellyfinWebhookProcessor()
+        result = processor._get_jellyfin_preferred_source(self.user, MediaTypes.TV.value)
+        self.assertEqual(result, Sources.TVDB.value)
+
+    def test_jellyfin_get_preferred_source_returns_user_default_for_anime(self):
+        """_get_jellyfin_preferred_source returns user's anime_metadata_source_default."""
+        self.user.jellyfin_provider_priority_enabled = True
+        self.user.anime_metadata_source_default = Sources.MAL.value
+        self.user.save()
+
+        processor = JellyfinWebhookProcessor()
+        result = processor._get_jellyfin_preferred_source(self.user, MediaTypes.ANIME.value)
+        self.assertEqual(result, Sources.MAL.value)
+
+    def test_jellyfin_get_preferred_source_returns_none_for_movies(self):
+        """_get_jellyfin_preferred_source returns None for movies (always TMDB)."""
+        self.user.jellyfin_provider_priority_enabled = True
+        self.user.tv_metadata_source_default = Sources.TVDB.value
+        self.user.save()
+
+        processor = JellyfinWebhookProcessor()
+        result = processor._get_jellyfin_preferred_source(self.user, MediaTypes.MOVIE.value)
+        self.assertIsNone(result)
+
+    def test_jellyfin_resolve_media_id_to_preferred_source_returns_tuple_when_match_found(self):
+        """_resolve_media_id_to_preferred_source returns (id, source, season, episode) when match found."""
+        self.user.jellyfin_provider_priority_enabled = True
+        self.user.tv_metadata_source_default = Sources.TVDB.value
+        self.user.save()
+
+        processor = JellyfinWebhookProcessor()
+        ids = {"tvdb_id": "303821"}
+
+        result = processor._resolve_media_id_to_preferred_source(
+            self.user, MediaTypes.TV.value, ids, season_number=1, episode_number=1
+        )
+
+        self.assertEqual(result, ("303821", Sources.TVDB.value, 1, 1))
+
+    def test_jellyfin_resolve_media_id_to_preferred_source_returns_none_when_no_match(self):
+        """_resolve_media_id_to_preferred_source returns None when preferred provider ID not in payload."""
+        self.user.jellyfin_provider_priority_enabled = True
+        self.user.tv_metadata_source_default = Sources.TVDB.value
+        self.user.save()
+
+        processor = JellyfinWebhookProcessor()
+        ids = {"tmdb_id": "1668"}
+
+        result = processor._resolve_media_id_to_preferred_source(
+            self.user, MediaTypes.TV.value, ids, season_number=1, episode_number=1
+        )
+
+        self.assertEqual(result, (None, None, None, None))
+
+
+
+    @patch("app.providers.tmdb.find")
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_jellyfin_match_existing_disabled_uses_normal_flow(self, mock_tv_with_seasons, mock_find):
+        """When match existing setting is disabled, should use normal TMDB-first flow."""
+        self.assertFalse(self.user.jellyfin_match_existing_enabled)
+
+        mock_find.return_value = {
+            "tv_episode_results": [{"show_id": 1668, "season_number": 1, "episode_number": 1}],
+            "tv_results": [],
+        }
+        mock_tv_with_seasons.return_value = {
+            "media_id": "1668",
+            "title": "Friends",
+            "image": "https://example.com/friends.jpg",
+            "tvdb_id": "303821",
+            "season/1": {"episodes": [{"episode_number": 1}]},
+        }
+
+        payload = {
+            "Event": "Stop",
+            "Item": {
+                "Type": "Episode",
+                "Name": "The One Where Monica Gets a Roommate",
+                "ProviderIds": {"Tvdb": "303821", "Imdb": "tt0583459"},
+                "UserData": {"Played": True},
+                "SeriesName": "Friends",
+                "ParentIndexNumber": 1,
+                "IndexNumber": 1,
+            },
+        }
+
+        response = self.client.post(self.url, data=json.dumps(payload), content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+
+        tv_item = Item.objects.get(media_type=MediaTypes.TV.value, media_id="1668")
+        self.assertEqual(tv_item.source, Sources.TMDB.value)
+
+    @patch("app.providers.tmdb.find")
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_jellyfin_updates_existing_mal_entry_when_match_enabled(self, mock_tv_with_seasons, mock_find):
+        """If user has show tracked under MAL, updates should go to MAL entry."""
+        self.user.jellyfin_match_existing_enabled = True
+        self.user.save()
+
+        mal_item = Item.objects.create(
+            media_id="4501",
+            source=Sources.MAL.value,
+            media_type=MediaTypes.TV.value,
+            title="Breaking Bad",
+        )
+        TV.objects.create(item=mal_item, user=self.user, status=Status.IN_PROGRESS.value)
+
+        ItemProviderLink.objects.create(
+            item=mal_item,
+            provider=Sources.TMDB.value,
+            provider_media_id="1396",
+            provider_media_type=MediaTypes.TV.value,
+        )
+
+        mock_find.return_value = {
+            "tv_episode_results": [{"show_id": 1396, "season_number": 1, "episode_number": 1}],
+            "tv_results": [],
+        }
+        mock_tv_with_seasons.return_value = {
+            "media_id": "1396",
+            "title": "Breaking Bad",
+            "image": "https://example.com/breaking-bad.jpg",
+            "tvdb_id": "81189",
+            "season/1": {"episodes": [{"episode_number": 1}]},
+        }
+
+        payload = {
+            "Event": "Stop",
+            "Item": {
+                "Type": "Episode",
+                "Name": "Pilot",
+                "ProviderIds": {"Tmdb": "1396"},
+                "UserData": {"Played": True},
+                "SeriesName": "Breaking Bad",
+                "ParentIndexNumber": 1,
+                "IndexNumber": 1,
+            },
+        }
+
+        response = self.client.post(self.url, data=json.dumps(payload), content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+
+        # The TV show Item + a Season Item are created
+        self.assertEqual(Item.objects.filter(media_type=MediaTypes.TV.value).count(), 1)
+        self.assertEqual(Item.objects.get(media_type=MediaTypes.TV.value).source, Sources.MAL.value)
+
+        tv = TV.objects.get(item__media_id="4501", user=self.user)
+        self.assertEqual(tv.status, Status.IN_PROGRESS.value)
+
+    @patch("app.providers.tmdb.find")
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_jellyfin_updates_existing_tvdb_entry_when_match_enabled(self, mock_tv_with_seasons, mock_find):
+        """If user has show tracked under TVDB, updates should go to TVDB entry."""
+        self.user.jellyfin_match_existing_enabled = True
+        self.user.save()
+
+        tvdb_item = Item.objects.create(
+            media_id="81189",
+            source=Sources.TVDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Breaking Bad",
+        )
+        TV.objects.create(item=tvdb_item, user=self.user, status=Status.IN_PROGRESS.value)
+
+        # Link the TVDB item to TMDB so Feature #2 can find it via TMDB ID
+        ItemProviderLink.objects.create(
+            item=tvdb_item,
+            provider=Sources.TMDB.value,
+            provider_media_id="1396",
+            provider_media_type=MediaTypes.TV.value,
+        )
+
+        mock_find.return_value = {
+            "tv_episode_results": [{"show_id": 1396, "season_number": 1, "episode_number": 1}],
+            "tv_results": [],
+        }
+        mock_tv_with_seasons.return_value = {
+            "media_id": "1396",
+            "title": "Breaking Bad",
+            "image": "https://example.com/breaking-bad.jpg",
+            "tvdb_id": "81189",
+            "season/1": {"episodes": [{"episode_number": 1}]},
+        }
+
+        payload = {
+            "Event": "Stop",
+            "Item": {
+                "Type": "Episode",
+                "Name": "Pilot",
+                "ProviderIds": {"Tmdb": "1396"},
+                "UserData": {"Played": True},
+                "SeriesName": "Breaking Bad",
+                "ParentIndexNumber": 1,
+                "IndexNumber": 1,
+            },
+        }
+
+        response = self.client.post(self.url, data=json.dumps(payload), content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+
+        # The TV show Item + a Season Item are created
+        self.assertEqual(Item.objects.filter(media_type=MediaTypes.TV.value).count(), 1)
+        self.assertEqual(Item.objects.get(media_type=MediaTypes.TV.value).source, Sources.TVDB.value)
+
+    @patch("app.providers.tmdb.find")
+    @patch("app.providers.tmdb.find")
+    def test_jellyfin_updates_existing_movie_by_tmdb_id(self, mock_find, mock_find2):
+        """If user has movie tracked, updates should go to existing movie entry."""
+        self.user.jellyfin_match_existing_enabled = True
+        self.user.save()
+
+        tmdb_item = Item.objects.create(
+            media_id="603",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="The Matrix",
+        )
+        Movie.objects.create(item=tmdb_item, user=self.user, status=Status.COMPLETED.value)
+
+        mock_find.return_value = {"movie_results": [{"id": 603}]}
+
+        payload = {
+            "Event": "Stop",
+            "Item": {
+                "Type": "Movie",
+                "Name": "The Matrix",
+                "ProductionYear": 1999,
+                "ProviderIds": {"Tmdb": "603"},
+                "UserData": {"Played": True},
+            },
+        }
+
+        response = self.client.post(self.url, data=json.dumps(payload), content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+
+        self.assertEqual(Movie.objects.count(), 1)
+        movie = Movie.objects.get(item__media_id="603", user=self.user)
+        self.assertEqual(movie.status, Status.COMPLETED.value)
+
+    def test_jellyfin_find_existing_item_returns_none_when_disabled(self):
+        """_find_existing_item returns None when feature is disabled."""
+        processor = JellyfinWebhookProcessor()
+
+        result, created = processor._find_existing_item(
+            self.user, MediaTypes.TV.value, {"tmdb_id": "1668"}
+        )
+
+        self.assertIsNone(result)
+        self.assertTrue(created)
+
+    def test_jellyfin_find_existing_item_returns_none_when_no_tracking_instance(self):
+        """_find_existing_item returns None when user has no tracking instance."""
+        self.user.jellyfin_match_existing_enabled = True
+        self.user.save()
+
+        Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Friends",
+        )
+
+        processor = JellyfinWebhookProcessor()
+
+        result, created = processor._find_existing_item(
+            self.user, MediaTypes.TV.value, {"tmdb_id": "1668"}
+        )
+
+        self.assertIsNone(result)
+        self.assertTrue(created)
+
+    def test_jellyfin_find_existing_item_returns_item_when_match_found(self):
+        """_find_existing_item returns item when match found."""
+        self.user.jellyfin_match_existing_enabled = True
+        self.user.save()
+
+        tmdb_item = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Friends",
+        )
+        TV.objects.create(item=tmdb_item, user=self.user, status=Status.IN_PROGRESS.value)
+
+        processor = JellyfinWebhookProcessor()
+
+        result, created = processor._find_existing_item(
+            self.user, MediaTypes.TV.value, {"tmdb_id": "1668"}
+        )
+
+        self.assertEqual(result, tmdb_item)
+        self.assertFalse(created)
+
+    def test_jellyfin_find_existing_item_by_provider_link(self):
+        """_find_existing_item finds item via ItemProviderLink."""
+        self.user.jellyfin_match_existing_enabled = True
+        self.user.save()
+
+        mal_item = Item.objects.create(
+            media_id="4501",
+            source=Sources.MAL.value,
+            media_type=MediaTypes.TV.value,
+            title="Breaking Bad",
+        )
+        TV.objects.create(item=mal_item, user=self.user, status=Status.IN_PROGRESS.value)
+
+        ItemProviderLink.objects.create(
+            item=mal_item,
+            provider=Sources.TMDB.value,
+            provider_media_id="1396",
+            provider_media_type=MediaTypes.TV.value,
+        )
+
+        processor = JellyfinWebhookProcessor()
+
+        result, created = processor._find_existing_item(
+            self.user, MediaTypes.TV.value, {"tmdb_id": "1396"}
+        )
+
+        self.assertEqual(result, mal_item)
+        self.assertFalse(created)
+
+    def test_update_jellyfin_settings_endpoint(self):
+        """Test the update_jellyfin_settings POST endpoint."""
+        self.client.login(username=self.TEST_USERNAME, password=self.TEST_PASSWORD)
+
+        url = reverse("update_jellyfin_settings")
+
+        self.assertFalse(self.user.jellyfin_provider_priority_enabled)
+        self.assertFalse(self.user.jellyfin_match_existing_enabled)
+
+        response = self.client.post(url, {
+            "jellyfin_provider_priority_enabled": "on",
+            "jellyfin_match_existing_enabled": "on",
+        })
+
+        self.assertEqual(response.status_code, 302)
+
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.jellyfin_provider_priority_enabled)
+        self.assertTrue(self.user.jellyfin_match_existing_enabled)
+
+    def test_update_jellyfin_settings_disable_features(self):
+        """Test disabling Jellyfin features."""
+        self.user.jellyfin_provider_priority_enabled = True
+        self.user.jellyfin_match_existing_enabled = True
+        self.user.save()
+
+        self.client.login(username=self.TEST_USERNAME, password=self.TEST_PASSWORD)
+
+        url = reverse("update_jellyfin_settings")
+
+        response = self.client.post(url, {
+            "jellyfin_provider_priority_enabled": "",
+            "jellyfin_match_existing_enabled": "",
+        })
+
+        self.assertEqual(response.status_code, 302)
+
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.jellyfin_provider_priority_enabled)
+        self.assertFalse(self.user.jellyfin_match_existing_enabled)
+
+    def test_update_jellyfin_settings_partial_update(self):
+        """Test updating only one feature."""
+        self.user.jellyfin_provider_priority_enabled = True
+        self.user.jellyfin_match_existing_enabled = True
+        self.user.save()
+
+        self.client.login(username=self.TEST_USERNAME, password=self.TEST_PASSWORD)
+
+        url = reverse("update_jellyfin_settings")
+
+        response = self.client.post(url, {
+            "jellyfin_provider_priority_enabled": "on",
+            "jellyfin_match_existing_enabled": "",
+        })
+
+        self.assertEqual(response.status_code, 302)
+
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.jellyfin_provider_priority_enabled)
+        self.assertFalse(self.user.jellyfin_match_existing_enabled)
