@@ -6,7 +6,6 @@ from django.core.cache import cache
 from django.test import TestCase, override_settings
 
 from app.apps import AppConfig as YamtrackAppConfig
-from app.models import Item, MediaTypes, Sources
 from app.tasks import GENRE_BACKFILL_VERSION
 
 
@@ -24,6 +23,7 @@ class AppStartupTests(TestCase):
         config = YamtrackAppConfig("app", import_module("app"))
 
         with (
+            patch.object(config, "_schedule_history_day_coverage_warmup"),
             patch.object(config, "_schedule_genre_backfill_reconcile") as mock_schedule,
             patch.object(config, "_schedule_trakt_popularity_reconcile"),
         ):
@@ -46,6 +46,7 @@ class AppStartupTests(TestCase):
         mock_apply_async.assert_called_once_with(
             kwargs={"strategy_version": GENRE_BACKFILL_VERSION},
             countdown=0,
+            priority=settings.CELERY_TASK_PRIORITY_BACKGROUND,
         )
         self.assertEqual(cache.get(version_key), "pending")
 
@@ -76,3 +77,50 @@ class AppStartupTests(TestCase):
         self.assertEqual(schedule["task"], "Ensure genre backfill reconcile")
         self.assertEqual(schedule["schedule"], 60 * 5)
         self.assertEqual(schedule["kwargs"]["batch_size"], 1500)
+        self.assertEqual(
+            schedule["options"]["priority"],
+            settings.CELERY_TASK_PRIORITY_BACKGROUND,
+        )
+
+    def test_celery_background_routes_and_prefetch_are_enabled(self):
+        self.assertEqual(settings.CELERY_WORKER_PREFETCH_MULTIPLIER, 1)
+        self.assertEqual(
+            settings.CELERY_TASK_ROUTES["app.tasks.populate_*"]["priority"],
+            settings.CELERY_TASK_PRIORITY_BACKGROUND,
+        )
+        self.assertEqual(
+            settings.CELERY_TASK_ROUTES["Backfill item metadata"]["priority"],
+            settings.CELERY_TASK_PRIORITY_BACKGROUND,
+        )
+        self.assertEqual(
+            settings.CELERY_TASK_ROUTES["Warm History Day Cache Coverage"]["priority"],
+            settings.CELERY_TASK_PRIORITY_BACKGROUND,
+        )
+        self.assertEqual(
+            settings.CELERY_TASK_ROUTES["Repair History Day Cache Coverage"]["priority"],
+            settings.CELERY_TASK_PRIORITY_BACKGROUND,
+        )
+
+    @patch("app.tasks.warm_history_day_cache_coverage.apply_async")
+    def test_schedule_history_day_coverage_warmup_uses_background_priority(
+        self,
+        mock_apply_async,
+    ):
+        config = YamtrackAppConfig("app", import_module("app"))
+
+        config._schedule_history_day_coverage_warmup()
+
+        mock_apply_async.assert_called_once_with(
+            countdown=120,
+            priority=settings.CELERY_TASK_PRIORITY_BACKGROUND,
+        )
+
+    def test_settings_include_history_day_coverage_fallback_schedule(self):
+        schedule = settings.CELERY_BEAT_SCHEDULE["warm_history_day_cache_coverage"]
+
+        self.assertEqual(schedule["task"], "Warm History Day Cache Coverage")
+        self.assertEqual(schedule["schedule"], 60 * 60 * 2)
+        self.assertEqual(
+            schedule["options"]["priority"],
+            settings.CELERY_TASK_PRIORITY_BACKGROUND,
+        )

@@ -723,24 +723,44 @@
 
         {# Trakt #}
         <div class="bg-[#39404b] p-4 rounded-lg"
-             x-data="{ usePrivateImport: false }"
+             x-data="{ traktProfileType: 'public' }"
              x-show="sourceSupports(['screen'])"
              x-transition.opacity.duration.150ms>
           <div class="flex items-center mb-3">{% source_display "trakt" %}</div>
           <p class="text-sm text-gray-400 mb-3">Import TV shows and movies</p>
 
           <div class="mb-3">
-            <label class="flex items-center text-sm text-gray-300">
-              <input type="checkbox"
-                     x-model="usePrivateImport"
-                     class="mr-2 rounded bg-[#2a2f35] border-gray-600 text-indigo-600 focus:ring-indigo-500 focus:ring-offset-0">
-              Import private profile (requires authentication)
-            </label>
+            <label class="block text-sm text-gray-300 mb-2">Profile</label>
+            <div class="relative">
+              <select x-model="traktProfileType"
+                      class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 appearance-none">
+                <option value="public">Public profile</option>
+                <option value="private">Private profile (OAuth)</option>
+              </select>
+              {% include "app/icons/chevron-down.svg" with classes="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" %}
+            </div>
+          </div>
+
+          <div x-show="traktProfileType === 'private'" class="mb-3 rounded-md border border-indigo-500/30 bg-indigo-500/10 p-3 text-xs text-gray-300 space-y-2">
+            <p class="text-indigo-200 font-medium">Private Profile Import (OAuth)</p>
+            <ol class="list-decimal list-inside space-y-1">
+              <li>
+                Create a Trakt application at
+                <a href="https://trakt.tv/oauth/applications"
+                   target="_blank"
+                   class="text-indigo-300 underline hover:text-indigo-200">Trakt API Apps</a>.
+              </li>
+              <li>Set the Redirect URI to <code class="text-indigo-200 break-all">{{ request.scheme }}://{{ request.get_host }}{% url 'import_trakt_private' %}</code>.</li>
+              <li>Set <code class="text-indigo-200">TRAKT_API</code> and <code class="text-indigo-200">TRAKT_API_SECRET</code> in your environment.</li>
+            </ol>
+            <p class="text-gray-400">
+              Behind reverse proxies, also set <code class="text-indigo-200">URLS=https://your_domain.com</code> so Yamtrack builds the correct callback URL.
+            </p>
           </div>
 
           <form class="flex items-center"
                 method="post"
-                x-show="!usePrivateImport"
+                x-show="traktProfileType === 'public'"
                 action="{% url 'import_trakt_public' %}">
             {% csrf_token %}
             <input type="hidden" name="frequency" x-model="importFrequency">
@@ -764,7 +784,7 @@
 
           <form class="flex items-center"
                 method="post"
-                x-show="usePrivateImport"
+                x-show="traktProfileType === 'private'"
                 action="{% url 'trakt_oauth' %}">
             {% csrf_token %}
             <input type="hidden" name="frequency" x-model="importFrequency">

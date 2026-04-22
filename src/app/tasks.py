@@ -104,6 +104,7 @@ NIGHTLY_METADATA_QUALITY_CREDITS_COUNTDOWN = 45
 NIGHTLY_METADATA_QUALITY_TRAKT_POPULARITY_COUNTDOWN = 60
 DISCOVER_METADATA_REFRESH_DEBOUNCE_SECONDS = 60 * 10
 DISCOVER_METADATA_REFRESH_COUNTDOWN_SECONDS = 60
+BACKGROUND_TASK_PRIORITY = getattr(settings, "CELERY_TASK_PRIORITY_BACKGROUND", 1)
 
 
 def _apply_backfill_state_filters(queryset, field: str):
@@ -347,7 +348,13 @@ def _schedule_metadata_statistics_refresh(items, field: str, reason: str):
             continue
         statistics_cache.mark_metadata_refreshing(user_id, reason=reason)
         statistics_cache.invalidate_statistics_days(user_id, day_keys, reason=reason)
-        statistics_cache.schedule_all_ranges_refresh(user_id, debounce_seconds=10, countdown=3)
+        statistics_cache.schedule_all_ranges_refresh(
+            user_id,
+            debounce_seconds=10,
+            countdown=3,
+            preferred_priority=BACKGROUND_TASK_PRIORITY,
+            all_time_priority=BACKGROUND_TASK_PRIORITY,
+        )
         logger.info(
             "metadata_refresh_scheduled user_id=%s field=%s days=%s reason=%s",
             user_id,
@@ -524,6 +531,7 @@ def _schedule_discover_refresh_for_movie_items(items: list[Item]) -> None:
             "media_types": target_media_types,
         },
         countdown=DISCOVER_METADATA_REFRESH_COUNTDOWN_SECONDS,
+        priority=BACKGROUND_TASK_PRIORITY,
     )
 
     for user_id in user_ids:
@@ -544,6 +552,7 @@ def _schedule_discover_refresh_for_movie_items(items: list[Item]) -> None:
                     "clear_provider_cache": False,
                 },
                 countdown=DISCOVER_METADATA_REFRESH_COUNTDOWN_SECONDS,
+                priority=BACKGROUND_TASK_PRIORITY,
             )
 
 
@@ -1836,6 +1845,42 @@ def refresh_history_cache_task(
         warm_days=warm_days,
         day_keys=day_keys,
     )
+
+
+@shared_task(name="Repair History Day Cache Coverage")
+def repair_history_day_cache_coverage_task(
+    user_id: int,
+    logging_style: str = "repeats",
+    batch_size: int | None = None,
+):
+    """Repair missing persisted history day payloads without blocking navigation."""
+    repair_key = history_cache._coverage_repair_key(user_id, logging_style)
+    result = history_cache.repair_history_day_cache_coverage(
+        user_id,
+        logging_style=logging_style,
+        batch_size=batch_size,
+    )
+    if result.get("remaining"):
+        cache.set(
+            repair_key,
+            {
+                "started_at": timezone.now().isoformat(),
+                "batch_size": batch_size,
+            },
+            history_cache.HISTORY_COVERAGE_REPAIR_LOCK_TTL,
+        )
+        repair_history_day_cache_coverage_task.apply_async(
+            kwargs={
+                "user_id": user_id,
+                "logging_style": logging_style,
+                "batch_size": batch_size,
+            },
+            countdown=5,
+            priority=BACKGROUND_TASK_PRIORITY,
+        )
+    else:
+        cache.delete(repair_key)
+    return result
 
 
 @shared_task
@@ -3519,6 +3564,40 @@ def warm_discover_startup_tabs(user_ids: list[int] | None = None):
     return {
         "scheduled": scheduled,
         "users_count": users_count,
+    }
+
+
+@shared_task(name="Warm History Day Cache Coverage")
+def warm_history_day_cache_coverage(
+    user_ids: list[int] | None = None,
+    logging_styles: list[str] | None = None,
+):
+    """Queue chunked history day coverage repair for active users."""
+    user_model = get_user_model()
+    users = user_model.objects.filter(is_active=True)
+    if user_ids:
+        users = users.filter(id__in=user_ids)
+
+    styles = logging_styles or ["sessions", "repeats"]
+    scheduled = 0
+    users_count = 0
+    for user in users.iterator(chunk_size=200):
+        users_count += 1
+        for logging_style in styles:
+            scheduled += int(
+                history_cache.schedule_history_day_cache_coverage(
+                    user.id,
+                    logging_style=logging_style,
+                    countdown=0,
+                    batch_size=history_cache.HISTORY_COVERAGE_REPAIR_BATCH_SIZE,
+                    priority=BACKGROUND_TASK_PRIORITY,
+                ),
+            )
+
+    return {
+        "scheduled": scheduled,
+        "users_count": users_count,
+        "logging_styles": styles,
     }
 
 

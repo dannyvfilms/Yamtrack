@@ -12,6 +12,7 @@ import events
 from app.collection_helpers import (
     extract_collection_metadata_from_plex,
 )
+from app import history_cache
 from app.helpers import is_item_collected
 from app.log_safety import exception_summary, safe_url
 from app.mixins import disable_fetch_releases
@@ -206,6 +207,11 @@ def import_media(importer_func, identifier, user_id, mode, oauth_username=None):
             )
 
     events.tasks.reload_calendar.delay()
+
+    # Importers rely heavily on bulk_create_with_history, which bypasses model signals.
+    # Force-clear history cache so month view index pages don't keep stale "empty month"
+    # payloads after imports (notably reproducible with SIMKL imports).
+    history_cache.invalidate_history_cache(user.id, force=True)
 
     # Queue collection metadata update task for media server imports
     _queue_post_import_collection_update(user_id, importer_func)

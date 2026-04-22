@@ -335,8 +335,9 @@ class SimklImporter:
         for season in tv["seasons"]:
             season_number = season["number"]
             episodes = season["episodes"]
-            season_key = f"season/{season_number}"
-            if season_key not in metadata:
+            season_metadata = metadata.get(f"season/{season_number}")
+
+            if not season_metadata:
                 self.warnings.append(
                     f"{title}: missing {source_label} metadata for season "
                     f"{season_number}",
@@ -348,7 +349,6 @@ class SimklImporter:
                     title,
                 )
                 continue
-            season_metadata = metadata[season_key]
 
             # Use season poster if available, otherwise fallback to TV show poster
             season_image = season_metadata.get("image") or metadata.get("image")
@@ -408,10 +408,11 @@ class SimklImporter:
 
     def _get_episode_image(self, episode, season_number, metadata):
         """Get the image for the episode."""
-        season_key = f"season/{season_number}"
-        if season_key not in metadata or "episodes" not in metadata[season_key]:
+        season_metadata = metadata.get(f"season/{season_number}")
+        if not season_metadata:
             return settings.IMG_NONE
-        for episode_metadata in metadata[season_key]["episodes"]:
+
+        for episode_metadata in season_metadata.get("episodes", []):
             if episode_metadata["episode_number"] == episode["number"]:
                 if episode_metadata.get("image"):
                     return episode_metadata["image"]

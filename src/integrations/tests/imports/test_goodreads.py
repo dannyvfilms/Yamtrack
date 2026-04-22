@@ -1,4 +1,6 @@
+from io import BytesIO
 from pathlib import Path
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -45,3 +47,70 @@ class ImportGoodreads(TestCase):
         read_book = Book.objects.get(status=Status.IN_PROGRESS.value)
         self.assertEqual(read_book.status, Status.IN_PROGRESS.value)
         self.assertEqual(read_book.progress, 0)
+
+    def test_unknown_shelf_defaults_to_planning(self):
+        """Unknown shelf values should default to planning instead of failing import."""
+        headers = [
+            "Book Id",
+            "Title",
+            "Author",
+            "ISBN13",
+            "My Rating",
+            "Number of Pages",
+            "Exclusive Shelf",
+            "Date Added",
+            "Date Read",
+            "Private Notes",
+        ]
+        csv_payload = (
+            ",".join(headers)
+            + "\n"
+            "1,Book with Unknown Shelf,Author,9780000000001,0,320,owned,,,\n"
+        )
+
+        resolved_book = {
+            "media_id": "1001",
+            "title": "Book with Unknown Shelf",
+            "image": "",
+        }
+        with patch.object(
+            goodreads.GoodReadsImporter,
+            "_search_book",
+            return_value=resolved_book,
+        ):
+            goodreads.importer(BytesIO(csv_payload.encode("utf-8")), self.user, "new")
+
+        imported_book = Book.objects.get(user=self.user, item__media_id="1001")
+        self.assertEqual(imported_book.status, Status.PLANNING.value)
+
+    def test_import_handles_missing_goodreads_dates(self):
+        """Rows without Goodreads date fields should not crash import."""
+        headers = [
+            "Book Id",
+            "Title",
+            "Author",
+            "ISBN13",
+            "My Rating",
+            "Number of Pages",
+            "Exclusive Shelf",
+            "Date Added",
+            "Date Read",
+            "Private Notes",
+        ]
+        csv_payload = (
+            ",".join(headers)
+            + "\n"
+            "2,Date-less Book,Author,9780000000002,4,220,read,,,\n"
+        )
+
+        resolved_book = {"media_id": "1002", "title": "Date-less Book", "image": ""}
+        with patch.object(
+            goodreads.GoodReadsImporter,
+            "_search_book",
+            return_value=resolved_book,
+        ):
+            goodreads.importer(BytesIO(csv_payload.encode("utf-8")), self.user, "new")
+
+        imported_book = Book.objects.get(user=self.user, item__media_id="1002")
+        self.assertEqual(imported_book.status, Status.COMPLETED.value)
+        self.assertEqual(imported_book.progress, 220)

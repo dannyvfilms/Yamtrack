@@ -55,7 +55,11 @@ class GoodReadsImporter:
     def import_data(self):
         """Import all GoodReads data from the CSV file."""
         try:
-            decoded_file = self.file.read().decode("utf-8").splitlines()
+            raw_file = self.file.read()
+            try:
+                decoded_file = raw_file.decode("utf-8-sig").splitlines()
+            except UnicodeDecodeError:
+                decoded_file = raw_file.decode("latin-1").splitlines()
         except UnicodeDecodeError as e:
             msg = "Invalid file format. Please upload a CSV file."
             raise MediaImportError(msg) from e
@@ -66,7 +70,8 @@ class GoodReadsImporter:
             try:
                 self._process_row(row)
             except services.ProviderAPIError:
-                error_msg = f"Error processing entry with ID {row['media_id']} "
+                title = row.get("Title", "Unknown")
+                error_msg = f"Error processing entry with title {title} "
                 self.warnings.append(error_msg)
                 continue
             except Exception as error:
@@ -134,9 +139,10 @@ class GoodReadsImporter:
 
     def _search_book(self, row, source):
         """Search for book and return result if found."""
+        isbn13 = (row.get("ISBN13") or "").strip()
         results = services.search(
             MediaTypes.BOOK.value,
-            row["ISBN13"],
+            isbn13,
             1,
             source.value,
         ).get(
@@ -146,9 +152,13 @@ class GoodReadsImporter:
         if results:
             return results[0]
 
+        title = (row.get("Title") or "").strip()
+        if not title:
+            return None
+
         results = services.search(
             MediaTypes.BOOK.value,
-            row["Title"],
+            title,
             1,
             source.value,
         ).get(
@@ -180,7 +190,8 @@ class GoodReadsImporter:
             "to-read": Status.PLANNING,
         }
 
-        return status_mapping[row["Exclusive Shelf"]].value
+        shelf = (row.get("Exclusive Shelf") or "").strip().lower()
+        return status_mapping.get(shelf, Status.PLANNING).value
 
     def _parse_goodreads_date(self, date_str):
         """Parse GoodReads date string (YYYY/MM/DD) into datetime object."""
@@ -198,10 +209,11 @@ class GoodReadsImporter:
         """Create media instance with all parameters."""
         model = apps.get_model(app_label="app", model_name=MediaTypes.BOOK.value)
         book_status = self._determine_status(row)
+        page_count = (row.get("Number of Pages") or "").strip()
         book_progress = (
-            int(row["Number of Pages"])
-            if book_status is Status.COMPLETED.value
-            and row["Number of Pages"].isnumeric()
+            int(page_count)
+            if book_status == Status.COMPLETED.value
+            and page_count.isnumeric()
             else 0
         )
 
@@ -211,16 +223,19 @@ class GoodReadsImporter:
 
         # filter out None dates
         dates = [date_created, date_rated]
-        most_recent_date = max(date for date in dates if date)
+        most_recent_date = max((date for date in dates if date), default=None)
+
+        rating = (row.get("My Rating") or "").strip()
+        notes = (row.get("Private Notes") or "").strip()
 
         instance = model(
             item=item,
             user=self.user,
-            score=None if row["My Rating"] == "0" else int(row["My Rating"]) * 2,
+            score=None if rating in {"", "0"} else int(rating) * 2,
             progress=book_progress,
             status=book_status,
             end_date=date_rated,
-            notes=row["Private Notes"],
+            notes=notes,
         )
         instance._history_date = most_recent_date or timezone.now()
 

@@ -234,6 +234,19 @@ def _resolve_list_card_image_override(item, *, season_item=None):
     return None
 
 
+def _extract_list_search_results(media_type, data):
+    """Normalize provider search payloads for list and recommendation UIs."""
+    if media_type != MediaTypes.MUSIC.value:
+        return data.get("results", []), data.get("total_pages", 1)
+
+    # MusicBrainz combined search returns tracks under a nested payload.
+    track_payload = data.get("tracks") if isinstance(data, dict) else None
+    if isinstance(track_payload, dict):
+        return track_payload.get("results", []), track_payload.get("total_pages", 1)
+
+    return data.get("results", []), data.get("total_pages", 1)
+
+
 def _list_item_title_fields_from_metadata(media_type, metadata):
     """Return item title fields, preferring episode titles for episode items."""
     metadata = metadata or {}
@@ -2211,7 +2224,7 @@ def add_list_item_search(request, list_id):
         custom_list.items.values_list("media_id", "source"),
     )
 
-    results = data.get("results", [])
+    results, total_pages = _extract_list_search_results(media_type, data)
     for result in results:
         key = (str(result["media_id"]), result["source"])
         result["already_in_list"] = key in existing_items
@@ -2224,7 +2237,7 @@ def add_list_item_search(request, list_id):
         "query": query,
         "media_type": media_type,
         "page": page,
-        "total_pages": data.get("total_pages", 1),
+        "total_pages": total_pages,
     }
 
     return render(request, "lists/components/add_item_search_results.html", context)
@@ -2606,7 +2619,7 @@ def recommend_search(request, list_id):
     )
 
     # Mark results that are already in the list or recommended
-    results = data.get("results", [])
+    results, total_pages = _extract_list_search_results(media_type, data)
     for result in results:
         key = (str(result["media_id"]), result["source"])
         result["already_in_list"] = key in existing_items
@@ -2620,7 +2633,7 @@ def recommend_search(request, list_id):
         "query": query,
         "media_type": media_type,
         "page": page,
-        "total_pages": data.get("total_pages", 1),
+        "total_pages": total_pages,
     }
 
     return render(request, "lists/components/recommend_search_results.html", context)
