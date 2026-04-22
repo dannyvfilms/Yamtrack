@@ -1,3 +1,4 @@
+from contextlib import ExitStack
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -5,9 +6,18 @@ import requests
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
-from app.models import Item, MediaTypes, Podcast, Sources, Status
+from app.models import (
+    Item,
+    MediaTypes,
+    Podcast,
+    PodcastEpisode,
+    PodcastShowTracker,
+    Sources,
+    Status,
+)
 from integrations.imports.helpers import MediaImportError
 from integrations.imports.pocketcasts import PocketCastsImporter
+from integrations import pocketcasts_api
 from integrations.models import PocketCastsAccount
 
 
@@ -351,6 +361,23 @@ class PocketCastsImportFlowTests(TestCase):
         error = requests.HTTPError(response=response)
         return error
 
+    def _artwork_patches(self):
+        """Patch external artwork lookups so importer tests stay local and deterministic."""
+        stack = ExitStack()
+        stack.enter_context(
+            patch(
+                "integrations.pocketcasts_artwork.fetch_podcast_artwork_and_rss",
+                return_value=(None, None),
+            ),
+        )
+        stack.enter_context(
+            patch(
+                "integrations.pocketcasts_artwork.fetch_podcast_artwork",
+                return_value=None,
+            ),
+        )
+        return stack
+
     def test_fetch_play_states_401_raises_media_import_error(self):
         """401 from play-states endpoint raises MediaImportError so the run stops loudly."""
         with (
@@ -388,7 +415,7 @@ class PocketCastsImportFlowTests(TestCase):
         self.assertEqual(second_call_kwargs.get("params"), {"page": 2})
 
     def test_import_happy_path(self):
-        """End-to-end: one podcast, two episodes (played + in-progress) become Podcast rows."""
+        """End-to-end: played and in-progress rows import without creating unplayed tracking rows."""
         podcast_list = {
             "podcasts": [
                 {
@@ -413,6 +440,12 @@ class PocketCastsImportFlowTests(TestCase):
                 "playedUpTo": 600,
                 "duration": 1800,
             },
+            "uuid-unplayed": {
+                "uuid": "uuid-unplayed",
+                "playingStatus": 0,
+                "playedUpTo": 0,
+                "duration": 1800,
+            },
         }
         metadata_page = {
             "podcast": {
@@ -431,12 +464,20 @@ class PocketCastsImportFlowTests(TestCase):
                         "duration": 1800,
                         "url": "https://example.com/inprogress.mp3",
                     },
+                    {
+                        "uuid": "uuid-unplayed",
+                        "title": "Unplayed Ep",
+                        "published": "2026-01-03T00:00:00Z",
+                        "duration": 1800,
+                        "url": "https://example.com/unplayed.mp3",
+                    },
                 ],
             },
             "has_more_episodes": False,
         }
 
         with (
+            self._artwork_patches(),
             patch.object(PocketCastsImporter, "_ensure_valid_token"),
             patch.object(PocketCastsImporter, "_get_access_token", return_value="fake"),
             patch(
@@ -461,9 +502,140 @@ class PocketCastsImportFlowTests(TestCase):
 
         podcasts = Podcast.objects.filter(user=self.user).order_by("item__media_id")
         self.assertEqual(podcasts.count(), 2)
+        self.assertEqual(
+            PodcastShowTracker.objects.filter(user=self.user, show__podcast_uuid="show-1").count(),
+            1,
+        )
+        self.assertEqual(
+            PodcastEpisode.objects.filter(show__podcast_uuid="show-1").count(),
+            3,
+        )
         statuses = {p.item.media_id: p.status for p in podcasts}
         self.assertEqual(statuses["uuid-played"], Status.COMPLETED.value)
         self.assertEqual(statuses["uuid-inprogress"], Status.IN_PROGRESS.value)
+        self.assertNotIn("uuid-unplayed", statuses)
+
+    def test_import_creates_catalog_for_unplayed_episodes_without_tracking_rows(self):
+        """Catalog sync keeps full show episodes browseable without creating Planning rows."""
+        podcast_list = {
+            "podcasts": [
+                {
+                    "uuid": "show-1",
+                    "title": "Test Show",
+                    "author": "Test Author",
+                    "description": "",
+                    "url": "",
+                }
+            ],
+        }
+        play_states = {
+            "uuid-a": {
+                "uuid": "uuid-a",
+                "playingStatus": 0,
+                "playedUpTo": 0,
+                "duration": 1800,
+            },
+            "uuid-b": {
+                "uuid": "uuid-b",
+                "playingStatus": 0,
+                "playedUpTo": 0,
+                "duration": 1800,
+            },
+        }
+        metadata = {
+            "uuid-a": {
+                "uuid": "uuid-a",
+                "title": "Ep A",
+                "published": "2026-01-01T00:00:00Z",
+                "duration": 1800,
+                "url": "https://example.com/a.mp3",
+            },
+            "uuid-b": {
+                "uuid": "uuid-b",
+                "title": "Ep B",
+                "published": "2026-01-02T00:00:00Z",
+                "duration": 1800,
+                "url": "https://example.com/b.mp3",
+            },
+        }
+
+        with (
+            self._artwork_patches(),
+            patch.object(PocketCastsImporter, "_ensure_valid_token"),
+            patch.object(PocketCastsImporter, "_get_access_token", return_value="fake"),
+            patch("integrations.pocketcasts_api.get_podcast_list", return_value=podcast_list),
+            patch.object(PocketCastsImporter, "_fetch_show_play_states", return_value=play_states),
+            patch.object(PocketCastsImporter, "_fetch_show_full_metadata", return_value=metadata),
+        ):
+            importer = PocketCastsImporter(self.user, "new")
+            importer.import_data()
+
+        tracker = PodcastShowTracker.objects.get(user=self.user, show__podcast_uuid="show-1")
+        self.assertEqual(PodcastEpisode.objects.filter(show=tracker.show).count(), 2)
+        self.assertEqual(Podcast.objects.filter(user=self.user).count(), 0)
+
+    def test_import_large_first_sync_keeps_full_catalog_but_only_tracks_listened_episodes(self):
+        """A large first sync keeps the full catalog while only tracking listened episodes."""
+        podcast_list = {
+            "podcasts": [
+                {
+                    "uuid": "show-1",
+                    "title": "Big Show",
+                    "author": "Host",
+                    "description": "",
+                    "url": "",
+                }
+            ],
+        }
+        metadata = {}
+        play_states = {}
+        for index in range(25):
+            episode_uuid = f"uuid-{index:02d}"
+            metadata[episode_uuid] = {
+                "uuid": episode_uuid,
+                "title": f"Episode {index}",
+                "published": f"2026-01-{index + 1:02d}T00:00:00Z",
+                "duration": 1800,
+                "url": f"https://example.com/{episode_uuid}.mp3",
+            }
+
+        play_states["uuid-00"] = {
+            "uuid": "uuid-00",
+            "playingStatus": 3,
+            "playedUpTo": 1800,
+            "duration": 1800,
+        }
+        play_states["uuid-01"] = {
+            "uuid": "uuid-01",
+            "playingStatus": 2,
+            "playedUpTo": 900,
+            "duration": 1800,
+        }
+        for index in range(2, 25):
+            play_states[f"uuid-{index:02d}"] = {
+                "uuid": f"uuid-{index:02d}",
+                "playingStatus": 0,
+                "playedUpTo": 0,
+                "duration": 1800,
+            }
+
+        with (
+            self._artwork_patches(),
+            patch.object(PocketCastsImporter, "_ensure_valid_token"),
+            patch.object(PocketCastsImporter, "_get_access_token", return_value="fake"),
+            patch("integrations.pocketcasts_api.get_podcast_list", return_value=podcast_list),
+            patch.object(PocketCastsImporter, "_fetch_show_play_states", return_value=play_states),
+            patch.object(PocketCastsImporter, "_fetch_show_full_metadata", return_value=metadata),
+        ):
+            importer = PocketCastsImporter(self.user, "new")
+            importer.import_data()
+
+        tracker = PodcastShowTracker.objects.get(user=self.user, show__podcast_uuid="show-1")
+        self.assertEqual(PodcastEpisode.objects.filter(show=tracker.show).count(), 25)
+        tracked_ids = set(
+            Podcast.objects.filter(user=self.user).values_list("item__media_id", flat=True),
+        )
+        self.assertEqual(tracked_ids, {"uuid-00", "uuid-01"})
 
     def test_import_skips_episode_with_missing_metadata(self):
         """When play state exists but metadata is missing, that episode is skipped."""
@@ -504,6 +676,7 @@ class PocketCastsImportFlowTests(TestCase):
         }
 
         with (
+            self._artwork_patches(),
             patch.object(PocketCastsImporter, "_ensure_valid_token"),
             patch.object(PocketCastsImporter, "_get_access_token", return_value="fake"),
             patch(
@@ -530,3 +703,42 @@ class PocketCastsImportFlowTests(TestCase):
             )
         )
         self.assertEqual(media_ids, {"uuid-a"})
+
+    def test_import_raises_when_show_bootstrap_fails(self):
+        """Podcast-list bootstrap failures stop the import and preserve last_sync_at."""
+        self.importer.account.last_sync_at = datetime(2026, 1, 1, tzinfo=UTC)
+        self.importer.account.save(update_fields=["last_sync_at"])
+
+        with (
+            patch.object(PocketCastsImporter, "_ensure_valid_token"),
+            patch.object(PocketCastsImporter, "_get_access_token", return_value="fake"),
+            patch(
+                "integrations.pocketcasts_api.get_podcast_list",
+                side_effect=pocketcasts_api.PocketCastsClientError("boom"),
+            ),
+        ):
+            with self.assertRaises(MediaImportError):
+                self.importer.import_data()
+
+        self.importer.account.refresh_from_db()
+        self.assertEqual(
+            self.importer.account.last_sync_at,
+            datetime(2026, 1, 1, tzinfo=UTC),
+        )
+
+    def test_import_empty_account_is_successful(self):
+        """A genuine empty subscription list returns success and advances last_sync_at."""
+        self.importer.account.last_sync_at = datetime(2026, 1, 1, tzinfo=UTC)
+        self.importer.account.save(update_fields=["last_sync_at"])
+
+        with (
+            patch.object(PocketCastsImporter, "_ensure_valid_token"),
+            patch.object(PocketCastsImporter, "_get_access_token", return_value="fake"),
+            patch("integrations.pocketcasts_api.get_podcast_list", return_value={"podcasts": []}),
+        ):
+            imported_counts, warnings = self.importer.import_data()
+
+        self.importer.account.refresh_from_db()
+        self.assertEqual(imported_counts, {})
+        self.assertEqual(warnings, "")
+        self.assertGreater(self.importer.account.last_sync_at, datetime(2026, 1, 1, tzinfo=UTC))

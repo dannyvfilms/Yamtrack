@@ -234,15 +234,25 @@ def get_podcast_list(access_token: str) -> dict[str, Any]:
 
     try:
         response = requests.post(url, json={}, headers=headers, timeout=10)
-        # Don't raise on 401 - just return empty list so import can continue
-        if response.status_code == 401:
-            logger.warning("Unauthorized access to podcast list - token may be expired")
-            return {"podcasts": []}
         response.raise_for_status()
-        return response.json()
+        data = response.json()
+    except requests.HTTPError as e:
+        if e.response is not None and e.response.status_code == 401:
+            raise PocketCastsAuthError("Pocket Casts token is invalid or expired") from e
+        status_code = e.response.status_code if e.response is not None else "unknown"
+        raise PocketCastsClientError(
+            f"Pocket Casts podcast list request failed: {status_code}",
+        ) from e
     except requests.RequestException as e:
         logger.error("Failed to fetch podcast list: %s", e)
-        return {"podcasts": []}
+        raise PocketCastsClientError(f"Failed to fetch Pocket Casts podcast list: {e}") from e
+    except ValueError as e:
+        raise PocketCastsClientError("Invalid Pocket Casts podcast list response") from e
+
+    if not isinstance(data, dict) or not isinstance(data.get("podcasts", []), list):
+        raise PocketCastsClientError("Invalid Pocket Casts podcast list response")
+
+    return data
 
 
 def get_podcast_image_url(podcast_uuid: str, size: int = 130) -> str:
