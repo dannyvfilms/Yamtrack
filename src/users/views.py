@@ -563,7 +563,6 @@ def preferences(request):
         tv_metadata_source_default = request.POST.get("tv_metadata_source_default")
         anime_metadata_source_default = request.POST.get("anime_metadata_source_default")
         anime_library_mode = request.POST.get("anime_library_mode")
-        progress_bar_raw = request.POST.get("progress_bar")
         hide_completed_recommendations_raw = request.POST.get("hide_completed_recommendations")
         hide_zero_rating_raw = request.POST.get("hide_zero_rating")
         quick_season_update_mobile = request.POST.get("quick_season_update_mobile") == "1"
@@ -652,12 +651,6 @@ def preferences(request):
                 request.user.rating_scale = rating_scale
                 fields_to_update.append("rating_scale")
                 rating_scale_changed = True
-
-        if progress_bar_raw is not None:
-            progress_bar = progress_bar_raw == "1"
-            if request.user.progress_bar != progress_bar:
-                request.user.progress_bar = progress_bar
-                fields_to_update.append("progress_bar")
 
         if hide_completed_recommendations_raw is not None:
             hide_completed_recommendations = hide_completed_recommendations_raw == "1"

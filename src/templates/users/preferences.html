@@ -670,26 +670,6 @@
       <div class="mb-6">
         <h3 class="text-lg font-medium text-gray-200 mb-3">Tracking & Interaction</h3>
 
-        <!-- Progress Bar -->
-        <div class="p-3 bg-[#39404b] rounded-md mb-4">
-          <div class="flex items-center justify-between">
-            <div>
-              <label class="text-gray-200 text-sm font-medium">Show Progress Bar</label>
-              <p class="text-gray-400 text-xs mt-1">Display progress bars on media cards when progress data is available.</p>
-            </div>
-            <label class="relative inline-flex items-center cursor-pointer">
-              <input type="hidden" name="progress_bar" value="0">
-              <input class="sr-only peer"
-                     type="checkbox"
-                     name="progress_bar"
-                     value="1"
-                     {% if user.progress_bar %}checked{% endif %}>
-              <div class="w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-px after:left-0.5 after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4.5 after:w-4.5 after:transition-all peer-checked:bg-indigo-600">
-              </div>
-            </label>
-          </div>
-        </div>
-
         <!-- Hide Completed Recommendations -->
         <div class="p-3 bg-[#39404b] rounded-md mb-4">
           <div class="flex items-center justify-between">

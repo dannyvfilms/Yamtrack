@@ -22,6 +22,7 @@ class SidebarViewTests(TestCase):
         response = self.client.get(reverse("preferences"))
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "users/preferences.html")
+        self.assertNotContains(response, "Show Progress Bar")
 
         self.assertIn("media_types", response.context)
         self.assertIn(MediaTypes.TV.value, response.context["media_types"])
@@ -106,7 +107,6 @@ class SidebarViewTests(TestCase):
                 "title_display_preference": self.user.title_display_preference,
                 "top_talent_sort_by": self.user.top_talent_sort_by,
                 "rating_scale": self.user.rating_scale,
-                "progress_bar": "1" if self.user.progress_bar else "0",
                 "hide_completed_recommendations": "1" if self.user.hide_completed_recommendations else "0",
                 "hide_zero_rating": "1" if self.user.hide_zero_rating else "0",
                 "quick_season_update_mobile": "1" if self.user.quick_season_update_mobile else "0",

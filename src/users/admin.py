@@ -50,7 +50,7 @@ class CustomUserAdmin(UserAdmin):
                 continue
 
             # Skip fields already included
-            if field.name in {"username", "password", "is_staff", "is_active", "id"}:
+            if field.name in {"username", "password", "is_staff", "is_active", "id", "progress_bar"}:
                 continue
 
             # Group fields by prefix (everything before first underscore)
