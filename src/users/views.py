@@ -23,8 +23,7 @@ from app.models import Item, MediaTypes, Status
 from app.providers import tmdb
 from app.services import metadata_resolution
 from app.templatetags import app_tags
-from integrations import exports
-from integrations import plex
+from integrations import exports, plex
 from integrations.models import PlexAccount
 from integrations.plex_watchlist import WATCHLIST_TASK_NAME
 from users.forms import (
@@ -40,15 +39,14 @@ from users.models import (
     AnimeLibraryModeChoices,
     DateFormatChoices,
     GameLoggingStyleChoices,
-    MetadataSourceDefaultChoices,
     MediaCardSubtitleDisplayChoices,
+    MetadataSourceDefaultChoices,
     MobileGridLayoutChoices,
     PlannedHomeDisplayChoices,
-    QuickWatchDateChoices,
     RatingScaleChoices,
+    TimeFormatChoices,
     TitleDisplayPreferenceChoices,
     TopTalentSortChoices,
-    TimeFormatChoices,
 )
 
 try:
@@ -465,21 +463,21 @@ def sidebar(request):
     """Render the sidebar settings page (media types visibility and UI preferences)."""
     # Get all media types except episode
     media_types = [mt.value for mt in MediaTypes if mt.value != MediaTypes.EPISODE.value]
-    
+
     if request.method == "POST":
         # Prevent demo users from updating preferences
         if request.user.is_demo:
             messages.error(request, "This section is view-only for demo accounts.")
             return redirect("sidebar")
-        
+
         fields_to_update = []
-        
+
         # Handle clickable_media_cards preference
         clickable_media_cards = request.POST.get("clickable_media_cards") == "on"
         if request.user.clickable_media_cards != clickable_media_cards:
             request.user.clickable_media_cards = clickable_media_cards
             fields_to_update.append("clickable_media_cards")
-        
+
         # Handle media types checkboxes
         selected_media_types = request.POST.getlist("media_types_checkboxes")
         for media_type in media_types:
@@ -489,15 +487,15 @@ def sidebar(request):
             if current_value != is_enabled:
                 setattr(request.user, enabled_field, is_enabled)
                 fields_to_update.append(enabled_field)
-        
+
         if fields_to_update:
             request.user.save(update_fields=fields_to_update)
             messages.success(request, "Settings updated successfully.")
         else:
             messages.info(request, "No changes to save.")
-        
+
         return redirect("sidebar")
-    
+
     context = {
         "media_types": media_types,
     }
@@ -703,10 +701,9 @@ def preferences(request):
             if request.user.watch_provider_region != provider_region:
                 request.user.watch_provider_region = provider_region
                 fields_to_update.append("watch_provider_region")
-        else:
-            if request.user.watch_provider_region != "UNSET":
-                request.user.watch_provider_region = "UNSET"
-                fields_to_update.append("watch_provider_region")
+        elif request.user.watch_provider_region != "UNSET":
+            request.user.watch_provider_region = "UNSET"
+            fields_to_update.append("watch_provider_region")
 
         if tv_metadata_source_default in {
             choice[0] for choice in tv_metadata_source_choices
@@ -1033,7 +1030,7 @@ def create_export_schedule(request):
     selected_media_types = request.POST.getlist("media_types") or request.POST.getlist("media_types_checkboxes")
     include_lists = request.POST.get("include_lists") == "on"
 
-    media_types = selected_media_types if selected_media_types else None
+    media_types = selected_media_types or None
 
     def build_export_response():
         now = timezone.localtime()

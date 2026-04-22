@@ -25,8 +25,8 @@ class JellyfinWebhookTests(TestCase):
     """Tests for Jellyfin webhook."""
 
     TEST_USERNAME = "testuser"
-    TEST_PASSWORD = "test-password"
-    TEST_TOKEN = "test-token"
+    TEST_PASSWORD = "test-password"  # noqa: S105
+    TEST_TOKEN = "test-token"  # noqa: S105
 
     def setUp(self):
         """Set up test data."""
@@ -1108,8 +1108,7 @@ class JellyfinWebhookTests(TestCase):
         self.assertEqual(Item.objects.get(media_type=MediaTypes.TV.value).source, Sources.TVDB.value)
 
     @patch("app.providers.tmdb.find")
-    @patch("app.providers.tmdb.find")
-    def test_jellyfin_updates_existing_movie_by_tmdb_id(self, mock_find, mock_find2):
+    def test_jellyfin_updates_existing_movie_by_tmdb_id(self, mock_find):
         """If user has movie tracked, updates should go to existing movie entry."""
         self.user.jellyfin_match_existing_enabled = True
         self.user.save()
@@ -1147,7 +1146,7 @@ class JellyfinWebhookTests(TestCase):
         processor = JellyfinWebhookProcessor()
 
         result, created = processor._find_existing_item(
-            self.user, MediaTypes.TV.value, {"tmdb_id": "1668"}
+            self.user, MediaTypes.TV.value, {"tmdb_id": "1668"},
         )
 
         self.assertIsNone(result)
@@ -1168,7 +1167,7 @@ class JellyfinWebhookTests(TestCase):
         processor = JellyfinWebhookProcessor()
 
         result, created = processor._find_existing_item(
-            self.user, MediaTypes.TV.value, {"tmdb_id": "1668"}
+            self.user, MediaTypes.TV.value, {"tmdb_id": "1668"},
         )
 
         self.assertIsNone(result)

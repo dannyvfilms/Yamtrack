@@ -155,7 +155,7 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
 
     # -- Feature #2: Match existing tracked items -----------------------
 
-    def _find_existing_item(self, user, media_type, ids, season_number=None, episode_number=None):
+    def _find_existing_item(self, user, media_type, ids):
         """Find existing tracked item by *any* known provider ID.
 
         Searches for items matching tmdb_id, tvdb_id, imdb_id, mal_id, etc.
@@ -236,9 +236,13 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
         return None, True
 
     def _update_existing_item(self, item, payload, user):
-        """Update progress on an existing item without changing its identity provider."""
+        """Update progress on an existing item without changing
+        its identity provider.
+        """
         played = self._is_played(payload)
-        now = self._get_played_at(payload) or timezone.now().replace(second=0, microsecond=0)
+        now = self._get_played_at(payload) or timezone.now().replace(
+            second=0, microsecond=0,
+        )
 
         if item.media_type == MediaTypes.MOVIE.value:
             self._update_movie_instance(item, user, played, now)
@@ -251,7 +255,11 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
             item=item,
             user=user,
             defaults={
-                "status": Status.COMPLETED.value if played else Status.IN_PROGRESS.value,
+                "status": (
+                    Status.COMPLETED.value
+                    if played
+                    else Status.IN_PROGRESS.value
+                ),
                 "progress": 1 if played else 0,
                 "start_date": None if played else now,
                 "end_date": now if played else None,
@@ -268,10 +276,18 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
             if instance.tracker.changed():
                 instance.save()
 
-    def _update_tv_season_episode(self, item, payload, user, played, now):
-        """Create or update a Season / Episode tracking instance for an existing TV show item."""
+    def _update_tv_season_episode(  # noqa: C901
+        self, item, payload, user, played, now,
+    ):
+        """Create or update Season/Episode tracking instances.
+
+        Creates or updates Season and Episode tracking instances
+        for an existing TV show item.
+        """
         # We need season/episode numbers to create Episode records.
-        season_number, episode_number = self._extract_season_episode_from_payload(payload)
+        season_number, episode_number = (
+            self._extract_season_episode_from_payload(payload)
+        )
         if season_number is None or episode_number is None:
             logger.warning(
                 "Cannot update TV season/episode without season/episode numbers: %s",
@@ -319,11 +335,6 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
 
         # Create Episode record if marked as played
         if played:
-            latest_episode = (
-                season_instance.episodes.filter(item=season_instance.item)
-                .order_by("-end_date")
-                .first()
-            )
             # Use a simpler episode lookup
             try:
                 episode_item = Season.objects.filter(
@@ -339,7 +350,9 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
                     )
                     should_create = True
                     if latest and latest.end_date:
-                        time_diff = abs((now - latest.end_date).total_seconds())
+                        time_diff = abs(
+                            (now - latest.end_date).total_seconds(),
+                        )
                         if time_diff < 5:
                             should_create = False
 
@@ -351,7 +364,10 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
                         )
             except Exception:
                 # Best-effort: don't fail the webhook if episode creation fails
-                logger.debug("Episode creation best-effort failed (non-critical)", exc_info=True)
+                logger.debug(
+                    "Episode creation best-effort failed (non-critical)",
+                    exc_info=True,
+                )
 
     # -- Feature #1: Provider priority for tracking source --------------
 
@@ -374,8 +390,12 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
         # Movies always use TMDB — no override needed
         return None
 
-    def _resolve_media_id_to_preferred_source(self, user, media_type, ids, season_number, episode_number):
-        """Resolve media ID to user's preferred provider and return ``(media_id, source, season, episode)``.
+    def _resolve_media_id_to_preferred_source(
+        self, user, media_type, ids, season_number, episode_number,
+    ):
+        """Resolve media ID to user's preferred provider.
+
+        Returns ``(media_id, source, season, episode)``.
 
         When ``jellyfin_provider_priority_enabled`` is True this method checks
         whether the user's preferred provider has a matching ID in the webhook
@@ -399,13 +419,19 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
         try:
             return str(ext_id), preferred, season_number, episode_number
         except Exception as exc:
-            logger.debug("Failed resolving preferred provider %s: %s", preferred, exc)
+            logger.debug(
+                "Failed resolving preferred provider %s: %s",
+                preferred, exc,
+            )
             return None, None, None, None
 
     # -- TV/movie routing -----------------------------------------------
 
-    def _process_tv(self, payload, user, ids, season_number=None, episode_number=None):
-        """Process TV episode webhook with optional existing-item matching and provider priority.
+    def _process_tv(
+        self, payload, user, ids,
+        season_number=None, episode_number=None,
+    ):
+        """Process TV episode webhook with matching/priority.
 
         Priority order:
 
@@ -415,12 +441,13 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
         """
         # Feature #2: Check for existing item FIRST (highest priority)
         existing_item, created = self._find_existing_item(
-            user, MediaTypes.TV.value, ids, season_number, episode_number,
+            user, MediaTypes.TV.value, ids,
         )
 
         if existing_item and not created:
             logger.info(
-                "Found existing item for TV episode (%s), updating progress instead of creating a new entry",
+                "Found existing item for TV episode (%s), "
+                "updating progress instead of creating a new entry",
                 existing_item.source,
             )
             self._update_existing_item(existing_item, payload, user)
@@ -469,7 +496,8 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
 
         if existing_item and not created:
             logger.info(
-                "Found existing item for movie (%s), updating progress instead of creating",
+                "Found existing item for movie (%s), "
+                "updating progress instead of creating",
                 existing_item.source,
             )
             self._update_existing_item(existing_item, payload, user)
@@ -562,7 +590,6 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
             # Match existing tracked TV show (jellyfin_match_existing_enabled)
             existing_item, _ = self._find_existing_item(
                 user, MediaTypes.TV.value, ids,
-                season_number, episode_number,
             )
             if existing_item:
                 media_id = existing_item.media_id
