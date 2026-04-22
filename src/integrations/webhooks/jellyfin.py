@@ -376,92 +376,52 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
 
     # -- Feature #1: Provider priority for tracking source --------------
 
-    def _get_jellyfin_provider_priority(self, user, media_type):
-        """Return ordered list of providers to try for webhook resolution.
+    def _get_jellyfin_preferred_source(self, user, media_type):
+        """Return the user's preferred tracking source for the given media type.
 
-        Returns a list like ``['tmdb', 'tvdb', 'imdb']`` or
-        ``['mal', 'tmdb', 'tvdb']`` based on user preferences when
-        ``jellyfin_provider_priority_enabled`` is *True*.
-        Falls back to ``['tmdb', 'tvdb', 'imdb']`` when disabled.
-        Only applies to TV / Anime, not movies.
+        Returns the preferred source string (e.g. ``'mal'``, ``'tvdb'``) or
+        ``None`` when the setting is disabled / unknown — letting the caller
+        fall through to normal TMDB-first processing.
         """
         if not getattr(user, "jellyfin_provider_priority_enabled", False):
-            return [Sources.TMDB.value, Sources.TVDB.value, Sources.IMDB.value]
+            return None
 
         if media_type == MediaTypes.TV.value:
-            preferred = getattr(user, "tv_metadata_source_default", Sources.TMDB.value)
-        elif media_type == MediaTypes.ANIME.value:
-            preferred = getattr(user, "anime_metadata_source_default", Sources.MAL.value)
-        else:  # Movie - always use TMDB
-            return [Sources.TMDB.value, Sources.TVDB.value, Sources.IMDB.value]
+            return getattr(user, "tv_metadata_source_default", None)
 
-        all_providers = [Sources.TMDB.value, Sources.TVDB.value, Sources.MAL.value]
-        if preferred in all_providers:
-            return [preferred] + [p for p in all_providers if p != preferred]
-        return [Sources.TMDB.value, Sources.TVDB.value, Sources.IMDB.value]
+        if media_type == MediaTypes.ANIME.value:
+            return getattr(user, "anime_metadata_source_default", None)
+
+        # Movies always use TMDB — no override needed
+        return None
 
     def _resolve_media_id_to_preferred_source(self, user, media_type, ids, season_number, episode_number):
         """Resolve media ID to user's preferred provider and return ``(media_id, source, season, episode)``.
 
-        When ``jellyfin_provider_priority_enabled`` is True this method attempts
-        to find the show's identifier in the user's preferred provider (MAL, TVDB,
-        etc.) using cross-provider lookups.
+        When ``jellyfin_provider_priority_enabled`` is True this method checks
+        whether the user's preferred provider has a matching ID in the webhook
+        payload.  If found, the item is tracked under that provider.
+
+        The returned ``source`` reflects **which provider supplied the final ID**,
+        so items are tracked under the correct identity provider.
 
         Returns ``(None, None, None, None)`` when the setting is disabled or when
-        no cross-provider mapping could be resolved — signalling that fallback
-        behaviour should apply.
+        no matching ID was found — signalling that fallback (normal TMDB-first)
+        processing should apply.
         """
-        if not getattr(user, "jellyfin_provider_priority_enabled", False):
+        preferred = self._get_jellyfin_preferred_source(user, media_type)
+        if not preferred:
             return None, None, None, None
 
-        provider_order = self._get_jellyfin_provider_priority(user, media_type)
+        ext_id = ids.get(f"{preferred}_id")
+        if not ext_id:
+            return None, None, None, None
 
-        for provider in provider_order:
-            ext_id = ids.get(f"{provider}_id")
-            if not ext_id:
-                continue
-
-            try:
-                if provider == Sources.TMDB.value:
-                    return int(ext_id), Sources.TMDB.value, season_number, episode_number
-
-                if provider == Sources.TVDB.value:
-                    response = app.providers.tmdb.find(ext_id, "tvdb_id")
-                    if response.get("tv_episode_results"):
-                        result = response["tv_episode_results"][0]
-                        return (
-                            result.get("show_id"),
-                            Sources.TMDB.value,
-                            result.get("season_number") or season_number,
-                            result.get("episode_number") or episode_number,
-                        )
-                    if response.get("tv_results"):
-                        return result.get("id"), Sources.TMDB.value, season_number, episode_number
-
-                if provider == Sources.IMDB.value:
-                    response = app.providers.tmdb.find(ext_id, "imdb_id")
-                    if response.get("tv_episode_results"):
-                        result = response["tv_episode_results"][0]
-                        return (
-                            result.get("show_id"),
-                            Sources.TMDB.value,
-                            result.get("season_number") or season_number,
-                            result.get("episode_number") or episode_number,
-                        )
-                    if response.get("tv_results"):
-                        return result.get("id"), Sources.TMDB.value, season_number, episode_number
-
-                if provider == Sources.MAL.value and media_type == MediaTypes.ANIME.value:
-                    mal_metadata = app.providers.mal.anime(int(ext_id))
-                    tmdb_id = mal_metadata.get("tmdb_id")
-                    if tmdb_id:
-                        return tmdb_id, Sources.MAL.value, season_number, episode_number
-
-            except Exception as exc:
-                logger.debug("Failed lookup via %s: %s", provider, exc)
-                continue
-
-        return None, None, None, None
+        try:
+            return str(ext_id), preferred, season_number, episode_number
+        except Exception as exc:
+            logger.debug("Failed resolving preferred provider %s: %s", preferred, exc)
+            return None, None, None, None
 
     # -- TV/movie routing -----------------------------------------------
 
@@ -496,19 +456,21 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
 
         if resolved_media_id is not None:
             logger.info(
-                "Tracking TV episode under source=%s (TMDB ID=%d, S%d E%d)",
+                "Tracking TV episode under source=%s (ID=%d, S%d E%d)",
                 resolved_source,
                 resolved_media_id,
                 resolved_season,
                 resolved_episode,
             )
-            self._handle_tv_episode_with_source(
+            # Use _handle_tv_episode with the resolved source;
+            # _get_tv_metadata override ensures metadata comes from the right provider.
+            self._handle_tv_episode(
                 resolved_media_id,
-                resolved_source,
                 resolved_season,
                 resolved_episode,
                 payload,
                 user,
+                source=resolved_source,
             )
             return
 
