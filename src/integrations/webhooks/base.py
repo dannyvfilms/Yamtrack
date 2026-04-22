@@ -894,6 +894,14 @@ class BaseWebhookProcessor:
             "source_url": tv_metadata.get("external_links", {}).get("TVDB"),
         }
 
+    def _get_tv_metadata(self, media_id, season_numbers, source):
+        """Return TV metadata dict from the given provider source.
+
+        Default implementation uses TMDB.  Subclasses may override to support
+        additional providers (TVDB, MAL, etc.).
+        """
+        return app.providers.tmdb.tv_with_seasons(media_id, season_numbers)
+
     def _handle_tv_episode(
         self,
         media_id,
@@ -901,14 +909,28 @@ class BaseWebhookProcessor:
         episode_number,
         payload,
         user,
+        *,
+        source=None,
     ):
-        """Handle TV episode playback event."""
+        """Handle TV episode playback event.
+
+        Args:
+            media_id: Provider-specific media ID for the show.
+            season_number: Season number.
+            episode_number: Episode number.
+            payload: Webhook payload.
+            user: User instance.
+            source: Identity provider source (default: ``Sources.TMDB.value``).
+        """
         from app.services import metadata_resolution  # noqa: PLC0415
 
-        tv_metadata = app.providers.tmdb.tv_with_seasons(media_id, [season_number])
+        if source is None:
+            source = Sources.TMDB.value
+
+        tv_metadata = self._get_tv_metadata(media_id, [season_number], source)
         tv_item, _ = app.models.Item.objects.get_or_create(
             media_id=media_id,
-            source=Sources.TMDB.value,
+            source=source,
             media_type=MediaTypes.TV.value,
             defaults={
                 "title": tv_metadata["title"],
@@ -927,7 +949,7 @@ class BaseWebhookProcessor:
                     "imdb_id": external_ids.get("imdb_id"),
                 },
             },
-            provider=Sources.TMDB.value,
+            provider=source,
             provider_media_type=MediaTypes.TV.value,
         )
 
@@ -952,8 +974,9 @@ class BaseWebhookProcessor:
         season_metadata = tv_metadata.get(season_key)
         if not season_metadata:
             logger.warning(
-                "Season %s metadata missing for TMDB ID %s; using payload fallback",
+                "Season %s metadata missing for %s ID %s; using payload fallback",
                 season_number,
+                source,
                 media_id,
             )
             season_metadata = self._build_fallback_season_metadata(
@@ -974,7 +997,8 @@ class BaseWebhookProcessor:
 
         if not season_metadata:
             logger.warning(
-                "Failed to build fallback season metadata for TMDB ID %s season %s",
+                "Failed to build fallback season metadata for %s ID %s season %s",
+                source,
                 media_id,
                 season_number,
             )
@@ -987,7 +1011,7 @@ class BaseWebhookProcessor:
 
         season_item, _ = app.models.Item.objects.get_or_create(
             media_id=media_id,
-            source=Sources.TMDB.value,
+            source=source,
             media_type=MediaTypes.SEASON.value,
             season_number=season_number,
             defaults={
@@ -1006,7 +1030,7 @@ class BaseWebhookProcessor:
                     "imdb_id": external_ids.get("imdb_id"),
                 },
             },
-            provider=Sources.TMDB.value,
+            provider=source,
             provider_media_type=MediaTypes.SEASON.value,
             season_number=season_number,
         )

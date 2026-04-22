@@ -159,6 +159,53 @@
       </div>
       </div>
 
+      <!-- Jellyfin Settings -->
+      <form method="post" action="{% url 'update_jellyfin_settings' %}" class="bg-[#39404b] p-5 rounded-lg mb-6">
+        {% csrf_token %}
+        <div class="flex items-center mb-3">
+          {% include "app/icons/settings.svg" with classes="w-5 h-5 text-indigo-400 mr-2" %}
+          <h3 class="text-base font-medium">Jellyfin Settings</h3>
+        </div>
+
+        <!-- Setting #1: Provider Priority -->
+        <div class="mb-4 pb-4 border-b border-gray-700">
+          <label class="flex items-start justify-between cursor-pointer">
+            <div class="flex-1">
+              <span class="text-sm font-medium text-white block">Prioritize Metadata Provider Preference</span>
+              <p class="text-xs text-gray-400 mt-1">
+                Use your Preferences → Metadata Providers setting (TV/A Anime source) when resolving Jellyfin webhooks. Falls back to TMDB if unavailable.
+              </p>
+            </div>
+            <input type="checkbox" name="jellyfin_provider_priority_enabled"
+                   class="mt-1 w-4 h-4 text-indigo-600 bg-gray-700 border-gray-600 rounded focus:ring-indigo-600"
+                   {% if user.jellyfin_provider_priority_enabled %}checked{% endif %}>
+          </label>
+        </div>
+
+        <!-- Setting #2: Match Existing Items -->
+        <div class="mb-4">
+          <label class="flex items-start justify-between cursor-pointer">
+            <div class="flex-1">
+              <span class="text-sm font-medium text-white block">Match Existing Tracked Items</span>
+              <p class="text-xs text-gray-400 mt-1">
+                Attempt to find already-tracked shows/movies by any provider ID (TMDB, TVDB, MAL, etc.) instead of always creating new entries.
+              </p>
+            </div>
+            <input type="checkbox" name="jellyfin_match_existing_enabled"
+                   class="mt-1 w-4 h-4 text-indigo-600 bg-gray-700 border-gray-600 rounded focus:ring-indigo-600"
+                   {% if user.jellyfin_match_existing_enabled %}checked{% endif %}>
+          </label>
+        </div>
+
+        <div class="pt-2 flex justify-end">
+          <button type="submit"
+                  class="flex items-center px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors text-sm cursor-pointer">
+            {% include "app/icons/save.svg" with classes="w-4 h-4 mr-2" %}
+            Save Settings
+          </button>
+        </div>
+      </form>
+
       <div class="bg-[#39404b] p-5 rounded-lg mb-6">
         <div class="flex items-center mb-3">
           {% include "app/icons/server.svg" with classes="w-5 h-5 text-indigo-400 mr-2" %}

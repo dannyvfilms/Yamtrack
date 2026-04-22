@@ -801,6 +801,16 @@ class User(AbstractUser):
         help_text="Track book, comic, and manga progress as percentage instead of pages/issues/chapters",
     )
 
+    # Jellyfin integration settings
+    jellyfin_provider_priority_enabled = models.BooleanField(
+        default=False,
+        help_text="Prioritize your Metadata Providers preference when resolving Jellyfin webhooks",
+    )
+    jellyfin_match_existing_enabled = models.BooleanField(
+        default=False,
+        help_text="Try matching existing tracked items by any metadata provider first",
+    )
+
     class Meta:
         """Meta options for the model."""
 
