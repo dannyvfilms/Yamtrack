@@ -312,6 +312,18 @@ def upsert_provider_links(
     extra_metadata: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     """Persist cross-provider IDs discovered in provider metadata."""
+    import logging
+    _logger = logging.getLogger(__name__)
+    _logger.info(
+        "upsert_provider_links: item=%s (id=%s), provider=%s, metadata_media_id=%s, "
+        "season_number=%s, normalized_provider=%s, normalized_media_type=%s",
+        item, item.id if item else None, provider,
+        metadata.get("media_id") if metadata else None,
+        season_number,
+        provider or (metadata.get("source") if metadata else None) or (item.source if item else None),
+        provider_media_type or (metadata.get("identity_media_type") if metadata else None)
+        or (metadata.get("media_type") if metadata else None) or (item.media_type if item else None),
+    )
     if item is None or not isinstance(metadata, dict):
         return {}
 
@@ -343,21 +355,6 @@ def upsert_provider_links(
         external_key = PROVIDER_EXTERNAL_ID_KEYS.get(provider_link.provider)
         if external_key and provider_link.provider_media_id:
             external_ids.setdefault(external_key, provider_link.provider_media_id)
-
-    for candidate_provider, external_key in PROVIDER_EXTERNAL_ID_KEYS.items():
-        external_id = external_ids.get(external_key)
-        if not external_id:
-            continue
-        ItemProviderLink.objects.update_or_create(
-            item=item,
-            provider=candidate_provider,
-            provider_media_type=normalized_media_type,
-            season_number=season_number,
-            defaults={
-                "provider_media_id": external_id,
-                "metadata": metadata_payload,
-            },
-        )
 
     if external_ids:
         merged_external_ids = dict(item.provider_external_ids or {})

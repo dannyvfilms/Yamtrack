@@ -542,8 +542,8 @@ class BaseWebhookProcessor:
         # Prioritize TVDB/IMDB lookups as they can properly resolve episode IDs via TMDB's find API
         # Plex often provides episode-level TMDB IDs which cannot be used directly as show IDs
         for ext_id, ext_type in [
-            (ids["tvdb_id"], "tvdb_id"),
-            (ids["imdb_id"], "imdb_id"),
+            (ids.get("tvdb_id"), "tvdb_id"),
+            (ids.get("imdb_id"), "imdb_id"),
         ]:
             if ext_id:
                 logger.info("_find_tv_media_id: looking up %s=%s via TMDB.find", ext_type, ext_id)
@@ -634,22 +634,22 @@ class BaseWebhookProcessor:
 
     def _mapping_series_id(self, entry, provider):
         """Return the grouped series id for TMDB/TVDB anime mapping entries."""
-        logger.info("_mapping_series_id: entry=%s, provider=%s", entry, provider)
+        #logger.info("_mapping_series_id: entry=%s, provider=%s", entry, provider)
         if provider == Sources.TMDB.value:
             for key in ("tmdb_show_id", "tmdb_id", "tmdb_tv_id"):
                 value = entry.get(key)
                 if value not in (None, ""):
-                    logger.info("_mapping_series_id: found tmdb series_id=%s", value)
+                    #logger.info("_mapping_series_id: found tmdb series_id=%s", value)
                     return str(value)
-            logger.info("_mapping_series_id: no tmdb series_id found")
+            #logger.info("_mapping_series_id: no tmdb series_id found")
             return None
 
         if provider == Sources.TVDB.value:
             value = entry.get("tvdb_id")
-            logger.info("_mapping_series_id: found tvdb series_id=%s", value)
+            #logger.info("_mapping_series_id: found tvdb series_id=%s", value)
             return str(value) if value not in (None, "") else None
 
-        logger.info("_mapping_series_id: unknown provider, returning None")
+        #logger.info("_mapping_series_id: unknown provider, returning None")
         return None
 
     def _mapping_season_number(self, entry, provider):
@@ -1011,16 +1011,66 @@ class BaseWebhookProcessor:
             },
         )
         external_ids = self._extract_external_ids(payload)
+        logger.info(
+            "_handle_tv_episode: building source_external_id for source=%s, media_id=%s",
+            source, media_id,
+        )
+        # Build the source-specific external ID based on which provider we're tracking under.
+        source_external_id = {}
+        if source == Sources.TMDB.value:
+            source_external_id["tmdb_id"] = str(media_id)
+            # Resolve TMDB show ID -> TVDB show ID via external_ids API
+            try:
+                logger.info("_handle_tv_episode: fetching external_ids for TMDB show %s", media_id)
+                ext_data = app.providers.tmdb.external_ids(MediaTypes.TV.value, media_id)
+                logger.info("_handle_tv_episode: external_ids result for TMDB %s: %s", media_id, ext_data)
+                if ext_data and isinstance(ext_data, dict):
+                    show_tvdb_id = ext_data.get("tvdb_id")
+                    if show_tvdb_id:
+                        source_external_id["tvdb_id"] = str(show_tvdb_id)
+                        logger.info(
+                            "_handle_tv_episode: resolved TMDB show %s -> TVDB show ID %s",
+                            media_id,
+                            show_tvdb_id,
+                        )
+            except Exception as exc:
+                logger.warning("_handle_tv_episode: failed to fetch external_ids for TMDB show %s: %s", media_id, exc)
+        elif source == Sources.TVDB.value:
+            source_external_id["tvdb_id"] = str(media_id)
+            # Resolve TVDB ID -> TMDB show ID via TMDB find API
+            try:
+                logger.info("_handle_tv_episode: resolving TVDB ID %s to TMDB via find", media_id)
+                find_response = app.providers.tmdb.find(media_id, "tvdb_id")
+                logger.info("_handle_tv_episode: find result for TVDB %s: %s", media_id, find_response)
+                if find_response.get("tv_results"):
+                    source_external_id["tmdb_id"] = str(find_response["tv_results"][0]["id"])
+                elif find_response.get("tv_episode_results"):
+                    source_external_id["tmdb_id"] = str(find_response["tv_episode_results"][0]["show_id"])
+            except Exception as exc:
+                logger.warning("_handle_tv_episode: failed to resolve TVDB ID %s to TMDB: %s", media_id, exc)
+        elif source == Sources.MAL.value:
+            source_external_id["mal_id"] = str(media_id)
+
+        # Use the show-level TVDB ID from metadata or external_ids, NOT the episode-level ID from the payload.
+        show_tvdb_id = source_external_id.get("tvdb_id") or tv_metadata.get("tvdb_id")
+        logger.info(
+            "_handle_tv_episode: final source_external_id=%s, show_tvdb_id=%s",
+            source_external_id, show_tvdb_id,
+        )
+
+        final_external_ids = {
+            **(tv_metadata.get("provider_external_ids") or {}),
+            "tvdb_id": show_tvdb_id,
+            "imdb_id": external_ids.get("imdb_id"),
+            **source_external_id,
+        }
+        logger.info("_handle_tv_episode: calling upsert_provider_links with provider_external_ids=%s", final_external_ids)
+
         metadata_resolution.upsert_provider_links(
             tv_item,
             tv_metadata
             | {
-                "provider_external_ids": {
-                    **(tv_metadata.get("provider_external_ids") or {}),
-                    "tmdb_id": str(media_id),
-                    "tvdb_id": external_ids.get("tvdb_id") or tv_metadata.get("tvdb_id"),
-                    "imdb_id": external_ids.get("imdb_id"),
-                },
+                "provider_external_ids": final_external_ids,
             },
             provider=source,
             provider_media_type=MediaTypes.TV.value,
@@ -1098,9 +1148,9 @@ class BaseWebhookProcessor:
             | {
                 "provider_external_ids": {
                     **(season_metadata.get("provider_external_ids") or {}),
-                    "tmdb_id": str(media_id),
-                    "tvdb_id": external_ids.get("tvdb_id") or tv_metadata.get("tvdb_id"),
+                    "tvdb_id": show_tvdb_id,
                     "imdb_id": external_ids.get("imdb_id"),
+                    **source_external_id,
                 },
             },
             provider=source,

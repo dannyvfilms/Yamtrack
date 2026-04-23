@@ -226,7 +226,7 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
         # Step 1: Resolve to TMDB show ID first (using base class helpers).
         # Step 2: Use TMDB show ID to call external_ids() to get show-level TVDB ID.
         resolved_ids = dict(ids)
-        if media_type == MediaTypes.TV.value:
+        if media_type == MediaTypes.TV.value and (ids.get("tvdb_id") or ids.get("imdb_id")):
             # Resolve TVDB/IMDB episode IDs -> TMDB show ID via base class
             tmdb_show_id, _, _ = self._find_tv_media_id(resolved_ids)
             if tmdb_show_id:
@@ -541,7 +541,7 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
         # For TV shows with TVDB preferred source, resolve episode-level IDs
         # to show-level IDs via TMDB.
         resolved_id = raw_ext_id
-        if media_type == MediaTypes.TV.value and preferred == Sources.TVDB.value:
+        if media_type == MediaTypes.TV.value and preferred == Sources.TVDB.value and (ids.get("tvdb_id") or ids.get("imdb_id")):
             logger.info(
                 "_resolve_media_id_to_preferred_source: resolving TVDB episode ID %s to show-level ID",
                 raw_ext_id,

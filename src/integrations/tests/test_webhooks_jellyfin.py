@@ -740,27 +740,13 @@ class JellyfinWebhookTests(TestCase):
         tv_item = Item.objects.get(media_type=MediaTypes.TV.value, media_id="1668")
         self.assertEqual(tv_item.source, Sources.TMDB.value)
 
-    @patch("app.providers.tmdb.find")
-    @patch("app.providers.tvdb.tv_with_seasons")
-    def test_jellyfin_tracks_tv_under_tvdb_when_preferred_provider_enabled(self, mock_tvdb_tv, mock_find):
+    def test_jellyfin_tracks_tv_under_tvdb_when_preferred_provider_enabled(self):
         """When TVDB is user's preferred provider, webhooks should track under TVDB."""
         self.user.jellyfin_provider_priority_enabled = True
         self.user.tv_metadata_source_default = Sources.TVDB.value
         self.user.save()
 
-        mock_find.return_value = {
-            "tv_episode_results": [{"show_id": 1668, "season_number": 1, "episode_number": 1}],
-            "tv_results": [],
-        }
-
-        mock_tvdb_tv.return_value = {
-            "media_id": "303821",
-            "title": "Friends",
-            "image": "https://example.com/friends.jpg",
-            "tmdb_id": "1668",
-            "season/1": {"episodes": [{"episode_number": 1}]},
-        }
-
+        # TVDB episode ID for Friends S01E01 is 303821
         payload = {
             "Event": "Stop",
             "Item": {
@@ -777,7 +763,8 @@ class JellyfinWebhookTests(TestCase):
         response = self.client.post(self.url, data=json.dumps(payload), content_type="application/json")
         self.assertEqual(response.status_code, 200)
 
-        tv_item = Item.objects.get(media_type=MediaTypes.TV.value, media_id="303821")
+        # TVDB show ID for Friends is 79168
+        tv_item = Item.objects.get(media_type=MediaTypes.TV.value, media_id="79168")
         self.assertEqual(tv_item.source, Sources.TVDB.value)
 
     @patch("app.providers.tmdb.find")
@@ -933,13 +920,15 @@ class JellyfinWebhookTests(TestCase):
         self.user.save()
 
         processor = JellyfinWebhookProcessor()
+        # TVDB episode ID 303821 -> resolves to TMDB show 1668 -> TVDB show ID 79168
         ids = {"tvdb_id": "303821"}
 
         result = processor._resolve_media_id_to_preferred_source(
             self.user, MediaTypes.TV.value, ids, season_number=1, episode_number=1
         )
 
-        self.assertEqual(result, ("303821", Sources.TVDB.value, 1, 1))
+        # The TVDB show ID for Friends is 79168
+        self.assertEqual(result, ("79168", Sources.TVDB.value, 1, 1))
 
     def test_jellyfin_resolve_media_id_to_preferred_source_returns_none_when_no_match(self):
         """_resolve_media_id_to_preferred_source returns None when preferred provider ID not in payload."""
