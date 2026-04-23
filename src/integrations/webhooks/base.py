@@ -22,23 +22,29 @@ class BaseWebhookProcessor:
 
     def process_payload(self, payload, user):
         """Process webhook payload."""
+        logger.info("BaseWebhookProcessor.process_payload called with payload keys=%s", list(payload.keys()))
         raise NotImplementedError
 
     def _get_played_at(self, payload):
         """Extract played-at timestamp if provided by the payload."""
+        logger.info("_get_played_at: payload keys=%s", list(payload.keys()))
         metadata = payload.get("Metadata", {}) or {}
         ts = (
             metadata.get("viewedAt")
             or metadata.get("lastViewedAt")
             or payload.get("viewedAt")
         )
+        logger.info("_get_played_at: raw timestamp=%s", ts)
         try:
             ts_int = int(ts)
         except (TypeError, ValueError):
+            logger.info("_get_played_at: timestamp conversion failed, returning None")
             return None
 
         played_at = datetime.fromtimestamp(ts_int, tz=UTC)
-        return timezone.localtime(played_at)
+        result = timezone.localtime(played_at)
+        logger.info("_get_played_at: parsed played_at=%s", result)
+        return result
 
     def _is_supported_event(self, event_type):
         """Check if event type is supported."""
@@ -78,9 +84,10 @@ class BaseWebhookProcessor:
 
     def _process_media(self, payload, user, ids):
         """Route processing based on media type."""
+        logger.info("_process_media: payload=%s, ids=%s, user=%s", payload, ids, user)
         media_type = self._get_media_type(payload)
         if not media_type:
-            logger.debug("Ignoring unsupported media type")
+            logger.info("_process_media: Ignoring unsupported media type")
             return
 
         logger.info("Received webhook for media_type=%s", media_type)
@@ -100,6 +107,14 @@ class BaseWebhookProcessor:
             season_number: Season number from payload (optional, will be extracted if None)
             episode_number: Episode number from payload (optional, will be extracted if None)
         """
+        logger.info(
+            "_process_tv: payload=%s, ids=%s, user=%s, season_number=%s, episode_number=%s",
+            payload,
+            ids,
+            user,
+            season_number,
+            episode_number,
+        )
         anidb_id = ids.get("anidb_id")
         if user.anime_enabled and anidb_id:
             mapping_data = self._fetch_mapping_data()
@@ -133,6 +148,7 @@ class BaseWebhookProcessor:
                         return
 
         media_id, found_season, found_episode = self._find_tv_media_id(ids)
+        logger.info("_process_tv: _find_tv_media_id returned media_id=%s, season=%s, episode=%s", media_id, found_season, found_episode)
         if not media_id:
             logger.warning("No matching TMDB ID found for TV show")
             return
@@ -350,14 +366,18 @@ class BaseWebhookProcessor:
 
     def _remember_tvdb_override(self, media_id, ids):
         """Persist a preferred TVDB ID for a resolved TMDB show when available."""
+        logger.info("_remember_tvdb_override: media_id=%s, ids=%s", media_id, ids)
         tvdb_id = ids.get("tvdb_id")
         if not media_id or not tvdb_id:
+            logger.info("_remember_tvdb_override: early return, media_id=%s, tvdb_id=%s", media_id, tvdb_id)
             return
 
+        logger.info("_remember_tvdb_override: calling set_tvdb_id_override(%s, %s)", media_id, tvdb_id)
         app.providers.tmdb.set_tvdb_id_override(media_id, tvdb_id)
 
     def _extract_payload_tmdb_id(self, payload):
         """Extract a raw TMDB ID directly from provider payload GUID fields."""
+        logger.info("_extract_payload_tmdb_id: payload keys=%s", list(payload.keys()))
         metadata = payload.get("Metadata", {}) or {}
         guids = metadata.get("Guid", [])
         if not guids:
@@ -395,7 +415,9 @@ class BaseWebhookProcessor:
         tv_metadata,
     ):
         """Detect when a raw Plex TMDB GUID appears to map to the wrong show."""
+        logger.info("_should_recover_tv_show_from_external_ids: payload=%s, ids=%s, media_id=%s", payload, ids, media_id)
         if not tv_metadata:
+            logger.info("_should_recover_tv_show_from_external_ids: no tv_metadata, returning False")
             return False
 
         raw_tmdb_id = self._extract_payload_tmdb_id(payload)
@@ -436,6 +458,7 @@ class BaseWebhookProcessor:
         return False
 
     def _process_movie(self, payload, user, ids):
+        logger.info("_process_movie: payload=%s, user=%s, ids=%s", payload, user, ids)
         tmdb_id = ids["tmdb_id"]
         imdb_id = ids["imdb_id"]
         find_response = None
@@ -515,6 +538,7 @@ class BaseWebhookProcessor:
 
     def _find_tv_media_id(self, ids):
         """Find TV media ID from external IDs."""
+        logger.info("_find_tv_media_id: ids=%s", ids)
         # Prioritize TVDB/IMDB lookups as they can properly resolve episode IDs via TMDB's find API
         # Plex often provides episode-level TMDB IDs which cannot be used directly as show IDs
         for ext_id, ext_type in [
@@ -522,10 +546,13 @@ class BaseWebhookProcessor:
             (ids["imdb_id"], "imdb_id"),
         ]:
             if ext_id:
+                logger.info("_find_tv_media_id: looking up %s=%s via TMDB.find", ext_type, ext_id)
                 response = app.providers.tmdb.find(ext_id, ext_type)
+                logger.info("_find_tv_media_id: TMDB.find response keys=%s", list(response.keys()))
                 # Check for episode-level results first
                 if response.get("tv_episode_results"):
                     result = response["tv_episode_results"][0]
+                    logger.info("_find_tv_media_id: found tv_episode_results, show_id=%s, season=%s, episode=%s", result.get("show_id"), result.get("season_number"), result.get("episode_number"))
                     return (
                         result.get("show_id"),
                         result.get("season_number"),
@@ -534,6 +561,7 @@ class BaseWebhookProcessor:
                 # Fall back to show-level results if episode-level not available
                 if response.get("tv_results"):
                     result = response["tv_results"][0]
+                    logger.info("_find_tv_media_id: found tv_results, show_id=%s", result.get("id"))
                     # Return show ID only, season/episode should come from payload
                     return result.get("id"), None, None
 
@@ -543,11 +571,13 @@ class BaseWebhookProcessor:
         if ids["tmdb_id"]:
             try:
                 media_id = int(ids["tmdb_id"])
+                logger.info("_find_tv_media_id: using tmdb_id directly, media_id=%s", media_id)
                 # We'll return None for season/episode to indicate they should come from payload
                 return media_id, None, None
             except (ValueError, TypeError):
                 logger.debug("Invalid TMDB ID format: %s", ids["tmdb_id"])
 
+        logger.info("_find_tv_media_id: no ID found, returning None")
         return None, None, None
 
     def _get_mal_id_from_provider_links(
@@ -558,11 +588,13 @@ class BaseWebhookProcessor:
         episode_number,
     ):
         """Prefer explicit season-aware anime links before global mapping data."""
+        logger.info("_get_mal_id_from_provider_links: provider=%s, provider_media_id=%s, season=%s, episode=%s", provider, provider_media_id, season_number, episode_number)
         if (
             provider_media_id in (None, "")
             or season_number is None
             or episode_number is None
         ):
+            logger.info("_get_mal_id_from_provider_links: early return due to missing params")
             return None, None
 
         exact_link = (
@@ -602,21 +634,27 @@ class BaseWebhookProcessor:
 
     def _mapping_series_id(self, entry, provider):
         """Return the grouped series id for TMDB/TVDB anime mapping entries."""
+        logger.info("_mapping_series_id: entry=%s, provider=%s", entry, provider)
         if provider == Sources.TMDB.value:
             for key in ("tmdb_show_id", "tmdb_id", "tmdb_tv_id"):
                 value = entry.get(key)
                 if value not in (None, ""):
+                    logger.info("_mapping_series_id: found tmdb series_id=%s", value)
                     return str(value)
+            logger.info("_mapping_series_id: no tmdb series_id found")
             return None
 
         if provider == Sources.TVDB.value:
             value = entry.get("tvdb_id")
+            logger.info("_mapping_series_id: found tvdb series_id=%s", value)
             return str(value) if value not in (None, "") else None
 
+        logger.info("_mapping_series_id: unknown provider, returning None")
         return None
 
     def _mapping_season_number(self, entry, provider):
         """Return the grouped season number for TMDB/TVDB anime mapping entries."""
+        logger.info("_mapping_season_number: entry=%s, provider=%s", entry, provider)
         keys = ["tvdb_season"] if provider == Sources.TVDB.value else [
             "tmdb_season",
             "tvdb_season",
@@ -627,13 +665,17 @@ class BaseWebhookProcessor:
             if value in (None, ""):
                 continue
             try:
-                return int(value)
+                result = int(value)
+                logger.info("_mapping_season_number: found season=%s", result)
+                return result
             except (TypeError, ValueError):
                 continue
+        logger.info("_mapping_season_number: no season found")
         return None
 
     def _mapping_episode_offset(self, entry, provider):
         """Return the grouped episode offset for TMDB/TVDB anime mapping entries."""
+        logger.info("_mapping_episode_offset: entry=%s, provider=%s", entry, provider)
         keys = ["tvdb_epoffset"] if provider == Sources.TVDB.value else [
             "tmdb_epoffset",
             "tvdb_epoffset",
@@ -643,9 +685,12 @@ class BaseWebhookProcessor:
             if value in (None, ""):
                 continue
             try:
-                return int(value)
+                result = int(value)
+                logger.info("_mapping_episode_offset: found offset=%s", result)
+                return result
             except (TypeError, ValueError):
                 continue
+        logger.info("_mapping_episode_offset: no offset found, defaulting to 0")
         return 0
 
     def _get_mal_id_from_grouped_mapping(
@@ -657,7 +702,9 @@ class BaseWebhookProcessor:
         episode_number,
     ):
         """Resolve a MAL anime id from grouped TMDB/TVDB anime mapping data."""
+        logger.info("_get_mal_id_from_grouped_mapping: mapping_data_keys=%s, provider=%s, series_id=%s, season=%s, episode=%s", list(mapping_data.keys()), provider, series_id, season_number, episode_number)
         if series_id in (None, "") or season_number is None or episode_number is None:
+            logger.info("_get_mal_id_from_grouped_mapping: early return due to missing params")
             return None, None
 
         matching_entries = [
@@ -702,7 +749,10 @@ class BaseWebhookProcessor:
 
     def _fetch_mapping_data(self):
         """Fetch anime mapping data with caching."""
-        return anime_mapping.load_mapping_data()
+        logger.info("_fetch_mapping_data: fetching...")
+        result = anime_mapping.load_mapping_data()
+        logger.info("_fetch_mapping_data: fetched %d entries", len(result))
+        return result
 
     def _get_mal_id_from_tvdb(
         self,
@@ -722,6 +772,7 @@ class BaseWebhookProcessor:
 
     def _get_mal_id_from_tmdb_movie(self, mapping_data, tmdb_movie_id):
         """Find MAL ID from TMDB movie mapping."""
+        logger.info("_get_mal_id_from_tmdb_movie: mapping_data_keys=%s, tmdb_movie_id=%s", list(mapping_data.keys()), tmdb_movie_id)
         for entry in mapping_data.values():
             candidate = entry.get("tmdb_movie_id")
             try:
@@ -733,6 +784,7 @@ class BaseWebhookProcessor:
 
     def _get_mal_id_from_imdb(self, mapping_data, imdb_id):
         """Find MAL ID from IMDB ID mapping."""
+        logger.info("_get_mal_id_from_imdb: mapping_data_keys=%s, imdb_id=%s", list(mapping_data.keys()), imdb_id)
         for entry in mapping_data.values():
             if entry.get("imdb_id") == imdb_id and "mal_id" in entry:
                 return self._parse_mal_id(entry["mal_id"])
@@ -743,15 +795,22 @@ class BaseWebhookProcessor:
 
         mal_id: Either a single ID (int) or comma-separated string of IDs
         """
+        logger.info("_parse_mal_id: mal_id=%s", mal_id)
         if isinstance(mal_id, str) and "," in mal_id:
-            return mal_id.split(",")[0].strip()
+            result = mal_id.split(",")[0].strip()
+            logger.info("_parse_mal_id: parsed first ID=%s", result)
+            return result
+        logger.info("_parse_mal_id: returning as-is=%s", mal_id)
         return mal_id
 
     def _handle_movie(self, media_id, payload, user):
         """Handle movie playback event."""
+        logger.info("_handle_movie: media_id=%s, payload_keys=%s, user=%s", media_id, list(payload.keys()), user)
         from app.services import metadata_resolution  # noqa: PLC0415
 
+        logger.info("_handle_movie: fetching TMDB metadata for media_id=%s", media_id)
         movie_metadata = app.providers.tmdb.movie(media_id)
+        logger.info("_handle_movie: got TMDB metadata, title=%s", movie_metadata.get("title"))
         movie_item, _ = app.models.Item.objects.get_or_create(
             media_id=media_id,
             source=Sources.TMDB.value,
@@ -829,10 +888,12 @@ class BaseWebhookProcessor:
 
     def _queue_collection_metadata_update_for_tv(self, payload, user, tv_item):
         """Queue collection metadata update for TV show (not episode-specific)."""
+        logger.info("_queue_collection_metadata_update_for_tv: payload_keys=%s, user=%s, tv_item=%s", list(payload.keys()), user, tv_item)
         self._queue_collection_metadata_update(payload, user, tv_item)
 
     def _build_fallback_episode_metadata(self, payload, episode_number, tv_metadata):
         """Build minimal episode metadata from payload when TMDB season data is missing."""
+        logger.info("_build_fallback_episode_metadata: episode_number=%s, tv_metadata_keys=%s", episode_number, list(tv_metadata.keys()) if tv_metadata else None)
         metadata = payload.get("Metadata", {}) or {}
 
         duration_ms = metadata.get("duration") or metadata.get("Duration")
@@ -866,6 +927,7 @@ class BaseWebhookProcessor:
         tv_metadata,
     ):
         """Build minimal season metadata for missing TMDB seasons."""
+        logger.info("_build_fallback_season_metadata: season_number=%s, episode_number=%s, tv_metadata_keys=%s", season_number, episode_number, list(tv_metadata.keys()) if tv_metadata else None)
         metadata = payload.get("Metadata", {}) or {}
         try:
             fallback_episode = self._build_fallback_episode_metadata(
@@ -900,7 +962,10 @@ class BaseWebhookProcessor:
         Default implementation uses TMDB.  Subclasses may override to support
         additional providers (TVDB, MAL, etc.).
         """
-        return app.providers.tmdb.tv_with_seasons(media_id, season_numbers)
+        logger.info("_get_tv_metadata: media_id=%s, season_numbers=%s, source=%s", media_id, season_numbers, source)
+        result = app.providers.tmdb.tv_with_seasons(media_id, season_numbers)
+        logger.info("_get_tv_metadata: got TMDB metadata, title=%s", result.get("title") if result else None)
+        return result
 
     def _handle_tv_episode(
         self,
@@ -922,6 +987,14 @@ class BaseWebhookProcessor:
             user: User instance.
             source: Identity provider source (default: ``Sources.TMDB.value``).
         """
+        logger.info(
+            "_handle_tv_episode: media_id=%s, season=%s, episode=%s, user=%s, source=%s",
+            media_id,
+            season_number,
+            episode_number,
+            user,
+            source,
+        )
         from app.services import metadata_resolution  # noqa: PLC0415
 
         if source is None:
@@ -1115,9 +1188,12 @@ class BaseWebhookProcessor:
 
     def _handle_anime(self, media_id, episode_number, payload, user):
         """Handle anime playback event."""
+        logger.info("_handle_anime: media_id=%s, episode_number=%s, payload_keys=%s, user=%s", media_id, episode_number, list(payload.keys()), user)
         from app.services import metadata_resolution  # noqa: PLC0415
 
+        logger.info("_handle_anime: fetching MAL metadata for media_id=%s", media_id)
         anime_metadata = app.providers.mal.anime(media_id)
+        logger.info("_handle_anime: got MAL metadata, title=%s", anime_metadata.get("title"))
         if not self._is_played(payload):
             episode_number = max(0, episode_number - 1)
 
@@ -1262,4 +1338,5 @@ class BaseWebhookProcessor:
         This is a no-op by default. Subclasses should override to implement
         collection metadata extraction for their specific media server.
         """
+        logger.info("_queue_collection_metadata_update: payload_keys=%s, user=%s, item=%s", list(payload.keys()), user, item)
         pass

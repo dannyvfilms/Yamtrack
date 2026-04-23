@@ -62,6 +62,10 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
 
     def process_payload(self, payload, user):
         """Process the incoming Jellyfin webhook payload."""
+        logger.info(
+            "Processing Jellyfin webhook payload: %s",
+            payload,
+        )
         logger.debug(
             "Processing Jellyfin webhook payload keys=%s item_keys=%s",
             mapping_keys(payload),
@@ -69,11 +73,16 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
         )
 
         event_type = payload.get("Event")
+        logger.info("Jellyfin webhook event type: %s", event_type)
         if not self._is_supported_event(event_type):
             logger.debug("Ignoring Jellyfin webhook event type: %s", event_type)
             return
 
         ids = self._extract_external_ids(payload)
+        logger.info(
+            "Extracted Jellyfin IDs from payload: %s",
+            ids,
+        )
         logger.info(
             "Extracted Jellyfin ID presence from payload: %s",
             presence_map(ids, ("tmdb_id", "imdb_id", "tvdb_id")),
@@ -100,13 +109,18 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
     # -- Event helpers --------------------------------------------------
 
     def _is_supported_event(self, event_type):
+        logger.info("_is_supported_event: event_type=%s, supported=%s", event_type, event_type in ("Play", "Pause", "Stop"))
         return event_type in ("Play", "Pause", "Stop")
 
     def _is_played(self, payload):
-        return payload["Item"]["UserData"]["Played"]
+        played = payload["Item"]["UserData"]["Played"]
+        logger.info("_is_played: played=%s", played)
+        return played
 
     def _get_media_type(self, payload):
-        return self.MEDIA_TYPE_MAPPING.get(payload["Item"].get("Type"))
+        media_type = self.MEDIA_TYPE_MAPPING.get(payload["Item"].get("Type"))
+        logger.info("_get_media_type: payload_item_type=%s, mapped=%s", payload["Item"].get("Type"), media_type)
+        return media_type
 
     def _get_media_title(self, payload):
         """Get media title from payload."""
@@ -117,40 +131,50 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
             season_number = payload["Item"].get("ParentIndexNumber")
             episode_number = payload["Item"].get("IndexNumber")
             title = f"{series_name} S{season_number:02d}E{episode_number:02d}"
+            logger.info("_get_media_title: TV title=%s", title)
 
         elif self._get_media_type(payload) == MediaTypes.MOVIE.value:
             movie_name = payload["Item"].get("Name")
             year = payload["Item"].get("ProductionYear")
             title = f"{movie_name} ({year})" if movie_name and year else movie_name
+            logger.info("_get_media_title: Movie title=%s", title)
 
         return title
 
     def _extract_external_ids(self, payload):
         provider_ids = payload["Item"].get("ProviderIds", {})
-        return {
+        result = {
             "tmdb_id": provider_ids.get("Tmdb"),
             "imdb_id": provider_ids.get("Imdb"),
             "tvdb_id": provider_ids.get("Tvdb"),
         }
+        logger.info("_extract_external_ids: result=%s", result)
+        return result
 
     def _extract_season_episode_from_payload(self, payload):
         """Extract season and episode numbers from Jellyfin payload."""
         item = payload.get("Item", {})
         season_number = item.get("ParentIndexNumber")
         episode_number = item.get("IndexNumber")
+        logger.info("_extract_season_episode_from_payload: raw season=%s, episode=%s", season_number, episode_number)
 
         try:
             season_number = int(season_number) if season_number is not None else None
             episode_number = int(episode_number) if episode_number is not None else None
         except (ValueError, TypeError):
+            logger.info("_extract_season_episode_from_payload: conversion failed, returning None, None")
             return None, None
 
+        logger.info("_extract_season_episode_from_payload: parsed season=%s, episode=%s", season_number, episode_number)
         return season_number, episode_number
 
     def _extract_series_title(self, payload):
         """Extract TV series title from Jellyfin payload."""
         if self._get_media_type(payload) == MediaTypes.TV.value:
-            return payload.get("Item", {}).get("SeriesName")
+            title = payload.get("Item", {}).get("SeriesName")
+            logger.info("_extract_series_title: title=%s", title)
+            return title
+        logger.info("_extract_series_title: not TV type, returning None")
         return None
 
     # -- Feature #2: Match existing tracked items -----------------------
@@ -162,13 +186,31 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
         Only returns items where the user has a tracking instance with a
         status (Completed, In progress, Planning, Paused, or Dropped).
 
+        For TV shows, if the webhook passes a TVDB/IMDB episode-level ID this
+        method resolves it to a show-level TMDB ID first (via the base-class
+        ``_find_tv_media_id`` helper), then calls the TMDB provider's
+        ``external_ids`` endpoint using that TMDB show ID to retrieve the
+        corresponding show-level TVDB ID.
+
+        All resolved show IDs (TMDB, TVDB, MAL) are tried against every
+        tracking source so that a webhook carrying e.g. a TVDB ID can still
+        match an item originally tracked under MAL or TMDB.
+
         Feature #2 Priority: check existing items **first** before applying
         provider priority.
 
         Returns ``(item, created)`` where ``created`` is ``False`` when a
         pre-existing item was found.
         """
+        logger.info(
+            "_find_existing_item: user=%s, media_type=%s, ids=%s, match_existing_enabled=%s",
+            user,
+            media_type,
+            ids,
+            getattr(user, "jellyfin_match_existing_enabled", False),
+        )
         if not getattr(user, "jellyfin_match_existing_enabled", False):
+            logger.info("_find_existing_item: match_existing disabled, returning None, True")
             return None, True
 
         # Helper to check if user has a tracking instance for an item
@@ -179,18 +221,53 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
                 return TV.objects.filter(item=item_, user=user).exists()
             return False
 
+        # --- Resolve episode-level IDs to show-level IDs -----------------
+        # Jellyfin may send a TVDB/IMDB episode ID instead of a show-level ID.
+        # Step 1: Resolve to TMDB show ID first (using base class helpers).
+        # Step 2: Use TMDB show ID to call external_ids() to get show-level TVDB ID.
+        resolved_ids = dict(ids)
+        if media_type == MediaTypes.TV.value:
+            # Resolve TVDB/IMDB episode IDs -> TMDB show ID via base class
+            tmdb_show_id, _, _ = self._find_tv_media_id(resolved_ids)
+            if tmdb_show_id:
+                resolved_ids["tmdb_id"] = str(tmdb_show_id)
+                logger.info(
+                    "_find_existing_item: resolved TV show ID via _find_tv_media_id -> TMDB=%s",
+                    tmdb_show_id,
+                )
+                # Step 2: Get show-level TVDB ID from TMDB external_ids
+                try:
+                    ext_data = app.providers.tmdb.external_ids(MediaTypes.TV.value, tmdb_show_id)
+                    if ext_data and isinstance(ext_data, dict):
+                        show_tvdb_id = ext_data.get("tvdb_id")
+                        if show_tvdb_id:
+                            resolved_ids["tvdb_id"] = str(show_tvdb_id)
+                            logger.info(
+                                "_find_existing_item: resolved TMDB show %s -> TVDB show ID %s",
+                                tmdb_show_id,
+                                show_tvdb_id,
+                            )
+                except Exception as exc:
+                    logger.warning(
+                        "_find_existing_item: failed to fetch external_ids for TMDB show %s: %s",
+                        tmdb_show_id,
+                        exc,
+                    )
+
         # --- Direct lookups by known fields on Item ----------------------
-        # Only TMDB, TVDB, and MAL are tracking sources for TV/anime.
-        # IMDB is an external identifier, not a tracking source.
-        direct_lookups = [
+        # Try ALL show IDs (TMDB, TVDB, MAL) against ALL tracking sources.
+        # This ensures we find items even if the webhook sends a different
+        # provider's ID than what the item was originally tracked under.
+        all_source_id_pairs = [
             (Sources.TMDB.value, "tmdb_id"),
             (Sources.TVDB.value, "tvdb_id"),
         ]
         if media_type == MediaTypes.ANIME.value:
-            direct_lookups.append((Sources.MAL.value, "mal_id"))
+            all_source_id_pairs.append((Sources.MAL.value, "mal_id"))
 
-        for source, id_key in direct_lookups:
-            raw_id = ids.get(id_key)
+        for source, id_key in all_source_id_pairs:
+            raw_id = resolved_ids.get(id_key)
+            logger.info("_find_existing_item: checking direct lookup source=%s, id_key=%s, raw_id=%s", source, id_key, raw_id)
             if not raw_id:
                 continue
             try:
@@ -200,6 +277,7 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
                     media_id=str(raw_id),
                 )
                 if has_tracking_instance(item):
+                    logger.info("_find_existing_item: found existing item via direct lookup: %s (source=%s)", item, source)
                     return item, False
             except Item.DoesNotExist:
                 pass
@@ -211,46 +289,59 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
                 provider_media_type=media_type,
             )
 
-            # Narrow by known IDs when available
-            tmdb_id = ids.get("tmdb_id")
-            tvdb_id = ids.get("tvdb_id")
-            if tmdb_id or tvdb_id:
-                q = Q()
-                if tmdb_id:
-                    q |= Q(provider=Sources.TMDB.value, provider_media_id=str(tmdb_id))
-                if tvdb_id:
-                    q |= Q(provider=Sources.TVDB.value, provider_media_id=str(tvdb_id))
+            # Build query using ALL resolved IDs (TMDB, TVDB, MAL)
+            q = Q()
+            for source, id_key in all_source_id_pairs:
+                item_id = resolved_ids.get(id_key)
+                if item_id:
+                    q |= Q(provider=source, provider_media_id=str(item_id))
+
+            if q.children:
+                logger.info("_find_existing_item: narrowing provider link query by resolved IDs: %s", {k: v for k, v in resolved_ids.items() if v})
                 link_qs = link_qs.filter(q)
 
-            for link in link_qs[:20]:
+            for link in link_qs[:50]:
                 try:
                     item = link.item
+                    logger.info(
+                        "_find_existing_item: checking provider link item=%s, media_type=%s, has_tracking=%s",
+                        item,
+                        item.media_type,
+                        has_tracking_instance(item),
+                    )
                     if (
                         item.media_type == media_type
                         and has_tracking_instance(item)
                     ):
+                        logger.info("_find_existing_item: found existing item via provider link: %s", item)
                         return item, False
                 except Exception:
                     continue
 
+        logger.info("_find_existing_item: no existing item found, returning None, True")
         return None, True
 
     def _update_existing_item(self, item, payload, user):
         """Update progress on an existing item without changing
         its identity provider.
         """
+        logger.info("_update_existing_item: item=%s, media_type=%s, user=%s", item, item.media_type, user)
         played = self._is_played(payload)
         now = self._get_played_at(payload) or timezone.now().replace(
             second=0, microsecond=0,
         )
+        logger.info("_update_existing_item: played=%s, now=%s", played, now)
 
         if item.media_type == MediaTypes.MOVIE.value:
+            logger.info("_update_existing_item: routing to _update_movie_instance")
             self._update_movie_instance(item, user, played, now)
         elif item.media_type == MediaTypes.TV.value:
+            logger.info("_update_existing_item: routing to _update_tv_season_episode")
             self._update_tv_season_episode(item, payload, user, played, now)
 
     def _update_movie_instance(self, item, user, played, now):
         """Create or update a Movie tracking instance."""
+        logger.info("_update_movie_instance: item=%s, user=%s, played=%s, now=%s", item, user, played, now)
         instance, created = Movie.objects.get_or_create(
             item=item,
             user=user,
@@ -284,6 +375,7 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
         Creates or updates Season and Episode tracking instances
         for an existing TV show item.
         """
+        logger.info("_update_tv_season_episode: item=%s, user=%s, played=%s, now=%s", item, user, played, now)
         # We need season/episode numbers to create Episode records.
         season_number, episode_number = (
             self._extract_season_episode_from_payload(payload)
@@ -378,16 +470,29 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
         ``None`` when the setting is disabled / unknown — letting the caller
         fall through to normal TMDB-first processing.
         """
-        if not getattr(user, "jellyfin_provider_priority_enabled", False):
+        provider_priority_enabled = getattr(user, "jellyfin_provider_priority_enabled", False)
+        logger.info(
+            "_get_jellyfin_preferred_source: user=%s, media_type=%s, provider_priority_enabled=%s",
+            user,
+            media_type,
+            provider_priority_enabled,
+        )
+        if not provider_priority_enabled:
+            logger.info("_get_jellyfin_preferred_source: provider priority disabled, returning None")
             return None
 
         if media_type == MediaTypes.TV.value:
-            return getattr(user, "tv_metadata_source_default", None)
+            preferred = getattr(user, "tv_metadata_source_default", None)
+            logger.info("_get_jellyfin_preferred_source: TV preferred source=%s", preferred)
+            return preferred
 
         if media_type == MediaTypes.ANIME.value:
-            return getattr(user, "anime_metadata_source_default", None)
+            preferred = getattr(user, "anime_metadata_source_default", None)
+            logger.info("_get_jellyfin_preferred_source: Anime preferred source=%s", preferred)
+            return preferred
 
         # Movies always use TMDB — no override needed
+        logger.info("_get_jellyfin_preferred_source: Movies use TMDB, returning None")
         return None
 
     def _resolve_media_id_to_preferred_source(
@@ -401,6 +506,12 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
         whether the user's preferred provider has a matching ID in the webhook
         payload.  If found, the item is tracked under that provider.
 
+        For TV shows, if the webhook passes an episode-level TVDB/IMDB ID this
+        method resolves it to a **show-level** ID by:
+        1. Using the base-class ``_find_tv_media_id`` to resolve to a TMDB show ID
+        2. Calling ``tmdb.external_ids()`` with that TMDB show ID to get the
+           corresponding show-level TVDB ID
+
         The returned ``source`` reflects **which provider supplied the final ID**,
         so items are tracked under the correct identity provider.
 
@@ -408,16 +519,78 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
         no matching ID was found — signalling that fallback (normal TMDB-first)
         processing should apply.
         """
+        logger.info(
+            "_resolve_media_id_to_preferred_source: user=%s, media_type=%s, ids=%s, season=%s, episode=%s",
+            user,
+            media_type,
+            ids,
+            season_number,
+            episode_number,
+        )
         preferred = self._get_jellyfin_preferred_source(user, media_type)
         if not preferred:
+            logger.info("_resolve_media_id_to_preferred_source: no preferred source, returning None")
             return None, None, None, None
 
-        ext_id = ids.get(f"{preferred}_id")
-        if not ext_id:
+        raw_ext_id = ids.get(f"{preferred}_id")
+        logger.info("_resolve_media_id_to_preferred_source: preferred=%s, raw_ext_id=%s", preferred, raw_ext_id)
+        if not raw_ext_id:
+            logger.info("_resolve_media_id_to_preferred_source: no ID for preferred source, returning None")
             return None, None, None, None
+
+        # For TV shows with TVDB preferred source, resolve episode-level IDs
+        # to show-level IDs via TMDB.
+        resolved_id = raw_ext_id
+        if media_type == MediaTypes.TV.value and preferred == Sources.TVDB.value:
+            logger.info(
+                "_resolve_media_id_to_preferred_source: resolving TVDB episode ID %s to show-level ID",
+                raw_ext_id,
+            )
+            # Step 1: Resolve TVDB/IMDB → TMDB show ID via base class helper
+            tmdb_show_id, _, _ = self._find_tv_media_id(ids)
+            if tmdb_show_id:
+                logger.info(
+                    "_resolve_media_id_to_preferred_source: resolved to TMDB show ID %s",
+                    tmdb_show_id,
+                )
+                # Step 2: Use TMDB external_ids to get show-level TVDB ID
+                try:
+                    ext_data = app.providers.tmdb.external_ids(MediaTypes.TV.value, tmdb_show_id)
+                    if ext_data and isinstance(ext_data, dict):
+                        show_tvdb_id = ext_data.get("tvdb_id")
+                        if show_tvdb_id:
+                            resolved_id = str(show_tvdb_id)
+                            logger.info(
+                                "_resolve_media_id_to_preferred_source: resolved TMDB show %s -> TVDB show ID %s",
+                                tmdb_show_id,
+                                show_tvdb_id,
+                            )
+                        else:
+                            logger.warning(
+                                "_resolve_media_id_to_preferred_source: no tvdb_id in external_ids response for TMDB show %s",
+                                tmdb_show_id,
+                            )
+                    else:
+                        logger.warning(
+                            "_resolve_media_id_to_preferred_source: empty external_ids response for TMDB show %s",
+                            tmdb_show_id,
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "_resolve_media_id_to_preferred_source: failed to fetch external_ids for TMDB show %s: %s",
+                        tmdb_show_id,
+                        exc,
+                    )
+            else:
+                logger.warning(
+                    "_resolve_media_id_to_preferred_source: could not resolve TVDB ID %s to TMDB show ID",
+                    raw_ext_id,
+                )
 
         try:
-            return str(ext_id), preferred, season_number, episode_number
+            result = str(resolved_id), preferred, season_number, episode_number
+            logger.info("_resolve_media_id_to_preferred_source: resolved to %s", result)
+            return result
         except Exception as exc:
             logger.debug(
                 "Failed resolving preferred provider %s: %s",
@@ -438,7 +611,15 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
         1. **Feature #2**: Check for an existing tracked item by *any* provider ID.
         2. **Feature #1**: Resolve media ID using user's preferred provider if enabled.
         3. **Fallback**: Normal TMDB-first processing via the base class.
+
+        If ``season_number`` or ``episode_number`` are not provided as parameters,
+        they are extracted from the payload before any downstream calls.
         """
+        # Extract season/episode from payload if not provided as parameters
+        if season_number is None or episode_number is None:
+            season_number, episode_number = self._extract_season_episode_from_payload(payload)
+            logger.info("_process_tv: extracted season=%s, episode=%s from payload", season_number, episode_number)
+
         # Feature #2: Check for existing item FIRST (highest priority)
         existing_item, created = self._find_existing_item(
             user, MediaTypes.TV.value, ids,
@@ -460,9 +641,9 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
             )
         )
 
-        if resolved_media_id is not None:
+        if resolved_media_id is not None and resolved_season is not None and resolved_episode is not None:
             logger.info(
-                "Tracking TV episode under source=%s (ID=%d, S%d E%d)",
+                "Tracking TV episode under source=%s (ID=%s, S%s E%s)",
                 resolved_source,
                 resolved_media_id,
                 resolved_season,
@@ -514,21 +695,26 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
         Overrides the base-class implementation to support TVDB and MAL in
         addition to the default TMDB backend.
         """
+        logger.info("_get_tv_metadata: media_id=%s, season_numbers=%s, source=%s", media_id, season_numbers, source)
         if source == Sources.TMDB.value:
-            return app.providers.tmdb.tv_with_seasons(media_id, season_numbers)
+            logger.info("_get_tv_metadata: using TMDB provider")
+            result = app.providers.tmdb.tv_with_seasons(media_id, season_numbers)
+            logger.info("_get_tv_metadata: TMDB result keys=%s", list(result.keys()) if result else None)
+            return result
 
         if source == Sources.TVDB.value:
-            return app.providers.tvdb.tv_with_seasons(
+            logger.info("_get_tv_metadata: using TVDB provider")
+            result = app.providers.tvdb.tv_with_seasons(
                 media_id, season_numbers, routed_media_type=MediaTypes.TV.value,
             )
+            logger.info("_get_tv_metadata: TVDB result keys=%s", list(result.keys()) if result else None)
+            return result
 
         # MAL / fallback: use TMDB for season structure
-        logger.debug(
-            "No direct TV metadata for source=%s; falling back to TMDB for media_id=%s",
-            source,
-            media_id,
-        )
-        return app.providers.tmdb.tv_with_seasons(media_id, season_numbers)
+        logger.info("_get_tv_metadata: falling back to TMDB for source=%s, media_id=%s", source, media_id)
+        result = app.providers.tmdb.tv_with_seasons(media_id, season_numbers)
+        logger.info("_get_tv_metadata: TMDB fallback result keys=%s", list(result.keys()) if result else None)
+        return result
 
     def _queue_collection_metadata_update_for_tv(self, payload, user, tv_item):
         """Queue collection metadata update for TV show (not episode-specific)."""
@@ -541,10 +727,14 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
         item_type = (
             payload.get("Item", {}).get("Type") or ""
         ).strip()
+        logger.info("_get_live_playback_media_type: item_type=%s", item_type)
         if item_type == "Episode":
+            logger.info("_get_live_playback_media_type: returning EPISODE")
             return MediaTypes.EPISODE.value
         if item_type == "Movie":
+            logger.info("_get_live_playback_media_type: returning MOVIE")
             return MediaTypes.MOVIE.value
+        logger.info("_get_live_playback_media_type: returning None")
         return None
 
     def _update_live_playback_state(
@@ -556,8 +746,11 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
         ``jellyfin_provider_priority_enabled`` so the card reflects the
         user's tracking identity.
         """
+        logger.info("_update_live_playback_state: payload=%s, user=%s, ids=%s, playback_media_type=%s", payload, user, ids, playback_media_type)
         event_type = JELLYFIN_EVENT_MAP.get(payload.get("Event"))
+        logger.info("_update_live_playback_state: event_type=%s", event_type)
         if not event_type:
+            logger.info("_update_live_playback_state: no event_type, returning early")
             return
 
         if playback_media_type not in (

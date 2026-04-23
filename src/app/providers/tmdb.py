@@ -338,6 +338,49 @@ def search(media_type, query, page):
     return data
 
 
+def external_ids(media_type, media_id):
+    """Fetch external IDs for a TMDB movie or TV show.
+    
+    Returns a dict with keys like 'imdb_id', 'tvdb_id', 'wikidata_id', etc.
+    For TV shows, tvdb_id is the series-level ID.
+    For movies, imdb_id is the primary external identifier.
+    """
+    cache_key = f"external_ids_{Sources.TMDB.value}_{media_type}_{media_id}"
+    data = cache.get(cache_key)
+
+    if data is None:
+        if media_type == MediaTypes.MOVIE.value:
+            url = f"{base_url}/movie/{media_id}/external_ids"
+        elif media_type == MediaTypes.TV.value:
+            url = f"{base_url}/tv/{media_id}/external_ids"
+        else:
+            logger.warning("external_ids: unsupported media_type=%s for media_id=%s", media_type, media_id)
+            return {}
+
+        params = {**base_params}
+
+        try:
+            response = services.api_request(
+                Sources.TMDB.value,
+                "GET",
+                url,
+                params=params,
+            )
+        except requests.exceptions.HTTPError as error:
+            logger.warning(
+                "external_ids: failed to fetch external IDs for %s %s: %s",
+                media_type,
+                media_id,
+                exception_summary(error),
+            )
+            return {}
+
+        data = response
+        cache.set(cache_key, data)
+
+    return data
+
+
 def find(external_id, external_source):
     """Search for media on TMDB."""
     cache_key = f"find_{Sources.TMDB.value}_{external_id}_{external_source}"
