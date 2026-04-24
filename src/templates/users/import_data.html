@@ -435,6 +435,146 @@
         </div>
 
 
+        {# Radarr #}
+        <div class="bg-[#39404b] p-4 rounded-lg space-y-3"
+             x-show="sourceSupports(['screen'])"
+             x-transition.opacity.duration.150ms>
+          <div class="flex items-center justify-between">
+            <div class="flex items-center">{% source_display "radarr" %}</div>
+            {% if radarr_account and radarr_account.is_connected %}
+              <form method="post" action="{% url 'radarr_disconnect' %}">
+                {% csrf_token %}
+                <button type="submit"
+                        class="px-2 py-1 text-xs rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/20 transition-colors cursor-pointer">
+                  Connected
+                </button>
+              </form>
+            {% else %}
+              <span class="px-2 py-1 text-xs rounded bg-gray-500/20 text-gray-300 border border-gray-600/50">Disconnected</span>
+            {% endif %}
+          </div>
+          {% if radarr_account %}
+            <p class="text-sm text-gray-400">Sync owned movies from Radarr every 2 hours and reconcile quality metadata with Plex.</p>
+            <div class="flex items-center gap-2 text-sm text-gray-400">
+              <span>{{ radarr_account.base_url }}</span>
+              {% if radarr_account.last_sync_at %}
+                <span>•</span>
+                <span>Last sync: {{ radarr_account.last_sync_at|user_datetime_format:user }}</span>
+              {% endif %}
+            </div>
+            {% if radarr_account.last_error_message %}
+              <div class="text-xs text-amber-200 bg-amber-500/10 border border-amber-400/30 rounded p-2">
+                <strong>Error:</strong> {{ radarr_account.last_error_message }}
+              </div>
+            {% endif %}
+            <div class="flex gap-2">
+              <form method="post" action="{% url 'import_radarr' %}">
+                {% csrf_token %}
+                <button type="submit"
+                        class="px-4 py-2 text-sm rounded-md bg-indigo-600 text-white hover:bg-indigo-700 transition-colors cursor-pointer">
+                  Sync Now
+                </button>
+              </form>
+              <form method="post" action="{% url 'radarr_disconnect' %}">
+                {% csrf_token %}
+                <button type="submit"
+                        class="px-4 py-2 text-sm rounded-md bg-slate-500/10 text-slate-200 border border-slate-400/30 hover:bg-slate-500/20 transition-colors cursor-pointer">
+                  Disconnect
+                </button>
+              </form>
+            </div>
+          {% else %}
+            <p class="text-sm text-gray-400">Connect Radarr using your server URL and API key.</p>
+            <form method="post" action="{% url 'radarr_connect' %}" class="space-y-3">
+              {% csrf_token %}
+              <input name="base_url"
+                     placeholder="https://radarr.local:7878"
+                     class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                     type="url"
+                     required>
+              <input name="api_key"
+                     placeholder="Radarr API key"
+                     class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                     type="password"
+                     required>
+              <button type="submit"
+                      class="w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer bg-indigo-600 text-white hover:bg-indigo-700">
+                Connect Radarr
+              </button>
+            </form>
+          {% endif %}
+        </div>
+
+        {# Sonarr #}
+        <div class="bg-[#39404b] p-4 rounded-lg space-y-3"
+             x-show="sourceSupports(['screen'])"
+             x-transition.opacity.duration.150ms>
+          <div class="flex items-center justify-between">
+            <div class="flex items-center">{% source_display "sonarr" %}</div>
+            {% if sonarr_account and sonarr_account.is_connected %}
+              <form method="post" action="{% url 'sonarr_disconnect' %}">
+                {% csrf_token %}
+                <button type="submit"
+                        class="px-2 py-1 text-xs rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/20 transition-colors cursor-pointer">
+                  Connected
+                </button>
+              </form>
+            {% else %}
+              <span class="px-2 py-1 text-xs rounded bg-gray-500/20 text-gray-300 border border-gray-600/50">Disconnected</span>
+            {% endif %}
+          </div>
+          {% if sonarr_account %}
+            <p class="text-sm text-gray-400">Sync owned TV collection from Sonarr every 2 hours and reconcile ownership with Plex.</p>
+            <div class="flex items-center gap-2 text-sm text-gray-400">
+              <span>{{ sonarr_account.base_url }}</span>
+              {% if sonarr_account.last_sync_at %}
+                <span>•</span>
+                <span>Last sync: {{ sonarr_account.last_sync_at|user_datetime_format:user }}</span>
+              {% endif %}
+            </div>
+            {% if sonarr_account.last_error_message %}
+              <div class="text-xs text-amber-200 bg-amber-500/10 border border-amber-400/30 rounded p-2">
+                <strong>Error:</strong> {{ sonarr_account.last_error_message }}
+              </div>
+            {% endif %}
+            <div class="flex gap-2">
+              <form method="post" action="{% url 'import_sonarr' %}">
+                {% csrf_token %}
+                <button type="submit"
+                        class="px-4 py-2 text-sm rounded-md bg-indigo-600 text-white hover:bg-indigo-700 transition-colors cursor-pointer">
+                  Sync Now
+                </button>
+              </form>
+              <form method="post" action="{% url 'sonarr_disconnect' %}">
+                {% csrf_token %}
+                <button type="submit"
+                        class="px-4 py-2 text-sm rounded-md bg-slate-500/10 text-slate-200 border border-slate-400/30 hover:bg-slate-500/20 transition-colors cursor-pointer">
+                  Disconnect
+                </button>
+              </form>
+            </div>
+          {% else %}
+            <p class="text-sm text-gray-400">Connect Sonarr using your server URL and API key.</p>
+            <form method="post" action="{% url 'sonarr_connect' %}" class="space-y-3">
+              {% csrf_token %}
+              <input name="base_url"
+                     placeholder="https://sonarr.local:8989"
+                     class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                     type="url"
+                     required>
+              <input name="api_key"
+                     placeholder="Sonarr API key"
+                     class="w-full py-2 px-3 bg-[#2a2f35] rounded-md text-white text-sm border border-gray-600 focus:border-indigo-500 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                     type="password"
+                     required>
+              <button type="submit"
+                      class="w-full px-4 py-2 text-sm rounded-md transition-colors cursor-pointer bg-indigo-600 text-white hover:bg-indigo-700">
+                Connect Sonarr
+              </button>
+            </form>
+          {% endif %}
+        </div>
+
         {# Audiobookshelf #}
         <div class="bg-[#39404b] p-4 rounded-lg space-y-3"
              x-show="sourceSupports(['books', 'podcasts'])"

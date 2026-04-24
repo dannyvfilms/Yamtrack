@@ -470,6 +470,69 @@ class UserGetImportTasksTests(TestCase):
         self.assertEqual(import_tasks["schedules"][0]["mode"], "Watchlist Sync")
 
     @patch("users.helpers.process_task_result")
+    @patch("users.helpers.get_next_run_info")
+    def test_get_import_tasks_maps_arr_results_and_schedules(
+        self,
+        mock_get_next_run_info,
+        mock_process_task_result,
+    ):
+        """Radarr and Sonarr tasks should appear in import history and schedules."""
+        processed_task = MagicMock()
+        processed_task.summary = "Synced collection ownership."
+        processed_task.errors = None
+        mock_process_task_result.return_value = processed_task
+        mock_get_next_run_info.return_value = {
+            "next_run": timezone.now() + timedelta(hours=2),
+            "frequency": "Every 2 hours",
+            "mode": "Only New Items",
+        }
+
+        TaskResult.objects.create(
+            task_id="task-radarr",
+            task_name="Import from Radarr",
+            task_kwargs=(f'{{"user_id": {self.user.id}}}'),
+            status="SUCCESS",
+            date_done=timezone.now() - timedelta(minutes=5),
+            result='"Synced collection ownership."',
+        )
+        TaskResult.objects.create(
+            task_id="task-sonarr",
+            task_name="Import from Sonarr",
+            task_kwargs=(f'{{"user_id": {self.user.id}}}'),
+            status="SUCCESS",
+            date_done=timezone.now(),
+            result='"Synced collection ownership."',
+        )
+
+        PeriodicTask.objects.create(
+            name="Import from Radarr for test (every 2 hours)",
+            task="Import from Radarr (Recurring)",
+            kwargs=(f'{{"user_id": {self.user.id}}}'),
+            crontab=self.crontab,
+            enabled=True,
+        )
+        PeriodicTask.objects.create(
+            name="Import from Sonarr for test (every 2 hours)",
+            task="Import from Sonarr (Recurring)",
+            kwargs=(f'{{"user_id": {self.user.id}}}'),
+            crontab=self.crontab,
+            enabled=True,
+        )
+
+        import_tasks = self.user.get_import_tasks()
+
+        self.assertEqual(
+            [result["source"] for result in import_tasks["results"]],
+            ["sonarr", "radarr"],
+        )
+        self.assertEqual(
+            [schedule["source"] for schedule in import_tasks["schedules"]],
+            ["radarr", "sonarr"],
+        )
+        self.assertEqual(mock_process_task_result.call_count, 2)
+        self.assertEqual(mock_get_next_run_info.call_count, 2)
+
+    @patch("users.helpers.process_task_result")
     def test_get_import_tasks_unknown_source(self, mock_process_task_result):
         """Test get_import_tasks with an unknown task source."""
         # Create mock processed task

@@ -839,6 +839,12 @@ def import_data(request):
     lastfm_account = getattr(request.user, "lastfm_account", None)
     if lastfm_account:
         lastfm_account.refresh_from_db()
+    radarr_account = getattr(request.user, "radarr_account", None)
+    if radarr_account:
+        radarr_account.refresh_from_db()
+    sonarr_account = getattr(request.user, "sonarr_account", None)
+    if sonarr_account:
+        sonarr_account.refresh_from_db()
 
     # Get Last.fm periodic task status
     lastfm_periodic_task = None
@@ -882,6 +888,8 @@ def import_data(request):
         "audiobookshelf_account": audiobookshelf_account,
         "pocketcasts_account": pocketcasts_account,
         "lastfm_account": lastfm_account,
+        "radarr_account": radarr_account,
+        "sonarr_account": sonarr_account,
         "lastfm_periodic_task": lastfm_periodic_task,
         "lastfm_poll_interval": lastfm_poll_interval,
         "lastfm_history_status_label": lastfm_history_status_label,

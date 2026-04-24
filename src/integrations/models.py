@@ -348,6 +348,101 @@ class LastFMAccount(models.Model):
         self.history_import_last_error_message = ""
 
 
+class RadarrAccount(models.Model):
+    """Store Radarr connection settings and sync state for a user."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="radarr_account",
+    )
+    base_url = models.URLField(help_text="Radarr server URL")
+    api_key = models.TextField(help_text="Encrypted Radarr API key")
+    connection_broken = models.BooleanField(default=False)
+    last_error_message = models.TextField(blank=True, default="")
+    last_sync_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        """Model options."""
+
+        verbose_name = "Radarr account"
+        verbose_name_plural = "Radarr accounts"
+
+    @property
+    def is_connected(self):
+        """Return True when the account appears connected."""
+        return bool(self.base_url and self.api_key) and not self.connection_broken
+
+
+class SonarrAccount(models.Model):
+    """Store Sonarr connection settings and sync state for a user."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="sonarr_account",
+    )
+    base_url = models.URLField(help_text="Sonarr server URL")
+    api_key = models.TextField(help_text="Encrypted Sonarr API key")
+    connection_broken = models.BooleanField(default=False)
+    last_error_message = models.TextField(blank=True, default="")
+    last_sync_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        """Model options."""
+
+        verbose_name = "Sonarr account"
+        verbose_name_plural = "Sonarr accounts"
+
+    @property
+    def is_connected(self):
+        """Return True when the account appears connected."""
+        return bool(self.base_url and self.api_key) and not self.connection_broken
+
+
+class CollectionSourceState(models.Model):
+    """Track source-specific collection metadata freshness for each user+item."""
+
+    SOURCE_CHOICES = [
+        ("plex", "Plex"),
+        ("radarr", "Radarr"),
+        ("sonarr", "Sonarr"),
+    ]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="collection_source_states",
+    )
+    item = models.ForeignKey(
+        "app.Item",
+        on_delete=models.CASCADE,
+        related_name="source_states",
+    )
+    source = models.CharField(max_length=20, choices=SOURCE_CHOICES)
+    quality_label = models.CharField(max_length=80, blank=True, default="")
+    last_source_updated_at = models.DateTimeField(null=True, blank=True)
+    last_synced_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        """Model options."""
+
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "item", "source"],
+                name="integrations_collectionsourcestate_unique_user_item_source",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["user", "source"]),
+            models.Index(fields=["user", "item"]),
+        ]
+
+
 class TraktAccount(models.Model):
     """Store Trakt API client credentials for a user."""
 

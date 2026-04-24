@@ -31,7 +31,9 @@ from integrations.imports import (
     mal,
     plex,
     pocketcasts,
+    radarr,
     simkl,
+    sonarr,
     steam,
     trakt,
     yamtrack,
@@ -312,6 +314,30 @@ def import_hardcover(file, user_id, mode):
 def import_plex(library, user_id, mode, username=None):  # noqa: ARG001
     """Celery task for importing media data from Plex."""
     return import_media(plex.importer, library, user_id, mode)
+
+
+@shared_task(name="Import from Radarr")
+def import_radarr(user_id, mode="new", username=None):  # noqa: ARG001
+    """Celery task for importing movie collection data from Radarr."""
+    return import_media(radarr.importer, None, user_id, mode)
+
+
+@shared_task(name="Import from Radarr (Recurring)")
+def import_radarr_recurring(user_id):
+    """Recurring import task for Radarr."""
+    return import_radarr.delay(user_id=user_id, mode="new")
+
+
+@shared_task(name="Import from Sonarr")
+def import_sonarr(user_id, mode="new", username=None):  # noqa: ARG001
+    """Celery task for importing TV collection data from Sonarr."""
+    return import_media(sonarr.importer, None, user_id, mode)
+
+
+@shared_task(name="Import from Sonarr (Recurring)")
+def import_sonarr_recurring(user_id):
+    """Recurring import task for Sonarr."""
+    return import_sonarr.delay(user_id=user_id, mode="new")
 
 
 @shared_task(name="Sync Plex Watchlist")

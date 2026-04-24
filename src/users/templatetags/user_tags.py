@@ -77,6 +77,14 @@ SOURCES_CONFIG = {
         "name": "Hardcover",
         "logo": static("img/hardcover-logo.png"),
     },
+    "radarr": {
+        "name": "Radarr",
+        "logo": static("img/plex-logo.svg"),
+    },
+    "sonarr": {
+        "name": "Sonarr",
+        "logo": static("img/plex-logo.svg"),
+    },
 }
 
 

@@ -1277,12 +1277,16 @@ class User(AbstractUser):
             "imdb": ["Import from IMDB"],
             "goodreads": ["Import from GoodReads"],
             "plex": ["Import from Plex", "Sync Plex Watchlist"],
+            "radarr": ["Import from Radarr"],
+            "sonarr": ["Import from Sonarr"],
             "audiobookshelf": ["Import from Audiobookshelf"],
             "pocketcasts": ["Import from Pocket Casts"],
             "lastfm": ["Import from Last.fm History"],
         }
         schedule_task_names = {
             **result_task_names,
+            "radarr": ["Import from Radarr (Recurring)"],
+            "sonarr": ["Import from Sonarr (Recurring)"],
             "audiobookshelf": ["Import from Audiobookshelf (Recurring)"],
             "pocketcasts": ["Import from Pocket Casts (Recurring)"],
             "lastfm": ["Poll Last.fm for all users"],
