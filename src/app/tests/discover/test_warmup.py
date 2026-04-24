@@ -94,6 +94,7 @@ class DiscoverWarmupTests(TestCase):
         config = YamtrackAppConfig("app", import_module("app"))
 
         with (
+            patch.object(config, "_repair_celery_redis_bindings"),
             patch.object(config, "_add_startup_cache_key", return_value=True),
             patch.object(config, "_schedule_runtime_population"),
             patch.object(config, "_schedule_discover_startup_warmup") as mock_schedule,
@@ -111,6 +112,7 @@ class DiscoverWarmupTests(TestCase):
         config = YamtrackAppConfig("app", import_module("app"))
 
         with (
+            patch.object(config, "_repair_celery_redis_bindings"),
             patch.object(config, "_add_startup_cache_key", return_value=True),
             patch.object(config, "_schedule_runtime_population"),
             patch.object(config, "_schedule_discover_startup_warmup") as mock_schedule,
