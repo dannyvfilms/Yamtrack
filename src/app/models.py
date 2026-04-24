@@ -81,7 +81,7 @@ class MediaTypes(models.TextChoices):
 class Item(CalendarTriggerMixin, models.Model):
     """Model to store basic information about media items."""
 
-    media_id = models.CharField(max_length=20)
+    media_id = models.CharField(max_length=500)
     source = models.CharField(
         max_length=20,
         choices=Sources,
@@ -302,6 +302,20 @@ class Item(CalendarTriggerMixin, models.Model):
             CheckConstraint(
                 condition=Q(library_media_type="") | Q(library_media_type__in=MediaTypes.values),
                 name="%(app_label)s_%(class)s_library_media_type_valid",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["metadata_fetched_at"],
+                name="app_item_metadata_fetched_idx",
+            ),
+            models.Index(
+                fields=["release_datetime"],
+                name="app_item_release_dt_idx",
+            ),
+            models.Index(
+                fields=["trakt_popularity_rank"],
+                name="app_item_trakt_pop_rank_idx",
             ),
         ]
         ordering = ["media_id"]
@@ -4606,7 +4620,7 @@ class PodcastEpisode(models.Model):
         blank=True,
         help_text="Duration in seconds",
     )
-    audio_url = models.URLField(blank=True, default="")
+    audio_url = models.URLField(max_length=500, blank=True, default="")
     episode_number = models.PositiveIntegerField(null=True, blank=True)
     season_number = models.PositiveIntegerField(null=True, blank=True)
     file_type = models.CharField(max_length=50, blank=True, default="")

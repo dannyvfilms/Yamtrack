@@ -367,7 +367,14 @@ def import_audiobookshelf_recurring(user_id):
 @shared_task(name="Import from Pocket Casts")
 def import_pocketcasts(user_id, mode="new"):
     """Celery task for importing podcast history from Pocket Casts."""
-    return import_media(pocketcasts.importer, None, user_id, mode)
+    lock_key = f"pocketcasts_import_lock_{user_id}"
+    if not cache.add(lock_key, "1", timeout=600):
+        logger.info("Pocket Casts import already running for user %s, skipping", user_id)
+        return "Skipped: import already in progress"
+    try:
+        return import_media(pocketcasts.importer, None, user_id, mode)
+    finally:
+        cache.delete(lock_key)
 
 
 @shared_task(name="Import from Pocket Casts (Recurring)")
