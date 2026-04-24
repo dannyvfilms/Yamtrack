@@ -377,8 +377,8 @@ class AppTagsTests(TestCase):
             content,
         )
 
-    def test_media_card_marks_alt_title_cards_as_tooltip_safe(self):
-        """Grid media cards with alternate-title tooltips should not clip the tooltip panel."""
+    def test_media_card_teleports_alt_title_tooltip(self):
+        """Grid media cards should teleport alternate-title tooltips outside the clipped shell."""
         item = Item(
             media_id="tooltip-card-1",
             source=Sources.TMDB.value,
@@ -411,9 +411,10 @@ class AppTagsTests(TestCase):
             request=request,
         )
 
-        self.assertIn("media-card-tooltip-safe", content)
         self.assertIn("media-card-visual", content)
         self.assertIn('aria-label="Show alternative title"', content)
+        self.assertIn('x-teleport="body"', content)
+        self.assertIn('x-ref="panel"', content)
 
     def test_history_card_uses_canonical_music_album_url(self):
         """Music history cards should link to the shared nested album route."""
@@ -472,8 +473,8 @@ class AppTagsTests(TestCase):
             content,
         )
 
-    def test_history_card_marks_alt_title_cards_as_tooltip_safe(self):
-        """History cards with alternate-title tooltips should allow the tooltip outside the shell."""
+    def test_history_card_teleports_alt_title_tooltip(self):
+        """History cards should teleport alternate-title tooltips outside the clipped shell."""
         item = Item.objects.create(
             media_id="tooltip-history-1",
             source=Sources.TMDB.value,
@@ -516,9 +517,10 @@ class AppTagsTests(TestCase):
             request=request,
         )
 
-        self.assertIn("media-card-tooltip-safe", content)
         self.assertIn("media-card-visual", content)
         self.assertIn('aria-label="Show alternative title"', content)
+        self.assertIn('x-teleport="body"', content)
+        self.assertIn('x-ref="panel"', content)
 
     def test_match_percent_clamps_and_rounds(self):
         """match_percent should clamp values to [0,100] and round."""

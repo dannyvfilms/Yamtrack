@@ -4,7 +4,7 @@
 {# History card component - used for both 2:3 and 1:1 aspect ratio cards #}
 {# Args: entry, card_class (search-result-card or search-result-card-square), history_mode, user #}
 
-<div class="media-card media-card-tooltip-safe bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative {{ card_class }}{% if user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %}"
+<div class="media-card bg-[#2a2f35] rounded-lg overflow-hidden shadow-lg relative {{ card_class }}{% if user.media_card_subtitle_display == 'always' %} media-card-subtitle-always{% endif %}"
      data-media-type="{{ entry.media_type }}"
      x-data="{ trackOpen: false, historyOpen: false, listsOpen: false }">
   <div class="media-card-visual relative">
@@ -113,28 +113,80 @@
         {{ preferred_entry_title|default:entry.display_title|default:entry.title }}
       </a>
       {% if entry_alternative_title %}
-        <div class="relative shrink-0" x-data="{ tooltipOpen: false }">
-          <button @mouseenter="tooltipOpen = true"
-                  @mouseleave="tooltipOpen = false"
-                  @click="tooltipOpen = !tooltipOpen"
-                  @click.outside="tooltipOpen = false"
+        <span class="relative shrink-0"
+              x-data="{
+                tooltipOpen: false,
+                tooltipStyle: '',
+                setTooltipPosition() {
+                  this.$nextTick(() => {
+                    const trigger = this.$refs.trigger;
+                    const panel = this.$refs.panel;
+                    if (!trigger || !panel) {
+                      return;
+                    }
+
+                    const triggerRect = trigger.getBoundingClientRect();
+                    const panelWidth = Math.min(panel.offsetWidth || 224, window.innerWidth - 32);
+                    const panelHeight = panel.offsetHeight || 0;
+                    const left = Math.min(
+                      Math.max(16, triggerRect.left + (triggerRect.width / 2) - (panelWidth / 2)),
+                      window.innerWidth - panelWidth - 16,
+                    );
+                    const showAbove = triggerRect.top >= panelHeight + 24;
+                    const top = showAbove ? triggerRect.top - panelHeight - 8 : triggerRect.bottom + 8;
+
+                    this.tooltipStyle = `left: ${left}px; top: ${top}px; width: ${panelWidth}px;`;
+                  });
+                },
+                openTooltip() {
+                  this.tooltipOpen = true;
+                  this.setTooltipPosition();
+                },
+                closeTooltip() {
+                  this.tooltipOpen = false;
+                },
+                toggleTooltip() {
+                  if (this.tooltipOpen) {
+                    this.closeTooltip();
+                    return;
+                  }
+
+                  this.openTooltip();
+                },
+              }"
+              @click.outside="closeTooltip()"
+              @keydown.escape.window="closeTooltip()"
+              @resize.window="if (tooltipOpen) setTooltipPosition()"
+              @scroll.window="if (tooltipOpen) setTooltipPosition()">
+          <button x-ref="trigger"
+                  @mouseenter="openTooltip()"
+                  @mouseleave="closeTooltip()"
+                  @focus="openTooltip()"
+                  @blur="closeTooltip()"
+                  @click.prevent.stop="toggleTooltip()"
                   class="text-gray-500 hover:text-gray-400 transition-colors cursor-pointer inline-flex items-center"
                   type="button"
                   aria-label="Show alternative title">
             {% include "app/icons/info.svg" with classes="w-3.5 h-3.5" %}
           </button>
-          <div x-show="tooltipOpen"
-               x-transition:enter="transition ease-out duration-200"
-               x-transition:enter-start="opacity-0 scale-95"
-               x-transition:enter-end="opacity-100 scale-100"
-               x-transition:leave="transition ease-in duration-150"
-               x-transition:leave-start="opacity-100 scale-100"
-               x-transition:leave-end="opacity-0 scale-95"
-               class="absolute right-0 bottom-full mb-2 w-56 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10"
-               style="display: none; background: rgba(0, 0, 0, 0.85); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);">
-            <p>{{ entry_alternative_title }}</p>
-          </div>
-        </div>
+          <template x-teleport="body">
+            <div x-cloak
+                 x-ref="panel"
+                 x-show="tooltipOpen"
+                 x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0 scale-95"
+                 x-transition:enter-end="opacity-100 scale-100"
+                 x-transition:leave="transition ease-in duration-150"
+                 x-transition:leave-start="opacity-100 scale-100"
+                 x-transition:leave-end="opacity-0 scale-95"
+                 class="fixed z-50 pointer-events-none rounded-lg p-3 text-xs text-white"
+                 style="display: none; background: rgba(0, 0, 0, 0.85); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);"
+                 :style="tooltipStyle"
+                 role="tooltip">
+              <p>{{ entry_alternative_title }}</p>
+            </div>
+          </template>
+        </span>
       {% endif %}
       {% if entry.score|show_media_score:user %}
         <span class="flex items-center gap-1 text-xs text-yellow-300 shrink-0">

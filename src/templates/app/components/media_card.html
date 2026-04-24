@@ -10,7 +10,7 @@
         {% with item|alternative_title:user as resolved_alt_title %}
           {% season_card_title item as resolved_season_card_title %}
           {% with hover_action_mode|default:'standard' as resolved_hover_action_mode %}
-      <div class="media-card media-card-tooltip-safe {% if secondary_color %}bg-[#39404b]{% else %}bg-[#2a2f35]{% endif %} rounded-lg overflow-hidden shadow-lg relative {% if active %}ring-2 ring-indigo-700{% endif %} {% if from_grid %}hover:ring-2 hover:ring-indigo-500 transition-all {% if resolved_media_type == 'podcast' or resolved_media_type == 'music' %}search-result-card-square{% else %}search-result-card{% endif %}{% endif %} {% if user.media_card_subtitle_display == 'always' %}media-card-subtitle-always{% elif show_episode_identity|default:False and resolved_media_type == MediaTypes.EPISODE.value %}media-card-subtitle-always{% endif %} {% if recommend_mode %}cursor-pointer{% endif %} group"
+      <div class="media-card {% if secondary_color %}bg-[#39404b]{% else %}bg-[#2a2f35]{% endif %} rounded-lg overflow-hidden shadow-lg relative {% if active %}ring-2 ring-indigo-700{% endif %} {% if from_grid %}hover:ring-2 hover:ring-indigo-500 transition-all {% if resolved_media_type == 'podcast' or resolved_media_type == 'music' %}search-result-card-square{% else %}search-result-card{% endif %}{% endif %} {% if user.media_card_subtitle_display == 'always' %}media-card-subtitle-always{% elif show_episode_identity|default:False and resolved_media_type == MediaTypes.EPISODE.value %}media-card-subtitle-always{% endif %} {% if recommend_mode %}cursor-pointer{% endif %} group"
            data-media-type="{{ item.media_type }}"
            {% if recommend_mode %}hx-get="{% if resolved_search_preview_url %}{{ resolved_search_preview_url }}{% else %}{% url 'recommend_search' recommend_list_id %}{% endif %}?show_preview=true&media_id={{ item.media_id }}&media_type={{ item.media_type }}&source={{ item.source }}&title={{ resolved_item_title|default:title|urlencode }}&image={{ item.image|urlencode }}&q={{ query|urlencode }}&search_media_type={{ media_type|urlencode }}&page={{ page }}" hx-target="{{ resolved_search_modal_target }}" hx-swap="innerHTML"{% endif %}
            x-data="{ trackOpen: false, listsOpen: false }">
@@ -329,28 +329,80 @@
                    title="{% if use_podcast_show|default:False and podcast_show %}{{ podcast_show.title }}{% elif resolved_media_type == MediaTypes.SEASON.value %}{{ season_card_title_override|default:resolved_season_card_title }}{% else %}{{ resolved_item_title|default:title }}{% endif %}">{% if use_podcast_show|default:False and podcast_show %}{{ podcast_show.title }}{% elif resolved_media_type == MediaTypes.SEASON.value %}{{ season_card_title_override|default:resolved_season_card_title }}{% else %}{{ resolved_item_title|default:title }}{% endif %}</a>
               {% endif %}
               {% if resolved_alt_title and not use_podcast_show|default:False and resolved_media_type != MediaTypes.SEASON.value %}
-                <div class="relative shrink-0" x-data="{ tooltipOpen: false }">
-                  <button @mouseenter="tooltipOpen = true"
-                          @mouseleave="tooltipOpen = false"
-                          @click="tooltipOpen = !tooltipOpen"
-                          @click.outside="tooltipOpen = false"
+                <span class="relative shrink-0"
+                      x-data="{
+                        tooltipOpen: false,
+                        tooltipStyle: '',
+                        setTooltipPosition() {
+                          this.$nextTick(() => {
+                            const trigger = this.$refs.trigger;
+                            const panel = this.$refs.panel;
+                            if (!trigger || !panel) {
+                              return;
+                            }
+
+                            const triggerRect = trigger.getBoundingClientRect();
+                            const panelWidth = Math.min(panel.offsetWidth || 224, window.innerWidth - 32);
+                            const panelHeight = panel.offsetHeight || 0;
+                            const left = Math.min(
+                              Math.max(16, triggerRect.left + (triggerRect.width / 2) - (panelWidth / 2)),
+                              window.innerWidth - panelWidth - 16,
+                            );
+                            const showAbove = triggerRect.top >= panelHeight + 24;
+                            const top = showAbove ? triggerRect.top - panelHeight - 8 : triggerRect.bottom + 8;
+
+                            this.tooltipStyle = `left: ${left}px; top: ${top}px; width: ${panelWidth}px;`;
+                          });
+                        },
+                        openTooltip() {
+                          this.tooltipOpen = true;
+                          this.setTooltipPosition();
+                        },
+                        closeTooltip() {
+                          this.tooltipOpen = false;
+                        },
+                        toggleTooltip() {
+                          if (this.tooltipOpen) {
+                            this.closeTooltip();
+                            return;
+                          }
+
+                          this.openTooltip();
+                        },
+                      }"
+                      @click.outside="closeTooltip()"
+                      @keydown.escape.window="closeTooltip()"
+                      @resize.window="if (tooltipOpen) setTooltipPosition()"
+                      @scroll.window="if (tooltipOpen) setTooltipPosition()">
+                  <button x-ref="trigger"
+                          @mouseenter="openTooltip()"
+                          @mouseleave="closeTooltip()"
+                          @focus="openTooltip()"
+                          @blur="closeTooltip()"
+                          @click.prevent.stop="toggleTooltip()"
                           class="text-gray-500 hover:text-gray-400 transition-colors cursor-pointer inline-flex items-center"
                           type="button"
                           aria-label="Show alternative title">
                     {% include "app/icons/info.svg" with classes="w-3.5 h-3.5" %}
                   </button>
-                  <div x-show="tooltipOpen"
-                       x-transition:enter="transition ease-out duration-200"
-                       x-transition:enter-start="opacity-0 scale-95"
-                       x-transition:enter-end="opacity-100 scale-100"
-                       x-transition:leave="transition ease-in duration-150"
-                       x-transition:leave-start="opacity-100 scale-100"
-                       x-transition:leave-end="opacity-0 scale-95"
-                       class="absolute right-0 bottom-full mb-2 w-56 max-w-[calc(100vw-2rem)] p-3 text-white text-xs rounded-lg z-10"
-                       style="display: none; background: rgba(0, 0, 0, 0.85); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);">
-                    <p>{{ resolved_alt_title }}</p>
-                  </div>
-                </div>
+                  <template x-teleport="body">
+                    <div x-cloak
+                         x-ref="panel"
+                         x-show="tooltipOpen"
+                         x-transition:enter="transition ease-out duration-200"
+                         x-transition:enter-start="opacity-0 scale-95"
+                         x-transition:enter-end="opacity-100 scale-100"
+                         x-transition:leave="transition ease-in duration-150"
+                         x-transition:leave-start="opacity-100 scale-100"
+                         x-transition:leave-end="opacity-0 scale-95"
+                         class="fixed z-50 pointer-events-none rounded-lg p-3 text-xs text-white"
+                         style="display: none; background: rgba(0, 0, 0, 0.85); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);"
+                         :style="tooltipStyle"
+                         role="tooltip">
+                      <p>{{ resolved_alt_title }}</p>
+                    </div>
+                  </template>
+                </span>
               {% endif %}
               {% if rating_value|show_media_score:user %}
                 <span class="flex items-center gap-1 text-xs text-yellow-300 shrink-0">
