@@ -634,6 +634,157 @@ class Metadata(TestCase):
             "468632",
         )
 
+    @patch("app.providers.tmdb.services.api_request")
+    def test_tv_with_seasons_keeps_cached_show_credits_when_refreshing_seasons(
+        self,
+        mock_api_request,
+    ):
+        """Season fetches should keep cached TMDB show credits intact."""
+        tmdb.cache.clear()
+        tv_cache_key = f"{Sources.TMDB.value}_{MediaTypes.TV.value}_1396"
+        tmdb.cache.set(
+            tv_cache_key,
+            {
+                "media_id": "1396",
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.TV.value,
+                "title": "Breaking Bad",
+                "original_title": "Breaking Bad",
+                "localized_title": "Breaking Bad",
+                "image": "https://example.com/breaking-bad.jpg",
+                "synopsis": "A chemistry teacher turns to crime.",
+                "genres": [],
+                "details": {"episodes": 62},
+                "cast": [
+                    {
+                        "person_id": "10",
+                        "name": "John Actor",
+                        "role": "Walter White",
+                    },
+                ],
+                "crew": [
+                    {
+                        "person_id": "11",
+                        "name": "Jane Director",
+                        "role": "Director",
+                        "department": "Directing",
+                    },
+                ],
+                "studios_full": [],
+                "related": {"seasons": []},
+                "tvdb_id": "81189",
+                "external_links": {},
+            },
+        )
+
+        def _mock_api_request(source, _method, url, params=None):
+            self.assertEqual(source, Sources.TMDB.value)
+            self.assertEqual(url, "https://api.themoviedb.org/3/tv/1396")
+            self.assertIn("season/1", params["append_to_response"])
+
+            response = {
+                "id": 1396,
+                "name": "Breaking Bad",
+                "original_name": "Breaking Bad",
+                "poster_path": "/breaking-bad.jpg",
+                "overview": "A chemistry teacher turns to crime.",
+                "genres": [],
+                "vote_average": 9.5,
+                "vote_count": 1000,
+                "production_companies": [],
+                "production_countries": [],
+                "spoken_languages": [],
+                "recommendations": {"results": []},
+                "external_ids": {"tvdb_id": "81189"},
+                "watch/providers": {"results": {}},
+                "episode_run_time": [47],
+                "first_air_date": "2008-01-20",
+                "last_air_date": "2013-09-29",
+                "status": "Ended",
+                "number_of_seasons": 5,
+                "number_of_episodes": 62,
+                "seasons": [
+                    {
+                        "season_number": 1,
+                        "name": "Season 1",
+                        "air_date": "2008-01-20",
+                        "episode_count": 7,
+                        "poster_path": "/season1.jpg",
+                    },
+                ],
+                "season/1": {
+                    "name": "Season 1",
+                    "overview": "Season overview",
+                    "season_number": 1,
+                    "poster_path": "/season1.jpg",
+                    "air_date": "2008-01-20",
+                    "vote_average": 9.0,
+                    "episodes": [
+                        {
+                            "episode_number": 1,
+                            "name": "Pilot",
+                            "overview": "Episode overview",
+                            "still_path": None,
+                            "runtime": 58,
+                            "vote_count": 100,
+                            "air_date": "2008-01-20",
+                        },
+                    ],
+                },
+                "season/1/watch/providers": {"results": {}},
+            }
+
+            if "aggregate_credits" in params["append_to_response"]:
+                response["aggregate_credits"] = {
+                    "cast": [
+                        {
+                            "id": 10,
+                            "name": "John Actor",
+                            "profile_path": None,
+                            "known_for_department": "Acting",
+                            "gender": 2,
+                            "order": 0,
+                            "roles": [
+                                {
+                                    "character": "Walter White",
+                                    "episode_count": 62,
+                                },
+                            ],
+                        },
+                    ],
+                    "crew": [
+                        {
+                            "id": 11,
+                            "name": "Jane Director",
+                            "profile_path": None,
+                            "known_for_department": "Directing",
+                            "gender": 1,
+                            "department": "Directing",
+                            "order": 0,
+                            "jobs": [{"job": "Director"}],
+                        },
+                    ],
+                }
+
+            if "alternative_titles" in params["append_to_response"]:
+                response["alternative_titles"] = {"results": []}
+
+            return response
+
+        mock_api_request.side_effect = _mock_api_request
+
+        result = tmdb.tv_with_seasons("1396", [1])
+
+        self.assertEqual(result["cast"][0]["name"], "John Actor")
+        self.assertEqual(result["cast"][0]["role"], "Walter White")
+        self.assertEqual(result["crew"][0]["name"], "Jane Director")
+        self.assertEqual(result["crew"][0]["role"], "Director")
+        self.assertEqual(tmdb.cache.get(tv_cache_key)["cast"][0]["name"], "John Actor")
+        self.assertEqual(
+            tmdb.cache.get(tv_cache_key)["crew"][0]["name"],
+            "Jane Director",
+        )
+
     @patch("app.providers.tvdb.search")
     @patch("app.providers.tmdb.services.api_request")
     @override_settings(TVDB_API_KEY="test-tvdb-key")

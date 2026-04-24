@@ -15,6 +15,9 @@ from app.providers import services
 logger = logging.getLogger(__name__)
 base_url = "https://api.themoviedb.org/3"
 TVDB_OVERRIDE_CACHE_TIMEOUT = 60 * 60 * 24 * 30
+TV_DETAIL_APPEND_RESPONSES = (
+    "recommendations,external_ids,aggregate_credits,alternative_titles,watch/providers"
+)
 base_params = {
     "api_key": settings.TMDB_API,
     "language": settings.TMDB_LANG,
@@ -779,7 +782,6 @@ def get_tvdb_episode_image_map(tvdb_id, season_number, *, tmdb_media_id=None):
 def fetch_and_cache_seasons(media_id, season_numbers, tv_data):
     """Fetch uncached seasons from API and cache them."""
     url = f"{base_url}/tv/{media_id}"
-    base_append = "recommendations,external_ids,watch/providers"
     max_seasons_per_request = 8
     fetched_tv_data = tv_data
     result_data = {}
@@ -795,7 +797,7 @@ def fetch_and_cache_seasons(media_id, season_numbers, tv_data):
 
         params = {
             **base_params,
-            "append_to_response": f"{base_append},{append_text}",
+            "append_to_response": f"{TV_DETAIL_APPEND_RESPONSES},{append_text}",
         }
 
         try:
@@ -915,7 +917,7 @@ def tv(media_id):
         url = f"{base_url}/tv/{media_id}"
         params = {
             **base_params,
-            "append_to_response": "recommendations,external_ids,aggregate_credits,alternative_titles,watch/providers",
+            "append_to_response": TV_DETAIL_APPEND_RESPONSES,
         }
 
         try:

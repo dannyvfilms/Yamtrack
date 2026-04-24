@@ -4950,6 +4950,7 @@ def media_details(
     # When the user prefers original titles, aggressively refresh stale TMDB cache
     # if we don't yet have an original title. This lets details-page opens backfill
     # better title variants that can then propagate across the UI.
+    tmdb_detail_cache_key = f"{Sources.TMDB.value}_{tracking_media_type}_{media_id}"
     should_refresh_tmdb_titles = (
         request.user.is_authenticated
         and source == Sources.TMDB.value
@@ -4959,8 +4960,23 @@ def media_details(
         and not media_metadata.get("original_title")
     )
     if should_refresh_tmdb_titles:
-        cache.delete(f"{Sources.TMDB.value}_{tracking_media_type}_{media_id}")
+        cache.delete(tmdb_detail_cache_key)
         media_metadata = services.get_media_metadata(media_type, media_id, source)
+        if isinstance(media_metadata, dict):
+            media_metadata.update(Item.title_fields_from_metadata(media_metadata))
+
+    should_refresh_tmdb_tv_credits = (
+        source == Sources.TMDB.value
+        and tracking_media_type == MediaTypes.TV.value
+        and isinstance(media_metadata, dict)
+        and not media_metadata.get("cast")
+        and not media_metadata.get("crew")
+    )
+    if should_refresh_tmdb_tv_credits:
+        cache.delete(tmdb_detail_cache_key)
+        media_metadata = services.get_media_metadata(media_type, media_id, source)
+        if isinstance(media_metadata, dict):
+            media_metadata.update(Item.title_fields_from_metadata(media_metadata))
 
     identity_media_metadata = media_metadata
 

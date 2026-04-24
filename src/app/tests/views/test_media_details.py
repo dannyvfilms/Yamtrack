@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
+from urllib.parse import urlparse
 
 import requests
 from django.conf import settings
@@ -12,26 +13,27 @@ from django.utils.translation import override
 
 from app import statistics_cache
 from app.models import (
+    TV,
     Album,
     AlbumTracker,
+    Anime,
     Artist,
     ArtistTracker,
-    Anime,
     BoardGame,
     Book,
-    Comic,
     CollectionEntry,
+    Comic,
     CreditRoleType,
     Episode,
     Game,
     Item,
-    ItemTag,
     ItemPersonCredit,
+    ItemTag,
     Manga,
-    MetadataProviderPreference,
     MediaTypes,
-    Music,
+    MetadataProviderPreference,
     Movie,
+    Music,
     Person,
     Podcast,
     PodcastEpisode,
@@ -41,9 +43,9 @@ from app.models import (
     Sources,
     Status,
     Tag,
-    TV,
     Track,
 )
+from app.providers import tmdb
 from app.services import game_lengths as game_length_services
 from app.services.metadata_resolution import MetadataResolutionResult
 from integrations.models import PlexAccount
@@ -4229,6 +4231,181 @@ class MediaDetailsViewTests(TestCase):
             ),
         )
 
+    @patch("app.providers.tmdb._build_specials_season_from_tvdb", return_value=None)
+    @patch("app.providers.tmdb.services.api_request")
+    def test_tv_details_keep_cast_and_crew_after_status_saves_and_reopen(
+        self,
+        mock_api_request,
+        mock_build_specials,
+    ):
+        """Saving TV tracking statuses should not remove cast/crew from reopened details."""
+        tmdb.cache.clear()
+        self.client.login(**self.credentials)
+        append_requests = []
+
+        def _mock_api_request(source, _method, url, params=None):
+            self.assertEqual(source, Sources.TMDB.value)
+            path_parts = urlparse(url).path.rstrip("/").split("/")
+            self.assertGreaterEqual(len(path_parts), 3)
+            self.assertEqual(path_parts[-2], "tv")
+            media_id = path_parts[-1]
+
+            append_to_response = params["append_to_response"]
+            append_requests.append(append_to_response)
+            response = {
+                "id": int(media_id),
+                "name": "Breaking Bad",
+                "original_name": "Breaking Bad",
+                "poster_path": "/breaking-bad.jpg",
+                "overview": "A chemistry teacher turns to crime.",
+                "genres": [],
+                "vote_average": 9.5,
+                "vote_count": 1000,
+                "production_companies": [],
+                "production_countries": [],
+                "spoken_languages": [],
+                "recommendations": {"results": []},
+                "external_ids": {"tvdb_id": "81189"},
+                "watch/providers": {"results": {}},
+                "episode_run_time": [47],
+                "first_air_date": "2008-01-20",
+                "last_air_date": "2013-09-29",
+                "status": "Ended",
+                "number_of_seasons": 1,
+                "number_of_episodes": 7,
+                "seasons": [
+                    {
+                        "season_number": 1,
+                        "name": "Season 1",
+                        "air_date": "2008-01-20",
+                        "episode_count": 7,
+                        "poster_path": "/season1.jpg",
+                    },
+                ],
+            }
+
+            if "aggregate_credits" in append_to_response:
+                response["aggregate_credits"] = {
+                    "cast": [
+                        {
+                            "id": 10,
+                            "name": "John Actor",
+                            "profile_path": None,
+                            "known_for_department": "Acting",
+                            "gender": 2,
+                            "order": 0,
+                            "roles": [
+                                {
+                                    "character": "Walter White",
+                                    "episode_count": 7,
+                                },
+                            ],
+                        },
+                    ],
+                    "crew": [
+                        {
+                            "id": 11,
+                            "name": "Jane Director",
+                            "profile_path": None,
+                            "known_for_department": "Directing",
+                            "gender": 1,
+                            "department": "Directing",
+                            "order": 0,
+                            "jobs": [{"job": "Director"}],
+                        },
+                    ],
+                }
+
+            if "alternative_titles" in append_to_response:
+                response["alternative_titles"] = {"results": []}
+
+            if "season/1" in append_to_response:
+                response["season/1"] = {
+                    "name": "Season 1",
+                    "overview": "Season overview",
+                    "season_number": 1,
+                    "poster_path": "/season1.jpg",
+                    "air_date": "2008-01-20",
+                    "vote_average": 9.0,
+                    "episodes": [
+                        {
+                            "episode_number": 1,
+                            "name": "Pilot",
+                            "overview": "Episode overview",
+                            "still_path": None,
+                            "runtime": 58,
+                            "vote_count": 100,
+                            "air_date": "2008-01-20",
+                        },
+                    ],
+                }
+                response["season/1/watch/providers"] = {"results": {}}
+
+            return response
+
+        mock_api_request.side_effect = _mock_api_request
+        for index, status in enumerate(Status.values, start=1396):
+            with self.subTest(status=status):
+                media_id = str(index)
+                detail_url = reverse(
+                    "media_details",
+                    kwargs={
+                        "source": Sources.TMDB.value,
+                        "media_type": MediaTypes.TV.value,
+                        "media_id": media_id,
+                        "title": "breaking-bad",
+                    },
+                )
+
+                untracked_response = self.client.get(detail_url)
+
+                self.assertEqual(untracked_response.status_code, 200)
+                self.assertContains(untracked_response, "John Actor")
+                self.assertContains(untracked_response, "Jane Director")
+
+                save_response = self.client.post(
+                    f"{reverse('media_save')}?next={detail_url}",
+                    {
+                        "media_id": media_id,
+                        "source": Sources.TMDB.value,
+                        "media_type": MediaTypes.TV.value,
+                        "status": status,
+                        "score": "",
+                        "notes": "",
+                    },
+                )
+
+                self.assertEqual(save_response.status_code, 302)
+                self.assertEqual(save_response.url, detail_url)
+                self.assertTrue(
+                    TV.objects.filter(
+                        user=self.user,
+                        item__media_id=media_id,
+                        item__source=Sources.TMDB.value,
+                        status=status,
+                    ).exists(),
+                )
+
+                tracked_response = self.client.get(detail_url)
+                reopened_response = self.client.get(detail_url)
+
+                self.assertEqual(tracked_response.status_code, 200)
+                self.assertContains(tracked_response, "John Actor")
+                self.assertContains(tracked_response, "Jane Director")
+                self.assertEqual(reopened_response.status_code, 200)
+                self.assertContains(reopened_response, "John Actor")
+                self.assertContains(reopened_response, "Jane Director")
+
+        self.assertTrue(any("season/0" in request for request in append_requests))
+        self.assertTrue(
+            all(
+                "aggregate_credits" in request
+                for request in append_requests
+                if "season/0" in request
+            ),
+        )
+        self.assertGreaterEqual(mock_build_specials.call_count, 1)
+
     @patch("app.providers.services.get_media_metadata")
     def test_tv_details_view_adds_specials_from_regular_path(self, mock_get_metadata):
         """TV details should show a specials season when season 0 is enriched."""
@@ -4846,6 +5023,88 @@ class MediaDetailsViewTests(TestCase):
                 role_type=CreditRoleType.AUTHOR.value,
             ).exists(),
         )
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_media_details_refreshes_stale_tmdb_tv_credit_cache(
+        self,
+        mock_get_metadata,
+    ):
+        stale_metadata = {
+            "media_id": "1396",
+            "title": "Breaking Bad",
+            "media_type": MediaTypes.TV.value,
+            "source": Sources.TMDB.value,
+            "source_url": "https://www.themoviedb.org/tv/1396",
+            "image": "http://example.com/breaking-bad.jpg",
+            "synopsis": "A chemistry teacher turns to crime.",
+            "details": {
+                "format": "TV",
+                "status": "Ended",
+                "seasons": 1,
+                "episodes": 7,
+                "runtime": "47m",
+            },
+            "cast": [],
+            "crew": [],
+            "providers": {},
+            "related": {"seasons": [], "recommendations": []},
+        }
+        refreshed_metadata = {
+            **stale_metadata,
+            "cast": [
+                {
+                    "person_id": "10",
+                    "name": "John Actor",
+                    "role": "Walter White",
+                    "image": "http://example.com/john-actor.jpg",
+                },
+            ],
+            "crew": [
+                {
+                    "person_id": "11",
+                    "name": "Jane Director",
+                    "role": "Director",
+                    "department": "Directing",
+                    "image": "http://example.com/jane-director.jpg",
+                },
+            ],
+        }
+        detail_call_count = {"count": 0}
+
+        def _metadata_side_effect(media_type, media_id, source, *args, **kwargs):
+            self.assertEqual(
+                (media_type, media_id, source),
+                (MediaTypes.TV.value, "1396", Sources.TMDB.value),
+            )
+            self.assertFalse(args)
+            self.assertFalse(kwargs)
+            detail_call_count["count"] += 1
+            if detail_call_count["count"] == 1:
+                return stale_metadata
+            return refreshed_metadata
+
+        mock_get_metadata.side_effect = _metadata_side_effect
+
+        cache_key = f"{Sources.TMDB.value}_{MediaTypes.TV.value}_1396"
+        cache.set(cache_key, stale_metadata)
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "media_id": "1396",
+                    "title": "breaking-bad",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertGreaterEqual(detail_call_count["count"], 2)
+        self.assertContains(response, "John Actor")
+        self.assertContains(response, "Jane Director")
+        self.assertIsNone(cache.get(cache_key))
 
     def test_podcast_media_details_renders_for_show_with_no_user_plays(self):
         """Podcast details should render even when episodes have no play history."""
