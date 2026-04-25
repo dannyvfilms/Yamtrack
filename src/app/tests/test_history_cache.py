@@ -10,7 +10,7 @@ from django.utils import timezone
 
 from app import history_cache
 from app.log_safety import stable_hmac
-from app.models import Item, MediaTypes, Movie, Sources, Status
+from app.models import Album, Artist, Item, MediaTypes, Movie, Music, Sources, Status, Track
 
 
 class HistoryMonthCacheTests(TestCase):
@@ -258,6 +258,83 @@ class HistoryRefreshSchedulingTests(TestCase):
             mock_apply_async.call_args.kwargs["priority"],
             settings.CELERY_TASK_PRIORITY_BACKGROUND,
         )
+
+
+class MusicHistoryOwnershipTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.user = get_user_model().objects.create_user(
+            username="history-music-owner",
+            password="12345",
+        )
+        self.other_user = get_user_model().objects.create_user(
+            username="history-music-other",
+            password="12345",
+        )
+        self.artist = Artist.objects.create(name="History Artist")
+        self.album = Album.objects.create(title="History Album", artist=self.artist)
+        self.track = Track.objects.create(
+            album=self.album,
+            title="History Track",
+            track_number=1,
+            duration_ms=180000,
+        )
+        self.played_at = timezone.now().replace(second=0, microsecond=0)
+        self.day_key = history_cache.history_day_key(self.played_at)
+
+    def tearDown(self):
+        cache.clear()
+
+    def _create_music_play(self, *, user, media_id, title):
+        item = Item.objects.create(
+            media_id=media_id,
+            source=Sources.MANUAL.value,
+            media_type=MediaTypes.MUSIC.value,
+            title=title,
+            image="http://example.com/music.jpg",
+            runtime_minutes=3,
+        )
+        music = Music.objects.create(
+            item=item,
+            user=user,
+            album=self.album,
+            artist=self.artist,
+            track=self.track,
+            status=Status.COMPLETED.value,
+            progress=1,
+            start_date=self.played_at,
+            end_date=self.played_at,
+        )
+        music.history.all().update(history_user=None)
+        return music
+
+    def test_build_history_day_keeps_owned_music_with_null_history_user(self):
+        self._create_music_play(
+            user=self.user,
+            media_id="owned-music",
+            title="Owned Music",
+        )
+
+        day = history_cache.build_history_day(self.user, self.day_key)
+
+        self.assertIsNotNone(day)
+        music_entries = [
+            entry for entry in day["entries"] if entry["media_type"] == MediaTypes.MUSIC.value
+        ]
+        self.assertEqual(len(music_entries), 1)
+        self.assertEqual(music_entries[0]["title"], "History Album")
+        self.assertEqual(music_entries[0]["play_count"], 1)
+        self.assertIn(self.day_key, history_cache.build_history_index(self.user, "repeats"))
+
+    def test_build_history_day_excludes_foreign_music_with_null_history_user(self):
+        self._create_music_play(
+            user=self.other_user,
+            media_id="foreign-music",
+            title="Foreign Music",
+        )
+
+        self.assertIsNone(history_cache.build_history_day(self.user, self.day_key))
+        self.assertNotIn(self.day_key, history_cache.build_history_index(self.user, "repeats"))
 
     def test_repair_history_day_cache_coverage_repairs_in_batches(self):
         current_item = Item.objects.create(

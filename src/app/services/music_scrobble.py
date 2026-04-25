@@ -931,8 +931,8 @@ def _update_music_entry(
             "album": album,
             "track": track,
             "status": Status.COMPLETED.value,
-            # Start at 0 so the first completed event increments to 1.
-            "progress": 0,
+            # A first completed scrobble is already one play.
+            "progress": 1,
             "start_date": played_at,
             "end_date": played_at,
         }
@@ -965,7 +965,7 @@ def _update_music_entry(
         changed = True
 
     if event.completed:
-        prior_end = music.end_date
+        prior_end = music.end_date if not created else None
         # Track-specific deduplication: Only prevent progress increment if THIS SAME TRACK
         # was played within 2 minutes. Different tracks have different Music records (via
         # unique item), so they are always fully logged regardless of timing.
@@ -973,7 +973,9 @@ def _update_music_entry(
         # For short tracks (< 2 minutes), this ensures:
         # - Same track played twice within 2 minutes: progress doesn't increment, but history is still recorded
         # - Different tracks played within 2 minutes: both are fully logged (separate Music records)
-        if prior_end and abs(played_at - prior_end) <= timedelta(minutes=2):
+        if created:
+            new_progress = music.progress or 1
+        elif prior_end and abs(played_at - prior_end) <= timedelta(minutes=2):
             # Same track played within 2 minutes: don't increment progress, but still record history
             new_progress = music.progress or 1
             logger.debug(

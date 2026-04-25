@@ -111,6 +111,10 @@ class MusicScrobbleServiceTests(TestCase):
         self.assertTrue(
             AlbumTracker.objects.filter(user=self.user, album=music.album).exists(),
         )
+        history_rows = list(music.history.order_by("history_date"))
+        self.assertEqual(len(history_rows), 1)
+        self.assertEqual(history_rows[0].progress, 1)
+        self.assertEqual(history_rows[0].history_user, self.user)
 
     @patch("app.services.music_scrobble.sync_artist_discography")
     @patch("app.services.music_scrobble.musicbrainz.get_artist")

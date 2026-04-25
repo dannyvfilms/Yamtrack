@@ -48,7 +48,7 @@ def _coerce_timedelta(value, default):
         return default
 
 
-HISTORY_CACHE_VERSION = 16
+HISTORY_CACHE_VERSION = 17
 HISTORY_INDEX_PREFIX = f"history_index_v{HISTORY_CACHE_VERSION}"
 HISTORY_DAY_PREFIX = f"history_day_v{HISTORY_CACHE_VERSION}"
 HISTORY_CACHE_PREFIX = HISTORY_INDEX_PREFIX
@@ -82,6 +82,14 @@ HISTORY_COVERAGE_REPAIR_LOCK_TTL = getattr(
     "HISTORY_COVERAGE_REPAIR_LOCK_TTL",
     60 * 30,
 )
+
+
+def _music_history_user_q(user):
+    user_id = getattr(user, "id", user)
+    owned_music_ids = Music.objects.filter(user_id=user_id).values("id")
+    return models.Q(history_user_id=user_id) | (
+        models.Q(history_user__isnull=True) & models.Q(id__in=owned_music_ids)
+    )
 
 
 def _cache_key(user_id: int, logging_style: str) -> str:
@@ -1805,7 +1813,7 @@ def build_history_index(user, logging_style_override=None):
 
     HistoricalMusic = apps.get_model("app", "HistoricalMusic")
     music_days = HistoricalMusic.objects.filter(
-        models.Q(history_user=user) | models.Q(history_user__isnull=True),
+        _music_history_user_q(user),
         end_date__isnull=False,
     ).annotate(
         day=TruncDate("end_date"),
@@ -2064,7 +2072,7 @@ def build_history_day(user, day_key, logging_style_override=None):
     HistoricalMusic = apps.get_model("app", "HistoricalMusic")
     music_history = list(
         HistoricalMusic.objects.filter(
-            models.Q(history_user=user) | models.Q(history_user__isnull=True),
+            _music_history_user_q(user),
             end_date__gte=day_start,
             end_date__lt=day_end,
         ).values("id", "end_date", "album_id", "track_id")
@@ -2084,7 +2092,7 @@ def build_history_day(user, day_key, logging_style_override=None):
         } if track_ids else {}
         music_map = {
             music.id: music
-            for music in Music.objects.filter(id__in=music_ids).select_related("item", "album", "track")
+            for music in Music.objects.filter(id__in=music_ids, user=user).select_related("item", "album", "track")
         } if music_ids else {}
 
         track_duration_cache = {}

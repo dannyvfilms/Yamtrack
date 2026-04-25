@@ -2594,6 +2594,9 @@ class Media(models.Model):
 
     def save(self, *args, **kwargs):
         """Save the media instance."""
+        if not getattr(self, "_history_user", None) and getattr(self, "user_id", None):
+            self._history_user = self.user
+
         if self.tracker.has_changed("progress"):
             self.process_progress()
 
