@@ -78,6 +78,15 @@ class MediaTypes(models.TextChoices):
     PODCAST = "podcast", "Podcast"
 
 
+class ProviderMetadataStatus(models.TextChoices):
+    """Flags for provider metadata states that need UI handling."""
+
+    LOCAL_ONLY_MISSING_SEASON = (
+        "local_only_missing_season",
+        "Local only: missing season metadata",
+    )
+
+
 class Item(CalendarTriggerMixin, models.Model):
     """Model to store basic information about media items."""
 
@@ -166,6 +175,13 @@ class Item(CalendarTriggerMixin, models.Model):
         default=dict,
         blank=True,
         help_text="Structured metadata overrides for manual/custom entries",
+    )
+    provider_metadata_status = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        choices=ProviderMetadataStatus.choices,
+        help_text="Flags special provider metadata states for UI and recovery flows",
     )
     provider_keywords = models.JSONField(default=list, blank=True, help_text="Provider keywords")
     provider_certification = models.CharField(

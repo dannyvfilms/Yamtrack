@@ -21,7 +21,7 @@ from django.core.cache import cache
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.paginator import EmptyPage, Paginator
 from django.db import IntegrityError
-from django.db.models import F, Min, Q, prefetch_related_objects
+from django.db.models import F, Max, Min, Q, prefetch_related_objects
 from django.db.models.functions import ExtractDay, ExtractMonth, TruncDate
 from django.db.utils import OperationalError
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
@@ -89,6 +89,7 @@ from app.models import (
     ItemTag,
     Manga,
     MediaTypes,
+    ProviderMetadataStatus,
     Movie,
     Music,
     Person,
@@ -121,6 +122,12 @@ from users.models import HomeSortChoices, MediaSortChoices, MediaStatusChoices
 from users.models import TopTalentSortChoices
 
 logger = logging.getLogger(__name__)
+
+
+LOCAL_ONLY_MISSING_SEASON_BANNER = (
+    "Season metadata is missing from the provider. "
+    "This page is built from local activity and the linked show may be mismatched."
+)
 DETAIL_EPISODES_PER_PAGE = 25
 
 MEDIA_RATING_CHOICES = (
@@ -6193,10 +6200,14 @@ def _build_missing_season_metadata(
     source,
     season_number,
     episodes_in_db,
+    *,
+    season_item=None,
+    show_item=None,
 ):
     """Build minimal season metadata from local items when provider data is missing."""
     tv_metadata = tv_metadata or {}
     episodes_by_number = defaultdict(list)
+    episode_item_by_number = {}
 
     for episode in episodes_in_db:
         item = getattr(episode, "item", None)
@@ -6204,31 +6215,36 @@ def _build_missing_season_metadata(
         if episode_number is None:
             continue
         episodes_by_number[episode_number].append(episode)
+        if item is not None:
+            episode_item_by_number.setdefault(episode_number, item)
 
-    episode_numbers = sorted(episodes_by_number)
+    for episode_item in Item.objects.filter(
+        media_id=media_id,
+        source=source,
+        media_type=MediaTypes.EPISODE.value,
+        season_number=season_number,
+    ).order_by("episode_number", "id"):
+        if episode_item.episode_number is None:
+            continue
+        episode_item_by_number.setdefault(episode_item.episode_number, episode_item)
+
+    episode_numbers = sorted(set(episodes_by_number) | set(episode_item_by_number))
     fallback_episodes = []
-    tv_image = tv_metadata.get("image") or settings.IMG_NONE
-    show_title = tv_metadata.get("title", "")
-    episode_backdrop = None
-    tvdb_episode_images = {}
-
-    if source == Sources.TMDB.value:
-        episode_backdrop = helpers.get_tmdb_backdrop_image(
-            MediaTypes.TV.value,
-            media_id,
-        )
-        tvdb_episode_images = tmdb.get_tvdb_episode_image_map(
-            tv_metadata.get("tvdb_id"),
-            season_number,
-            tmdb_media_id=media_id,
-        )
+    tv_image = helpers.first_real_image(
+        getattr(show_item, "image", None),
+        tv_metadata.get("image"),
+        getattr(season_item, "image", None),
+        default=settings.IMG_NONE,
+    )
+    show_title = (
+        tv_metadata.get("title")
+        or getattr(show_item, "title", "")
+        or getattr(season_item, "title", "")
+    )
 
     for episode_number in episode_numbers:
-        history_entries = episodes_by_number[episode_number]
-        episode_item = next(
-            (entry.item for entry in history_entries if entry.item),
-            None,
-        )
+        history_entries = episodes_by_number.get(episode_number, [])
+        episode_item = episode_item_by_number.get(episode_number)
         air_date = None
         runtime = None
         title = f"Episode {episode_number}"
@@ -6252,17 +6268,10 @@ def _build_missing_season_metadata(
             if episode_item.title and episode_item.title != show_title:
                 title = episode_item.title
 
-        if source == Sources.TMDB.value:
-            episode_image, image_source = helpers.resolve_image_with_fallback(
-                primary_image,
-                tvdb_episode_images.get(str(episode_number)),
-                episode_backdrop,
-            )
-        else:
-            episode_image, image_source = helpers.resolve_image_with_fallback(
-                primary_image,
-                tv_image,
-            )
+        episode_image, image_source = helpers.resolve_image_with_fallback(
+            primary_image,
+            tv_image,
+        )
 
         fallback_episodes.append(
             {
@@ -6296,16 +6305,24 @@ def _build_missing_season_metadata(
     if source == Sources.TMDB.value:
         source_url = f"https://www.themoviedb.org/tv/{media_id}/season/{season_number}"
 
+    synopsis = tv_metadata.get("synopsis") or ""
+    if not synopsis and show_item is not None:
+        synopsis = (show_item.manual_metadata or {}).get("synopsis") or ""
+
     return {
         "media_id": media_id,
         "source": source,
         "media_type": MediaTypes.SEASON.value,
-        "title": tv_metadata.get("title", ""),
+        "title": show_title,
         "season_title": f"Season {season_number}",
-        "image": tv_image,
+        "image": helpers.first_real_image(
+            getattr(season_item, "image", None),
+            tv_image,
+            default=settings.IMG_NONE,
+        ),
         "season_number": season_number,
-        "synopsis": tv_metadata.get("synopsis") or "No synopsis available.",
-        "genres": tv_metadata.get("genres") or [],
+        "synopsis": synopsis or "No synopsis available.",
+        "genres": tv_metadata.get("genres") or getattr(show_item, "genres", []) or [],
         "max_progress": max_episode_number,
         "score": None,
         "score_count": None,
@@ -6316,6 +6333,183 @@ def _build_missing_season_metadata(
         "tvdb_id": tv_metadata.get("tvdb_id"),
         "external_links": tv_metadata.get("external_links"),
     }
+
+
+def _get_local_show_item(media_id, source):
+    """Return the locally stored show item for a season route, if available."""
+    show_item = Item.objects.filter(
+        media_id=media_id,
+        source=source,
+        media_type=MediaTypes.TV.value,
+    ).first()
+    if show_item is not None:
+        return show_item
+    return Item.objects.filter(
+        media_id=media_id,
+        source=source,
+        media_type=MediaTypes.ANIME.value,
+    ).first()
+
+
+def _build_local_related_seasons(media_id, source, show_title, show_image):
+    """Return locally persisted season rows for the season dropdown."""
+    episode_stats = {
+        row["season_number"]: row
+        for row in Item.objects.filter(
+            media_id=media_id,
+            source=source,
+            media_type=MediaTypes.EPISODE.value,
+            season_number__isnull=False,
+        )
+        .values("season_number")
+        .annotate(
+            max_progress=Max("episode_number"),
+            first_air_date=Min("release_datetime"),
+        )
+    }
+
+    related_seasons = []
+    for season_item in Item.objects.filter(
+        media_id=media_id,
+        source=source,
+        media_type=MediaTypes.SEASON.value,
+        season_number__isnull=False,
+    ).order_by("season_number", "id"):
+        season_number = season_item.season_number
+        if season_number is None:
+            continue
+
+        season_title = "Specials" if season_number == 0 else f"Season {season_number}"
+        season_stats = episode_stats.get(season_number, {})
+        related_seasons.append(
+            {
+                "source": source,
+                "media_type": MediaTypes.SEASON.value,
+                "media_id": media_id,
+                "title": show_title,
+                "season_title": season_title,
+                "season_header_title": season_title,
+                "season_number": season_number,
+                "image": helpers.first_real_image(
+                    season_item.image,
+                    show_image,
+                    default=settings.IMG_NONE,
+                ),
+                "max_progress": season_stats.get("max_progress") or 0,
+                "first_air_date": season_stats.get("first_air_date"),
+            },
+        )
+
+    return related_seasons
+
+
+def _build_local_tv_with_seasons_metadata(
+    media_id,
+    source,
+    *,
+    tv_metadata=None,
+    show_item=None,
+    season_item=None,
+):
+    """Return TV metadata enriched with locally persisted season rows."""
+    tv_metadata = dict(tv_metadata or {})
+    show_item = show_item or _get_local_show_item(media_id, source)
+    show_title = (
+        tv_metadata.get("title")
+        or getattr(show_item, "title", "")
+        or getattr(season_item, "title", "")
+    )
+    show_image = helpers.first_real_image(
+        getattr(show_item, "image", None),
+        tv_metadata.get("image"),
+        getattr(season_item, "image", None),
+        default=settings.IMG_NONE,
+    )
+
+    related = dict(tv_metadata.get("related") or {})
+    provider_related_seasons = []
+    seen_season_numbers = set()
+    for season in related.get("seasons") or []:
+        if not isinstance(season, dict):
+            continue
+        season_copy = dict(season)
+        raw_season_number = season_copy.get("season_number")
+        try:
+            normalized_season_number = (
+                int(raw_season_number) if raw_season_number is not None else None
+            )
+        except (TypeError, ValueError):
+            normalized_season_number = None
+        season_copy["season_number"] = normalized_season_number
+        if normalized_season_number is not None:
+            season_title = (
+                "Specials"
+                if normalized_season_number == 0
+                else f"Season {normalized_season_number}"
+            )
+            season_copy.setdefault("title", show_title)
+            season_copy.setdefault("season_title", season_title)
+            season_copy.setdefault("season_header_title", season_title)
+            season_copy.setdefault("media_id", media_id)
+            season_copy.setdefault("media_type", MediaTypes.SEASON.value)
+            season_copy.setdefault("source", source)
+            season_copy.setdefault("image", show_image)
+        provider_related_seasons.append(season_copy)
+        seen_season_numbers.add(normalized_season_number)
+
+    local_related_seasons = _build_local_related_seasons(
+        media_id,
+        source,
+        show_title,
+        show_image,
+    )
+    for local_season in local_related_seasons:
+        if local_season["season_number"] not in seen_season_numbers:
+            provider_related_seasons.append(local_season)
+
+    provider_related_seasons.sort(
+        key=lambda season: (
+            season.get("season_number") is None,
+            season.get("season_number")
+            if season.get("season_number") is not None
+            else 999999,
+        ),
+    )
+    related["seasons"] = provider_related_seasons
+
+    provider_external_ids = getattr(show_item, "provider_external_ids", {}) or {}
+    tv_metadata.update(
+        {
+            "media_id": media_id,
+            "source": source,
+            "media_type": MediaTypes.TV.value,
+            "title": show_title,
+            "image": show_image,
+            "synopsis": tv_metadata.get("synopsis")
+            or ((show_item.manual_metadata or {}).get("synopsis") if show_item else "")
+            or "",
+            "genres": tv_metadata.get("genres")
+            or getattr(show_item, "genres", [])
+            or [],
+            "related": related,
+            "tvdb_id": (
+                tv_metadata.get("tvdb_id")
+                or provider_external_ids.get("tvdb_id")
+            ),
+        },
+    )
+    tv_metadata.setdefault("source_url", "")
+    tv_metadata.setdefault("external_links", {})
+    return tv_metadata
+
+
+def _save_provider_metadata_status(item, status):
+    """Persist provider metadata status when it changes."""
+    if item is None or item.provider_metadata_status == status:
+        return item
+    item.provider_metadata_status = status
+    item.save(update_fields=["provider_metadata_status"])
+    return item
 
 
 def _flat_anime_episode_preview_candidates(user, metadata_resolution_result=None):
@@ -6823,53 +7017,95 @@ def season_details(
             # If we can't find a list owner, list_owner stays None
             pass
 
-    tv_with_seasons_metadata = services.get_media_metadata(
-        "tv_with_seasons",
-        media_id,
-        source,
-        [season_number],
-    )
-    season_key = f"season/{season_number}"
-    season_metadata = tv_with_seasons_metadata.get(season_key)
     season_item = Item.objects.filter(
         media_id=media_id,
         source=source,
         media_type=MediaTypes.SEASON.value,
         season_number=season_number,
     ).first()
+    show_item = _get_local_show_item(media_id, source)
+    season_key = f"season/{season_number}"
+    season_item_is_local_only = (
+        season_item is not None
+        and season_item.provider_metadata_status
+        == ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value
+    )
 
     # For public views, we don't need user media data
     if public_view:
         user_medias = []
         current_instance = None
     else:
-        user_medias = BasicMedia.objects.filter_media_prefetch(
-            request.user,
-            media_id,
-            MediaTypes.SEASON.value,
-            source,
-            season_number=season_number,
-        )
+        if season_item_is_local_only:
+            user_medias = list(
+                Season.objects.filter(
+                    item__media_id=media_id,
+                    item__media_type=MediaTypes.SEASON.value,
+                    item__source=source,
+                    item__season_number=season_number,
+                    user=request.user,
+                )
+                .select_related("item", "related_tv", "related_tv__item")
+                .prefetch_related("episodes", "episodes__item")
+            )
+        else:
+            user_medias = BasicMedia.objects.filter_media_prefetch(
+                request.user,
+                media_id,
+                MediaTypes.SEASON.value,
+                source,
+                season_number=season_number,
+            )
         current_instance = user_medias[0] if user_medias else None
 
     episodes_in_db = current_instance.episodes.all() if current_instance else []
-
-    season_metadata_missing = season_metadata is None
-    if season_metadata_missing:
+    if season_item_is_local_only:
+        tv_with_seasons_metadata = _build_local_tv_with_seasons_metadata(
+            media_id,
+            source,
+            show_item=show_item,
+            season_item=season_item,
+        )
         season_metadata = _build_missing_season_metadata(
             tv_with_seasons_metadata,
             media_id,
             source,
             season_number,
             episodes_in_db,
+            season_item=season_item,
+            show_item=show_item,
         )
-        if not public_view:
-            messages.warning(
-                request,
-                "Season metadata was not found for this show. Showing local activity only.",
+        season_metadata_missing = True
+    else:
+        tv_with_seasons_metadata = services.get_media_metadata(
+            "tv_with_seasons",
+            media_id,
+            source,
+            [season_number],
+        )
+        season_metadata = tv_with_seasons_metadata.get(season_key)
+        season_metadata_missing = season_metadata is None
+        if season_metadata_missing:
+            tv_with_seasons_metadata = _build_local_tv_with_seasons_metadata(
+                media_id,
+                source,
+                tv_metadata=tv_with_seasons_metadata,
+                show_item=show_item,
+                season_item=season_item,
+            )
+            season_metadata = _build_missing_season_metadata(
+                tv_with_seasons_metadata,
+                media_id,
+                source,
+                season_number,
+                episodes_in_db,
+                season_item=season_item,
+                show_item=show_item,
             )
 
-    default_season_title = "Specials" if season_number == 0 else f"Season {season_number}"
+    default_season_title = (
+        "Specials" if season_number == 0 else f"Season {season_number}"
+    )
     anime_show_item = Item.objects.filter(
         media_id=media_id,
         source=source,
@@ -6877,7 +7113,10 @@ def season_details(
         library_media_type=MediaTypes.ANIME.value,
     ).first()
     if isinstance(season_metadata, dict):
-        season_metadata.setdefault("season_header_title", season_metadata.get("season_title") or default_season_title)
+        season_metadata.setdefault(
+            "season_header_title",
+            season_metadata.get("season_title") or default_season_title,
+        )
         season_metadata.setdefault("season_alternative_title", None)
         if anime_show_item:
             provider_season_title = (season_metadata.get("season_title") or "").strip()
@@ -6923,6 +7162,11 @@ def season_details(
                 else settings.IMG_NONE
             )
             or settings.IMG_NONE,
+            "provider_metadata_status": (
+                ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value
+                if season_metadata_missing and season_number > 0
+                else ""
+            ),
         }
         season_item, _ = Item.objects.get_or_create(
             media_id=media_id,
@@ -6930,6 +7174,11 @@ def season_details(
             media_type=MediaTypes.SEASON.value,
             season_number=season_number,
             defaults=season_defaults,
+        )
+    elif season_metadata_missing and season_number > 0:
+        season_item = _save_provider_metadata_status(
+            season_item,
+            ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value,
         )
 
     # Save episode runtimes from raw metadata before processing for display
@@ -6957,23 +7206,37 @@ def season_details(
                 media_type=MediaTypes.EPISODE.value,
                 season_number=season_number,
                 episode_number=episode_number,
-                defaults={"title": season_metadata.get("title", ""), "image": settings.IMG_NONE},
+                defaults={
+                    "title": season_metadata.get("title", ""),
+                    "image": settings.IMG_NONE,
+                },
             )
             
             # Extract runtime from raw episode data (TMDB returns integer minutes)
             runtime_minutes = None
             if episode.get("runtime") is not None:
-                runtime_minutes = int(episode["runtime"]) if episode["runtime"] > 0 else None
+                runtime_minutes = (
+                    int(episode["runtime"])
+                    if episode["runtime"] > 0
+                    else None
+                )
             elif episode.get("air_date"):
                 # Check if episode has aired
                 try:
                     if isinstance(episode["air_date"], str):
                         date_obj = datetime.strptime(episode["air_date"], "%Y-%m-%d")
-                        air_date_dt = timezone.make_aware(date_obj, timezone.get_current_timezone())
+                        air_date_dt = timezone.make_aware(
+                            date_obj,
+                            timezone.get_current_timezone(),
+                        )
                     else:
                         air_date_dt = episode["air_date"]
                     
-                    if air_date_dt and air_date_dt.year > 1900 and air_date_dt <= current_datetime:
+                    if (
+                        air_date_dt
+                        and air_date_dt.year > 1900
+                        and air_date_dt <= current_datetime
+                    ):
                         # Episode has aired but no runtime - mark as unknown (use 999998)
                         runtime_minutes = 999998
                 except (ValueError, TypeError):
@@ -6985,7 +7248,11 @@ def season_details(
                 episodes_to_update.append(episode_item)
         
         if episodes_to_update:
-            Item.objects.bulk_update(episodes_to_update, ["runtime_minutes"], batch_size=100)
+            Item.objects.bulk_update(
+                episodes_to_update,
+                ["runtime_minutes"],
+                batch_size=100,
+            )
             # Invalidate time_left cache for all users (runtime affects time calculations)
             from app.cache_utils import clear_time_left_cache_for_user
             # Get all users who track this show
@@ -7017,12 +7284,21 @@ def season_details(
     ):
         season_metadata["image"] = season_item.image
 
+    season_provider_metadata_status = (
+        season_item.provider_metadata_status if season_item is not None else ""
+    )
+    if isinstance(season_metadata, dict):
+        season_metadata["provider_metadata_status"] = season_provider_metadata_status
+
     # Add collection_entry data to each episode (if not public view)
     if not public_view and season_metadata.get("episodes"):
         from app.models import Item as ItemModel, CollectionEntry
         
         # Get all episode items for this season
-        episode_numbers = [ep.get("episode_number") for ep in season_metadata["episodes"]]
+        episode_numbers = [
+            ep.get("episode_number")
+            for ep in season_metadata["episodes"]
+        ]
         episode_items = ItemModel.objects.filter(
             media_id=media_id,
             source=source,
@@ -7037,7 +7313,10 @@ def season_details(
             for item in episode_items
             if item.episode_number is not None
         }
-        episode_item_ids = list(item_by_episode_number[ep_num].id for ep_num in item_by_episode_number)
+        episode_item_ids = [
+            item_by_episode_number[ep_num].id
+            for ep_num in item_by_episode_number
+        ]
         collection_entries = {}
         if episode_item_ids:
             collection_entries_qs = (
@@ -7081,7 +7360,11 @@ def season_details(
     fetching_collection_data = False
     item_id_for_polling = None
     if not public_view:
-        from app.helpers import get_item_collection_entries, get_season_collection_stats, get_season_collection_metadata
+        from app.helpers import (
+            get_item_collection_entries,
+            get_season_collection_metadata,
+            get_season_collection_stats,
+        )
         from app.models import Item as ItemModel  # Use alias to avoid any potential shadowing
         
         # Get the season item
@@ -7179,6 +7462,8 @@ def season_details(
         season_item
         and current_instance
         and season_number > 0
+        and season_item.provider_metadata_status
+        != ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value
         and trakt_popularity_service.trakt_provider.is_configured()
         and trakt_popularity_service.needs_refresh(season_item)
     ):
@@ -7223,9 +7508,11 @@ def season_details(
         "public_view": public_view,
         "collection_entry": collection_entry,
         "collection_entries": collection_entries,
-        "collection_stats": season_collection_stats,  # For season, this is episode stats
+        "collection_stats": season_collection_stats,
         "has_collection_data": has_collection_data,
-        "fetching_collection_data": fetching_collection_data if not public_view else False,
+        "fetching_collection_data": (
+            fetching_collection_data if not public_view else False
+        ),
         "item_id_for_polling": item_id_for_polling if not public_view else None,
         "trakt_score": trakt_score,
         "watch_providers": tmdb.filter_providers(
@@ -7249,6 +7536,12 @@ def season_details(
         "display_provider": source,
         "identity_provider": source,
         "episode_load_more": episode_load_more,
+        "season_provider_metadata_status": season_provider_metadata_status,
+        "season_provider_metadata_banner": LOCAL_ONLY_MISSING_SEASON_BANNER,
+        "season_provider_metadata_is_local_only": (
+            season_provider_metadata_status
+            == ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value
+        ),
     }
     return render(request, "app/media_details.html", context)
 

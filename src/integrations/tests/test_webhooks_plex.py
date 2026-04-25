@@ -16,6 +16,7 @@ from app.models import (
     Item,
     MediaTypes,
     Movie,
+    ProviderMetadataStatus,
     Season,
     Status,
 )
@@ -461,6 +462,241 @@ class PlexWebhookTests(TestCase):
                 for season in cached_tv["related"]["seasons"]
             ),
         )
+
+    @patch("app.providers.tmdb.search", return_value={"results": []})
+    @patch("app.providers.tmdb.find")
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_missing_season_recovery_reattaches_history_to_resolved_show(
+        self,
+        mock_tv_with_seasons,
+        mock_find,
+        mock_tmdb_search,
+    ):
+        """Missing seasons should recover before creating TV/season rows."""
+
+        def fake_tv_with_seasons(media_id, season_numbers):
+            if str(media_id) == "203934":
+                return {
+                    "title": "MasterChef USA",
+                    "image": "",
+                    "tvdb_id": "wrong-tvdb",
+                    "synopsis": "Wrong show metadata.",
+                    "external_links": {},
+                    "related": {"seasons": [{"season_number": 15}]},
+                }
+            if str(media_id) == "302124":
+                return {
+                    "title": "MasterChef",
+                    "image": "",
+                    "tvdb_id": "397849",
+                    "synopsis": "Recovered show metadata.",
+                    "external_links": {},
+                    "related": {"seasons": [{"season_number": 16}]},
+                    "season/16": {
+                        "image": "",
+                        "episodes": [{"episode_number": 1, "runtime": 42}],
+                    },
+                }
+            raise AssertionError(f"Unexpected TMDB ID requested: {media_id}")
+
+        mock_tv_with_seasons.side_effect = fake_tv_with_seasons
+        mock_find.return_value = {
+            "tv_episode_results": [
+                {
+                    "show_id": 302124,
+                    "season_number": 16,
+                    "episode_number": 1,
+                },
+            ],
+            "tv_results": [],
+        }
+
+        payload = {
+            "event": "media.scrobble",
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "MasterChef",
+                "parentTitle": "Season 16",
+                "title": "Auditions: Europe (1)",
+                "summary": "Recovered episode metadata.",
+                "duration": 2520000,
+                "originallyAvailableAt": "2026-04-15",
+                "index": 1,
+                "parentIndex": 16,
+                "Guid": [
+                    {"id": "imdb://tt1234567"},
+                    {"id": "tmdb://203934"},
+                    {"id": "tvdb://397849"},
+                ],
+            },
+        }
+
+        PlexWebhookProcessor()._handle_tv_episode(
+            "203934",
+            16,
+            1,
+            payload,
+            self.user,
+        )
+
+        self.assertTrue(
+            TV.objects.filter(item__media_id="302124", user=self.user).exists(),
+        )
+        self.assertFalse(
+            TV.objects.filter(item__media_id="203934", user=self.user).exists(),
+        )
+        self.assertTrue(
+            Episode.objects.filter(
+                item__media_id="302124",
+                item__season_number=16,
+                item__episode_number=1,
+            ).exists(),
+        )
+        self.assertFalse(
+            Episode.objects.filter(
+                item__media_id="203934",
+                item__season_number=16,
+                item__episode_number=1,
+            ).exists(),
+        )
+        mock_tmdb_search.assert_not_called()
+
+    @patch("app.providers.tmdb.search", return_value={"results": []})
+    @patch(
+        "app.providers.tmdb.find",
+        return_value={"tv_episode_results": [], "tv_results": []},
+    )
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_missing_non_special_season_persists_local_only_flag(
+        self,
+        mock_tv_with_seasons,
+        _mock_find,
+        _mock_tmdb_search,
+    ):
+        """Unresolved missing seasons should stay visible but flagged as local-only."""
+        mock_tv_with_seasons.return_value = {
+            "title": "MasterChef USA",
+            "image": "",
+            "tvdb_id": "wrong-tvdb",
+            "synopsis": "Wrong show metadata.",
+            "external_links": {},
+            "related": {"seasons": [{"season_number": 15}]},
+        }
+
+        payload = {
+            "event": "media.scrobble",
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "MasterChef",
+                "parentTitle": "Season 16",
+                "title": "Auditions: Europe (1)",
+                "summary": "Fallback episode metadata.",
+                "duration": 2520000,
+                "originallyAvailableAt": "2026-04-15",
+                "index": 1,
+                "parentIndex": 16,
+                "Guid": [
+                    {"id": "imdb://tt1234567"},
+                    {"id": "tmdb://203934"},
+                    {"id": "tvdb://397849"},
+                ],
+            },
+        }
+
+        PlexWebhookProcessor()._handle_tv_episode(
+            "203934",
+            16,
+            1,
+            payload,
+            self.user,
+        )
+
+        season_item = Item.objects.get(
+            media_id="203934",
+            media_type=MediaTypes.SEASON.value,
+            season_number=16,
+        )
+        self.assertEqual(
+            season_item.provider_metadata_status,
+            ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value,
+        )
+
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_provider_backed_season_webhook_clears_local_only_flag(
+        self,
+        mock_tv_with_seasons,
+    ):
+        """A later provider-backed season fetch should clear the local-only flag."""
+        tv_item = Item.objects.create(
+            media_id="203934",
+            source="tmdb",
+            media_type=MediaTypes.TV.value,
+            title="MasterChef USA",
+            image="",
+        )
+        related_tv = TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        season_item = Item.objects.create(
+            media_id="203934",
+            source="tmdb",
+            media_type=MediaTypes.SEASON.value,
+            season_number=16,
+            title="MasterChef USA",
+            image="",
+            provider_metadata_status=(
+                ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value
+            ),
+        )
+        Season.objects.create(
+            item=season_item,
+            user=self.user,
+            related_tv=related_tv,
+            status=Status.IN_PROGRESS.value,
+        )
+        mock_tv_with_seasons.return_value = {
+            "title": "MasterChef USA",
+            "image": "",
+            "tvdb_id": "397849",
+            "synopsis": "Recovered show metadata.",
+            "external_links": {},
+            "related": {"seasons": [{"season_number": 16}]},
+            "season/16": {
+                "image": "",
+                "episodes": [{"episode_number": 1, "runtime": 42}],
+            },
+        }
+        payload = {
+            "event": "media.scrobble",
+            "Metadata": {
+                "type": "episode",
+                "grandparentTitle": "MasterChef USA",
+                "parentTitle": "Season 16",
+                "title": "Auditions: Europe (1)",
+                "duration": 2520000,
+                "originallyAvailableAt": "2026-04-15",
+                "index": 1,
+                "parentIndex": 16,
+                "Guid": [
+                    {"id": "imdb://tt1234567"},
+                    {"id": "tmdb://203934"},
+                    {"id": "tvdb://397849"},
+                ],
+            },
+        }
+
+        PlexWebhookProcessor()._handle_tv_episode(
+            "203934",
+            16,
+            1,
+            payload,
+            self.user,
+        )
+
+        season_item.refresh_from_db()
+        self.assertEqual(season_item.provider_metadata_status, "")
 
     @patch("app.providers.tmdb.search", return_value={"results": []})
     @patch("app.providers.tmdb.find")

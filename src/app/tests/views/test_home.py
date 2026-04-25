@@ -12,6 +12,7 @@ from app.models import (
     Episode,
     Item,
     MediaTypes,
+    ProviderMetadataStatus,
     Season,
     Sources,
     Status,
@@ -211,6 +212,30 @@ class HomeViewTests(TestCase):
         self.assertEqual(fallback_season.card_image_override, show_image)
         self.assertEqual(fallback_season.card_image_source, "fallback")
         self.assertContains(response, 'data-image-source="fallback"')
+
+    def test_home_view_shows_local_only_chip_for_flagged_season(self):
+        season_item = Item.objects.get(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+        )
+        season_item.provider_metadata_status = (
+            ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value
+        )
+        season_item.save(update_fields=["provider_metadata_status"])
+
+        response = self.client.get(reverse("home"))
+
+        season_items = response.context["list_by_type"][MediaTypes.SEASON.value]["items"]
+        flagged_season = next(
+            media for media in season_items if media.item.media_id == "1668"
+        )
+        self.assertEqual(
+            flagged_season.item.provider_metadata_status,
+            ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value,
+        )
+        self.assertContains(response, "Local only")
 
     @patch("app.live_playback._fetch_episode_still")
     @patch("app.helpers.get_tmdb_backdrop_image")

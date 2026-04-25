@@ -117,6 +117,12 @@
             {% endif %}
           {% endif %}
 
+          {% if resolved_media_type == MediaTypes.SEASON.value and item.provider_metadata_status == "local_only_missing_season" %}
+            <div class="absolute bottom-2 left-2 rounded-md border border-amber-500/30 bg-amber-500/15 px-2 py-1 text-[11px] font-medium text-amber-100 shadow-md">
+              Local only
+            </div>
+          {% endif %}
+
           {% if media %}
             {% if show_progress_chip|default_if_none:True %}
               {% with aggregated_progress=media|safe_attr:"aggregated_progress" %}

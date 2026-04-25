@@ -39,6 +39,7 @@ from app.models import (
     PodcastEpisode,
     PodcastShow,
     PodcastShowTracker,
+    ProviderMetadataStatus,
     Season,
     Sources,
     Status,
@@ -3521,6 +3522,198 @@ class MediaDetailsViewTests(TestCase):
             [1],
         )
 
+    @patch("app.views.trakt_popularity_service.refresh_trakt_popularity")
+    @patch("app.providers.tmdb.get_tvdb_episode_image_map")
+    @patch("app.helpers.get_tmdb_backdrop_image")
+    @patch("app.providers.services.get_media_metadata")
+    def test_season_details_missing_provider_metadata_marks_local_only_and_skips_fallback_network_calls(
+        self,
+        mock_get_metadata,
+        mock_get_tmdb_backdrop_image,
+        mock_get_tvdb_episode_image_map,
+        mock_refresh_trakt_popularity,
+    ):
+        tv_item = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Test TV Show",
+            image="http://example.com/show.jpg",
+        )
+        related_tv = TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        season_item = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Test TV Show",
+            image="http://example.com/show.jpg",
+            season_number=16,
+        )
+        season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            related_tv=related_tv,
+        )
+        episode_item = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Auditions: Europe (1)",
+            image="http://example.com/episode.jpg",
+            season_number=16,
+            episode_number=1,
+            release_datetime=timezone.make_aware(datetime(2026, 4, 15)),
+        )
+        Episode.objects.create(
+            item=episode_item,
+            related_season=season,
+            end_date=timezone.make_aware(datetime(2026, 4, 17)),
+        )
+        mock_get_tmdb_backdrop_image.reset_mock()
+        mock_get_tvdb_episode_image_map.reset_mock()
+        mock_refresh_trakt_popularity.reset_mock()
+        mock_get_metadata.return_value = {
+            "title": "Test TV Show",
+            "media_id": "1668",
+            "source": Sources.TMDB.value,
+            "media_type": MediaTypes.TV.value,
+            "image": "http://example.com/show.jpg",
+            "synopsis": "Provider show synopsis.",
+            "genres": ["Reality"],
+            "related": {"seasons": [{"season_number": 15}]},
+        }
+
+        response = self.client.get(
+            reverse(
+                "season_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_id": "1668",
+                    "title": "test-tv-show",
+                    "season_number": 16,
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        season_item.refresh_from_db()
+        self.assertEqual(
+            season_item.provider_metadata_status,
+            ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value,
+        )
+        self.assertEqual(
+            response.context["media"]["provider_metadata_status"],
+            ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value,
+        )
+        self.assertTrue(response.context["season_provider_metadata_is_local_only"])
+        self.assertContains(
+            response,
+            (
+                "Season metadata is missing from the provider. "
+                "This page is built from local activity and the linked "
+                "show may be mismatched."
+            ),
+        )
+        self.assertContains(response, "Auditions: Europe (1)")
+        self.assertIn(
+            16,
+            [
+                season_entry["season_number"]
+                for season_entry in response.context["tv"]["related"]["seasons"]
+            ],
+        )
+        mock_get_tmdb_backdrop_image.assert_not_called()
+        mock_get_tvdb_episode_image_map.assert_not_called()
+        mock_refresh_trakt_popularity.assert_not_called()
+
+    @patch("app.views.trakt_popularity_service.refresh_trakt_popularity")
+    @patch("app.providers.tmdb.get_tvdb_episode_image_map")
+    @patch("app.helpers.get_tmdb_backdrop_image")
+    @patch("app.providers.services.get_media_metadata")
+    def test_season_details_local_only_flag_skips_provider_metadata_lookup(
+        self,
+        mock_get_metadata,
+        mock_get_tmdb_backdrop_image,
+        mock_get_tvdb_episode_image_map,
+        mock_refresh_trakt_popularity,
+    ):
+        tv_item = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Test TV Show",
+            image="http://example.com/show.jpg",
+        )
+        related_tv = TV.objects.create(
+            item=tv_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+        )
+        season_item = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            title="Test TV Show",
+            image="http://example.com/show.jpg",
+            season_number=16,
+            provider_metadata_status=(
+                ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value
+            ),
+        )
+        season = Season.objects.create(
+            item=season_item,
+            user=self.user,
+            status=Status.IN_PROGRESS.value,
+            related_tv=related_tv,
+        )
+        episode_item = Item.objects.create(
+            media_id="1668",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            title="Auditions: Europe (1)",
+            image="http://example.com/episode.jpg",
+            season_number=16,
+            episode_number=1,
+            release_datetime=timezone.make_aware(datetime(2026, 4, 15)),
+        )
+        Episode.objects.create(
+            item=episode_item,
+            related_season=season,
+            end_date=timezone.make_aware(datetime(2026, 4, 17)),
+        )
+        mock_get_metadata.reset_mock()
+        mock_get_tmdb_backdrop_image.reset_mock()
+        mock_get_tvdb_episode_image_map.reset_mock()
+        mock_refresh_trakt_popularity.reset_mock()
+
+        response = self.client.get(
+            reverse(
+                "season_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_id": "1668",
+                    "title": "test-tv-show",
+                    "season_number": 16,
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            "Season metadata is missing from the provider. This page is built from local activity and the linked show may be mismatched.",
+        )
+        self.assertContains(response, "Auditions: Europe (1)")
+        mock_get_metadata.assert_not_called()
+        mock_get_tmdb_backdrop_image.assert_not_called()
+        mock_get_tvdb_episode_image_map.assert_not_called()
+        mock_refresh_trakt_popularity.assert_not_called()
+
     @patch("app.providers.services.get_media_metadata")
     @patch("app.providers.tmdb.process_episodes")
     def test_season_details_roll_up_season_level_collection_entry_when_no_episode_rows_exist(
@@ -4444,8 +4637,8 @@ class MediaDetailsViewTests(TestCase):
                             },
                         ],
                     },
-                    "cast": [],
-                    "crew": [],
+                    "cast": [{"name": "Denji"}],
+                    "crew": [{"name": "Makima"}],
                     "studios_full": [],
                 }
 

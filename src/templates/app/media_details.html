@@ -273,6 +273,12 @@
         {% endif %}
       {% endif %}
 
+      {% if season_provider_metadata_is_local_only %}
+        <div class="mb-5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+          {{ season_provider_metadata_banner }}
+        </div>
+      {% endif %}
+
       <div class="flex flex-col sm:contents">
       {# Score chips #}
       {% if media.score_count is not None or trakt_score or user_medias and current_instance and not public_view|default:False %}

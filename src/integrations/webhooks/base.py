@@ -6,7 +6,7 @@ from django.utils import timezone
 
 import app
 from app.log_safety import exception_summary
-from app.models import MediaTypes, Sources, Status
+from app.models import MediaTypes, ProviderMetadataStatus, Sources, Status
 from integrations import anime_mapping
 
 logger = logging.getLogger(__name__)
@@ -894,6 +894,94 @@ class BaseWebhookProcessor:
             "source_url": tv_metadata.get("external_links", {}).get("TVDB"),
         }
 
+    def _load_tv_metadata_with_required_season(
+        self,
+        media_id,
+        season_number,
+        *,
+        reason,
+    ):
+        """Return TMDB show metadata only when the requested season exists."""
+        try:
+            tv_metadata = app.providers.tmdb.tv_with_seasons(media_id, [season_number])
+        except Exception as exc:  # pragma: no cover - defensive network guard
+            logger.warning(
+                "TV season recovery failed for candidate %s via %s: %s",
+                media_id,
+                reason,
+                exception_summary(exc),
+            )
+            return None
+
+        if f"season/{season_number}" not in tv_metadata:
+            logger.info(
+                "TV season recovery candidate %s via %s still missing season %s",
+                media_id,
+                reason,
+                season_number,
+            )
+            return None
+
+        return tv_metadata
+
+    def _recover_tv_metadata_for_missing_season(
+        self,
+        media_id,
+        season_number,
+        payload,
+        ids,
+    ):
+        """Try one bounded recovery pass when the resolved show lacks the season."""
+        if season_number in (None, 0):
+            return None, None
+
+        seen_media_ids = {str(media_id)}
+        alt_ids = dict(ids)
+        alt_ids["tmdb_id"] = None
+        recovered_media_id, _alt_season, _alt_episode = self._find_tv_media_id(alt_ids)
+        if recovered_media_id and str(recovered_media_id) not in seen_media_ids:
+            recovered_tv_metadata = self._load_tv_metadata_with_required_season(
+                recovered_media_id,
+                season_number,
+                reason="external_ids",
+            )
+            if recovered_tv_metadata is not None:
+                return str(recovered_media_id), recovered_tv_metadata
+            seen_media_ids.add(str(recovered_media_id))
+
+        series_title = self._extract_series_title(payload)
+        if not series_title:
+            return None, None
+
+        try:
+            search_results = app.providers.tmdb.search(
+                MediaTypes.TV.value,
+                series_title,
+                page=1,
+            )
+        except Exception as exc:  # pragma: no cover - defensive network guard
+            logger.warning(
+                "TV title-search recovery failed for '%s': %s",
+                series_title,
+                exception_summary(exc),
+            )
+            return None, None
+
+        for result in (search_results.get("results") or [])[:3]:
+            candidate_media_id = result.get("media_id")
+            if not candidate_media_id or str(candidate_media_id) in seen_media_ids:
+                continue
+            recovered_tv_metadata = self._load_tv_metadata_with_required_season(
+                candidate_media_id,
+                season_number,
+                reason=f"title_search:{series_title}",
+            )
+            if recovered_tv_metadata is not None:
+                return str(candidate_media_id), recovered_tv_metadata
+            seen_media_ids.add(str(candidate_media_id))
+
+        return None, None
+
     def _handle_tv_episode(
         self,
         media_id,
@@ -906,6 +994,64 @@ class BaseWebhookProcessor:
         from app.services import metadata_resolution  # noqa: PLC0415
 
         tv_metadata = app.providers.tmdb.tv_with_seasons(media_id, [season_number])
+        external_ids = self._extract_external_ids(payload)
+
+        season_key = f"season/{season_number}"
+        season_metadata = tv_metadata.get(season_key)
+        used_local_only_fallback = False
+        if not season_metadata and int(season_number) != 0:
+            (
+                recovered_media_id,
+                recovered_tv_metadata,
+            ) = self._recover_tv_metadata_for_missing_season(
+                media_id,
+                season_number,
+                payload,
+                external_ids,
+            )
+            if recovered_media_id and recovered_tv_metadata:
+                media_id = recovered_media_id
+                tv_metadata = recovered_tv_metadata
+                self._remember_tvdb_override(media_id, external_ids)
+                season_metadata = tv_metadata.get(season_key)
+                logger.info(
+                    "Recovered missing season %s using TMDB show %s",
+                    season_number,
+                    media_id,
+                )
+
+        if not season_metadata:
+            logger.warning(
+                "Season %s metadata missing for TMDB ID %s; using payload fallback",
+                season_number,
+                media_id,
+            )
+            season_metadata = self._build_fallback_season_metadata(
+                payload,
+                season_number,
+                episode_number,
+                tv_metadata,
+            )
+            if season_metadata and int(season_number) == 0:
+                cached_fallback = app.providers.tmdb.cache_fallback_season_metadata(
+                    media_id,
+                    season_number,
+                    tv_metadata,
+                    season_metadata,
+                )
+                if cached_fallback:
+                    season_metadata = cached_fallback
+            elif season_metadata:
+                used_local_only_fallback = True
+
+        if not season_metadata:
+            logger.warning(
+                "Failed to build fallback season metadata for TMDB ID %s season %s",
+                media_id,
+                season_number,
+            )
+            return
+
         tv_item, _ = app.models.Item.objects.get_or_create(
             media_id=media_id,
             source=Sources.TMDB.value,
@@ -915,7 +1061,6 @@ class BaseWebhookProcessor:
                 "image": tv_metadata["image"],
             },
         )
-        external_ids = self._extract_external_ids(payload)
         metadata_resolution.upsert_provider_links(
             tv_item,
             tv_metadata
@@ -923,7 +1068,10 @@ class BaseWebhookProcessor:
                 "provider_external_ids": {
                     **(tv_metadata.get("provider_external_ids") or {}),
                     "tmdb_id": str(media_id),
-                    "tvdb_id": external_ids.get("tvdb_id") or tv_metadata.get("tvdb_id"),
+                    "tvdb_id": (
+                        external_ids.get("tvdb_id")
+                        or tv_metadata.get("tvdb_id")
+                    ),
                     "imdb_id": external_ids.get("imdb_id"),
                 },
             },
@@ -948,40 +1096,6 @@ class BaseWebhookProcessor:
                 tv_metadata["title"],
             )
 
-        season_key = f"season/{season_number}"
-        season_metadata = tv_metadata.get(season_key)
-        if not season_metadata:
-            logger.warning(
-                "Season %s metadata missing for TMDB ID %s; using payload fallback",
-                season_number,
-                media_id,
-            )
-            season_metadata = self._build_fallback_season_metadata(
-                payload,
-                season_number,
-                episode_number,
-                tv_metadata,
-            )
-            if season_metadata and int(season_number) == 0:
-                cached_fallback = app.providers.tmdb.cache_fallback_season_metadata(
-                    media_id,
-                    season_number,
-                    tv_metadata,
-                    season_metadata,
-                )
-                if cached_fallback:
-                    season_metadata = cached_fallback
-
-        if not season_metadata:
-            logger.warning(
-                "Failed to build fallback season metadata for TMDB ID %s season %s",
-                media_id,
-                season_number,
-            )
-            # Queue collection metadata update for TV show (not episode-specific)
-            self._queue_collection_metadata_update_for_tv(payload, user, tv_item)
-            return
-
         # Use season poster if available, otherwise fallback to TV show poster
         season_image = season_metadata.get("image") or tv_metadata.get("image")
 
@@ -993,8 +1107,21 @@ class BaseWebhookProcessor:
             defaults={
                 "title": tv_metadata["title"],
                 "image": season_image,
+                "provider_metadata_status": (
+                    ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value
+                    if used_local_only_fallback
+                    else ""
+                ),
             },
         )
+        desired_provider_metadata_status = (
+            ProviderMetadataStatus.LOCAL_ONLY_MISSING_SEASON.value
+            if used_local_only_fallback
+            else ""
+        )
+        if season_item.provider_metadata_status != desired_provider_metadata_status:
+            season_item.provider_metadata_status = desired_provider_metadata_status
+            season_item.save(update_fields=["provider_metadata_status"])
         metadata_resolution.upsert_provider_links(
             season_item,
             season_metadata
@@ -1002,7 +1129,10 @@ class BaseWebhookProcessor:
                 "provider_external_ids": {
                     **(season_metadata.get("provider_external_ids") or {}),
                     "tmdb_id": str(media_id),
-                    "tvdb_id": external_ids.get("tvdb_id") or tv_metadata.get("tvdb_id"),
+                    "tvdb_id": (
+                        external_ids.get("tvdb_id")
+                        or tv_metadata.get("tvdb_id")
+                    ),
                     "imdb_id": external_ids.get("imdb_id"),
                 },
             },
