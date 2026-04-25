@@ -246,6 +246,12 @@ MOVIE_COMFORT_BURST_GAP_DAYS = 30.0
 MOVIE_COMFORT_BURST_HISTORY_MIN_WATCHES = 3
 MOVIE_COMFORT_RECENT_TITLE_MULTIPLIER_FLOOR = 0.72
 MOVIE_COMFORT_READY_NOW_WEIGHT = 0.12
+MOVIE_COMFORT_SATURATION_ELIGIBLE_DAYS = 30.0
+MOVIE_COMFORT_SATURATION_WINDOW_90D = 90
+MOVIE_COMFORT_SATURATION_WINDOW_180D = 180
+MOVIE_COMFORT_SATURATION_GAP_TARGET_DAYS = 45.0
+MOVIE_COMFORT_SATURATION_GAP_RANGE_DAYS = 30.0
+MOVIE_COMFORT_SATURATION_WEIGHT = 0.45
 WORLD_RATING_PROFILE_MIN_SAMPLE_SIZE = 5
 WORLD_QUALITY_ALIGNMENT_BASELINE = 0.25
 WORLD_QUALITY_ALIGNMENT_WEIGHT = 0.20
@@ -2824,6 +2830,19 @@ def _movie_cadence_signal(
         if gaps
         else MOVIE_COMFORT_COOLDOWN_DEFAULT_DAYS
     )
+    recent_90_cutoff = now - timedelta(days=MOVIE_COMFORT_SATURATION_WINDOW_90D)
+    recent_180_cutoff = now - timedelta(days=MOVIE_COMFORT_SATURATION_WINDOW_180D)
+    recent_90_activity = [dt for dt in ordered if dt >= recent_90_cutoff]
+    recent_180_activity = [dt for dt in ordered if dt >= recent_180_cutoff]
+    recent_gaps = [
+        float(max(0, (earlier - later).days))
+        for earlier, later in zip(recent_180_activity, recent_180_activity[1:], strict=False)
+    ]
+    recent_gap_median_days = (
+        float(statistics.median(recent_gaps))
+        if recent_gaps
+        else 0.0
+    )
     burstiness = _clamp_unit(
         (
             sum(1 for gap in gaps if gap <= MOVIE_COMFORT_BURST_GAP_DAYS)
@@ -2837,6 +2856,62 @@ def _movie_cadence_signal(
         "days_since_last_watch": days_since_last_watch,
         "median_gap_days": median_gap_days,
         "burstiness": burstiness,
+        "recent_play_count_90d": float(len(recent_90_activity)),
+        "recent_play_count_180d": float(len(recent_180_activity)),
+        "recent_gap_median_days": recent_gap_median_days,
+        "recent_gap_count": float(len(recent_gaps)),
+    }
+
+
+def _movie_title_saturation_signal(
+    *,
+    media_type: str,
+    days_since_title_watch: float,
+    title_signal: dict[str, float],
+) -> dict[str, float]:
+    recent_play_count_90d = float(title_signal.get("recent_play_count_90d", 0.0))
+    recent_play_count_180d = float(title_signal.get("recent_play_count_180d", 0.0))
+    recent_gap_median_days = float(title_signal.get("recent_gap_median_days", 0.0))
+    recent_gap_count = int(title_signal.get("recent_gap_count", 0.0) or 0)
+
+    if (
+        media_type != MediaTypes.MOVIE.value
+        or days_since_title_watch < MOVIE_COMFORT_SATURATION_ELIGIBLE_DAYS
+    ):
+        return {
+            "recent_play_count_90d": round(recent_play_count_90d, 6),
+            "recent_play_count_180d": round(recent_play_count_180d, 6),
+            "recent_gap_median_days": round(recent_gap_median_days, 6),
+            "title_saturation_penalty": 0.0,
+            "saturation_multiplier": 1.0,
+        }
+
+    plays_90_pressure = _clamp_unit((recent_play_count_90d - 1.0) / 3.0)
+    plays_180_pressure = _clamp_unit((recent_play_count_180d - 2.0) / 4.0)
+    if recent_gap_count > 0:
+        recent_gap_pressure = _clamp_unit(
+            (
+                MOVIE_COMFORT_SATURATION_GAP_TARGET_DAYS
+                - recent_gap_median_days
+            )
+            / MOVIE_COMFORT_SATURATION_GAP_RANGE_DAYS,
+        )
+    else:
+        recent_gap_pressure = 0.0
+    title_saturation_penalty = _clamp_unit(
+        (plays_90_pressure * 0.50)
+        + (plays_180_pressure * 0.30)
+        + (recent_gap_pressure * 0.20),
+    )
+    saturation_multiplier = _clamp_unit(
+        1.0 - (MOVIE_COMFORT_SATURATION_WEIGHT * title_saturation_penalty),
+    )
+    return {
+        "recent_play_count_90d": round(recent_play_count_90d, 6),
+        "recent_play_count_180d": round(recent_play_count_180d, 6),
+        "recent_gap_median_days": round(recent_gap_median_days, 6),
+        "title_saturation_penalty": round(title_saturation_penalty, 6),
+        "saturation_multiplier": round(saturation_multiplier, 6),
     }
 
 
@@ -2981,22 +3056,18 @@ def _movie_ready_now_signal(
         MOVIE_COMFORT_COOLDOWN_MIN_DAYS,
         min(MOVIE_COMFORT_COOLDOWN_MAX_DAYS, cooldown_window_days),
     )
-    if title_watch_count >= MOVIE_COMFORT_BURST_HISTORY_MIN_WATCHES:
-        cooldown_window_days *= 1.0 - (0.45 * title_burstiness)
-    cooldown_window_days *= 1.0 - (0.20 * lane_burstiness)
-    cooldown_window_days = max(
-        MOVIE_COMFORT_COOLDOWN_MIN_DAYS,
-        min(MOVIE_COMFORT_COOLDOWN_MAX_DAYS, cooldown_window_days),
-    )
 
     title_cooldown_penalty = _clamp_unit(
         1.0 - (days_since_title_watch / max(cooldown_window_days, 1.0)),
     )
-    burst_replay_allowance = _clamp_unit((title_burstiness * 0.7) + (lane_burstiness * 0.3))
-    cooldown_penalty = _clamp_unit(
-        title_cooldown_penalty * (1.0 - (burst_replay_allowance * 0.75)),
-    )
+    burst_replay_allowance = 0.0
+    cooldown_penalty = title_cooldown_penalty
     ready_now_score = _clamp_unit(1.0 - cooldown_penalty)
+    saturation_signal = _movie_title_saturation_signal(
+        media_type=candidate.media_type,
+        days_since_title_watch=days_since_title_watch,
+        title_signal=title_signal,
+    )
 
     return {
         "days_since_title_watch": round(days_since_title_watch, 6),
@@ -3011,6 +3082,11 @@ def _movie_ready_now_signal(
         "burst_replay_allowance": round(burst_replay_allowance, 6),
         "cooldown_penalty": round(cooldown_penalty, 6),
         "ready_now_score": round(ready_now_score, 6),
+        "recent_play_count_90d": float(saturation_signal["recent_play_count_90d"]),
+        "recent_play_count_180d": float(saturation_signal["recent_play_count_180d"]),
+        "recent_gap_median_days": float(saturation_signal["recent_gap_median_days"]),
+        "title_saturation_penalty": float(saturation_signal["title_saturation_penalty"]),
+        "saturation_multiplier": float(saturation_signal["saturation_multiplier"]),
     }
 
 
@@ -3713,6 +3789,19 @@ def _apply_movie_comfort_confidence(
                 _clamp_unit(legacy_core_affinity_score * floor_multiplier),
             )
 
+        saturation_multiplier = float(cooldown_signal["saturation_multiplier"])
+        saturation_penalty_contribution = 0.0
+        if candidate.media_type == MediaTypes.MOVIE.value and saturation_multiplier < 0.999:
+            raw_before_saturation = raw_final_score
+            raw_final_score = _clamp_unit(raw_final_score * saturation_multiplier)
+            legacy_raw_final_score = _clamp_unit(
+                legacy_raw_final_score * saturation_multiplier,
+            )
+            saturation_penalty_contribution = max(
+                0.0,
+                raw_before_saturation - raw_final_score,
+            )
+
         holiday_strength, seasonal_adjustment = _holiday_seasonal_adjustment(
             candidate,
             holiday_window_active=holiday_window_active,
@@ -3785,6 +3874,26 @@ def _apply_movie_comfort_confidence(
         )
         candidate.score_breakdown["cooldown_window_days"] = round(
             float(cooldown_signal["cooldown_window_days"]),
+            6,
+        )
+        candidate.score_breakdown["recent_play_count_90d"] = round(
+            float(cooldown_signal["recent_play_count_90d"]),
+            6,
+        )
+        candidate.score_breakdown["recent_play_count_180d"] = round(
+            float(cooldown_signal["recent_play_count_180d"]),
+            6,
+        )
+        candidate.score_breakdown["recent_gap_median_days"] = round(
+            float(cooldown_signal["recent_gap_median_days"]),
+            6,
+        )
+        candidate.score_breakdown["title_saturation_penalty"] = round(
+            float(cooldown_signal["title_saturation_penalty"]),
+            6,
+        )
+        candidate.score_breakdown["saturation_multiplier"] = round(
+            float(cooldown_signal["saturation_multiplier"]),
             6,
         )
         candidate.score_breakdown["keyword_fit"] = round(family_layer_fits["keywords"]["blended"], 6)
@@ -3884,7 +3993,15 @@ def _apply_movie_comfort_confidence(
             6,
         )
         candidate.score_breakdown["holiday_strength"] = round(holiday_strength, 6)
-        candidate.score_breakdown["dampeners_contribution"] = round(seasonal_adjustment, 6)
+        candidate.score_breakdown["raw_final_score"] = round(raw_final_score, 6)
+        candidate.score_breakdown["dampeners_contribution"] = round(
+            seasonal_adjustment - saturation_penalty_contribution,
+            6,
+        )
+        candidate.score_breakdown["saturation_dampener_contribution"] = round(
+            -saturation_penalty_contribution,
+            6,
+        )
         candidate.score_breakdown["seasonality_dampener_contribution"] = round(
             seasonal_adjustment,
             6,
@@ -4472,6 +4589,8 @@ def _build_movie_comfort_debug_payload(
             penalty_count += 1
         if float(score.get("candidate_is_unrated", 0.0)) >= 1.0:
             penalty_count += 1
+        if float(score.get("saturation_multiplier", 1.0)) < 0.999:
+            penalty_count += 1
         if seasonal_adjustment < 0.0:
             penalty_count += 1
         if penalty_count >= 2:
@@ -4516,6 +4635,26 @@ def _build_movie_comfort_debug_payload(
                 ),
                 "burst_replay_allowance": round(
                     float(score.get("burst_replay_allowance", 0.0)),
+                    6,
+                ),
+                "recent_play_count_90d": round(
+                    float(score.get("recent_play_count_90d", 0.0)),
+                    6,
+                ),
+                "recent_play_count_180d": round(
+                    float(score.get("recent_play_count_180d", 0.0)),
+                    6,
+                ),
+                "recent_gap_median_days": round(
+                    float(score.get("recent_gap_median_days", 0.0)),
+                    6,
+                ),
+                "title_saturation_penalty": round(
+                    float(score.get("title_saturation_penalty", 0.0)),
+                    6,
+                ),
+                "saturation_multiplier": round(
+                    float(score.get("saturation_multiplier", 1.0)),
                     6,
                 ),
                 "days_since_title_watch": round(
@@ -4591,6 +4730,10 @@ def _build_movie_comfort_debug_payload(
                 ),
                 "seasonality_dampener_contribution": round(
                     float(score.get("seasonality_dampener_contribution", 0.0)),
+                    6,
+                ),
+                "saturation_dampener_contribution": round(
+                    float(score.get("saturation_dampener_contribution", 0.0)),
                     6,
                 ),
                 "penalty_count": penalty_count,

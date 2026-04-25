@@ -4,6 +4,7 @@ from unittest.mock import patch
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import OperationalError
+from django.template.loader import render_to_string
 from django.test import TestCase
 from django.utils import timezone
 
@@ -1202,7 +1203,7 @@ class DiscoverServiceTests(TestCase):
             "key": "comfort_rewatches",
             "title": "Comfort Rewatches",
             "mission": "Comfort",
-            "why": "Favorites you loved, ready for a revisit.",
+            "why": "Past favorites that feel ready to revisit again.",
             "source": "local",
             "items": [
                 CandidateItem(
@@ -3796,6 +3797,53 @@ class DiscoverServiceTests(TestCase):
         self.assertIn("4002", candidate_ids)
         self.assertNotIn("4003", candidate_ids)
 
+    def test_comfort_candidates_exclude_recent_movies_inside_30_day_floor(self):
+        eligible_item = Item.objects.create(
+            media_id="4101",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Eligible Comfort",
+            image="http://example.com/eligible.jpg",
+            genres=["Animation"],
+        )
+        recent_item = Item.objects.create(
+            media_id="4102",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Recent Comfort",
+            image="http://example.com/recent.jpg",
+            genres=["Animation"],
+        )
+
+        with patch("app.models.providers.services.get_media_metadata", return_value={"max_progress": 1}):
+            Movie.objects.create(
+                item=eligible_item,
+                user=self.user,
+                score=9,
+                status=Status.COMPLETED.value,
+                end_date=timezone.now() - timedelta(days=31),
+            )
+            Movie.objects.create(
+                item=recent_item,
+                user=self.user,
+                score=10,
+                status=Status.COMPLETED.value,
+                end_date=timezone.now() - timedelta(days=29),
+            )
+
+        candidates = _comfort_candidates(
+            self.user,
+            MediaTypes.MOVIE.value,
+            row_key="comfort_rewatches",
+            source_reason="Past favorite",
+            older_than_days=30,
+            min_score=8.0,
+        )
+        candidate_ids = {candidate.media_id for candidate in candidates}
+
+        self.assertIn("4101", candidate_ids)
+        self.assertNotIn("4102", candidate_ids)
+
     def test_comfort_candidates_biases_phase_evidence_with_limited_backfill(self):
         phase_media_ids = {"5001", "5002"}
         with patch("app.models.providers.services.get_media_metadata", return_value={"max_progress": 1}):
@@ -4480,6 +4528,11 @@ class DiscoverServiceTests(TestCase):
         self.assertIn("ready_now_score", payload["top_candidates"][0])
         self.assertIn("cooldown_penalty", payload["top_candidates"][0])
         self.assertIn("burst_replay_allowance", payload["top_candidates"][0])
+        self.assertIn("recent_play_count_90d", payload["top_candidates"][0])
+        self.assertIn("recent_play_count_180d", payload["top_candidates"][0])
+        self.assertIn("recent_gap_median_days", payload["top_candidates"][0])
+        self.assertIn("title_saturation_penalty", payload["top_candidates"][0])
+        self.assertIn("saturation_multiplier", payload["top_candidates"][0])
         self.assertIn("active_signal_families", payload["top_candidates"][0])
         self.assertIn("suppressed_signal_families", payload["top_candidates"][0])
         self.assertIn("world_quality", payload["top_candidates"][0])
@@ -4491,6 +4544,92 @@ class DiscoverServiceTests(TestCase):
         self.assertIn("legacy_raw_final_score", payload["top_candidates"][0])
         self.assertIn("world_alignment_sample_size", payload["top_candidates"][0])
         self.assertIn("comparison_summary", payload)
+
+    def test_movie_comfort_debug_template_uses_clarified_time_labels(self):
+        candidates = [
+            CandidateItem(
+                media_type=MediaTypes.MOVIE.value,
+                source="tmdb",
+                media_id="render-debug",
+                title="Render Debug",
+                genres=["Animation"],
+                keywords=["family"],
+                studios=["pixar"],
+                certification="PG",
+                runtime_bucket="90_109",
+                release_decade="2020s",
+                popularity=80.0,
+                rating_count=5000,
+                score_breakdown={
+                    "user_score": 8.0,
+                    "days_since_activity": 120.0,
+                    "rewatch_count": 2.0,
+                },
+            ),
+        ]
+        reranked = _apply_comfort_confidence(
+            candidates,
+            {
+                "phase_keyword_affinity": {"family": 1.0},
+                "recent_keyword_affinity": {"family": 0.9},
+                "phase_studio_affinity": {"pixar": 1.0},
+                "recent_studio_affinity": {"pixar": 0.9},
+                "phase_certification_affinity": {"PG": 1.0},
+                "recent_certification_affinity": {"PG": 0.9},
+                "phase_runtime_bucket_affinity": {"90_109": 1.0},
+                "recent_runtime_bucket_affinity": {"90_109": 0.9},
+                "phase_decade_affinity": {"2020s": 0.8},
+                "recent_decade_affinity": {"2020s": 0.8},
+                "comfort_library_affinity": {
+                    "keywords": {"family": 1.0},
+                    "collections": {},
+                    "studios": {"pixar": 1.0},
+                    "genres": {"animation": 0.9},
+                    "directors": {},
+                    "lead_cast": {},
+                    "certifications": {"PG": 1.0},
+                    "runtime_buckets": {"90_109": 1.0},
+                    "decades": {"2020s": 0.8},
+                },
+                "comfort_rewatch_affinity": {
+                    "keywords": {"family": 1.0},
+                    "collections": {},
+                    "studios": {"pixar": 1.0},
+                    "genres": {"animation": 0.9},
+                    "directors": {},
+                    "lead_cast": {},
+                    "certifications": {"PG": 1.0},
+                    "runtime_buckets": {"90_109": 1.0},
+                    "decades": {"2020s": 0.8},
+                },
+            },
+            use_movie_rewatch_model=True,
+        )
+        row = RowResult(
+            key="comfort_rewatches",
+            title="Comfort Rewatches",
+            mission="Comfort",
+            why="Past favorites that feel ready to revisit again.",
+            source="local",
+            items=[],
+            debug_payload=_build_comfort_debug_payload(reranked, top_n=1),
+        )
+
+        content = render_to_string(
+            "app/components/discover_row.html",
+            {
+                "row": row,
+                "discover_debug": True,
+                "show_more": False,
+                "selected_media_type": MediaTypes.MOVIE.value,
+                "user": self.user,
+            },
+        )
+
+        self.assertIn("last-watch-days", content)
+        self.assertIn("median-repeat-gap", content)
+        self.assertIn("recent-90", content)
+        self.assertNotIn("title-days", content)
 
     @patch("app.discover.service._is_holiday_window", return_value=False)
     def test_movie_behavior_first_applies_keyword_holiday_penalty_out_of_season(self, _mock_window):
@@ -4821,7 +4960,7 @@ class DiscoverServiceTests(TestCase):
             encanto.score_breakdown["ready_now_score"],
         )
 
-    def test_movie_comfort_confidence_softens_cooldown_for_bursty_title_repeats(self):
+    def test_movie_comfort_confidence_penalizes_bursty_recent_density_once_titles_are_eligible(self):
         bursty_item = Item.objects.create(
             media_id="burst-title",
             source=Sources.TMDB.value,
@@ -4852,7 +4991,7 @@ class DiscoverServiceTests(TestCase):
         )
 
         with patch("app.models.providers.services.get_media_metadata", return_value={"max_progress": 1}):
-            for days_ago in (4, 11, 20):
+            for days_ago in (35, 50, 70):
                 Movie.objects.create(
                     item=bursty_item,
                     user=self.user,
@@ -4860,7 +4999,7 @@ class DiscoverServiceTests(TestCase):
                     status=Status.COMPLETED.value,
                     end_date=timezone.now() - timedelta(days=days_ago),
                 )
-            for days_ago in (4, 140, 280):
+            for days_ago in (35, 170, 320):
                 Movie.objects.create(
                     item=steady_item,
                     user=self.user,
@@ -4886,7 +5025,7 @@ class DiscoverServiceTests(TestCase):
                 rating_count=5000,
                 score_breakdown={
                     "user_score": 8.0,
-                    "days_since_activity": 4.0,
+                    "days_since_activity": 35.0,
                     "rewatch_count": 3.0,
                 },
             ),
@@ -4906,7 +5045,7 @@ class DiscoverServiceTests(TestCase):
                 rating_count=5000,
                 score_breakdown={
                     "user_score": 8.0,
-                    "days_since_activity": 4.0,
+                    "days_since_activity": 35.0,
                     "rewatch_count": 3.0,
                 },
             ),
@@ -4959,16 +5098,22 @@ class DiscoverServiceTests(TestCase):
         bursty = next(candidate for candidate in reranked if candidate.media_id == "burst-title")
         steady = next(candidate for candidate in reranked if candidate.media_id == "steady-title")
         self.assertGreater(
-            bursty.score_breakdown["burst_replay_allowance"],
-            steady.score_breakdown["burst_replay_allowance"],
+            bursty.score_breakdown["title_saturation_penalty"],
+            steady.score_breakdown["title_saturation_penalty"],
         )
         self.assertLess(
-            bursty.score_breakdown["cooldown_penalty"],
-            steady.score_breakdown["cooldown_penalty"],
+            bursty.score_breakdown["saturation_multiplier"],
+            steady.score_breakdown["saturation_multiplier"],
         )
         self.assertGreater(
-            bursty.score_breakdown["ready_now_score"],
-            steady.score_breakdown["ready_now_score"],
+            bursty.score_breakdown["recent_play_count_90d"],
+            steady.score_breakdown["recent_play_count_90d"],
+        )
+        self.assertEqual(bursty.score_breakdown["burst_replay_allowance"], 0.0)
+        self.assertEqual(steady.score_breakdown["burst_replay_allowance"], 0.0)
+        self.assertLess(
+            bursty.final_score,
+            steady.final_score,
         )
 
     @patch("app.discover.service._is_holiday_window", return_value=False)
