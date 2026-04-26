@@ -5,6 +5,7 @@ from unittest.mock import call, patch
 from dateutil.relativedelta import relativedelta
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.db.utils import OperationalError
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -186,6 +187,19 @@ class StatisticsViewTests(TestCase):
         )
 
         self.assertTrue(date_is_none)
+
+    @patch("users.models.CustomUser.update_preference")
+    def test_statistics_view_handles_preference_save_operational_error(self, mock_update_preference):
+        """Statistics view should render fallback context when preference save hits sqlite lock."""
+        mock_update_preference.side_effect = OperationalError("database is locked")
+
+        response = self.client.get(
+            reverse("statistics")
+            + "?start-date=2026-01-01&end-date=2026-04-25&compare=none",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["database_error"])
 
     def test_statistics_view_defaults_to_previous_period_comparison(self):
         """Finite statistics ranges default to previous-period comparisons."""

@@ -1855,7 +1855,7 @@
       </div>
 
       {% with talent=top_talent %}
-      {% with talent_sort=request.user.top_talent_sort_by|default:talent.sort_by|default:'plays' %}
+      {% with talent_sort=request.user.top_talent_sort_by|default:'plays' %}
       {% if talent.top_actors or talent.top_actresses or talent.top_directors or talent.top_writers or talent.top_studios %}
       <section class="bg-[#2a2f35] rounded-lg p-6 mobile-tight-section stat-scroll-safe mb-4 sm:mb-8 space-y-8"
                x-data="{
