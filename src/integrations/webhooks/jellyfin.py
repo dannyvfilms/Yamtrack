@@ -60,12 +60,71 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
         Feature #2 (match existing) > Feature #1 (preferred source) > Fallback (TMDB)
     """
 
+    def _resolve_tvdb_episode_to_show(self, media_type, ids):
+        """Resolve TVDB episode ID to show-level TMDB/TVDB IDs if needed.
+        
+        Jellyfin may send a TVDB episode ID instead of a show ID for TV series.
+        This function converts episode-level IDs to show-level IDs by:
+        1. Using the base class _find_tv_media_id() to resolve to TMDB show ID
+        2. Then calling TMDB's external_ids() to get the show-level TVDB ID
+        """
+        if media_type != MediaTypes.TV.value:
+            return ids
+        
+        tvdb_episode_id = ids.get("tvdb_id")
+        imdb_episode_id = ids.get("imdb_id")
+        
+        if not tvdb_episode_id and not imdb_episode_id:
+            return ids
+        
+        # Build a copy to avoid modifying the original dict
+        resolved_ids = dict(ids)
+        
+        # Try to resolve episode-level TVDB ID to TMDB show ID
+        if tvdb_episode_id:
+            logger.info(
+                "_resolve_tvdb_episode_to_show: Resolving TVDB episode ID %s to show ID",
+                tvdb_episode_id,
+            )
+            tmdb_show_id, _, _ = self._find_tv_media_id(resolved_ids)
+            
+            if tmdb_show_id:
+                # Step 1: Update resolved IDs to use TMDB show ID instead
+                resolved_ids["tmdb_id"] = str(tmdb_show_id)
+                
+                # Step 2: Get show-level TVDB ID from TMDB external_ids endpoint
+                try:
+                    ext_data = app.providers.tmdb.external_ids(
+                        MediaTypes.TV.value,
+                        tmdb_show_id,
+                    )
+                    if ext_data and isinstance(ext_data, dict):
+                        show_tvdb_id = ext_data.get("tvdb_id")
+                        if show_tvdb_id:
+                            resolved_ids["tvdb_id"] = str(show_tvdb_id)
+                            logger.info(
+                                "_resolve_tvdb_episode_to_show: Resolved TVDB episode %s -> show %s -> TVDB show %s",
+                                tvdb_episode_id,
+                                tmdb_show_id,
+                                show_tvdb_id,
+                            )
+                except Exception as exc:
+                    logger.warning(
+                        "_resolve_tvdb_episode_to_show: Failed to resolve TVDB episode ID %s: %s",
+                        tvdb_episode_id,
+                        exc,
+                    )
+        # If we only have an IMDB episode ID, the existing _find_existing_item
+        # logic will handle it when looking up the item
+        return resolved_ids
+
     def process_payload(self, payload, user):
         """Process the incoming Jellyfin webhook payload."""
         logger.info(
             "Processing Jellyfin webhook payload: %s",
             payload,
         )
+
         logger.debug(
             "Processing Jellyfin webhook payload keys=%s item_keys=%s",
             mapping_keys(payload),
@@ -79,14 +138,15 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
             return
 
         ids = self._extract_external_ids(payload)
+        media_type = self._get_media_type(payload)
+
         logger.info(
             "Extracted Jellyfin IDs from payload: %s",
             ids,
         )
-        logger.info(
-            "Extracted Jellyfin ID presence from payload: %s",
-            presence_map(ids, ("tmdb_id", "imdb_id", "tvdb_id")),
-        )
+
+        # Resolve TVDB episode IDs to show-level IDs before logging
+        ids = self._resolve_tvdb_episode_to_show(media_type, ids)
 
         # Update live playback state (before media tracking)
         playback_media_type = self._get_live_playback_media_type(payload)
@@ -186,12 +246,6 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
         Only returns items where the user has a tracking instance with a
         status (Completed, In progress, Planning, Paused, or Dropped).
 
-        For TV shows, if the webhook passes a TVDB/IMDB episode-level ID this
-        method resolves it to a show-level TMDB ID first (via the base-class
-        ``_find_tv_media_id`` helper), then calls the TMDB provider's
-        ``external_ids`` endpoint using that TMDB show ID to retrieve the
-        corresponding show-level TVDB ID.
-
         All resolved show IDs (TMDB, TVDB, MAL) are tried against every
         tracking source so that a webhook carrying e.g. a TVDB ID can still
         match an item originally tracked under MAL or TMDB.
@@ -221,38 +275,7 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
                 return TV.objects.filter(item=item_, user=user).exists()
             return False
 
-        # --- Resolve episode-level IDs to show-level IDs -----------------
-        # Jellyfin may send a TVDB/IMDB episode ID instead of a show-level ID.
-        # Step 1: Resolve to TMDB show ID first (using base class helpers).
-        # Step 2: Use TMDB show ID to call external_ids() to get show-level TVDB ID.
         resolved_ids = dict(ids)
-        if media_type == MediaTypes.TV.value and (ids.get("tvdb_id") or ids.get("imdb_id")):
-            # Resolve TVDB/IMDB episode IDs -> TMDB show ID via base class
-            tmdb_show_id, _, _ = self._find_tv_media_id(resolved_ids)
-            if tmdb_show_id:
-                resolved_ids["tmdb_id"] = str(tmdb_show_id)
-                logger.info(
-                    "_find_existing_item: resolved TV show ID via _find_tv_media_id -> TMDB=%s",
-                    tmdb_show_id,
-                )
-                # Step 2: Get show-level TVDB ID from TMDB external_ids
-                try:
-                    ext_data = app.providers.tmdb.external_ids(MediaTypes.TV.value, tmdb_show_id)
-                    if ext_data and isinstance(ext_data, dict):
-                        show_tvdb_id = ext_data.get("tvdb_id")
-                        if show_tvdb_id:
-                            resolved_ids["tvdb_id"] = str(show_tvdb_id)
-                            logger.info(
-                                "_find_existing_item: resolved TMDB show %s -> TVDB show ID %s",
-                                tmdb_show_id,
-                                show_tvdb_id,
-                            )
-                except Exception as exc:
-                    logger.warning(
-                        "_find_existing_item: failed to fetch external_ids for TMDB show %s: %s",
-                        tmdb_show_id,
-                        exc,
-                    )
 
         # --- Direct lookups by known fields on Item ----------------------
         # Try ALL show IDs (TMDB, TVDB, MAL) against ALL tracking sources.
@@ -506,14 +529,9 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
         whether the user's preferred provider has a matching ID in the webhook
         payload.  If found, the item is tracked under that provider.
 
-        For TV shows, if the webhook passes an episode-level TVDB/IMDB ID this
-        method resolves it to a **show-level** ID by:
-        1. Using the base-class ``_find_tv_media_id`` to resolve to a TMDB show ID
-        2. Calling ``tmdb.external_ids()`` with that TMDB show ID to get the
-           corresponding show-level TVDB ID
-
-        The returned ``source`` reflects **which provider supplied the final ID**,
-        so items are tracked under the correct identity provider.
+        Note: Episode-level TVDB/IMDB IDs are resolved to show-level IDs
+        in ``_resolve_tvdb_episode_to_show()`` before this method is called,
+        so this function only handles show-level IDs.
 
         Returns ``(None, None, None, None)`` when the setting is disabled or when
         no matching ID was found — signalling that fallback (normal TMDB-first)
@@ -532,63 +550,14 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
             logger.info("_resolve_media_id_to_preferred_source: no preferred source, returning None")
             return None, None, None, None
 
-        raw_ext_id = ids.get(f"{preferred}_id")
-        logger.info("_resolve_media_id_to_preferred_source: preferred=%s, raw_ext_id=%s", preferred, raw_ext_id)
-        if not raw_ext_id:
-            logger.info("_resolve_media_id_to_preferred_source: no ID for preferred source, returning None")
+        media_id = ids.get(f"{preferred}_id")
+        if not media_id:
+            logger.info("_resolve_media_id_to_preferred_source: no ID for preferred source (%s), returning None", preferred)
             return None, None, None, None
-
-        # For TV shows with TVDB preferred source, resolve episode-level IDs
-        # to show-level IDs via TMDB.
-        resolved_id = raw_ext_id
-        if media_type == MediaTypes.TV.value and preferred == Sources.TVDB.value and (ids.get("tvdb_id") or ids.get("imdb_id")):
-            logger.info(
-                "_resolve_media_id_to_preferred_source: resolving TVDB episode ID %s to show-level ID",
-                raw_ext_id,
-            )
-            # Step 1: Resolve TVDB/IMDB → TMDB show ID via base class helper
-            tmdb_show_id, _, _ = self._find_tv_media_id(ids)
-            if tmdb_show_id:
-                logger.info(
-                    "_resolve_media_id_to_preferred_source: resolved to TMDB show ID %s",
-                    tmdb_show_id,
-                )
-                # Step 2: Use TMDB external_ids to get show-level TVDB ID
-                try:
-                    ext_data = app.providers.tmdb.external_ids(MediaTypes.TV.value, tmdb_show_id)
-                    if ext_data and isinstance(ext_data, dict):
-                        show_tvdb_id = ext_data.get("tvdb_id")
-                        if show_tvdb_id:
-                            resolved_id = str(show_tvdb_id)
-                            logger.info(
-                                "_resolve_media_id_to_preferred_source: resolved TMDB show %s -> TVDB show ID %s",
-                                tmdb_show_id,
-                                show_tvdb_id,
-                            )
-                        else:
-                            logger.warning(
-                                "_resolve_media_id_to_preferred_source: no tvdb_id in external_ids response for TMDB show %s",
-                                tmdb_show_id,
-                            )
-                    else:
-                        logger.warning(
-                            "_resolve_media_id_to_preferred_source: empty external_ids response for TMDB show %s",
-                            tmdb_show_id,
-                        )
-                except Exception as exc:
-                    logger.warning(
-                        "_resolve_media_id_to_preferred_source: failed to fetch external_ids for TMDB show %s: %s",
-                        tmdb_show_id,
-                        exc,
-                    )
-            else:
-                logger.warning(
-                    "_resolve_media_id_to_preferred_source: could not resolve TVDB ID %s to TMDB show ID",
-                    raw_ext_id,
-                )
+        logger.info("_resolve_media_id_to_preferred_source: preferred=%s, media_id=%s", preferred, media_id)
 
         try:
-            result = str(resolved_id), preferred, season_number, episode_number
+            result = str(media_id), preferred, season_number, episode_number
             logger.info("_resolve_media_id_to_preferred_source: resolved to %s", result)
             return result
         except Exception as exc:
