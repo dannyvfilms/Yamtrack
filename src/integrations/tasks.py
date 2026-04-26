@@ -42,6 +42,11 @@ from integrations.plex_watchlist import PlexWatchlistSyncService
 
 logger = logging.getLogger(__name__)
 ERROR_TITLE = "\n\n\n Couldn't import the following media: \n\n"
+GOODREADS_IMPORT_TASK_NAME = "Import from Goodreads"
+LEGACY_GOODREADS_IMPORT_TASK_NAMES = (
+    "Import from GoodReads",
+    "integrations.tasks.import_goodreads",
+)
 
 
 def _is_expected_plex_lookup_error(exc):
@@ -298,10 +303,27 @@ def import_imdb(file, user_id, mode):
     return import_media(imdb.importer, _coerce_uploaded_file(file), user_id, mode)
 
 
-@shared_task(name="Import from GoodReads")
-def import_goodreads(file, user_id, mode):
-    """Celery task for importing media data from GoodReads."""
+def _run_goodreads_import(file, user_id, mode):
+    """Execute the Goodreads CSV import for any registered task alias."""
     return import_media(goodreads.importer, _coerce_uploaded_file(file), user_id, mode)
+
+
+@shared_task(name=GOODREADS_IMPORT_TASK_NAME)
+def import_goodreads(file, user_id, mode):
+    """Celery task for importing media data from Goodreads."""
+    return _run_goodreads_import(file, user_id, mode)
+
+
+@shared_task(name=LEGACY_GOODREADS_IMPORT_TASK_NAMES[0])
+def import_goodreads_legacy(file, user_id, mode):
+    """Compatibility alias for the legacy Goodreads task name."""
+    return _run_goodreads_import(file, user_id, mode)
+
+
+@shared_task(name=LEGACY_GOODREADS_IMPORT_TASK_NAMES[1])
+def import_goodreads_dotted(file, user_id, mode):
+    """Compatibility alias for dotted Goodreads task references."""
+    return _run_goodreads_import(file, user_id, mode)
 
 
 @shared_task(name="Import from Hardcover")

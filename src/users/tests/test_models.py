@@ -594,6 +594,41 @@ class UserGetImportTasksTests(TestCase):
         mock_process_task_result.assert_called_once()
 
     @patch("users.helpers.process_task_result")
+    def test_get_import_tasks_maps_goodreads_legacy_and_canonical_results(
+        self,
+        mock_process_task_result,
+    ):
+        """Goodreads results should map correctly across supported task names."""
+        processed_task = MagicMock()
+        processed_task.summary = "Imported 2 books."
+        processed_task.errors = None
+        mock_process_task_result.return_value = processed_task
+
+        task_names = [
+            "Import from Goodreads",
+            "Import from GoodReads",
+            "integrations.tasks.import_goodreads",
+        ]
+        for index, task_name in enumerate(task_names):
+            TaskResult.objects.create(
+                task_id=f"task-goodreads-{index}",
+                task_name=task_name,
+                task_kwargs=(f'{{"user_id": {self.user.id}}}'),
+                status="SUCCESS",
+                date_done=timezone.now() + timedelta(minutes=index),
+                result='"Imported 2 books."',
+            )
+
+        import_tasks = self.user.get_import_tasks()
+
+        self.assertEqual(len(import_tasks["results"]), 3)
+        self.assertEqual(
+            [result["source"] for result in import_tasks["results"]],
+            ["goodreads", "goodreads", "goodreads"],
+        )
+        self.assertEqual(mock_process_task_result.call_count, 3)
+
+    @patch("users.helpers.process_task_result")
     def test_get_import_tasks_maps_lastfm_history_results(self, mock_process_task_result):
         """Last.fm history task results should appear under the Last.fm source."""
         mock_task = MagicMock()

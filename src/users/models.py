@@ -1275,7 +1275,11 @@ class User(AbstractUser):
             "hltb": ["Import from HowLongToBeat"],
             "steam": ["Import from Steam"],
             "imdb": ["Import from IMDB"],
-            "goodreads": ["Import from GoodReads"],
+            "goodreads": [
+                "Import from Goodreads",
+                "Import from GoodReads",
+                "integrations.tasks.import_goodreads",
+            ],
             "plex": ["Import from Plex", "Sync Plex Watchlist"],
             "radarr": ["Import from Radarr"],
             "sonarr": ["Import from Sonarr"],

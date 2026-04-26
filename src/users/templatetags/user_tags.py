@@ -54,7 +54,7 @@ SOURCES_CONFIG = {
         "logo": static("img/steam-logo.ico"),
     },
     "goodreads": {
-        "name": "GoodReads",
+        "name": "Goodreads",
         "logo": static("img/logo-goodreads.svg"),
     },
     "plex": {

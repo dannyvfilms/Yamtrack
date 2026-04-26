@@ -87,6 +87,38 @@ class ServicesTests(TestCase):
         self.assertIsNone(cm.exception.status_code)
         self.assertIn("Could not reach", str(cm.exception))
 
+    @patch("app.providers.services.time.sleep")
+    @patch("app.providers.services.session.get")
+    def test_api_request_retries_transient_http_errors(
+        self,
+        mock_get,
+        mock_sleep,
+    ):
+        """Transient upstream 5xx responses should be retried before failing."""
+        failed_response = MagicMock()
+        failed_response.status_code = 502
+        failed_response.headers = {}
+        failed_response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+            "502 Bad Gateway",
+            response=failed_response,
+        )
+
+        successful_response = MagicMock()
+        successful_response.raise_for_status.return_value = None
+        successful_response.json.return_value = {"data": "retry_success"}
+
+        mock_get.side_effect = [failed_response, successful_response]
+
+        result = services.api_request(
+            Sources.TMDB.value,
+            "GET",
+            "https://example.com/api",
+        )
+
+        self.assertEqual(result, {"data": "retry_success"})
+        self.assertEqual(mock_get.call_count, 2)
+        mock_sleep.assert_called_once_with(1)
+
     @patch("app.providers.services.api_request")
     def test_request_error_handling_rate_limit(self, mock_api_request):
         """Test the request_error_handling function with rate limiting."""
@@ -158,6 +190,31 @@ class ServicesTests(TestCase):
             tmdb.handle_error(error)
 
         self.assertEqual(cm.exception.provider, Sources.TMDB.value)
+
+    @patch("app.providers.tmdb.logger.exception")
+    def test_handle_error_tmdb_non_json_server_error_skips_decode_traceback(
+        self,
+        mock_logger_exception,
+    ):
+        """TMDB 5xx HTML bodies should raise provider errors without JSON tracebacks."""
+        mock_response = MagicMock()
+        mock_response.status_code = 502
+        mock_response.headers = {}
+        mock_response.text = "<html>Bad Gateway</html>"
+        mock_response.json.side_effect = requests.exceptions.JSONDecodeError(
+            "Expecting value",
+            "",
+            0,
+        )
+
+        error = requests.exceptions.HTTPError("502 Bad Gateway")
+        error.response = mock_response
+
+        with self.assertRaises(services.ProviderAPIError) as cm:
+            tmdb.handle_error(error)
+
+        self.assertEqual(cm.exception.provider, Sources.TMDB.value)
+        mock_logger_exception.assert_not_called()
 
     def test_handle_error_mal_forbidden(self):
         """Test the handle_error function with MAL forbidden error."""

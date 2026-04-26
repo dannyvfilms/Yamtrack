@@ -1394,11 +1394,11 @@ def import_imdb(request):
 
 @require_POST
 def import_goodreads(request):
-    """View for importing books data from GoodReads CSV."""
+    """View for importing books data from Goodreads CSV."""
     file = request.FILES.get("goodreads_csv")
 
     if not file:
-        messages.error(request, "GoodReads CSV file is required.")
+        messages.error(request, "Goodreads CSV file is required.")
         return redirect("import_data")
 
     mode = request.POST["mode"]
@@ -1409,7 +1409,7 @@ def import_goodreads(request):
     )
     messages.info(
         request,
-        "The task to import media from GoodReads CSV file has been queued.",
+        "The task to import media from Goodreads CSV file has been queued.",
     )
     return redirect("import_data")
 

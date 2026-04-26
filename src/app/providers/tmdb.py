@@ -29,15 +29,15 @@ def handle_error(error):
     error_resp = error.response
     status_code = error_resp.status_code
 
-    try:
-        error_json = error_resp.json()
-    except requests.exceptions.JSONDecodeError as json_error:
-        logger.exception("Failed to decode JSON response")
-        raise services.ProviderAPIError(Sources.TMDB.value, error) from json_error
-
     # Handle authentication errors
     if status_code == requests.codes.unauthorized:
-        details = error_json.get("status_message")
+        error_json = None
+        try:
+            error_json = error_resp.json()
+        except requests.exceptions.JSONDecodeError:
+            error_json = None
+
+        details = error_json.get("status_message") if isinstance(error_json, dict) else None
         if details:
             # Remove trailing period if present
             details = details.rstrip(".")
