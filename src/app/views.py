@@ -10359,18 +10359,6 @@ _MONTH_CACHE_UNSUPPORTED_FILTER_KEYS = frozenset(
         "tv",
     },
 )
-_MONTH_CACHE_DIRECT_ITEM_MEDIA_TYPES = frozenset(
-    {
-        MediaTypes.BOOK.value,
-        MediaTypes.BOARDGAME.value,
-        MediaTypes.COMIC.value,
-        MediaTypes.GAME.value,
-        MediaTypes.MANGA.value,
-        MediaTypes.MOVIE.value,
-        MediaTypes.MUSIC.value,
-        MediaTypes.PODCAST.value,
-    },
-)
 
 
 def _can_use_cached_month_history(
@@ -10386,15 +10374,8 @@ def _can_use_cached_month_history(
         return False
     if any(key in filters for key in _MONTH_CACHE_UNSUPPORTED_FILTER_KEYS):
         return False
-
-    target_media_id = filters.get("media_id")
-    target_source = filters.get("source")
-    media_type_filter = filters.get("media_type")
-    if target_media_id or target_source:
-        if not target_media_id or not target_source:
-            return False
-        if media_type_filter not in _MONTH_CACHE_DIRECT_ITEM_MEDIA_TYPES:
-            return False
+    if filters.get("media_id") or filters.get("source"):
+        return False
 
     return True
 

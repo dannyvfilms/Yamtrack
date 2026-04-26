@@ -325,6 +325,123 @@ class HistoryMonthViewTests(TestCase):
         self.assertNotContains(response, "Month View Episode")
         self.assertContains(response, "media_type=movie", html=False)
 
+    def _create_movie_history(self, item, older_played_at, newer_played_at):
+        Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            start_date=older_played_at,
+            end_date=older_played_at,
+        )
+        Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            start_date=newer_played_at,
+            end_date=newer_played_at,
+        )
+
+    def _create_game_history(self, item, older_played_at, newer_played_at):
+        Game.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=120,
+            start_date=older_played_at - timedelta(hours=2),
+            end_date=older_played_at,
+        )
+        Game.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=90,
+            start_date=newer_played_at - timedelta(hours=1),
+            end_date=newer_played_at,
+        )
+
+    def _create_book_history(self, item, older_played_at, newer_played_at):
+        Book.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=320,
+            start_date=older_played_at - timedelta(days=4),
+            end_date=older_played_at,
+        )
+        Book.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=280,
+            start_date=newer_played_at - timedelta(days=3),
+            end_date=newer_played_at,
+        )
+
+    def test_item_filtered_history_shows_full_cross_month_history(self):
+        older_played_at = timezone.now() - timedelta(days=40)
+        newer_played_at = timezone.now()
+        scenarios = [
+            {
+                "media_type": MediaTypes.MOVIE.value,
+                "media_id": "cross-month-movie",
+                "title": "Cross Month Movie",
+                "create_entries": self._create_movie_history,
+                "params": {},
+            },
+            {
+                "media_type": MediaTypes.GAME.value,
+                "media_id": "cross-month-game",
+                "title": "Cross Month Game",
+                "create_entries": self._create_game_history,
+                "params": {"logging_style": "sessions"},
+            },
+            {
+                "media_type": MediaTypes.BOOK.value,
+                "media_id": "cross-month-book",
+                "title": "Cross Month Book",
+                "create_entries": self._create_book_history,
+                "params": {},
+            },
+        ]
+
+        for scenario in scenarios:
+            with self.subTest(media_type=scenario["media_type"]):
+                item = Item.objects.create(
+                    media_id=scenario["media_id"],
+                    source=Sources.MANUAL.value,
+                    media_type=scenario["media_type"],
+                    title=scenario["title"],
+                    image=f"http://example.com/{scenario['media_id']}.jpg",
+                )
+                scenario["create_entries"](item, older_played_at, newer_played_at)
+
+                response = self.client.get(
+                    reverse("history"),
+                    {
+                        "media_type": scenario["media_type"],
+                        "media_id": item.media_id,
+                        "source": item.source,
+                        **scenario["params"],
+                    },
+                )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertFalse(response.context["use_month_view"])
+                self.assertEqual(
+                    sum(len(day.get("entries", [])) for day in response.context["history_days"]),
+                    2,
+                )
+                self.assertEqual(
+                    {
+                        entry["title"]
+                        for day in response.context["history_days"]
+                        for entry in day.get("entries", [])
+                    },
+                    {scenario["title"]},
+                )
+
 
 class MusicScoreHistoryInvalidationTests(TestCase):
     """Test that music score edits invalidate only affected history days."""

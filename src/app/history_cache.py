@@ -631,6 +631,12 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
     podcast_show_filter = filters.get('podcast_show')
     person_source_filter = filters.get("person_source")
     person_id_filter = filters.get("person_id")
+    reading_media_types = {
+        MediaTypes.BOOK.value,
+        MediaTypes.COMIC.value,
+        MediaTypes.MANGA.value,
+    }
+    has_reading_media_type_filter = media_type_filter in reading_media_types
     if target_media_id is not None:
         target_media_id = str(target_media_id)
     if target_source is not None:
@@ -1054,107 +1060,101 @@ def build_history_days(user, filters=None, date_filters=None, logging_style_over
             entry_counts["movies"] += 1
 
     # Author-filtered reading history support:
-    # include only book/comic/manga entries credited to the selected author.
-    if has_person_filter:
-        credited_reading_item_ids = set(
-            ItemPersonCredit.objects.filter(
-                role_type=CreditRoleType.AUTHOR.value,
-                person__source=person_source_filter,
-                person__source_person_id=person_id_filter,
-                item__media_type__in=(
-                    MediaTypes.BOOK.value,
-                    MediaTypes.COMIC.value,
-                    MediaTypes.MANGA.value,
-                ),
-            ).values_list("item_id", flat=True),
-        )
+    # include book/comic/manga entries when explicitly filtering to them, and
+    # keep author-filtered reading history support.
+    if has_person_filter or has_reading_media_type_filter:
+        credited_reading_item_ids = None
+        if has_person_filter:
+            credited_reading_item_ids = set(
+                ItemPersonCredit.objects.filter(
+                    role_type=CreditRoleType.AUTHOR.value,
+                    person__source=person_source_filter,
+                    person__source_person_id=person_id_filter,
+                    item__media_type__in=tuple(reading_media_types),
+                ).values_list("item_id", flat=True),
+            )
 
-        if credited_reading_item_ids:
-            reading_qs = {
-                MediaTypes.BOOK.value: Book.objects.filter(
-                    user=user,
-                    item_id__in=credited_reading_item_ids,
-                    item__media_type=MediaTypes.BOOK.value,
-                ).select_related("item"),
-                MediaTypes.COMIC.value: Comic.objects.filter(
-                    user=user,
-                    item_id__in=credited_reading_item_ids,
-                    item__media_type=MediaTypes.COMIC.value,
-                ).select_related("item"),
-                MediaTypes.MANGA.value: Manga.objects.filter(
-                    user=user,
-                    item_id__in=credited_reading_item_ids,
-                    item__media_type=MediaTypes.MANGA.value,
-                ).select_related("item"),
-            }
+        reading_model_map = {
+            MediaTypes.BOOK.value: Book,
+            MediaTypes.COMIC.value: Comic,
+            MediaTypes.MANGA.value: Manga,
+        }
+        for reading_media_type, model in reading_model_map.items():
+            if media_type_filter and media_type_filter != reading_media_type:
+                continue
 
-            for reading_media_type, queryset in reading_qs.items():
-                if media_type_filter and media_type_filter != reading_media_type:
+            queryset = model.objects.filter(
+                user=user,
+                item__media_type=reading_media_type,
+            ).select_related("item")
+            if credited_reading_item_ids is not None:
+                if not credited_reading_item_ids:
                     continue
-                if target_media_id and target_source and media_type_filter == reading_media_type:
-                    queryset = queryset.filter(
-                        item__media_id=target_media_id,
-                        item__source=target_source,
-                    )
-                if start_date:
-                    queryset = queryset.filter(
-                        models.Q(end_date__gte=start_date)
-                        | (
-                            models.Q(end_date__isnull=True)
-                            & models.Q(start_date__gte=start_date)
-                        ),
-                    )
-                if end_date:
-                    queryset = queryset.filter(
-                        models.Q(end_date__lte=end_date)
-                        | (
-                            models.Q(end_date__isnull=True)
-                            & models.Q(start_date__lte=end_date)
-                        ),
-                    )
+                queryset = queryset.filter(item_id__in=credited_reading_item_ids)
+            if target_media_id and target_source and media_type_filter == reading_media_type:
                 queryset = queryset.filter(
-                    models.Q(start_date__isnull=False) | models.Q(end_date__isnull=False),
-                ).order_by("-end_date", "-start_date", "-created_at")
+                    item__media_id=target_media_id,
+                    item__source=target_source,
+                )
+            if start_date:
+                queryset = queryset.filter(
+                    models.Q(end_date__gte=start_date)
+                    | (
+                        models.Q(end_date__isnull=True)
+                        & models.Q(start_date__gte=start_date)
+                    ),
+                )
+            if end_date:
+                queryset = queryset.filter(
+                    models.Q(end_date__lte=end_date)
+                    | (
+                        models.Q(end_date__isnull=True)
+                        & models.Q(start_date__lte=end_date)
+                    ),
+                )
+            queryset = queryset.filter(
+                models.Q(start_date__isnull=False) | models.Q(end_date__isnull=False),
+            ).order_by("-end_date", "-start_date", "-created_at")
 
-                for reading_entry in queryset:
-                    item = getattr(reading_entry, "item", None)
-                    if not item:
-                        continue
-                    if genre_filter and not matches_item_genre(item):
-                        continue
-                    played_at_local = _localize_datetime(
-                        reading_entry.end_date
-                        or reading_entry.start_date
-                        or reading_entry.created_at,
-                    )
-                    if not played_at_local:
-                        continue
+            for reading_entry in queryset:
+                item = getattr(reading_entry, "item", None)
+                if not item:
+                    continue
+                if genre_filter and not matches_item_genre(item):
+                    continue
+                played_at_local = _localize_datetime(
+                    reading_entry.end_date
+                    or reading_entry.start_date
+                    or reading_entry.created_at,
+                )
+                if not played_at_local:
+                    continue
 
-                    entry = {
-                        "media_type": item.media_type,
-                        "item": _serialize_item(item),
-                        "poster": item.image or settings.IMG_NONE,
-                        "title": item.title,
-                        "display_title": item.title,
-                        "episode_label": None,
-                        "episode_code": None,
-                        "played_at_local": played_at_local,
-                        "runtime_minutes": 0,
-                        "runtime_display": None,
-                        "instance_id": reading_entry.id,
-                        "entry_key": f"{item.media_type}-{reading_entry.id}",
-                    }
-                    _attach_entry_score(entry, reading_entry)
-                    genres = _resolve_genres(item)
-                    if genres:
-                        entry["genres"] = genres
-                    entries.append(entry)
-                    if item.media_type == MediaTypes.BOOK.value:
-                        entry_counts["books"] += 1
-                    elif item.media_type == MediaTypes.COMIC.value:
-                        entry_counts["comics"] += 1
-                    elif item.media_type == MediaTypes.MANGA.value:
-                        entry_counts["manga"] += 1
+                entry = {
+                    "media_type": item.media_type,
+                    "item": _serialize_item(item),
+                    "poster": item.image or settings.IMG_NONE,
+                    "title": item.title,
+                    "display_title": item.title,
+                    "episode_label": None,
+                    "episode_code": None,
+                    "played_at_local": played_at_local,
+                    "runtime_minutes": 0,
+                    "runtime_display": None,
+                    "instance_id": reading_entry.id,
+                    "entry_key": f"{item.media_type}-{reading_entry.id}",
+                }
+                _attach_entry_score(entry, reading_entry)
+                genres = _resolve_genres(item)
+                if genres:
+                    entry["genres"] = genres
+                entries.append(entry)
+                if item.media_type == MediaTypes.BOOK.value:
+                    entry_counts["books"] += 1
+                elif item.media_type == MediaTypes.COMIC.value:
+                    entry_counts["comics"] += 1
+                elif item.media_type == MediaTypes.MANGA.value:
+                    entry_counts["manga"] += 1
 
     # Process music entries (always process if filtering by music, or if processing all)
     if process_all or has_music_filter or media_type_filter == MediaTypes.MUSIC.value:
