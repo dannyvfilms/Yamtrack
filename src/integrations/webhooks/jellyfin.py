@@ -148,6 +148,13 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
         # Resolve TVDB episode IDs to show-level IDs before logging
         ids = self._resolve_tvdb_episode_to_show(media_type, ids)
 
+        # Update payload ProviderIds with resolved IDs
+        payload["Item"]["ProviderIds"] = {
+            "Tmdb": ids.get("tmdb_id", ""),
+            "Imdb": ids.get("imdb_id", ""),
+            "Tvdb": ids.get("tvdb_id", ""),
+        }
+
         # Update live playback state (before media tracking)
         playback_media_type = self._get_live_playback_media_type(payload)
         self._update_live_playback_state(
