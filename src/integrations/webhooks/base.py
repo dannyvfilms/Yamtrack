@@ -536,7 +536,7 @@ class BaseWebhookProcessor:
         else:
             logger.warning("No TMDB or IMDB ID found for movie, skipping processing")
 
-    def _find_tv_media_id(self, ids):
+    def _find_tv_media_id(self, ids, prioritize_type=MediaTypes.EPISODE.value) -> tuple[int|None, int|None, int|None]:
         """Find TV media ID from external IDs."""
         logger.info("_find_tv_media_id: ids=%s", ids)
         # Prioritize TVDB/IMDB lookups as they can properly resolve episode IDs via TMDB's find API
@@ -549,16 +549,19 @@ class BaseWebhookProcessor:
                 logger.info("_find_tv_media_id: looking up %s=%s via TMDB.find", ext_type, ext_id)
                 response = app.providers.tmdb.find(ext_id, ext_type)
                 logger.info("_find_tv_media_id: TMDB.find response keys=%s", list(response.keys()))
-                # Check for episode-level results first
-                if response.get("tv_episode_results"):
-                    result = response["tv_episode_results"][0]
-                    logger.info("_find_tv_media_id: found tv_episode_results, show_id=%s, season=%s, episode=%s", result.get("show_id"), result.get("season_number"), result.get("episode_number"))
-                    return (
-                        result.get("show_id"),
-                        result.get("season_number"),
-                        result.get("episode_number"),
-                    )
-                # Fall back to show-level results if episode-level not available
+
+                if prioritize_type == MediaTypes.EPISODE.value: # Default behavior
+                    # Check for episode-level results first
+                    if response.get("tv_episode_results"):
+                        result = response["tv_episode_results"][0]
+                        logger.info("_find_tv_media_id: found tv_episode_results, show_id=%s, season=%s, episode=%s", result.get("show_id"), result.get("season_number"), result.get("episode_number"))
+                        return (
+                            result.get("show_id"),
+                            result.get("season_number"),
+                            result.get("episode_number"),
+                        )
+
+                # Fall back to show-level results if episode-level not available, or if episode results are specifically avoided
                 if response.get("tv_results"):
                     result = response["tv_results"][0]
                     logger.info("_find_tv_media_id: found tv_results, show_id=%s", result.get("id"))

@@ -86,7 +86,7 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
                 "_resolve_tvdb_episode_to_show: Resolving TVDB episode ID %s to show ID",
                 tvdb_episode_id,
             )
-            tmdb_show_id, _, _ = self._find_tv_media_id(resolved_ids)
+            tmdb_show_id, _, _ = self._find_tv_media_id(resolved_ids, MediaTypes.EPISODE.value)
             
             if tmdb_show_id:
                 # Step 1: Update resolved IDs to use TMDB show ID instead
@@ -617,6 +617,19 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
             )
         )
 
+        # None of the options are enabled, fall back to using TMDB, if possible
+        if (
+            resolved_media_id is None and
+            ids.get("tmdb_id") is not None and
+            season_number is not None and
+            episode_number is not None
+        ):
+            resolved_media_id = int(ids.get("tmdb_id"))
+            resolved_source = Sources.TMDB.value
+            resolved_season = season_number
+            resolved_episode = episode_number
+
+
         if resolved_media_id is not None and resolved_season is not None and resolved_episode is not None:
             logger.info(
                 "Tracking TV episode under source=%s (ID=%s, S%s E%s)",
@@ -786,15 +799,19 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
 
             # Fallback: resolve via TMDB find
             if media_id is None:
-                if ids.get("tvdb_id") or ids.get("imdb_id"):
+                if ids.get("tmdb_id") is not None:
+                    media_id = ids.get("tmdb_id")
+                elif ids.get("tvdb_id") or ids.get("imdb_id"):
                     alt_ids = dict(ids)
                     alt_ids["tmdb_id"] = None
-                    resolved_id, _, _ = super()._find_tv_media_id(alt_ids)
+                    # Specifically avoid resolving episode IDs to avoid errors, 
+                    # as we already have a TV ID.
+                    resolved_id, _, _ = self._find_tv_media_id(alt_ids, MediaTypes.TV.value)
                     if resolved_id:
                         media_id = str(resolved_id)
-
+                
                 if media_id is None:
-                    media_id = ids.get("tmdb_id")
+                    return
 
         # Duration / offset from Jellyfin ticks (100 ns units)
         duration_seconds = _ticks_to_seconds(item.get("RunTimeTicks"))
