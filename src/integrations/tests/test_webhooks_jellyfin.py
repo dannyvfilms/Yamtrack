@@ -65,17 +65,74 @@ BREAKING_BAD_TMDB_FIND_RETURN_VALUE: dict = {
 
 BREAKING_BAD_TV_DETAILS_RETURN_VALUE: dict = {
     "media_id": "1396",
+    "source": "tmdb",
+    "source_url": "https://www.themoviedb.org/tv/1396",
+    "media_type": "tv",
     "title": "Breaking Bad",
+    "original_title": "Breaking Bad",
+    "localized_title": "Breaking Bad",
+    "max_progress": 62,
     "image": "https://example.com/breaking-bad.jpg",
+    "synopsis": "",
+    "genres": [],
+    "score": 0.0,
+    "score_count": 0,
+    "details": {
+        "format": "TV",
+        "first_air_date": None,
+        "last_air_date": None,
+        "status": None,
+        "seasons": None,
+        "episodes": 62,
+        "runtime": None,
+        "studios": [],
+        "country": [],
+        "languages": [],
+    },
+    "cast": [],
+    "crew": [],
+    "studios_full": [],
+    "related": {
+        "seasons": [],
+        "recommendations": [],
+    },
     "tvdb_id": "81189",
-    "season/1": {"episodes": [{"episode_number": 1}]},
+    "external_links": {},
+    "last_episode_season": None,
+    "next_episode_season": None,
+    "providers": {},
 }
 
 BREAKING_BAD_MAL_ANIME_RETURN_VALUE: dict = {
     "media_id": "4501",
+    "source": "mal",
+    "source_url": "https://myanimelist.net/anime/4501",
+    "media_type": "anime",
     "title": "Breaking Bad",
-    "image": "https://example.com/breaking-bad.jpg",
+    "original_title": "Breaking Bad",
+    "localized_title": "Breaking Bad",
     "max_progress": 62,
+    "image": "https://example.com/breaking-bad.jpg",
+    "synopsis": "",
+    "genres": [],
+    "score": 0.0,
+    "score_count": 0,
+    "details": {
+        "format": None,
+        "start_date": None,
+        "end_date": None,
+        "status": None,
+        "episodes": 62,
+        "runtime": None,
+        "studios": [],
+        "season": None,
+        "broadcast": None,
+        "source": None,
+    },
+    "related": {
+        "related_anime": [],
+        "recommendations": [],
+    },
 }
 
 # Mock data for Matrix movie tests
@@ -99,17 +156,74 @@ FRIEREN_TMDB_FIND_RETURN_VALUE: dict = {
 
 FRIEREN_MAL_ANIME_RETURN_VALUE: dict = {
     "media_id": "52991",
+    "source": "mal",
+    "source_url": "https://myanimelist.net/anime/52991",
+    "media_type": "anime",
     "title": "Frieren: Beyond Journey's End",
-    "image": "https://example.com/frieren.jpg",
+    "original_title": "Frieren: Beyond Journey's End",
+    "localized_title": "Frieren: Beyond Journey's End",
     "max_progress": 28,
+    "image": "https://example.com/frieren.jpg",
+    "synopsis": "",
+    "genres": [],
+    "score": 0.0,
+    "score_count": 0,
+    "details": {
+        "format": None,
+        "start_date": None,
+        "end_date": None,
+        "status": None,
+        "episodes": 28,
+        "runtime": None,
+        "studios": [],
+        "season": None,
+        "broadcast": None,
+        "source": None,
+    },
+    "related": {
+        "related_anime": [],
+        "recommendations": [],
+    },
 }
 
 FRIEREN_TV_DETAILS_RETURN_VALUE: dict = {
     "media_id": "209867",
+    "source": "tmdb",
+    "source_url": "https://www.themoviedb.org/tv/209867",
+    "media_type": "tv",
     "title": "Frieren: Beyond Journey's End",
+    "original_title": "Frieren: Beyond Journey's End",
+    "localized_title": "Frieren: Beyond Journey's End",
+    "max_progress": 28,
     "image": "https://example.com/frieren.jpg",
+    "synopsis": "",
+    "genres": [],
+    "score": 0.0,
+    "score_count": 0,
+    "details": {
+        "format": "TV",
+        "first_air_date": None,
+        "last_air_date": None,
+        "status": None,
+        "seasons": None,
+        "episodes": 28,
+        "runtime": None,
+        "studios": [],
+        "country": [],
+        "languages": [],
+    },
+    "cast": [],
+    "crew": [],
+    "studios_full": [],
+    "related": {
+        "seasons": [],
+        "recommendations": [],
+    },
     "tvdb_id": "424536",
-    # ...
+    "external_links": {},
+    "last_episode_season": None,
+    "next_episode_season": None,
+    "providers": {},
 }
 
 # https://developer.themoviedb.org/reference/find-by-id
@@ -140,47 +254,47 @@ TMDB_FIND_RETURN_VALUE: dict = {
     }
 }
 # https://developer.themoviedb.org/reference/tv-series-details - long reply, simplified
+# series_id=1668
+# append_to_response=recommendations,external_ids,aggregate_credits,alternative_titles,watch/providers
 TMDB_TV_DETAILS_RETURN_VALUE: dict = {
     "friends": {
-        "id": TMDB_TV_IDS["friends"],
-        "name": "Friends",
-        "number_of_episodes": 228,
-        "number_of_seasons": 10,
-        "popularity": 110.6843,
-        "poster_path": "/2koX1xLkpTQM4IZebYvKysFW1Nh.jpg",
-        "seasons": [
-            {
-                "air_date": "2001-02-15",
-                "episode_count": 39,
-                "id": 4583,
-                "name": "Specials",
-                "overview": "",
-                "poster_path": "/xaEj0Vw0LOmp7kBeX2vmYPb5sTg.jpg",
-                "season_number": 0,
-                "vote_average": 0
-            },
-            {
-                "air_date": "1994-09-22",
-                "episode_count": 24,
-                "id": 4573,
-                "name": "Season 1",
-                "overview": "",
-                "poster_path": "/odCW88Cq5hAF0ZFVOkeJmeQv1nV.jpg",
-                "season_number": 1,
-                "vote_average": 7.9
-            },
-            {
-                "air_date": "1995-09-21",
-                "episode_count": 24,
-                "id": 4574,
-                "name": "Season 2",
-                "overview": "",
-                "poster_path": "/kC9VHoMh1KkoAYfsY3QlHpZRxDy.jpg",
-                "season_number": 2,
-                "vote_average": 8.1
-            },
-            # ...
-        ],
+        "media_id": str(TMDB_TV_IDS["friends"]),
+        "source": "tmdb",
+        "source_url": f"https://www.themoviedb.org/tv/{TMDB_TV_IDS['friends']}",
+        "media_type": "tv",
+        "title": "Friends",
+        "original_title": "Friends",
+        "localized_title": "Friends",
+        "max_progress": 228,
+        "image": "https://image.tmdb.org/t/p/w500/2koX1xLkpTQM4IZebYvKysFW1Nh.jpg",
+        "synopsis": "",
+        "genres": [],
+        "score": 7.9,
+        "score_count": 110.6843,
+        "details": {
+            "format": "TV",
+            "first_air_date": "1994-09-22",
+            "last_air_date": None,
+            "status": None,
+            "seasons": 10,
+            "episodes": 228,
+            "runtime": None,
+            "studios": [],
+            "country": [],
+            "languages": [],
+        },
+        "cast": [],
+        "crew": [],
+        "studios_full": [],
+        "related": {
+            "seasons": [],
+            "recommendations": [],
+        },
+        "tvdb_id": "79168",
+        "external_links": {},
+        "last_episode_season": None,
+        "next_episode_season": None,
+        "providers": {},
     }
 }
 
@@ -289,9 +403,34 @@ class JellyfinWebhookTests(TestCase):
         }
         mock_mal_anime.return_value = {
             "media_id": "437",
+            "source": "mal",
+            "source_url": "https://myanimelist.net/anime/437",
+            "media_type": "anime",
             "title": "Perfect Blue",
-            "image": "https://example.com/perfect-blue.jpg",
+            "original_title": "Perfect Blue",
+            "localized_title": "Perfect Blue",
             "max_progress": 1,
+            "image": "https://example.com/perfect-blue.jpg",
+            "synopsis": "",
+            "genres": [],
+            "score": 0.0,
+            "score_count": 0,
+            "details": {
+                "format": None,
+                "start_date": None,
+                "end_date": None,
+                "status": None,
+                "episodes": 1,
+                "runtime": None,
+                "studios": [],
+                "season": None,
+                "broadcast": None,
+                "source": None,
+            },
+            "related": {
+                "related_anime": [],
+                "recommendations": [],
+            },
         }
         payload = {
             "Event": "Stop",
@@ -320,8 +459,24 @@ class JellyfinWebhookTests(TestCase):
         self.assertEqual(movie.status, Status.COMPLETED.value)
         self.assertEqual(movie.progress, 1)
 
-    def test_anime_episode_mark_played(self):
+    @patch("app.providers.mal.anime")
+    @patch("app.providers.tmdb.find")
+    @patch("app.providers.tmdb.tv_with_seasons")
+    def test_anime_episode_mark_played(self, mock_tv_with_seasons, mock_find, mock_mal_anime):
         """Test webhook handles anime episode mark played event."""
+        self.user.anime_enabled = True
+        self.user.jellyfin_provider_priority_enabled = True
+        self.user.jellyfin_match_existing_enabled = False
+        self.user.anime_metadata_source_default = Sources.MAL.value
+        self.user.save()
+
+        mock_find.return_value = {
+            "tv_episode_results": [{"show_id": 52991, "season_number": 1, "episode_number": 1}],
+            "tv_results": [],
+        }
+        mock_tv_with_seasons.return_value = FRIEREN_TV_DETAILS_RETURN_VALUE
+        mock_mal_anime.return_value = FRIEREN_MAL_ANIME_RETURN_VALUE
+
         payload = {
             "Event": "Stop",
             "Item": {
@@ -378,10 +533,42 @@ class JellyfinWebhookTests(TestCase):
         }
         mock_tv_with_seasons.return_value = {
             "media_id": "12345",
+            "source": "tmdb",
+            "source_url": "https://www.themoviedb.org/tv/12345",
+            "media_type": "tv",
             "title": "Hell's Paradise",
+            "original_title": "Hell's Paradise",
+            "localized_title": "Hell's Paradise",
+            "max_progress": 13,
             "image": "https://example.com/hells-paradise.jpg",
+            "synopsis": "",
+            "genres": [],
+            "score": 0.0,
+            "score_count": 0,
+            "details": {
+                "format": "TV",
+                "first_air_date": None,
+                "last_air_date": None,
+                "status": None,
+                "seasons": None,
+                "episodes": 13,
+                "runtime": None,
+                "studios": [],
+                "country": [],
+                "languages": [],
+            },
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+            "related": {
+                "seasons": [],
+                "recommendations": [],
+            },
             "tvdb_id": "402474",
-            "season/2": {"episodes": [{"episode_number": 11}]},
+            "external_links": {},
+            "last_episode_season": None,
+            "next_episode_season": None,
+            "providers": {},
         }
         mock_load_mapping_data.return_value = {
             "hells-paradise-tvdb": {
@@ -402,16 +589,66 @@ class JellyfinWebhookTests(TestCase):
             if str(media_id) == "60067":
                 return {
                     "media_id": "60067",
+                    "source": "mal",
+                    "source_url": "https://myanimelist.net/anime/60067",
+                    "media_type": "anime",
                     "title": "Hell's Paradise 2nd Season",
-                    "image": "https://example.com/hells-paradise-s2.jpg",
+                    "original_title": "Hell's Paradise 2nd Season",
+                    "localized_title": "Hell's Paradise 2nd Season",
                     "max_progress": 12,
+                    "image": "https://example.com/hells-paradise-s2.jpg",
+                    "synopsis": "",
+                    "genres": [],
+                    "score": 0.0,
+                    "score_count": 0,
+                    "details": {
+                        "format": None,
+                        "start_date": None,
+                        "end_date": None,
+                        "status": None,
+                        "episodes": 12,
+                        "runtime": None,
+                        "studios": [],
+                        "season": None,
+                        "broadcast": None,
+                        "source": None,
+                    },
+                    "related": {
+                        "related_anime": [],
+                        "recommendations": [],
+                    },
                 }
             if str(media_id) == "46569":
                 return {
                     "media_id": "46569",
+                    "source": "mal",
+                    "source_url": "https://myanimelist.net/anime/46569",
+                    "media_type": "anime",
                     "title": "Hell's Paradise",
-                    "image": "https://example.com/hells-paradise-s1.jpg",
+                    "original_title": "Hell's Paradise",
+                    "localized_title": "Hell's Paradise",
                     "max_progress": 13,
+                    "image": "https://example.com/hells-paradise-s1.jpg",
+                    "synopsis": "",
+                    "genres": [],
+                    "score": 0.0,
+                    "score_count": 0,
+                    "details": {
+                        "format": None,
+                        "start_date": None,
+                        "end_date": None,
+                        "status": None,
+                        "episodes": 13,
+                        "runtime": None,
+                        "studios": [],
+                        "season": None,
+                        "broadcast": None,
+                        "source": None,
+                    },
+                    "related": {
+                        "related_anime": [],
+                        "recommendations": [],
+                    },
                 }
             msg = f"Unexpected MAL ID requested: {media_id}"
             raise AssertionError(msg)
@@ -887,9 +1124,34 @@ class JellyfinWebhookTests(TestCase):
         }
         mock_mal_anime.return_value = {
             "media_id": "52991",
+            "source": "mal",
+            "source_url": "https://myanimelist.net/anime/52991",
+            "media_type": "anime",
             "title": "Frieren: Beyond Journey's End",
-            "image": "https://example.com/frieren.jpg",
+            "original_title": "Frieren: Beyond Journey's End",
+            "localized_title": "Frieren: Beyond Journey's End",
             "max_progress": 28,
+            "image": "https://example.com/frieren.jpg",
+            "synopsis": "",
+            "genres": [],
+            "score": 0.0,
+            "score_count": 0,
+            "details": {
+                "format": None,
+                "start_date": None,
+                "end_date": None,
+                "status": None,
+                "episodes": 28,
+                "runtime": None,
+                "studios": [],
+                "season": None,
+                "broadcast": None,
+                "source": None,
+            },
+            "related": {
+                "related_anime": [],
+                "recommendations": [],
+            },
         }
 
         payload = {
