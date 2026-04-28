@@ -239,6 +239,18 @@ class Item(CalendarTriggerMixin, models.Model):
         help_text="When game length metadata was last fetched",
     )
     metadata_fetched_at = models.DateTimeField(null=True, blank=True, help_text="When metadata was last fetched")
+    manual_metadata = models.JSONField(
+        blank=True,
+        default=dict,
+        help_text="Structured metadata overrides for manual/custom entries",
+    )
+    provider_metadata_status = models.CharField(
+        blank=True,
+        default="",
+        max_length=64,
+        choices=[("local_only_missing_season", "Local only: missing season metadata")],
+        help_text="Flags special provider metadata states for UI and recovery flows",
+    )
     series_name = models.TextField(null=True, blank=True)
     series_position = models.FloatField(null=True, blank=True)
 
@@ -4627,9 +4639,8 @@ class PodcastEpisode(models.Model):
         related_name="episodes",
     )
     episode_uuid = models.CharField(
-        max_length=36,
-        unique=True,
-        help_text="Pocket Casts episode UUID",
+        max_length=500,
+        help_text="Pocket Casts episode UUID or RSS GUID",
     )
     title = models.CharField(max_length=500)
     slug = models.CharField(max_length=255, blank=True, default="")
@@ -4652,6 +4663,7 @@ class PodcastEpisode(models.Model):
         ordering = ["-published", "episode_number"]
         verbose_name = "Podcast Episode"
         verbose_name_plural = "Podcast Episodes"
+        unique_together = [("show", "episode_uuid")]
 
     def __str__(self):
         """Return the episode title."""

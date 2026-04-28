@@ -4506,53 +4506,50 @@ def media_details(
 
                             # Fetch episodes from RSS feed (fetch all, no limit)
                             try:
+                                import hashlib
+
                                 episodes_data = podcast_rss.fetch_episodes_from_rss(rss_feed_url, limit=None)
+                                seen_uuids = set()
 
                                 for episode_data in episodes_data:
-                                    # Generate episode UUID from GUID or create one
-                                    # Use GUID directly (consistent with _sync_episodes_from_rss logic)
                                     episode_uuid = episode_data.get("guid")
                                     if not episode_uuid:
-                                        # Use a hash of title + published date as fallback UUID
-                                        import hashlib
                                         uuid_str = f"{episode_data.get('title', '')}{episode_data.get('published', '')}"
                                         episode_uuid = hashlib.md5(uuid_str.encode()).hexdigest()[:36]
 
-                                    # Check if episode already exists by UUID, or try to match by title + date
-                                    episode = None
-                                    try:
-                                        episode = PodcastEpisode.objects.get(episode_uuid=episode_uuid)
-                                    except PodcastEpisode.DoesNotExist:
-                                        # Try to match by title + published date
-                                        if episode_data.get("title") and episode_data.get("published"):
-                                            matching = PodcastEpisode.objects.filter(
-                                                show=show,
-                                                title__iexact=episode_data["title"].strip(),
-                                                published__date=episode_data["published"].date(),
-                                            ).first()
-                                            if matching:
-                                                episode = matching
-                                    except PodcastEpisode.MultipleObjectsReturned:
-                                        # If multiple found, use first one
-                                        episode = PodcastEpisode.objects.filter(episode_uuid=episode_uuid).first()
+                                    if episode_uuid in seen_uuids:
+                                        continue
 
-                                    if not episode:
-                                        PodcastEpisode.objects.create(
+                                    # Check for existing match within this show by title + date
+                                    exists = False
+                                    if episode_data.get("title") and episode_data.get("published"):
+                                        exists = PodcastEpisode.objects.filter(
                                             show=show,
-                                            episode_uuid=episode_uuid,
-                                            title=episode_data.get("title", "Unknown Episode"),
-                                            published=episode_data.get("published"),
-                                            duration=episode_data.get("duration"),
-                                            audio_url=episode_data.get("audio_url", ""),
-                                            episode_number=episode_data.get("episode_number"),
-                                            season_number=episode_data.get("season_number"),
-                                        )
+                                            title__iexact=episode_data["title"].strip(),
+                                            published__date=episode_data["published"].date(),
+                                        ).exists()
+
+                                    if not exists:
+                                        try:
+                                            PodcastEpisode.objects.create(
+                                                show=show,
+                                                episode_uuid=episode_uuid,
+                                                title=episode_data.get("title", "Unknown Episode"),
+                                                published=episode_data.get("published"),
+                                                duration=episode_data.get("duration"),
+                                                audio_url=episode_data.get("audio_url", ""),
+                                                episode_number=episode_data.get("episode_number"),
+                                                season_number=episode_data.get("season_number"),
+                                            )
+                                            seen_uuids.add(episode_uuid)
+                                        except Exception:
+                                            logger.debug("Skipping duplicate episode UUID %s for show %s", episode_uuid, show.title)
                             except Exception as e:
                                 logger.warning(
-                                    "Failed to fetch episodes from RSS feed: %s",
+                                    "Failed to fetch episodes from RSS feed for %s: %s",
+                                    show.title,
                                     exception_summary(e),
                                 )
-                                # Continue without episodes
 
                         # Redirect to the new/enriched show
                         from django.utils.text import slugify
@@ -4578,6 +4575,68 @@ def media_details(
         if show:
             # This is a show, not an episode - show show detail page
             tracker = PodcastShowTracker.objects.filter(user=request.user, show=show).first() if not public_view else None
+
+            # If show has RSS feed, check if we need to fetch more episodes
+            # This ensures we get the full episode list even if initial enrichment only got partial list
+            if show.rss_feed_url and not public_view:
+                try:
+                    import hashlib
+
+                    from integrations import podcast_rss
+
+                    # Fetch all episodes from RSS to see what's available
+                    episodes_data = podcast_rss.fetch_episodes_from_rss(show.rss_feed_url, limit=None)
+
+                    # Get existing episode UUIDs
+                    existing_uuids = set(
+                        PodcastEpisode.objects.filter(show=show).values_list("episode_uuid", flat=True),
+                    )
+
+                    # Create any missing episodes
+                    new_episodes_count = 0
+                    for episode_data in episodes_data:
+                        episode_uuid = episode_data.get("guid")
+                        if not episode_uuid:
+                            uuid_str = f"{episode_data.get('title', '')}{episode_data.get('published', '')}"
+                            episode_uuid = hashlib.md5(uuid_str.encode()).hexdigest()[:36]
+
+                        if episode_uuid in existing_uuids:
+                            continue
+
+                        # Check for a match within this show by title + date
+                        episode = None
+                        if episode_data.get("title") and episode_data.get("published"):
+                            episode = PodcastEpisode.objects.filter(
+                                show=show,
+                                title__iexact=episode_data["title"].strip(),
+                                published__date=episode_data["published"].date(),
+                            ).first()
+
+                        if not episode:
+                            try:
+                                PodcastEpisode.objects.create(
+                                    show=show,
+                                    episode_uuid=episode_uuid,
+                                    title=episode_data.get("title", "Unknown Episode"),
+                                    published=episode_data.get("published"),
+                                    duration=episode_data.get("duration"),
+                                    audio_url=episode_data.get("audio_url", ""),
+                                    episode_number=episode_data.get("episode_number"),
+                                    season_number=episode_data.get("season_number"),
+                                )
+                                new_episodes_count += 1
+                                existing_uuids.add(episode_uuid)
+                            except Exception:
+                                logger.debug("Skipping duplicate episode UUID %s for show %s", episode_uuid, show.title)
+
+                    if new_episodes_count > 0:
+                        logger.info("Fetched %d additional episodes for show %s (ID: %d)", new_episodes_count, show.title, show.id)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to refresh episode list from RSS feed for show %s: %s",
+                        show.title,
+                        exception_summary(e),
+                    )
 
             # Get all episodes for this show, ordered by published date (newest first)
             # Use Coalesce to handle None published dates (put them at the end)
@@ -12610,7 +12669,56 @@ def podcast_mark_all_played(request, show_id):
         defaults={"status": Status.IN_PROGRESS.value},
     )
 
-    # Get all episodes for this show
+    # If show has RSS feed, fetch full episode list and ensure all episodes are in database
+    if show.rss_feed_url:
+        try:
+            # Fetch ALL episodes (no limit) from RSS feed
+            episodes_data = podcast_rss.fetch_episodes_from_rss(show.rss_feed_url, limit=None)
+
+            seen_uuids = set(
+                PodcastEpisode.objects.filter(show=show).values_list("episode_uuid", flat=True)
+            )
+            for episode_data in episodes_data:
+                episode_uuid = episode_data.get("guid")
+                if not episode_uuid:
+                    uuid_str = f"{episode_data.get('title', '')}{episode_data.get('published', '')}"
+                    episode_uuid = hashlib.md5(uuid_str.encode()).hexdigest()[:36]
+
+                if episode_uuid in seen_uuids:
+                    continue
+
+                # Check for existing match within this show by title + date
+                exists = False
+                if episode_data.get("title") and episode_data.get("published"):
+                    exists = PodcastEpisode.objects.filter(
+                        show=show,
+                        title__iexact=episode_data["title"].strip(),
+                        published__date=episode_data["published"].date(),
+                    ).exists()
+
+                if not exists:
+                    try:
+                        PodcastEpisode.objects.create(
+                            show=show,
+                            episode_uuid=episode_uuid,
+                            title=episode_data.get("title", "Unknown Episode"),
+                            published=episode_data.get("published"),
+                            duration=episode_data.get("duration"),
+                            audio_url=episode_data.get("audio_url", ""),
+                            episode_number=episode_data.get("episode_number"),
+                            season_number=episode_data.get("season_number"),
+                        )
+                        seen_uuids.add(episode_uuid)
+                    except Exception:
+                        logger.debug("Skipping duplicate episode UUID %s for show %s", episode_uuid, show.title)
+        except Exception as e:
+            logger.warning(
+                "Failed to fetch full episode list from RSS feed for %s: %s",
+                show.title,
+                exception_summary(e),
+            )
+
+    # Get all episodes for this show (now including any newly fetched ones)
     all_episodes = PodcastEpisode.objects.filter(show=show)
 
     # Get all episodes the user has already completed (has end_date)
