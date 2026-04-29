@@ -197,7 +197,7 @@ FRIEREN_TV_DETAILS_RETURN_VALUE: dict = {
     "max_progress": 28,
     "image": "https://example.com/frieren.jpg",
     "synopsis": "",
-    "genres": [],
+    "genres": ["Animation"],
     "score": 0.0,
     "score_count": 0,
     "details": {
@@ -542,7 +542,7 @@ class JellyfinWebhookTests(TestCase):
             "max_progress": 13,
             "image": "https://example.com/hells-paradise.jpg",
             "synopsis": "",
-            "genres": [],
+            "genres": ["Animation"],
             "score": 0.0,
             "score_count": 0,
             "details": {
@@ -1076,7 +1076,7 @@ class JellyfinWebhookTests(TestCase):
     @patch("app.providers.tmdb.tv_with_seasons")
     def test_jellyfin_provider_priority_disabled_uses_tmdb_default(self, mock_tv_with_seasons, mock_find):
         """When provider priority setting is disabled, webhooks should use default TMDB tracking."""
-        self.user.jellyfin_provider_priority_enabled = True
+        self.user.jellyfin_provider_priority_enabled = False
         self.user.jellyfin_match_existing_enabled = False
         self.user.tv_metadata_source_default = Sources.TVDB.value
         self.user.save()
