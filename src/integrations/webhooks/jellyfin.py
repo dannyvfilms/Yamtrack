@@ -919,15 +919,26 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
             self._update_existing_item(existing_item, payload, user)
             return
 
-        # For new anime movies: create under MAL if mal_id was resolved
+        # Feature #1: Resolve to preferred source for anime movies (only if mal_id exists)
         if ids.get("mal_id"):
-            logger.info(
-                "Creating new anime movie under MAL: ID=%s",
-                ids["mal_id"],
+            resolved_media_id, resolved_source, _, _ = self._resolve_media_id_to_preferred_source(
+                user, MediaTypes.ANIME.value, ids, season_number=None, episode_number=1,
             )
-            if self._handle_anime(ids["mal_id"], 1, payload, user):
-                return
-
+            
+            # Handle as anime if Feature #1 resolved
+            if resolved_media_id and resolved_source:
+                logger.info("Handling anime movie under %s: ID=%s", resolved_source, resolved_media_id)
+                if self._handle_anime(resolved_media_id, 1, payload, user, source=resolved_source, is_movie=True):
+                    return
+            
+            # If Feature #1 didn't resolve, handle as anime under TMDB
+            tmdb_id = ids.get("tmdb_id")
+            if tmdb_id:
+                logger.info("Feature #1 didn't resolve, handling anime movie under TMDB: ID=%s", tmdb_id)
+                if self._handle_anime(tmdb_id, 1, payload, user, source=Sources.TMDB.value, is_movie=True):
+                    return
+        
+        # Fallback: Handle as regular TMDB movie (no mal_id or anime handling failed)
         # Fall through to base class for regular movies
         super()._process_movie(payload, user, ids)
 
