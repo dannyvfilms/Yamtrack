@@ -678,7 +678,15 @@ def get_season_collection_stats(user, season_item):
         if season_collection_entry:
             collected_count = total_episodes
 
-    # If no episode or season-level entries exist, check for a show-level collection entry.
+    show_has_granular_collection = CollectionEntry.objects.filter(
+        user=user,
+        item__media_id=season_item.media_id,
+        item__source=season_item.source,
+        item__media_type__in=[MediaTypes.SEASON.value, MediaTypes.EPISODE.value],
+    ).exists()
+
+    # If no episode or season-level entries exist anywhere for the show,
+    # a show-level collection entry can still represent the whole season.
     if collected_count == 0:
         try:
             tv_item = Item.objects.get(
@@ -691,8 +699,7 @@ def get_season_collection_stats(user, season_item):
                 item=tv_item,
             ).exists()
             
-            # If show-level entry exists and no granular episode entries, consider all episodes collected
-            if show_collection_entry:
+            if show_collection_entry and not show_has_granular_collection:
                 collected_count = total_episodes
         except Item.DoesNotExist:
             pass
@@ -767,6 +774,12 @@ def get_season_collection_metadata(user, season_item):
             }
         
         # Check for show-level entry
+        show_has_granular_collection = CollectionEntry.objects.filter(
+            user=user,
+            item__media_id=season_item.media_id,
+            item__source=season_item.source,
+            item__media_type__in=[MediaTypes.SEASON.value, MediaTypes.EPISODE.value],
+        ).exists()
         try:
             tv_item = Item.objects.get(
                 media_id=season_item.media_id,
@@ -778,7 +791,7 @@ def get_season_collection_metadata(user, season_item):
                 item=tv_item,
             ).first()
             
-            if show_collection_entry:
+            if show_collection_entry and not show_has_granular_collection:
                 # Return the show-level entry metadata
                 return {
                     "resolution": show_collection_entry.resolution or "",

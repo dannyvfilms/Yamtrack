@@ -12,13 +12,37 @@
   </div>
 
   <div class="space-y-6">
-    {% if existing_entries %}
+    {% if season_audit_entries %}
+      <div>
+        <h3 class="text-sm font-semibold uppercase tracking-wide text-gray-400 mb-3">Collected Seasons</h3>
+        <div class="space-y-3 max-h-64 overflow-y-auto pr-1">
+          {% for season_audit_entry in season_audit_entries %}
+            {% url 'collection_remove_season' season_audit_entry.season_item_id as remove_url %}
+            {% include "app/components/collection_entry_summary.html" with collection_entry=season_audit_entry.collection_entry media_type=item.media_type user=request.user show_delete=True delete_url=remove_url return_url=return_url show_date=False format_with_subtitle=True show_format_header=False entry_title=season_audit_entry.display_title entry_source_labels=season_audit_entry.source_labels entry_quality_label=season_audit_entry.quality_label show_inline_quality=True show_entry_details=False %}
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
+
+    {% if episode_audit_entries %}
+      <div>
+        <h3 class="text-sm font-semibold uppercase tracking-wide text-gray-400 mb-3">Collected Episodes</h3>
+        <div class="space-y-3 max-h-64 overflow-y-auto pr-1">
+          {% for episode_audit_entry in episode_audit_entries %}
+            {% url 'collection_remove' episode_audit_entry.entry.id as remove_url %}
+            {% include "app/components/collection_entry_summary.html" with collection_entry=episode_audit_entry.entry media_type=episode_audit_entry.entry.item.media_type user=request.user show_delete=True delete_url=remove_url return_url=return_url show_date=False format_with_subtitle=True show_format_header=False entry_title=episode_audit_entry.title entry_source_labels=episode_audit_entry.source_labels entry_quality_label=episode_audit_entry.quality_label show_inline_quality=True show_entry_details=False %}
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
+
+    {% if visible_existing_entries %}
       <div>
         <h3 class="text-sm font-semibold uppercase tracking-wide text-gray-400 mb-3">Existing Entries</h3>
         <div class="space-y-3 max-h-52 overflow-y-auto pr-1">
-          {% for existing_entry in existing_entries %}
+          {% for existing_entry in visible_existing_entries %}
             {% url 'collection_remove' existing_entry.id as remove_url %}
-            {% include "app/components/collection_entry_summary.html" with collection_entry=existing_entry media_type=item.media_type user=request.user show_delete=True delete_url=remove_url return_url=return_url show_date=False format_with_subtitle=True show_format_header=False %}
+            {% include "app/components/collection_entry_summary.html" with collection_entry=existing_entry media_type=item.media_type user=request.user show_delete=True delete_url=remove_url return_url=return_url show_date=False format_with_subtitle=True show_format_header=False entry_quality_label="" %}
           {% endfor %}
         </div>
       </div>
@@ -30,7 +54,7 @@
       {{ form.item }}
 
       <h3 class="text-sm font-semibold uppercase tracking-wide text-gray-400 mb-3">
-        {% if existing_entries %}Add Another Copy{% else %}Add Copy{% endif %}
+        {% if visible_existing_entries or season_audit_entries or episode_audit_entries %}Add Another Copy{% else %}Add Copy{% endif %}
       </h3>
 
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4">

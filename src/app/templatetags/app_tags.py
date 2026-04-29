@@ -62,6 +62,45 @@ def title_preserve_acronyms(value):
     return normalized.title()
 
 
+def _collection_entry_field(collection_entry, field_name):
+    """Read a collection metadata field from models, dicts, or simple namespaces."""
+    if collection_entry is None:
+        return None
+    if isinstance(collection_entry, dict):
+        return collection_entry.get(field_name)
+    return getattr(collection_entry, field_name, None)
+
+
+@register.filter
+def collection_quality_label(collection_entry):
+    """Return a compact display label for collection quality metadata."""
+    if not collection_entry:
+        return ""
+
+    resolution = (_collection_entry_field(collection_entry, "resolution") or "").strip()
+    hdr = (_collection_entry_field(collection_entry, "hdr") or "").strip()
+    media_type = (_collection_entry_field(collection_entry, "media_type") or "").strip()
+
+    parts = []
+    if resolution:
+        parts.append(str(resolution))
+    if hdr:
+        parts.append(str(hdr))
+    if not parts and media_type:
+        parts.append(title_preserve_acronyms(str(media_type)))
+
+    return " • ".join(parts)
+
+
+@register.filter
+def collection_quality_display(collection_entry, explicit_label=""):
+    """Prefer an explicit quality label before falling back to collection metadata."""
+    normalized_label = str(explicit_label or "").strip()
+    if normalized_label:
+        return normalized_label
+    return collection_quality_label(collection_entry)
+
+
 @register.filter
 def slug(arg1):
     """Return the slug of the string.

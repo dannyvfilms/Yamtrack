@@ -2,8 +2,9 @@
 {% load user_tags %}
 
 <div class="{% if flat_list %}{% if not is_last %}pb-3 mb-3 border-b border-gray-700{% endif %}{% else %}rounded-md border border-gray-700 bg-[#343a40] p-3{% endif %} {% if show_delete and delete_url and show_date == False %}relative{% endif %}">
+  {% with inline_quality=collection_entry|collection_quality_display:entry_quality_label %}
   <div class="flex items-start justify-between gap-3">
-    <div class="min-w-0 flex-1 {% if show_delete and delete_url and show_date == False %}pr-20{% endif %}">
+    <div class="min-w-0 flex-1 {% if show_delete and delete_url and show_date == False %}pr-12{% endif %}">
       {% if show_date != False and not show_delete and collection_entry.collected_at %}
         <div class="flex items-start justify-between gap-3">
           {% if show_format_header != False %}
@@ -27,6 +28,31 @@
         </p>
       {% endif %}
 
+      {% if entry_overline %}
+        <p class="mt-1 text-xs tracking-wide text-gray-400 uppercase">
+          {{ entry_overline }}
+        </p>
+      {% endif %}
+
+      {% if entry_title %}
+        <p class="mt-1 text-sm font-semibold leading-tight text-gray-200 break-words">
+          {{ entry_title }}
+        </p>
+      {% endif %}
+
+      {% if entry_source_labels or show_inline_quality and inline_quality %}
+        <p class="mt-1 text-xs tracking-wide text-gray-400 uppercase">
+          {% if entry_source_labels %}
+            Source{% if entry_source_labels|length != 1 %}s{% endif %}: {{ entry_source_labels|join:" • " }}
+          {% endif %}
+          {% if show_inline_quality and inline_quality %}
+            {% if entry_source_labels %} • {% endif %}
+            <span class="normal-case">{{ inline_quality }}</span>
+          {% endif %}
+        </p>
+      {% endif %}
+
+      {% if show_entry_details != False %}
       {% if media_type == "game" %}
         {% if source_style_game_meta %}
           <p class="{% if show_format_header != False %}mt-1 {% endif %}text-gray-200 leading-tight break-words">
@@ -110,6 +136,7 @@
           {% if collection_entry.is_3d %}3D{% endif %}
         </p>
       {% endif %}
+      {% endif %}
     </div>
 
     {% if show_date != False and show_delete %}
@@ -122,8 +149,10 @@
           <form method="post" action="{{ delete_url }}{% if return_url %}?next={{ return_url }}{% endif %}">
             {% csrf_token %}
             <button type="submit"
-                    class="text-sm text-red-400 hover:text-red-300 transition-colors cursor-pointer">
-              Delete
+                    class="inline-flex h-8 w-8 items-center justify-center rounded-md text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors cursor-pointer"
+                    title="Remove collection entry"
+                    aria-label="Remove collection entry">
+              {% include "app/icons/trashcan.svg" with classes="w-4 h-4" %}
             </button>
           </form>
         {% endif %}
@@ -137,9 +166,12 @@
           class="absolute inset-y-0 right-3 flex items-center">
       {% csrf_token %}
       <button type="submit"
-              class="text-sm text-red-400 hover:text-red-300 transition-colors cursor-pointer">
-        Delete
+              class="inline-flex h-8 w-8 items-center justify-center rounded-md text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors cursor-pointer"
+              title="Remove collection entry"
+              aria-label="Remove collection entry">
+        {% include "app/icons/trashcan.svg" with classes="w-4 h-4" %}
       </button>
     </form>
   {% endif %}
+  {% endwith %}
 </div>

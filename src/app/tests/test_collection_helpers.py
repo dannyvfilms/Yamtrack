@@ -3,6 +3,7 @@ from django.test import TestCase
 
 from app.helpers import (
     get_collection_stats,
+    get_season_collection_metadata,
     get_season_collection_stats,
     get_tv_show_collection_stats,
     get_user_collection,
@@ -471,3 +472,102 @@ class CollectionHelpersTest(TestCase):
                 "total_episodes": 2,
             },
         )
+
+    def test_get_season_collection_stats_ignores_show_fallback_after_granular_collection_exists(self):
+        """Show-level fallback should stop once any granular collection rows exist for the show."""
+        season_one_item = Item.objects.create(
+            media_id=self.tv_item.media_id,
+            source=self.tv_item.source,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            title="Test TV Season 1",
+            image="http://example.com/season1.jpg",
+        )
+        season_two_item = Item.objects.create(
+            media_id=self.tv_item.media_id,
+            source=self.tv_item.source,
+            media_type=MediaTypes.SEASON.value,
+            season_number=2,
+            title="Test TV Season 2",
+            image="http://example.com/season2.jpg",
+        )
+        first_episode = Item.objects.create(
+            media_id=self.tv_item.media_id,
+            source=self.tv_item.source,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=1,
+            title="Test TV Episode 1",
+            image="http://example.com/episode1.jpg",
+        )
+        Item.objects.create(
+            media_id=self.tv_item.media_id,
+            source=self.tv_item.source,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=2,
+            episode_number=1,
+            title="Test TV Episode 2",
+            image="http://example.com/episode2.jpg",
+        )
+        CollectionEntry.objects.create(user=self.user, item=self.tv_item, media_type="digital")
+        CollectionEntry.objects.create(user=self.user, item=season_one_item, media_type="digital")
+        CollectionEntry.objects.create(user=self.user, item=first_episode, media_type="digital")
+
+        stats = get_season_collection_stats(self.user, season_two_item)
+
+        self.assertEqual(
+            stats,
+            {
+                "collected_episodes": 0,
+                "total_episodes": 1,
+            },
+        )
+
+    def test_get_season_collection_metadata_ignores_show_fallback_after_granular_collection_exists(self):
+        """Season metadata should not borrow a show-level row once episode/season rows exist."""
+        season_one_item = Item.objects.create(
+            media_id=self.tv_item.media_id,
+            source=self.tv_item.source,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+            title="Test TV Season 1",
+            image="http://example.com/season1.jpg",
+        )
+        season_two_item = Item.objects.create(
+            media_id=self.tv_item.media_id,
+            source=self.tv_item.source,
+            media_type=MediaTypes.SEASON.value,
+            season_number=2,
+            title="Test TV Season 2",
+            image="http://example.com/season2.jpg",
+        )
+        first_episode = Item.objects.create(
+            media_id=self.tv_item.media_id,
+            source=self.tv_item.source,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=1,
+            title="Test TV Episode 1",
+            image="http://example.com/episode1.jpg",
+        )
+        Item.objects.create(
+            media_id=self.tv_item.media_id,
+            source=self.tv_item.source,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=2,
+            episode_number=1,
+            title="Test TV Episode 2",
+            image="http://example.com/episode2.jpg",
+        )
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=self.tv_item,
+            media_type="digital",
+            resolution="1080p",
+        )
+        CollectionEntry.objects.create(user=self.user, item=season_one_item, media_type="digital")
+        CollectionEntry.objects.create(user=self.user, item=first_episode, media_type="digital")
+
+        metadata = get_season_collection_metadata(self.user, season_two_item)
+
+        self.assertIsNone(metadata)

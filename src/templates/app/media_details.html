@@ -1118,7 +1118,7 @@
           {% if collection_entries %}
             <div>
               {% for owned_entry in collection_entries %}
-                {% include "app/components/collection_entry_summary.html" with collection_entry=owned_entry media_type=media_type user=user source_style_game_meta=True flat_list=True is_last=forloop.last %}
+                {% include "app/components/collection_entry_summary.html" with collection_entry=owned_entry media_type=media_type user=user source_style_game_meta=True flat_list=True is_last=forloop.last entry_quality_label="" %}
               {% endfor %}
             </div>
           {% elif collection_entry %}
@@ -1126,7 +1126,7 @@
               {% if media_type == MediaTypes.SEASON.value %}
                 <p class="text-xs uppercase tracking-wide text-gray-400">Aggregated Episode Metadata</p>
               {% endif %}
-              {% include "app/components/collection_entry_summary.html" with collection_entry=collection_entry media_type=media_type user=user source_style_game_meta=True flat_list=True is_last=True %}
+              {% include "app/components/collection_entry_summary.html" with collection_entry=collection_entry media_type=media_type user=user source_style_game_meta=True flat_list=True is_last=True entry_quality_label="" %}
             </div>
           {% elif not collection_stats %}
             <p class="text-gray-400 text-sm">No collection data available</p>

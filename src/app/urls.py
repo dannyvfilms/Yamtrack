@@ -286,6 +286,11 @@ urlpatterns = [
         name="collection_remove",
     ),
     path(
+        "collection/season/<int:season_item_id>/remove/",
+        views.collection_remove_season,
+        name="collection_remove_season",
+    ),
+    path(
         "collection/modal/<source:source>/<media_type:media_type>/<path:media_id>/",
         views.collection_modal,
         name="collection_modal",

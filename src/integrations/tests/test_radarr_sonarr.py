@@ -2,13 +2,16 @@ from datetime import UTC, datetime
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.db.utils import OperationalError
 from django.test import TestCase
 from django.urls import reverse
 from django_celery_beat.models import PeriodicTask
 
-from app.models import MediaTypes, Sources
+from app.helpers import get_tv_show_collection_stats
+from app.models import CollectionEntry, Item, MediaTypes, Sources
 from integrations.imports import helpers, radarr, sonarr
-from integrations.models import RadarrAccount, SonarrAccount
+from integrations.models import CollectionSourceState, RadarrAccount, SonarrAccount
+from integrations.source_sync import upsert_collection_source_state
 
 
 class ArrImportViewTests(TestCase):
@@ -189,3 +192,229 @@ class ArrImporterTests(TestCase):
             "95396",
             Sources.TMDB.value,
         )
+
+    @patch("integrations.imports.sonarr.services.get_media_metadata")
+    @patch("integrations.imports.sonarr.SonarrClient.episodes")
+    @patch("integrations.imports.sonarr.SonarrClient.series")
+    def test_sonarr_import_syncs_episode_collection_and_clears_legacy_show_state(
+        self,
+        mock_series,
+        mock_episodes,
+        mock_get_media_metadata,
+    ):
+        """Sonarr should replace the old show-level placeholder with episode rows."""
+        show_item = Item.objects.create(
+            media_id="95396",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Severance",
+            image="https://example.com/severance.jpg",
+        )
+        CollectionEntry.objects.create(
+            user=self.user,
+            item=show_item,
+            media_type="digital",
+            audio_codec="AAC",
+            audio_channels="5.1",
+            bitrate=1653,
+        )
+        CollectionSourceState.objects.create(
+            user=self.user,
+            item=show_item,
+            source="sonarr",
+        )
+
+        mock_series.return_value = [
+            {
+                "id": 77,
+                "title": "Severance",
+                "statistics": {"episodeFileCount": 1},
+                "tmdbId": 95396,
+                "seasons": [{"seasonNumber": 1}],
+            },
+        ]
+        mock_episodes.return_value = [
+            {
+                "seasonNumber": 1,
+                "episodeNumber": 1,
+                "title": "Good News About Hell",
+                "airDateUtc": "2022-02-18T00:00:00Z",
+                "episodeFileId": 11,
+            },
+            {
+                "seasonNumber": 1,
+                "episodeNumber": 2,
+                "title": "Half Loop",
+                "airDateUtc": "2022-02-25T00:00:00Z",
+                "episodeFileId": 0,
+            },
+        ]
+        mock_get_media_metadata.return_value = {
+            "title": "Severance",
+            "image": "https://example.com/severance.jpg",
+            "genres": [],
+        }
+
+        imported_counts, warnings = sonarr.importer(None, self.user, "new")
+
+        self.assertEqual(imported_counts[MediaTypes.TV.value], 1)
+        self.assertEqual(warnings, "")
+        self.assertFalse(
+            CollectionSourceState.objects.filter(
+                user=self.user,
+                item=show_item,
+                source="sonarr",
+            ).exists(),
+        )
+        self.assertFalse(
+            CollectionEntry.objects.filter(
+                user=self.user,
+                item=show_item,
+            ).exists(),
+        )
+
+        season_item = Item.objects.get(
+            media_id="95396",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.SEASON.value,
+            season_number=1,
+        )
+        self.assertEqual(season_item.title, "Severance Season 1")
+
+        collected_episode = Item.objects.get(
+            media_id="95396",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=1,
+        )
+        uncollected_episode = Item.objects.get(
+            media_id="95396",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=2,
+        )
+        self.assertTrue(
+            CollectionEntry.objects.filter(
+                user=self.user,
+                item=collected_episode,
+            ).exists(),
+        )
+        self.assertFalse(
+            CollectionEntry.objects.filter(
+                user=self.user,
+                item=uncollected_episode,
+            ).exists(),
+        )
+
+        self.assertEqual(
+            get_tv_show_collection_stats(
+                self.user,
+                show_item,
+                metadata_episode_count=2,
+            ),
+            {
+                "collected_seasons": 1,
+                "total_seasons": 1,
+                "collected_episodes": 1,
+                "total_episodes": 2,
+            },
+        )
+
+    @patch("integrations.imports.sonarr.SonarrClient.series")
+    def test_sonarr_import_removes_episode_collection_when_series_has_no_files(
+        self,
+        mock_series,
+    ):
+        """A Sonarr series with no files should clear stale episode ownership."""
+        Item.objects.create(
+            media_id="95396",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Severance",
+            image="https://example.com/severance.jpg",
+        )
+        episode_item = Item.objects.create(
+            media_id="95396",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=1,
+            title="Good News About Hell",
+            image="https://example.com/severance.jpg",
+        )
+        CollectionEntry.objects.create(user=self.user, item=episode_item)
+        CollectionSourceState.objects.create(
+            user=self.user,
+            item=episode_item,
+            source="sonarr",
+        )
+
+        mock_series.return_value = [
+            {
+                "id": 77,
+                "title": "Severance",
+                "statistics": {"episodeFileCount": 0},
+                "tmdbId": 95396,
+            },
+        ]
+
+        imported_counts, warnings = sonarr.importer(None, self.user, "new")
+
+        self.assertEqual(imported_counts, {})
+        self.assertEqual(warnings, "")
+        self.assertFalse(
+            CollectionSourceState.objects.filter(
+                user=self.user,
+                item=episode_item,
+                source="sonarr",
+            ).exists(),
+        )
+        self.assertFalse(
+            CollectionEntry.objects.filter(
+                user=self.user,
+                item=episode_item,
+            ).exists(),
+        )
+
+
+class CollectionSourceSyncTests(TestCase):
+    """Cover collection source sync durability helpers."""
+
+    def setUp(self):
+        """Create a user/item pair for source sync tests."""
+        self.user = get_user_model().objects.create_user(username="source-sync-user")
+        self.item = Item.objects.create(
+            media_id="95396",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.EPISODE.value,
+            season_number=1,
+            episode_number=1,
+            title="Good News About Hell",
+            image="https://example.com/severance.jpg",
+        )
+
+    @patch("integrations.source_sync._reconcile_collection_entry", return_value="ok")
+    @patch("integrations.source_sync.CollectionSourceState.objects.update_or_create")
+    def test_upsert_collection_source_state_retries_sqlite_locks(
+        self,
+        mock_update_or_create,
+        mock_reconcile,
+    ):
+        """Source sync should retry Sonarr state writes when SQLite is locked."""
+        mock_update_or_create.side_effect = [
+            OperationalError("database is locked"),
+            (CollectionSourceState(), True),
+        ]
+
+        result = upsert_collection_source_state(
+            user=self.user,
+            item=self.item,
+            source="sonarr",
+            quality_label="WEBDL-1080p",
+        )
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(mock_update_or_create.call_count, 2)
+        mock_reconcile.assert_called_once_with(user=self.user, item=self.item)
