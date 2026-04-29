@@ -139,6 +139,25 @@ class TrackModalViewTests(TestCase):
         self.assertContains(response, 'name="action"', html=False)
         self.assertNotContains(response, "Custom Metadata")
 
+    def test_track_modal_close_button_supports_split_button_wrapper(self):
+        """The shared close button should work for edit/create split-button wrappers."""
+        response = self.client.get(
+            reverse(
+                "track_modal",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "238",
+                },
+            )
+            + "?return_url=/home",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'modalState.editTrackOpen !== undefined', html=False)
+        self.assertContains(response, 'modalState.createTrackOpen !== undefined', html=False)
+        self.assertContains(response, 'modalState.trackOpen !== undefined', html=False)
+
     def test_track_modal_view_uses_stored_discover_hidden_state(self):
         """Discover tab should reflect persisted hidden feedback for the item."""
         DiscoverFeedback.objects.create(

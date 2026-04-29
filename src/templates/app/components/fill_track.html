@@ -7,8 +7,29 @@
     <div>
       <h2 class="text-xl md:text-2xl font-bold text-white line-clamp-2">{{ title }}</h2>
     </div>
-    <button class="text-gray-400 hover:text-white cursor-pointer shrink-0"
-            @click="trackOpen = false">{% include "app/icons/x.svg" with classes="w-5 h-5" %}</button>
+    <button type="button"
+            class="text-gray-400 hover:text-white cursor-pointer shrink-0"
+            @click="
+              let node = $el.parentElement;
+              while (node) {
+                if (node.hasAttribute && node.hasAttribute('x-data')) {
+                  const modalState = Alpine.$data(node);
+                  if (modalState && modalState.editTrackOpen !== undefined) {
+                    modalState.editTrackOpen = false;
+                    break;
+                  }
+                  if (modalState && modalState.createTrackOpen !== undefined) {
+                    modalState.createTrackOpen = false;
+                    break;
+                  }
+                  if (modalState && modalState.trackOpen !== undefined) {
+                    modalState.trackOpen = false;
+                    break;
+                  }
+                }
+                node = node.parentElement;
+              }
+            ">{% include "app/icons/x.svg" with classes="w-5 h-5" %}</button>
   </div>
 
   <div class="flex flex-col sm:flex-row min-h-[36rem]">
