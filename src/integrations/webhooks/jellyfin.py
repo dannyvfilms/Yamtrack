@@ -811,6 +811,8 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
             self._update_existing_item(existing_item, payload, user)
             return
 
+
+
         # Feature #1: Try to resolve media ID using user's preferred provider
         # Determine correct media type for provider resolution (ANIME vs TV)
         resolution_media_type = MediaTypes.TV.value
@@ -855,16 +857,15 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
                 resolved_episode,
             )
             
-            # If we resolved to MAL, handle as anime (MAL is only used for anime)
-            if resolved_source == Sources.MAL.value:
+            # If we have a MAL ID from anime detection, handle as anime using resolved_source
+            if ids.get("mal_id"):
                 logger.info(
-                    "Tracking anime episode under MAL: ID=%s, Episode: %d",
-                    resolved_media_id,
-                    resolved_episode,
+                    "Detected anime via mapping, handling under %s: ID=%s",
+                    resolved_source, resolved_media_id,
                 )
-                if self._handle_anime(resolved_media_id, resolved_episode, payload, user):
+                if self._handle_anime(resolved_media_id, resolved_episode, payload, user, source=resolved_source):
                     return
-                # Fall through to TV handling if anime handling fails
+
             
             # Use _handle_tv_episode with the resolved source;
             # _get_tv_metadata override ensures metadata comes from the right provider.

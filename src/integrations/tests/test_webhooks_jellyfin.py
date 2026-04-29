@@ -678,9 +678,12 @@ class JellyfinWebhookTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        anime = Anime.objects.get(item__media_id="60067", user=self.user)
+        # Anime should be tracked under TMDB (the fallback source when Feature #1 is disabled)
+        anime = Anime.objects.get(item__media_id="12345", user=self.user)
+        self.assertEqual(anime.item.source, Sources.TMDB.value)
         self.assertEqual(anime.status, Status.IN_PROGRESS.value)
         self.assertEqual(anime.progress, 11)
+        # TVDB-mapped anime should not exist
         self.assertFalse(
             Anime.objects.filter(item__media_id="46569", user=self.user).exists(),
         )

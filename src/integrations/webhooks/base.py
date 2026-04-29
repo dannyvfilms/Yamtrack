@@ -1239,14 +1239,46 @@ class BaseWebhookProcessor:
         # Queue collection metadata update for TV show (not episode-specific)
         self._queue_collection_metadata_update_for_tv(payload, user, tv_item)
 
-    def _handle_anime(self, media_id, episode_number, payload, user):
-        """Handle anime playback event."""
-        logger.info("_handle_anime: media_id=%s, episode_number=%s, payload_keys=%s, user=%s", media_id, episode_number, list(payload.keys()), user)
+    def _handle_anime(self, media_id, episode_number, payload, user, source=Sources.MAL.value):
+        """Handle anime playback event.
+
+        Args:
+            media_id: Provider-specific media ID for the anime.
+            episode_number: Episode number (or 1 for movies).
+            payload: Webhook payload.
+            user: User instance.
+            source: Provider source (default: MAL). Can be MAL, TMDB, or TVDB.
+        """
+        logger.info("_handle_anime: media_id=%s, episode_number=%s, payload_keys=%s, user=%s, source=%s", media_id, episode_number, list(payload.keys()), user, source)
+
+        # Check if anime is enabled for this user
+        if not getattr(user, 'anime_enabled', False):
+            logger.info("_handle_anime: anime is disabled for user %s, skipping", user)
+            return False
+
         from app.services import metadata_resolution  # noqa: PLC0415
 
-        logger.info("_handle_anime: fetching MAL metadata for media_id=%s", media_id)
-        anime_metadata = app.providers.mal.anime(media_id)
-        logger.info("_handle_anime: got MAL metadata, title=%s", anime_metadata.get("title"))
+        # Fetch metadata based on source
+        logger.info("_handle_anime: fetching metadata from %s for media_id=%s", source, media_id)
+        if source == Sources.MAL.value:
+            anime_metadata = app.providers.mal.anime(media_id)
+        elif source == Sources.TMDB.value:
+            # For TMDB, we need season number - extract from payload or use 1
+            season_number, _ = self._extract_season_episode_from_payload(payload)
+            if season_number is None:
+                season_number = 1
+            anime_metadata = app.providers.tmdb.tv_with_seasons(str(media_id), [season_number])
+        elif source == Sources.TVDB.value:
+            season_number, _ = self._extract_season_episode_from_payload(payload)
+            if season_number is None:
+                season_number = 1
+            anime_metadata = app.providers.tvdb.tv_with_seasons(str(media_id), [season_number], routed_media_type=MediaTypes.ANIME.value)
+        else:
+            logger.warning("_handle_anime: unknown source %s, defaulting to MAL", source)
+            anime_metadata = app.providers.mal.anime(media_id)
+
+        logger.info("_handle_anime: got metadata, title=%s", anime_metadata.get("title"))
+
         if not self._is_played(payload):
             episode_number = max(0, episode_number - 1)
 
@@ -1257,16 +1289,14 @@ class BaseWebhookProcessor:
             and episode_number > max_progress
         ):
             logger.warning(
-                "Skipping anime mapping for MAL ID %s: episode %s exceeds max_progress %s",
-                media_id,
-                episode_number,
-                max_progress,
+                "Skipping anime mapping for %s ID %s: episode %s exceeds max_progress %s",
+                source, media_id, episode_number, max_progress,
             )
             return False
 
         anime_item, _ = app.models.Item.objects.get_or_create(
             media_id=media_id,
-            source=Sources.MAL.value,
+            source=source,
             media_type=MediaTypes.ANIME.value,
             defaults={
                 "title": anime_metadata["title"],
@@ -1276,11 +1306,12 @@ class BaseWebhookProcessor:
         metadata_resolution.upsert_provider_links(
             anime_item,
             anime_metadata | {"media_id": str(media_id)},
-            provider=Sources.MAL.value,
+            provider=source,
             provider_media_type=MediaTypes.ANIME.value,
         )
 
-        for mapping_entry in anime_mapping.find_entries_for_mal_id(media_id):
+        # Add provider links for cross-referencing (TMDB/TVDB <-> MAL)
+        for mapping_entry in anime_mapping.find_entries_for_mal_id(media_id) if source == Sources.MAL.value else []:
             tmdb_id = (
                 mapping_entry.get("tmdb_show_id")
                 or mapping_entry.get("tmdb_id")
