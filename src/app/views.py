@@ -1120,6 +1120,54 @@ def _parse_detail_tag_preview_genres(raw_value):
     return stats._coerce_genre_list(parsed_value)
 
 
+def _user_tags_for_item(user, item):
+    """Return the user's tags annotated with whether they apply to the item."""
+    from django.db import models as db_models
+
+    return (
+        Tag.objects.filter(user=user)
+        .annotate(
+            has_tag=db_models.Exists(
+                ItemTag.objects.filter(
+                    tag_id=db_models.OuterRef("id"),
+                    item=item,
+                ),
+            ),
+        )
+        .order_by("name")
+    )
+
+
+def _render_tag_modal_response(request, item, preview_genres):
+    """Render the tag modal plus OOB preview refresh for the current item."""
+    from django.template.loader import render_to_string
+
+    modal_html = render_to_string(
+        "app/components/fill_tags.html",
+        {
+            "item": item,
+            "user_tags": _user_tags_for_item(request.user, item),
+            "preview_genres_json": json.dumps(preview_genres),
+        },
+        request=request,
+    )
+    preview_html = render_to_string(
+        "app/components/detail_tag_preview.html",
+        {
+            "preview_id": app_tags.component_id("tag-preview", item),
+            "detail_tag_sections": _build_detail_tag_sections(
+                {},
+                item,
+                request.user,
+                fallback_genres=preview_genres,
+            ),
+            "swap_oob": True,
+        },
+        request=request,
+    )
+    return HttpResponse(modal_html + preview_html)
+
+
 def _should_queue_game_lengths_refresh(detail_item):
     """Return whether a background game-length refresh should be queued."""
     if not detail_item:
@@ -15566,33 +15614,18 @@ def tags_modal(
             image=metadata["image"],
         )
 
-    from django.db import models as db_models
-
     preview_genres = _parse_detail_tag_preview_genres(
         request.GET.get("preview_genres_json"),
     )
     if not preview_genres:
         preview_genres = _resolve_detail_tag_genres({}, item)
 
-    user_tags = (
-        Tag.objects.filter(user=request.user)
-        .annotate(
-            has_tag=db_models.Exists(
-                ItemTag.objects.filter(
-                    tag_id=db_models.OuterRef("id"),
-                    item=item,
-                ),
-            ),
-        )
-        .order_by("name")
-    )
-
     return render(
         request,
         "app/components/fill_tags.html",
         {
             "item": item,
-            "user_tags": user_tags,
+            "user_tags": _user_tags_for_item(request.user, item),
             "preview_genres_json": json.dumps(preview_genres),
         },
     )
@@ -15651,8 +15684,6 @@ def tag_item_toggle(request):
 @require_POST
 def tag_create(request):
     """Create a new tag for the user and optionally apply it to an item."""
-    from django.template.loader import render_to_string
-
     name = (request.POST.get("name") or "").strip()
     item_id = request.POST.get("item_id")
 
@@ -15678,48 +15709,35 @@ def tag_create(request):
         except Item.DoesNotExist:
             return HttpResponseBadRequest("Item not found.")
 
-        from django.db import models as db_models
+        preview_genres = _parse_detail_tag_preview_genres(
+            request.POST.get("preview_genres_json"),
+        )
+        return _render_tag_modal_response(request, item, preview_genres)
+
+    return HttpResponse(status=204)
+
+
+@require_POST
+def tag_delete(request):
+    """Delete a tag owned by the current user and refresh the tag modal."""
+    tag_id = request.POST.get("tag_id")
+    item_id = request.POST.get("item_id")
+
+    if not tag_id:
+        return HttpResponseBadRequest("Tag is required.")
+
+    tag = get_object_or_404(Tag, id=tag_id, user=request.user)
+    tag.delete()
+
+    if item_id:
+        try:
+            item = Item.objects.get(id=item_id)
+        except Item.DoesNotExist:
+            return HttpResponseBadRequest("Item not found.")
 
         preview_genres = _parse_detail_tag_preview_genres(
             request.POST.get("preview_genres_json"),
         )
-
-        user_tags = (
-            Tag.objects.filter(user=request.user)
-            .annotate(
-                has_tag=db_models.Exists(
-                    ItemTag.objects.filter(
-                        tag_id=db_models.OuterRef("id"),
-                        item=item,
-                    ),
-                ),
-            )
-            .order_by("name")
-        )
-
-        modal_html = render_to_string(
-            "app/components/fill_tags.html",
-            {
-                "item": item,
-                "user_tags": user_tags,
-                "preview_genres_json": json.dumps(preview_genres),
-            },
-            request=request,
-        )
-        preview_html = render_to_string(
-            "app/components/detail_tag_preview.html",
-            {
-                "preview_id": app_tags.component_id("tag-preview", item),
-                "detail_tag_sections": _build_detail_tag_sections(
-                    {},
-                    item,
-                    request.user,
-                    fallback_genres=preview_genres,
-                ),
-                "swap_oob": True,
-            },
-            request=request,
-        )
-        return HttpResponse(modal_html + preview_html)
+        return _render_tag_modal_response(request, item, preview_genres)
 
     return HttpResponse(status=204)

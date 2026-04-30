@@ -39,6 +39,7 @@ class TagsModalViewTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Favorite")
         self.assertContains(response, "Must Watch")
+        self.assertContains(response, reverse("tag_delete"))
 
     def test_tags_modal_shows_applied_status(self):
         """Modal shows correct has_tag status."""
@@ -197,6 +198,74 @@ class TagCreateViewTest(TestCase):
         url = reverse("tag_create")
         response = self.client.post(url, {"name": "", "item_id": self.item.id})
         self.assertEqual(response.status_code, 400)
+
+
+class TagDeleteViewTest(TestCase):
+    """Test the tag_delete view."""
+
+    def setUp(self):
+        self.credentials = {"username": "test", "password": "12345"}
+        self.user = get_user_model().objects.create_user(**self.credentials)
+        self.client.login(**self.credentials)
+
+        self.item = Item.objects.create(
+            media_id="278",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="The Shawshank Redemption",
+            image="http://example.com/image.jpg",
+            genres=["Drama"],
+        )
+        self.tag = Tag.objects.create(user=self.user, name="Favorite")
+        self.other_tag = Tag.objects.create(user=self.user, name="Must Watch")
+        ItemTag.objects.create(tag=self.tag, item=self.item)
+
+    def test_delete_tag_removes_it_from_library(self):
+        """Deleting a tag removes the tag object and its item links."""
+        url = reverse("tag_delete")
+        response = self.client.post(
+            url,
+            {"tag_id": self.tag.id, "item_id": self.item.id},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Tag.objects.filter(id=self.tag.id).exists())
+        self.assertFalse(ItemTag.objects.filter(tag_id=self.tag.id).exists())
+
+    def test_delete_returns_modal_and_oob_preview_refresh(self):
+        """Delete response refreshes both the modal and the detail-tag preview."""
+        url = reverse("tag_delete")
+        response = self.client.post(
+            url,
+            {
+                "tag_id": self.tag.id,
+                "item_id": self.item.id,
+                "preview_genres_json": json.dumps(["Drama"]),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, self.other_tag.name)
+        self.assertNotContains(response, "Favorite</span>")
+        self.assertContains(response, 'hx-swap-oob="outerHTML"')
+        self.assertContains(response, 'id="tag-preview-movie-278"')
+        self.assertContains(response, "Click to add tags")
+        self.assertContains(response, "Tags")
+        self.assertContains(response, "Genres")
+        self.assertContains(response, "Drama")
+
+    def test_cannot_delete_other_user_tag(self):
+        """Cannot delete a tag owned by another user."""
+        other_user = get_user_model().objects.create_user(
+            username="other", password="12345"
+        )
+        foreign_tag = Tag.objects.create(user=other_user, name="Other Tag")
+        url = reverse("tag_delete")
+        response = self.client.post(
+            url,
+            {"tag_id": foreign_tag.id, "item_id": self.item.id},
+        )
+        self.assertEqual(response.status_code, 404)
 
 
 class TagFilterViewTest(TestCase):

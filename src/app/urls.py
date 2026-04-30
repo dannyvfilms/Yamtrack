@@ -318,4 +318,5 @@ urlpatterns = [
     ),
     path("tag_item_toggle", views.tag_item_toggle, name="tag_item_toggle"),
     path("tag_create", views.tag_create, name="tag_create"),
+    path("tag_delete", views.tag_delete, name="tag_delete"),
 ]
