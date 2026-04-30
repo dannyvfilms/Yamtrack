@@ -591,6 +591,7 @@
                      name="preview_genres_json"
                      value="{{ detail_tag_preview_genres_json|escape }}">
               <button class="inline-flex h-11 w-full items-center justify-center rounded-xl border border-white/10 bg-[#2a2f35] text-gray-100 shadow-sm transition-colors duration-200 hover:bg-[#343a40] cursor-pointer sm:size-11 sm:w-11"
+                      x-ref="manageTagsButton"
                       title="Manage tags"
                       hx-get="{% media_view_url 'tags_modal' media %}"
                       hx-include="#{{ detail_tag_preview_genres_id }}"

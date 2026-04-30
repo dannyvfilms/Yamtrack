@@ -873,6 +873,75 @@ class MediaDetailsViewTests(TestCase):
         )
 
     @patch("app.providers.services.get_media_metadata")
+    def test_media_details_renders_empty_tag_section_when_item_has_no_tags(
+        self,
+        mock_get_metadata,
+    ):
+        Item.objects.create(
+            media_id="238",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Test Movie",
+            image="http://example.com/image.jpg",
+            genres=["Drama", "Mystery"],
+        )
+
+        mock_get_metadata.return_value = {
+            "media_id": "238",
+            "title": "Test Movie",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "image": "http://example.com/image.jpg",
+            "source_url": "https://www.themoviedb.org/movie/238",
+            "genres": ["Drama", "Mystery"],
+            "synopsis": "Test overview",
+            "details": {},
+            "related": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "238",
+                    "title": "test-movie",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Genres")
+        self.assertContains(response, "Tags")
+        self.assertContains(response, "Click to add tags")
+        self.assertContains(response, 'x-ref="manageTagsButton"')
+        self.assertContains(response, "$refs.manageTagsButton.click()")
+        self.assertEqual(
+            response.context["detail_tag_sections"],
+            [
+                {
+                    "title": "Genres",
+                    "entries": [
+                        {
+                            "label": "Drama",
+                            "chip_classes": "border-violet-400/18 bg-violet-500/[0.07] text-violet-100",
+                        },
+                        {
+                            "label": "Mystery",
+                            "chip_classes": "border-violet-400/18 bg-violet-500/[0.07] text-violet-100",
+                        },
+                    ],
+                },
+                {
+                    "title": "Tags",
+                    "entries": [],
+                    "empty_label": "Click to add tags",
+                },
+            ],
+        )
+
+    @patch("app.providers.services.get_media_metadata")
     def test_media_details_hides_streaming_section_when_watch_provider_region_disabled(
         self,
         mock_get_metadata,

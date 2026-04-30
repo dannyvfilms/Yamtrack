@@ -1055,7 +1055,7 @@ def _resolve_detail_tag_genres(media_metadata, item, fallback_genres=None):
 
 
 def _build_detail_tag_sections(media_metadata, item, user, fallback_genres=None):
-    """Return grouped genre and user-tag chips for the media detail action row."""
+    """Return grouped genre and tag preview sections for the media detail action row."""
     sections = []
 
     genres = _resolve_detail_tag_genres(
@@ -1079,7 +1079,8 @@ def _build_detail_tag_sections(media_metadata, item, user, fallback_genres=None)
         )
 
     tag_names = []
-    if item is not None and getattr(user, "is_authenticated", False):
+    is_authenticated_user = item is not None and getattr(user, "is_authenticated", False)
+    if is_authenticated_user:
         tag_names = list(
             ItemTag.objects.filter(item=item, tag__user=user)
             .select_related("tag")
@@ -1087,18 +1088,22 @@ def _build_detail_tag_sections(media_metadata, item, user, fallback_genres=None)
             .values_list("tag__name", flat=True)
         )
 
-    if tag_names:
+    if is_authenticated_user:
+        tag_section = {
+            "title": "Tags",
+            "entries": [
+                {
+                    "label": tag_name,
+                    "chip_classes": "border-slate-400/18 bg-slate-500/[0.07] text-slate-100",
+                }
+                for tag_name in tag_names
+            ],
+        }
+        if not tag_names:
+            tag_section["empty_label"] = "Click to add tags"
+
         sections.append(
-            {
-                "title": "Tags",
-                "entries": [
-                    {
-                        "label": tag_name,
-                        "chip_classes": "border-slate-400/18 bg-slate-500/[0.07] text-slate-100",
-                    }
-                    for tag_name in tag_names
-                ],
-            }
+            tag_section,
         )
 
     return sections
