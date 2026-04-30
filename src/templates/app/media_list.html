@@ -18,7 +18,55 @@
     </div>
   </div>
 
-  <div x-data="{ sort: '{{ current_sort }}', direction: '{{ current_direction }}', status: '{{ current_status }}', rating: '{{ current_rating }}', collection: '{{ current_collection }}', genre: '{{ current_genre|default:'' }}', year: '{{ current_year|default:'' }}', release: '{{ current_release|default:'all' }}', source: '{{ current_source|default:'' }}', language: '{{ current_language|default:'' }}', country: '{{ current_country|default:'' }}', platform: '{{ current_platform|default:'' }}', origin: '{{ current_origin|default:'' }}', format: '{{ current_format|default:'' }}', author: '{{ current_author|default:'' }}', tag: '{{ current_tag|default:'' }}', tag_exclude: '{{ current_tag_exclude|default:'' }}', layout: '{{ current_layout }}', search: '{{ request.GET.search|default:'' }}', showLanguages: {{ filter_data.show_languages|yesno:'true,false' }}, showCountries: {{ filter_data.show_countries|yesno:'true,false' }}, showPlatforms: {{ filter_data.show_platforms|yesno:'true,false' }}, showOrigins: {{ filter_data.show_origins|yesno:'true,false' }}, showFormats: {{ filter_data.show_formats|yesno:'true,false' }}, showAuthors: {{ filter_data.show_authors|yesno:'true,false' }}, statusLabels: {
+  <script>
+    function buildMediaListFilterParams(form, overrides = {}) {
+      const params = new URLSearchParams();
+      if (!form) {
+        return params;
+      }
+
+      const omitDefaults = {
+        status: 'all',
+        rating: 'all',
+        collection: 'all',
+        release: 'all',
+      };
+
+      Array.from(form.elements).forEach((field) => {
+        if (!field || !field.name || field.disabled) {
+          return;
+        }
+
+        const hasOverride = Object.prototype.hasOwnProperty.call(overrides, field.name);
+        const rawValue = hasOverride ? overrides[field.name] : field.value;
+        if (rawValue === null || rawValue === undefined) {
+          return;
+        }
+
+        const value = String(rawValue).trim();
+        if (!value) {
+          return;
+        }
+
+        const omittedDefault = omitDefaults[field.name];
+        if (omittedDefault && value.toLowerCase() === omittedDefault) {
+          return;
+        }
+
+        params.set(field.name, value);
+      });
+
+      return params;
+    }
+
+    function buildMediaListHref(listPath, form, overrides = {}) {
+      const params = buildMediaListFilterParams(form, overrides);
+      const query = params.toString();
+      return query ? `${listPath}?${query}` : listPath;
+    }
+  </script>
+
+  <div x-data="{ mediaListUrl: '{% url 'medialist' media_type %}', sort: '{{ current_sort }}', direction: '{{ current_direction }}', status: '{{ current_status }}', rating: '{{ current_rating }}', collection: '{{ current_collection }}', genre: '{{ current_genre|default:'' }}', year: '{{ current_year|default:'' }}', release: '{{ current_release|default:'all' }}', source: '{{ current_source|default:'' }}', language: '{{ current_language|default:'' }}', country: '{{ current_country|default:'' }}', platform: '{{ current_platform|default:'' }}', origin: '{{ current_origin|default:'' }}', format: '{{ current_format|default:'' }}', author: '{{ current_author|default:'' }}', tag: '{{ current_tag|default:'' }}', tag_exclude: '{{ current_tag_exclude|default:'' }}', layout: '{{ current_layout }}', search: '{{ request.GET.search|default:'' }}', showLanguages: {{ filter_data.show_languages|yesno:'true,false' }}, showCountries: {{ filter_data.show_countries|yesno:'true,false' }}, showPlatforms: {{ filter_data.show_platforms|yesno:'true,false' }}, showOrigins: {{ filter_data.show_origins|yesno:'true,false' }}, showFormats: {{ filter_data.show_formats|yesno:'true,false' }}, showAuthors: {{ filter_data.show_authors|yesno:'true,false' }}, statusLabels: {
     {% for value, label in status_choices %}
       '{{ value }}': '{{ label }}'
       {% if not forloop.last %},{% endif %}
@@ -42,7 +90,7 @@
       {% if not forloop.last %},{% endif %}
 
     {% endfor %}
-    }, defaultDirection(value) { return ['author', 'popularity', 'runtime', 'start_date', 'title', 'time_left', 'time_to_beat'].includes(value) ? 'asc' : 'desc' }, toggleSort(value) { this.direction = (this.sort === value) ? (this.direction === 'asc' ? 'desc' : 'asc') : this.defaultDirection(value); this.sort = value; }, toggleRating() { if (this.rating === 'all') { this.rating = 'rated'; } else if (this.rating === 'rated') { this.rating = 'not_rated'; } else { this.rating = 'all'; } }, toggleCollection() { if (this.collection === 'all') { this.collection = 'collected'; } else if (this.collection === 'collected') { this.collection = 'not_collected'; } else { this.collection = 'all'; } }, filterLabel() { const labels = []; if (this.rating && this.rating !== 'all') { labels.push(this.ratingLabels[this.rating] || 'Rated'); } if (this.collection && this.collection !== 'all') { labels.push(this.collectionLabels[this.collection] || 'Collected'); } if (this.genre) { labels.push(this.genre); } if (this.year) { labels.push(this.year === 'unknown' ? 'Unknown Year' : this.year); } if (this.release && this.release !== 'all') { labels.push(this.releaseLabels[this.release] || 'Released'); } if (this.source) { labels.push(this.source.toUpperCase()); } if (this.showLanguages && this.language) { labels.push(this.language.length <= 3 ? this.language.toUpperCase() : this.language); } if (this.showCountries && this.country) { labels.push(this.country.length <= 3 ? this.country.toUpperCase() : this.country); } if (this.showPlatforms && this.platform) { labels.push(this.platform); } if (this.showOrigins && this.origin) { labels.push(this.origin.length <= 3 ? this.origin.toUpperCase() : this.origin); } if (this.showFormats && this.format) { labels.push(this.format === 'ebook' ? 'eBook' : this.format.charAt(0).toUpperCase() + this.format.slice(1)); } if (this.showAuthors && this.author) { labels.push(this.author); } if (this.tag) { labels.push('+' + this.tag); } if (this.tag_exclude) { labels.push('-' + this.tag_exclude); } if (labels.length === 0) { return 'All'; } if (labels.length === 1) { return labels[0]; } return `${labels[0]} +${labels.length - 1}`; }, clearFilters() { this.rating = 'all'; this.collection = 'all'; this.genre = ''; this.year = ''; this.release = 'all'; this.source = ''; this.language = ''; this.country = ''; this.platform = ''; this.origin = ''; this.format = ''; this.author = ''; this.tag = ''; this.tag_exclude = ''; } }">
+    }, defaultDirection(value) { return ['author', 'popularity', 'runtime', 'start_date', 'title', 'time_left', 'time_to_beat'].includes(value) ? 'asc' : 'desc' }, toggleSort(value) { this.direction = (this.sort === value) ? (this.direction === 'asc' ? 'desc' : 'asc') : this.defaultDirection(value); this.sort = value; }, toggleRating() { if (this.rating === 'all') { this.rating = 'rated'; } else if (this.rating === 'rated') { this.rating = 'not_rated'; } else { this.rating = 'all'; } }, toggleCollection() { if (this.collection === 'all') { this.collection = 'collected'; } else if (this.collection === 'collected') { this.collection = 'not_collected'; } else { this.collection = 'all'; } }, layoutHref(nextLayout) { return buildMediaListHref(this.mediaListUrl, document.getElementById('filter-form'), { layout: nextLayout }); }, filterLabel() { const labels = []; if (this.rating && this.rating !== 'all') { labels.push(this.ratingLabels[this.rating] || 'Rated'); } if (this.collection && this.collection !== 'all') { labels.push(this.collectionLabels[this.collection] || 'Collected'); } if (this.genre) { labels.push(this.genre); } if (this.year) { labels.push(this.year === 'unknown' ? 'Unknown Year' : this.year); } if (this.release && this.release !== 'all') { labels.push(this.releaseLabels[this.release] || 'Released'); } if (this.source) { labels.push(this.source.toUpperCase()); } if (this.showLanguages && this.language) { labels.push(this.language.length <= 3 ? this.language.toUpperCase() : this.language); } if (this.showCountries && this.country) { labels.push(this.country.length <= 3 ? this.country.toUpperCase() : this.country); } if (this.showPlatforms && this.platform) { labels.push(this.platform); } if (this.showOrigins && this.origin) { labels.push(this.origin.length <= 3 ? this.origin.toUpperCase() : this.origin); } if (this.showFormats && this.format) { labels.push(this.format === 'ebook' ? 'eBook' : this.format.charAt(0).toUpperCase() + this.format.slice(1)); } if (this.showAuthors && this.author) { labels.push(this.author); } if (this.tag) { labels.push('+' + this.tag); } if (this.tag_exclude) { labels.push('-' + this.tag_exclude); } if (labels.length === 0) { return 'All'; } if (labels.length === 1) { return labels[0]; } return `${labels[0]} +${labels.length - 1}`; }, clearFilters() { this.rating = 'all'; this.collection = 'all'; this.genre = ''; this.year = ''; this.release = 'all'; this.source = ''; this.language = ''; this.country = ''; this.platform = ''; this.origin = ''; this.format = ''; this.author = ''; this.tag = ''; this.tag_exclude = ''; } }">
 
     <!-- Form to manage state -->
     <form id="filter-form" class="hidden">
@@ -1007,14 +1055,14 @@
 
           <!-- Layout Toggle -->
           <div class="flex rounded-md overflow-hidden border border-gray-700 layout-toggle">
-            <a :href="`{% url 'medialist' media_type %}?${search ? 'search=' + search + '&' : ''}${status && status !== 'all' && status !== 'All' ? 'status=' + status + '&' : ''}${rating !== 'all' ? 'rating=' + rating + '&' : ''}${collection !== 'all' ? 'collection=' + collection + '&' : ''}${genre ? 'genre=' + genre + '&' : ''}${year ? 'year=' + year + '&' : ''}${release !== 'all' ? 'release=' + release + '&' : ''}${source ? 'source=' + source + '&' : ''}${showLanguages && language ? 'language=' + language + '&' : ''}${showCountries && country ? 'country=' + country + '&' : ''}${showPlatforms && platform ? 'platform=' + platform + '&' : ''}${showOrigins && origin ? 'origin=' + origin + '&' : ''}${showFormats && format ? 'format=' + format + '&' : ''}${showAuthors && author ? 'author=' + author + '&' : ''}${direction ? 'direction=' + direction + '&' : ''}${sort !== 'score' ? 'sort=' + sort + '&' : ''}layout=grid`"
+            <a :href="layoutHref('grid')"
                class="p-2 cursor-pointer"
                :class="layout === 'grid' ? 'bg-indigo-600 text-white' : 'bg-[#39404b] hover:bg-[#454d5a]'"
                title="Grid View"
                @click="layout = 'grid'">
               {% include "app/icons/four-square.svg" with classes="w-5 h-5" %}
             </a>
-            <a :href="`{% url 'medialist' media_type %}?${search ? 'search=' + search + '&' : ''}${status && status !== 'all' && status !== 'All' ? 'status=' + status + '&' : ''}${rating !== 'all' ? 'rating=' + rating + '&' : ''}${collection !== 'all' ? 'collection=' + collection + '&' : ''}${genre ? 'genre=' + genre + '&' : ''}${year ? 'year=' + year + '&' : ''}${release !== 'all' ? 'release=' + release + '&' : ''}${source ? 'source=' + source + '&' : ''}${showLanguages && language ? 'language=' + language + '&' : ''}${showCountries && country ? 'country=' + country + '&' : ''}${showPlatforms && platform ? 'platform=' + platform + '&' : ''}${showOrigins && origin ? 'origin=' + origin + '&' : ''}${showFormats && format ? 'format=' + format + '&' : ''}${showAuthors && author ? 'author=' + author + '&' : ''}${direction ? 'direction=' + direction + '&' : ''}${sort !== 'score' ? 'sort=' + sort + '&' : ''}layout=table`"
+            <a :href="layoutHref('table')"
                class="p-2 cursor-pointer"
                :class="layout === 'table' ? 'bg-indigo-600 text-white' : 'bg-[#39404b] hover:bg-[#454d5a]'"
                title="Table View"
@@ -1186,71 +1234,21 @@
 
       const listPath = '{% url "medialist" media_type %}';
       const storageKey = 'yamtrack.media.filters.{{ user.id }}.{{ media_type }}';
-      const persistedKeys = [
-        'search',
-        'status',
-        'rating',
-        'collection',
-        'genre',
-        'year',
-        'release',
-        'source',
-        'language',
-        'country',
-        'platform',
-        'origin',
-        'format',
-        'author',
-        'sort',
-        'direction',
-        'layout',
-      ];
+      const persistedKeys = Array.from(
+        new Set(
+          Array.from(filterForm.elements)
+            .map((field) => (field && field.name ? field.name : ''))
+            .filter(Boolean),
+        ),
+      );
 
       function hasPersistedParams(search) {
         const params = new URLSearchParams(search || window.location.search);
         return persistedKeys.some((key) => params.has(key));
       }
 
-      function readFilterValue(name) {
-        const field = filterForm.elements.namedItem(name);
-        if (!field || typeof field.value !== 'string') {
-          return '';
-        }
-        return field.value.trim();
-      }
-
-      function setParam(params, key, value, omitAll) {
-        if (!value) {
-          return;
-        }
-        if (omitAll && value.toLowerCase() === 'all') {
-          return;
-        }
-        params.set(key, value);
-      }
-
       function buildFilterParams() {
-        const params = new URLSearchParams();
-
-        setParam(params, 'search', readFilterValue('search'));
-        setParam(params, 'status', readFilterValue('status'), true);
-        setParam(params, 'rating', readFilterValue('rating'), true);
-        setParam(params, 'collection', readFilterValue('collection'), true);
-        setParam(params, 'genre', readFilterValue('genre'));
-        setParam(params, 'year', readFilterValue('year'));
-        setParam(params, 'release', readFilterValue('release'), true);
-        setParam(params, 'source', readFilterValue('source'));
-        setParam(params, 'language', readFilterValue('language'));
-        setParam(params, 'country', readFilterValue('country'));
-        setParam(params, 'platform', readFilterValue('platform'));
-        setParam(params, 'origin', readFilterValue('origin'));
-        setParam(params, 'format', readFilterValue('format'));
-        setParam(params, 'author', readFilterValue('author'));
-        setParam(params, 'sort', readFilterValue('sort'));
-        setParam(params, 'direction', readFilterValue('direction'));
-        setParam(params, 'layout', readFilterValue('layout'));
-
-        return params;
+        return buildMediaListFilterParams(filterForm);
       }
 
       function persistFilters(syncUrl) {
@@ -1271,7 +1269,7 @@
           return;
         }
 
-        const nextUrl = query ? `${listPath}?${query}` : listPath;
+        const nextUrl = buildMediaListHref(listPath, filterForm);
         if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
           window.history.replaceState(window.history.state, '', nextUrl);
         }

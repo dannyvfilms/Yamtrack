@@ -1466,6 +1466,33 @@ class MediaListViewTests(TestCase):
         self.user.refresh_from_db()
         self.assertEqual(self.user.movie_sort, "title")
 
+    def test_media_list_filter_persistence_serializes_filter_form_fields(self):
+        """Filter persistence should derive keys from the hidden filter form."""
+        response = self.client.get(
+            reverse("medialist", args=[MediaTypes.MOVIE.value])
+            + "?tag=Favorite&tag_exclude=Archived&layout=grid",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_tag"], "Favorite")
+        self.assertEqual(response.context["current_tag_exclude"], "Archived")
+        self.assertContains(response, "function buildMediaListFilterParams(form, overrides = {})")
+        self.assertContains(response, "Array.from(form.elements)")
+        self.assertContains(response, "const persistedKeys = Array.from(")
+        self.assertNotContains(response, "const persistedKeys = [")
+
+    def test_media_list_layout_toggle_uses_shared_filter_serializer(self):
+        """Grid/table links should reuse the shared serializer instead of manual query strings."""
+        response = self.client.get(reverse("medialist", args=[MediaTypes.MOVIE.value]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, ":href=\"layoutHref('grid')\"")
+        self.assertContains(response, ":href=\"layoutHref('table')\"")
+        self.assertContains(
+            response,
+            "layoutHref(nextLayout) { return buildMediaListHref(this.mediaListUrl, document.getElementById('filter-form'), { layout: nextLayout }); }",
+        )
+
     def test_media_list_htmx_request(self):
         """Test the media list view with HTMX request."""
         response = self.client.get(
