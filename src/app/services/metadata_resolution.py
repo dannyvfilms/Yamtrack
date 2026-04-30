@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from django.conf import settings
 
 from app import config
+from app.db_retry import run_retryable_db_operation
 from app.models import (
     Item,
     ItemProviderLink,
@@ -22,6 +24,11 @@ GROUPED_ANIME_PROVIDERS = {
     Sources.TMDB.value,
     Sources.TVDB.value,
 }
+
+logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 PROVIDER_EXTERNAL_ID_KEYS = {
     Sources.TMDB.value: "tmdb_id",
@@ -310,6 +317,8 @@ def upsert_provider_links(
     season_number: int | None = None,
     episode_offset: int | None = None,
     extra_metadata: dict[str, Any] | None = None,
+    persistence_mode: str = "required",
+    on_deferred: Callable[[Exception], None] | None = None,
 ) -> dict[str, str]:
     """Persist cross-provider IDs discovered in provider metadata."""
     if item is None or not isinstance(metadata, dict):
@@ -333,37 +342,68 @@ def upsert_provider_links(
         }
         if episode_offset is not None:
             link_defaults["episode_offset"] = episode_offset
-        provider_link, _ = ItemProviderLink.objects.update_or_create(
-            item=item,
-            provider=normalized_provider,
-            provider_media_type=normalized_media_type,
-            season_number=season_number,
-            defaults=link_defaults,
+        provider_link_outcome = run_retryable_db_operation(
+            lambda: ItemProviderLink.objects.update_or_create(
+                item=item,
+                provider=normalized_provider,
+                provider_media_type=normalized_media_type,
+                season_number=season_number,
+                defaults=link_defaults,
+            ),
+            mode=persistence_mode,
+            fallback=lambda: (None, False),
+            operation_name="item provider-link upsert",
+            operation_logger=logger,
+            on_deferred=on_deferred,
         )
-        external_key = PROVIDER_EXTERNAL_ID_KEYS.get(provider_link.provider)
-        if external_key and provider_link.provider_media_id:
+        provider_link, _ = provider_link_outcome.value
+        external_key = (
+            PROVIDER_EXTERNAL_ID_KEYS.get(provider_link.provider)
+            if provider_link is not None
+            else None
+        )
+        if external_key and provider_link and provider_link.provider_media_id:
             external_ids.setdefault(external_key, provider_link.provider_media_id)
 
     for candidate_provider, external_key in PROVIDER_EXTERNAL_ID_KEYS.items():
         external_id = external_ids.get(external_key)
         if not external_id:
             continue
-        ItemProviderLink.objects.update_or_create(
-            item=item,
-            provider=candidate_provider,
-            provider_media_type=normalized_media_type,
-            season_number=season_number,
-            defaults={
-                "provider_media_id": external_id,
-                "metadata": metadata_payload,
-            },
+        def _upsert_external_provider_link(
+            candidate_provider=candidate_provider,
+            external_id=external_id,
+        ):
+            return ItemProviderLink.objects.update_or_create(
+                item=item,
+                provider=candidate_provider,
+                provider_media_type=normalized_media_type,
+                season_number=season_number,
+                defaults={
+                    "provider_media_id": external_id,
+                    "metadata": metadata_payload,
+                },
+            )
+
+        run_retryable_db_operation(
+            _upsert_external_provider_link,
+            mode=persistence_mode,
+            fallback=lambda: (None, False),
+            operation_name=f"{candidate_provider} provider-link upsert",
+            operation_logger=logger,
+            on_deferred=on_deferred,
         )
 
     if external_ids:
         merged_external_ids = dict(item.provider_external_ids or {})
         if merged_external_ids != (merged_external_ids | external_ids):
             item.provider_external_ids = merged_external_ids | external_ids
-            item.save(update_fields=["provider_external_ids"])
+            run_retryable_db_operation(
+                lambda: item.save(update_fields=["provider_external_ids"]),
+                mode=persistence_mode,
+                operation_name="item provider-external-id save",
+                operation_logger=logger,
+                on_deferred=on_deferred,
+            )
 
     return external_ids
 
@@ -374,6 +414,8 @@ def resolve_provider_media_id(
     *,
     route_media_type: str,
     season_number: int | None = None,
+    persistence_mode: str = "required",
+    on_deferred: Callable[[Exception], None] | None = None,
 ) -> str | None:
     """Return the mapped provider ID for a tracked item."""
     if item is None:
@@ -416,12 +458,19 @@ def resolve_provider_media_id(
             provider,
         )
         if mapped_series_id:
-            ItemProviderLink.objects.update_or_create(
-                item=item,
-                provider=provider,
-                provider_media_type=provider_media_type,
-                season_number=season_number,
-                defaults={"provider_media_id": str(mapped_series_id)},
+            run_retryable_db_operation(
+                lambda: ItemProviderLink.objects.update_or_create(
+                    item=item,
+                    provider=provider,
+                    provider_media_type=provider_media_type,
+                    season_number=season_number,
+                    defaults={"provider_media_id": str(mapped_series_id)},
+                ),
+                mode=persistence_mode,
+                fallback=lambda: (None, False),
+                operation_name="grouped-anime provider-link upsert",
+                operation_logger=logger,
+                on_deferred=on_deferred,
             )
             return str(mapped_series_id)
 
@@ -719,6 +768,8 @@ def resolve_detail_metadata(
     media_id: str,
     source: str,
     base_metadata: dict,
+    persistence_mode: str = "required",
+    on_persistence_deferred: Callable[[Exception], None] | None = None,
 ) -> MetadataResolutionResult:
     """Resolve the detail-page display provider and overlay metadata when mapped."""
     provider = get_preferred_provider(
@@ -759,6 +810,8 @@ def resolve_detail_metadata(
             item,
             provider,
             route_media_type=route_media_type,
+            persistence_mode=persistence_mode,
+            on_deferred=on_persistence_deferred,
         )
         if provider_media_id:
             overlay_metadata = services.get_media_metadata(
@@ -813,6 +866,8 @@ def resolve_detail_metadata(
                 route_media_type,
                 source=identity_provider,
             ),
+            persistence_mode=persistence_mode,
+            on_deferred=on_persistence_deferred,
         )
 
     return MetadataResolutionResult(

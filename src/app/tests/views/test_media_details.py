@@ -6,6 +6,7 @@ import requests
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.db.utils import OperationalError
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
@@ -3452,6 +3453,281 @@ class MediaDetailsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Fetching cached time-to-beat data in the background.")
         mock_queue_game_lengths_refresh.assert_not_called()
+
+    @patch("app.db_retry.time.sleep")
+    @patch("app.views.Item.objects.get_or_create")
+    @patch("app.providers.services.get_media_metadata")
+    def test_game_media_details_renders_when_auto_create_hits_retryable_lock(
+        self,
+        mock_get_metadata,
+        mock_get_or_create,
+        _mock_sleep,
+    ):
+        mock_get_or_create.side_effect = OperationalError("database is locked")
+        mock_get_metadata.return_value = {
+            "media_id": "325609",
+            "title": "Dispatch",
+            "media_type": MediaTypes.GAME.value,
+            "source": Sources.IGDB.value,
+            "source_url": "https://www.igdb.com/games/dispatch",
+            "image": "https://example.com/dispatch.jpg",
+            "synopsis": "Test synopsis",
+            "details": {
+                "format": "Main game",
+                "release_date": "2025-10-22",
+                "platforms": ["PC", "PlayStation 5"],
+            },
+            "genres": ["Action"],
+            "related": {},
+            "external_links": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.IGDB.value,
+                    "media_type": MediaTypes.GAME.value,
+                    "media_id": "325609",
+                    "title": "dispatch",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Add to tracker")
+        self.assertContains(
+            response,
+            "Some metadata updates were deferred because the database is busy.",
+        )
+        self.assertTrue(response.context["detail_persistence_deferred"])
+        self.assertFalse(
+            Item.objects.filter(
+                media_id="325609",
+                source=Sources.IGDB.value,
+                media_type=MediaTypes.GAME.value,
+            ).exists(),
+        )
+
+    @patch("app.db_retry.time.sleep")
+    @patch("app.services.metadata_resolution.ItemProviderLink.objects.update_or_create")
+    @patch("app.providers.services.get_media_metadata")
+    def test_anime_media_details_renders_when_provider_link_upsert_locks(
+        self,
+        mock_get_metadata,
+        mock_update_or_create,
+        _mock_sleep,
+    ):
+        item = Item.objects.create(
+            media_id="52991",
+            source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME.value,
+            title="Frieren",
+            image="https://example.com/frieren.jpg",
+        )
+        mock_update_or_create.side_effect = OperationalError("database is locked")
+        mock_get_metadata.return_value = {
+            "media_id": item.media_id,
+            "title": "Frieren",
+            "original_title": "Sousou no Frieren",
+            "localized_title": "Frieren",
+            "media_type": MediaTypes.ANIME.value,
+            "source": Sources.MAL.value,
+            "source_url": "https://myanimelist.net/anime/52991",
+            "max_progress": 28,
+            "image": "https://example.com/frieren.jpg",
+            "synopsis": "A mage looks back.",
+            "details": {"episodes": 28},
+            "related": {},
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.MAL.value,
+                    "media_type": MediaTypes.ANIME.value,
+                    "media_id": item.media_id,
+                    "title": "frieren",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            "Some metadata updates were deferred because the database is busy.",
+        )
+        self.assertTrue(response.context["detail_persistence_deferred"])
+
+    def test_game_media_details_renders_when_metadata_save_hits_retryable_lock(self):
+        item = Item.objects.create(
+            media_id="325609",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Dispatch",
+            image="https://example.com/dispatch.jpg",
+        )
+        base_metadata = {
+            "media_id": item.media_id,
+            "title": "Dispatch",
+            "media_type": MediaTypes.GAME.value,
+            "source": Sources.IGDB.value,
+            "source_url": "https://www.igdb.com/games/dispatch",
+            "image": "https://example.com/dispatch.jpg",
+            "synopsis": "Test synopsis",
+            "details": {
+                "format": "Main game",
+                "release_date": "2025-10-22",
+                "platforms": ["PC", "PlayStation 5"],
+            },
+            "genres": ["Action"],
+            "related": {},
+            "external_links": {},
+        }
+
+        with (
+            patch("app.db_retry.time.sleep"),
+            patch("app.providers.services.get_media_metadata", return_value=base_metadata),
+            patch("app.views.metadata_utils.apply_item_metadata", return_value=["genres"]),
+            patch("app.views.Item.save", side_effect=OperationalError("database is locked")),
+        ):
+            response = self.client.get(
+                reverse(
+                    "media_details",
+                    kwargs={
+                        "source": Sources.IGDB.value,
+                        "media_type": MediaTypes.GAME.value,
+                        "media_id": item.media_id,
+                        "title": "dispatch",
+                    },
+                ),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            "Some metadata updates were deferred because the database is busy.",
+        )
+        self.assertTrue(response.context["detail_persistence_deferred"])
+
+    @patch("app.db_retry.time.sleep")
+    @patch("app.views.credits.sync_item_credits_from_metadata")
+    @patch("app.views.metadata_utils.apply_item_metadata", return_value=[])
+    @patch("app.views.metadata_resolution.resolve_detail_metadata")
+    @patch("app.providers.services.get_media_metadata")
+    def test_tv_media_details_renders_when_credit_sync_hits_retryable_lock(
+        self,
+        mock_get_metadata,
+        mock_resolve_detail_metadata,
+        _mock_apply_item_metadata,
+        mock_sync_credits,
+        _mock_sleep,
+    ):
+        item = Item.objects.create(
+            media_id="1396",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Breaking Bad",
+            image="https://example.com/breaking-bad.jpg",
+        )
+        base_metadata = {
+            "media_id": item.media_id,
+            "title": "Breaking Bad",
+            "media_type": MediaTypes.TV.value,
+            "source": Sources.TMDB.value,
+            "source_url": "https://www.themoviedb.org/tv/1396",
+            "image": "https://example.com/breaking-bad.jpg",
+            "synopsis": "Chemistry teacher cooks meth.",
+            "details": {"episodes": 62},
+            "related": {},
+            "cast": [],
+            "crew": [],
+            "studios_full": [],
+        }
+        mock_get_metadata.return_value = base_metadata
+        mock_resolve_detail_metadata.return_value = MetadataResolutionResult(
+            display_provider=Sources.TMDB.value,
+            identity_provider=Sources.TMDB.value,
+            mapping_status="identity",
+            header_metadata=base_metadata,
+            grouped_preview=None,
+            provider_media_id=item.media_id,
+        )
+        mock_sync_credits.side_effect = OperationalError("database is locked")
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "media_id": item.media_id,
+                    "title": "breaking-bad",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            "Some metadata updates were deferred because the database is busy.",
+        )
+        self.assertTrue(response.context["detail_persistence_deferred"])
+
+    @patch("app.views._queue_game_lengths_refresh", side_effect=RuntimeError("queue unavailable"))
+    @patch("app.providers.services.get_media_metadata")
+    def test_game_media_details_renders_when_refresh_enqueue_raises(
+        self,
+        mock_get_metadata,
+        _mock_queue_game_lengths_refresh,
+    ):
+        Item.objects.create(
+            media_id="325609",
+            source=Sources.IGDB.value,
+            media_type=MediaTypes.GAME.value,
+            title="Dispatch",
+            image="https://example.com/dispatch.jpg",
+        )
+        mock_get_metadata.return_value = {
+            "media_id": "325609",
+            "title": "Dispatch",
+            "media_type": MediaTypes.GAME.value,
+            "source": Sources.IGDB.value,
+            "source_url": "https://www.igdb.com/games/dispatch",
+            "image": "https://example.com/dispatch.jpg",
+            "synopsis": "Test synopsis",
+            "details": {
+                "format": "Main game",
+                "release_date": "2025-10-22",
+                "platforms": ["PC", "PlayStation 5"],
+            },
+            "genres": ["Action"],
+            "related": {},
+            "external_links": {},
+        }
+
+        response = self.client.get(
+            reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.IGDB.value,
+                    "media_type": MediaTypes.GAME.value,
+                    "media_id": "325609",
+                    "title": "dispatch",
+                },
+            ),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            "Some metadata updates were deferred because the database is busy.",
+        )
+        self.assertTrue(response.context["detail_persistence_deferred"])
 
     @patch("app.providers.services.get_media_metadata")
     @patch("app.providers.tmdb.process_episodes")

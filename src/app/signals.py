@@ -5,7 +5,6 @@ from contextvars import ContextVar
 from celery import states
 from celery.signals import before_task_publish
 from django.conf import settings
-from django.db.backends.signals import connection_created
 from django.db.models.signals import post_delete, post_save
 from django.db.utils import OperationalError
 from django.dispatch import receiver
@@ -87,16 +86,6 @@ def suppress_media_change_side_effects():
 def media_change_side_effects_suppressed() -> bool:
     """Return whether media-row side effects are suppressed for the current context."""
     return bool(_SUPPRESS_MEDIA_CHANGE_SIDE_EFFECTS.get())
-
-
-@receiver(connection_created)
-def setup_sqlite_pragmas(sender, connection, **kwargs):  # noqa: ARG001
-    """Set up SQLite pragmas for WAL mode and busy timeout on connection creation."""
-    if connection.vendor == "sqlite":
-        cursor = connection.cursor()
-        cursor.execute("PRAGMA journal_mode=wal;")
-        cursor.execute("PRAGMA busy_timeout=5000;")
-        cursor.close()
 
 
 @before_task_publish.connect

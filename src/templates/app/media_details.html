@@ -278,6 +278,11 @@
           {{ season_provider_metadata_banner }}
         </div>
       {% endif %}
+      {% if detail_persistence_deferred %}
+        <div class="mb-5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+          Some metadata updates were deferred because the database is busy. The page is showing provider data and will catch up on a later refresh.
+        </div>
+      {% endif %}
 
       <div class="flex flex-col sm:contents">
       {# Score chips #}

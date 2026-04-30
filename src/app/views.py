@@ -49,6 +49,7 @@ from app import (
     metadata_utils,
     statistics_cache,
 )
+from app.db_retry import run_retryable_db_operation
 from app.discover import tab_cache as discover_tab_cache
 from app.columns import (
     resolve_column_config,
@@ -4426,6 +4427,40 @@ def media_details(
             # If we can't find a list owner, list_owner stays None
             pass
 
+    detail_persistence_deferred = False
+
+    def _mark_detail_persistence_deferred(_error=None):
+        nonlocal detail_persistence_deferred
+        detail_persistence_deferred = True
+
+    def _best_effort_detail_db_work(operation, *, fallback=None, operation_name):
+        return run_retryable_db_operation(
+            operation,
+            mode="best_effort",
+            fallback=fallback,
+            operation_name=operation_name,
+            operation_logger=logger,
+            on_deferred=_mark_detail_persistence_deferred,
+        )
+
+    def _best_effort_detail_followup(
+        operation,
+        *,
+        operation_name,
+        fallback=False,
+    ):
+        try:
+            return operation()
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "Skipping detail follow-up %s for %s due to error",
+                operation_name,
+                request.path,
+                exc_info=True,
+            )
+            _mark_detail_persistence_deferred()
+            return fallback
+
     # For podcast shows (identified by podcast_uuid), show show detail page
     if media_type == MediaTypes.PODCAST.value and source == Sources.POCKETCASTS.value:
         from app.models import PodcastEpisode, PodcastShow, PodcastShowTracker
@@ -4945,15 +4980,20 @@ def media_details(
         and media_type == MediaTypes.GAME.value
         and isinstance(media_metadata, dict)
     ):
-        detail_item, _ = Item.objects.get_or_create(
-            media_id=media_id,
-            source=source,
-            media_type=media_type,
-            defaults={
-                **Item.title_fields_from_metadata(media_metadata),
-                "image": media_metadata.get("image") or settings.IMG_NONE,
-            },
+        detail_item_outcome = _best_effort_detail_db_work(
+            lambda: Item.objects.get_or_create(
+                media_id=media_id,
+                source=source,
+                media_type=media_type,
+                defaults={
+                    **Item.title_fields_from_metadata(media_metadata),
+                    "image": media_metadata.get("image") or settings.IMG_NONE,
+                },
+            ),
+            fallback=lambda: (None, False),
+            operation_name="IGDB detail item create",
         )
+        detail_item, _ = detail_item_outcome.value
 
     # When the user prefers original titles, aggressively refresh stale TMDB cache
     # if we don't yet have an original title. This lets details-page opens backfill
@@ -5010,7 +5050,10 @@ def media_details(
                 setattr(detail_item, field_name, desired_value)
                 update_fields.append(field_name)
         if update_fields:
-            detail_item.save(update_fields=update_fields)
+            _best_effort_detail_db_work(
+                lambda: detail_item.save(update_fields=update_fields),
+                operation_name="detail item title sync",
+            )
 
     # Persist series info for books if available
     if media_type == MediaTypes.BOOK.value and isinstance(media_metadata, dict):
@@ -5029,7 +5072,10 @@ def media_details(
                 update_fields.append("series_position")
             
             if update_fields:
-                item.save(update_fields=update_fields)
+                _best_effort_detail_db_work(
+                    lambda: item.save(update_fields=update_fields),
+                    operation_name="detail book-series sync",
+                )
         except Item.DoesNotExist:
             pass
 
@@ -5055,6 +5101,8 @@ def media_details(
             media_id=media_id,
             source=source,
             base_metadata=media_metadata,
+            persistence_mode="best_effort",
+            on_persistence_deferred=_mark_detail_persistence_deferred,
         )
         media_metadata = metadata_resolution_result.header_metadata
         media_metadata.update(
@@ -5083,11 +5131,20 @@ def media_details(
             if metadata_update_fields:
                 detail_item.metadata_fetched_at = timezone.now()
                 metadata_update_fields.append("metadata_fetched_at")
-                detail_item.save(update_fields=metadata_update_fields)
+                _best_effort_detail_db_work(
+                    lambda: detail_item.save(update_fields=metadata_update_fields),
+                    operation_name="TMDB detail metadata sync",
+                )
             missing_people = not detail_item.person_credits.exists()
             missing_studios = not detail_item.studio_credits.exists()
             if missing_people or missing_studios:
-                credits.sync_item_credits_from_metadata(detail_item, media_metadata)
+                _best_effort_detail_db_work(
+                    lambda: credits.sync_item_credits_from_metadata(
+                        detail_item,
+                        media_metadata,
+                    ),
+                    operation_name="TMDB detail credits sync",
+                )
 
     if (
         source == Sources.IGDB.value
@@ -5102,7 +5159,10 @@ def media_details(
         if metadata_update_fields:
             detail_item.metadata_fetched_at = timezone.now()
             metadata_update_fields.append("metadata_fetched_at")
-            detail_item.save(update_fields=metadata_update_fields)
+            _best_effort_detail_db_work(
+                lambda: detail_item.save(update_fields=metadata_update_fields),
+                operation_name="IGDB detail metadata sync",
+            )
 
     _apply_cached_hltb_link(media_metadata, detail_item)
 
@@ -5130,10 +5190,14 @@ def media_details(
             is not None
         )
         if not game_lengths_refresh_pending:
-            game_lengths_fetch_queued = _queue_game_lengths_refresh(
-                detail_item,
-                force=False,
-                fetch_hltb=True,
+            game_lengths_fetch_queued = _best_effort_detail_followup(
+                lambda: _queue_game_lengths_refresh(
+                    detail_item,
+                    force=False,
+                    fetch_hltb=True,
+                ),
+                operation_name="game lengths refresh enqueue",
+                fallback=False,
             )
             game_lengths_refresh_pending = game_lengths_fetch_queued or (
                 _get_game_lengths_refresh_lock(
@@ -5195,7 +5259,10 @@ def media_details(
 
         authors_full = media_metadata.get("authors_full")
         if detail_item and isinstance(authors_full, list):
-            credits.sync_item_author_credits(detail_item, authors_full)
+            _best_effort_detail_db_work(
+                lambda: credits.sync_item_author_credits(detail_item, authors_full),
+                operation_name="detail author-credit sync",
+            )
 
         authors_linked = _collect_authors_linked(media_metadata)
 
@@ -5221,7 +5288,13 @@ def media_details(
                 media_metadata.setdefault("studios_full", [])
                 refreshed_authors_full = media_metadata.get("authors_full")
                 if detail_item and isinstance(refreshed_authors_full, list):
-                    credits.sync_item_author_credits(detail_item, refreshed_authors_full)
+                    _best_effort_detail_db_work(
+                        lambda: credits.sync_item_author_credits(
+                            detail_item,
+                            refreshed_authors_full,
+                        ),
+                        operation_name="refreshed detail author-credit sync",
+                    )
                 authors_linked = _collect_authors_linked(media_metadata)
 
     # Prefer a stored poster/cover override when the tracked item has one.
@@ -5451,8 +5524,12 @@ def media_details(
         if item:
             if metadata_genres and metadata_genres != item.genres:
                 item.genres = metadata_genres
-                item.save(update_fields=["genres"])
-                genres_updated = True
+                genre_save_outcome = _best_effort_detail_db_work(
+                    lambda: item.save(update_fields=["genres"]),
+                    operation_name="detail genre sync",
+                )
+                genres_updated = not genre_save_outcome.deferred
+                media_metadata["genres"] = metadata_genres
             elif item.genres:
                 media_metadata["genres"] = item.genres
         if genres_updated and media_type in (
@@ -5744,6 +5821,7 @@ def media_details(
             media_id=media_id,
             base_metadata=media_metadata,
             metadata_resolution_result=metadata_resolution_result,
+            on_persistence_deferred=_mark_detail_persistence_deferred,
         )
         if flat_anime_episode_preview:
             media_metadata["episodes"] = flat_anime_episode_preview
@@ -5775,14 +5853,27 @@ def media_details(
                 if plex_account and plex_account.plex_token:
                     from integrations.tasks import fetch_collection_metadata_for_item
                     # Trigger background task to fetch collection data
-                    fetch_collection_metadata_for_item.delay(user_id=request.user.id, item_id=item.id)
-                    # Use module-level logger directly to avoid UnboundLocalError
-                    logging.getLogger(__name__).info("Triggered background collection fetch for %s - %s (item_id=%s)", request.user.username, item.title, item.id)
-                    # TODO(issue-166): Re-enable a user-facing collection-fetching banner only after
-                    # the background task reliably self-resolves for empty collections; remove this
-                    # reminder once that task/UX overhaul is complete.
-                    fetching_collection_data = True
-                    item_id_for_polling = item.id
+                    followup_started = _best_effort_detail_followup(
+                        lambda: fetch_collection_metadata_for_item.delay(
+                            user_id=request.user.id,
+                            item_id=item.id,
+                        ),
+                        operation_name="collection metadata auto-fetch",
+                        fallback=None,
+                    )
+                    if followup_started is not None:
+                        # Use module-level logger directly to avoid UnboundLocalError
+                        logging.getLogger(__name__).info(
+                            "Triggered background collection fetch for %s - %s (item_id=%s)",
+                            request.user.username,
+                            item.title,
+                            item.id,
+                        )
+                        # TODO(issue-166): Re-enable a user-facing collection-fetching banner only after
+                        # the background task reliably self-resolves for empty collections; remove this
+                        # reminder once that task/UX overhaul is complete.
+                        fetching_collection_data = True
+                        item_id_for_polling = item.id
         except Item.DoesNotExist:
             pass
 
@@ -5799,6 +5890,8 @@ def media_details(
                 detail_item,
                 Sources.TMDB.value,
                 route_media_type=media_type,
+                persistence_mode="best_effort",
+                on_deferred=_mark_detail_persistence_deferred,
             )
             if tmdb_media_id:
                 tmdb_metadata = services.get_media_metadata(
@@ -5945,6 +6038,7 @@ def media_details(
         "migrated_grouped_item": migrated_grouped_item,
         "migrated_grouped_title": migrated_grouped_title,
         "episode_load_more": episode_load_more,
+        "detail_persistence_deferred": detail_persistence_deferred,
     }
     return render(request, "app/media_details.html", context)
 
@@ -6704,6 +6798,7 @@ def _build_flat_anime_episode_preview(
     media_id,
     base_metadata,
     metadata_resolution_result=None,
+    on_persistence_deferred=None,
 ):
     """Return a read-only mapped episode slice for flat MAL anime details."""
     if not isinstance(base_metadata, dict):
@@ -6750,6 +6845,8 @@ def _build_flat_anime_episode_preview(
                     detail_item,
                     candidate,
                     route_media_type=MediaTypes.ANIME.value,
+                    persistence_mode="best_effort",
+                    on_deferred=on_persistence_deferred,
                 )
                 if detail_item is not None
                 else anime_mapping.resolve_provider_series_id(media_id, candidate)

@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.db.utils import OperationalError
 from django.test import TestCase, override_settings
 
 from app.models import (
@@ -416,3 +417,115 @@ class MetadataResolutionTests(TestCase):
             result.grouped_preview["related"]["seasons"][0]["mapped_episode_end"],
             28,
         )
+
+    @patch("app.db_retry.time.sleep")
+    @patch("app.services.metadata_resolution.ItemProviderLink.objects.update_or_create")
+    def test_resolve_detail_metadata_best_effort_keeps_identity_payload_on_lock(
+        self,
+        mock_update_or_create,
+        _mock_sleep,
+    ):
+        """Identity-provider detail reads should render even if link persistence locks."""
+        item = Item.objects.create(
+            media_id="1396",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Breaking Bad",
+            image="https://example.com/breaking-bad.jpg",
+        )
+        mock_update_or_create.side_effect = OperationalError("database is locked")
+
+        result = metadata_resolution.resolve_detail_metadata(
+            self.user,
+            item=item,
+            route_media_type=MediaTypes.TV.value,
+            media_id=item.media_id,
+            source=item.source,
+            base_metadata={
+                "media_id": "1396",
+                "source": Sources.TMDB.value,
+                "media_type": MediaTypes.TV.value,
+                "title": "Breaking Bad",
+                "image": "https://example.com/breaking-bad.jpg",
+                "details": {"episodes": 62},
+                "related": {},
+            },
+            persistence_mode="best_effort",
+        )
+
+        self.assertEqual(result.display_provider, Sources.TMDB.value)
+        self.assertEqual(result.mapping_status, "identity")
+        self.assertEqual(result.header_metadata["title"], "Breaking Bad")
+        self.assertEqual(mock_update_or_create.call_count, 12)
+
+    @override_settings(TVDB_API_KEY="test-tvdb-key")
+    @patch("app.db_retry.time.sleep")
+    @patch("app.services.metadata_resolution.anime_mapping.resolve_provider_series_id")
+    @patch("app.services.metadata_resolution.ItemProviderLink.objects.update_or_create")
+    def test_resolve_provider_media_id_best_effort_returns_mapping_on_lock(
+        self,
+        mock_update_or_create,
+        mock_resolve_provider_series_id,
+        _mock_sleep,
+    ):
+        """Grouped-anime mapping should still resolve even when link writes defer."""
+        item = Item.objects.create(
+            media_id="52991",
+            source=Sources.MAL.value,
+            media_type=MediaTypes.ANIME.value,
+            title="Frieren",
+            image="https://example.com/frieren.jpg",
+        )
+        mock_resolve_provider_series_id.return_value = "9350138"
+        mock_update_or_create.side_effect = OperationalError("database is locked")
+
+        provider_media_id = metadata_resolution.resolve_provider_media_id(
+            item,
+            Sources.TVDB.value,
+            route_media_type=MediaTypes.ANIME.value,
+            persistence_mode="best_effort",
+        )
+
+        self.assertEqual(provider_media_id, "9350138")
+        self.assertFalse(
+            ItemProviderLink.objects.filter(
+                item=item,
+                provider=Sources.TVDB.value,
+                provider_media_id="9350138",
+                provider_media_type=MediaTypes.TV.value,
+            ).exists(),
+        )
+        self.assertEqual(mock_update_or_create.call_count, 6)
+
+    @patch("app.db_retry.time.sleep")
+    @patch("app.services.metadata_resolution.ItemProviderLink.objects.update_or_create")
+    def test_upsert_provider_links_required_mode_raises_on_lock(
+        self,
+        mock_update_or_create,
+        _mock_sleep,
+    ):
+        """Required persistence should still raise after bounded retries."""
+        item = Item.objects.create(
+            media_id="1396",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.TV.value,
+            title="Breaking Bad",
+            image="https://example.com/breaking-bad.jpg",
+        )
+        mock_update_or_create.side_effect = OperationalError("database is locked")
+
+        with self.assertRaises(OperationalError):
+            metadata_resolution.upsert_provider_links(
+                item,
+                {
+                    "media_id": "1396",
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.TV.value,
+                    "title": "Breaking Bad",
+                    "image": "https://example.com/breaking-bad.jpg",
+                },
+                provider=Sources.TMDB.value,
+                provider_media_type=MediaTypes.TV.value,
+            )
+
+        self.assertEqual(mock_update_or_create.call_count, 6)
