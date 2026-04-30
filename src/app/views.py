@@ -8380,6 +8380,62 @@ def _track_modal_field_groups(form, *, hidden_field_names, metadata_field_names=
     }
 
 
+def _track_modal_release_date_shortcut(*candidates):
+    """Return an ISO release-date string for the shared track modal shortcut."""
+    for candidate in candidates:
+        if not candidate:
+            continue
+        if isinstance(candidate, dict):
+            candidate = helpers.extract_release_datetime(candidate)
+        elif isinstance(candidate, str):
+            candidate = parse_date(candidate[:10])
+
+        if not candidate:
+            continue
+        if isinstance(candidate, datetime):
+            if timezone.is_aware(candidate):
+                candidate = timezone.localtime(candidate)
+            return candidate.date().isoformat()
+        if isinstance(candidate, date):
+            return candidate.isoformat()
+    return ""
+
+
+def _track_modal_release_runtime_minutes(media_type, *candidates):
+    """Return a trusted runtime in minutes for release-date start-date backfill."""
+    if media_type != MediaTypes.MOVIE.value:
+        return ""
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+
+        runtime_minutes = None
+        if isinstance(candidate, dict):
+            runtime_minutes = candidate.get("runtime_minutes")
+            if runtime_minutes is None:
+                runtime_minutes = (candidate.get("details") or {}).get("runtime")
+        else:
+            runtime_minutes = getattr(candidate, "runtime_minutes", None)
+            if runtime_minutes is None:
+                runtime_minutes = getattr(candidate, "runtime", None)
+
+        if isinstance(runtime_minutes, str):
+            stripped_runtime = runtime_minutes.strip()
+            runtime_minutes = (
+                int(stripped_runtime)
+                if stripped_runtime.isdigit()
+                else stats.parse_runtime_to_minutes(stripped_runtime)
+            )
+        elif isinstance(runtime_minutes, float):
+            runtime_minutes = int(runtime_minutes)
+
+        if isinstance(runtime_minutes, int) and 0 < runtime_minutes < 999998:
+            return str(runtime_minutes)
+
+    return ""
+
+
 def _render_standard_track_modal(
     request,
     source,
@@ -8680,6 +8736,25 @@ def _render_standard_track_modal(
         episode_plays_form = None
 
     track_form_id = f"track-form-{uuid4().hex}"
+    release_date_shortcut = _track_modal_release_date_shortcut(
+        getattr(metadata_item, "release_datetime", None) if metadata_item else None,
+        (
+            metadata_resolution_result.header_metadata
+            if metadata_resolution_result is not None
+            else None
+        ),
+        base_metadata,
+    )
+    release_date_runtime_minutes = _track_modal_release_runtime_minutes(
+        media_type,
+        metadata_item,
+        (
+            metadata_resolution_result.header_metadata
+            if metadata_resolution_result is not None
+            else None
+        ),
+        base_metadata,
+    )
     context = {
         "user": request.user,
         "title": title,
@@ -8716,6 +8791,8 @@ def _render_standard_track_modal(
             if media and metadata_item and not can_edit_custom_metadata
             else None
         ),
+        "release_date_shortcut": release_date_shortcut,
+        "release_date_runtime_minutes": release_date_runtime_minutes,
         "manual_metadata_form": manual_metadata_form,
         "manual_metadata_formaction": (
             reverse("update_manual_item_metadata", args=[metadata_item.id])
@@ -8827,6 +8904,8 @@ def _render_podcast_show_track_modal(
             "general_existing_instance": tracker,
             "image_field": None,
             "image_save_item_id": None,
+            "release_date_shortcut": "",
+            "release_date_runtime_minutes": "",
             "track_form_id": track_form_id,
             "initial_active_tab": initial_active_tab,
             "episode_plays_tab_available": episode_plays_tab_available,
@@ -9543,6 +9622,11 @@ def music_bulk_save(request):
             form=tracker_form,
             save_url=save_url,
             delete_url=delete_url,
+            release_date_shortcut=(
+                _track_modal_release_date_shortcut(album.release_date)
+                if album is not None
+                else ""
+            ),
             bulk_domain=bulk_domain,
             bulk_form_override=bulk_form,
             initial_active_tab="episode-plays",
@@ -11271,6 +11355,7 @@ def _render_music_tracker_modal(
     form,
     save_url,
     delete_url,
+    release_date_shortcut="",
     bulk_domain=None,
     bulk_form_override=None,
     initial_active_tab="general",
@@ -11320,6 +11405,8 @@ def _render_music_tracker_modal(
             "general_existing_instance": tracker,
             "image_field": None,
             "image_save_item_id": None,
+            "release_date_shortcut": release_date_shortcut,
+            "release_date_runtime_minutes": "",
             "track_form_id": track_form_id,
             "initial_active_tab": initial_active_tab,
             "episode_plays_tab_available": episode_plays_tab_available,
@@ -12722,6 +12809,7 @@ def album_track_modal(request, album_id):
         form=form,
         save_url=reverse("album_save"),
         delete_url=reverse("album_delete"),
+        release_date_shortcut=_track_modal_release_date_shortcut(album.release_date),
         bulk_domain=bulk_music_tracking.build_album_play_domain(request.user, album),
     )
 

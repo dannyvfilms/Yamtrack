@@ -14,15 +14,15 @@
               while (node) {
                 if (node.hasAttribute && node.hasAttribute('x-data')) {
                   const modalState = Alpine.$data(node);
-                  if (modalState && modalState.editTrackOpen !== undefined) {
-                    modalState.editTrackOpen = false;
-                    break;
-                  }
-                  if (modalState && modalState.createTrackOpen !== undefined) {
+                  if (modalState && modalState.createTrackOpen) {
                     modalState.createTrackOpen = false;
                     break;
                   }
-                  if (modalState && modalState.trackOpen !== undefined) {
+                  if (modalState && modalState.editTrackOpen) {
+                    modalState.editTrackOpen = false;
+                    break;
+                  }
+                  if (modalState && modalState.trackOpen) {
                     modalState.trackOpen = false;
                     break;
                   }
@@ -109,6 +109,18 @@
                         {% include "app/icons/chevron-down.svg" with classes="w-3.5 h-3.5" %}
                       </button>
                     </div>
+                  {% elif field.name == "start_date" or field.name == "end_date" %}
+                    {% if release_date_shortcut %}
+                      {{ field|add_class:"w-full p-2 pr-28 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff]" }}
+                      <button type="button"
+                              onclick="applyTrackModalReleaseDate(this, '{{ release_date_shortcut }}', '{{ field.name }}'{% if field.name == 'end_date' and release_date_runtime_minutes %}, '{{ release_date_runtime_minutes }}'{% endif %})"
+                              class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center text-sm text-indigo-400 hover:text-indigo-300 transition-colors bg-[#2a2f35] px-2 py-1 rounded cursor-pointer">
+                        {% include "app/icons/calendar.svg" with classes="w-4 h-4 mr-1" %}
+                        Release date
+                      </button>
+                    {% else %}
+                      {{ field|add_class:"w-full p-2 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff]" }}
+                    {% endif %}
                   {% else %}
                     {{ field|add_class:"w-full p-2 bg-[#39404b] rounded-md text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-[#4a9eff]" }}
                   {% endif %}

@@ -1,10 +1,14 @@
 import os
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
+from django.urls import reverse
 from django.utils import timezone
 from playwright.sync_api import expect, sync_playwright
+
+from app.models import Item, MediaTypes, Movie, Sources, Status
 from users.models import DateFormatChoices
 
 
@@ -50,7 +54,9 @@ class IntegrationTest(StaticLiveServerTestCase):
         expect(self.page.locator("h2", has_text="Search Results")).to_be_visible()
         self.page.get_by_title("Breaking Bad", exact=True).click()
         expect(self.page.get_by_role("main")).to_contain_text("Breaking Bad")
-        season_href = self.page.locator('a[href*="/season/1"]').first.get_attribute("href")
+        season_href = self.page.locator(
+            'a[href*="/season/1"]',
+        ).first.get_attribute("href")
         self.page.goto(f"{self.live_server_url}{season_href}")
         expect(self.page.get_by_role("main")).to_contain_text("Breaking Bad")
         self.page.get_by_title("Track Episode").first.click(force=True)
@@ -97,7 +103,9 @@ class IntegrationTest(StaticLiveServerTestCase):
         expect(self.page.locator("h2", has_text="Search Results")).to_be_visible()
         self.page.get_by_title("Breaking Bad", exact=True).click()
         expect(self.page.get_by_role("main")).to_contain_text("Breaking Bad")
-        season_href = self.page.locator('a[href*="/season/1"]').first.get_attribute("href")
+        season_href = self.page.locator(
+            'a[href*="/season/1"]',
+        ).first.get_attribute("href")
         self.page.goto(f"{self.live_server_url}{season_href}")
         expect(self.page.get_by_role("main")).to_contain_text("Breaking Bad")
         self.page.get_by_role("button", name="Add to tracker").click()
@@ -169,7 +177,106 @@ class IntegrationTest(StaticLiveServerTestCase):
         self.page.get_by_role("link", name="TV Shows").click()
         self.page.get_by_title("Friends").click()
         expect(self.page.get_by_role("main")).to_contain_text("Friends")
-        season_href = self.page.locator('a[href*="/season/1"]').first.get_attribute("href")
+        season_href = self.page.locator(
+            'a[href*="/season/1"]',
+        ).first.get_attribute("href")
         self.page.goto(f"{self.live_server_url}{season_href}")
         expect(self.page.get_by_role("main")).to_contain_text("Friends")
         expect(self.page.get_by_role("main")).to_contain_text("Episode 1")
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_movie_split_track_modal_close_button_and_release_date(
+        self,
+        mock_get_metadata,
+    ):
+        """Shared modal close should survive split flows and release-date use."""
+        mock_get_metadata.return_value = {
+            "media_id": "238",
+            "title": "Test Movie",
+            "media_type": MediaTypes.MOVIE.value,
+            "source": Sources.TMDB.value,
+            "image": "http://example.com/image.jpg",
+            "max_progress": 1,
+            "score": 7.6,
+            "score_count": 42000,
+            "details": {
+                "release_date": "2019-11-08",
+            },
+            "related": {},
+        }
+        item = Item.objects.create(
+            media_id="238",
+            source=Sources.TMDB.value,
+            media_type=MediaTypes.MOVIE.value,
+            title="Test Movie",
+            image="http://example.com/image.jpg",
+            runtime_minutes=95,
+        )
+        Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            start_date=datetime(2026, 3, 1, 12, 0, tzinfo=UTC),
+            end_date=datetime(2026, 3, 1, 14, 0, tzinfo=UTC),
+        )
+        Movie.objects.create(
+            item=item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+            progress=1,
+            start_date=datetime(2026, 3, 12, 12, 0, tzinfo=UTC),
+            end_date=datetime(2026, 3, 12, 14, 0, tzinfo=UTC),
+        )
+
+        self.page.goto(
+            self.live_server_url
+            + reverse(
+                "media_details",
+                kwargs={
+                    "source": Sources.TMDB.value,
+                    "media_type": MediaTypes.MOVIE.value,
+                    "media_id": "238",
+                    "title": "test-movie",
+                },
+            ),
+        )
+
+        expect(self.page.get_by_role("main")).to_contain_text("Test Movie")
+
+        self.page.get_by_role("button", name="More tracking actions").click()
+        expect(self.page.get_by_role("button", name="Add new entry")).to_be_visible()
+        self.page.get_by_role("button", name="Add new entry").click()
+
+        create_modal = self.page.locator("[data-track-modal-root]:visible").first
+        expect(create_modal).to_be_visible()
+        create_modal.locator("button[type='button']").first.click()
+        expect(self.page.locator("[data-track-modal-root]:visible")).to_have_count(0)
+
+        self.page.get_by_role("button", name="More tracking actions").click()
+        self.page.get_by_role("button", name="Add new entry").click()
+        expect(create_modal).to_be_visible()
+
+        end_date_input = create_modal.locator('input[name="end_date"]')
+        end_date_before = end_date_input.input_value()
+        self.assertIn("T", end_date_before)
+        end_time_segment = end_date_before.split("T", 1)[1]
+        start_date_input = create_modal.locator('input[name="start_date"]')
+
+        create_modal.get_by_role("button", name="Release date").nth(1).click()
+        expect(end_date_input).to_have_value(f"2019-11-08T{end_time_segment}")
+        end_hour, end_minute = [int(segment) for segment in end_time_segment.split(":")]
+        expected_start_date = (
+            datetime(2019, 11, 8, end_hour, end_minute, tzinfo=UTC)
+            - timedelta(minutes=95)
+        ).strftime("%Y-%m-%dT%H:%M")
+        expect(start_date_input).to_have_value(expected_start_date)
+
+        create_modal.locator("button[type='button']").first.click()
+        expect(self.page.locator("[data-track-modal-root]:visible")).to_have_count(0)
+
+        self.page.get_by_role("button", name="Completed", exact=True).click()
+        edit_modal = self.page.locator("[data-track-modal-root]:visible").first
+        expect(edit_modal).to_be_visible()
+        edit_modal.locator("button[type='button']").first.click()
+        expect(self.page.locator("[data-track-modal-root]:visible")).to_have_count(0)
