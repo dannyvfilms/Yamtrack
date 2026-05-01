@@ -597,6 +597,31 @@ class ListDetailViewTests(TestCase):
         response = self.client.get(reverse("list_detail", args=[self.custom_list.id]))
         self.assertEqual(response.status_code, 200)
 
+    def test_public_list_detail_reorders_header_and_removes_public_banner(self):
+        """Public manual lists should show the owner on the metadata line without the banner."""
+        self.custom_list.visibility = "public"
+        self.custom_list.allow_recommendations = True
+        self.custom_list.save(update_fields=["visibility", "allow_recommendations"])
+
+        self.client.logout()
+        response = self.client.get(reverse("list_detail", args=[self.custom_list.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "3 items")
+        self.assertContains(response, self.user.username)
+        self.assertNotContains(response, "View Profile")
+        self.assertNotContains(response, "You're viewing a public list.")
+
+        content = response.content.decode()
+        self.assertIn(
+            'class="inline-flex items-center text-gray-400 transition-colors hover:text-indigo-300"',
+            content,
+        )
+        self.assertLess(content.index("3 items"), content.index(self.user.username))
+        self.assertLess(content.index(self.user.username), content.index("Links"))
+        self.assertLess(content.index("Links"), content.index("Recommend Item"))
+        self.assertLess(content.index("Recommend Item"), content.index("Test Description"))
+
     def test_public_list_detail_resolves_custom_slug(self):
         """Public lists should resolve their custom slug in the detail route."""
         self.custom_list.visibility = "public"
@@ -1078,8 +1103,53 @@ class ListDetailViewTests(TestCase):
             response,
             f'{reverse("list_detail", args=[smart_list.id])}?edit_smart_rules=1',
         )
+        self.assertContains(response, "Smart Rules")
         self.assertContains(response, "More list actions")
         self.assertNotContains(response, 'aria-label="Edit list metadata"')
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_public_smart_list_reorders_header_and_removes_public_banner(
+        self,
+        mock_get_media_metadata,
+    ):
+        """Public smart lists should match the manual-list header ordering."""
+        mock_get_media_metadata.return_value = {
+            "max_progress": 1,
+            "related": {"seasons": []},
+            "title": "Test Movie",
+        }
+        Movie.objects.create(
+            item=self.movie_item,
+            status=Status.COMPLETED.value,
+            user=self.user,
+        )
+        smart_list = CustomList.objects.create(
+            name="Public Smart List",
+            description="Smart Description",
+            owner=self.user,
+            is_smart=True,
+            visibility="public",
+            allow_recommendations=True,
+            smart_media_types=[MediaTypes.MOVIE.value],
+            smart_filters={"status": "all"},
+        )
+
+        self.client.logout()
+        response = self.client.get(reverse("list_detail", args=[smart_list.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "1 item")
+        self.assertContains(response, self.user.username)
+        self.assertNotContains(response, "View Profile")
+        self.assertNotContains(response, "You're viewing a public list.")
+        self.assertNotContains(response, "Smart Rules")
+
+        content = response.content.decode()
+        self.assertIn("border-indigo-400/18 bg-indigo-500/[0.07]", content)
+        self.assertLess(content.index("1 item"), content.index(self.user.username))
+        self.assertLess(content.index(self.user.username), content.index("Links"))
+        self.assertLess(content.index("Links"), content.index("Recommend Item"))
+        self.assertLess(content.index("Recommend Item"), content.index("Smart Description"))
 
     @patch("app.providers.services.get_media_metadata")
     def test_smart_list_detail_table_partial(self, mock_get_media_metadata):
