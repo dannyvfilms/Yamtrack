@@ -1072,6 +1072,20 @@ class ListDetailViewTests(TestCase):
         self.assertContains(response, "More list actions")
         self.assertNotContains(response, 'aria-label="Edit list"')
 
+    def test_manual_list_detail_reorders_internal_header_like_public_layout(self):
+        """Owner views should keep the same header stack as public manual lists."""
+        self.custom_list.visibility = "public"
+        self.custom_list.allow_recommendations = True
+        self.custom_list.save(update_fields=["visibility", "allow_recommendations"])
+
+        response = self.client.get(reverse("list_detail", args=[self.custom_list.id]))
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertLess(content.index("3 items"), content.index("Links"))
+        self.assertLess(content.index("Links"), content.index("Add New Item"))
+        self.assertLess(content.index("Add New Item"), content.index("Test Description"))
+
     @patch("app.providers.services.get_media_metadata")
     def test_smart_list_detail_exposes_smart_rule_split_actions(
         self,
@@ -1106,6 +1120,42 @@ class ListDetailViewTests(TestCase):
         self.assertContains(response, "Smart Rules")
         self.assertContains(response, "More list actions")
         self.assertNotContains(response, 'aria-label="Edit list metadata"')
+
+    @patch("app.providers.services.get_media_metadata")
+    def test_smart_list_detail_reorders_internal_header_like_public_layout(
+        self,
+        mock_get_media_metadata,
+    ):
+        """Owner smart-list views should keep description above the editable rules UI."""
+        mock_get_media_metadata.return_value = {
+            "max_progress": 1,
+            "related": {"seasons": []},
+            "title": "Test Movie",
+        }
+        Movie.objects.create(
+            item=self.movie_item,
+            status=Status.COMPLETED.value,
+            user=self.user,
+        )
+        smart_list = CustomList.objects.create(
+            name="Internal Smart List",
+            description="Smart Description",
+            owner=self.user,
+            is_smart=True,
+            visibility="public",
+            allow_recommendations=True,
+            smart_media_types=[MediaTypes.MOVIE.value],
+            smart_filters={"status": "all"},
+        )
+
+        response = self.client.get(reverse("list_detail", args=[smart_list.id]))
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        self.assertLess(content.index("1 item"), content.index("Links"))
+        self.assertLess(content.index("Links"), content.index("Edit Smart Rules"))
+        self.assertLess(content.index("Edit Smart Rules"), content.index("Smart Description"))
+        self.assertLess(content.index("Smart Description"), content.rindex("Smart Rules"))
 
     @patch("app.providers.services.get_media_metadata")
     def test_public_smart_list_reorders_header_and_removes_public_banner(
