@@ -672,21 +672,62 @@
 
         <!-- Hide Completed Recommendations -->
         <div class="p-3 bg-[#39404b] rounded-md mb-4">
-          <div class="flex items-center justify-between">
-            <div>
-              <label class="text-gray-200 text-sm font-medium">Hide Completed Recommendations</label>
-              <p class="text-gray-400 text-xs mt-1">Hide already completed items from recommendation sections.</p>
-            </div>
-            <label class="relative inline-flex items-center cursor-pointer">
-              <input type="hidden" name="hide_completed_recommendations" value="0">
-              <input class="sr-only peer"
-                     type="checkbox"
-                     name="hide_completed_recommendations"
-                     value="1"
-                     {% if user.hide_completed_recommendations %}checked{% endif %}>
-              <div class="w-9 h-5 bg-gray-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-px after:left-0.5 after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4.5 after:w-4.5 after:transition-all peer-checked:bg-indigo-600">
+          <div class="flex items-center justify-between mb-2">
+            <label class="text-gray-200 text-sm font-medium">Hide Completed Recommendations</label>
+            <span class="text-gray-400 text-xs">Hide already completed items from recommendation sections.</span>
+          </div>
+          <div class="relative w-full"
+               x-data="{
+                 open: false,
+                 selectedValue: '{{ user.hide_completed_recommendations|yesno:'1,0' }}',
+                 selectedLabel: '',
+                 options: [
+                   { value: '1', label: 'Enabled - hide completed items' },
+                   { value: '0', label: 'Disabled - show completed items' }
+                 ],
+                 init() {
+                   const match = this.options.find(o => o.value === this.selectedValue);
+                   this.selectedLabel = match ? match.label : this.options[1]?.label ?? '';
+                 }
+               }"
+               x-init="init()">
+              <button type="button"
+                      @click="open = !open"
+                      @click.outside="open = false"
+                      class="flex items-center justify-between w-full px-3 py-2 bg-[#272c31] border border-gray-600 rounded-md text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent cursor-pointer">
+                <span x-text="selectedLabel"></span>
+                <svg xmlns="http://www.w3.org/2000/svg"
+                     width="24"
+                     height="24"
+                     viewBox="0 0 24 24"
+                     fill="none"
+                     stroke="currentColor"
+                     stroke-width="2"
+                     stroke-linecap="round"
+                     stroke-linejoin="round"
+                     class="w-4 h-4 text-gray-400">
+                  <path d="m6 9 6 6 6-6"></path>
+                </svg>
+              </button>
+              <div x-show="open"
+                   x-transition:enter="transition ease-out duration-100"
+                   x-transition:enter-start="transform opacity-0 scale-95"
+                   x-transition:enter-end="transform opacity-100 scale-100"
+                   x-transition:leave="transition ease-in duration-75"
+                   x-transition:leave-start="transform opacity-100 scale-100"
+                   x-transition:leave-end="transform opacity-0 scale-95"
+                   class="absolute left-0 right-0 mt-2 py-1 bg-[#272c31] rounded-md shadow-lg overflow-hidden z-10 border border-gray-600">
+                <template x-for="option in options" :key="option.value">
+                  <button type="button"
+                          @click="selectedValue = option.value; selectedLabel = option.label; open = false"
+                          class="block w-full px-3 py-2 text-left text-sm transition-colors text-gray-300 hover:bg-[#39404b] hover:text-white"
+                          :class="{ 'text-white bg-[#39404b]': selectedValue === option.value }">
+                    <span x-text="option.label"></span>
+                  </button>
+                </template>
               </div>
-            </label>
+              <input type="hidden" name="hide_completed_recommendations" x-bind:value="selectedValue">
+            </div>
           </div>
         </div>
 

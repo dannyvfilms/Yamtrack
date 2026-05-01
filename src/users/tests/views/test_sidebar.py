@@ -40,6 +40,7 @@ class SidebarViewTests(TestCase):
             reverse("preferences"),
             {
                 "media_types_checkboxes": [MediaTypes.TV.value, MediaTypes.ANIME.value],
+                "hide_completed_recommendations": "1",
             },
         )
         self.assertRedirects(response, reverse("preferences"))
@@ -48,6 +49,7 @@ class SidebarViewTests(TestCase):
         self.assertTrue(self.user.tv_enabled)
         self.assertFalse(self.user.movie_enabled)
         self.assertTrue(self.user.anime_enabled)
+        self.assertTrue(self.user.hide_completed_recommendations)
 
         messages = list(get_messages(response.wsgi_request))
         self.assertEqual(len(messages), 1)
