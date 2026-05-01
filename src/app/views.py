@@ -120,6 +120,7 @@ from app.signals import suppress_media_cache_change_signals
 from integrations import anime_mapping
 from integrations.models import CollectionSourceState
 from lists.models import CustomList
+from users.home_screen import build_home_page_groups
 from users.models import HomeSortChoices, MediaSortChoices, MediaStatusChoices
 from users.models import TopTalentSortChoices
 
@@ -1265,314 +1266,49 @@ def _annotate_home_card_images(media_items):
 def home(request):
     """Home page with media items in progress."""
     try:
-        sort_by = request.user.update_preference("home_sort", request.GET.get("sort"))
-        media_type_to_load = request.GET.get("load_media_type")
         items_limit = 14
+        try:
+            load_row_id = int(request.GET.get("load_row", ""))
+        except (TypeError, ValueError):
+            load_row_id = None
 
-        if request.headers.get("HX-Request") and media_type_to_load == RECENTLY_NOT_RATED_KEY:
-            from django.template.loader import render_to_string
-            from collections import defaultdict
-            from django.conf import settings
-            from app.models import Album, Item, Sources
-            
-            recent_items = BasicMedia.objects.get_recently_unrated(
-                request.user,
-                days=RECENTLY_NOT_RATED_DAYS,
-            )
-            
-            # Aggregate music tracks to albums (same logic as main view)
-            music_tracks = []
-            other_items = []
-            albums_by_id = {}
-            
-            for item in recent_items:
-                if item.item.media_type == MediaTypes.MUSIC.value:
-                    music_tracks.append(item)
-                else:
-                    other_items.append(item)
-            
-            # Aggregate music tracks to albums
-            album_play_counts = defaultdict(int)
-            album_last_played = {}
-            album_primary_track = {}
-            
-            for track in music_tracks:
-                album = getattr(track, "album", None)
-                if album:
-                    album_id = album.id
-                    albums_by_id[album_id] = album
-                    play_count = getattr(track, "repeats", None) or 1
-                    album_play_counts[album_id] += play_count
-                    last_played = track.last_played_at or track.created_at
-                    if album_id not in album_last_played or last_played > album_last_played[album_id]:
-                        album_last_played[album_id] = last_played
-                        album_primary_track[album_id] = track
-            
-            # Create AlbumAdapter for each unique album
-            class AlbumAdapter:
-                """Adapter to make Album compatible with media components."""
-                
-                def __init__(self, album, play_count, last_played_at, primary_track):
-                    self.album = album
-                    self.id = album.id
-                    self.play_count = play_count
-                    self.last_played_at = last_played_at
-                    self.created_at = last_played_at
-                    
-                    # Media-like attributes for template compatibility
-                    self.status = None  # Albums don't have status in Recently Played - Not Rated
-                    self.end_date = last_played_at  # Use last_played_at as end_date
-                    self.next_event = None  # Albums don't have next events
-                    self.score = None  # Albums in Recently Played - Not Rated don't have scores
-                    self.title = album.title  # For template title display
-                    
-                    album_media_id = f"album_{album.id}"
-                    self.item, _ = Item.objects.get_or_create(
-                        media_id=album_media_id,
-                        source=Sources.MANUAL.value,
-                        media_type=MediaTypes.MUSIC.value,
-                        defaults={
-                            "title": album.title,
-                            "image": album.image or settings.IMG_NONE,
-                        },
-                    )
-                    album_image = album.image or settings.IMG_NONE
-                    if self.item.title != album.title or self.item.image != album_image:
-                        self.item.title = album.title
-                        self.item.image = album_image
-                        self.item.save(update_fields=["title", "image"])
-                    
-                    self.primary_track = primary_track
-                
-                def __str__(self):
-                    """Return album title for string representation."""
-                    return self.album.title
-            
-            album_adapters = [
-                AlbumAdapter(
-                    albums_by_id[album_id],
-                    album_play_counts[album_id],
-                    album_last_played[album_id],
-                    album_primary_track[album_id],
-                )
-                for album_id in albums_by_id.keys()
-            ]
-            
-            album_adapters.sort(key=lambda a: a.last_played_at or a.created_at, reverse=True)
-            all_items = album_adapters + other_items
-            
-            items_to_load = all_items[items_limit:]
-            _annotate_home_card_images(items_to_load)
-            
-            # Split items into 2:3 (standard) and 1:1 (square) types
-            square_types = {"music", "podcast"}
-            standard_items = []
-            square_items = []
-            for item in items_to_load:
-                if isinstance(item, AlbumAdapter):
-                    square_items.append(item)
-                else:
-                    media_type = getattr(getattr(item, "item", None), "media_type", "").lower() if getattr(item, "item", None) else None
-                    if media_type in square_types:
-                        square_items.append(item)
-                    elif media_type:
-                        standard_items.append(item)
-            
-            # Render each group with proper grid wrappers
-            result_parts = []
-            
-            if standard_items:
-                standard_context = {
-                    "media_list": {
-                        "items": standard_items,
-                        "show_played_chip": True,
-                    },
-                    "user": request.user,
-                    "MediaTypes": MediaTypes,
-                    "csrf_token": request.META.get("CSRF_COOKIE"),
-                }
-                standard_html = render_to_string("app/components/home_grid.html", standard_context, request)
-                result_parts.append(f'<div class="media-grid">{standard_html}</div>')
-            
-            if square_items:
-                square_context = {
-                    "media_list": {
-                        "items": square_items,
-                        "show_played_chip": True,
-                    },
-                    "user": request.user,
-                    "MediaTypes": MediaTypes,
-                    "csrf_token": request.META.get("CSRF_COOKIE"),
-                }
-                square_html = render_to_string("app/components/home_grid.html", square_context, request)
-                result_parts.append(f'<div class="media-grid media-grid-square mt-4">{square_html}</div>')
-            
-            return HttpResponse("".join(result_parts))
-
-        if media_type_to_load == RECENTLY_NOT_RATED_KEY:
-            media_type_to_load = None
-
-        list_by_type = BasicMedia.objects.get_in_progress(
+        home_groups = build_home_page_groups(
             request.user,
-            sort_by,
             items_limit,
-            media_type_to_load,
+            load_row_id=load_row_id,
+            append_only=bool(request.headers.get("HX-Request") and load_row_id),
         )
 
-        # If this is an HTMX request to load more items for a specific media type
-        if request.headers.get("HX-Request") and media_type_to_load:
-            context = {
-                "media_list": list_by_type.get(media_type_to_load, []),
-            }
-            return render(request, "app/components/home_grid.html", context)
-
-        recent_items = BasicMedia.objects.get_recently_unrated(
-            request.user,
-            days=RECENTLY_NOT_RATED_DAYS,
-        )
-        if recent_items:
-            # Aggregate music tracks to albums
-            from collections import defaultdict
-            from django.conf import settings
-            from app.models import Album, Item, Sources
-            
-            music_tracks = []
-            other_items = []
-            albums_by_id = {}  # Track albums we've seen
-            
-            for item in recent_items:
-                if item.item.media_type == MediaTypes.MUSIC.value:
-                    music_tracks.append(item)
-                else:
-                    other_items.append(item)
-            
-            # Aggregate music tracks to albums
-            album_play_counts = defaultdict(int)
-            album_last_played = {}
-            album_primary_track = {}
-            
-            for track in music_tracks:
-                album = getattr(track, "album", None)
-                if album:
-                    album_id = album.id
-                    albums_by_id[album_id] = album
-                    # Count plays (repeats or 1)
-                    play_count = getattr(track, "repeats", None) or 1
-                    album_play_counts[album_id] += play_count
-                    # Track most recent play
-                    last_played = track.last_played_at or track.created_at
-                    if album_id not in album_last_played or last_played > album_last_played[album_id]:
-                        album_last_played[album_id] = last_played
-                        album_primary_track[album_id] = track
-            
-            # Create AlbumAdapter for each unique album
-            class AlbumAdapter:
-                """Adapter to make Album compatible with media components."""
-                
-                def __init__(self, album, play_count, last_played_at, primary_track):
-                    self.album = album
-                    self.id = album.id
-                    self.play_count = play_count
-                    self.last_played_at = last_played_at
-                    self.created_at = last_played_at  # For sorting
-                    
-                    # Media-like attributes for template compatibility
-                    self.status = None  # Albums don't have status in Recently Played - Not Rated
-                    self.end_date = last_played_at  # Use last_played_at as end_date
-                    self.next_event = None  # Albums don't have next events
-                    self.score = None  # Albums in Recently Played - Not Rated don't have scores
-                    self.title = album.title  # For template title display
-                    
-                    # Create a mock Item for compatibility with media components
-                    # Use a unique identifier for the album
-                    album_media_id = f"album_{album.id}"
-                    self.item, _ = Item.objects.get_or_create(
-                        media_id=album_media_id,
-                        source=Sources.MANUAL.value,
-                        media_type=MediaTypes.MUSIC.value,
-                        defaults={
-                            "title": album.title,
-                            "image": album.image or settings.IMG_NONE,
-                        },
-                    )
-                    # Update item if album data changed
-                    album_image = album.image or settings.IMG_NONE
-                    if self.item.title != album.title or self.item.image != album_image:
-                        self.item.title = album.title
-                        self.item.image = album_image
-                        self.item.save(update_fields=["title", "image"])
-                    
-                    # Store primary track for reference
-                    self.primary_track = primary_track
-                
-                def __str__(self):
-                    """Return album title for string representation."""
-                    return self.album.title
-            
-            album_adapters = [
-                AlbumAdapter(
-                    albums_by_id[album_id],
-                    album_play_counts[album_id],
-                    album_last_played[album_id],
-                    album_primary_track[album_id],
-                )
-                for album_id in albums_by_id.keys()
-            ]
-            
-            # Sort albums by last played (most recent first)
-            album_adapters.sort(key=lambda a: a.last_played_at or a.created_at, reverse=True)
-            
-            # Combine albums with other items
-            all_items = album_adapters + other_items
-            
-            # Split items into 2:3 (standard) and 1:1 (square) types
-            # This ensures both grids show if both types exist in the dataset
-            square_types = {"music", "podcast"}
-            
-            standard_items = []
-            square_items = []
-            for item in all_items:
-                # For AlbumAdapter, it's always music (square)
-                # For other items, check media_type
-                if isinstance(item, AlbumAdapter):
-                    square_items.append(item)
-                else:
-                    media_type = item.item.media_type.lower() if item.item else None
-                    if media_type in square_types:
-                        square_items.append(item)
-                    elif media_type:
-                        standard_items.append(item)
-            
-            # If both types exist, show items from both types up to the limit
-            # Prioritize showing both grids if both types are available
-            limited_items = []
-            if standard_items and square_items:
-                # Show a mix: take up to half from each type (rounded up for standard)
-                # This ensures both grids render
-                standard_count = min(len(standard_items), (items_limit + 1) // 2)
-                square_count = min(len(square_items), items_limit - standard_count)
-                limited_items = standard_items[:standard_count] + square_items[:square_count]
-            elif standard_items:
-                limited_items = standard_items[:items_limit]
-            elif square_items:
-                limited_items = square_items[:items_limit]
-
-            _annotate_home_card_images(limited_items)
-            
-            list_by_type[RECENTLY_NOT_RATED_KEY] = {
-                "items": limited_items,
-                "total": len(all_items),
-                "section_title": RECENTLY_NOT_RATED_LABEL,
-                "show_played_chip": True,
-            }
+        if request.headers.get("HX-Request") and load_row_id:
+            target_row = next(
+                (
+                    row
+                    for group in home_groups
+                    for row in group["rows"]
+                    if row["row_id"] == load_row_id
+                ),
+                None,
+            )
+            if target_row is None:
+                return HttpResponse("")
+            return render(
+                request,
+                "app/components/home_grid.html",
+                {
+                    "media_list": target_row,
+                    "user": request.user,
+                    "MediaTypes": MediaTypes,
+                    "IMG_NONE": settings.IMG_NONE,
+                },
+            )
 
         context = {
             "user": request.user,
-            "list_by_type": list_by_type,
-            "current_sort": sort_by,
-            "sort_choices": HomeSortChoices.choices,
+            "home_groups": home_groups,
             "items_limit": items_limit,
             "active_playback_card": live_playback.build_home_playback_card(request.user),
+            "MediaTypes": MediaTypes,
+            "IMG_NONE": settings.IMG_NONE,
         }
         return render(request, "app/home.html", context)
     except OperationalError as error:
@@ -1580,12 +1316,12 @@ def home(request):
         # Return empty state on database error
         context = {
             "user": request.user,
-            "list_by_type": {},
-            "current_sort": request.GET.get("sort", "progress"),
-            "sort_choices": HomeSortChoices.choices,
+            "home_groups": [],
             "items_limit": 14,
             "database_error": True,
             "active_playback_card": None,
+            "MediaTypes": MediaTypes,
+            "IMG_NONE": settings.IMG_NONE,
         }
         return render(request, "app/home.html", context)
 

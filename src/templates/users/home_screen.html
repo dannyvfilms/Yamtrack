@@ -1,0 +1,444 @@
+{% extends "users/base.html" %}
+
+{% block title %}
+  Home Screen - Yamtrack
+{% endblock title %}
+
+{% block settings_content %}
+  <div class="bg-[#2a2f35] rounded-lg p-6"
+       x-data="homeScreenSettings({
+         sections: {{ home_screen_sections_json|safe }},
+         listSearchUrl: '{{ home_screen_list_search_url }}',
+         directionChoices: {{ direction_choices_json|safe }}
+       })"
+       x-init="init()">
+    <div class="flex items-center mb-4">
+      {% include "app/icons/house.svg" with classes="w-6 h-6 text-indigo-400 mr-3" %}
+      <h2 class="text-xl font-semibold">Home Screen</h2>
+    </div>
+    <p class="text-gray-400 mb-6 text-sm max-w-3xl">
+      Control which rows show on Home for each enabled library. Configure library queries, attach lists or smart lists, choose sort order, and drag rows into place.
+    </p>
+
+    <form method="post" @submit="prepareSubmit">
+      {% csrf_token %}
+      <input type="hidden" name="home_screen_sections" x-ref="payloadInput">
+
+      <div class="space-y-4">
+        <template x-for="section in sections" :key="section.media_type">
+          <section class="overflow-hidden rounded-xl border border-slate-700/80 bg-[#39404b]">
+            <button type="button"
+                    class="flex w-full items-center gap-3 px-5 py-4 text-left cursor-pointer"
+                    @click="section.expanded = !section.expanded">
+              <div class="flex h-10 w-10 items-center justify-center rounded-full border border-slate-600 bg-[#272c31] text-sm font-semibold text-slate-200"
+                   x-text="initials(section.label)"></div>
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-3">
+                  <h3 class="text-lg font-semibold text-white" x-text="section.label"></h3>
+                  <span class="rounded-full border border-slate-600 px-2.5 py-1 text-[11px] uppercase tracking-[0.18em] text-slate-300"
+                        x-text="`${section.rows.length} row${section.rows.length === 1 ? '' : 's'}`"></span>
+                </div>
+                <p class="mt-1 text-sm text-slate-400">Rows follow the Home page order for this library.</p>
+              </div>
+              <div class="text-slate-400">
+                <span x-show="!section.expanded">{% include "app/icons/chevron-down.svg" with classes="w-5 h-5" %}</span>
+                <span x-show="section.expanded">{% include "app/icons/chevron-up.svg" with classes="w-5 h-5" %}</span>
+              </div>
+            </button>
+
+            <div x-show="section.expanded"
+                 x-transition:enter="transition ease-out duration-150"
+                 x-transition:enter-start="opacity-0 -translate-y-1"
+                 x-transition:enter-end="opacity-100 translate-y-0"
+                 class="border-t border-slate-700/80 px-4 py-4">
+              <div class="mb-4 flex flex-wrap gap-2">
+                <button type="button"
+                        class="inline-flex items-center rounded-md border border-indigo-500/40 bg-indigo-500/12 px-3 py-2 text-sm font-medium text-indigo-100 transition-colors hover:bg-indigo-500/20 cursor-pointer"
+                        @click="addRow(section, 'library_query')">
+                  {% include "app/icons/plus.svg" with classes="mr-2 h-4 w-4" %}
+                  Add Library Row
+                </button>
+                <button type="button"
+                        class="inline-flex items-center rounded-md border border-slate-600 bg-[#272c31] px-3 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-[#313842] cursor-pointer"
+                        @click="addRow(section, 'custom_list')">
+                  {% include "app/icons/list.svg" with classes="mr-2 h-4 w-4" %}
+                  Add List / Smart List
+                </button>
+                <button type="button"
+                        class="inline-flex items-center rounded-md border border-slate-600 bg-[#272c31] px-3 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-[#313842] cursor-pointer"
+                        @click="addRow(section, 'recently_unrated')"
+                        :disabled="section.rows.some(row => row.row_type === 'recently_unrated')"
+                        :class="{ 'opacity-50 cursor-not-allowed': section.rows.some(row => row.row_type === 'recently_unrated') }">
+                  {% include "app/icons/history.svg" with classes="mr-2 h-4 w-4" %}
+                  Add Recently Played Row
+                </button>
+              </div>
+
+              <div class="space-y-3" :data-home-row-list="section.media_type">
+                <template x-for="row in section.rows" :key="row.client_id">
+                  <article class="group rounded-xl border border-slate-700 bg-[#272c31] p-4"
+                           :data-row-client-id="row.client_id">
+                    <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div class="min-w-0 flex-1">
+                        <div class="flex items-start gap-3">
+                          <button type="button"
+                                  class="drag-handle mt-0.5 rounded-md border border-slate-700 bg-[#1f2429] p-2 text-slate-400 transition-colors hover:text-white cursor-grab active:cursor-grabbing">
+                            {% include "app/icons/drag-handle.svg" with classes="h-4 w-4" %}
+                          </button>
+                          <div class="min-w-0 flex-1">
+                            <div class="flex flex-wrap items-center gap-2">
+                              <h4 class="text-base font-semibold text-white"
+                                  x-text="rowDisplayTitle(section, row)"></h4>
+                              <span class="rounded-full border border-slate-600 px-2 py-0.5 text-[11px] uppercase tracking-[0.18em] text-slate-300"
+                                    x-text="rowTypeLabel(row.row_type)"></span>
+                              <span class="rounded-full border border-slate-600 px-2 py-0.5 text-[11px] uppercase tracking-[0.18em]"
+                                    :class="row.enabled ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200' : 'border-slate-600 text-slate-400'"
+                                    x-text="row.enabled ? 'Enabled' : 'Disabled'"></span>
+                            </div>
+                            <p class="mt-1 text-sm text-slate-400" x-text="rowDisplaySummary(section, row)"></p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div class="flex flex-col gap-2 md:opacity-100 lg:min-w-[23rem] lg:opacity-0 lg:transition-opacity lg:group-hover:opacity-100 lg:group-focus-within:opacity-100">
+                        <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          <label class="text-xs font-medium uppercase tracking-[0.16em] text-slate-400">
+                            State
+                            <select x-model="row.enabled"
+                                    class="mt-1 w-full rounded-md border border-slate-600 bg-[#1f2429] px-3 py-2 text-sm text-slate-100 focus:border-indigo-500 focus:outline-none">
+                              <option :value="true">Enabled</option>
+                              <option :value="false">Disabled</option>
+                            </select>
+                          </label>
+                          <template x-if="row.row_type !== 'recently_unrated'">
+                            <label class="text-xs font-medium uppercase tracking-[0.16em] text-slate-400">
+                              Sort
+                              <select x-model="row.sort_by"
+                                      class="mt-1 w-full rounded-md border border-slate-600 bg-[#1f2429] px-3 py-2 text-sm text-slate-100 focus:border-indigo-500 focus:outline-none">
+                                <template x-for="choice in sortChoices(section, row)" :key="choice.value">
+                                  <option :value="choice.value" x-text="choice.label"></option>
+                                </template>
+                              </select>
+                            </label>
+                          </template>
+                          <template x-if="row.row_type !== 'recently_unrated'">
+                            <label class="text-xs font-medium uppercase tracking-[0.16em] text-slate-400">
+                              Direction
+                              <select x-model="row.direction"
+                                      class="mt-1 w-full rounded-md border border-slate-600 bg-[#1f2429] px-3 py-2 text-sm text-slate-100 focus:border-indigo-500 focus:outline-none">
+                                <template x-for="choice in directionChoices" :key="choice.value">
+                                  <option :value="choice.value" x-text="choice.label"></option>
+                                </template>
+                              </select>
+                            </label>
+                          </template>
+                        </div>
+
+                        <div class="flex flex-wrap justify-end gap-2">
+                          <button type="button"
+                                  class="inline-flex items-center rounded-md border border-slate-600 bg-[#1f2429] px-3 py-2 text-sm text-slate-200 transition-colors hover:bg-[#313842] cursor-pointer"
+                                  x-show="row.row_type !== 'recently_unrated'"
+                                  @click="row.editorOpen = !row.editorOpen">
+                            {% include "app/icons/horizontal-sliders.svg" with classes="mr-2 h-4 w-4" %}
+                            <span x-text="row.editorOpen ? 'Hide Editor' : 'Edit Row'"></span>
+                          </button>
+                          <button type="button"
+                                  class="inline-flex items-center rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-100 transition-colors hover:bg-rose-500/20 cursor-pointer"
+                                  @click="removeRow(section, row.client_id)">
+                            {% include "app/icons/trashcan.svg" with classes="mr-2 h-4 w-4" %}
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div x-show="row.editorOpen && row.row_type === 'library_query'"
+                         x-transition:enter="transition ease-out duration-150"
+                         x-transition:enter-start="opacity-0 -translate-y-1"
+                         x-transition:enter-end="opacity-100 translate-y-0"
+                         class="mt-4 rounded-lg border border-slate-700 bg-[#1f2429] p-4">
+                      <div class="mb-3 flex items-center justify-between">
+                        <h5 class="text-sm font-semibold text-white">Library Filters</h5>
+                        <button type="button"
+                                class="text-xs font-medium uppercase tracking-[0.16em] text-slate-400 hover:text-white cursor-pointer"
+                                @click="resetLibraryFilters(row)">
+                          Reset Filters
+                        </button>
+                      </div>
+                      <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                        <template x-for="field in section.filter_fields" :key="field.key">
+                          <label class="text-xs font-medium uppercase tracking-[0.16em] text-slate-400">
+                            <span x-text="field.label"></span>
+                            <select x-model="row.filters[field.key]"
+                                    class="mt-1 w-full rounded-md border border-slate-600 bg-[#272c31] px-3 py-2 text-sm font-normal text-slate-100 focus:border-indigo-500 focus:outline-none">
+                              <template x-for="option in field.options" :key="option.value">
+                                <option :value="option.value" x-text="option.label"></option>
+                              </template>
+                            </select>
+                          </label>
+                        </template>
+                      </div>
+                    </div>
+
+                    <div x-show="row.editorOpen && row.row_type === 'custom_list'"
+                         x-transition:enter="transition ease-out duration-150"
+                         x-transition:enter-start="opacity-0 -translate-y-1"
+                         x-transition:enter-end="opacity-100 translate-y-0"
+                         class="mt-4 rounded-lg border border-slate-700 bg-[#1f2429] p-4">
+                      <div class="mb-3">
+                        <h5 class="text-sm font-semibold text-white">List Selection</h5>
+                        <p class="mt-1 text-sm text-slate-400">Search your owned and collaborator lists. Smart lists are included here too.</p>
+                      </div>
+                      <div class="relative">
+                        <input type="text"
+                               x-model="row.listQuery"
+                               @input.debounce.250ms="searchLists(section, row)"
+                               class="w-full rounded-md border border-slate-600 bg-[#272c31] px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
+                               placeholder="Search lists and smart lists">
+                        <div x-show="row.listResults.length"
+                             class="absolute z-20 mt-2 w-full overflow-hidden rounded-md border border-slate-600 bg-[#272c31] shadow-lg">
+                          <template x-for="result in row.listResults" :key="result.id">
+                            <button type="button"
+                                    class="block w-full border-b border-slate-700 px-3 py-2 text-left text-sm text-slate-200 transition-colors hover:bg-[#39404b] cursor-pointer last:border-b-0"
+                                    @click="applyListResult(row, result)">
+                              <div class="font-medium" x-text="result.name"></div>
+                              <div class="text-xs text-slate-400" x-text="result.is_smart ? 'Smart list' : 'Manual list'"></div>
+                            </button>
+                          </template>
+                        </div>
+                      </div>
+
+                      <div class="mt-3 rounded-md border border-slate-700 bg-[#272c31] px-3 py-2 text-sm text-slate-200">
+                        <span class="text-slate-400">Selected:</span>
+                        <span x-text="row.custom_list_name || 'No list selected yet'"></span>
+                      </div>
+                    </div>
+                  </article>
+                </template>
+              </div>
+            </div>
+          </section>
+        </template>
+      </div>
+
+      <div class="mt-6 flex items-center justify-end">
+        <button type="submit"
+                class="inline-flex items-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700 cursor-pointer">
+          {% include "app/icons/save.svg" with classes="mr-2 h-4 w-4" %}
+          Save Home Screen
+        </button>
+      </div>
+    </form>
+  </div>
+{% endblock settings_content %}
+
+{% block js %}
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/Sortable.min.js"></script>
+  <script>
+    function homeScreenSettings({ sections, listSearchUrl, directionChoices }) {
+      return {
+        sections: (sections || []).map(section => ({
+          ...section,
+          expanded: true,
+          rows: (section.rows || []).map(row => ({
+            ...row,
+            enabled: row.enabled !== false,
+            editorOpen: !row.id,
+            filters: { ...(row.filters || {}) },
+            listQuery: row.custom_list_name || '',
+            listResults: []
+          }))
+        })),
+        listSearchUrl,
+        directionChoices: directionChoices || [],
+        sortables: [],
+        nextRowId: 0,
+        init() {
+          window.homeScreenSettingsInstance = this;
+          this.nextRowId = this.sections.reduce((maxId, section) => {
+            return Math.max(
+              maxId,
+              ...section.rows.map(row => Number.parseInt(String(row.id || '0'), 10) || 0)
+            );
+          }, 0) + 1;
+          this.$nextTick(() => this.initSortables());
+        },
+        initials(label) {
+          return String(label || '')
+            .split(' ')
+            .filter(Boolean)
+            .slice(0, 2)
+            .map(part => part[0])
+            .join('')
+            .toUpperCase();
+        },
+        rowTypeLabel(type) {
+          if (type === 'library_query') return 'Library Row';
+          if (type === 'custom_list') return 'List / Smart List';
+          return 'Recently Played';
+        },
+        rowDisplayTitle(section, row) {
+          if (row.row_type === 'custom_list') {
+            return row.custom_list_name || 'List / Smart List';
+          }
+          if (row.row_type === 'recently_unrated') {
+            return 'Recently Played - Not Rated';
+          }
+          return this.describeFilters(section, row);
+        },
+        rowDisplaySummary(section, row) {
+          if (row.row_type === 'custom_list') {
+            return row.custom_list_name
+              ? 'List-backed row on Home'
+              : 'Choose a list or smart list for this library row.';
+          }
+          if (row.row_type === 'recently_unrated') {
+            return 'Recent unrated plays from this library.';
+          }
+          const sort = this.sortChoices(section, row).find(choice => choice.value === row.sort_by);
+          const direction = this.directionChoices.find(choice => choice.value === row.direction);
+          return `Sorted by ${sort ? sort.label : row.sort_by} • ${direction ? direction.label : row.direction}`;
+        },
+        describeFilters(section, row) {
+          const status = row.filters?.status || 'all';
+          const parts = [];
+          if (status === 'In Progress') parts.push('In Progress');
+          else if (status === 'Planning') parts.push('Planning');
+          else if (status === 'Completed') parts.push('Completed');
+          else if (status === 'Paused') parts.push('Paused');
+          else if (status === 'Dropped') parts.push('Dropped');
+          else parts.push('Library');
+
+          const labelFor = (key, value) => {
+            const field = (section.filter_fields || []).find(candidate => candidate.key === key);
+            if (!field) return value;
+            const option = (field.options || []).find(candidate => candidate.value === value);
+            return option ? option.label : value;
+          };
+
+          ['rating', 'collection', 'genre', 'year', 'release', 'source', 'language', 'country', 'platform', 'origin', 'format', 'author', 'tag', 'tag_exclude']
+            .forEach(key => {
+              const value = row.filters?.[key];
+              if (!value || value === 'all') return;
+              parts.push(key === 'tag_exclude' ? `Not tagged ${labelFor(key, value)}` : labelFor(key, value));
+            });
+
+          return parts.slice(0, 4).join(' • ');
+        },
+        sortChoices(section, row) {
+          if (row.row_type === 'custom_list') return section.sort_choices.custom_list || [];
+          return section.sort_choices.library_query || [];
+        },
+        addRow(section, rowType) {
+          if (rowType === 'recently_unrated' && section.rows.some(row => row.row_type === 'recently_unrated')) {
+            return;
+          }
+          const defaultSortChoices = rowType === 'custom_list'
+            ? (section.sort_choices.custom_list || [])
+            : (section.sort_choices.library_query || []);
+          const defaultSort = defaultSortChoices[0]?.value || 'title';
+          section.rows.push({
+            id: null,
+            client_id: `new-row-${this.nextRowId++}`,
+            enabled: true,
+            row_type: rowType,
+            custom_list_id: null,
+            custom_list_name: '',
+            sort_by: rowType === 'recently_unrated' ? 'recent' : defaultSort,
+            direction: rowType === 'recently_unrated' ? 'desc' : 'asc',
+            filters: this.defaultFilters(rowType),
+            editorOpen: rowType !== 'recently_unrated',
+            listQuery: '',
+            listResults: []
+          });
+          this.$nextTick(() => this.initSortables());
+        },
+        defaultFilters(rowType) {
+          if (rowType !== 'library_query') return {};
+          return {
+            status: 'In Progress',
+            rating: 'all',
+            collection: 'all',
+            genre: '',
+            year: '',
+            release: 'all',
+            source: '',
+            language: '',
+            country: '',
+            platform: '',
+            origin: '',
+            format: '',
+            author: '',
+            tag: '',
+            tag_exclude: ''
+          };
+        },
+        removeRow(section, clientId) {
+          section.rows = section.rows.filter(row => row.client_id !== clientId);
+          this.$nextTick(() => this.initSortables());
+        },
+        resetLibraryFilters(row) {
+          row.filters = this.defaultFilters('library_query');
+        },
+        async searchLists(section, row) {
+          const query = String(row.listQuery || '').trim();
+          if (!query) {
+            row.listResults = [];
+            return;
+          }
+          const response = await fetch(`${this.listSearchUrl}?media_type=${encodeURIComponent(section.media_type)}&q=${encodeURIComponent(query)}`);
+          if (!response.ok) {
+            row.listResults = [];
+            return;
+          }
+          const payload = await response.json();
+          row.listResults = payload.results || [];
+        },
+        applyListResult(row, result) {
+          row.custom_list_id = result.id;
+          row.custom_list_name = result.name;
+          row.listQuery = result.name;
+          row.listResults = [];
+        },
+        prepareSubmit() {
+          const payload = this.sections.map(section => ({
+            media_type: section.media_type,
+            rows: section.rows.map(row => ({
+              id: row.id,
+              enabled: !!row.enabled,
+              row_type: row.row_type,
+              custom_list_id: row.custom_list_id,
+              sort_by: row.sort_by,
+              direction: row.direction,
+              filters: row.filters || {}
+            }))
+          }));
+          this.$refs.payloadInput.value = JSON.stringify(payload);
+        },
+        initSortables() {
+          this.sortables.forEach(sortable => sortable.destroy());
+          this.sortables = [];
+          if (typeof Sortable === 'undefined') return;
+
+          this.$el.querySelectorAll('[data-home-row-list]').forEach(container => {
+            const mediaType = container.dataset.homeRowList;
+            this.sortables.push(
+              Sortable.create(container, {
+                animation: 150,
+                handle: '.drag-handle',
+                onEnd: () => {
+                  const section = this.sections.find(entry => entry.media_type === mediaType);
+                  if (!section) return;
+                  const orderedIds = Array.from(container.querySelectorAll('[data-row-client-id]')).map(node => node.dataset.rowClientId);
+                  section.rows = orderedIds
+                    .map(clientId => section.rows.find(row => row.client_id === clientId))
+                    .filter(Boolean);
+                }
+              })
+            );
+          });
+        }
+      };
+    }
+  </script>
+{% endblock js %}

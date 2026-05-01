@@ -6,38 +6,9 @@
 {% endblock title %}
 
 {% block content %}
-  <div class="flex flex-col sm:flex-row justify-between items-center gap-2 sm:gap-4 mb-4 sm:mb-8">
-    <h1 class="text-3xl font-bold text-center w-full sm:w-auto">
-      {% if user.show_planned_on_home == 'combined' %}
-        In Progress and Planned
-      {% else %}
-        In Progress
-      {% endif %}
-    </h1>
-    <div class="relative" x-data="{ open: false }">
-      <button @click="open = !open"
-              @click.outside="open = false"
-              class="flex items-center gap-2 px-4 py-2 bg-[#39404b] hover:bg-[#454d5a] rounded-md transition-colors cursor-pointer">
-        {% include "app/icons/arrows-up-down.svg" with classes="w-4 h-4" %}
-        <span class="text-sm font-medium">{{ current_sort|no_underscore|title }}</span>
-        {% include "app/icons/chevron-down.svg" with classes="w-4 h-4 text-gray-400" %}
-      </button>
-      <div x-show="open"
-           x-transition:enter="transition ease-out duration-100"
-           x-transition:enter-start="transform opacity-0 scale-95"
-           x-transition:enter-end="transform opacity-100 scale-100"
-           x-transition:leave="transition ease-in duration-75"
-           x-transition:leave-start="transform opacity-100 scale-100"
-           x-transition:leave-end="transform opacity-0 scale-95"
-           class="absolute right-0 mt-2 py-1 w-48 bg-[#39404b] rounded-md shadow-lg overflow-hidden z-10 border border-gray-700">
-        {% for value, label in sort_choices %}
-          <a href="{% url 'home' %}?sort={{ value }}"
-             class="block w-full px-4 py-2 text-left text-sm transition-colors {% if current_sort == value %}bg-indigo-600 text-white font-medium{% else %}text-gray-300 hover:bg-[#454d5a] hover:text-white{% endif %}">
-            {{ label }}
-          </a>
-        {% endfor %}
-      </div>
-    </div>
+  <div class="mb-4 sm:mb-8">
+    <h1 class="text-3xl font-bold">Home</h1>
+    <p class="mt-2 text-sm text-gray-400">Rows are grouped by your enabled libraries and follow the order configured in Settings.</p>
   </div>
   <div class="space-y-4 sm:space-y-8">
     <div id="active-playback-container"
@@ -51,77 +22,57 @@
         {% include "app/components/active_playback_card.html" %}
       {% endif %}
     </div>
-    {% for section_key, media_list in list_by_type.items %}
-      <div>
-        {% if media_list.section_title %}
-          <h2 class="text-xl font-semibold mb-2 sm:mb-4">{{ media_list.section_title }}</h2>
-        {% elif media_list.section_label %}
-          {# Separated mode: use explicit section label with media type #}
-          <h2 class="text-xl font-semibold mb-2 sm:mb-4">{{ media_list.section_label }} - {{ media_list.media_type|media_type_readable_plural }}</h2>
-        {% else %}
-          {# Combined or Disabled mode: use section_key as media_type #}
-          <h2 class="text-xl font-semibold mb-2 sm:mb-4">{{ section_key|media_type_readable_plural }}</h2>
-        {% endif %}
-        {% if section_key == 'recently_not_rated' %}
-          {# Split mixed section by aspect ratio: 2:3 first, then 1:1 #}
-          <div id="media-grid-{{ section_key }}">
-            {% with square_types="music,podcast" %}
-              {% with standard_items=media_list.items|exclude_home_media_types:square_types %}
-                {% if standard_items %}
-                  <div class="media-grid">
-                    {% include "app/components/home_grid.html" with media_list_items=standard_items %}
-                  </div>
-                {% endif %}
-              {% endwith %}
-              {% with square_items=media_list.items|filter_home_media_types:square_types %}
-                {% if square_items %}
-                  <div class="media-grid media-grid-square mt-4">
-                    {% include "app/components/home_grid.html" with media_list_items=square_items %}
-                  </div>
-                {% endif %}
-              {% endwith %}
-            {% endwith %}
-          </div>
-        {% elif section_key == 'music' or section_key == 'podcast' %}
-          <div id="media-grid-{{ section_key }}"
-               class="media-grid media-grid-square">
-            {% include "app/components/home_grid.html" %}
-          </div>
-        {% else %}
-          <div id="media-grid-{{ section_key }}"
-               class="media-grid">
-            {% include "app/components/home_grid.html" %}
-          </div>
-        {% endif %}
-
-        {% if media_list.total > items_limit %}
-          <div class="mt-3 sm:mt-6 flex justify-center">
-            <button hx-get="{% url 'home' %}?sort={{ current_sort }}&load_media_type={{ section_key }}"
-                    hx-target="#media-grid-{{ section_key }}"
-                    hx-swap="beforeend"
-                    hx-indicator="#loading-indicator-{{ section_key }}"
-                    hx-trigger="click"
-                    class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md transition-colors cursor-pointer"
-                    hx-on:click="this.remove()">Load All ({{ media_list.total }})</button>
-            <div id="loading-indicator-{{ section_key }}"
-                 class="htmx-indicator text-center hidden">
-              <div class="inline-flex justify-center items-center">
-                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500"></div>
+    {% for group in home_groups %}
+      <section class="space-y-4">
+        <div class="flex items-center justify-between gap-3">
+          <h2 class="text-2xl font-semibold">{{ group.label }}</h2>
+          <a href="{% url 'home_screen' %}"
+             class="text-sm text-indigo-300 transition-colors hover:text-indigo-200">Edit Home Screen</a>
+        </div>
+        <div class="space-y-6">
+          {% for row in group.rows %}
+            <div>
+              <div class="mb-2 flex items-center justify-between gap-3">
+                <div>
+                  <h3 class="text-lg font-semibold">{{ row.title }}</h3>
+                  <p class="text-sm text-gray-400">{{ row.summary }}</p>
+                </div>
               </div>
+              <div id="media-grid-row-{{ row.row_id }}"
+                   class="{{ row.grid_class }}">
+                {% include "app/components/home_grid.html" with media_list=row %}
+              </div>
+              {% if row.total > items_limit %}
+                <div class="mt-3 sm:mt-6 flex justify-center">
+                  <button hx-get="{% url 'home' %}?load_row={{ row.row_id }}"
+                          hx-target="#media-grid-row-{{ row.row_id }}"
+                          hx-swap="beforeend"
+                          hx-indicator="#loading-indicator-{{ row.row_id }}"
+                          hx-trigger="click"
+                          class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md transition-colors cursor-pointer"
+                          hx-on:click="this.remove()">Load All ({{ row.total }})</button>
+                  <div id="loading-indicator-{{ row.row_id }}"
+                       class="htmx-indicator text-center hidden">
+                    <div class="inline-flex justify-center items-center">
+                      <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500"></div>
+                    </div>
+                  </div>
+                </div>
+              {% endif %}
             </div>
-          </div>
-        {% endif %}
-      </div>
+          {% endfor %}
+        </div>
+      </section>
     {% empty %}
       <div class="flex flex-col items-center justify-center py-16 sm:py-32 px-3 sm:px-4 bg-[#2a2f35] rounded-lg">
         <div class="bg-[#39404b] rounded-full p-4 w-16 h-16 mx-auto mb-4 flex items-center justify-center">
           {% include "app/icons/pulse.svg" with classes="w-8 h-8 text-gray-400" %}
         </div>
-        <h3 class="text-xl font-semibold mb-2">No media in progress</h3>
-        <p class="text-gray-400 text-center max-w-md mb-4">Start tracking your progress by marking items as "In Progress".</p>
+        <h3 class="text-xl font-semibold mb-2">Nothing is configured for Home yet</h3>
+        <p class="text-gray-400 text-center max-w-md mb-4">Add or enable rows from the Home Screen settings page to populate this view.</p>
         <div class="pt-4">
-          <a href="{{ 'tv'|sample_search }}"
-             class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors">Browse Media</a>
+          <a href="{% url 'home_screen' %}"
+             class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors">Open Home Screen Settings</a>
         </div>
       </div>
     {% endfor %}

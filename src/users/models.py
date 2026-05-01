@@ -21,6 +21,10 @@ VALID_SEARCH_TYPES = [
     value for value in MediaTypes.values if value not in EXCLUDED_SEARCH_TYPES
 ]
 
+VALID_HOME_SCREEN_MEDIA_TYPES = [
+    value for value in MediaTypes.values if value != MediaTypes.EPISODE.value
+]
+
 
 def generate_token():
     """Generate a user token."""
@@ -209,6 +213,14 @@ class PlannedHomeDisplayChoices(models.TextChoices):
     DISABLED = "disabled", "Disabled"
     COMBINED = "combined", "Combined"
     SEPARATED = "separated", "Separated"
+
+
+class HomeScreenRowTypeChoices(models.TextChoices):
+    """Supported row sources for the configurable home screen."""
+
+    LIBRARY_QUERY = "library_query", "Library Row"
+    CUSTOM_LIST = "custom_list", "List / Smart List"
+    RECENTLY_UNRATED = "recently_unrated", "Recently Played - Not Rated"
 
 
 class JellyseerrDefaultAddedStatusChoices(models.TextChoices):
@@ -1608,3 +1620,65 @@ class UserRecoveryCode(models.Model):
         """Mark this code as used."""
         self.used_at = timezone.now()
         self.save(update_fields=["used_at"])
+
+
+class HomeScreenRow(models.Model):
+    """Persisted home screen row configuration owned by a user."""
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="home_screen_rows",
+    )
+    media_type = models.CharField(
+        max_length=16,
+        choices=MediaTypes.choices,
+    )
+    position = models.PositiveIntegerField(default=0)
+    enabled = models.BooleanField(default=True)
+    row_type = models.CharField(
+        max_length=32,
+        choices=HomeScreenRowTypeChoices.choices,
+        default=HomeScreenRowTypeChoices.LIBRARY_QUERY,
+    )
+    custom_list = models.ForeignKey(
+        "lists.CustomList",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="home_screen_rows",
+    )
+    sort_by = models.CharField(max_length=32, default=MediaSortChoices.TITLE)
+    direction = models.CharField(
+        max_length=4,
+        default=DirectionChoices.ASC,
+        choices=DirectionChoices.choices,
+    )
+    filters = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["media_type", "position", "id"]
+        constraints = [
+            models.CheckConstraint(
+                name="home_screen_row_media_type_valid",
+                condition=models.Q(media_type__in=VALID_HOME_SCREEN_MEDIA_TYPES),
+            ),
+            models.CheckConstraint(
+                name="home_screen_row_row_type_valid",
+                condition=models.Q(row_type__in=HomeScreenRowTypeChoices.values),
+            ),
+            models.CheckConstraint(
+                name="home_screen_row_direction_valid",
+                condition=models.Q(direction__in=DirectionChoices.values),
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["user", "media_type", "position"]),
+            models.Index(fields=["user", "enabled"]),
+        ]
+
+    def __str__(self):
+        """Return a compact label for admin/debug use."""
+        return f"{self.user_id}:{self.media_type}:{self.row_type}:{self.position}"

@@ -14,6 +14,7 @@ from django.db.models import Q
 from django.http import JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.defaultfilters import pluralize
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 from django_celery_beat.models import PeriodicTask
@@ -34,6 +35,12 @@ from users.forms import (
     PasswordRecoveryForm,
     RegenerateRecoveryCodesForm,
     UserUpdateForm,
+)
+from users.home_screen import (
+    HomeScreenValidationError,
+    save_home_screen_configuration,
+    search_home_screen_lists,
+    serialize_settings_sections,
 )
 from users.models import (
     ActivityHistoryViewChoices,
@@ -504,6 +511,52 @@ def sidebar(request):
     return render(request, "users/sidebar.html", context)
 
 
+@require_http_methods(["GET", "POST"])
+def home_screen(request):
+    """Render and persist Home screen row settings."""
+    if request.method == "POST":
+        if request.user.is_demo:
+            messages.error(request, "This section is view-only for demo accounts.")
+            return redirect("home_screen")
+
+        try:
+            save_home_screen_configuration(
+                request.user,
+                request.POST.get("home_screen_sections", "[]"),
+            )
+        except HomeScreenValidationError as exc:
+            messages.error(request, str(exc))
+        else:
+            messages.success(request, "Home screen updated successfully.")
+        return redirect("home_screen")
+
+    context = {
+        "home_screen_sections_json": json.dumps(serialize_settings_sections(request.user)),
+        "home_screen_list_search_url": reverse("home_screen_list_search"),
+        "direction_choices_json": json.dumps(
+            [
+                {"value": "asc", "label": "Ascending"},
+                {"value": "desc", "label": "Descending"},
+            ],
+        ),
+    }
+    return render(request, "users/home_screen.html", context)
+
+
+@require_GET
+def home_screen_list_search(request):
+    """Return accessible list suggestions for the Home screen settings page."""
+    return JsonResponse(
+        {
+            "results": search_home_screen_lists(
+                request.user,
+                request.GET.get("q", ""),
+                request.GET.get("media_type", ""),
+            ),
+        },
+    )
+
+
 @require_GET
 def ui_preferences(request):
     """Redirect to sidebar page (UI preferences renamed to Sidebar)."""
@@ -668,7 +721,7 @@ def preferences(request):
             request.user.quick_season_update_mobile = quick_season_update_mobile
             fields_to_update.append("quick_season_update_mobile")
 
-        show_planned_on_home = request.POST.get("show_planned_on_home", PlannedHomeDisplayChoices.DISABLED)
+        show_planned_on_home = request.POST.get("show_planned_on_home")
 
         if show_planned_on_home in [choice[0] for choice in PlannedHomeDisplayChoices.choices]:
             if request.user.show_planned_on_home != show_planned_on_home:

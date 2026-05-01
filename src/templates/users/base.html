@@ -39,6 +39,13 @@
               <span>Sidebar</span>
             </a>
 
+            {% url 'home_screen' as home_screen_url %}
+            <a href="{{ home_screen_url }}"
+               class="w-full flex items-center space-x-3 px-2 py-2 rounded-md transition-colors text-left border-l-2 cursor-pointer text-sm {% if request.path == home_screen_url %}bg-[#39404b] text-white border-indigo-500{% else %}text-gray-400 border-transparent hover:bg-[#313842] hover:text-white{% endif %}">
+              {% include "app/icons/house.svg" with classes="w-5 h-5" %}
+              <span>Home Screen</span>
+            </a>
+
             {% url 'integrations' as integrations_url %}
             <a href="{{ integrations_url }}"
                class="w-full flex items-center space-x-3 px-2 py-2 rounded-md transition-colors text-left border-l-2 cursor-pointer text-sm {% if request.path == integrations_url %}bg-[#39404b] text-white border-indigo-500{% else %}text-gray-400 border-transparent hover:bg-[#313842] hover:text-white{% endif %}">

@@ -89,6 +89,7 @@ def redirect_back(request):
         query_params = dict(parse_qsl(parsed_url.query, keep_blank_values=True))
         query_params.pop("page", None)
         query_params.pop("load_media_type", None)
+        query_params.pop("load_row", None)
 
         # Reconstruct the URL
         new_query = urlencode(query_params)
