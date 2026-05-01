@@ -564,7 +564,7 @@ def _get_or_create_album(metadata: ResolvedMusicMetadata, artist: Artist) -> tup
         if _normalize(a.title) == normalized_title
     ]
     if len(matching_albums) > 1:
-        _dedupe_albums(artist, matching_albums, album, normalized_title)
+        album = _dedupe_albums(artist, matching_albums, album, normalized_title)
 
     return album, created
 
@@ -695,11 +695,11 @@ def _dedupe_albums(
     albums: list[Album],
     keep_album: Album,
     normalized_title: str,
-) -> None:
+) -> Album:
     """Merge/delete duplicate albums with matching titles for the same artist."""
     same_title = [a for a in albums if _normalize(a.title) == normalized_title]
     if len(same_title) <= 1:
-        return
+        return keep_album
 
     primary = _choose_primary_album(same_title, keep_album)
     duplicates = [a for a in same_title if a.id != primary.id]
@@ -806,6 +806,8 @@ def _dedupe_albums(
                     dup.id,
                     exc,
                 )
+
+    return primary
 
 
 def _choose_primary_album(albums: list[Album], preferred: Album) -> Album:
