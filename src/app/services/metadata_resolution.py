@@ -147,13 +147,14 @@ def get_tracking_media_type(
     identity_media_type: str | None = None,
 ) -> str:
     """Return the persisted Item/media model type for a route."""
-    if media_type == MediaTypes.ANIME.value:
-        # Anime movies are tracked as Movie (not TV)
-        if identity_media_type == MediaTypes.MOVIE.value:
-            return MediaTypes.MOVIE.value
-        # Anime TV series are tracked as TV (grouped anime)
-        if identity_media_type == MediaTypes.TV.value or source in GROUPED_ANIME_PROVIDERS:
-            return MediaTypes.TV.value
+    if (
+        media_type == MediaTypes.ANIME.value
+        and (
+            identity_media_type == MediaTypes.TV.value
+            or source in GROUPED_ANIME_PROVIDERS
+        )
+    ):
+        return MediaTypes.TV.value
     return identity_media_type or media_type
 
 
