@@ -505,7 +505,7 @@ class BaseWebhookProcessor:
                     mal_id,
                     source,
                 )
-                if self._handle_anime(mal_id, 1, payload, user, is_movie=True):
+                if self._handle_anime(mal_id, 1, payload, user):
                     return
 
         # Handle as regular movie
@@ -1239,7 +1239,7 @@ class BaseWebhookProcessor:
         # Queue collection metadata update for TV show (not episode-specific)
         self._queue_collection_metadata_update_for_tv(payload, user, tv_item)
 
-    def _handle_anime(self, media_id, episode_number, payload, user, source=Sources.MAL.value, is_movie=False):
+    def _handle_anime(self, media_id, episode_number, payload, user, source=Sources.MAL.value):
         """Handle anime playback event.
 
         Args:
@@ -1248,9 +1248,8 @@ class BaseWebhookProcessor:
             payload: Webhook payload.
             user: User instance.
             source: Provider source (default: MAL). Can be MAL, TMDB, or TVDB.
-            is_movie: True for movies, False for TV series.
         """
-        logger.info("_handle_anime: media_id=%s, episode_number=%s, payload_keys=%s, user=%s, source=%s, is_movie=%s", media_id, episode_number, list(payload.keys()), user, source, is_movie)
+        logger.info("_handle_anime: media_id=%s, episode_number=%s, payload_keys=%s, user=%s, source=%s", media_id, episode_number, list(payload.keys()), user, source)
 
         # Check if anime is enabled for this user
         if not getattr(user, 'anime_enabled', False):
@@ -1259,27 +1258,21 @@ class BaseWebhookProcessor:
 
         from app.services import metadata_resolution  # noqa: PLC0415
 
-        # Fetch metadata based on source and is_movie
-        logger.info("_handle_anime: fetching metadata from %s for media_id=%s, is_movie=%s", source, media_id, is_movie)
+        # Fetch metadata based on source
+        logger.info("_handle_anime: fetching metadata from %s for media_id=%s", source, media_id)
         if source == Sources.MAL.value:
             anime_metadata = app.providers.mal.anime(media_id)
         elif source == Sources.TMDB.value:
-            if is_movie:
-                anime_metadata = app.providers.tmdb.movie(str(media_id))
-            else:
-                season_number, _ = self._extract_season_episode_from_payload(payload)
-                if season_number is None:
-                    season_number = 1
-                anime_metadata = app.providers.tmdb.tv_with_seasons(str(media_id), [season_number])
+            # For TMDB, we need season number - extract from payload or use 1
+            season_number, _ = self._extract_season_episode_from_payload(payload)
+            if season_number is None:
+                season_number = 1
+            anime_metadata = app.providers.tmdb.tv_with_seasons(str(media_id), [season_number])
         elif source == Sources.TVDB.value:
-            if is_movie:
-                # TVDB movie or fallback to TMDB
-                anime_metadata = app.providers.tmdb.movie(str(media_id))
-            else:
-                season_number, _ = self._extract_season_episode_from_payload(payload)
-                if season_number is None:
-                    season_number = 1
-                anime_metadata = app.providers.tvdb.tv_with_seasons(str(media_id), [season_number], routed_media_type=MediaTypes.ANIME.value)
+            season_number, _ = self._extract_season_episode_from_payload(payload)
+            if season_number is None:
+                season_number = 1
+            anime_metadata = app.providers.tvdb.tv_with_seasons(str(media_id), [season_number], routed_media_type=MediaTypes.ANIME.value)
         else:
             logger.warning("_handle_anime: unknown source %s, defaulting to MAL", source)
             anime_metadata = app.providers.mal.anime(media_id)
