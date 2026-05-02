@@ -186,15 +186,6 @@ class JellyfinWebhookProcessor(BaseWebhookProcessor):
             if is_movie:
                 mal_id = self._get_mal_id_from_tmdb_movie(mapping_data, str(tmdb_id))
                 mapped_episode = 1
-                # Fallback: try IMDB if TMDB mapping didn't find a MAL ID
-                if not mal_id:
-                    imdb_id = ids.get("imdb_id")
-                    if imdb_id:
-                        logger.info(
-                            "_resolve_mal_id_from_tmdb_via_genre_check: no TMDB mapping, trying IMDB fallback with imdb_id=%s",
-                            imdb_id,
-                        )
-                        mal_id = self._get_mal_id_from_imdb(mapping_data, imdb_id)
             else:
                 # First try TMDB mapping
                 mal_id, mapped_episode = self._get_mal_id_from_tmdb(

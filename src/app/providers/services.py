@@ -14,8 +14,6 @@ from requests_ratelimiter import LimiterAdapter, LimiterSession
 from app import config
 from app.log_safety import exception_summary, mapping_keys
 from app.models import Item, MediaTypes, Sources
-
-from integrations import anime_mapping
 from app.providers import (
     bgg,
     comicvine,
@@ -314,63 +312,6 @@ def _ensure_title_fields(metadata):
     return metadata
 
 
-
-
-def _get_tmdb_anime_metadata(media_id):
-    """Fetch TMDB anime metadata, handling both movies and TV series.
-    
-    TMDB anime can be either movies or TV series. This function:
-    1. Checks if the ID is known to be a movie from anime mapping
-    2. If known movie, calls tmdb.movie()
-    3. If known TV, calls tmdb.tv()
-    4. If unknown, tries tv first, then falls back to movie on 404
-    
-    Returns metadata with anime-specific fields added.
-    """
-    anime_type = anime_mapping.is_tmdb_anime_movie(media_id)
-    
-    # If we know it's a movie from the mapping
-    if anime_type is True:
-        logger.debug("_get_tmdb_anime_metadata: TMDB ID %s is known movie", media_id)
-        return tmdb.movie(str(media_id)) | {
-            "media_type": MediaTypes.ANIME.value,
-            "identity_media_type": MediaTypes.MOVIE.value,
-            "library_media_type": MediaTypes.ANIME.value,
-        }
-    
-    # If we know it's TV from the mapping
-    if anime_type is False:
-        logger.debug("_get_tmdb_anime_metadata: TMDB ID %s is known TV series", media_id)
-        return tmdb.tv(str(media_id)) | {
-            "media_type": MediaTypes.ANIME.value,
-            "identity_media_type": MediaTypes.TV.value,
-            "library_media_type": MediaTypes.ANIME.value,
-        }
-    
-    # Unknown - try TV first (most anime are TV), then fallback to movie
-    try:
-        result = tmdb.tv(str(media_id))
-        logger.debug("_get_tmdb_anime_metadata: TMDB ID %s resolved as TV series", media_id)
-        return result | {
-            "media_type": MediaTypes.ANIME.value,
-            "identity_media_type": MediaTypes.TV.value,
-            "library_media_type": MediaTypes.ANIME.value,
-        }
-    except ProviderAPIError:
-        # TV lookup failed, try movie
-        try:
-            result = tmdb.movie(str(media_id))
-            logger.debug("_get_tmdb_anime_metadata: TMDB ID %s resolved as movie (fallback)", media_id)
-            return result | {
-                "media_type": MediaTypes.ANIME.value,
-                "identity_media_type": MediaTypes.MOVIE.value,
-                "library_media_type": MediaTypes.ANIME.value,
-            }
-        except ProviderAPIError:
-            # Neither worked, re-raise with appropriate context
-            raise_not_found_error(Sources.TMDB.value, media_id, "anime")
-
-
 def get_media_metadata(
     media_type,
     media_id,
@@ -439,7 +380,11 @@ def get_media_metadata(
         MediaTypes.ANIME.value: lambda: (
             mal.anime(media_id)
             if source == Sources.MAL.value
-            else _get_tmdb_anime_metadata(media_id)
+            else tmdb.tv(media_id) | {
+                "media_type": MediaTypes.ANIME.value,
+                "identity_media_type": MediaTypes.TV.value,
+                "library_media_type": MediaTypes.ANIME.value,
+            }
             if source == Sources.TMDB.value
             else tvdb_series_metadata(MediaTypes.ANIME.value)
         ),
@@ -779,7 +724,11 @@ def _lookup_by_numeric_id(media_type, query, source):  # noqa: PLR0911
         if source == Sources.MAL.value:
             return mal.anime(n)
         if source == Sources.TMDB.value:
-            return _get_tmdb_anime_metadata(n)
+            return tmdb.tv(n) | {
+                "media_type": MediaTypes.ANIME.value,
+                "identity_media_type": MediaTypes.TV.value,
+                "library_media_type": MediaTypes.ANIME.value,
+            }
         return tvdb.tv(n, routed_media_type=MediaTypes.ANIME.value)
     if media_type == MediaTypes.MANGA.value:
         if source == Sources.MANGAUPDATES.value:

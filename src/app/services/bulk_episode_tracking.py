@@ -632,14 +632,6 @@ def build_episode_play_domain(
     if route_media_type not in {MediaTypes.TV.value, MediaTypes.ANIME.value}:
         return None
 
-    # Anime movies don't have seasons/episodes
-    if route_media_type == MediaTypes.ANIME.value:
-        identity_media_type = None
-        if base_metadata:
-            identity_media_type = base_metadata.get("identity_media_type")
-        if identity_media_type == MediaTypes.MOVIE.value:
-            return None  # Anime movies don't have episode plays
-
     if (
         route_media_type == MediaTypes.ANIME.value
         and source == Sources.MAL.value
