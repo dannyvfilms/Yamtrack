@@ -390,6 +390,36 @@ def _matches_item_filters(item: Item, rules: dict, today) -> bool:
     return True
 
 
+def _rules_require_item_scan(normalized_rules: dict) -> bool:
+    """Return whether matching requires per-item inspection beyond the base queryset."""
+    if _normalize_filter_value(normalized_rules.get("release") or "all") != "all":
+        return True
+
+    if normalized_rules.get("collection", "all") != "all":
+        return True
+
+    if normalized_rules.get("rating", "all") != "all":
+        return True
+
+    for key in (
+        "genre",
+        "year",
+        "source",
+        "language",
+        "country",
+        "platform",
+        "origin",
+        "format",
+        "author",
+        "tag",
+        "tag_exclude",
+    ):
+        if _normalize_filter_value(normalized_rules.get(key)):
+            return True
+
+    return False
+
+
 def _matches_collection_filter(
     entry,
     media_type: str,
@@ -465,8 +495,12 @@ def collect_matching_item_ids(owner, normalized_rules: dict) -> set[int]:
     collection_filter = normalized_rules.get("collection", "all")
     rating_filter = normalized_rules.get("rating", "all")
     today = timezone.localdate()
+    item_scan_required = _rules_require_item_scan(normalized_rules)
 
-    collected_item_ids, collected_episode_pairs = _collection_filter_context(owner)
+    collected_item_ids: set[int] = set()
+    collected_episode_pairs: set[tuple[str, str]] = set()
+    if collection_filter != "all":
+        collected_item_ids, collected_episode_pairs = _collection_filter_context(owner)
 
     tag_filter = _normalize_filter_value(normalized_rules.get("tag"))
     tag_exclude = _normalize_filter_value(normalized_rules.get("tag_exclude"))
@@ -496,16 +530,20 @@ def collect_matching_item_ids(owner, normalized_rules: dict) -> set[int]:
             search_query=normalized_rules.get("search", ""),
         )
 
-        candidate_item_ids = _filter_item_ids_by_rating(
-            owner,
-            media_type,
-            queryset.values_list("item_id", flat=True),
-            rating_filter,
-        )
-        if not candidate_item_ids:
+        if not item_scan_required:
+            matched_ids.update(queryset.values_list("item_id", flat=True))
             continue
 
-        queryset = queryset.filter(item_id__in=candidate_item_ids)
+        if rating_filter != "all":
+            candidate_item_ids = _filter_item_ids_by_rating(
+                owner,
+                media_type,
+                queryset.values_list("item_id", flat=True),
+                rating_filter,
+            )
+            if not candidate_item_ids:
+                continue
+            queryset = queryset.filter(item_id__in=candidate_item_ids)
 
         for entry in queryset.iterator():
             item = getattr(entry, "item", None)
@@ -515,7 +553,7 @@ def collect_matching_item_ids(owner, normalized_rules: dict) -> set[int]:
             if not _matches_item_filters(item, normalized_rules, today):
                 continue
 
-            if not _matches_collection_filter(
+            if collection_filter != "all" and not _matches_collection_filter(
                 entry=entry,
                 media_type=media_type,
                 collection_filter=collection_filter,

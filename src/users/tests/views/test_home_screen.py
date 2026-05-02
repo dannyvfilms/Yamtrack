@@ -1,4 +1,5 @@
 import json
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.contrib.messages import get_messages
@@ -7,6 +8,7 @@ from django.urls import reverse
 
 from app.models import MediaTypes, Status
 from lists.models import CustomList
+from users import home_screen
 from users.models import HomeScreenRow, HomeScreenRowTypeChoices, HomeSortChoices
 
 
@@ -150,6 +152,31 @@ class HomeScreenViewTests(TestCase):
                 (MediaTypes.MOVIE.value, HomeScreenRowTypeChoices.LIBRARY_QUERY, HomeSortChoices.RECENT),
                 (MediaTypes.SEASON.value, HomeScreenRowTypeChoices.LIBRARY_QUERY, HomeSortChoices.UPCOMING),
             ],
+        )
+
+    def test_describe_library_query_uses_static_summary_labels(self):
+        """Home row summaries should not rebuild full filter-field option data."""
+        filters = {
+            "status": "all",
+            "rating": "rated",
+            "year": "unknown",
+            "source": "tmdb",
+            "tag_exclude": "rewatch",
+        }
+
+        with patch(
+            "users.home_screen.build_filter_field_data",
+            side_effect=AssertionError("summary labels should not build filter fields"),
+        ):
+            summary = home_screen.describe_library_query(
+                filters,
+                self.user,
+                MediaTypes.MOVIE.value,
+            )
+
+        self.assertEqual(
+            summary,
+            "Library • Rated • Unknown Year • The Movie Database",
         )
 
     def test_home_screen_post_persists_row_configuration(self):

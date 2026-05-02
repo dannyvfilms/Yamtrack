@@ -1,4 +1,5 @@
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError
@@ -15,6 +16,7 @@ from app.models import (
     Status,
     TV,
 )
+from lists import smart_rules
 from lists.models import CustomList, CustomListItem
 
 
@@ -157,6 +159,55 @@ class CustomListManagerTest(TestCase):
 
         smart_list.sync_smart_items()
         self.assertTrue(smart_list.items.filter(id=item.id).exists())
+
+    def test_collect_matching_item_ids_fast_paths_simple_status_rules(self):
+        """Status-only smart rules should not build extra collection/rating scans."""
+        completed_item = Item.objects.create(
+            title="Completed Movie",
+            media_id="4567",
+            media_type=MediaTypes.MOVIE.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/completed.jpg",
+        )
+        dropped_item = Item.objects.create(
+            title="Dropped Movie",
+            media_id="4568",
+            media_type=MediaTypes.MOVIE.value,
+            source=Sources.TMDB.value,
+            image="https://example.com/dropped.jpg",
+        )
+        Movie.objects.create(
+            item=completed_item,
+            user=self.user,
+            status=Status.COMPLETED.value,
+        )
+        Movie.objects.create(
+            item=dropped_item,
+            user=self.user,
+            status=Status.DROPPED.value,
+        )
+
+        normalized_rules = smart_rules.normalize_rule_payload(
+            {
+                "media_types": [MediaTypes.MOVIE.value],
+                "status": Status.COMPLETED.value,
+            },
+            self.user,
+        )
+
+        with patch(
+            "lists.smart_rules._collection_filter_context",
+            side_effect=AssertionError("collection context should not be built"),
+        ), patch(
+            "lists.smart_rules._filter_item_ids_by_rating",
+            side_effect=AssertionError("rating filter scan should not run"),
+        ), patch(
+            "lists.smart_rules._matches_item_filters",
+            side_effect=AssertionError("simple status rules should not scan items"),
+        ):
+            matched_ids = smart_rules.collect_matching_item_ids(self.user, normalized_rules)
+
+        self.assertEqual(matched_ids, {completed_item.id})
 
     def test_smart_list_collection_filter_uses_episode_collection_for_tv(self):
         """Collected TV rules should match when related episodes are collected."""

@@ -668,14 +668,36 @@ def build_filter_field_data(user, media_type: str) -> list[dict]:
     return visible_fields
 
 
-def _filter_summary_label_map(user, media_type: str) -> dict[str, dict[str, str]]:
-    return {
-        field["key"]: {
-            option["value"]: option["label"]
-            for option in field.get("options", [])
-        }
-        for field in build_filter_field_data(user, media_type)
-    }
+_SUMMARY_STATIC_FILTER_LABELS = {
+    "rating": {
+        "rated": "Rated",
+        "not_rated": "Not Rated",
+    },
+    "collection": {
+        "collected": "Collected",
+        "not_collected": "Not Collected",
+    },
+    "release": {
+        "released": "Released",
+        "not_released": "Not Released",
+    },
+    "source": dict(Sources.choices),
+    "format": {
+        "hardcover": "Hardcover",
+        "paperback": "Paperback",
+        "ebook": "eBook",
+        "audiobook": "Audiobook",
+    },
+}
+
+
+def _summary_filter_label(key: str, value: str) -> str:
+    label = _SUMMARY_STATIC_FILTER_LABELS.get(key, {}).get(value)
+    if label:
+        return label
+    if key == "year" and value == "unknown":
+        return "Unknown Year"
+    return value
 
 
 def _canonical_status_filter(value, default="all") -> str | None:
@@ -704,7 +726,6 @@ def describe_library_query(filters: dict, user, media_type: str) -> str:
     else:
         parts = ["Library"]
 
-    field_labels = _filter_summary_label_map(user, media_type)
     for key in (
         "rating",
         "collection",
@@ -724,7 +745,7 @@ def describe_library_query(filters: dict, user, media_type: str) -> str:
         value = str(normalized.get(key, "") or "").strip()
         if not value or value in {"all", "Any"}:
             continue
-        label = field_labels.get(key, {}).get(value, value)
+        label = _summary_filter_label(key, value)
         if key == "tag_exclude":
             label = f"Not tagged {label}"
         parts.append(label)
