@@ -123,7 +123,6 @@ class HomeViewTests(TestCase):
         self.assertEqual(season_row["items"][0].media.progress, 5)
         self.assertEqual(len(anime_row["items"]), 1)
         self.assertIsNone(self._get_group(response, MediaTypes.TV.value))
-        self.assertContains(response, "Edit Home Screen")
 
     def test_home_view_hides_disabled_sidebar_media_types_even_when_rows_exist(self):
         """Stored rows for disabled libraries should not render on Home."""

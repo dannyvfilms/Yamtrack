@@ -748,6 +748,7 @@ def serialize_settings_sections(user) -> list[dict]:
             {
                 "media_type": media_type,
                 "label": _media_type_group_label(media_type),
+                "icon_svg": str(app_tags.icon(media_type, False, "w-5 h-5 text-slate-300")),
                 "sort_choices": {
                     HomeScreenRowTypeChoices.LIBRARY_QUERY: get_allowed_sort_choices(
                         media_type,

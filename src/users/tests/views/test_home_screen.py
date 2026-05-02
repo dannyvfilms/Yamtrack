@@ -40,6 +40,18 @@ class HomeScreenViewTests(TestCase):
         sections = json.loads(response.context["home_screen_sections_json"])
         self.assertEqual([section["media_type"] for section in sections], ["tv", "movie"])
         self.assertContains(response, "Home Screen")
+        self.assertContains(response, "sections: JSON.parse(")
+        self.assertContains(response, "directionChoices: JSON.parse(")
+        self.assertNotContains(response, 'sections: [{"media_type":')
+        self.assertContains(response, "expanded: false")
+        self.assertContains(response, 'x-html="section.icon_svg"')
+        self.assertNotContains(response, "section.rows.length === 1")
+        self.assertContains(response, "Add Row")
+        self.assertContains(response, "Add List")
+        self.assertNotContains(response, "Add Library Row")
+        self.assertNotContains(response, "Add List / Smart List")
+        self.assertNotContains(response, "Add Recently Played Row")
+        self.assertNotContains(response, "Enabled")
 
     def test_home_screen_get_seeds_old_home_style_defaults(self):
         self._set_enabled_media_types(

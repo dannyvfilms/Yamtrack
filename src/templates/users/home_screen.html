@@ -7,184 +7,265 @@
 {% block settings_content %}
   <div class="bg-[#2a2f35] rounded-lg p-6"
        x-data="homeScreenSettings({
-         sections: {{ home_screen_sections_json|safe }},
-         listSearchUrl: '{{ home_screen_list_search_url }}',
-         directionChoices: {{ direction_choices_json|safe }}
+         sections: JSON.parse('{{ home_screen_sections_json|escapejs }}'),
+         listSearchUrl: '{{ home_screen_list_search_url|escapejs }}',
+         directionChoices: JSON.parse('{{ direction_choices_json|escapejs }}')
        })"
        x-init="init()">
-    <div class="flex items-center mb-4">
-      {% include "app/icons/house.svg" with classes="w-6 h-6 text-indigo-400 mr-3" %}
-      <h2 class="text-xl font-semibold">Home Screen</h2>
-    </div>
-    <p class="text-gray-400 mb-6 text-sm max-w-3xl">
-      Control which rows show on Home for each enabled library. Configure library queries, attach lists or smart lists, choose sort order, and drag rows into place.
-    </p>
-
     <form method="post" @submit="prepareSubmit">
       {% csrf_token %}
       <input type="hidden" name="home_screen_sections" x-ref="payloadInput">
 
-      <div class="space-y-4">
+      <div class="space-y-1">
         <template x-for="section in sections" :key="section.media_type">
-          <section class="overflow-hidden rounded-xl border border-slate-700/80 bg-[#39404b]">
+          <section>
             <button type="button"
-                    class="flex w-full items-center gap-3 px-5 py-4 text-left cursor-pointer"
+                    class="flex w-full items-center justify-between gap-3 rounded-md border border-gray-600 bg-[#272c31] px-3 py-2 text-left text-gray-200 text-sm transition-colors hover:bg-[#313842] cursor-pointer"
                     @click="section.expanded = !section.expanded">
-              <div class="flex h-10 w-10 items-center justify-center rounded-full border border-slate-600 bg-[#272c31] text-sm font-semibold text-slate-200"
-                   x-text="initials(section.label)"></div>
+              <div class="flex h-5 w-5 shrink-0 items-center justify-center text-gray-300"
+                   x-html="section.icon_svg"></div>
               <div class="min-w-0 flex-1">
-                <div class="flex items-center gap-3">
-                  <h3 class="text-lg font-semibold text-white" x-text="section.label"></h3>
-                  <span class="rounded-full border border-slate-600 px-2.5 py-1 text-[11px] uppercase tracking-[0.18em] text-slate-300"
-                        x-text="`${section.rows.length} row${section.rows.length === 1 ? '' : 's'}`"></span>
-                </div>
-                <p class="mt-1 text-sm text-slate-400">Rows follow the Home page order for this library.</p>
+                <h3 class="font-medium text-gray-200" x-text="section.label"></h3>
               </div>
-              <div class="text-slate-400">
-                <span x-show="!section.expanded">{% include "app/icons/chevron-down.svg" with classes="w-5 h-5" %}</span>
-                <span x-show="section.expanded">{% include "app/icons/chevron-up.svg" with classes="w-5 h-5" %}</span>
+              <div class="shrink-0 text-gray-400">
+                <span x-show="!section.expanded">{% include "app/icons/chevron-down.svg" with classes="w-4 h-4" %}</span>
+                <span x-show="section.expanded">{% include "app/icons/chevron-up.svg" with classes="w-4 h-4" %}</span>
               </div>
             </button>
 
             <div x-show="section.expanded"
+                 x-cloak
                  x-transition:enter="transition ease-out duration-150"
                  x-transition:enter-start="opacity-0 -translate-y-1"
                  x-transition:enter-end="opacity-100 translate-y-0"
-                 class="border-t border-slate-700/80 px-4 py-4">
-              <div class="mb-4 flex flex-wrap gap-2">
-                <button type="button"
-                        class="inline-flex items-center rounded-md border border-indigo-500/40 bg-indigo-500/12 px-3 py-2 text-sm font-medium text-indigo-100 transition-colors hover:bg-indigo-500/20 cursor-pointer"
-                        @click="addRow(section, 'library_query')">
-                  {% include "app/icons/plus.svg" with classes="mr-2 h-4 w-4" %}
-                  Add Library Row
-                </button>
-                <button type="button"
-                        class="inline-flex items-center rounded-md border border-slate-600 bg-[#272c31] px-3 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-[#313842] cursor-pointer"
-                        @click="addRow(section, 'custom_list')">
-                  {% include "app/icons/list.svg" with classes="mr-2 h-4 w-4" %}
-                  Add List / Smart List
-                </button>
-                <button type="button"
-                        class="inline-flex items-center rounded-md border border-slate-600 bg-[#272c31] px-3 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-[#313842] cursor-pointer"
-                        @click="addRow(section, 'recently_unrated')"
-                        :disabled="section.rows.some(row => row.row_type === 'recently_unrated')"
-                        :class="{ 'opacity-50 cursor-not-allowed': section.rows.some(row => row.row_type === 'recently_unrated') }">
-                  {% include "app/icons/history.svg" with classes="mr-2 h-4 w-4" %}
-                  Add Recently Played Row
-                </button>
-              </div>
+                 class="mt-3 border-t border-gray-600 pt-3">
+              <template x-if="!section.rows.length">
+                <div class="mb-3 rounded-md border border-dashed border-gray-600 bg-[#272c31] px-4 py-5 text-sm text-gray-400">
+                  No Home rows configured yet for this library.
+                </div>
+              </template>
 
-              <div class="space-y-3" :data-home-row-list="section.media_type">
+              <div x-show="section.rows.length"
+                   x-cloak
+                   class="rounded-md border border-[#434a56]"
+                   :data-home-row-list="section.media_type">
                 <template x-for="row in section.rows" :key="row.client_id">
-                  <article class="group rounded-xl border border-slate-700 bg-[#272c31] p-4"
+                  <article class="relative border-t border-[#3a414c] first:rounded-t-md first:border-t-0 last:rounded-b-md"
+                           x-data="{ openMenu: null, filterView: 'root', filterSearch: '', hovering: false, isDesktop: window.matchMedia('(min-width: 1024px)').matches }"
+                           @mouseenter="hovering = true"
+                           @mouseleave="if (openMenu === null && !row.editorOpen) hovering = false"
+                           @focusin="hovering = true"
+                           @focusout="if (!($el.contains($event.relatedTarget))) { hovering = false }"
+                           @click="hovering = true"
                            :data-row-client-id="row.client_id">
-                    <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                      <div class="min-w-0 flex-1">
-                        <div class="flex items-start gap-3">
-                          <button type="button"
-                                  class="drag-handle mt-0.5 rounded-md border border-slate-700 bg-[#1f2429] p-2 text-slate-400 transition-colors hover:text-white cursor-grab active:cursor-grabbing">
-                            {% include "app/icons/drag-handle.svg" with classes="h-4 w-4" %}
-                          </button>
-                          <div class="min-w-0 flex-1">
-                            <div class="flex flex-wrap items-center gap-2">
-                              <h4 class="text-base font-semibold text-white"
-                                  x-text="rowDisplayTitle(section, row)"></h4>
-                              <span class="rounded-full border border-slate-600 px-2 py-0.5 text-[11px] uppercase tracking-[0.18em] text-slate-300"
-                                    x-text="rowTypeLabel(row.row_type)"></span>
-                              <span class="rounded-full border border-slate-600 px-2 py-0.5 text-[11px] uppercase tracking-[0.18em]"
-                                    :class="row.enabled ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200' : 'border-slate-600 text-slate-400'"
-                                    x-text="row.enabled ? 'Enabled' : 'Disabled'"></span>
-                            </div>
-                            <p class="mt-1 text-sm text-slate-400" x-text="rowDisplaySummary(section, row)"></p>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div class="flex flex-col gap-2 md:opacity-100 lg:min-w-[23rem] lg:opacity-0 lg:transition-opacity lg:group-hover:opacity-100 lg:group-focus-within:opacity-100">
-                        <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                          <label class="text-xs font-medium uppercase tracking-[0.16em] text-slate-400">
-                            State
-                            <select x-model="row.enabled"
-                                    class="mt-1 w-full rounded-md border border-slate-600 bg-[#1f2429] px-3 py-2 text-sm text-slate-100 focus:border-indigo-500 focus:outline-none">
-                              <option :value="true">Enabled</option>
-                              <option :value="false">Disabled</option>
-                            </select>
-                          </label>
-                          <template x-if="row.row_type !== 'recently_unrated'">
-                            <label class="text-xs font-medium uppercase tracking-[0.16em] text-slate-400">
-                              Sort
-                              <select x-model="row.sort_by"
-                                      class="mt-1 w-full rounded-md border border-slate-600 bg-[#1f2429] px-3 py-2 text-sm text-slate-100 focus:border-indigo-500 focus:outline-none">
-                                <template x-for="choice in sortChoices(section, row)" :key="choice.value">
-                                  <option :value="choice.value" x-text="choice.label"></option>
-                                </template>
-                              </select>
-                            </label>
-                          </template>
-                          <template x-if="row.row_type !== 'recently_unrated'">
-                            <label class="text-xs font-medium uppercase tracking-[0.16em] text-slate-400">
-                              Direction
-                              <select x-model="row.direction"
-                                      class="mt-1 w-full rounded-md border border-slate-600 bg-[#1f2429] px-3 py-2 text-sm text-slate-100 focus:border-indigo-500 focus:outline-none">
-                                <template x-for="choice in directionChoices" :key="choice.value">
-                                  <option :value="choice.value" x-text="choice.label"></option>
-                                </template>
-                              </select>
-                            </label>
-                          </template>
-                        </div>
-
-                        <div class="flex flex-wrap justify-end gap-2">
-                          <button type="button"
-                                  class="inline-flex items-center rounded-md border border-slate-600 bg-[#1f2429] px-3 py-2 text-sm text-slate-200 transition-colors hover:bg-[#313842] cursor-pointer"
-                                  x-show="row.row_type !== 'recently_unrated'"
-                                  @click="row.editorOpen = !row.editorOpen">
-                            {% include "app/icons/horizontal-sliders.svg" with classes="mr-2 h-4 w-4" %}
-                            <span x-text="row.editorOpen ? 'Hide Editor' : 'Edit Row'"></span>
-                          </button>
-                          <button type="button"
-                                  class="inline-flex items-center rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-100 transition-colors hover:bg-rose-500/20 cursor-pointer"
-                                  @click="removeRow(section, row.client_id)">
-                            {% include "app/icons/trashcan.svg" with classes="mr-2 h-4 w-4" %}
-                            Remove
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div x-show="row.editorOpen && row.row_type === 'library_query'"
-                         x-transition:enter="transition ease-out duration-150"
-                         x-transition:enter-start="opacity-0 -translate-y-1"
-                         x-transition:enter-end="opacity-100 translate-y-0"
-                         class="mt-4 rounded-lg border border-slate-700 bg-[#1f2429] p-4">
-                      <div class="mb-3 flex items-center justify-between">
-                        <h5 class="text-sm font-semibold text-white">Library Filters</h5>
+                    <div class="h-10 rounded-[inherit] bg-[#22272d] px-3 transition-colors hover:bg-[#292f36]">
+                      <div class="flex h-full min-w-0 items-center gap-2">
                         <button type="button"
-                                class="text-xs font-medium uppercase tracking-[0.16em] text-slate-400 hover:text-white cursor-pointer"
-                                @click="resetLibraryFilters(row)">
-                          Reset Filters
+                                class="drag-handle hidden h-8 w-8 shrink-0 items-center justify-center rounded-md border border-[#4a515d] bg-[#1f2429] text-slate-400 transition-colors hover:text-white cursor-grab active:cursor-grabbing lg:inline-flex"
+                                @click.stop>
+                          {% include "app/icons/drag-handle.svg" with classes="h-4 w-4" %}
                         </button>
-                      </div>
-                      <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                        <template x-for="field in section.filter_fields" :key="field.key">
-                          <label class="text-xs font-medium uppercase tracking-[0.16em] text-slate-400">
-                            <span x-text="field.label"></span>
-                            <select x-model="row.filters[field.key]"
-                                    class="mt-1 w-full rounded-md border border-slate-600 bg-[#272c31] px-3 py-2 text-sm font-normal text-slate-100 focus:border-indigo-500 focus:outline-none">
-                              <template x-for="option in field.options" :key="option.value">
-                                <option :value="option.value" x-text="option.label"></option>
-                              </template>
-                            </select>
-                          </label>
-                        </template>
+
+                        <div class="min-w-0 flex-1">
+                          <div class="truncate whitespace-nowrap text-sm font-medium text-white"
+                               x-text="rowDisplayTitle(section, row)"></div>
+                        </div>
+
+                        <div x-show="!isDesktop || hovering || openMenu !== null || row.editorOpen"
+                             x-cloak
+                             x-transition:enter="transition ease-out duration-150"
+                             x-transition:enter-start="opacity-0"
+                             x-transition:enter-end="opacity-100"
+                             x-transition:leave="transition ease-in duration-100"
+                             x-transition:leave-start="opacity-100"
+                             x-transition:leave-end="opacity-0"
+                             class="flex shrink-0 items-center gap-1 whitespace-nowrap">
+                          <template x-if="row.row_type === 'library_query'">
+                            <div class="relative filter-control"
+                                 @click.outside="if (openMenu === 'filter') { openMenu = null; filterView = 'root'; filterSearch = ''; }">
+                              <button type="button"
+                                      class="flex items-center px-2 py-2 rounded-md text-gray-200 hover:text-white transition-colors cursor-pointer"
+                                      @click.stop="if (openMenu === 'filter') { openMenu = null; filterView = 'root'; filterSearch = ''; } else { openMenu = 'filter'; filterView = 'root'; filterSearch = ''; }">
+                                <span class="block min-w-0 truncate max-w-[10rem] sm:max-w-[14rem]" x-text="rowFilterLabel(section, row)"></span>
+                                <svg xmlns="http://www.w3.org/2000/svg"
+                                     viewBox="0 0 20 20"
+                                     class="w-4 h-4 ml-2"
+                                     aria-hidden="true">
+                                  <path d="M10 14 L4.5 7 H15.5 Z" fill="currentColor"></path>
+                                </svg>
+                              </button>
+                              <div class="absolute z-40 mt-2 w-60 bg-[#39404b] rounded-md shadow-lg overflow-hidden border border-gray-700"
+                                   x-cloak
+                                   x-show="openMenu === 'filter'"
+                                   x-transition:enter="transition ease-out duration-100"
+                                   x-transition:enter-start="transform opacity-0 scale-95"
+                                   x-transition:enter-end="transform opacity-100 scale-100"
+                                   x-transition:leave="transition ease-in duration-75"
+                                   x-transition:leave-start="transform opacity-100 scale-100"
+                                   x-transition:leave-end="transform opacity-0 scale-95">
+                                <div x-show="filterView === 'root'" x-cloak>
+                                  <button type="button"
+                                          class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                                          @click.stop="clearLibraryFilters(row); openMenu = null; filterView = 'root'; filterSearch = ''">
+                                    <span>All</span>
+                                    <span class="ml-auto text-xs text-gray-500" x-show="rowFilterLabel(section, row) === 'All'">Active</span>
+                                  </button>
+
+                                  <div class="border-t border-gray-700 my-1"></div>
+                                  <template x-for="field in filterMenuFields(section)" :key="field.key">
+                                    <button type="button"
+                                            class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white"
+                                            @click.stop="filterView = field.key; filterSearch = ''">
+                                      <span class="flex-shrink-0 mr-3" x-text="field.label"></span>
+                                      <span class="ml-auto text-xs text-gray-400 block min-w-0 truncate max-w-[8rem]"
+                                            x-text="fieldSelectionLabel(section, row, field.key)"></span>
+                                      <span class="ml-2">{% include "app/icons/chevron-right.svg" with classes="w-3.5 h-3.5" %}</span>
+                                    </button>
+                                  </template>
+                                </div>
+
+                                <template x-for="field in filterMenuFields(section)" :key="`${field.key}-menu`">
+                                  <div x-show="filterView === field.key" x-cloak>
+                                    <button type="button"
+                                            class="flex items-center w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer text-gray-300 hover:bg-[#454d5a] hover:text-white border-b border-gray-700"
+                                            @click.stop="filterView = 'root'; filterSearch = ''">
+                                      <span class="mr-3">{% include "app/icons/chevron-left.svg" with classes="w-3.5 h-3.5" %}</span>
+                                      <span x-text="field.label"></span>
+                                    </button>
+
+                                    <div x-show="shouldShowFieldSearch(field)"
+                                         x-cloak
+                                         class="p-2 border-b border-gray-700">
+                                      <input type="text"
+                                             x-model="filterSearch"
+                                             class="w-full rounded-md border border-gray-600 bg-[#272c31] px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
+                                             :placeholder="`Search ${field.label.toLowerCase()}...`">
+                                    </div>
+
+                                    <div class="max-h-72 overflow-y-auto py-1">
+                                      <template x-for="option in filteredMenuOptions(field, filterSearch)" :key="`${field.key}-${option.value}`">
+                                        <button type="button"
+                                                class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
+                                                :class="normalizeFieldValue(option.value) === normalizeFieldValue(row.filters[field.key]) ? 'bg-indigo-600 text-white font-medium' : 'text-gray-300 hover:bg-[#454d5a] hover:text-white'"
+                                                @click.stop="setRowFilter(row, field.key, option.value); openMenu = null; filterView = 'root'; filterSearch = ''"
+                                                x-text="option.label"></button>
+                                      </template>
+                                    </div>
+                                  </div>
+                                </template>
+                              </div>
+                            </div>
+                          </template>
+
+                          <template x-if="row.row_type === 'library_query'">
+                            <div class="relative filter-control" @click.outside="if (openMenu === 'status') openMenu = null">
+                              <button type="button"
+                                      class="flex items-center px-2 py-2 rounded-md text-gray-200 hover:text-white transition-colors cursor-pointer"
+                                      @click.stop="openMenu = openMenu === 'status' ? null : 'status'">
+                                <span x-text="statusButtonLabel(section, row)"></span>
+                                <svg xmlns="http://www.w3.org/2000/svg"
+                                     viewBox="0 0 20 20"
+                                     class="w-4 h-4 ml-2"
+                                     aria-hidden="true">
+                                  <path d="M10 14 L4.5 7 H15.5 Z" fill="currentColor"></path>
+                                </svg>
+                              </button>
+                              <div class="absolute z-40 mt-2 py-1 w-48 bg-[#39404b] rounded-md shadow-lg overflow-hidden border border-gray-700"
+                                   x-cloak
+                                   x-show="openMenu === 'status'"
+                                   x-transition:enter="transition ease-out duration-100"
+                                   x-transition:enter-start="transform opacity-0 scale-95"
+                                   x-transition:enter-end="transform opacity-100 scale-100"
+                                   x-transition:leave="transition ease-in duration-75"
+                                   x-transition:leave-start="transform opacity-100 scale-100"
+                                   x-transition:leave-end="transform opacity-0 scale-95">
+                                <template x-for="option in statusFilterOptions(section)" :key="option.value">
+                                  <button type="button"
+                                          class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
+                                          :class="row.filters.status === option.value ? 'bg-indigo-600 text-white font-medium' : 'text-gray-300 hover:bg-[#454d5a] hover:text-white'"
+                                          @click.stop="row.filters.status = option.value; openMenu = null"
+                                          x-text="option.label"></button>
+                                </template>
+                              </div>
+                            </div>
+                          </template>
+
+                          <template x-if="row.row_type !== 'recently_unrated'">
+                            <div class="relative filter-control" @click.outside="if (openMenu === 'sort') openMenu = null">
+                              <button type="button"
+                                      class="flex items-center px-2 py-2 rounded-md text-gray-200 hover:text-white transition-colors cursor-pointer"
+                                      @click.stop="openMenu = openMenu === 'sort' ? null : 'sort'">
+                                <span x-text="sortButtonLabel(section, row)"></span>
+                                <svg xmlns="http://www.w3.org/2000/svg"
+                                     viewBox="0 0 20 20"
+                                     class="w-4 h-4 ml-2"
+                                     x-show="row.direction === 'asc'"
+                                     aria-hidden="true">
+                                  <path d="M10 5 L16 15 H4 Z" fill="currentColor"></path>
+                                </svg>
+                                <svg xmlns="http://www.w3.org/2000/svg"
+                                     viewBox="0 0 20 20"
+                                     class="w-4 h-4 ml-2"
+                                     x-show="row.direction !== 'asc'"
+                                     aria-hidden="true">
+                                  <path d="M10 15 L4 5 H16 Z" fill="currentColor"></path>
+                                </svg>
+                              </button>
+                              <div class="absolute z-40 mt-2 py-1 w-48 bg-[#39404b] rounded-md shadow-lg overflow-hidden border border-gray-700"
+                                   x-cloak
+                                   x-show="openMenu === 'sort'"
+                                   x-transition:enter="transition ease-out duration-100"
+                                   x-transition:enter-start="transform opacity-0 scale-95"
+                                   x-transition:enter-end="transform opacity-100 scale-100"
+                                   x-transition:leave="transition ease-in duration-75"
+                                   x-transition:leave-start="transform opacity-100 scale-100"
+                                   x-transition:leave-end="transform opacity-0 scale-95">
+                                <template x-for="choice in sortChoices(section, row)" :key="choice.value">
+                                  <button type="button"
+                                          class="block w-full px-4 py-2 text-left text-sm transition-colors cursor-pointer"
+                                          :class="row.sort_by === choice.value ? 'bg-indigo-600 text-white font-medium' : 'text-gray-300 hover:bg-[#454d5a] hover:text-white'"
+                                          @click.stop="toggleRowSort(row, choice.value); openMenu = null"
+                                          x-text="choice.label"></button>
+                                </template>
+                              </div>
+                            </div>
+                          </template>
+
+                          <template x-if="row.row_type === 'custom_list'">
+                            <button type="button"
+                                    class="flex items-center px-2 py-2 rounded-md text-gray-200 hover:text-white transition-colors cursor-pointer"
+                                    @click.stop="openMenu = null; row.editorOpen = !row.editorOpen">
+                              <span x-text="row.custom_list_name || 'Choose List'"></span>
+                              <svg xmlns="http://www.w3.org/2000/svg"
+                                   viewBox="0 0 20 20"
+                                   class="w-4 h-4 ml-2"
+                                   aria-hidden="true">
+                                <path d="M10 14 L4.5 7 H15.5 Z" fill="currentColor"></path>
+                              </svg>
+                            </button>
+                          </template>
+
+                          <template x-if="row.row_type === 'recently_unrated'">
+                            <div class="px-2 py-2 text-sm text-slate-300">
+                              Recent unrated plays
+                            </div>
+                          </template>
+
+                          <button type="button"
+                                  class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-gray-400 hover:text-red-400 hover:bg-red-400/10 transition-opacity duration-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-50 cursor-pointer"
+                                  @click.stop="removeRow(section, row.client_id)">
+                            {% include "app/icons/trashcan.svg" with classes="w-5 h-5" %}
+                          </button>
+                        </div>
                       </div>
                     </div>
 
                     <div x-show="row.editorOpen && row.row_type === 'custom_list'"
+                         x-cloak
                          x-transition:enter="transition ease-out duration-150"
                          x-transition:enter-start="opacity-0 -translate-y-1"
                          x-transition:enter-end="opacity-100 translate-y-0"
-                         class="mt-4 rounded-lg border border-slate-700 bg-[#1f2429] p-4">
+                         class="border-t border-[#3a414c] bg-[#1c2025] px-4 py-4">
                       <div class="mb-3">
                         <h5 class="text-sm font-semibold text-white">List Selection</h5>
                         <p class="mt-1 text-sm text-slate-400">Search your owned and collaborator lists. Smart lists are included here too.</p>
@@ -193,13 +274,14 @@
                         <input type="text"
                                x-model="row.listQuery"
                                @input.debounce.250ms="searchLists(section, row)"
-                               class="w-full rounded-md border border-slate-600 bg-[#272c31] px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
+                               class="w-full rounded-md border border-[#4a515d] bg-[#272c31] px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
                                placeholder="Search lists and smart lists">
                         <div x-show="row.listResults.length"
-                             class="absolute z-20 mt-2 w-full overflow-hidden rounded-md border border-slate-600 bg-[#272c31] shadow-lg">
+                             x-cloak
+                             class="absolute z-20 mt-2 w-full overflow-hidden rounded-md border border-[#4a515d] bg-[#272c31] shadow-lg">
                           <template x-for="result in row.listResults" :key="result.id">
                             <button type="button"
-                                    class="block w-full border-b border-slate-700 px-3 py-2 text-left text-sm text-slate-200 transition-colors hover:bg-[#39404b] cursor-pointer last:border-b-0"
+                                    class="block w-full border-b border-[#3d4450] px-3 py-2 text-left text-sm text-slate-200 transition-colors hover:bg-[#39404b] cursor-pointer last:border-b-0"
                                     @click="applyListResult(row, result)">
                               <div class="font-medium" x-text="result.name"></div>
                               <div class="text-xs text-slate-400" x-text="result.is_smart ? 'Smart list' : 'Manual list'"></div>
@@ -208,13 +290,49 @@
                         </div>
                       </div>
 
-                      <div class="mt-3 rounded-md border border-slate-700 bg-[#272c31] px-3 py-2 text-sm text-slate-200">
+                      <div class="mt-3 rounded-md border border-[#3d4450] bg-[#272c31] px-3 py-2 text-sm text-slate-200">
                         <span class="text-slate-400">Selected:</span>
                         <span x-text="row.custom_list_name || 'No list selected yet'"></span>
                       </div>
                     </div>
                   </article>
                 </template>
+              </div>
+
+              <div class="mt-4 flex flex-wrap items-center gap-2">
+                <div class="relative" @click.outside="section.addRowMenuOpen = false">
+                  <button type="button"
+                          class="inline-flex items-center rounded-md border border-gray-600 bg-[#272c31] px-3 py-2 text-sm font-medium text-gray-200 transition-colors hover:bg-[#313842] cursor-pointer"
+                          @click="section.addRowMenuOpen = !section.addRowMenuOpen">
+                    {% include "app/icons/plus.svg" with classes="mr-2 h-4 w-4" %}
+                    Add Row
+                  </button>
+                  <div x-show="section.addRowMenuOpen"
+                       x-cloak
+                       class="absolute left-0 z-20 mt-2 w-52 overflow-hidden rounded-md border border-[#4a515d] bg-[#272c31] shadow-lg">
+                    <button type="button"
+                            class="flex w-full items-center px-3 py-2 text-left text-sm text-slate-200 transition-colors hover:bg-[#39404b] cursor-pointer"
+                            @click="addRow(section, 'library_query'); section.addRowMenuOpen = false">
+                      {% include "app/icons/plus.svg" with classes="mr-2 h-4 w-4" %}
+                      Library Row
+                    </button>
+                    <button type="button"
+                            class="flex w-full items-center border-t border-[#3d4450] px-3 py-2 text-left text-sm text-slate-200 transition-colors hover:bg-[#39404b] cursor-pointer"
+                            @click="addRow(section, 'recently_unrated'); section.addRowMenuOpen = false"
+                            :disabled="section.rows.some(row => row.row_type === 'recently_unrated')"
+                            :class="{ 'opacity-50 cursor-not-allowed': section.rows.some(row => row.row_type === 'recently_unrated') }">
+                      {% include "app/icons/history.svg" with classes="mr-2 h-4 w-4" %}
+                      Recently Played Row
+                    </button>
+                  </div>
+                </div>
+
+                <button type="button"
+                        class="inline-flex items-center rounded-md border border-gray-600 bg-[#272c31] px-3 py-2 text-sm font-medium text-gray-200 transition-colors hover:bg-[#313842] cursor-pointer"
+                        @click="addRow(section, 'custom_list')">
+                  {% include "app/icons/list.svg" with classes="mr-2 h-4 w-4" %}
+                  Add List
+                </button>
               </div>
             </div>
           </section>
@@ -239,11 +357,12 @@
       return {
         sections: (sections || []).map(section => ({
           ...section,
-          expanded: true,
+          addRowMenuOpen: false,
+          expanded: false,
           rows: (section.rows || []).map(row => ({
             ...row,
-            enabled: row.enabled !== false,
-            editorOpen: !row.id,
+            enabled: true,
+            editorOpen: row.row_type === 'custom_list' && !row.id,
             filters: { ...(row.filters || {}) },
             listQuery: row.custom_list_name || '',
             listResults: []
@@ -263,15 +382,6 @@
           }, 0) + 1;
           this.$nextTick(() => this.initSortables());
         },
-        initials(label) {
-          return String(label || '')
-            .split(' ')
-            .filter(Boolean)
-            .slice(0, 2)
-            .map(part => part[0])
-            .join('')
-            .toUpperCase();
-        },
         rowTypeLabel(type) {
           if (type === 'library_query') return 'Library Row';
           if (type === 'custom_list') return 'List / Smart List';
@@ -286,23 +396,46 @@
           }
           return this.describeFilters(section, row);
         },
-        rowDisplaySummary(section, row) {
-          if (row.row_type === 'custom_list') {
-            return row.custom_list_name
-              ? 'List-backed row on Home'
-              : 'Choose a list or smart list for this library row.';
+        activeLibraryFilterCount(row) {
+          return Object.entries(row.filters || {}).filter(([key, value]) => {
+            if (key === 'status') return false;
+            if (value === null || typeof value === 'undefined') return false;
+            return value !== '' && value !== 'all';
+          }).length;
+        },
+        rowFilterLabel(section, row) {
+          const labels = [];
+          for (const key of ['rating', 'collection', 'genre', 'year', 'release', 'source', 'language', 'country', 'platform', 'origin', 'format', 'author', 'tag', 'tag_exclude']) {
+            const value = row.filters?.[key];
+            if (!value || value === 'all') continue;
+            let label = this.fieldOptionLabel(section, key, value);
+            if (key === 'tag') label = `+${label}`;
+            if (key === 'tag_exclude') label = `-${label}`;
+            labels.push(label);
           }
-          if (row.row_type === 'recently_unrated') {
-            return 'Recent unrated plays from this library.';
-          }
-          const sort = this.sortChoices(section, row).find(choice => choice.value === row.sort_by);
-          const direction = this.directionChoices.find(choice => choice.value === row.direction);
-          return `Sorted by ${sort ? sort.label : row.sort_by} • ${direction ? direction.label : row.direction}`;
+          if (!labels.length) return 'All';
+          if (labels.length === 1) return labels[0];
+          return `${labels[0]} +${labels.length - 1}`;
+        },
+        statusButtonLabel(section, row) {
+          const option = this.statusFilterOptions(section).find(candidate => candidate.value === row.filters?.status);
+          return option ? option.label : 'Status';
+        },
+        sortButtonLabel(section, row) {
+          const choice = this.sortChoices(section, row).find(candidate => candidate.value === row.sort_by);
+          return choice ? choice.label : 'Sort';
+        },
+        defaultSortDirection(value) {
+          return ['author', 'popularity', 'runtime', 'start_date', 'title', 'time_left', 'time_to_beat'].includes(value) ? 'asc' : 'desc';
+        },
+        toggleRowSort(row, value) {
+          row.direction = (row.sort_by === value) ? (row.direction === 'asc' ? 'desc' : 'asc') : this.defaultSortDirection(value);
+          row.sort_by = value;
         },
         describeFilters(section, row) {
           const status = row.filters?.status || 'all';
           const parts = [];
-          if (status === 'In Progress') parts.push('In Progress');
+          if (status === 'In progress') parts.push('In Progress');
           else if (status === 'Planning') parts.push('Planning');
           else if (status === 'Completed') parts.push('Completed');
           else if (status === 'Paused') parts.push('Paused');
@@ -325,6 +458,57 @@
 
           return parts.slice(0, 4).join(' • ');
         },
+        filterMenuFields(section) {
+          return (section.filter_fields || []).filter(field => field.key !== 'status');
+        },
+        statusFilterOptions(section) {
+          const statusField = (section.filter_fields || []).find(field => field.key === 'status');
+          return statusField?.options || [];
+        },
+        fieldDefinition(section, key) {
+          return (section.filter_fields || []).find(field => field.key === key) || null;
+        },
+        fieldOptionLabel(section, key, value) {
+          const field = this.fieldDefinition(section, key);
+          const option = field?.options?.find(candidate => this.normalizeFieldValue(candidate.value) === this.normalizeFieldValue(value));
+          if (option) return option.label;
+          return value || 'Any';
+        },
+        fieldSelectionLabel(section, row, key) {
+          const value = row.filters?.[key];
+          if (!value || value === 'all') {
+            const field = this.fieldDefinition(section, key);
+            return field?.options?.[0]?.label || 'Any';
+          }
+          return this.fieldOptionLabel(section, key, value);
+        },
+        shouldShowFieldSearch(field) {
+          return (field?.options || []).length > 8;
+        },
+        filteredMenuOptions(field, search) {
+          const term = String(search || '').trim().toLowerCase();
+          const options = field?.options || [];
+          if (!term) return options;
+          return options.filter(option => {
+            const label = String(option.label || '').toLowerCase();
+            const value = String(option.value || '').toLowerCase();
+            return label.includes(term) || value.includes(term);
+          });
+        },
+        normalizeFieldValue(value) {
+          if (value === null || typeof value === 'undefined') return '';
+          return String(value);
+        },
+        setRowFilter(row, key, value) {
+          row.filters[key] = value;
+        },
+        clearLibraryFilters(row) {
+          const defaults = this.defaultFilters('library_query');
+          for (const [key, value] of Object.entries(defaults)) {
+            if (key === 'status') continue;
+            row.filters[key] = value;
+          }
+        },
         sortChoices(section, row) {
           if (row.row_type === 'custom_list') return section.sort_choices.custom_list || [];
           return section.sort_choices.library_query || [];
@@ -337,7 +521,7 @@
             ? (section.sort_choices.custom_list || [])
             : (section.sort_choices.library_query || []);
           const defaultSort = defaultSortChoices[0]?.value || 'title';
-          section.rows.push({
+          const newRow = {
             id: null,
             client_id: `new-row-${this.nextRowId++}`,
             enabled: true,
@@ -345,18 +529,19 @@
             custom_list_id: null,
             custom_list_name: '',
             sort_by: rowType === 'recently_unrated' ? 'recent' : defaultSort,
-            direction: rowType === 'recently_unrated' ? 'desc' : 'asc',
+            direction: rowType === 'recently_unrated' ? 'desc' : this.defaultSortDirection(defaultSort),
             filters: this.defaultFilters(rowType),
-            editorOpen: rowType !== 'recently_unrated',
+            editorOpen: rowType === 'custom_list',
             listQuery: '',
             listResults: []
-          });
+          };
+          section.rows.push(newRow);
           this.$nextTick(() => this.initSortables());
         },
         defaultFilters(rowType) {
           if (rowType !== 'library_query') return {};
           return {
-            status: 'In Progress',
+            status: 'In progress',
             rating: 'all',
             collection: 'all',
             genre: '',
@@ -376,9 +561,6 @@
         removeRow(section, clientId) {
           section.rows = section.rows.filter(row => row.client_id !== clientId);
           this.$nextTick(() => this.initSortables());
-        },
-        resetLibraryFilters(row) {
-          row.filters = this.defaultFilters('library_query');
         },
         async searchLists(section, row) {
           const query = String(row.listQuery || '').trim();
@@ -405,7 +587,7 @@
             media_type: section.media_type,
             rows: section.rows.map(row => ({
               id: row.id,
-              enabled: !!row.enabled,
+              enabled: true,
               row_type: row.row_type,
               custom_list_id: row.custom_list_id,
               sort_by: row.sort_by,

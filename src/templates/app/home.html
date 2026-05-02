@@ -6,10 +6,6 @@
 {% endblock title %}
 
 {% block content %}
-  <div class="mb-4 sm:mb-8">
-    <h1 class="text-3xl font-bold">Home</h1>
-    <p class="mt-2 text-sm text-gray-400">Rows are grouped by your enabled libraries and follow the order configured in Settings.</p>
-  </div>
   <div class="space-y-4 sm:space-y-8">
     <div id="active-playback-container"
          class="media-grid"
@@ -24,11 +20,7 @@
     </div>
     {% for group in home_groups %}
       <section class="space-y-4">
-        <div class="flex items-center justify-between gap-3">
-          <h2 class="text-2xl font-semibold">{{ group.label }}</h2>
-          <a href="{% url 'home_screen' %}"
-             class="text-sm text-indigo-300 transition-colors hover:text-indigo-200">Edit Home Screen</a>
-        </div>
+        <h2 class="text-2xl font-semibold">{{ group.label }}</h2>
         <div class="space-y-6">
           {% for row in group.rows %}
             <div>
