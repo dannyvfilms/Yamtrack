@@ -1453,6 +1453,7 @@ def build_home_page_groups(
     user,
     items_limit: int,
     load_row_id: int | None = None,
+    load_row_offset: int = 0,
     *,
     append_only: bool = False,
 ) -> list[dict]:
@@ -1478,10 +1479,10 @@ def build_home_page_groups(
             if not entries:
                 continue
 
-            if load_row_id == row.id:
-                section_entries = entries[items_limit:] if append_only else entries
-            else:
-                section_entries = entries[:items_limit]
+            batch_start = load_row_offset if load_row_id == row.id and append_only else 0
+            batch_end = batch_start + items_limit
+            section_entries = entries[batch_start:batch_end]
+            loaded_count = min(len(entries), batch_start + len(section_entries))
             row_sections.append(
                 {
                     "row_id": row.id,
@@ -1489,7 +1490,9 @@ def build_home_page_groups(
                     "summary": row_summary(row, user),
                     "items": section_entries,
                     "total": len(entries),
+                    "loaded_count": loaded_count,
                     "show_played_chip": row.row_type == HomeScreenRowTypeChoices.RECENTLY_UNRATED,
+                    "card_width_class": "w-52" if media_type in SQUARE_HOME_MEDIA_TYPES else "w-44",
                     "grid_class": "media-grid media-grid-square"
                     if media_type in SQUARE_HOME_MEDIA_TYPES
                     else "media-grid",

@@ -31,26 +31,20 @@
                 </div>
               </div>
               <div id="media-grid-row-{{ row.row_id }}"
-                   class="{{ row.grid_class }}">
+                   class="flex flex-nowrap gap-4 overflow-x-auto pb-3 pr-2"
+                   data-home-row="true"
+                   data-loaded-count="{{ row.loaded_count }}"
+                   data-loading="false"
+                   data-row-id="{{ row.row_id }}"
+                   data-stick-to-end="false"
+                   data-total-count="{{ row.total }}"
+                   hx-get="{% url 'home' %}?load_row={{ row.row_id }}"
+                   hx-vals='js:{offset: Number(this.dataset.loadedCount || 0)}'
+                   hx-trigger="home-row-load-more"
+                   hx-target="this"
+                   hx-swap="beforeend">
                 {% include "app/components/home_grid.html" with media_list=row %}
               </div>
-              {% if row.total > items_limit %}
-                <div class="mt-3 sm:mt-6 flex justify-center">
-                  <button hx-get="{% url 'home' %}?load_row={{ row.row_id }}"
-                          hx-target="#media-grid-row-{{ row.row_id }}"
-                          hx-swap="beforeend"
-                          hx-indicator="#loading-indicator-{{ row.row_id }}"
-                          hx-trigger="click"
-                          class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md transition-colors cursor-pointer"
-                          hx-on:click="this.remove()">Load All ({{ row.total }})</button>
-                  <div id="loading-indicator-{{ row.row_id }}"
-                       class="htmx-indicator text-center hidden">
-                    <div class="inline-flex justify-center items-center">
-                      <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500"></div>
-                    </div>
-                  </div>
-                </div>
-              {% endif %}
             </div>
           {% endfor %}
         </div>
@@ -139,6 +133,62 @@
       });
     }
 
+    function getHomeRowCounts(row) {
+      const loaded = Number.parseInt(row.dataset.loadedCount || '0', 10);
+      const total = Number.parseInt(row.dataset.totalCount || '0', 10);
+      return {
+        loaded: Number.isNaN(loaded) ? 0 : loaded,
+        total: Number.isNaN(total) ? 0 : total,
+      };
+    }
+
+    function isHomeRowAtEnd(row) {
+      return row.scrollLeft + row.clientWidth >= row.scrollWidth - 48;
+    }
+
+    function syncHomeRowLoadedCount(row) {
+      row.dataset.loadedCount = String(row.children.length);
+    }
+
+    function maybeLoadMoreHomeRow(row) {
+      const { loaded, total } = getHomeRowCounts(row);
+      if (row.dataset.loading === 'true' || loaded >= total || !isHomeRowAtEnd(row)) {
+        return;
+      }
+      row.dataset.stickToEnd = 'true';
+      htmx.trigger(row, 'home-row-load-more');
+    }
+
+    function maybeAutofillHomeRow(row) {
+      const { loaded, total } = getHomeRowCounts(row);
+      if (row.dataset.loading === 'true' || loaded >= total) {
+        return;
+      }
+      if (row.scrollWidth <= row.clientWidth + 1) {
+        row.dataset.stickToEnd = 'true';
+        htmx.trigger(row, 'home-row-load-more');
+      }
+    }
+
+    function initHomeRowInfiniteScroll() {
+      document.querySelectorAll('[data-home-row="true"]').forEach(row => {
+        if (row.dataset.homeRowBound === 'true') {
+          return;
+        }
+        row.dataset.homeRowBound = 'true';
+        row.addEventListener('scroll', () => {
+          row.dataset.stickToEnd = isHomeRowAtEnd(row) ? 'true' : 'false';
+          maybeLoadMoreHomeRow(row);
+        }, { passive: true });
+      });
+      requestAnimationFrame(() => {
+        document.querySelectorAll('[data-home-row="true"]').forEach(row => {
+          syncHomeRowLoadedCount(row);
+          maybeAutofillHomeRow(row);
+        });
+      });
+    }
+
     function formatPlaybackClock(totalSeconds) {
       const clamped = Math.max(0, Math.floor(totalSeconds || 0));
       const hours = Math.floor(clamped / 3600);
@@ -200,6 +250,7 @@
 
     function initHomePageEnhancements() {
       loadVisibleReleaseYears();
+      initHomeRowInfiniteScroll();
       initActivePlaybackTicker();
     }
 
@@ -209,9 +260,35 @@
       initHomePageEnhancements();
     }
 
-    document.body.addEventListener('htmx:afterSwap', function() {
+    document.body.addEventListener('htmx:beforeRequest', function(event) {
+      const row = event.detail.elt;
+      if (row && row.matches('[data-home-row="true"]')) {
+        row.dataset.loading = 'true';
+      }
+    });
+
+    document.body.addEventListener('htmx:afterRequest', function(event) {
+      const row = event.detail.elt;
+      if (row && row.matches('[data-home-row="true"]')) {
+        row.dataset.loading = 'false';
+      }
+    });
+
+    document.body.addEventListener('htmx:afterSwap', function(event) {
+      const row = event.detail.target;
+      if (row && row.matches('[data-home-row="true"]')) {
+        syncHomeRowLoadedCount(row);
+        requestAnimationFrame(() => {
+          if (row.dataset.stickToEnd === 'true') {
+            row.scrollLeft = row.scrollWidth;
+          }
+          maybeAutofillHomeRow(row);
+          maybeLoadMoreHomeRow(row);
+        });
+      }
       setTimeout(() => {
         loadVisibleReleaseYears();
+        initHomeRowInfiniteScroll();
         initActivePlaybackTicker();
       }, 50);
     });

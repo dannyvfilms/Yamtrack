@@ -1271,11 +1271,16 @@ def home(request):
             load_row_id = int(request.GET.get("load_row", ""))
         except (TypeError, ValueError):
             load_row_id = None
+        try:
+            load_row_offset = max(int(request.GET.get("offset", "0")), 0)
+        except (TypeError, ValueError):
+            load_row_offset = 0
 
         home_groups = build_home_page_groups(
             request.user,
             items_limit,
             load_row_id=load_row_id,
+            load_row_offset=load_row_offset,
             append_only=bool(request.headers.get("HX-Request") and load_row_id),
         )
 

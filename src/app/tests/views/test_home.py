@@ -123,6 +123,14 @@ class HomeViewTests(TestCase):
         self.assertEqual(season_row["items"][0].media.progress, 5)
         self.assertEqual(len(anime_row["items"]), 1)
         self.assertIsNone(self._get_group(response, MediaTypes.TV.value))
+        self.assertContains(
+            response,
+            'class="flex flex-nowrap gap-4 overflow-x-auto pb-3 pr-2"',
+            html=False,
+        )
+        self.assertContains(response, 'class="w-44 shrink-0"', html=False)
+        self.assertContains(response, 'data-home-row="true"', html=False)
+        self.assertNotContains(response, "Load All")
 
     def test_home_view_hides_disabled_sidebar_media_types_even_when_rows_exist(self):
         """Stored rows for disabled libraries should not render on Home."""
@@ -479,9 +487,11 @@ class HomeViewTests(TestCase):
 
         initial_response = self.client.get(reverse("home"))
         season_row = self._get_first_row(initial_response, MediaTypes.SEASON.value)
+        self.assertContains(initial_response, 'data-loaded-count="14"', html=False)
+        self.assertContains(initial_response, 'hx-trigger="home-row-load-more"', html=False)
 
         response = self.client.get(
-            reverse("home") + f"?load_row={season_row['row_id']}",
+            reverse("home") + f"?load_row={season_row['row_id']}&offset=14",
             headers={"hx-request": "true"},
         )
 
@@ -491,6 +501,7 @@ class HomeViewTests(TestCase):
         self.assertEqual(season_row["total"], 15)
         self.assertEqual(len(response.context["media_list"]["items"]), 1)
         self.assertEqual(response.context["media_list"]["total"], 15)
+        self.assertContains(response, 'class="w-44 shrink-0"', html=False)
 
     def test_active_playback_fragment_empty(self):
         """Fragment endpoint returns empty body when nothing is playing."""
